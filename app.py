@@ -101,6 +101,8 @@ DATA_SOURCES = [
 
 SPORTS = ["NBA", "NFL", "MLB", "NHL", "ALL"]
 
+SEM_WINDOW_SIZE = 20  # number of recent bets to evaluate trend
+
 # =========================
 # SESSION STATE INIT
 # =========================
@@ -119,7 +121,6 @@ if "board_data" not in st.session_state or not isinstance(st.session_state.board
         "model_verdicts": {},
     }
 else:
-    # Backward compatibility: ensure all keys exist
     bd = st.session_state.board_data
     if "props" not in bd:
         bd["props"] = None
@@ -160,6 +161,18 @@ if "emergency_floor_pct" not in st.session_state:
 
 if "sem_notes" not in st.session_state:
     st.session_state.sem_notes = ""
+
+if "sem_mode" not in st.session_state:
+    st.session_state.sem_mode = "NORMAL"  # NORMAL, DEFENSIVE, AGGRESSIVE
+
+if "sem_profile" not in st.session_state:
+    st.session_state.sem_profile = {
+        "max_parlay_legs": 4,
+        "allowed_tiers": ["SOVEREIGN", "ELITE", "VALUE"],
+    }
+
+if "sensor_score" not in st.session_state:
+    st.session_state.sensor_score = 1.0
 
 # =========================
 # CORE UTILS
@@ -208,6 +221,66 @@ def move_to_history(lock, result, units, reason=""):
     lock_copy["units"] = units
     lock_copy["reason"] = reason
     st.session_state.history.append(lock_copy)
+
+# =========================
+# SEM ENGINE
+# =========================
+def classify_loss_reason(lock):
+    tier = lock.get("tier", "VALUE")
+    if tier == "SOVEREIGN":
+        return "Variance / High-Confidence Miss"
+    if tier == "ELITE":
+        return "Thin Edge / Market Drift"
+    return "Low Edge / Noise"
+
+def update_sem_profile():
+    hist = st.session_state.history[-SEM_WINDOW_SIZE:]
+    if not hist:
+        st.session_state.sem_mode = "NORMAL"
+        st.session_state.sem_profile = {
+            "max_parlay_legs": 4,
+            "allowed_tiers": ["SOVEREIGN", "ELITE", "VALUE"],
+        }
+        return
+
+    wins = sum(1 for h in hist if h.get("result") == "WIN")
+    losses = sum(1 for h in hist if h.get("result") == "LOSS")
+    total = wins + losses
+    if total == 0:
+        winrate = 0.5
+    else:
+        winrate = wins / total
+
+    if winrate >= 0.58:
+        st.session_state.sem_mode = "AGGRESSIVE"
+        st.session_state.sem_integrity = min(100, st.session_state.sem_integrity + 2)
+        st.session_state.emergency_floor_pct = 10
+        st.session_state.sem_profile = {
+            "max_parlay_legs": 4,
+            "allowed_tiers": ["SOVEREIGN", "ELITE", "VALUE"],
+        }
+    elif winrate <= 0.48:
+        st.session_state.sem_mode = "DEFENSIVE"
+        st.session_state.sem_integrity = max(40, st.session_state.sem_integrity - 3)
+        st.session_state.emergency_floor_pct = 18
+        st.session_state.sem_profile = {
+            "max_parlay_legs": 2,
+            "allowed_tiers": ["VALUE", "ELITE"],
+        }
+    else:
+        st.session_state.sem_mode = "NORMAL"
+        st.session_state.emergency_floor_pct = max(
+            12, min(st.session_state.emergency_floor_pct, 15)
+        )
+        st.session_state.sem_profile = {
+            "max_parlay_legs": 3,
+            "allowed_tiers": ["SOVEREIGN", "ELITE", "VALUE"],
+        }
+
+    if st.session_state.sem_integrity < 55:
+        st.session_state.safe_corridor_active = True
+    else:
+        st.session_state.safe_corridor_active = True
 
 # =========================
 # MOCK MODEL VERDICTS
@@ -649,7 +722,11 @@ def reconcile_locks(active_unit):
         if lock["status"] == "PENDING":
             result = mock_box_score_result(lock)
             units = active_unit if result == "WIN" else -active_unit
-            reason = "Variance" if result == "LOSS" else "Model Edge"
+            if result == "WIN":
+                reason = "Model Edge / CLV Realized"
+            else:
+                reason = classify_loss_reason(lock)
+
             move_to_history(lock, result, units, reason)
 
             if result == "WIN":
@@ -660,13 +737,7 @@ def reconcile_locks(active_unit):
             st.session_state.bankroll += units
             st.session_state.locks.remove(lock)
 
-    if st.session_state.sem_integrity < 55:
-        st.session_state.safe_corridor_active = True
-        st.session_state.emergency_floor_pct = max(
-            st.session_state.emergency_floor_pct, 15
-        )
-    else:
-        st.session_state.safe_corridor_active = True
+    update_sem_profile()
 
 # =========================
 # PARLAY ENGINE
@@ -682,6 +753,9 @@ def build_parlay_from_props(props_df, max_legs=4):
         game_key = player.split()[0]
 
         if player in used_players or game_key in used_games:
+            continue
+
+        if row["Tier"] not in st.session_state.sem_profile["allowed_tiers"]:
             continue
 
         legs.append(row)
@@ -713,17 +787,20 @@ with st.sidebar:
     integrity = st.slider("Integrity Score (SEM)", 40, 100, st.session_state.sem_integrity)
     st.session_state.sem_integrity = integrity
 
-    emergency_floor = st.slider("Emergency Floor (%)", 5, 25, st.session_state.emergency_floor_pct)
+    emergency_floor = st.slider(
+        "Emergency Floor (%)", 5, 25, st.session_state.emergency_floor_pct
+    )
     st.session_state.emergency_floor_pct = emergency_floor
 
     st.markdown("---")
     st.checkbox("Safe Corridor Mode", value=True, key="safe_corridor_active")
+    st.markdown(f"**SEM Mode:** {st.session_state.sem_mode}")
 
 # =========================
-# MAIN TABS
+# MAIN TABS (ORDERED)
 # =========================
-tab_analysis, tab_locks, tab_tools, tab_summary = st.tabs(
-    ["Analysis", "Locks & Ledger", "Tools & SEM", "Summary Report"]
+tab_analysis, tab_summary, tab_locks, tab_tools = st.tabs(
+    ["Analysis", "Summary Report", "Locks & Ledger", "Tools & SEM"]
 )
 
 # =========================
@@ -830,6 +907,8 @@ with tab_analysis:
 
         st.markdown("### 🔐 Lock Props from This Board")
         for idx, row in props.iterrows():
+            if row["Tier"] not in st.session_state.sem_profile["allowed_tiers"]:
+                continue
             c1, c2, c3, c4, c5 = st.columns([3, 2, 1, 1, 2])
             with c1:
                 st.write(f"**{row['Player']}** — {row['Prop']}")
@@ -902,6 +981,152 @@ with tab_analysis:
                         st.success(f"Locked Game: {row['Matchup']}")
 
 # =========================
+# SUMMARY REPORT TAB
+# =========================
+with tab_summary:
+    st.markdown("## 🧾 THE BOARD OF 8 — CLARITY MODEL OUTPUT (Summary Report)")
+
+    board = st.session_state.board_data
+    games = st.session_state.games
+    if board is None or board.get("props") is None or games is None:
+        st.info("No board data loaded yet. Load data from Analysis tab first.")
+    else:
+        props = board["props"]
+        injuries = board["injuries"]
+        spreads = board["spreads"]
+        series = board["series"]
+        removed = board.get("firewall_removed", 0)
+
+        st.markdown(
+            "**Data Source:** BettingPros + RotoWire + CBS Sports + Covers.com + DraftKings + ESPN"
+        )
+        st.markdown(
+            f"**Sport:** {st.session_state.last_sport} — {date.today().strftime('%b %d, %Y')}  \n"
+            f"Status: 🛡️ SAFE CORRIDOR MODE ACTIVE | 🚨 EMERGENCY FLOOR ACTIVE ({st.session_state.emergency_floor_pct}%)"
+        )
+
+        st.markdown(
+            f"🔒 **Validation Firewall:** PASSED "
+            f"({len(spreads)} games, {len(injuries)} matchups verified, {removed} props removed)."
+        )
+
+        st.markdown("### 🚨 PRE-FILTER: LINEUP & INJURY VERIFICATION")
+        st.table(injuries)
+
+        st.markdown("### 🚨 BLOWOUT / GAME SCRIPT ADVISORY")
+        st.table(spreads)
+
+        st.markdown("### 📊 SERIES / CONTEXT: APPLIED")
+        st.table(series)
+
+        st.markdown("### 📊 PROPS SURVIVED PRE-FILTER")
+        st.table(props[["Player", "Prop", "Line", "Side"]])
+
+        st.markdown("### 🗳️ MODEL-BY-MODEL VERDICTS (High Level)")
+        st.markdown(
+            """
+- v5.3 DeepSeek — Outlier Suppression: Approves core edges; passes high-variance props.  
+- v6.5 Gemini — Environmental Physics: Adjusts for environment; passes unstable conditions.  
+- v25.4 Claude — Motivation / Ref Bias: Elevates must-win / narrative spots.  
+- v4.0 Copilot — Deterministic Floor Engine: Approves only strong floors.  
+- v4.1 Perplexity — Volatility Mapping: Flags sigma-heavy props.  
+- v6.0 Supreme — Governance / CLV Integrity: Sovereign only with CLV + density.  
+- v22.6 Grok — Ceiling Variance Engine: Approves high-ceiling edges.  
+- Base Model — Raw Projection Layer: Baseline only.
+"""
+        )
+
+        st.markdown("### 🟦 COUNCIL CONSENSUS SUMMARY")
+        consensus = props[["Player", "Prop", "Side", "Line", "Weighted Score", "Tier"]].copy()
+        consensus["Tier Label"] = consensus["Tier"].apply(tier_badge)
+        st.table(consensus)
+
+        st.markdown("**Strongest Multi-Model Alignments:**")
+        top_consensus = consensus.sort_values("Weighted Score", ascending=False).head(5)
+        st.table(
+            top_consensus[["Player", "Prop", "Side", "Line", "Weighted Score", "Tier Label"]]
+        )
+
+        st.markdown("**Excluded:** Volatility traps, thin-model-density combo props, injury-uncertain edges (mock).")
+
+        st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
+        md = get_market_dynamics(st.session_state.last_sport)
+        st.markdown(
+            f"- RLM Status: {'DETECTED' if md['rlm'] else 'NONE'} — Example: key Under moving against public sentiment.  \n"
+            f"- Contrarian Flag: {'ACTIVE' if md['contrarian'] else 'INACTIVE'} — Public on {md['public_on']}; Council on {md['council_on']}.  \n"
+            f"- Regime Type: {md['regime']} (mock).  \n"
+        )
+
+        st.markdown("### 🛡️ SEM STATUS")
+        st.markdown(
+            f"- Integrity Score: {st.session_state.sem_integrity}  \n"
+            f"- SEM Mode: {st.session_state.sem_mode}  \n"
+            f"- Safe Corridor: {'ACTIVE' if st.session_state.safe_corridor_active else 'INACTIVE'}  \n"
+            f"- Emergency Floor: ACTIVE ({st.session_state.emergency_floor_pct}%)  \n"
+            "- Blowout Advisory: INACTIVE (mock)  \n"
+            f"- Active Locks: {len([l for l in st.session_state.locks if l['status']=='PENDING'])}  \n"
+            f"- Sensor Health: {st.session_state.sensor_score*100:.0f}%"
+        )
+
+        st.markdown("### 🔒 BETCOUNCIL LOCK OF THE DAY (PROP)")
+        top_prop = props.sort_values("Weighted Score", ascending=False).iloc[0]
+        st.table(
+            pd.DataFrame(
+                [
+                    {
+                        "Type": "Prop",
+                        "Pick": f"{top_prop['Player']} {top_prop['Prop']} {top_prop['Side']}",
+                        "Line": top_prop["Line"],
+                        "Tier": tier_badge(top_prop["Tier"]),
+                        "Weighted Score": top_prop["Weighted Score"],
+                    }
+                ]
+            )
+        )
+
+        st.markdown("### 🏆 BETCOUNCIL GAME LOCK OF THE DAY")
+        top_game = games.sort_values("Weighted Score", ascending=False).iloc[0]
+        st.table(
+            pd.DataFrame(
+                [
+                    {
+                        "Matchup": top_game["Matchup"],
+                        "Moneyline": top_game["Moneyline"],
+                        "Spread": top_game["Spread"],
+                        "Total": top_game["Total"],
+                        "Tier": tier_badge(top_game["Tier"]),
+                        "Weighted Score": top_game["Weighted Score"],
+                    }
+                ]
+            )
+        )
+
+        st.markdown("### 🔗 BETCOUNCIL PARLAY OF THE DAY — PROPS")
+        parlay_df = build_parlay_from_props(
+            props, max_legs=st.session_state.sem_profile["max_parlay_legs"]
+        )
+        if parlay_df.empty:
+            st.info("No eligible props for parlay (correlation / SEM filters).")
+        else:
+            parlay_rows = []
+            for i, (_, row) in enumerate(parlay_df.iterrows(), start=1):
+                parlay_rows.append(
+                    {
+                        "Leg": i,
+                        "Player": row["Player"],
+                        "Prop": row["Prop"],
+                        "Line": row["Line"],
+                        "Side": row["Side"],
+                        "Tier": tier_badge(row["Tier"]),
+                    }
+                )
+            st.table(pd.DataFrame(parlay_rows))
+            st.caption(
+                f"{len(parlay_rows)}-leg configuration with SEM-governed exposure. "
+                f"Total unit exposure: ${active_unit:.2f} (Floor-adjusted)."
+            )
+
+# =========================
 # LOCKS & LEDGER TAB
 # =========================
 with tab_locks:
@@ -946,6 +1171,43 @@ with tab_locks:
                     }
                 ]
             )
+        )
+
+        st.markdown("### 🔗 Parlay of the Day (Props)")
+        parlay_df = build_parlay_from_props(
+            df_props, max_legs=st.session_state.sem_profile["max_parlay_legs"]
+        )
+        if parlay_df.empty:
+            st.info("No eligible props for parlay (correlation / SEM filters).")
+        else:
+            parlay_rows = []
+            for i, (_, row) in enumerate(parlay_df.iterrows(), start=1):
+                parlay_rows.append(
+                    {
+                        "Leg": i,
+                        "Player": row["Player"],
+                        "Prop": row["Prop"],
+                        "Line": row["Line"],
+                        "Side": row["Side"],
+                        "Tier": tier_badge(row["Tier"]),
+                    }
+                )
+            st.table(pd.DataFrame(parlay_rows))
+
+        st.markdown("### 📊 Top 5 Props by Consensus")
+        top_props = df_props.sort_values("Weighted Score", ascending=False).head(5)
+        st.table(
+            top_props[
+                ["Player", "Prop", "Side", "Line", "Weighted Score", "Tier"]
+            ].rename(columns={"Tier": "Tier Raw"})
+        )
+
+        st.markdown("### 📊 Top 5 Games by Consensus")
+        top_games = df_games.sort_values("Weighted Score", ascending=False).head(5)
+        st.table(
+            top_games[
+                ["Matchup", "Moneyline", "Spread", "Total", "Weighted Score", "Tier"]
+            ].rename(columns={"Tier": "Tier Raw"})
         )
 
         st.markdown("---")
@@ -1053,30 +1315,6 @@ with tab_locks:
                     )
             st.table(pd.DataFrame(hist_rows))
 
-        st.markdown("---")
-        st.markdown("### 🔗 BETCOUNCIL PARLAY OF THE DAY — PROPS")
-        parlay_df = build_parlay_from_props(df_props, max_legs=4)
-        if parlay_df.empty:
-            st.info("No eligible props for parlay (correlation filters).")
-        else:
-            parlay_rows = []
-            for i, (_, row) in enumerate(parlay_df.iterrows(), start=1):
-                parlay_rows.append(
-                    {
-                        "Leg": i,
-                        "Player": row["Player"],
-                        "Prop": row["Prop"],
-                        "Line": row["Line"],
-                        "Side": row["Side"],
-                        "Tier": tier_badge(row["Tier"]),
-                    }
-                )
-            st.table(pd.DataFrame(parlay_rows))
-            st.caption(
-                f"Four-leg configuration utilizing Alt-Line insulation to avoid 0.5 hook variance. "
-                f"Total unit exposure: ${active_unit:.2f} (Regular Floor)."
-            )
-
 # =========================
 # TOOLS & SEM TAB
 # =========================
@@ -1096,7 +1334,6 @@ with tab_tools:
     st.table(pd.DataFrame(status_rows))
 
     if st.button("Scan All (Tools Tab)"):
-        # Use last_sport so MLB scan doesn't show NBA
         scan_all_sources(st.session_state.last_sport)
         st.success(f"Scan complete for {st.session_state.last_sport} (mock).")
 
@@ -1124,17 +1361,25 @@ with tab_tools:
         "Historical Sigma / Volatility",
         "Correlation with Other Board Props",
     ]
-    for s in sensors:
-        st.checkbox(s)
+    sensor_flags = []
+    for i, s in enumerate(sensors):
+        flag = st.checkbox(s, key=f"sensor_{i}")
+        sensor_flags.append(flag)
+    if sensor_flags:
+        st.session_state.sensor_score = sum(sensor_flags) / len(sensor_flags)
+    else:
+        st.session_state.sensor_score = 1.0
 
     st.markdown("---")
     st.markdown("### 🛡️ SEM STATUS")
     st.markdown(
         f"- Integrity Score: {st.session_state.sem_integrity}  \n"
+        f"- SEM Mode: {st.session_state.sem_mode}  \n"
         f"- Safe Corridor: {'ACTIVE' if st.session_state.safe_corridor_active else 'INACTIVE'}  \n"
         f"- Emergency Floor: ACTIVE ({st.session_state.emergency_floor_pct}%)  \n"
         "- Blowout Advisory: INACTIVE (mock)  \n"
-        f"- Active Locks: {len([l for l in st.session_state.locks if l['status']=='PENDING'])}"
+        f"- Active Locks: {len([l for l in st.session_state.locks if l['status']=='PENDING'])}  \n"
+        f"- Sensor Health: {st.session_state.sensor_score*100:.0f}%"
     )
 
     st.markdown("---")
@@ -1144,145 +1389,3 @@ with tab_tools:
         value=st.session_state.sem_notes,
         height=150,
     )
-
-# =========================
-# SUMMARY REPORT TAB
-# =========================
-with tab_summary:
-    st.markdown("## 🧾 THE BOARD OF 8 — CLARITY MODEL OUTPUT (Summary Report)")
-
-    board = st.session_state.board_data
-    games = st.session_state.games
-    if board is None or board.get("props") is None or games is None:
-        st.info("No board data loaded yet. Load data from Analysis tab first.")
-    else:
-        props = board["props"]
-        injuries = board["injuries"]
-        spreads = board["spreads"]
-        series = board["series"]
-        removed = board.get("firewall_removed", 0)
-
-        st.markdown(
-            "**Data Source:** BettingPros + RotoWire + CBS Sports + Covers.com + DraftKings + ESPN"
-        )
-        st.markdown(
-            f"**Sport:** {st.session_state.last_sport} — {date.today().strftime('%b %d, %Y')}  \n"
-            f"Status: 🛡️ SAFE CORRIDOR MODE ACTIVE | 🚨 EMERGENCY FLOOR ACTIVE ({st.session_state.emergency_floor_pct}%)"
-        )
-
-        st.markdown(
-            f"🔒 **Validation Firewall:** PASSED "
-            f"({len(spreads)} games, {len(injuries)} matchups verified, {removed} props removed)."
-        )
-
-        st.markdown("### 🚨 PRE-FILTER: LINEUP & INJURY VERIFICATION")
-        st.table(injuries)
-
-        st.markdown("### 🚨 BLOWOUT / GAME SCRIPT ADVISORY")
-        st.table(spreads)
-
-        st.markdown("### 📊 SERIES / CONTEXT: APPLIED")
-        st.table(series)
-
-        st.markdown("### 📊 PROPS SURVIVED PRE-FILTER")
-        st.table(props[["Player", "Prop", "Line", "Side"]])
-
-        st.markdown("### 🗳️ MODEL-BY-MODEL VERDICTS (High Level)")
-        st.markdown(
-            """
-- v5.3 DeepSeek — Outlier Suppression: Approves core edges; passes high-variance props.  
-- v6.5 Gemini — Environmental Physics: Adjusts for environment; passes unstable conditions.  
-- v25.4 Claude — Motivation / Ref Bias: Elevates must-win / narrative spots.  
-- v4.0 Copilot — Deterministic Floor Engine: Approves only strong floors.  
-- v4.1 Perplexity — Volatility Mapping: Flags sigma-heavy props.  
-- v6.0 Supreme — Governance / CLV Integrity: Sovereign only with CLV + density.  
-- v22.6 Grok — Ceiling Variance Engine: Approves high-ceiling edges.  
-- Base Model — Raw Projection Layer: Baseline only.
-"""
-        )
-
-        st.markdown("### 🟦 COUNCIL CONSENSUS SUMMARY")
-        consensus = props[["Player", "Prop", "Side", "Line", "Weighted Score", "Tier"]].copy()
-        consensus["Tier Label"] = consensus["Tier"].apply(tier_badge)
-        st.table(consensus)
-
-        st.markdown("**Strongest Multi-Model Alignments:**")
-        top_consensus = consensus.sort_values("Weighted Score", ascending=False).head(5)
-        st.table(
-            top_consensus[["Player", "Prop", "Side", "Line", "Weighted Score", "Tier Label"]]
-        )
-
-        st.markdown("**Excluded:** Volatility traps, thin-model-density combo props, injury-uncertain edges (mock).")
-
-        st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
-        md = get_market_dynamics(st.session_state.last_sport)
-        st.markdown(
-            f"- RLM Status: {'DETECTED' if md['rlm'] else 'NONE'} — Example: key Under moving against public sentiment.  \n"
-            f"- Contrarian Flag: {'ACTIVE' if md['contrarian'] else 'INACTIVE'} — Public on {md['public_on']}; Council on {md['council_on']}.  \n"
-            f"- Regime Type: {md['regime']} (mock).  \n"
-        )
-
-        st.markdown("### 🛡️ SEM STATUS")
-        st.markdown(
-            f"- Integrity Score: {st.session_state.sem_integrity}  \n"
-            f"- Safe Corridor: {'ACTIVE' if st.session_state.safe_corridor_active else 'INACTIVE'}  \n"
-            f"- Emergency Floor: ACTIVE ({st.session_state.emergency_floor_pct}%)  \n"
-            "- Blowout Advisory: INACTIVE (mock)  \n"
-            f"- Active Locks: {len([l for l in st.session_state.locks if l['status']=='PENDING'])}"
-        )
-
-        st.markdown("### 🔒 BETCOUNCIL LOCK OF THE DAY (PROP)")
-        top_prop = props.sort_values("Weighted Score", ascending=False).iloc[0]
-        st.table(
-            pd.DataFrame(
-                [
-                    {
-                        "Type": "Prop",
-                        "Pick": f"{top_prop['Player']} {top_prop['Prop']} {top_prop['Side']}",
-                        "Line": top_prop["Line"],
-                        "Tier": tier_badge(top_prop["Tier"]),
-                        "Weighted Score": top_prop["Weighted Score"],
-                    }
-                ]
-            )
-        )
-
-        st.markdown("### 🏆 BETCOUNCIL GAME LOCK OF THE DAY")
-        top_game = games.sort_values("Weighted Score", ascending=False).iloc[0]
-        st.table(
-            pd.DataFrame(
-                [
-                    {
-                        "Matchup": top_game["Matchup"],
-                        "Moneyline": top_game["Moneyline"],
-                        "Spread": top_game["Spread"],
-                        "Total": top_game["Total"],
-                        "Tier": tier_badge(top_game["Tier"]),
-                        "Weighted Score": top_game["Weighted Score"],
-                    }
-                ]
-            )
-        )
-
-        st.markdown("### 🔗 BETCOUNCIL PARLAY OF THE DAY — PROPS")
-        parlay_df = build_parlay_from_props(props, max_legs=4)
-        if parlay_df.empty:
-            st.info("No eligible props for parlay (correlation filters).")
-        else:
-            parlay_rows = []
-            for i, (_, row) in enumerate(parlay_df.iterrows(), start=1):
-                parlay_rows.append(
-                    {
-                        "Leg": i,
-                        "Player": row["Player"],
-                        "Prop": row["Prop"],
-                        "Line": row["Line"],
-                        "Side": row["Side"],
-                        "Tier": tier_badge(row["Tier"]),
-                    }
-                )
-            st.table(pd.DataFrame(parlay_rows))
-            st.caption(
-                f"Four-leg configuration utilizing Alt-Line insulation to avoid 0.5 hook variance. "
-                f"Total unit exposure: ${active_unit:.2f} (Regular Floor)."
-            )
