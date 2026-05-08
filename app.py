@@ -109,15 +109,30 @@ if "scanner_status" not in st.session_state:
         src: {"ok": False, "last": None, "error": None} for src in DATA_SOURCES
     }
 
-if "board_data" not in st.session_state:
+if "board_data" not in st.session_state or not isinstance(st.session_state.board_data, dict):
     st.session_state.board_data = {
         "props": None,
         "injuries": None,
         "spreads": None,
         "series": None,
         "firewall_removed": 0,
-        "model_verdicts": {},  # per prop index: dict of model->verdict
+        "model_verdicts": {},
     }
+else:
+    # Backward compatibility: ensure all keys exist
+    bd = st.session_state.board_data
+    if "props" not in bd:
+        bd["props"] = None
+    if "injuries" not in bd:
+        bd["injuries"] = None
+    if "spreads" not in bd:
+        bd["spreads"] = None
+    if "series" not in bd:
+        bd["series"] = None
+    if "firewall_removed" not in bd:
+        bd["firewall_removed"] = 0
+    if "model_verdicts" not in bd:
+        bd["model_verdicts"] = {}
 
 if "games" not in st.session_state:
     st.session_state.games = None
@@ -198,7 +213,6 @@ def move_to_history(lock, result, units, reason=""):
 # MOCK MODEL VERDICTS
 # =========================
 def generate_model_verdicts_for_prop(player, prop, side, line, sport):
-    # Simple deterministic-ish mock logic
     base = 0.7
     if "Wembanyama" in player or "Ohtani" in player or "Mahomes" in player or "McDavid" in player:
         base = 0.82
@@ -207,7 +221,6 @@ def generate_model_verdicts_for_prop(player, prop, side, line, sport):
     elif "UNDER" in side:
         base = 0.72
 
-    # Model-specific tweaks
     scores = {
         "deepseek": base,
         "supreme": base - 0.02,
@@ -494,7 +507,6 @@ def mock_game_data(sport: str):
 # FIREWALL / FILTERS
 # =========================
 def apply_firewall(props_df, injuries_df, spreads_df, sport):
-    # Mock filters: remove some props based on simple rules
     removed = 0
     keep_rows = []
     for idx, row in props_df.iterrows():
@@ -502,7 +514,6 @@ def apply_firewall(props_df, injuries_df, spreads_df, sport):
         prop = row["Prop"]
         side = row["Side"]
 
-        # Example filters
         injury_flag = any(player.split()[0] in s for s in injuries_df["Status"].tolist())
         blowout_flag = False
         for _, srow in spreads_df.iterrows():
@@ -511,7 +522,6 @@ def apply_firewall(props_df, injuries_df, spreads_df, sport):
 
         volatility_flag = "PTS+REB" in prop or "PTS+AST" in prop
 
-        # Simple rule: if injury + volatility, drop
         if injury_flag and volatility_flag:
             removed += 1
             continue
@@ -598,18 +608,15 @@ def scan_all_sources(sport: str):
     st.session_state.last_sport = sport
 
 def parse_manual_text(text: str, sport: str):
-    # For now, just use mock but still run firewall + models
     scan_all_sources(sport)
 
 def parse_screenshot(image, sport: str):
-    # For now, just use mock but still run firewall + models
     scan_all_sources(sport)
 
 # =========================
 # MARKET DYNAMICS (MOCK)
 # =========================
 def get_market_dynamics(sport):
-    # Mock RLM, public %, regime
     rlm_detected = True
     contrarian_flag = True
     regime = "STABLE"
@@ -653,7 +660,6 @@ def reconcile_locks(active_unit):
             st.session_state.bankroll += units
             st.session_state.locks.remove(lock)
 
-    # SEM-based safe corridor / suppression
     if st.session_state.sem_integrity < 55:
         st.session_state.safe_corridor_active = True
         st.session_state.emergency_floor_pct = max(
@@ -666,7 +672,6 @@ def reconcile_locks(active_unit):
 # PARLAY ENGINE
 # =========================
 def build_parlay_from_props(props_df, max_legs=4):
-    # Avoid same player / same prop correlation
     legs = []
     used_players = set()
     used_games = set()
@@ -674,7 +679,6 @@ def build_parlay_from_props(props_df, max_legs=4):
     for _, row in props_df.sort_values("Weighted Score", ascending=False).iterrows():
         player = row["Player"]
         prop = row["Prop"]
-        # mock game association: first word of player as game key
         game_key = player.split()[0]
 
         if player in used_players or game_key in used_games:
@@ -769,14 +773,14 @@ with tab_analysis:
     st.markdown("---")
 
     board = st.session_state.board_data
-    if board["props"] is None:
+    if board is None or board.get("props") is None:
         st.info("No board data loaded yet. Run a scan, paste data, or upload a screenshot.")
     else:
         props = board["props"]
         injuries = board["injuries"]
         spreads = board["spreads"]
         series = board["series"]
-        removed = board["firewall_removed"]
+        removed = board.get("firewall_removed", 0)
 
         st.markdown(
             f"🔒 **Validation Firewall:** PASSED "
@@ -801,7 +805,7 @@ with tab_analysis:
             st.table(games[["Matchup", "Moneyline", "Spread", "Total"]])
 
         st.markdown("### 🗳️ MODEL-BY-MODEL VERDICTS (PER PROP)")
-        mv = board["model_verdicts"]
+        mv = board.get("model_verdicts", {})
         for idx, row in props.iterrows():
             st.markdown(f"**{row['Player']} — {row['Prop']} {row['Side']} {row['Line']}**")
             verdicts = mv.get(idx, {})
@@ -905,7 +909,7 @@ with tab_locks:
 
     board = st.session_state.board_data
     games = st.session_state.games
-    if board["props"] is None or games is None:
+    if board is None or board.get("props") is None or games is None:
         st.info("No board data available. Load data from Analysis tab first.")
     else:
         df_props = board["props"].copy()
@@ -1092,8 +1096,9 @@ with tab_tools:
     st.table(pd.DataFrame(status_rows))
 
     if st.button("Scan All (Tools Tab)"):
-        scan_all_sources("NBA")
-        st.success("Scan complete for NBA (mock).")
+        # Use last_sport so MLB scan doesn't show NBA
+        scan_all_sources(st.session_state.last_sport)
+        st.success(f"Scan complete for {st.session_state.last_sport} (mock).")
 
     st.markdown("---")
     st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
@@ -1148,14 +1153,14 @@ with tab_summary:
 
     board = st.session_state.board_data
     games = st.session_state.games
-    if board["props"] is None or games is None:
+    if board is None or board.get("props") is None or games is None:
         st.info("No board data loaded yet. Load data from Analysis tab first.")
     else:
         props = board["props"]
         injuries = board["injuries"]
         spreads = board["spreads"]
         series = board["series"]
-        removed = board["firewall_removed"]
+        removed = board.get("firewall_removed", 0)
 
         st.markdown(
             "**Data Source:** BettingPros + RotoWire + CBS Sports + Covers.com + DraftKings + ESPN"
