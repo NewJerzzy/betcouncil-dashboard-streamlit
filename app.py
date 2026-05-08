@@ -60,7 +60,7 @@ st.markdown(
 )
 
 # -----------------------------
-# CONSTANTS (SOVEREIGN SOURCE)
+# CONSTANTS
 # -----------------------------
 MODEL_WEIGHTS = {
     "deepseek": 0.18,
@@ -114,7 +114,7 @@ def tier_badge(tier):
     return "—"
 
 # -----------------------------
-# MOCK DATA (TEMPORARY)
+# MOCK DATA
 # -----------------------------
 def mock_props():
     data = [
@@ -174,7 +174,7 @@ def mock_props():
     return pd.DataFrame(rows)
 
 # -----------------------------
-# SIDEBAR (GOVERNANCE PANEL)
+# SIDEBAR
 # -----------------------------
 with st.sidebar:
     st.markdown("### 🛡️ BetCouncil v3.1 OS")
@@ -233,22 +233,23 @@ with tab_locks:
     df_sorted = df.sort_values("Weighted Score", ascending=False)
     lock = df_sorted.iloc[0]
 
-    st.markdown(
-        f"**{lock['Player']} — {lock['Prop']} {lock['Side']} {lock['Line']}**  
-        Weighted Score: `{lock['Weighted Score']}`  
-        Tier: {tier_badge(lock['Tier'])}",
-        unsafe_allow_html=True,
+    lock_text = (
+        f"**{lock['Player']} — {lock['Prop']} {lock['Side']} {lock['Line']}**  \n"
+        f"Weighted Score: `{lock['Weighted Score']}`  \n"
+        f"Tier: {lock['Tier']}"
     )
+    st.markdown(lock_text, unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### Parlay Builder (Max 5 Legs)")
     legs = st.slider("Legs", 2, 5, 3)
 
     for i, (_, row) in enumerate(df_sorted.head(legs).iterrows(), start=1):
-        st.markdown(
-            f"**Leg {i}:** {row['Player']} — {row['Prop']} {row['Side']} {row['Line']}  
-            Score: `{row['Weighted Score']}` Tier: {row['Tier']}"
+        leg_text = (
+            f"**Leg {i}:** {row['Player']} — {row['Prop']} {row['Side']} {row['Line']}  \n"
+            f"Score: `{row['Weighted Score']}` · Tier: {row['Tier']}"
         )
+        st.markdown(leg_text)
 
 # -----------------------------
 # TOOLS & SEM TAB
