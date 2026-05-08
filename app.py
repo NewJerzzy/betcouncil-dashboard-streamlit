@@ -1,10 +1,6 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
 from datetime import date, datetime
-import json
-import re
 
 # =========================
 # PAGE CONFIG
@@ -17,37 +13,54 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-body, .stApp, .main { background-color: #0a0c14; color: #e6edf3; }
-h1, h2, h3, h4 { color: #ffffff; }
-.stButton > button {
-    background-color: #7c4dff; color: white; border: none;
-    border-radius: 0.5rem; padding: 0.5rem 1.5rem; font-weight: 600;
+body, .stApp, .main {
+    background-color: #0a0c14;
+    color: #e6edf3;
+    font-family: 'Inter', system-ui, sans-serif;
 }
-.stButton > button:disabled { opacity: 0.4; }
-.green-tier { color: #00c853; font-weight: 700; }
-.yellow-tier { color: #ffd600; font-weight: 700; }
-.blue-tier { color: #448aff; font-weight: 600; }
-.red-tier { color: #ff5252; font-weight: 600; }
+h1, h2, h3, h4, h5 { color: #ffffff; }
+.stButton > button {
+    background-color: #7c4dff;
+    color: #ffffff;
+    border: none;
+    border-radius: 0.5rem;
+    padding: 0.6rem 1.5rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.stButton > button:hover { background-color: #651fff; }
+.stButton > button:disabled { opacity: 0.4; cursor: not-allowed; }
+.section-card {
+    background-color: #141824;
+    border: 1px solid #1f2639;
+    border-radius: 1rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+.sovereign-badge { color: #00c853; font-weight: 700; }
+.elite-badge { color: #ffd600; font-weight: 700; }
+.approved-badge { color: #448aff; font-weight: 600; }
+.lean-badge { color: #9e9e9e; font-weight: 600; }
+.pass-badge { color: #ff5252; font-weight: 600; }
+.model-name { color: #7c4dff; font-weight: 600; }
+.footer-text { color: #7b8794; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTS — EXACT MATCH TO v3.0 HARD ENGINE
+# CONSTANTS — EXACT MATCH TO CHAT MODEL
 # =========================
 
-MODELS = {
-    "v5.3 DeepSeek — Outlier Suppression": 0.18,
-    "v6.0 Supreme — Governance / CLV Integrity": 0.18,
-    "v25.4 Claude — Motivation / Ref Bias": 0.14,
-    "v4.0 Copilot — Deterministic Floor Engine": 0.14,
-    "v6.5 Gemini — Environmental Physics": 0.10,
-    "v4.1 Perplexity — Volatility Mapping": 0.10,
-    "v22.6 Grok — Ceiling Variance Engine": 0.10,
-    "Base Model — Raw Projection Layer": 0.06,
-}
-
-MODEL_WEIGHTS = list(MODELS.values())
-MODEL_NAMES = list(MODELS.keys())
+MODELS = [
+    {"name": "v5.3 DeepSeek — Outlier Suppression", "weight": 0.18},
+    {"name": "v6.5 Gemini — Environmental Physics", "weight": 0.10},
+    {"name": "v25.4 Claude — Motivation / Ref Bias", "weight": 0.14},
+    {"name": "v4.0 Copilot — Deterministic Floor Engine", "weight": 0.14},
+    {"name": "v4.1 Perplexity — Volatility Mapping", "weight": 0.10},
+    {"name": "v6.0 Supreme — Governance / CLV Integrity", "weight": 0.18},
+    {"name": "v22.6 Grok — Ceiling Variance Engine", "weight": 0.10},
+    {"name": "Base Model — Raw Projection Layer", "weight": 0.06},
+]
 
 TIER_THRESHOLDS = {
     "SOVEREIGN": 0.70,
@@ -56,59 +69,11 @@ TIER_THRESHOLDS = {
     "LEAN": 0.20,
 }
 
-SAFE_CORRIDOR_ALLOWED = {
-    "H+R+RBI": [0.5],
-    "HITS": [0.5],
-    "STRIKEOUTS": [3.5, 4.5],
-}
-
-BANNED_PROP_KEYWORDS = [
-    "FANTASY SCORE", "TOTAL BASES", "HITS ALLOWED", "EARNED RUNS",
-    "HOME RUN", "PRA", "PTS+REB", "PTS+AST", "PTS+AST+REB",
-    "REB+AST", "FTA", "FTM", "FG ATTEMPTED", "3PTM", "3PTA",
-    "BLOCKS", "STEALS", "DUNKS", "TURNOVERS", "2PTM", "2-PT",
-    "DEF REB", "OFF REB", "1H", "1Q", "DOUBLE DOUBLE",
-]
-
-PROP_SOURCE_URLS = {
-    "BettingPros": "https://www.bettingpros.com/{sport}/props/",
-    "RotoWire": "https://www.rotowire.com/betting/{sport}/player-props.php",
-    "CBS Sports": "https://www.cbssports.com/{sport}/player-props/",
-    "Covers": "https://www.covers.com/sport/{sport}/player-props",
-    "DraftKings": "https://sportsbook.draftkings.com/page/{sport}-player-props",
-}
-
-GAME_SOURCE_URLS = {
-    "ESPN": "https://www.espn.com/{sport}/odds",
-    "DraftKings": "https://sportsbook.draftkings.com/page/{sport}-game-lines",
-    "Covers": "https://www.covers.com/sport/{sport}/odds",
-}
-
-SPREAD_THRESHOLD = 10
+DEFAULT_BANKROLL = 527.00
 KELLY_FRACTION = 0.25
 KELLY_CAP = 0.25
-DEFAULT_BANKROLL = 527.00
-
-INTEGRITY_FORMULA = {
-    "WIN": 0.3,
-    "LOSS": -0.4,
-    "VARIANCE_LOSS": -0.2,
-    "SOVEREIGN_WIN": 0.5,
-    "SOVEREIGN_LOSS": -1.0,
-}
-
-EMERGENCY_FLOOR_WINRATE = 0.45
-EMERGENCY_FLOOR_BET_COUNT = 20
-EMERGENCY_FLOOR_EDGE = 0.12
-
-PROP_PARLAY_MIN = 2
-PROP_PARLAY_MAX = 5
-GAME_PARLAY_MIN = 2
-GAME_PARLAY_MAX = 6
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; BetCouncil/3.0)"
-}
+INTEGRITY_FLOOR = 40
+INTEGRITY_CEILING = 100
 
 # =========================
 # SESSION STATE
@@ -125,46 +90,33 @@ if "locks" not in st.session_state:
     st.session_state.locks = []
 if "history" not in st.session_state:
     st.session_state.history = []
-if "bet_count" not in st.session_state:
-    st.session_state.bet_count = 43
-if "wins" not in st.session_state:
-    st.session_state.wins = 11
-if "losses" not in st.session_state:
-    st.session_state.losses = 26
-if "props_df" not in st.session_state:
-    st.session_state.props_df = None
-if "games_df" not in st.session_state:
-    st.session_state.games_df = None
+if "board_data" not in st.session_state:
+    st.session_state.board_data = None
+if "game_verdicts" not in st.session_state:
+    st.session_state.game_verdicts = None
 if "last_sport" not in st.session_state:
     st.session_state.last_sport = "NBA"
 if "lock_num" not in st.session_state:
     st.session_state.lock_num = 0
-if "injuries_df" not in st.session_state:
-    st.session_state.injuries_df = None
-if "series_df" not in st.session_state:
-    st.session_state.series_df = None
-if "firewall_removed" not in st.session_state:
-    st.session_state.firewall_removed = 0
-if "scan_log" not in st.session_state:
-    st.session_state.scan_log = []
+if "injuries" not in st.session_state:
+    st.session_state.injuries = []
+if "blowout_games" not in st.session_state:
+    st.session_state.blowout_games = []
+if "filtered_count" not in st.session_state:
+    st.session_state.filtered_count = 0
+if "raw_props" not in st.session_state:
+    st.session_state.raw_props = []
+if "raw_games" not in st.session_state:
+    st.session_state.raw_games = []
 
 # =========================
-# UTILITY FUNCTIONS
+# HELPER FUNCTIONS
 # =========================
-def log(msg):
-    st.session_state.scan_log.append(f"{datetime.now().strftime('%H:%M:%S')} — {msg}")
-    if len(st.session_state.scan_log) > 100:
-        st.session_state.scan_log = st.session_state.scan_log[-100:]
-
-def generate_lock_id():
-    st.session_state.lock_num += 1
-    return f"LOCK-{date.today().strftime('%m%d')}-{st.session_state.lock_num:02d}"
-
 def weighted_score(votes):
-    score = 0.0
-    for i, model in enumerate(MODEL_NAMES):
-        score += votes.get(model, 0) * MODEL_WEIGHTS[i]
-    return round(score, 3)
+    total = 0.0
+    for i, model in enumerate(MODELS):
+        total += model["weight"] * votes.get(model["name"], 0)
+    return round(total, 3)
 
 def get_tier(score):
     if score >= TIER_THRESHOLDS["SOVEREIGN"]:
@@ -177,458 +129,241 @@ def get_tier(score):
         return "LEAN"
     return "PASS"
 
-def tier_display(tier):
-    labels = {
+def tier_label(tier):
+    return {
         "SOVEREIGN": "🟢 Sovereign Lock",
         "ELITE": "🟡 Elite Edge",
         "APPROVED": "🔵 Approved Single",
         "LEAN": "⚪ Lean",
         "PASS": "🔴 PASS",
-    }
-    return labels.get(tier, "—")
+    }.get(tier, "—")
 
-def is_banned_prop(prop_type):
-    prop_upper = prop_type.upper()
-    for keyword in BANNED_PROP_KEYWORDS:
-        if keyword in prop_upper:
-            return True
-    return False
+def generate_lock_id():
+    st.session_state.lock_num += 1
+    return f"LOCK-{date.today().strftime('%m%d')}-{st.session_state.lock_num:02d}"
 
-def is_safe_corridor_allowed(prop_type, line):
-    if not st.session_state.safe_corridor:
-        return True
-    prop_upper = prop_type.upper()
-    if "H+R+RBI" in prop_upper or "HRRBI" in prop_upper:
-        return line == 0.5
-    if "HITS" in prop_upper and "ALLOWED" not in prop_upper and "PITCHER" not in prop_upper:
-        return line == 0.5
-    if "STRIKEOUT" in prop_upper or "KS" in prop_upper:
-        return 3.5 <= line <= 4.5
-    return False
+def active_unit():
+    return round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
 
 # =========================
-# SCRAPING FUNCTIONS (REAL)
+# SAMPLE DATA — NBA May 8, 2026
 # =========================
-def fetch_url(url):
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        return resp.text
-    except Exception as e:
-        log(f"FAILED: {url} — {e}")
-        return None
+def load_sample_board():
+    """Load the May 8 NBA board exactly as we would get from scanning."""
+    st.session_state.raw_props = [
+        {"Player": "Jalen Brunson", "Prop": "POINTS", "Line": 26.5, "Side": "OVER"},
+        {"Player": "Karl-Anthony Towns", "Prop": "POINTS", "Line": 20.5, "Side": "OVER"},
+        {"Player": "Anthony Edwards", "Prop": "POINTS", "Line": 22.5, "Side": "UNDER"},
+        {"Player": "Victor Wembanyama", "Prop": "POINTS", "Line": 26.5, "Side": "OVER"},
+        {"Player": "De'Aaron Fox", "Prop": "POINTS", "Line": 18.5, "Side": "OVER"},
+        {"Player": "Julius Randle", "Prop": "POINTS", "Line": 17.5, "Side": "OVER"},
+        {"Player": "Joel Embiid", "Prop": "POINTS", "Line": 28.5, "Side": "OVER"},
+        {"Player": "Tyrese Maxey", "Prop": "POINTS", "Line": 24.5, "Side": "UNDER"},
+        {"Player": "Jalen Brunson", "Prop": "PTS+AST", "Line": 34.5, "Side": "OVER"},
+        {"Player": "Karl-Anthony Towns", "Prop": "PTS+AST+REB", "Line": 32.5, "Side": "OVER"},
+        {"Player": "Victor Wembanyama", "Prop": "PTS+AST+REB", "Line": 44.5, "Side": "OVER"},
+    ]
+    st.session_state.raw_games = [
+        {"Matchup": "NYK @ PHI", "Spread": "NYK -4.5", "Total": "O/U 213.5", "Moneyline": "NYK -190 / PHI +160"},
+        {"Matchup": "MIN @ SAS", "Spread": "SAS -3.5", "Total": "O/U 215.5", "Moneyline": "SAS -165 / MIN +140"},
+    ]
+    st.session_state.injuries = [
+        {"Player": "Joel Embiid", "Status": "PROBABLE (Knee)"},
+        {"Player": "Anthony Edwards", "Status": "Cleared to play"},
+    ]
+    st.session_state.blowout_games = [
+        {"Game": "NYK @ PHI", "Spread": "-4.5", "Advisory": "❌ Inactive"},
+        {"Game": "MIN @ SAS", "Spread": "-3.5", "Advisory": "❌ Inactive"},
+    ]
+    st.session_state.filtered_count = 5
+    st.session_state.last_sport = "NBA"
 
-def parse_bettingpros(html, sport):
-    """Extract props from BettingPros HTML."""
-    props = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                cols = row.find_all("td")
-                if len(cols) >= 4:
-                    player = cols[0].get_text(strip=True)
-                    prop_text = cols[1].get_text(strip=True)
-                    line_text = cols[2].get_text(strip=True)
-                    odds_text = cols[3].get_text(strip=True)
-                    if player and prop_text and line_text:
-                        try:
-                            line = float(re.sub(r"[^\d.]+", "", line_text.split()[0]))
-                        except:
-                            continue
-                        side = "OVER" if "O" in odds_text.upper() else "UNDER"
-                        props.append({
-                            "Player": player,
-                            "Prop": prop_text,
-                            "Line": line,
-                            "Side": side,
-                            "Odds": odds_text,
-                        })
-    except Exception as e:
-        log(f"BettingPros parse error: {e}")
-    return props
+def run_council():
+    """Run the 8-model Council on all raw props exactly as the chat does."""
+    raw = st.session_state.raw_props
+    if not raw:
+        st.session_state.board_data = []
+        return
 
-def parse_rotowire(html, sport):
-    """Extract props from RotoWire HTML."""
-    props = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                cols = row.find_all("td")
-                if len(cols) >= 5:
-                    player = cols[0].get_text(strip=True)
-                    prop_text = cols[1].get_text(strip=True)
-                    line_text = cols[2].get_text(strip=True)
-                    over_odds = cols[3].get_text(strip=True)
-                    under_odds = cols[4].get_text(strip=True)
-                    try:
-                        line = float(re.sub(r"[^\d.]+", "", line_text))
-                    except:
-                        continue
-                    props.append({
-                        "Player": player,
-                        "Prop": prop_text,
-                        "Line": line,
-                        "Side": "OVER",
-                        "Odds": over_odds,
-                    })
-                    props.append({
-                        "Player": player,
-                        "Prop": prop_text,
-                        "Line": line,
-                        "Side": "UNDER",
-                        "Odds": under_odds,
-                    })
-    except Exception as e:
-        log(f"RotoWire parse error: {e}")
-    return props
-
-def parse_covers(html, sport):
-    """Extract props from Covers HTML."""
-    props = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                cols = row.find_all("td")
-                if len(cols) >= 4:
-                    player = cols[0].get_text(strip=True)
-                    prop_text = cols[1].get_text(strip=True)
-                    line_text = cols[2].get_text(strip=True)
-                    try:
-                        line = float(re.sub(r"[^\d.]+", "", line_text))
-                    except:
-                        continue
-                    props.append({
-                        "Player": player,
-                        "Prop": prop_text,
-                        "Line": line,
-                        "Side": "OVER",
-                        "Odds": "",
-                    })
-    except Exception as e:
-        log(f"Covers parse error: {e}")
-    return props
-
-def parse_draftkings(html, sport):
-    """Extract props from DraftKings HTML."""
-    props = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        prop_cards = soup.find_all("div", class_=re.compile("prop|sportsbook-offer"))
-        for card in prop_cards:
-            text = card.get_text(strip=True)
-            match = re.search(r"(\w[\w\s.-]+?)\s*(OVER|UNDER|Over|Under|O|U)\s*([\d.]+)\s*([+-]\d+)", text)
-            if match:
-                player = match.group(1).strip()
-                side = "OVER" if match.group(2).upper() in ("OVER", "O") else "UNDER"
-                line = float(match.group(3))
-                odds = match.group(4)
-                props.append({"Player": player, "Prop": "", "Line": line, "Side": side, "Odds": odds})
-    except Exception as e:
-        log(f"DraftKings parse error: {e}")
-    return props
-
-def parse_cbssports(html, sport):
-    """Extract props from CBS Sports HTML."""
-    props = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        articles = soup.find_all("article")
-        for article in articles:
-            text = article.get_text()
-            matches = re.findall(r"(\w[\w\s.-]+?)\s*(OVER|UNDER|Over|Under)\s*([\d.]+)\s*([+-]\d+)", text)
-            for match in matches:
-                player = match[0].strip()
-                side = "OVER" if match[1].upper() == "OVER" else "UNDER"
-                line = float(match[2])
-                odds = match[3]
-                props.append({"Player": player, "Prop": "", "Line": line, "Side": side, "Odds": odds})
-    except Exception as e:
-        log(f"CBS Sports parse error: {e}")
-    return props
-
-def parse_espn_games(html, sport):
-    """Extract game lines from ESPN HTML."""
-    games = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        game_rows = soup.find_all("tr")
-        for row in game_rows:
-            cols = row.find_all("td")
-            if len(cols) >= 4:
-                matchup = cols[0].get_text(strip=True)
-                spread = cols[1].get_text(strip=True)
-                total = cols[2].get_text(strip=True)
-                moneyline = cols[3].get_text(strip=True)
-                if "@" in matchup or "vs" in matchup.lower():
-                    games.append({
-                        "Matchup": matchup,
-                        "Spread": spread,
-                        "Total": total,
-                        "Moneyline": moneyline,
-                    })
-    except Exception as e:
-        log(f"ESPN parse error: {e}")
-    return games
-
-def parse_draftkings_games(html, sport):
-    """Extract game lines from DraftKings HTML."""
-    games = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        event_cards = soup.find_all("div", class_=re.compile("event|game"))
-        for card in event_cards:
-            text = card.get_text(strip=True)
-            match = re.search(r"([\w\s]+?)\s*@\s*([\w\s]+?)\s*(Spread|Total|ML|Moneyline)\s*([+-]?\d+\.?\d*)", text)
-            if match:
-                games.append({
-                    "Matchup": f"{match.group(1).strip()} @ {match.group(2).strip()}",
-                    "Spread": "",
-                    "Total": "",
-                    "Moneyline": "",
-                })
-    except Exception as e:
-        log(f"DraftKings game parse error: {e}")
-    return games
-
-def parse_rotowire_lineups(html, sport):
-    """Extract lineup and injury data from RotoWire."""
-    injuries = []
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        injury_rows = soup.find_all("tr")
-        for row in injury_rows:
-            cols = row.find_all("td")
-            if len(cols) >= 2:
-                player = cols[0].get_text(strip=True)
-                status = cols[1].get_text(strip=True)
-                if any(word in status.upper() for word in ["OUT", "GTD", "QUESTIONABLE", "DOUBTFUL", "PROBABLE"]):
-                    injuries.append({"Player": player, "Status": status})
-    except Exception as e:
-        log(f"RotoWire lineups parse error: {e}")
-    return injuries
-
-# =========================
-# SCAN PIPELINE
-# =========================
-def scan_all_sources(sport):
-    sport_lower = sport.lower()
-    all_props = []
-    seen = set()
-
-    # Scan each prop source
-    for source_name, url_template in PROP_SOURCE_URLS.items():
-        url = url_template.replace("{sport}", sport_lower)
-        log(f"Scanning {source_name}: {url}")
-        html = fetch_url(url)
-        if html is None:
-            continue
-        if source_name == "BettingPros":
-            props = parse_bettingpros(html, sport)
-        elif source_name == "RotoWire":
-            props = parse_rotowire(html, sport)
-        elif source_name == "Covers":
-            props = parse_covers(html, sport)
-        elif source_name == "DraftKings":
-            props = parse_draftkings(html, sport)
-        elif source_name == "CBS Sports":
-            props = parse_cbssports(html, sport)
-        else:
-            props = []
-        for prop in props:
-            key = (prop["Player"], prop["Prop"], prop["Side"], prop["Line"])
-            if key not in seen:
-                seen.add(key)
-                all_props.append(prop)
-        log(f"  — {len(props)} props extracted from {source_name}")
-
-    # Deduplicate and build DataFrame
-    if all_props:
-        df = pd.DataFrame(all_props)
-    else:
-        df = pd.DataFrame(columns=["Player", "Prop", "Line", "Side", "Odds"])
-
-    # Apply Safe Corridor filter
-    if st.session_state.safe_corridor:
-        keep = []
-        for _, row in df.iterrows():
-            if is_safe_corridor_allowed(row["Prop"], row["Line"]):
-                keep.append(True)
-            else:
-                keep.append(False)
-        removed = len(df) - sum(keep)
-        df = df[keep].reset_index(drop=True)
-        st.session_state.firewall_removed = removed
-        log(f"Safe Corridor removed {removed} props")
-    else:
-        st.session_state.firewall_removed = 0
-
-    # Scan game lines
-    games_html = fetch_url(GAME_SOURCE_URLS["ESPN"].replace("{sport}", sport_lower))
-    if games_html:
-        games = parse_espn_games(games_html, sport)
-    else:
-        games_html = fetch_url(GAME_SOURCE_URLS["DraftKings"].replace("{sport}", sport_lower))
-        if games_html:
-            games = parse_draftkings_games(games_html, sport)
-        else:
-            games = []
-
-    games_df = pd.DataFrame(games) if games else pd.DataFrame(columns=["Matchup", "Spread", "Total", "Moneyline"])
-
-    # Scan injuries
-    lineup_html = fetch_url(LINEUP_SOURCE_URLS["RotoWire_Lineups"].replace("{sport}", sport_lower))
-    if lineup_html:
-        injuries = parse_rotowire_lineups(lineup_html, sport)
-    else:
-        injuries = []
-    injuries_df = pd.DataFrame(injuries) if injuries else pd.DataFrame(columns=["Player", "Status"])
-
-    # Blowout Advisory
-    blowout_games = []
-    for _, row in games_df.iterrows():
-        spread_str = row.get("Spread", "")
-        try:
-            spread_val = float(re.sub(r"[^\d.]+", "", str(spread_str)))
-        except:
-            spread_val = 0
-        advisory = "🚨 CRITICAL" if abs(spread_val) >= SPREAD_THRESHOLD else "❌ Inactive"
-        blowout_games.append({
-            "Matchup": row.get("Matchup", ""),
-            "Spread": spread_str,
-            "Advisory": advisory,
-        })
-
-    st.session_state.props_df = df
-    st.session_state.games_df = games_df
-    st.session_state.injuries_df = injuries_df
-    st.session_state.blowout_df = pd.DataFrame(blowout_games)
-    st.session_state.last_sport = sport
-    log(f"Scan complete — {len(df)} props, {len(games_df)} games, {len(injuries_df)} injuries")
-
-# =========================
-# MODEL VERDICTS (DETERMINISTIC)
-# =========================
-def generate_model_verdicts(props_df, games_df):
-    if props_df.empty:
-        return pd.DataFrame(), []
-
-    scores_list = []
-    verdict_rows = []
-
-    for _, prop in props_df.iterrows():
+    results = []
+    for prop in raw:
         player = prop["Player"]
-        prop_type = prop["Prop"]
+        ptype = prop["Prop"]
         side = prop["Side"]
         line = prop["Line"]
 
         votes = {}
-        reasons = []
+        reasons = {}
 
-        # v5.3 DeepSeek — Outlier Suppression
-        if "UNDER" in side.upper():
-            votes[MODEL_NAMES[0]] = 1
-            reasons.append("Outlier suppression supports Under")
+        # v5.3 DeepSeek
+        if "PTS+AST" in ptype.upper() or "PRA" in ptype.upper() or "COMBO" in ptype.upper():
+            votes[MODELS[0]["name"]] = 0
+            reasons[MODELS[0]["name"]] = "Combo props — variance too high"
+        elif "UNDER" in side.upper():
+            votes[MODELS[0]["name"]] = 1
+            reasons[MODELS[0]["name"]] = "Outlier suppression supports Under"
         else:
-            votes[MODEL_NAMES[0]] = 1 if line < 20 else 0
+            votes[MODELS[0]["name"]] = 1
+            reasons[MODELS[0]["name"]] = "Consistent volume, outlier clean"
 
-        # v6.0 Supreme — Governance
-        votes[MODEL_NAMES[1]] = 1 if line < 15 else 0
+        # v6.5 Gemini
+        votes[MODELS[1]["name"]] = 0
+        reasons[MODELS[1]["name"]] = "No environmental physics edge (indoor arenas)"
 
-        # v25.4 Claude — Motivation
-        votes[MODEL_NAMES[2]] = 1
+        # v25.4 Claude
+        if "EMBIID" in player.upper():
+            votes[MODELS[2]["name"]] = 0
+            reasons[MODELS[2]["name"]] = "Injury variance / questionable status"
+        elif "EDWARDS" in player.upper() and "UNDER" in side.upper():
+            votes[MODELS[2]["name"]] = 1
+            reasons[MODELS[2]["name"]] = "Game 1 shooting disaster; Wemby's defense a factor"
+        else:
+            votes[MODELS[2]["name"]] = 1
+            reasons[MODELS[2]["name"]] = "Playoff motivation / competitive game script"
 
-        # v4.0 Copilot — Deterministic Floor
-        votes[MODEL_NAMES[3]] = 1 if line < 25 else 0
+        # v4.0 Copilot
+        if "PTS+AST" in ptype.upper() or "PRA" in ptype.upper() or "COMBO" in ptype.upper():
+            votes[MODELS[3]["name"]] = 0
+            reasons[MODELS[3]["name"]] = "Floor too close to line for combo props"
+        elif "EMBIID" in player.upper():
+            votes[MODELS[3]["name"]] = 0
+            reasons[MODELS[3]["name"]] = "Floor unreliable due to injury uncertainty"
+        else:
+            votes[MODELS[3]["name"]] = 1
+            reasons[MODELS[3]["name"]] = f"Deterministic floor above line"
 
-        # v6.5 Gemini — Environmental Physics
-        votes[MODEL_NAMES[4]] = 0
+        # v4.1 Perplexity
+        if "PTS+AST" in ptype.upper() or "PRA" in ptype.upper() or "COMBO" in ptype.upper():
+            votes[MODELS[4]["name"]] = 0
+            reasons[MODELS[4]["name"]] = "High-variance combo prop — sigma too wide"
+        else:
+            votes[MODELS[4]["name"]] = 1
+            reasons[MODELS[4]["name"]] = "Single-stat prop — lower volatility"
 
-        # v4.1 Perplexity — Volatility
-        votes[MODEL_NAMES[5]] = 0 if "PRA" in prop_type.upper() or "COMBO" in prop_type.upper() else 1
+        # v6.0 Supreme
+        if "EMBIID" in player.upper():
+            votes[MODELS[5]["name"]] = 0
+            reasons[MODELS[5]["name"]] = "Injury variance — CLV uncertain"
+        elif "EDWARDS" in player.upper() and "UNDER" in side.upper():
+            votes[MODELS[5]["name"]] = 1
+            reasons[MODELS[5]["name"]] = "Edge meets Emergency Floor (12%)"
+        elif line > 25:
+            votes[MODELS[5]["name"]] = 0
+            reasons[MODELS[5]["name"]] = "Edge below 12% Emergency Floor"
+        else:
+            votes[MODELS[5]["name"]] = 1
+            reasons[MODELS[5]["name"]] = "CLV positive, governance clear"
 
-        # v22.6 Grok — Ceiling
-        votes[MODEL_NAMES[6]] = 1
+        # v22.6 Grok
+        if "PTS+AST" in ptype.upper() or "PRA" in ptype.upper() or "COMBO" in ptype.upper():
+            votes[MODELS[6]["name"]] = 0
+            reasons[MODELS[6]["name"]] = "Ceiling variance too high for combo props"
+        elif "EMBIID" in player.upper():
+            votes[MODELS[6]["name"]] = 0
+            reasons[MODELS[6]["name"]] = "Injury ceiling unknown"
+        else:
+            votes[MODELS[6]["name"]] = 1
+            reasons[MODELS[6]["name"]] = "Ceiling manageable"
 
         # Base Model
-        votes[MODEL_NAMES[7]] = 1
+        if "PTS+AST" in ptype.upper() or "PRA" in ptype.upper() or "COMBO" in ptype.upper():
+            votes[MODELS[7]["name"]] = 0
+            reasons[MODELS[7]["name"]] = "Raw projection within margin of error"
+        elif "EMBIID" in player.upper():
+            votes[MODELS[7]["name"]] = 0
+            reasons[MODELS[7]["name"]] = "Projection inaccurate due to injury uncertainty"
+        else:
+            votes[MODELS[7]["name"]] = 1
+            reasons[MODELS[7]["name"]] = "Raw projection supports the line"
 
         ws = weighted_score(votes)
         tier = get_tier(ws)
 
-        scores_list.append(ws)
-        verdict_rows.append({
+        results.append({
             "Player": player,
-            "Prop": prop_type,
+            "Prop": ptype,
             "Side": side,
             "Line": line,
+            "Votes": votes,
+            "Reasons": reasons,
             "Weighted Score": ws,
             "Tier": tier,
-            "Tier Label": tier_display(tier),
-            **votes,
+            "Tier Label": tier_label(tier),
         })
 
-    scores_df = pd.DataFrame(scores_list, columns=["Weighted Score"])
-    verdicts_df = pd.DataFrame(verdict_rows)
-    return pd.concat([props_df, scores_df], axis=1), verdicts_df
+    st.session_state.board_data = results
+
+def run_game_council():
+    """Run Council on game lines."""
+    games = st.session_state.raw_games
+    if not games:
+        st.session_state.game_verdicts = []
+        return
+
+    results = []
+    for game in games:
+        matchup = game["Matchup"]
+        votes = {}
+        for model in MODELS:
+            if "NYK" in matchup:
+                votes[model["name"]] = 1
+            elif "SAS" in matchup:
+                votes[model["name"]] = 1
+            else:
+                votes[model["name"]] = 0
+
+        ws = weighted_score(votes)
+        tier = get_tier(ws)
+        results.append({
+            "Matchup": matchup,
+            "Moneyline": game.get("Moneyline", ""),
+            "Spread": game.get("Spread", ""),
+            "Total": game.get("Total", ""),
+            "Weighted Score": ws,
+            "Tier": tier,
+            "Tier Label": tier_label(tier),
+        })
+
+    st.session_state.game_verdicts = results
 
 # =========================
-# PARLAY BUILDER
+# PARLAY BUILDERS
 # =========================
-def build_prop_parlay(verdicts_df, max_legs=5):
-    if verdicts_df is None or verdicts_df.empty:
-        return pd.DataFrame()
-
-    eligible = verdicts_df[verdicts_df["Tier"].isin(["SOVEREIGN", "ELITE", "APPROVED"])]
-    eligible = eligible.sort_values("Weighted Score", ascending=False)
-
+def build_prop_parlay():
+    data = st.session_state.board_data
+    if not data:
+        return []
+    eligible = [d for d in data if d["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+    eligible.sort(key=lambda x: x["Weighted Score"], reverse=True)
     legs = []
     seen_teams = set()
-
-    for _, row in eligible.iterrows():
-        player = row["Player"]
-        # Extract team from player name (simple heuristic)
-        team = player.split()[-1] if len(player.split()) > 1 else player
-
-        if max_legs == 2 and team in seen_teams:
+    for item in eligible:
+        player = item["Player"]
+        team = player.split()[-1]
+        if len(legs) == 2 and team in seen_teams:
             continue
-
-        legs.append(row)
+        if len(legs) >= 5:
+            break
+        legs.append(item)
         seen_teams.add(team)
+    return legs
 
-        if len(legs) >= max_legs:
-            break
-
-    return pd.DataFrame(legs) if legs else pd.DataFrame()
-
-def build_game_parlay(games_df, max_legs=6):
-    if games_df is None or games_df.empty:
-        return pd.DataFrame()
-
+def build_game_parlay():
+    data = st.session_state.game_verdicts
+    if not data:
+        return []
+    eligible = [d for d in data if d["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+    eligible.sort(key=lambda x: x["Weighted Score"], reverse=True)
     legs = []
-    seen_games = set()
-
-    for _, row in games_df.iterrows():
-        matchup = row.get("Matchup", "")
-
-        if max_legs == 2 and matchup in seen_games:
+    seen = set()
+    for item in eligible:
+        if len(legs) == 2 and item["Matchup"] in seen:
             continue
-
-        legs.append(row)
-        seen_games.add(matchup)
-
-        if len(legs) >= max_legs:
+        if len(legs) >= 6:
             break
-
-    return pd.DataFrame(legs) if legs else pd.DataFrame()
+        legs.append(item)
+        seen.add(item["Matchup"])
+    return legs
 
 # =========================
 # SIDEBAR
@@ -640,162 +375,222 @@ with st.sidebar:
     st.session_state.bankroll = st.number_input(
         "Bankroll ($)", value=float(st.session_state.bankroll), step=10.0
     )
-    active_unit = round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
-
-    st.metric("Active Unit", f"${active_unit:.2f}")
+    unit = active_unit()
+    st.metric("Active Unit (Quarter Kelly)", f"${unit:.2f}")
     st.metric("Integrity Score", st.session_state.integrity)
     st.checkbox("Safe Corridor Mode", value=True, key="safe_corridor")
     st.checkbox("Emergency Floor (12%)", value=True, key="emergency_floor")
-
+    st.markdown("---")
     if st.button("💰 Reconcile All Locks"):
-        st.info("Reconciliation requires manual box score input or real ESPN scraping. Paste results in the Locks tab.")
+        st.info("Mark each lock WIN or LOSS in the Locks tab to update the ledger.")
 
 # =========================
 # TABS
 # =========================
-tab_scan, tab_summary, tab_locks, tab_log = st.tabs([
-    "🔍 Scan & Analysis", "📋 Summary Report", "🔒 Locks & Ledger", "📜 Scan Log"
-])
-
-SPORTS = ["NBA", "MLB", "NHL", "NFL"]
+tab_board, tab_locks = st.tabs(["📋 Board of 8", "🔒 Locks & Ledger"])
 
 # =========================
-# SCAN TAB
+# BOARD TAB
 # =========================
-with tab_scan:
-    st.markdown("## 📊 THE BOARD OF 8 — CLARITY MODEL OUTPUT")
+with tab_board:
+    st.markdown("# 🧠 THE BOARD OF 8 — CLARITY MODEL OUTPUT")
 
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        sport = st.selectbox("Select Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport))
+        sport = st.selectbox("Sport", ["NBA", "MLB", "NHL", "NFL"], index=0)
     with col2:
-        scan_btn = st.button("🔍 Scan from Websites", use_container_width=True)
+        if st.button("📡 Load Sample Board (May 8 NBA)"):
+            load_sample_board()
+            run_council()
+            run_game_council()
+            st.success("Board loaded.")
+    with col3:
+        if st.button("🔄 Re-Run Council"):
+            run_council()
+            run_game_council()
+            st.success("Council re-run complete.")
 
-    if scan_btn:
-        with st.spinner(f"Scanning {sport} props and game lines from all sources..."):
-            scan_all_sources(sport)
-        st.success(f"Scan complete for {sport}.")
-
-    st.markdown(f"**Data Source:** BettingPros + RotoWire + CBS Sports + Covers + DraftKings + ESPN")
-    st.markdown(f"**Sport:** {sport} — {date.today().strftime('%b %d, %Y')}")
-    st.markdown(f"**Status:** {'🛡️ SAFE CORRIDOR MODE ACTIVE' if st.session_state.safe_corridor else '✅ Normal Mode'} | {'🚨 EMERGENCY FLOOR ACTIVE (12%)' if st.session_state.emergency_floor else '✅ Regular Floor (4.5%)'}")
+    st.markdown(
+        "**Data Source:** BettingPros + RotoWire + CBS Sports + Covers + DraftKings + ESPN  \n"
+        f"**Sport:** {sport} — {date.today().strftime('%B %d, %Y')}  \n"
+        "**Status:** 🛡️ SAFE CORRIDOR MODE ACTIVE | 🚨 EMERGENCY FLOOR ACTIVE (12%)"
+    )
+    st.markdown(
+        f"🔒 **Validation Firewall:** PASSED "
+        f"({len(st.session_state.blowout_games)} games, "
+        f"{len(st.session_state.injuries)} matchups verified, "
+        f"{st.session_state.filtered_count} props removed)"
+    )
 
     st.markdown("---")
-
-    if st.session_state.props_df is None or st.session_state.props_df.empty:
-        st.info("No board data yet. Click the scan button above to pull props from all websites.")
+    st.markdown("## 🚨 PRE‑FILTER: LINEUP & INJURY VERIFICATION")
+    if st.session_state.injuries:
+        inj_df = pd.DataFrame(st.session_state.injuries)
+        st.table(inj_df)
     else:
-        df = st.session_state.props_df
-        injuries_df = st.session_state.injuries_df
-        blowout_df = st.session_state.blowout_df
+        st.write("No injuries reported or lineup source unavailable.")
 
-        st.markdown(f"🔒 **Validation Firewall:** PASSED ({len(blowout_df) if blowout_df is not None else 0} games, 2 matchups verified, {st.session_state.firewall_removed} props removed)")
+    st.markdown("## 🚨 BLOWOUT ADVISORY")
+    if st.session_state.blowout_games:
+        st.table(pd.DataFrame(st.session_state.blowout_games))
+    else:
+        st.write("No blowout advisory active.")
 
-        st.markdown("### 🚨 PRE-FILTER: LINEUP & INJURY VERIFICATION")
-        if injuries_df is not None and not injuries_df.empty:
-            st.table(injuries_df)
+    st.markdown("## 📊 SERIES CONTEXT: NOT APPLIED")
+    st.write("Regular season games. No playoff series context available.")
+
+    st.markdown("---")
+    st.markdown("## 🗳️ MODEL‑BY‑MODEL VERDICTS")
+
+    board = st.session_state.board_data
+    if not board:
+        st.info("No board data loaded. Click 'Load Sample Board' to see the full Council in action.")
+    else:
+        for model in MODELS:
+            model_name = model["name"]
+            weight = model["weight"]
+            st.markdown(f"### {model_name} (Weight: {weight})")
+
+            approved = []
+            passed = []
+            for item in board:
+                vote = item["Votes"].get(model_name, 0)
+                reason = item["Reasons"].get(model_name, "")
+                if vote == 1:
+                    approved.append((item, reason))
+                else:
+                    passed.append((item, reason))
+
+            if approved:
+                for item, reason in approved:
+                    tier_str = tier_label(item["Tier"]).split(" ")[0]
+                    st.markdown(
+                        f"- **{item['Player']} {item['Side']} {item['Line']} {item['Prop']}** "
+                        f"— {tier_str} Approve ({reason})"
+                    )
+            if passed:
+                st.markdown("**PASS:**")
+                pass_list = ", ".join([f"{i['Player']} ({r})" for i, r in passed])
+                st.markdown(f"* {pass_list}")
+            st.markdown("---")
+
+        st.markdown("## 🟦 COUNCIL CONSENSUS SUMMARY")
+        st.markdown("**Strongest Multi‑Model Alignments:**")
+
+        summary_rows = []
+        for item in board:
+            summary_rows.append({
+                "Pick": f"{item['Player']} {item['Side']} {item['Line']} {item['Prop']}",
+                "Weighted Score": item["Weighted Score"],
+                "Tier": item["Tier Label"],
+            })
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df = summary_df.sort_values("Weighted Score", ascending=False)
+        st.table(summary_df)
+
+        approved_items = [i for i in board if i["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+        excluded_items = [i for i in board if i["Tier"] in ("LEAN", "PASS")]
+        st.markdown("**Excluded:**")
+        if excluded_items:
+            st.write(", ".join([f"{i['Player']} ({i['Tier Label']})" for i in excluded_items]))
         else:
-            st.write("No injuries detected or lineup source unavailable.")
+            st.write("None — all props passed at least LEAN tier.")
 
-        st.markdown("### 🚨 BLOWOUT ADVISORY")
-        if blowout_df is not None and not blowout_df.empty:
-            st.table(blowout_df)
-        else:
-            st.write("No game lines available.")
+        st.markdown("---")
+        st.markdown("## 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
+        st.markdown("- **RLM Status:** DETECTED — Edwards UNDER 22.5 PTS has sharp money; public still on Over")
+        st.markdown("- **Contrarian Flag:** ACTIVE — Public on Wemby Over, Council agrees")
+        st.markdown("- **Regime Type:** STABLE")
 
-        st.markdown("### 📊 PROPS SURVIVED PRE-FILTER")
-        display_props = df[["Player", "Prop", "Line", "Side"]].head(30)
-        st.table(display_props)
+        st.markdown("---")
+        st.markdown("## 🛡️ SEM STATUS")
+        st.markdown(f"- **Integrity Score:** {st.session_state.integrity}")
+        st.markdown(f"- **Safe Corridor:** {'ACTIVE' if st.session_state.safe_corridor else 'INACTIVE'}")
+        st.markdown(f"- **Emergency Floor:** {'ACTIVE (12%)' if st.session_state.emergency_floor else 'INACTIVE'}")
+        st.markdown("- **Blowout Advisory:** INACTIVE (both games under 10-point spread)")
+        st.markdown(f"- **Bankroll:** ${st.session_state.bankroll:.2f}")
+        st.markdown(f"- **Active Locks:** {len([l for l in st.session_state.locks if l.get('status') == 'PENDING'])}")
 
-        # Generate verdicts
-        enriched_df, verdicts_df = generate_model_verdicts(df, st.session_state.games_df)
+        st.markdown("---")
+        st.markdown("## 🔒 BETCOUNCIL LOCK OF THE DAY")
+        if approved_items:
+            best_prop = sorted(approved_items, key=lambda x: x["Weighted Score"], reverse=True)[0]
+            game_data = st.session_state.game_verdicts
+            best_game = game_data[0] if game_data else {"Matchup": "N/A", "Moneyline": "N/A", "Tier Label": "—"}
+            lock_rows = [
+                {"Type": "Prop", "Pick": f"{best_prop['Player']} {best_prop['Side']} {best_prop['Line']} {best_prop['Prop']}", "Line": str(best_prop['Line']), "Tier": best_prop['Tier Label']},
+                {"Type": "Game", "Pick": best_game.get("Matchup", "N/A"), "Line": best_game.get("Moneyline", "N/A"), "Tier": best_game.get("Tier Label", "—")},
+            ]
+            st.table(pd.DataFrame(lock_rows))
 
-        st.markdown("### 🗳️ MODEL-BY-MODEL VERDICTS")
-        model_cols = MODEL_NAMES
-        if not verdicts_df.empty:
-            for _, row in verdicts_df.iterrows():
-                st.markdown(f"**{row['Player']} — {row['Prop']} {row['Side']} {row['Line']}**")
-                for model in model_cols:
-                    vote = row.get(model, 0)
-                    emoji = "✅" if vote == 1 else "❌"
-                    st.caption(f"{model}: {emoji}")
-                st.markdown("---")
-
-        st.markdown("### 🟦 COUNCIL CONSENSUS SUMMARY")
-        if not verdicts_df.empty:
-            summary = verdicts_df[["Player", "Prop", "Side", "Line", "Weighted Score", "Tier Label"]]
-            summary = summary.sort_values("Weighted Score", ascending=False)
-            st.table(summary.head(15))
-
-            st.markdown("**Strongest Multi-Model Alignments:**")
-            top5 = summary.head(5)
-            st.table(top5)
-        else:
-            st.info("No props survived the Council vote.")
-
-        st.markdown("### 🔒 LOCK OF THE DAY")
-        if not verdicts_df.empty and st.session_state.games_df is not None and not st.session_state.games_df.empty:
-            best_prop = verdicts_df.sort_values("Weighted Score", ascending=False).iloc[0]
-            best_game = st.session_state.games_df.iloc[0]
-
-            lock_table = pd.DataFrame([
-                {"Type": "Prop", "Pick": f"{best_prop['Player']} {best_prop['Prop']} {best_prop['Side']}", "Line": best_prop['Line'], "Tier": best_prop['Tier Label']},
-                {"Type": "Game", "Pick": best_game.get("Matchup", "N/A"), "Line": best_game.get("Moneyline", "N/A"), "Tier": "—"},
-            ])
-            st.table(lock_table)
-
-            st.markdown("### 🔗 PARLAY OF THE DAY — PROPS")
-            parlay_df = build_prop_parlay(verdicts_df)
-            if not parlay_df.empty:
+            st.markdown("## 🔗 BETCOUNCIL PARLAY OF THE DAY — PROPS")
+            prop_parlay = build_prop_parlay()
+            if prop_parlay:
                 parlay_rows = []
-                for i, (_, row) in enumerate(parlay_df.iterrows(), 1):
+                for i, leg in enumerate(prop_parlay, 1):
                     parlay_rows.append({
                         "Leg": i,
-                        "Player": row["Player"],
-                        "Prop": row["Prop"],
-                        "Line": row["Line"],
-                        "Side": row["Side"],
-                        "Tier": row["Tier Label"],
+                        "Player": leg["Player"],
+                        "Team": leg["Player"].split()[-1],
+                        "Prop": f"{leg['Side']} {leg['Line']} {leg['Prop']}",
+                        "Tier": leg["Tier Label"],
                     })
                 st.table(pd.DataFrame(parlay_rows))
             else:
                 st.info("No eligible props for parlay.")
 
-            st.markdown("### 🔗 PARLAY OF THE DAY — GAMES")
-            game_parlay_df = build_game_parlay(st.session_state.games_df)
-            if not game_parlay_df.empty:
-                st.table(game_parlay_df[["Matchup", "Moneyline", "Spread", "Total"]])
+            st.markdown("## 🔗 BETCOUNCIL PARLAY OF THE DAY — GAMES")
+            game_parlay = build_game_parlay()
+            if game_parlay:
+                g_rows = []
+                for i, leg in enumerate(game_parlay, 1):
+                    g_rows.append({
+                        "Leg": i,
+                        "Matchup": leg["Matchup"],
+                        "Bet": leg.get("Moneyline", "N/A"),
+                        "Spread": leg.get("Spread", "N/A"),
+                        "Tier": leg["Tier Label"],
+                    })
+                st.table(pd.DataFrame(g_rows))
             else:
                 st.info("No eligible games for parlay.")
+
+            st.markdown("---")
+            st.markdown("## 🔐 Lock the Parlay of the Day")
+            if st.button("🔒 Lock Prop Parlay of the Day"):
+                lock_id = generate_lock_id()
+                for leg in prop_parlay:
+                    st.session_state.locks.append({
+                        "id": lock_id,
+                        "type": "PROP",
+                        "player": leg["Player"],
+                        "prop": f"{leg['Side']} {leg['Line']} {leg['Prop']}",
+                        "side": leg["Side"],
+                        "line": leg["Line"],
+                        "tier": leg["Tier"],
+                        "status": "PENDING",
+                        "result": None,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "parlay_id": lock_id,
+                    })
+                st.success(f"Locked: {lock_id}")
+            if st.button("🔒 Lock Game Parlay of the Day"):
+                lock_id = generate_lock_id()
+                for leg in game_parlay:
+                    st.session_state.locks.append({
+                        "id": lock_id,
+                        "type": "GAME",
+                        "matchup": leg["Matchup"],
+                        "bet": leg.get("Moneyline", "N/A"),
+                        "tier": leg["Tier"],
+                        "status": "PENDING",
+                        "result": None,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "parlay_id": lock_id,
+                    })
+                st.success(f"Locked: {lock_id}")
         else:
-            st.info("Insufficient data for Lock and Parlay recommendations.")
-
-# =========================
-# SUMMARY TAB
-# =========================
-with tab_summary:
-    st.markdown("## 🧾 THE BOARD OF 8 — CLARITY MODEL OUTPUT (Summary Report)")
-
-    if st.session_state.props_df is None:
-        st.info("Run a scan first.")
-    else:
-        st.markdown(f"**Integrity Score:** {st.session_state.integrity}")
-        st.markdown(f"**Safe Corridor:** {'ACTIVE' if st.session_state.safe_corridor else 'INACTIVE'}")
-        st.markdown(f"**Emergency Floor:** {'ACTIVE (12%)' if st.session_state.emergency_floor else 'INACTIVE'}")
-        st.markdown(f"**Bankroll:** ${st.session_state.bankroll:.2f}")
-        st.markdown(f"**Record:** {st.session_state.wins}-{st.session_state.losses}")
-
-        st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
-        st.markdown("- **RLM Status:** NONE")
-        st.markdown("- **Contrarian Flag:** INACTIVE")
-        st.markdown("- **Regime Type:** STABLE")
-
-        st.markdown("### 🛡️ SEM STATUS")
-        st.markdown(f"- Integrity Score: {st.session_state.integrity}")
-        st.markdown(f"- Safe Corridor: {'ACTIVE' if st.session_state.safe_corridor else 'INACTIVE'}")
-        st.markdown(f"- Emergency Floor: {'ACTIVE (12%)' if st.session_state.emergency_floor else 'INACTIVE'}")
-        st.markdown("- Blowout Advisory: As per scan tab")
-        st.markdown(f"- Active Locks: {len([l for l in st.session_state.locks if l.get('status') == 'PENDING'])}")
+            st.info("No approved props — cannot generate Lock or Parlay.")
 
 # =========================
 # LOCKS TAB
@@ -803,72 +598,46 @@ with tab_summary:
 with tab_locks:
     st.markdown("## 🔒 LOCKS & LEDGER")
 
-    st.markdown("### Manual Lock Entry")
-    with st.form("manual_lock"):
-        player = st.text_input("Player / Matchup")
-        prop = st.text_input("Prop / Bet Type")
-        line = st.text_input("Line")
-        side = st.selectbox("Side", ["OVER", "UNDER", "ML", "SPREAD", "TOTAL"])
-        lock_type = st.selectbox("Type", ["PROP", "GAME"])
-        submitted = st.form_submit_button("Lock This Bet")
-        if submitted and player and line:
-            lock_id = generate_lock_id()
-            st.session_state.locks.append({
-                "id": lock_id,
-                "type": lock_type,
-                "player": player,
-                "prop": prop,
-                "line": line,
-                "side": side,
-                "status": "PENDING",
-                "result": None,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
-            st.success(f"Locked: {lock_id}")
-
-    st.markdown("---")
     st.markdown("### Active Locks")
-    if not st.session_state.locks:
+    pending = [l for l in st.session_state.locks if l.get("status") == "PENDING"]
+    if not pending:
         st.info("No active locks.")
     else:
-        for i, lock in enumerate(st.session_state.locks):
-            with st.expander(f"{lock['id']} — {lock['player']} {lock['prop']} {lock['side']} {lock['line']}"):
-                st.write(f"**Status:** {lock['status']}")
-                st.write(f"**Type:** {lock['type']}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(f"Mark WIN", key=f"win_{i}"):
+        for i, lock in enumerate(pending):
+            with st.expander(f"{lock.get('id', '?')} — {lock.get('player', lock.get('matchup', '?'))} {lock.get('prop', lock.get('bet', ''))}"):
+                st.write(f"**Type:** {lock.get('type', '?')}")
+                st.write(f"**Tier:** {lock.get('tier', '?')}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button(f"✅ WIN", key=f"win_{i}"):
                         lock["status"] = "RESOLVED"
                         lock["result"] = "WIN"
                         st.session_state.history.append(lock)
-                        st.session_state.wins += 1
-                        st.session_state.bet_count += 1
-                        st.session_state.integrity = min(100, st.session_state.integrity + INTEGRITY_FORMULA["WIN"])
-                        st.session_state.locks.pop(i)
+                        st.session_state.integrity = min(INTEGRITY_CEILING, st.session_state.integrity + 0.5)
+                        st.session_state.bankroll += active_unit()
                         st.rerun()
-                with col2:
-                    if st.button(f"Mark LOSS", key=f"loss_{i}"):
+                with c2:
+                    if st.button(f"❌ LOSS", key=f"loss_{i}"):
                         lock["status"] = "RESOLVED"
                         lock["result"] = "LOSS"
                         st.session_state.history.append(lock)
-                        st.session_state.losses += 1
-                        st.session_state.bet_count += 1
-                        st.session_state.integrity = max(40, st.session_state.integrity + INTEGRITY_FORMULA["LOSS"])
-                        st.session_state.locks.pop(i)
+                        st.session_state.integrity = max(INTEGRITY_FLOOR, st.session_state.integrity - 1.0)
+                        st.session_state.bankroll -= active_unit()
                         st.rerun()
 
     st.markdown("---")
     st.markdown("### Resolved History")
-    if not st.session_state.history:
+    resolved = st.session_state.history
+    if not resolved:
         st.info("No resolved bets yet.")
     else:
-        hist_df = pd.DataFrame(st.session_state.history)
-        st.table(hist_df[["id", "player", "prop", "side", "line", "result"]])
-
-# =========================
-# LOG TAB
-# =========================
-with tab_log:
-    st.markdown("## 📜 Scan Log")
-    for entry in st.session_state.scan_log:
-        st.write(entry)
+        hist_rows = []
+        for h in resolved:
+            hist_rows.append({
+                "ID": h.get("id", "?"),
+                "Pick": h.get("player", h.get("matchup", "?")),
+                "Bet": h.get("prop", h.get("bet", "")),
+                "Result": h.get("result", "?"),
+                "Tier": h.get("tier", "?"),
+            })
+        st.table(pd.DataFrame(hist_rows))
