@@ -127,6 +127,10 @@ if "board_data" not in st.session_state:
         "series": None,
     }
 
+# locks ledger: list of dicts
+if "locks" not in st.session_state:
+    st.session_state.locks = []
+
 # -----------------------------
 # CORE FUNCTIONS
 # -----------------------------
@@ -157,12 +161,20 @@ def tier_badge(tier):
         return '<span class="tier-bronze">🥉 Value</span>'
     return "—"
 
+def add_lock(entry: dict):
+    st.session_state.locks.append(entry)
+
+def remove_lock(index: int):
+    if 0 <= index < len(st.session_state.locks):
+        st.session_state.locks.pop(index)
+
+def clear_locks():
+    st.session_state.locks = []
+
 # -----------------------------
 # MOCK / PLACEHOLDER DATA PIPELINE
 # -----------------------------
 def mock_board_data(sport: str):
-    # This is where scraped / parsed data will eventually land.
-    # For now, we keep a structured mock that matches your example.
     props = pd.DataFrame(
         [
             ["Victor Wembanyama", "REBOUNDS", 12.5, "OVER"],
@@ -209,10 +221,8 @@ def mock_board_data(sport: str):
         columns=["Series", "Game Context", "Trend Adjustment"],
     )
 
-    # Attach model scores to props for consensus
     model_scores = []
     for _, row in props.iterrows():
-        # Simple mock scores; replace with real model outputs later
         base = 0.8 if "Wembanyama" in row["Player"] or "Maxey" in row["Player"] else 0.65
         scores = {
             "deepseek": base,
@@ -242,8 +252,6 @@ def mock_board_data(sport: str):
 # SCRAPER / SCANNER PLACEHOLDERS
 # -----------------------------
 def scan_source(name: str, sport: str):
-    # Placeholder: mark as OK and return mock data.
-    # Later: implement real requests + parsing per site.
     ok = True
     error = None
     st.session_state.scanner_status[name]["ok"] = ok
@@ -253,15 +261,12 @@ def scan_source(name: str, sport: str):
 def scan_all_sources(sport: str):
     for src in DATA_SOURCES:
         scan_source(src, sport)
-    # After scanning, update board_data (for now, mock)
     st.session_state.board_data = mock_board_data(sport)
 
 def parse_manual_text(text: str, sport: str):
-    # Placeholder: ignore text and just load mock data.
     st.session_state.board_data = mock_board_data(sport)
 
 def parse_screenshot(image, sport: str):
-    # Placeholder: OCR hook; for now, just mock.
     if Image is None or pytesseract is None:
         st.warning("OCR libraries not available; using mock data instead.")
     st.session_state.board_data = mock_board_data(sport)
@@ -342,7 +347,7 @@ with tab_analysis:
     if board["props"] is None:
         st.info("No board data loaded yet. Run a scan, paste data, or upload a screenshot.")
     else:
-        st.markdown("### 🔒 Validation Firewall & Pre-Filter (Mock Layout)")
+        st.markdown("### 🔒 Validation Firewall & Pre-Filter")
         st.markdown("**Lineup & Injury Verification**")
         st.table(board["injuries"])
 
@@ -353,13 +358,45 @@ with tab_analysis:
         st.table(board["series"])
 
         st.markdown("### 📊 Props Survived Pre-Filter")
-        st.dataframe(board["props"], use_container_width=True)
+        props = board["props"].copy()
+        st.dataframe(props, use_container_width=True)
+
+        st.markdown("### 🔐 Lock Props from This Board")
+        for idx, row in props.iterrows():
+            c1, c2, c3, c4, c5 = st.columns([3, 2, 1, 1, 2])
+            with c1:
+                st.write(f"**{row['Player']}** — {row['Prop']}")
+            with c2:
+                st.write(f"{row['Side']} {row['Line']}")
+            with c3:
+                st.write(f"{row['Tier']}")
+            with c4:
+                st.write(f"{row['Weighted Score']:.3f}")
+            with c5:
+                if st.button("LOCK THIS PROP", key=f"lock_prop_{idx}"):
+                    add_lock(
+                        {
+                            "type": "PROP",
+                            "sport": sport,
+                            "player": row["Player"],
+                            "prop": row["Prop"],
+                            "side": row["Side"],
+                            "line": row["Line"],
+                            "tier": row["Tier"],
+                            "score": row["Weighted Score"],
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "status": "PENDING",
+                            "result": None,
+                            "is_parlay_leg": False,
+                        }
+                    )
+                    st.success(f"Locked: {row['Player']} {row['Prop']} {row['Side']} {row['Line']}")
 
 # -----------------------------
 # LOCKS & PARLAY TAB
 # -----------------------------
 with tab_locks:
-    st.markdown("## 🔒 BETCOUNCIL LOCK & PARLAY CONFIGURATION")
+    st.markdown("## 🔒 BETCOUNCIL LOCKS & PARLAY")
 
     board = st.session_state.board_data
     if board["props"] is None:
@@ -368,7 +405,7 @@ with tab_locks:
         df = board["props"].copy()
         df_sorted = df.sort_values("Weighted Score", ascending=False)
 
-        st.markdown("### Lock of the Day")
+        st.markdown("### Auto-Selected Lock of the Day (Model)")
         lock = df_sorted.iloc[0]
         lock_text = (
             f"**{lock['Player']} {lock['Prop']} {lock['Side']} {lock['Line']}**  \n"
@@ -377,6 +414,47 @@ with tab_locks:
         )
         st.markdown(lock_text, unsafe_allow_html=True)
         st.caption(f"Unit Exposure: ${active_unit:.2f} (Regular Floor).")
+
+        st.markdown("---")
+        st.markdown("### Your Locked Bets (Ledger)")
+
+        if not st.session_state.locks:
+            st.info("No locked bets yet. Lock props from the Analysis tab.")
+        else:
+            lock_rows = []
+            for i, l in enumerate(st.session_state.locks):
+                lock_rows.append(
+                    {
+                        "#": i + 1,
+                        "Type": l["type"],
+                        "Sport": l["sport"],
+                        "Player": l.get("player", ""),
+                        "Prop": l.get("prop", ""),
+                        "Side": l.get("side", ""),
+                        "Line": l.get("line", ""),
+                        "Tier": l.get("tier", ""),
+                        "Score": l.get("score", ""),
+                        "Status": l.get("status", ""),
+                        "Result": l.get("result", ""),
+                        "Time": l.get("timestamp", ""),
+                    }
+                )
+            st.table(pd.DataFrame(lock_rows))
+
+            cols = st.columns(3)
+            with cols[0]:
+                if st.button("Clear All Locks"):
+                    clear_locks()
+                    st.success("All locks cleared.")
+            with cols[1]:
+                remove_index = st.number_input(
+                    "Remove Lock #", min_value=1, max_value=len(st.session_state.locks), value=1
+                )
+                if st.button("Remove Selected Lock"):
+                    remove_lock(remove_index - 1)
+                    st.success("Lock removed.")
+            with cols[2]:
+                st.write("Reconcile logic will be wired here (box score scan).")
 
         st.markdown("---")
         st.markdown("### Parlay of the Day — Props (Max 5 Legs)")
@@ -479,7 +557,6 @@ with tab_summary:
 
         st.markdown("### 🚨 PRE-FILTER: LINEUP & INJURY VERIFICATION")
         st.table(injuries)
-        st.caption("Lineup data sourced from BettingPros / RotoWire / DraftEdge equivalents (mock).")
 
         st.markdown("### 🚨 BLOWOUT ADVISORY")
         st.table(spreads)
@@ -490,37 +567,9 @@ with tab_summary:
         st.markdown("### 📊 PROPS SURVIVED PRE-FILTER")
         st.table(props[["Player", "Prop", "Line", "Side"]])
 
-        st.markdown("### 🗳️ MODEL-BY-MODEL VERDICTS (Structure Placeholder)")
-        st.markdown(
-            "- v5.3 DeepSeek — Outlier Suppression (0.18): Approve / Pass logic per prop.\n"
-            "- v6.5 Gemini — Environmental Physics (0.10): Environment / travel / home-away.\n"
-            "- v25.4 Claude — Motivation / Ref Bias (0.14): Motivation, whistle, desperation.\n"
-            "- v4.0 Copilot — Deterministic Floor Engine (0.14): Floor vs line.\n"
-            "- v4.1 Perplexity — Volatility Mapping (0.10): Sigma / variance.\n"
-            "- v6.0 Supreme — Governance / CLV Integrity (0.18): CLV, sharp vs public.\n"
-            "- v22.6 Grok — Ceiling Variance Engine (0.10): Ceiling outcomes.\n"
-            "- Base Model — Raw Projection Layer (0.06): Historical mean."
-        )
-
         st.markdown("### 🟦 COUNCIL CONSENSUS SUMMARY")
         consensus = props[["Player", "Prop", "Side", "Line", "Weighted Score", "Tier"]].copy()
         st.table(consensus)
-
-        st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
-        st.markdown(
-            "- RLM Status: DETECTED — Example: Edwards UNDER moving against public sentiment.  \n"
-            "- Contrarian Flag: ACTIVE — Public on Embiid Over; Council on Under/Pass.  \n"
-            "- Regime Type: STABLE"
-        )
-
-        st.markdown("### 🛡️ SEM STATUS")
-        st.markdown(
-            f"- Integrity Score: {integrity}  \n"
-            f"- Safe Corridor: ACTIVE  \n"
-            f"- Emergency Floor: ACTIVE ({emergency_floor}%)  \n"
-            "- Blowout Advisory: INACTIVE  \n"
-            "- Active Locks: Pending reconciliation"
-        )
 
         st.markdown("### 🔒 BETCOUNCIL LOCK OF THE DAY")
         top = props.sort_values("Weighted Score", ascending=False).iloc[0]
