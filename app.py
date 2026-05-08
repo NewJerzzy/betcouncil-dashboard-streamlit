@@ -191,9 +191,9 @@ def move_to_history(lock, result, units):
     st.session_state.history.append(lock_copy)
 
 # -----------------------------
-# MOCK DATA PIPELINE
+# MULTI-SPORT MOCK DATA PIPELINE
 # -----------------------------
-def mock_board_data(sport: str):
+def mock_board_data_nba():
     props = pd.DataFrame(
         [
             ["Victor Wembanyama", "REBOUNDS", 12.5, "OVER"],
@@ -267,7 +267,7 @@ def mock_board_data(sport: str):
         "series": series,
     }
 
-def mock_game_data(sport: str):
+def mock_game_data_nba():
     games = pd.DataFrame(
         [
             ["NYK @ PHI", "PHI -2.5", "PHI ML -145", "O/U 214.5"],
@@ -297,6 +297,339 @@ def mock_game_data(sport: str):
     games["Tier"] = [x[1] for x in model_scores]
 
     return games
+
+def mock_board_data_mlb():
+    props = pd.DataFrame(
+        [
+            ["Shohei Ohtani", "TOTAL BASES", 1.5, "OVER"],
+            ["Aaron Judge", "HOME RUN", 0.5, "OVER"],
+            ["Mookie Betts", "RUNS+RBI", 1.5, "OVER"],
+            ["Spencer Strider", "STRIKEOUTS", 8.5, "OVER"],
+            ["Corbin Burnes", "STRIKEOUTS", 7.5, "UNDER"],
+        ],
+        columns=["Player", "Prop", "Line", "Side"],
+    )
+
+    injuries = pd.DataFrame(
+        [
+            ["LAD @ NYY", "Judge (Probable - Hand Contusion)"],
+            ["ATL @ MIL", "Strider (Cleared - Pitch Count Watch)"],
+        ],
+        columns=["Game", "Status"],
+    )
+
+    spreads = pd.DataFrame(
+        [
+            ["LAD @ NYY", -1.5, "❌ Inactive", "Full evaluation"],
+            ["ATL @ MIL", -1.5, "❌ Inactive", "Full evaluation"],
+        ],
+        columns=["Game", "Spread", "Advisory", "Effect"],
+    )
+
+    series = pd.DataFrame(
+        [
+            [
+                "LAD @ NYY",
+                "Interleague marquee; bullpen fatigue edge LAD",
+                "[SERIES CONTEXT: +10% Power Shift to Ohtani/Judge]",
+            ],
+            [
+                "ATL @ MIL",
+                "Pitching duel; low total environment",
+                "[SERIES CONTEXT: -8% Run Environment Adjustment]",
+            ],
+        ],
+        columns=["Series", "Game Context", "Trend Adjustment"],
+    )
+
+    model_scores = []
+    for _, row in props.iterrows():
+        base = 0.8 if "Ohtani" in row["Player"] or "Judge" in row["Player"] else 0.7
+        scores = {
+            "deepseek": base,
+            "supreme": base - 0.02,
+            "claude": base - 0.03,
+            "copilot": base - 0.01,
+            "gemini": base - 0.05,
+            "perplexity": base - 0.06,
+            "grok": base - 0.04,
+            "base": base - 0.1,
+        }
+        wc = calculate_weighted_consensus(scores)
+        tier = assign_tier(wc)
+        model_scores.append((wc, tier))
+
+    props["Weighted Score"] = [x[0] for x in model_scores]
+    props["Tier"] = [x[1] for x in model_scores]
+
+    return {
+        "props": props,
+        "injuries": injuries,
+        "spreads": spreads,
+        "series": series,
+    }
+
+def mock_game_data_mlb():
+    games = pd.DataFrame(
+        [
+            ["LAD @ NYY", "LAD -1.5", "LAD ML -135", "O/U 8.5"],
+            ["ATL @ MIL", "ATL -1.5", "ATL ML -140", "O/U 7.5"],
+        ],
+        columns=["Matchup", "Spread", "Moneyline", "Total"],
+    )
+
+    model_scores = []
+    for _, row in games.iterrows():
+        base = 0.73 if "LAD" in row["Matchup"] or "ATL" in row["Matchup"] else 0.65
+        scores = {
+            "deepseek": base,
+            "supreme": base - 0.02,
+            "claude": base - 0.03,
+            "copilot": base - 0.01,
+            "gemini": base - 0.05,
+            "perplexity": base - 0.06,
+            "grok": base - 0.04,
+            "base": base - 0.1,
+        }
+        wc = calculate_weighted_consensus(scores)
+        tier = assign_tier(wc)
+        model_scores.append((wc, tier))
+
+    games["Weighted Score"] = [x[0] for x in model_scores]
+    games["Tier"] = [x[1] for x in model_scores]
+
+    return games
+
+def mock_board_data_nfl():
+    props = pd.DataFrame(
+        [
+            ["Patrick Mahomes", "PASSING YARDS", 285.5, "OVER"],
+            ["Travis Kelce", "RECEPTIONS", 6.5, "OVER"],
+            ["Christian McCaffrey", "RUSH+REC YARDS", 104.5, "OVER"],
+            ["Justin Jefferson", "RECEIVING YARDS", 92.5, "UNDER"],
+        ],
+        columns=["Player", "Prop", "Line", "Side"],
+    )
+
+    injuries = pd.DataFrame(
+        [
+            ["KC @ SF", "Kelce (Probable - Knee Soreness)"],
+            ["MIN @ GB", "Jefferson (Questionable - Hamstring)"],
+        ],
+        columns=["Game", "Status"],
+    )
+
+    spreads = pd.DataFrame(
+        [
+            ["KC @ SF", -2.5, "❌ Inactive", "Full evaluation"],
+            ["MIN @ GB", 3.5, "❌ Inactive", "Full evaluation"],
+        ],
+        columns=["Game", "Spread", "Advisory", "Effect"],
+    )
+
+    series = pd.DataFrame(
+        [
+            [
+                "KC @ SF",
+                "Super Bowl rematch; high leverage environment",
+                "[PLAYOFF CONTEXT: +12% Volume to Mahomes/Kelce]",
+            ],
+            [
+                "MIN @ GB",
+                "Divisional game; weather risk",
+                "[ENVIRONMENT: -10% Passing Volume Adjustment]",
+            ],
+        ],
+        columns=["Series", "Game Context", "Trend Adjustment"],
+    )
+
+    model_scores = []
+    for _, row in props.iterrows():
+        base = 0.81 if "Mahomes" in row["Player"] or "Kelce" in row["Player"] else 0.72
+        scores = {
+            "deepseek": base,
+            "supreme": base - 0.02,
+            "claude": base - 0.03,
+            "copilot": base - 0.01,
+            "gemini": base - 0.05,
+            "perplexity": base - 0.06,
+            "grok": base - 0.04,
+            "base": base - 0.1,
+        }
+        wc = calculate_weighted_consensus(scores)
+        tier = assign_tier(wc)
+        model_scores.append((wc, tier))
+
+    props["Weighted Score"] = [x[0] for x in model_scores]
+    props["Tier"] = [x[1] for x in model_scores]
+
+    return {
+        "props": props,
+        "injuries": injuries,
+        "spreads": spreads,
+        "series": series,
+    }
+
+def mock_game_data_nfl():
+    games = pd.DataFrame(
+        [
+            ["KC @ SF", "KC -2.5", "KC ML -135", "O/U 51.5"],
+            ["MIN @ GB", "GB -3.5", "GB ML -160", "O/U 44.0"],
+        ],
+        columns=["Matchup", "Spread", "Moneyline", "Total"],
+    )
+
+    model_scores = []
+    for _, row in games.iterrows():
+        base = 0.76 if "KC" in row["Matchup"] or "GB" in row["Matchup"] else 0.68
+        scores = {
+            "deepseek": base,
+            "supreme": base - 0.02,
+            "claude": base - 0.03,
+            "copilot": base - 0.01,
+            "gemini": base - 0.05,
+            "perplexity": base - 0.06,
+            "grok": base - 0.04,
+            "base": base - 0.1,
+        }
+        wc = calculate_weighted_consensus(scores)
+        tier = assign_tier(wc)
+        model_scores.append((wc, tier))
+
+    games["Weighted Score"] = [x[0] for x in model_scores]
+    games["Tier"] = [x[1] for x in model_scores]
+
+    return games
+
+def mock_board_data_nhl():
+    props = pd.DataFrame(
+        [
+            ["Connor McDavid", "POINTS", 1.5, "OVER"],
+            ["Leon Draisaitl", "SHOTS ON GOAL", 3.5, "OVER"],
+            ["Auston Matthews", "GOALS", 0.5, "OVER"],
+            ["Igor Shesterkin", "SAVES", 29.5, "OVER"],
+        ],
+        columns=["Player", "Prop", "Line", "Side"],
+    )
+
+    injuries = pd.DataFrame(
+        [
+            ["EDM @ TOR", "Matthews (Probable - Wrist)"],
+            ["NYR @ BOS", "Shesterkin (Confirmed Starter)"],
+        ],
+        columns=["Game", "Status"],
+    )
+
+    spreads = pd.DataFrame(
+        [
+            ["EDM @ TOR", -1.5, "❌ Inactive", "Full evaluation"],
+            ["NYR @ BOS", 1.5, "❌ Inactive", "Full evaluation"],
+        ],
+        columns=["Game", "Spread", "Advisory", "Effect"],
+    )
+
+    series = pd.DataFrame(
+        [
+            [
+                "EDM @ TOR",
+                "High-event environment; elite offensive talent",
+                "[PACE: +15% Shot Volume Adjustment]",
+            ],
+            [
+                "NYR @ BOS",
+                "Defensive grind; goalie duel",
+                "[PACE: -10% Goal Expectation]",
+            ],
+        ],
+        columns=["Series", "Game Context", "Trend Adjustment"],
+    )
+
+    model_scores = []
+    for _, row in props.iterrows():
+        base = 0.8 if "McDavid" in row["Player"] or "Matthews" in row["Player"] else 0.72
+        scores = {
+            "deepseek": base,
+            "supreme": base - 0.02,
+            "claude": base - 0.03,
+            "copilot": base - 0.01,
+            "gemini": base - 0.05,
+            "perplexity": base - 0.06,
+            "grok": base - 0.04,
+            "base": base - 0.1,
+        }
+        wc = calculate_weighted_consensus(scores)
+        tier = assign_tier(wc)
+        model_scores.append((wc, tier))
+
+    props["Weighted Score"] = [x[0] for x in model_scores]
+    props["Tier"] = [x[1] for x in model_scores]
+
+    return {
+        "props": props,
+        "injuries": injuries,
+        "spreads": spreads,
+        "series": series,
+    }
+
+def mock_game_data_nhl():
+    games = pd.DataFrame(
+        [
+            ["EDM @ TOR", "TOR -1.5", "TOR ML -130", "O/U 6.5"],
+            ["NYR @ BOS", "BOS -1.5", "BOS ML -150", "O/U 5.5"],
+        ],
+        columns=["Matchup", "Spread", "Moneyline", "Total"],
+    )
+
+    model_scores = []
+    for _, row in games.iterrows():
+        base = 0.75 if "TOR" in row["Matchup"] or "BOS" in row["Matchup"] else 0.67
+        scores = {
+            "deepseek": base,
+            "supreme": base - 0.02,
+            "claude": base - 0.03,
+            "copilot": base - 0.01,
+            "gemini": base - 0.05,
+            "perplexity": base - 0.06,
+            "grok": base - 0.04,
+            "base": base - 0.1,
+        }
+        wc = calculate_weighted_consensus(scores)
+        tier = assign_tier(wc)
+        model_scores.append((wc, tier))
+
+    games["Weighted Score"] = [x[0] for x in model_scores]
+    games["Tier"] = [x[1] for x in model_scores]
+
+    return games
+
+def mock_board_data_all():
+    # Just reuse NBA props as a generic ALL board for now
+    return mock_board_data_nba()
+
+def mock_game_data_all():
+    return mock_game_data_nba()
+
+def mock_board_data(sport: str):
+    if sport == "NBA":
+        return mock_board_data_nba()
+    if sport == "MLB":
+        return mock_board_data_mlb()
+    if sport == "NFL":
+        return mock_board_data_nfl()
+    if sport == "NHL":
+        return mock_board_data_nhl()
+    return mock_board_data_all()
+
+def mock_game_data(sport: str):
+    if sport == "NBA":
+        return mock_game_data_nba()
+    if sport == "MLB":
+        return mock_game_data_mlb()
+    if sport == "NFL":
+        return mock_game_data_nfl()
+    if sport == "NHL":
+        return mock_game_data_nhl()
+    return mock_game_data_all()
 
 # -----------------------------
 # SCANNER / PARSING PLACEHOLDERS
@@ -328,7 +661,6 @@ def parse_screenshot(image, sport: str):
 # RECONCILIATION (MOCK)
 # -----------------------------
 def mock_box_score_result(lock):
-    # Mock: 65% hit rate for Sovereign, 55% for Elite, 50% for Value
     tier = lock.get("tier", "VALUE")
     if tier == "SOVEREIGN":
         p = 0.65
@@ -340,25 +672,19 @@ def mock_box_score_result(lock):
     return "WIN" if hit else "LOSS"
 
 def reconcile_locks(active_unit):
-    new_locks = []
-    for lock in st.session_state.locks:
+    for lock in list(st.session_state.locks):
         if lock["status"] == "PENDING":
             result = mock_box_score_result(lock)
             units = active_unit if result == "WIN" else -active_unit
             move_to_history(lock, result, units)
 
-            # SEM integrity adjustment (simple mock)
             if result == "WIN":
                 st.session_state.sem_integrity = min(100, st.session_state.sem_integrity + 1)
             else:
                 st.session_state.sem_integrity = max(40, st.session_state.sem_integrity - 2)
 
-            # Bankroll update
             st.session_state.bankroll += units
-        else:
-            new_locks.append(lock)
-
-    st.session_state.locks = [l for l in st.session_state.locks if l["status"] == "PENDING"]
+            st.session_state.locks.remove(lock)
 
 # -----------------------------
 # SIDEBAR – GOVERNANCE PANEL
@@ -410,7 +736,7 @@ with tab_analysis:
     with col_scan:
         if st.button("🔍 Scan from Web (All Sources)"):
             scan_all_sources(sport)
-            st.success("Scan complete (mock pipeline).")
+            st.success(f"Scan complete for {sport} (mock pipeline).")
     with col_manual:
         st.write("Manual Data Paste:")
     with col_screen:
@@ -420,7 +746,7 @@ with tab_analysis:
     if st.button("Use Pasted Data"):
         if manual_text.strip():
             parse_manual_text(manual_text, sport)
-            st.success("Manual data ingested (mock parser).")
+            st.success(f"Manual data ingested for {sport} (mock parser).")
         else:
             st.warning("No text detected.")
 
@@ -429,7 +755,7 @@ with tab_analysis:
         if screenshot is not None:
             img = Image.open(screenshot) if Image is not None else None
             parse_screenshot(img, sport)
-            st.success("Screenshot processed (mock OCR).")
+            st.success(f"Screenshot processed for {sport} (mock OCR).")
         else:
             st.warning("No screenshot uploaded.")
 
@@ -439,7 +765,7 @@ with tab_analysis:
     if board["props"] is None:
         st.info("No board data loaded yet. Run a scan, paste data, or upload a screenshot.")
     else:
-        st.markdown("🔒 **Validation Firewall:** PASSED (2 games, 2 matchups verified, 0 props removed)")
+        st.markdown("🔒 **Validation Firewall:** PASSED (mock counts; real filters plug in here)")
 
         st.markdown("### 🚨 PRE-FILTER: LINEUP & INJURY VERIFICATION")
         st.table(board["injuries"])
@@ -463,32 +789,28 @@ with tab_analysis:
         st.markdown(
             """
 **v5.3 DeepSeek — Outlier Suppression (Weight: 0.18)**  
-- Approves Wembanyama REB Over, Maxey PTS Over, Edwards PTS Under.  
-- Passes Embiid PTS (variance too high), combo props with wide sigma.
+- Approves core star props; passes high-variance edges.
 
 **v6.5 Gemini — Environmental Physics (Weight: 0.10)**  
-- No major environmental flags; approves all single-stat props, passes combo props.
+- Adjusts for weather/park/arena; passes only stable environments.
 
 **v25.4 Claude — Motivation / Ref Bias (Weight: 0.14)**  
-- Elevates Wembanyama and Maxey due to motivation and whistle profile.  
-- Passes Brunson due to trap coverage.
+- Elevates must-win / narrative spots; suppresses low-motivation edges.
 
 **v4.0 Copilot — Deterministic Floor Engine (Weight: 0.14)**  
-- Approves Wembanyama, Maxey, Towns, Edwards Under based on floor vs line.  
-- Passes combo props (floors too tight).
+- Approves only props with floor clearly above line.
 
 **v4.1 Perplexity — Volatility Mapping (Weight: 0.10)**  
-- Approves single-stat props; flags combo props as high variance.
+- Flags high-sigma props; passes only single-stat stable edges.
 
 **v6.0 Supreme — Governance / CLV Integrity (Weight: 0.18)**  
-- Sovereign on Wembanyama and Maxey; approves Edwards Under.  
-- Passes Embiid due to market uncertainty.
+- Sovereign only when CLV and model density align.
 
 **v22.6 Grok — Ceiling Variance Engine (Weight: 0.10)**  
-- Approves Wembanyama, Maxey, Towns; passes Brunson (ceiling capped).
+- Approves props with ceiling far above line; passes capped ceilings.
 
 **Base Model — Raw Projection Layer (Weight: 0.06)**  
-- Approves Wembanyama, Maxey, Edwards; passes Embiid/Brunson.
+- Baseline projections; no governance.
 """
         )
 
@@ -509,7 +831,7 @@ with tab_analysis:
             with c4:
                 st.write(f"{row['Weighted Score']:.3f}")
             with c5:
-                if st.button("LOCK THIS PROP", key=f"lock_prop_{idx}"):
+                if st.button("LOCK THIS PROP", key=f"lock_prop_{sport}_{idx}"):
                     add_lock(
                         {
                             "type": "PROP",
@@ -541,7 +863,7 @@ with tab_analysis:
                 with c4:
                     st.write(f"{row['Weighted Score']:.3f}")
                 with c5:
-                    if st.button("LOCK THIS GAME", key=f"lock_game_{idx}"):
+                    if st.button("LOCK THIS GAME", key=f"lock_game_{sport}_{idx}"):
                         add_lock(
                             {
                                 "type": "GAME",
@@ -567,11 +889,12 @@ with tab_locks:
     st.markdown("## 🔒 BETCOUNCIL LOCKS, PARLAY & LEDGER")
 
     board = st.session_state.board_data
-    if board["props"] is None or st.session_state.games is None:
+    games = st.session_state.games
+    if board["props"] is None or games is None:
         st.info("No board data available. Load data from Analysis tab first.")
     else:
         df_props = board["props"].copy()
-        df_games = st.session_state.games.copy()
+        df_games = games.copy()
 
         st.markdown("### 🔥 Prop Lock of the Day (Model)")
         lock_prop = df_props.sort_values("Weighted Score", ascending=False).iloc[0]
@@ -750,16 +1073,15 @@ with tab_tools:
 
     if st.button("Scan All (Tools Tab)"):
         scan_all_sources("NBA")
-        st.success("Scan complete (mock).")
+        st.success("Scan complete for NBA (mock).")
 
     st.markdown("---")
     st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
     st.markdown(
         """
-- RLM Status: DETECTED — Example: Edwards UNDER 25.5 PTS moving against public sentiment.  
-- Contrarian Flag: ACTIVE — Public on Embiid Over; Council on Under/Pass.  
-- Regime Type: STABLE  
-- CLV: Tracked vs closing lines (mock placeholder).
+- RLM Status: DETECTED — Example: key Under moving against public sentiment.  
+- Contrarian Flag: ACTIVE — Public on overs; Council on unders/passes.  
+- Regime Type: STABLE (mock).  
 """
     )
 
@@ -767,11 +1089,11 @@ with tab_tools:
     st.markdown("### 11-Sensor Checklist")
     sensors = [
         "Lineup Confirmed",
-        "Minutes Floor Verified",
-        "Blowout Risk Evaluated",
-        "Pace & Possessions Context",
+        "Minutes / Usage Floor Verified",
+        "Blowout / Game Script Risk Evaluated",
+        "Pace / Possessions / Run Environment",
         "Matchup Coverage & Scheme",
-        "Referee / Whistle Profile",
+        "Referee / Umpire / Whistle Profile",
         "Travel & Rest Differential",
         "CLV vs Open/Close",
         "Public vs Sharp Money Split",
@@ -788,8 +1110,7 @@ with tab_tools:
         f"- Safe Corridor: ACTIVE  \n"
         f"- Emergency Floor: ACTIVE ({emergency_floor}%)  \n"
         "- Blowout Advisory: INACTIVE  \n"
-        "- Active Locks: "
-        f"{len([l for l in st.session_state.locks if l['status']=='PENDING'])}"
+        f"- Active Locks: {len([l for l in st.session_state.locks if l['status']=='PENDING'])}"
     )
 
     st.markdown("---")
@@ -819,23 +1140,22 @@ with tab_summary:
             "**Data Source:** BettingPros + RotoWire + CBS Sports + Covers.com + DraftKings + ESPN"
         )
         st.markdown(
-            f"**Sport:** NBA — {date.today().strftime('%b %d, %Y')}  \n"
+            f"**Sport:** NBA/MLB/NFL/NHL/ALL (depends on last scan) — {date.today().strftime('%b %d, %Y')}  \n"
             f"Status: 🛡️ SAFE CORRIDOR MODE ACTIVE | 🚨 EMERGENCY FLOOR ACTIVE ({emergency_floor}%)"
         )
 
         st.markdown(
             "🔒 **Validation Firewall:** PASSED "
-            f"({len(spreads)} games, {len(injuries)} matchups verified, 0 props removed)"
+            f"({len(spreads)} games, {len(injuries)} matchups verified, 0 props removed — mock)."
         )
 
         st.markdown("### 🚨 PRE-FILTER: LINEUP & INJURY VERIFICATION")
         st.table(injuries)
-        st.caption("Lineup data sourced from BettingPros / RotoWire / DraftEdge equivalents (mock).")
 
-        st.markdown("### 🚨 BLOWOUT ADVISORY")
+        st.markdown("### 🚨 BLOWOUT / GAME SCRIPT ADVISORY")
         st.table(spreads)
 
-        st.markdown("### 📊 SERIES CONTEXT: APPLIED")
+        st.markdown("### 📊 SERIES / CONTEXT: APPLIED")
         st.table(series)
 
         st.markdown("### 📊 PROPS SURVIVED PRE-FILTER")
@@ -844,14 +1164,14 @@ with tab_summary:
         st.markdown("### 🗳️ MODEL-BY-MODEL VERDICTS")
         st.markdown(
             """
-- v5.3 DeepSeek — Outlier Suppression (0.18): Approves Wembanyama/Maxey/Edwards Under; passes Embiid/Brunson combo props.  
-- v6.5 Gemini — Environmental Physics (0.10): No major environment flags; approves single-stat props.  
-- v25.4 Claude — Motivation / Ref Bias (0.14): Elevates Wembanyama/Maxey; passes Brunson.  
-- v4.0 Copilot — Deterministic Floor Engine (0.14): Approves Wembanyama/Maxey/Towns/Edwards Under; passes combo props.  
-- v4.1 Perplexity — Volatility Mapping (0.10): Approves single-stat props; flags combo props.  
-- v6.0 Supreme — Governance / CLV Integrity (0.18): Sovereign on Wembanyama/Maxey; approves Edwards Under; passes Embiid.  
-- v22.6 Grok — Ceiling Variance Engine (0.10): Approves Wembanyama/Maxey/Towns; passes Brunson.  
-- Base Model — Raw Projection Layer (0.06): Approves Wembanyama/Maxey/Edwards; passes Embiid/Brunson.
+- v5.3 DeepSeek — Outlier Suppression: Approves core edges; passes high-variance props.  
+- v6.5 Gemini — Environmental Physics: Adjusts for environment; passes unstable conditions.  
+- v25.4 Claude — Motivation / Ref Bias: Elevates must-win / narrative spots.  
+- v4.0 Copilot — Deterministic Floor Engine: Approves only strong floors.  
+- v4.1 Perplexity — Volatility Mapping: Flags sigma-heavy props.  
+- v6.0 Supreme — Governance / CLV Integrity: Sovereign only with CLV + density.  
+- v22.6 Grok — Ceiling Variance Engine: Approves high-ceiling edges.  
+- Base Model — Raw Projection Layer: Baseline only.
 """
         )
 
@@ -860,14 +1180,14 @@ with tab_summary:
         consensus["Tier Label"] = consensus["Tier"].apply(tier_badge)
         st.table(consensus)
 
-        st.markdown("**Excluded:** Brunson (volatility / trap coverage), combo props (insufficient model density).")
+        st.markdown("**Excluded:** Volatility traps, thin-model-density combo props (mock).")
 
         st.markdown("### 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
         st.markdown(
             """
-- RLM Status: DETECTED — Edwards UNDER 25.5 PTS moving against public sentiment.  
-- Contrarian Flag: ACTIVE — Public on Embiid Over; Council strictly on Under/Pass.  
-- Regime Type: STABLE  
+- RLM Status: DETECTED (mock).  
+- Contrarian Flag: ACTIVE (mock).  
+- Regime Type: STABLE (mock).  
 """
         )
 
