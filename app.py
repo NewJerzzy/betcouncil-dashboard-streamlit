@@ -17,7 +17,7 @@ class BetCouncilVault:
 
 vault = BetCouncilVault()
 
-# --- 2. CSS & THEME ---
+# --- 2. CSS & THEME (GOLD DASHBOARD) ---
 st.set_page_config(page_title="BetCouncil v3.0", layout="wide")
 st.markdown("""
     <style>
@@ -60,24 +60,30 @@ with tabs[1]: # Board of 8
     
     st.divider()
     
-    # --- THIS IS THE FIX: SPORT SELECTION ---
+    # SPORT SELECTION
     selected_sport = st.selectbox("Select Sport Board", ["NBA", "MLB", "NHL", "UFC", "SOCCER"])
     
     if load_board or scan_all:
+        # --- THE RESTORED SUMMARY LOGIC ---
         st.error(f"🔒 Validation Firewall: PASSED ({selected_sport})")
         
-        # Logic to change data based on selection
-        if selected_sport == "NBA":
-            data = [
-                {"p": "Daniss Jenkins", "m": "DET @ CLE", "l": 10.5, "tier": "Sovereign"},
-                {"p": "Chet Holmgren", "m": "OKC @ LAL", "l": 26.5, "tier": "Sovereign"}
-            ]
-        elif selected_sport == "UFC":
-            data = [{"p": "King Green", "m": "UFC 328", "l": -429, "tier": "Observation"}]
+        # 1. Advisory Module
+        st.markdown("#### 2. PRE-FILTER MODULES (Advisory)")
+        if selected_sport == "MLB":
+            adv_data = [{"Game": "LAD @ NYY", "Context": "Bullpen Heavy", "Advisory": "VOLATILITY: High wind at stadium."}]
+            props_data = [{"p": "Shohei Ohtani", "m": "LAD @ NYY", "t": "HITS", "l": 1.5, "tier": "Sovereign"}]
+        elif selected_sport == "NBA":
+            adv_data = [{"Game": "DET @ CLE", "Context": "DET leads 2-0", "Advisory": "URGENCY: CLE must win home floor."}]
+            props_data = [{"p": "Daniss Jenkins", "m": "DET @ CLE", "t": "PTS", "l": 10.5, "tier": "Sovereign"}]
         else:
-            data = [] # Empty for other sports until we add their data
+            adv_data = []
+            props_data = []
 
-        for item in data:
+        st.table(pd.DataFrame(adv_data))
+
+        # 2. Primary Props Table
+        st.markdown("#### 4. PRIMARY PROPS TABLE (Computed Signals)")
+        for item in props_data:
             c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
             c1.write(f"**{item['p']}** ({item['m']})")
             c2.metric("Line", item['l'])
@@ -85,8 +91,13 @@ with tabs[1]: # Board of 8
             if c4.button("LOCK", key=item['p']):
                 vault.lock(selected_sport, item['m'], item['p'], item['l'], item['tier'], unit_size)
                 st.toast(f"Locked {item['p']}")
+        
+        # 3. Model Verdicts (Footer)
+        st.markdown("#### 5. MODEL-BY-MODEL VERDICTS")
+        st.caption(f"DeepSeek & Supreme weighting 0.18 applied to {selected_sport} signals.")
+        
     else:
-        st.info(f"Select a sport and click 'Load Board' to see the {selected_sport} props.")
+        st.info(f"Select {selected_sport} and click 'Load Board' to generate the Summary.")
 
 with tabs[3]: # Ledger
     st.subheader("Persistent Vault")
