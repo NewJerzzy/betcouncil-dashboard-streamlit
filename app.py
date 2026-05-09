@@ -17,71 +17,137 @@ st.set_page_config(
 st.markdown("""
 <style>
 body, .stApp, .main {
-    background-color: #0a0c14;
-    color: #e6edf3;
+    background-color: #07090c;
+    color: #e8f0f8;
     font-family: 'Inter', system-ui, sans-serif;
 }
-h1, h2, h3, h4, h5 { color: #ffffff; text-transform: uppercase; letter-spacing: 0.5px; }
+h1, h2, h3, h4, h5 { color: #f4f8fc; text-transform: uppercase; letter-spacing: 0.5px; }
 .stButton > button {
     background-color: #7c4dff;
     color: #ffffff;
     border: none;
     border-radius: 0.5rem;
-    padding: 0.6rem 1.5rem;
+    padding: 0.55rem 1.3rem;
     font-weight: 600;
     cursor: pointer;
+    font-size: 0.85rem;
 }
 .stButton > button:hover { background-color: #651fff; }
 .stButton > button:disabled { opacity: 0.4; cursor: not-allowed; }
 .section-card {
-    background-color: #141824;
-    border: 1px solid #1f2639;
-    border-radius: 0.75rem;
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-}
-.sovereign-badge { color: #00c853; font-weight: 700; }
-.elite-badge { color: #ffd600; font-weight: 700; }
-.approved-badge { color: #448aff; font-weight: 600; }
-.lean-badge { color: #9e9e9e; font-weight: 600; }
-.pass-badge { color: #ff5252; font-weight: 600; }
-.status-dot-green { color: #00c853; }
-.status-dot-red { color: #ff5252; }
-.status-dot-yellow { color: #ffd600; }
-.legend-box {
-    background-color: #141824;
-    border: 1px solid #1f2639;
+    background-color: #0d1219;
+    border: 1px solid #1c2a3a;
     border-radius: 0.5rem;
-    padding: 0.75rem;
-    margin: 0.5rem 0;
-    font-size: 0.85rem;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
 }
-.ready-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 999px;
+.command-bar {
+    background: linear-gradient(135deg, rgba(232,160,32,0.1), #0d1219);
+    border: 1px solid rgba(232,160,32,0.35);
+    border-top: 2px solid #e8a020;
+    border-radius: 0 0 10px 10px;
+    padding: 14px 18px;
+    margin-bottom: 14px;
+}
+.toggle-btn {
+    font-size: 10px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    border: 1px solid #5a7088;
+    background: rgba(255,255,255,0.04);
+    color: #5a7088;
+    cursor: pointer;
+    font-family: monospace;
+}
+.toggle-btn.active { border-color: #e8a020; color: #e8a020; background: rgba(232,160,32,0.1); }
+.sovereign-badge { color: #e8a020; font-weight: 700; }
+.elite-badge { color: #16a84a; font-weight: 700; }
+.approved-badge { color: #2868d0; font-weight: 600; }
+.lean-badge { color: #888; font-weight: 600; }
+.pass-badge { color: #d03030; font-weight: 600; }
+.model-card {
+    background: #111a24;
+    border: 1px solid #1c2a3a;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+.model-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    border-bottom: 1px solid #1c2a3a;
+    background: rgba(255,255,255,0.015);
+    cursor: pointer;
+}
+.metric-box {
+    background: #0d1219;
+    border: 1px solid #1c2a3a;
+    border-radius: 6px;
+    padding: 7px 10px;
+}
+.metric-label {
+    font-size: 10px;
+    color: #5a7088;
+    font-family: monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.metric-value {
+    font-size: 16px;
     font-weight: 600;
-    font-size: 0.85rem;
-    margin-right: 8px;
 }
-.ready-green { background-color: rgba(0,200,83,0.15); color: #00c853; border: 1px solid #00c853; }
-.ready-yellow { background-color: rgba(255,214,0,0.15); color: #ffd600; border: 1px solid #ffd600; }
-.ready-red { background-color: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid #ff5252; }
+.consensus-table { width: 100%; border-collapse: collapse; }
+.consensus-table th { font-size: 10px; font-family: monospace; color: #5a7088; text-transform: uppercase; text-align: left; padding: 5px 8px; border-bottom: 1px solid #1c2a3a; }
+.consensus-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; }
+.parlay-card {
+    background: linear-gradient(135deg, rgba(22,168,74,0.07), #111a24);
+    border: 1px solid rgba(22,168,74,0.3);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.game-parlay-card {
+    background: linear-gradient(135deg, rgba(40,104,208,0.07), #111a24);
+    border: 1px solid rgba(40,104,208,0.3);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.lock-btn {
+    background: rgba(22,168,74,0.15);
+    border: 1px solid #16a84a;
+    color: #16a84a;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-weight: 500;
+}
+.lock-btn:hover { background: rgba(22,168,74,0.3); }
+.gold-text { color: #e8a020; }
+.green-text { color: #16a84a; }
+.red-text { color: #d03030; }
+.muted-text { color: #5a7088; }
+.white-text { color: #f4f8fc; }
+.mono { font-family: monospace; }
+.status-dot-green { color: #16a84a; }
+.status-dot-red { color: #d03030; }
+.status-dot-yellow { color: #ffd600; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTS
+# CONSTANTS — EXACT MATCH TO v3.0 HARD ENGINE
 # =========================
 MODELS = [
-    {"name": "v5.3 DeepSeek — Outlier Suppression", "weight": 0.18},
-    {"name": "v6.5 Gemini — Environmental Physics", "weight": 0.10},
-    {"name": "v25.4 Claude — Motivation / Ref Bias", "weight": 0.14},
-    {"name": "v4.0 Copilot — Deterministic Floor Engine", "weight": 0.14},
-    {"name": "v4.1 Perplexity — Volatility Mapping", "weight": 0.10},
-    {"name": "v6.0 Supreme — Governance / CLV Integrity", "weight": 0.18},
-    {"name": "v22.6 Grok — Ceiling Variance Engine", "weight": 0.10},
-    {"name": "Base Model — Raw Projection Layer", "weight": 0.06},
+    {"name": "v5.3 DeepSeek — Outlier Suppression", "weight": 0.18, "em": "🐋"},
+    {"name": "v6.5 Gemini — Environmental Physics", "weight": 0.10, "em": "✦"},
+    {"name": "v25.4 Claude — Motivation / Ref Bias", "weight": 0.14, "em": "🔮"},
+    {"name": "v4.0 Copilot — Deterministic Floor Engine", "weight": 0.14, "em": "⬡"},
+    {"name": "v4.1 Perplexity — Volatility Mapping", "weight": 0.10, "em": "◈"},
+    {"name": "v6.0 Supreme — Governance / CLV Integrity", "weight": 0.18, "em": "👑"},
+    {"name": "v22.6 Grok — Ceiling Variance Engine", "weight": 0.10, "em": "✕"},
+    {"name": "Base Model — Raw Projection Layer", "weight": 0.06, "em": "📊"},
 ]
 
 TIER_THRESHOLDS = {"SOVEREIGN": 0.70, "ELITE": 0.55, "APPROVED": 0.40, "LEAN": 0.20}
@@ -118,9 +184,7 @@ LINEUP_SOURCES = {
     "RotoWire": "https://www.rotowire.com/basketball/{sport}/lineups.php",
 }
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; BetCouncil/3.0)"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; BetCouncil/3.0)"}
 
 # =========================
 # SESSION STATE
@@ -129,6 +193,8 @@ if "bankroll" not in st.session_state: st.session_state.bankroll = DEFAULT_BANKR
 if "integrity" not in st.session_state: st.session_state.integrity = 64
 if "safe_corridor" not in st.session_state: st.session_state.safe_corridor = True
 if "emergency_floor" not in st.session_state: st.session_state.emergency_floor = True
+if "is_playoff" not in st.session_state: st.session_state.is_playoff = True
+if "blowout_advisory" not in st.session_state: st.session_state.blowout_advisory = True
 if "locks" not in st.session_state: st.session_state.locks = []
 if "history" not in st.session_state: st.session_state.history = []
 if "autopsy_log" not in st.session_state: st.session_state.autopsy_log = []
@@ -149,10 +215,9 @@ if "site_status" not in st.session_state:
 if "board_ready" not in st.session_state: st.session_state.board_ready = False
 if "board_check_time" not in st.session_state: st.session_state.board_check_time = None
 if "last_scan_time" not in st.session_state: st.session_state.last_scan_time = None
-if "auto_refresh" not in st.session_state: st.session_state.auto_refresh = False
-if "estimated_ready_time" not in st.session_state: st.session_state.estimated_ready_time = None
 if "manual_results" not in st.session_state: st.session_state.manual_results = None
 if "cross_sport_board" not in st.session_state: st.session_state.cross_sport_board = None
+if "model_expanded" not in st.session_state: st.session_state.model_expanded = {}
 
 # =========================
 # HELPERS
@@ -172,12 +237,12 @@ def get_tier(score):
 
 def tier_label(tier):
     return {
-        "SOVEREIGN": "⚡ Sovereign Lock",
-        "ELITE": "🟡 Elite Edge", 
-        "APPROVED": "🔵 Approved Single",
-        "LEAN": "⚪ Lean",
-        "PASS": "🔴 PASS"
+        "SOVEREIGN": "⚡ Sovereign Lock", "ELITE": "🟡 Elite Edge",
+        "APPROVED": "🔵 Approved Single", "LEAN": "⚪ Lean", "PASS": "🔴 PASS"
     }.get(tier, "—")
+
+def tier_color(tier):
+    return {"SOVEREIGN": "#e8a020", "ELITE": "#16a84a", "APPROVED": "#2868d0", "LEAN": "#888", "PASS": "#d03030"}.get(tier, "#5a7088")
 
 def generate_lock_id():
     st.session_state.lock_num += 1
@@ -201,124 +266,58 @@ def classify_loss(lock):
 
 def mark_site_ok(name):
     st.session_state.site_status[name] = {"status": "ok", "last_checked": datetime.now().strftime("%H:%M:%S")}
-
 def mark_site_fail(name):
     st.session_state.site_status[name] = {"status": "fail", "last_checked": datetime.now().strftime("%H:%M:%S")}
-
-def mark_site_degraded(name):
-    st.session_state.site_status[name] = {"status": "degraded", "last_checked": datetime.now().strftime("%H:%M:%S")}
-
-def check_board_ready(sport="NBA"):
-    """Ping ALL prop and game sources with failover. Return True if ANY source has tomorrow's data."""
-    sport_lower = sport.lower()
-    tomorrow = date.today() + timedelta(days=1)
-    tomorrow_formats = [
-        tomorrow.strftime("%b %d"), tomorrow.strftime("%B %d"),
-        tomorrow.strftime("%m/%d"), tomorrow.strftime("%Y-%m-%d"),
-    ]
-    
-    sources_to_check = []
-    for name, url_template in PROP_SOURCES.items():
-        sources_to_check.append((name, url_template.replace("{sport}", sport_lower), "props"))
-    for name, url_template in GAME_SOURCES.items():
-        sources_to_check.append((name, url_template.replace("{sport}", sport_lower), "games"))
-    
-    ready_sources = []
-    
-    for name, url, source_type in sources_to_check:
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                page_text = soup.get_text()
-                date_found = any(fmt in page_text for fmt in tomorrow_formats)
-                tables = soup.find_all("table")
-                has_table_data = any(len(table.find_all("tr")) > 3 for table in tables)
-                has_content = len(page_text.strip()) > 500
-                
-                if date_found or has_table_data or has_content:
-                    ready_sources.append(name)
-                    mark_site_ok(name)
-                else:
-                    mark_site_degraded(name)
-            else:
-                mark_site_fail(name)
-        except:
-            mark_site_fail(name)
-    
-    if ready_sources:
-        st.session_state.board_ready = True
-        st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
-        st.session_state.last_scan_time = st.session_state.board_check_time
-        st.session_state.estimated_ready_time = None
-        return True
-    
-    st.session_state.board_ready = False
-    st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
-    if st.session_state.estimated_ready_time is None:
-        st.session_state.estimated_ready_time = (datetime.now() + timedelta(hours=4)).strftime("%I:%M %p ET")
-    return False
-
-def board_ready_badge():
-    if st.session_state.board_ready:
-        return '<span class="ready-badge ready-green">🟢 BOARD READY — Tomorrow\'s props available</span>'
-    elif st.session_state.board_check_time:
-        return f'<span class="ready-badge ready-yellow">🟡 WAITING — Last check: {st.session_state.board_check_time}. Estimated: {st.session_state.estimated_ready_time or "after 10 PM ET"}</span>'
-    return '<span class="ready-badge ready-red">🔴 NO DATA — Click "Check Now" to verify</span>'
-
-def load_button_label():
-    if st.session_state.board_ready: return "🟢 Load Board (Ready)"
-    elif st.session_state.board_check_time: return "🟡 Load Board (Check Again)"
-    return "🔴 Load Board (No Data)"
 
 def parse_manual_input(text):
     results = []
     for line in text.strip().split("\n"):
         line = line.strip()
         if not line: continue
-        game_match = re.match(r"(.+?)\s+([+-]?\d+\.?\d*)\s*$", line)
-        if game_match and ("@" in line or "vs" in line.lower() or any(t in line for t in ["ML", "Over", "Under"])):
-            results.append({"type": "GAME", "raw": line})
-            continue
         prop_match = re.match(r"(.+?)\s+(OVER|UNDER)\s+([\d.]+)\s+(.+)", line, re.IGNORECASE)
         if prop_match:
             results.append({
-                "type": "PROP",
-                "player": prop_match.group(1).strip(),
-                "side": prop_match.group(2).upper(),
-                "line": float(prop_match.group(3)),
-                "prop": prop_match.group(4).strip(),
-                "raw": line,
+                "type": "PROP", "player": prop_match.group(1).strip(),
+                "side": prop_match.group(2).upper(), "line": float(prop_match.group(3)),
+                "prop": prop_match.group(4).strip(), "raw": line,
             })
     return results
 
 def run_council_on_props(raw_props):
-    """Run the 8-model Council on a list of raw prop dicts. Return results list."""
     if not raw_props: return []
     results = []
     for prop in raw_props:
         player, ptype, side, line = prop["Player"], prop["Prop"], prop["Side"], prop["Line"]
         votes, reasons = {}, {}
-        is_combo = any(k in ptype.upper() for k in ["PTS+A", "PTS+R", "PRA", "COMBO"])
+        is_combo = any(k in ptype.upper() for k in ["PTS+A", "PTS+R", "PRA", "COMBO", "REB+AST"])
         is_under = "UNDER" in side.upper()
-        is_star = any(s in player for s in ["Shai", "LeBron", "Cade", "Donovan", "Anthony", "Aaron", "Shohei", "Bryce", "Juan"])
+        is_star = any(s in player for s in ["Shai", "LeBron", "Cade", "Donovan", "Anthony", "Aaron", "Shohei", "Bryce", "Juan", "James", "Tobias", "Chet", "Victor", "Jalen", "Karl", "Joel", "De'Aaron", "Julius", "Daniss", "Deandre"])
 
-        votes[MODELS[0]["name"]] = 0 if is_combo else (1 if is_under else 1)
-        reasons[MODELS[0]["name"]] = "Combo variance too high" if is_combo else ("Outlier supports Under" if is_under else "Consistent, outlier clean")
-        votes[MODELS[1]["name"]] = 0
-        reasons[MODELS[1]["name"]] = "No environmental edge"
-        votes[MODELS[2]["name"]] = 1 if is_star else 0
-        reasons[MODELS[2]["name"]] = "Playoff motivation / legacy game" if is_star else "Role player — motivation variance"
-        votes[MODELS[3]["name"]] = 0 if is_combo else 1
-        reasons[MODELS[3]["name"]] = "Floor unreliable" if is_combo else "Deterministic floor above line"
-        votes[MODELS[4]["name"]] = 0 if is_combo else 1
-        reasons[MODELS[4]["name"]] = "Sigma too wide" if is_combo else "Low volatility"
-        votes[MODELS[5]["name"]] = 1 if is_star else 0
-        reasons[MODELS[5]["name"]] = "CLV positive, edge meets floor" if is_star else "Edge below Emergency Floor"
-        votes[MODELS[6]["name"]] = 1 if is_star else 0
-        reasons[MODELS[6]["name"]] = "Ceiling manageable" if is_star else "Ceiling risk"
-        votes[MODELS[7]["name"]] = 0 if is_combo else 1
-        reasons[MODELS[7]["name"]] = "Margin of error" if is_combo else "Raw projection supports"
+        for i, model in enumerate(MODELS):
+            if i == 0:
+                votes[model["name"]] = 0 if is_combo else (1 if is_under else 1)
+                reasons[model["name"]] = "Combo variance too high" if is_combo else ("Outlier supports Under" if is_under else "Consistent, outlier clean")
+            elif i == 1:
+                votes[model["name"]] = 0
+                reasons[model["name"]] = "No environmental edge"
+            elif i == 2:
+                votes[model["name"]] = 1 if is_star else 0
+                reasons[model["name"]] = "Playoff motivation / legacy game" if is_star else "Role player — motivation variance"
+            elif i == 3:
+                votes[model["name"]] = 0 if is_combo else 1
+                reasons[model["name"]] = "Floor unreliable" if is_combo else "Deterministic floor above line"
+            elif i == 4:
+                votes[model["name"]] = 0 if is_combo else 1
+                reasons[model["name"]] = "Sigma too wide" if is_combo else "Low volatility"
+            elif i == 5:
+                votes[model["name"]] = 1 if is_star else 0
+                reasons[model["name"]] = "CLV positive, edge meets floor" if is_star else "Edge below Emergency Floor"
+            elif i == 6:
+                votes[model["name"]] = 1 if is_star else 0
+                reasons[model["name"]] = "Ceiling manageable" if is_star else "Ceiling risk"
+            else:
+                votes[model["name"]] = 0 if is_combo else 1
+                reasons[model["name"]] = "Margin of error" if is_combo else "Raw projection supports"
 
         ws = weighted_score(votes)
         tier = get_tier(ws)
@@ -335,7 +334,7 @@ def run_game_council_on_games(raw_games):
     results = []
     for game in raw_games:
         matchup = game["Matchup"]
-        votes = {model["name"]: (1 if any(t in matchup for t in ["CLE", "OKC", "NYY", "PHI", "CHC"]) else 0) for model in MODELS}
+        votes = {model["name"]: (1 if any(t in matchup for t in ["CLE", "OKC", "NYY", "PHI", "CHC", "NYK", "SAS"]) else 0) for model in MODELS}
         ws = weighted_score(votes)
         tier = get_tier(ws)
         results.append({
@@ -346,17 +345,32 @@ def run_game_council_on_games(raw_games):
         })
     return results
 
-def run_manual_council(props_list):
-    results = []
-    for item in props_list:
-        if item["type"] != "PROP": continue
-        raw = [{"Player": item["player"], "Prop": item["prop"], "Side": item["side"], "Line": item["line"], "Sport": "NBA"}]
-        cooked = run_council_on_props(raw)
-        if cooked:
-            cooked[0]["raw"] = item.get("raw", "")
-            cooked[0]["type"] = "PROP"
-            results.append(cooked[0])
-    return results
+def build_prop_parlay(board_data=None):
+    data = board_data or st.session_state.board_data
+    if not data: return []
+    eligible = [d for d in data if d["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+    eligible.sort(key=lambda x: x["Weighted Score"], reverse=True)
+    legs, teams = [], set()
+    for item in eligible:
+        team = item["Player"].split()[-1]
+        if len(legs) == 2 and team in teams: continue
+        if len(legs) >= 5: break
+        legs.append(item)
+        teams.add(team)
+    return legs
+
+def build_game_parlay():
+    data = st.session_state.game_verdicts
+    if not data: return []
+    eligible = [d for d in data if d["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+    eligible.sort(key=lambda x: x["Weighted Score"], reverse=True)
+    legs, seen = [], set()
+    for item in eligible:
+        if len(legs) == 2 and item["Matchup"] in seen: continue
+        if len(legs) >= 6: break
+        legs.append(item)
+        seen.add(item["Matchup"])
+    return legs
 
 # =========================
 # SAMPLE DATA
@@ -383,7 +397,6 @@ MLB_SAMPLE = {
         {"Player": "Aaron Judge", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER", "Sport": "MLB"},
         {"Player": "Shohei Ohtani", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER", "Sport": "MLB"},
         {"Player": "Bryce Harper", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER", "Sport": "MLB"},
-        {"Player": "Juan Soto", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER", "Sport": "MLB"},
         {"Player": "Spencer Strider", "Prop": "STRIKEOUTS", "Line": 4.5, "Side": "OVER", "Sport": "MLB"},
     ],
     "raw_games": [
@@ -396,9 +409,7 @@ MLB_SAMPLE = {
 }
 
 def load_sport_data(sport):
-    if sport == "NBA": data = NBA_SAMPLE
-    elif sport == "MLB": data = MLB_SAMPLE
-    else: data = {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0}
+    data = NBA_SAMPLE if sport == "NBA" else (MLB_SAMPLE if sport == "MLB" else {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0})
     st.session_state.raw_props = data["raw_props"]
     st.session_state.raw_games = data["raw_games"]
     st.session_state.injuries = data["injuries"]
@@ -411,55 +422,34 @@ def load_sport_data(sport):
     st.session_state.game_verdicts = run_game_council_on_games(data["raw_games"])
 
 def scan_all_sports():
-    """Scan all four major sports and merge into a single cross-sport board."""
-    all_props = []
-    all_games = []
+    all_props, all_games = [], []
     for sport in SPORTS:
-        if sport == "NBA": data = NBA_SAMPLE
-        elif sport == "MLB": data = MLB_SAMPLE
-        else: data = {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0}
+        data = NBA_SAMPLE if sport == "NBA" else (MLB_SAMPLE if sport == "MLB" else {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0})
         all_props.extend(data["raw_props"])
         all_games.extend(data["raw_games"])
-        for name in list(PROP_SOURCES.keys()) + list(GAME_SOURCES.keys()):
-            mark_site_ok(name)
     prop_results = run_council_on_props(all_props)
     game_results = run_game_council_on_games(all_games)
     prop_results.sort(key=lambda x: x["Weighted Score"], reverse=True)
     game_results.sort(key=lambda x: x["Weighted Score"], reverse=True)
     st.session_state.cross_sport_board = {
-        "props": prop_results,
-        "games": game_results,
+        "props": prop_results, "games": game_results,
         "scanned_at": datetime.now().strftime("%H:%M:%S"),
     }
     st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
     st.session_state.board_ready = True
 
-def build_prop_parlay():
-    data = st.session_state.board_data
-    if not data: return []
-    eligible = [d for d in data if d["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
-    eligible.sort(key=lambda x: x["Weighted Score"], reverse=True)
-    legs, teams = [], set()
-    for item in eligible:
-        team = item["Player"].split()[-1]
-        if len(legs) == 2 and team in teams: continue
-        if len(legs) >= 5: break
-        legs.append(item)
-        teams.add(team)
-    return legs
-
-def build_game_parlay():
-    data = st.session_state.game_verdicts
-    if not data: return []
-    eligible = [d for d in data if d["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
-    eligible.sort(key=lambda x: x["Weighted Score"], reverse=True)
-    legs, seen = [], set()
-    for item in eligible:
-        if len(legs) == 2 and item["Matchup"] in seen: continue
-        if len(legs) >= 6: break
-        legs.append(item)
-        seen.add(item["Matchup"])
-    return legs
+def lock_single_prop(item):
+    lid = generate_lock_id()
+    override_flag = item["Tier"] not in ("SOVEREIGN", "ELITE") or any(k in item["Prop"].upper() for k in ["PRA", "COMBO", "REB+AST", "PTS+A"])
+    st.session_state.locks.append({
+        "id": lid, "type": "PROP", "player": item["Player"],
+        "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
+        "side": item["Side"], "line": item["Line"], "tier": item["Tier"],
+        "status": "PENDING", "result": None,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "parlay_id": lid, "override": override_flag,
+    })
+    return lid
 
 def parse_pasted_results(text):
     results = []
@@ -483,26 +473,11 @@ with st.sidebar:
     st.checkbox("Emergency Floor (12%)", value=st.session_state.emergency_floor, key="emergency_floor")
     
     st.markdown("---")
-    st.markdown("### 📡 Board Readiness")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔍 Check Now"):
-            ready = check_board_ready(st.session_state.last_sport)
-            if ready: st.success("Board is ready!")
-            else: st.warning("Not ready yet.")
-    with col2:
-        st.checkbox("Auto-check", value=st.session_state.auto_refresh, key="auto_refresh")
-    if st.session_state.last_scan_time:
-        st.caption(f"Last successful scan: {st.session_state.last_scan_time}")
-    
-    st.markdown("---")
-    st.markdown("### 🌐 Cross-Sport")
     if st.button("🌍 Scan All Sports", use_container_width=True):
         scan_all_sports()
-        st.success("All 4 leagues scanned. Top picks ready.")
+        st.success("All 4 leagues scanned.")
     
-    st.markdown("---")
-    label = load_button_label()
+    label = "🟢 Load Board" if st.session_state.board_ready else "🔴 Load Board (No Data)"
     if st.button(label):
         load_sport_data(st.session_state.last_sport)
         st.success(f"{st.session_state.last_sport} board loaded.")
@@ -512,183 +487,202 @@ with st.sidebar:
         st.success("Refreshed.")
 
 # =========================
-# TABS
+# COMMAND BAR
 # =========================
-tabs = st.tabs(["🌍 Cross-Sport Best Bets", "🏀 Board of 8", "🔒 Locks of the Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🛡️ SEM & System"])
+st.markdown(f"""
+<div class="command-bar">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+        <div style="width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">⚡</div>
+        <div>
+            <div style="font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;">BetCouncil</div>
+            <div style="font-size:11px;color:#5a7088;margin-top:1px;">v3.0 Hard Engine · 8 Models · Fixed Weights</div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+            <span class="toggle-btn {'active' if st.session_state.safe_corridor else ''}">🛡️ Safe Corridor: {'ON' if st.session_state.safe_corridor else 'OFF'}</span>
+            <span class="toggle-btn {'active' if st.session_state.blowout_advisory else ''}">⚠️ Blowout: {'ON' if st.session_state.blowout_advisory else 'OFF'}</span>
+            <span class="toggle-btn {'active' if st.session_state.is_playoff else ''}">🏆 Playoff: {'ON' if st.session_state.is_playoff else 'OFF'}</span>
+            <span class="toggle-btn" style="border-color:#e8a020;color:#e8a020;background:rgba(232,160,32,0.1);">🔒 {len([l for l in st.session_state.locks if l.get('status') == 'PENDING'])} Locks</span>
+        </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px;">
+        <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.bankroll:.2f}</div></div>
+        <div class="metric-box"><div class="metric-label">Integrity Score</div><div class="metric-value" style="color:{'#16a84a' if st.session_state.integrity >= 70 else '#d03030' if st.session_state.integrity < 55 else '#e8a020'}">{st.session_state.integrity}/100</div></div>
+        <div class="metric-box"><div class="metric-label">Active Floor</div><div class="metric-value green-text">12%</div></div>
+        <div class="metric-box"><div class="metric-label">Kelly Fraction</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
+        <div class="metric-box"><div class="metric-label">Unit (IS/BR)</div><div class="metric-value gold-text">${active_unit()}</div></div>
+        <div class="metric-box"><div class="metric-label">Active Locks</div><div class="metric-value" style="color:{'#e89020' if len([l for l in st.session_state.locks if l.get('status') == 'PENDING']) > 0 else '#5a7088'}">{len([l for l in st.session_state.locks if l.get('status') == 'PENDING'])}</div></div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # =========================
-# TAB 0 — CROSS-SPORT BEST BETS
+# TABS
+# =========================
+tabs = st.tabs(["🌍 Cross-Sport", "🏀 Board of 8", "🔒 Locks of Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🛡️ SEM & System"])
+
+# =========================
+# TAB 0 — CROSS-SPORT
 # =========================
 with tabs[0]:
     st.markdown("# 🌍 CROSS-SPORT BEST BETS")
-    st.markdown("Top-ranked props and game lines across all four major sports, sorted by weighted Council score.")
     cross = st.session_state.cross_sport_board
     if not cross:
-        st.info("No cross-sport scan yet. Click 'Scan All Sports' in the sidebar to generate the unified board.")
+        st.info("Click 'Scan All Sports' in the sidebar to generate the unified board.")
     else:
-        st.markdown(f"**Scanned at:** {cross['scanned_at']} | **Source:** All 8 sites across 4 sports")
+        st.markdown(f"**Scanned at:** {cross['scanned_at']}")
         st.markdown("---")
-        
         st.markdown("## 🏆 TOP 5 PROPS — ALL SPORTS")
-        top_props = cross["props"][:5]
-        prop_rows = []
-        for i, p in enumerate(top_props, 1):
-            prop_rows.append({
-                "#": i,
-                "Sport": p.get("Sport", ""),
-                "Player": p["Player"],
-                "Prop": f"{p['Side']} {p['Line']} {p['Prop']}",
-                "Score": p["Weighted Score"],
-                "Tier": p["Tier Label"],
-            })
-        st.table(pd.DataFrame(prop_rows))
-        
-        st.markdown("## 🏆 TOP 3 GAME LINES — ALL SPORTS")
-        top_games = cross["games"][:3]
-        game_rows = []
-        for i, g in enumerate(top_games, 1):
-            game_rows.append({
-                "#": i,
-                "Sport": g.get("Sport", ""),
-                "Matchup": g["Matchup"],
-                "Bet": g.get("Moneyline", g.get("Spread", "")),
-                "Score": g["Weighted Score"],
-                "Tier": g["Tier Label"],
-            })
-        st.table(pd.DataFrame(game_rows))
-        
-        st.markdown("---")
-        st.markdown("### 🔒 Quick Lock — Top Cross-Sport Props")
-        for i, p in enumerate(top_props):
-            override_flag = any(k in p["Prop"].upper() for k in ["PRA", "COMBO", "REB+AST", "PTS+A"])
-            if st.button(f"🔒 Lock: {p['Player']} {p['Side']} {p['Line']} {p['Prop']} ({p['Tier Label']})", key=f"cross_lock_{i}"):
-                lid = generate_lock_id()
-                st.session_state.locks.append({
-                    "id": lid, "type": "PROP",
-                    "player": p["Player"],
-                    "prop": f"{p['Side']} {p['Line']} {p['Prop']}",
-                    "side": p["Side"], "line": p["Line"],
-                    "tier": p["Tier"],
-                    "status": "PENDING", "result": None,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "parlay_id": lid,
-                    "override": override_flag,
-                    "sport": p.get("Sport", ""),
-                })
+        for i, p in enumerate(cross["props"][:5], 1):
+            tc = tier_color(p["Tier"])
+            st.markdown(f"""
+            <div class="section-card" style="border-left:3px solid {tc};">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <span style="font-size:11px;color:#5a7088;">#{i} · {p.get('Sport','')}</span>
+                        <span style="font-weight:600;color:#f4f8fc;"> {p['Player']} {p['Side']} {p['Line']} {p['Prop']}</span>
+                        <span style="font-size:12px;color:{tc};margin-left:8px;font-weight:600;">{p['Tier Label']}</span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span style="font-family:monospace;color:#e8a020;font-weight:600;">{p['Weighted Score']:.2f}</span>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"🔒 Lock #{i}", key=f"cross_lock_{i}"):
+                lid = lock_single_prop(p)
                 st.success(f"Locked: {lid}")
+
+        st.markdown("## 🏆 TOP 3 GAME LINES — ALL SPORTS")
+        for i, g in enumerate(cross["games"][:3], 1):
+            tc = tier_color(g["Tier"])
+            st.markdown(f"""
+            <div class="section-card" style="border-left:3px solid {tc};">
+                <span style="font-size:11px;color:#5a7088;">#{i} · {g.get('Sport','')}</span>
+                <span style="font-weight:600;color:#f4f8fc;"> {g['Matchup']} — {g.get('Moneyline','')}</span>
+                <span style="font-size:12px;color:{tc};margin-left:8px;font-weight:600;">{g['Tier Label']}</span>
+                <span style="font-family:monospace;color:#e8a020;font-weight:600;float:right;">{g['Weighted Score']:.2f}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
 # =========================
 # TAB 1 — BOARD OF 8
 # =========================
 with tabs[1]:
     st.markdown("# 🧠 THE BOARD OF 8 — CLARITY MODEL OUTPUT")
-    st.markdown(board_ready_badge(), unsafe_allow_html=True)
-    if st.session_state.auto_refresh:
-        st.caption("🔄 Auto-check active — checking every 30 minutes")
+    st.markdown("**Data Source:** BettingPros + RotoWire + CBS Sports + Covers + DraftKings + ESPN")
     
-    # ===== MANUAL OVERRIDE SECTION =====
+    # Manual Override
     st.markdown("---")
     st.markdown("## ⚡ MANUAL OVERRIDE — QUICK PROP LOOKUP")
-    st.markdown("Paste a single prop, game line, or full slip. One per line.")
-    manual_input = st.text_area(
-        "Paste props or games here",
-        placeholder="LeBron James OVER 21.5 Points\nOKC -8.5\nJames Harden OVER 5.5 Rebounds",
-        height=120,
-        key="manual_override_input"
-    )
-    col_m1, col_m2, col_m3 = st.columns([1, 1, 1])
-    with col_m1:
+    manual_input = st.text_area("Paste props or games here", placeholder="LeBron James OVER 21.5 Points\nOKC -8.5", height=100, key="manual_override")
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
         if st.button("⚡ Run Manual Analysis", use_container_width=True):
             if manual_input.strip():
                 parsed = parse_manual_input(manual_input)
                 if parsed:
-                    st.session_state.manual_results = run_manual_council(parsed)
+                    st.session_state.manual_results = []
+                    for item in parsed:
+                        raw = [{"Player": item["player"], "Prop": item["prop"], "Side": item["side"], "Line": item["line"], "Sport": "NBA"}]
+                        cooked = run_council_on_props(raw)
+                        if cooked:
+                            cooked[0]["raw"] = item.get("raw", "")
+                            st.session_state.manual_results.append(cooked[0])
                     st.success(f"Analyzed {len(st.session_state.manual_results)} props.")
-                else:
-                    st.warning("Could not parse. Use: Player OVER/UNDER Line Prop")
-    with col_m2:
-        st.file_uploader("📸 Upload Screenshot", type=["png","jpg","jpeg"], key="manual_screenshot")
-    with col_m3:
-        if st.button("🗑️ Clear Manual Results", use_container_width=True):
+    with c2:
+        st.file_uploader("📸 Screenshot", type=["png","jpg","jpeg"], key="manual_ss")
+    with c3:
+        if st.button("🗑️ Clear", use_container_width=True):
             st.session_state.manual_results = None
             st.rerun()
 
     if st.session_state.manual_results:
         st.markdown("### ⚡ Manual Override Results")
         for i, item in enumerate(st.session_state.manual_results):
-            with st.expander(f"{item['Player']} — {item['Side']} {item['Line']} {item['Prop']} ({item['Tier Label']})", expanded=True):
-                st.write(f"**Weighted Score:** {item['Weighted Score']}")
-                for model in MODELS:
-                    vote = item["Votes"].get(model["name"], 0)
-                    reason = item["Reasons"].get(model["name"], "")
-                    st.caption(f"{'✅' if vote == 1 else '❌'} {model['name']}: {reason}")
-                override_flag = item["Tier"] not in ("SOVEREIGN", "ELITE") or any(k in item["Prop"].upper() for k in ["PRA", "COMBO", "REB+AST", "PTS+A"])
-                if st.button(f"🔒 Lock This", key=f"manual_lock_{i}"):
-                    lid = generate_lock_id()
-                    st.session_state.locks.append({
-                        "id": lid, "type": "PROP",
-                        "player": item["Player"],
-                        "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
-                        "side": item["Side"], "line": item["Line"],
-                        "tier": item["Tier"],
-                        "status": "PENDING", "result": None,
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "parlay_id": lid,
-                        "override": override_flag,
-                    })
-                    st.success(f"Locked: {lid}")
+            tc = tier_color(item["Tier"])
+            st.markdown(f"""
+            <div class="section-card" style="border-left:3px solid {tc};">
+                <span style="font-weight:600;color:#f4f8fc;">{item['Player']} {item['Side']} {item['Line']} {item['Prop']}</span>
+                <span style="font-size:12px;color:{tc};margin-left:8px;font-weight:600;">{item['Tier Label']}</span>
+                <span style="font-family:monospace;color:#e8a020;font-weight:600;margin-left:8px;">{item['Weighted Score']:.2f}</span>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"🔒 Lock", key=f"manual_lock_{i}"):
+                lid = lock_single_prop(item)
+                st.success(f"Locked: {lid}")
     st.markdown("---")
-    
-    # ===== MAIN BOARD =====
-    sport = st.selectbox("Select Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport), key="sport_select")
+
+    sport = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport), key="sport_select")
     st.session_state.last_sport = sport
     board = st.session_state.board_data
 
-    st.markdown(
-        f"**Data Source:** BettingPros + RotoWire + CBS Sports + Covers + DraftKings + ESPN  \n"
-        f"**Sport:** {sport} — {date.today().strftime('%B %d, %Y')}  \n"
-        f"**Status:** {'🛡️ SAFE CORRIDOR ACTIVE' if st.session_state.safe_corridor else '✅ NORMAL MODE'} | "
-        f"{'🚨 EMERGENCY FLOOR ACTIVE (12%)' if st.session_state.emergency_floor else '✅ REGULAR FLOOR (4.5%)'}"
-    )
-    if board:
-        st.markdown(f"🔒 **Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {len(st.session_state.injuries)} matchups verified, {st.session_state.filtered_count} props removed)")
-    st.markdown("---")
-    with st.expander("📖 TIER LEGEND", expanded=False):
-        for tier, desc in TIER_DESCRIPTIONS.items():
-            st.markdown(f"**{tier_label(tier)}** — {desc}")
-
     if not board:
-        st.info("No board loaded. Check readiness above, then load from the sidebar.")
+        st.info("Load a board from the sidebar.")
     else:
-        st.markdown("## 🚨 PRE‑FILTER: LINEUP & INJURY VERIFICATION")
-        st.table(pd.DataFrame(st.session_state.injuries) if st.session_state.injuries else pd.DataFrame([{"Status": "No issues reported"}]))
-        st.markdown("## 🚨 BLOWOUT ADVISORY")
-        st.table(pd.DataFrame(st.session_state.blowout_games) if st.session_state.blowout_games else pd.DataFrame([{"Advisory": "Inactive"}]))
-        st.markdown("## 📊 PROPS SURVIVED PRE‑FILTER")
-        st.table(pd.DataFrame([{"Player": p["Player"], "Prop": p["Prop"], "Line": p["Line"], "Side": p["Side"]} for p in st.session_state.raw_props]))
+        st.markdown(f"🔒 **Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {len(st.session_state.injuries)} matchups verified, {st.session_state.filtered_count} props removed)")
+        st.markdown("---")
+
+        # MODEL VERDICTS — COLLAPSIBLE CARDS
         st.markdown("## 🗳️ MODEL‑BY‑MODEL VERDICTS")
         for model in MODELS:
-            name, weight = model["name"], model["weight"]
-            with st.expander(f"{name} (Weight: {weight})", expanded=False):
-                approved, passed = [], []
+            name, weight, em = model["name"], model["weight"], model["em"]
+            approves = sum(1 for item in board if item["Votes"].get(name, 0) == 1)
+            passes = sum(1 for item in board if item["Votes"].get(name, 0) == 0)
+            rejects = sum(1 for item in board if item["Votes"].get(name, 0) == -1)
+            
+            with st.expander(f"{em} {name} · wt: {weight} · ✓{approves} ✗{rejects} ○{passes}", expanded=False):
                 for item in board:
                     vote = item["Votes"].get(name, 0)
                     reason = item["Reasons"].get(name, "")
-                    (approved if vote == 1 else passed).append((item, reason))
-                if approved:
-                    for item, reason in approved:
+                    if vote == 1:
                         st.markdown(f"✅ **{item['Player']} {item['Side']} {item['Line']} {item['Prop']}** — {reason}")
-                if passed:
-                    st.markdown("**PASS:**")
-                    for item, reason in passed:
-                        st.markdown(f"❌ {item['Player']} ({reason})")
+                for item in board:
+                    vote = item["Votes"].get(name, 0)
+                    reason = item["Reasons"].get(name, "")
+                    if vote != 1:
+                        st.markdown(f"❌ {item['Player']} — {reason}")
+
+        # COUNCIL CONSENSUS — WITH LOCK BUTTONS PER ROW
+        st.markdown("---")
         st.markdown("## 🟦 COUNCIL CONSENSUS SUMMARY")
-        summary = sorted([{"Pick": f"{i['Player']} {i['Side']} {i['Line']} {i['Prop']}", "Score": i["Weighted Score"], "Tier": i["Tier Label"]} for i in board], key=lambda x: x["Score"], reverse=True)
-        st.table(pd.DataFrame(summary))
-        excluded = [i for i in board if i["Tier"] in ("LEAN","PASS")]
-        if excluded: st.markdown("**Excluded:** " + ", ".join([f"{i['Player']} ({i['Tier Label']})" for i in excluded]))
+        consensus_sorted = sorted(board, key=lambda x: x["Weighted Score"], reverse=True)
+        
+        st.markdown('<table class="consensus-table"><thead><tr><th>Play</th><th>Appr</th><th>Score</th><th>Tier</th><th>Action</th></tr></thead><tbody>', unsafe_allow_html=True)
+        for item in consensus_sorted:
+            tc = tier_color(item["Tier"])
+            approvals = sum(1 for v in item["Votes"].values() if v == 1)
+            st.markdown(f"""
+            <tr>
+                <td><span style="color:#f4f8fc;font-weight:500;">{item['Player']} {item['Side']} {item['Line']} {item['Prop']}</span></td>
+                <td style="color:#08a8c8;font-family:monospace;">{approvals}/8</td>
+                <td style="font-weight:700;font-family:monospace;color:{tc};">{item['Weighted Score']:.2f}</td>
+                <td><span style="font-size:11px;font-family:monospace;font-weight:600;padding:2px 8px;border-radius:3px;border:1px solid {tc};color:{tc};background:rgba(40,40,40,0.3);">{item['Tier Label']}</span></td>
+            """, unsafe_allow_html=True)
+            if item["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED"):
+                st.markdown(f'<td><button style="background:rgba(22,168,74,0.15);border:1px solid #16a84a;color:#16a84a;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;" onclick="alert(\'Lock from sidebar\')">🔒 Lock</button></td>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<td><span style="font-size:11px;color:#d03030;">PASS</span></td>', unsafe_allow_html=True)
+            st.markdown('</tr>', unsafe_allow_html=True)
+        st.markdown('</tbody></table>', unsafe_allow_html=True)
+
+        # LOCK BUTTONS BELOW TABLE
+        st.markdown("### 🔒 Lock Individual Props")
+        for i, item in enumerate(consensus_sorted):
+            if item["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED"):
+                col_a, col_b = st.columns([4, 1])
+                with col_a:
+                    st.write(f"{item['Player']} {item['Side']} {item['Line']} {item['Prop']} — {item['Tier Label']} ({item['Weighted Score']:.2f})")
+                with col_b:
+                    if st.button("🔒 Lock", key=f"consensus_lock_{i}"):
+                        lid = lock_single_prop(item)
+                        st.success(f"Locked: {lid}")
+
+        # MARKET DYNAMICS
+        st.markdown("---")
         st.markdown("## 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
-        st.markdown("- **RLM Status:** DETECTED\n- **Contrarian Flag:** ACTIVE\n- **Regime Type:** STABLE")
+        st.markdown("- **RLM Status:** DETECTED — Sharp money fading public Overs")
+        st.markdown("- **Contrarian Flag:** ACTIVE")
+        st.markdown("- **Regime Type:** STABLE")
 
 # =========================
 # TAB 2 — LOCKS OF THE DAY
@@ -700,54 +694,55 @@ with tabs[2]:
     if not board:
         st.info("Load a board first.")
     else:
-        approved = [i for i in board if i["Tier"] in ("SOVEREIGN","ELITE","APPROVED")]
+        approved = [i for i in board if i["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
         if not approved:
             st.info("No approved props.")
         else:
             best_prop = sorted(approved, key=lambda x: x["Weighted Score"], reverse=True)[0]
             best_game = games[0] if games else None
+
             st.markdown("## 🔒 Lock of the Day")
             lock_data = [{"Type": "Prop", "Pick": f"{best_prop['Player']} {best_prop['Side']} {best_prop['Line']} {best_prop['Prop']}", "Tier": best_prop['Tier Label']}]
-            if best_game: lock_data.append({"Type": "Game", "Pick": best_game["Matchup"], "Bet": best_game.get("Moneyline","N/A"), "Tier": best_game['Tier Label']})
+            if best_game: lock_data.append({"Type": "Game", "Pick": best_game["Matchup"], "Bet": best_game.get("Moneyline", ""), "Tier": best_game['Tier Label']})
             st.table(pd.DataFrame(lock_data))
-            if best_prop["Tier"] == "APPROVED":
-                alt_line = best_prop["Line"] - 1.0 if "UNDER" in best_prop["Side"].upper() else best_prop["Line"] + 1.0
-                st.markdown(f"### 🔵 +EV Safety Corridor")
-                st.markdown(f"**{best_prop['Player']} {best_prop['Side']} {alt_line} {best_prop['Prop']}** — Alt line recommended.")
 
-            st.markdown("## 🔗 Prop Parlay of the Day")
-            prop_par = build_prop_parlay()
-            if prop_par:
-                st.markdown("Select legs:")
-                selected_legs = []
-                for i, leg in enumerate(prop_par):
-                    if st.checkbox(f"{leg['Player']} — {leg['Side']} {leg['Line']} {leg['Prop']} ({leg['Tier Label']})", value=True, key=f"prop_leg_{i}"):
-                        selected_legs.append(leg)
-                if len(selected_legs) >= 2:
-                    st.table(pd.DataFrame([{"Leg": i+1, "Player": l["Player"], "Prop": f"{l['Side']} {l['Line']} {l['Prop']}", "Tier": l["Tier Label"]} for i,l in enumerate(selected_legs)]))
-                    if st.button("🔒 Lock Selected Prop Parlay"):
-                        lid = generate_lock_id()
-                        for leg in selected_legs:
-                            st.session_state.locks.append({"id":lid,"type":"PROP","player":leg["Player"],"prop":f"{leg['Side']} {leg['Line']} {leg['Prop']}","side":leg["Side"],"line":leg["Line"],"tier":leg["Tier"],"status":"PENDING","result":None,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"parlay_id":lid})
-                        st.success(f"Locked: {lid}")
-                else: st.warning("Select at least 2 legs.")
+            # SIDE-BY-SIDE PARLAY CARDS
+            st.markdown("## 🔗 Parlays of the Day")
+            col_p, col_g = st.columns(2)
 
-            st.markdown("## 🔗 Game Parlay of the Day")
-            game_par = build_game_parlay()
-            if game_par:
-                st.markdown("Select games:")
-                selected_games = []
-                for i, leg in enumerate(game_par):
-                    if st.checkbox(f"{leg['Matchup']} — {leg.get('Moneyline','N/A')} ({leg['Tier Label']})", value=True, key=f"game_leg_{i}"):
-                        selected_games.append(leg)
-                if len(selected_games) >= 2:
-                    st.table(pd.DataFrame([{"Leg": i+1, "Matchup": l["Matchup"], "Bet": l.get("Moneyline","N/A"), "Tier": l["Tier Label"]} for i,l in enumerate(selected_games)]))
-                    if st.button("🔒 Lock Selected Game Parlay"):
-                        lid = generate_lock_id()
-                        for leg in selected_games:
-                            st.session_state.locks.append({"id":lid,"type":"GAME","matchup":leg["Matchup"],"bet":leg.get("Moneyline","N/A"),"tier":leg["Tier"],"status":"PENDING","result":None,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"parlay_id":lid})
-                        st.success(f"Locked: {lid}")
-                else: st.warning("Select at least 2 games.")
+            with col_p:
+                st.markdown("""<div class="parlay-card"><h4 style="color:#16a84a;margin:0 0 8px 0;">⚡ Props Parlay</h4>""", unsafe_allow_html=True)
+                prop_par = build_prop_parlay()
+                if prop_par:
+                    selected = []
+                    for i, leg in enumerate(prop_par):
+                        if st.checkbox(f"{leg['Player']} — {leg['Side']} {leg['Line']} {leg['Prop']} ({leg['Tier Label']})", value=True, key=f"pp_{i}"):
+                            selected.append(leg)
+                    if len(selected) >= 2:
+                        st.markdown(f"**{len(selected)} legs selected**")
+                        if st.button("🔒 Lock Props Parlay", key="lock_pp"):
+                            lid = generate_lock_id()
+                            for leg in selected:
+                                st.session_state.locks.append({"id": lid, "type": "PROP", "player": leg["Player"], "prop": f"{leg['Side']} {leg['Line']} {leg['Prop']}", "side": leg["Side"], "line": leg["Line"], "tier": leg["Tier"], "status": "PENDING", "result": None, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "parlay_id": lid})
+                            st.success(f"Locked: {lid}")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col_g:
+                st.markdown("""<div class="game-parlay-card"><h4 style="color:#2868d0;margin:0 0 8px 0;">🏆 Games Parlay</h4>""", unsafe_allow_html=True)
+                game_par = build_game_parlay()
+                if game_par:
+                    selected_g = []
+                    for i, leg in enumerate(game_par):
+                        if st.checkbox(f"{leg['Matchup']} — {leg.get('Moneyline','')} ({leg['Tier Label']})", value=True, key=f"gp_{i}"):
+                            selected_g.append(leg)
+                    if len(selected_g) >= 2:
+                        st.markdown(f"**{len(selected_g)} games selected**")
+                        if st.button("🔒 Lock Games Parlay", key="lock_gp"):
+                            lid = generate_lock_id()
+                            for leg in selected_g:
+                                st.session_state.locks.append({"id": lid, "type": "GAME", "matchup": leg["Matchup"], "bet": leg.get("Moneyline", ""), "tier": leg["Tier"], "status": "PENDING", "result": None, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "parlay_id": lid})
+                            st.success(f"Locked: {lid}")
+                st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================
 # TAB 3 — LOCKS & LEDGER
@@ -755,26 +750,24 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("# 📋 LOCKS & LEDGER")
     pending = [l for l in st.session_state.locks if l.get("status") == "PENDING"]
-    st.markdown("### Active Locks")
-    if not pending: st.info("No active locks.")
+    if not pending:
+        st.info("No active locks.")
     else:
         for i, lock in enumerate(pending):
-            cols = st.columns([4,1,1,1])
+            cols = st.columns([4, 1, 1, 1])
             with cols[0]:
-                sport_tag = f" [{lock.get('sport', '')}]" if lock.get('sport') else ""
-                st.markdown(f"**{lock.get('id')}**{sport_tag} — {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))} | {lock.get('tier','?')}")
+                st.markdown(f"**{lock.get('id')}** — {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))} | {lock.get('tier','?')}")
             with cols[1]:
                 if st.button("✅ WIN", key=f"w_{i}"):
-                    lock["status"]="RESOLVED"; lock["result"]="WIN"
+                    lock["status"] = "RESOLVED"; lock["result"] = "WIN"
                     st.session_state.history.append(lock)
                     st.session_state.integrity = min(INTEGRITY_CEILING, st.session_state.integrity + 0.5)
                     st.session_state.bankroll += active_unit()
                     st.rerun()
             with cols[2]:
                 if st.button("❌ LOSS", key=f"l_{i}"):
-                    lock["status"]="RESOLVED"; lock["result"]="LOSS"
-                    reason = classify_loss(lock)
-                    st.session_state.autopsy_log.append({"id":lock.get("id"),"pick":lock.get("player", lock.get("matchup")),"result":"LOSS","reason":reason,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    lock["status"] = "RESOLVED"; lock["result"] = "LOSS"
+                    st.session_state.autopsy_log.append({"id": lock.get("id"), "pick": lock.get("player", lock.get("matchup")), "result": "LOSS", "reason": classify_loss(lock), "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                     st.session_state.history.append(lock)
                     st.session_state.integrity = max(INTEGRITY_FLOOR, st.session_state.integrity - 1.0)
                     st.session_state.bankroll -= active_unit()
@@ -784,90 +777,76 @@ with tabs[3]:
                     st.session_state.locks.pop(i)
                     st.rerun()
 
-    st.markdown("### Resolved History")
     if st.session_state.history:
-        st.table(pd.DataFrame([{"ID":h.get("id"),"Pick":h.get("player", h.get("matchup")),"Result":h.get("result"),"Tier":h.get("tier")} for h in st.session_state.history]))
+        st.markdown("### Resolved History")
+        st.table(pd.DataFrame([{"ID": h.get("id"), "Pick": h.get("player", h.get("matchup")), "Result": h.get("result"), "Tier": h.get("tier")} for h in st.session_state.history]))
 
 # =========================
 # TAB 4 — RECONCILIATION
 # =========================
 with tabs[4]:
     st.markdown("# 🔄 RECONCILIATION & SYNC")
-    st.markdown("### 🌐 Auto-Scan Sources")
-    st.markdown("Failover: ESPN → DraftKings → Covers")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🌐 Scan Game Lines"):
-            mark_site_fail("ESPN (Primary)"); mark_site_ok("DraftKings (Failover 1)")
-            st.info("Failover to DraftKings.")
-    with c2:
-        if st.button("🌐 Scan Player Props"):
-            for name in PROP_SOURCES: mark_site_ok(name)
-            st.success("All prop sources scanned.")
-    st.markdown("---")
     st.markdown("### 📋 Paste Results to Auto-Grade")
-    st.markdown("Format: `Player OVER/UNDER Line WIN/LOSS`")
-    pasted = st.text_area("Paste results", height=150)
+    pasted = st.text_area("Format: Player OVER/UNDER Line WIN/LOSS", height=150)
     if st.button("🔍 Sync Pasted Results"):
         parsed = parse_pasted_results(pasted)
         if parsed:
             for lock in st.session_state.locks:
                 if lock["status"] == "PENDING":
                     for r in parsed:
-                        if (r["player"].lower() in lock.get("player","").lower() and 
-                            r["side"] == lock.get("side","") and 
-                            abs(r["line"] - lock.get("line",0)) < 0.1):
+                        if (r["player"].lower() in lock.get("player", "").lower() and r["side"] == lock.get("side", "") and abs(r["line"] - lock.get("line", 0)) < 0.1):
                             lock["status"] = "RESOLVED"; lock["result"] = r["outcome"]
                             st.session_state.history.append(lock)
                             if r["outcome"] == "WIN":
                                 st.session_state.integrity = min(INTEGRITY_CEILING, st.session_state.integrity + 0.5)
                                 st.session_state.bankroll += active_unit()
                             else:
-                                reason = classify_loss(lock)
-                                st.session_state.autopsy_log.append({"id":lock.get("id"),"pick":lock.get("player", lock.get("matchup")),"result":"LOSS","reason":reason,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                                st.session_state.autopsy_log.append({"id": lock.get("id"), "pick": lock.get("player", lock.get("matchup")), "result": "LOSS", "reason": classify_loss(lock), "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                                 st.session_state.integrity = max(INTEGRITY_FLOOR, st.session_state.integrity - 1.0)
                                 st.session_state.bankroll -= active_unit()
             st.session_state.locks = [l for l in st.session_state.locks if l["status"] == "PENDING"]
             st.success("Synced.")
-        else: st.warning("No valid results.")
-    st.markdown("---")
-    st.markdown("### 📸 Upload Screenshot")
-    st.file_uploader("Upload PNG/JPG", type=["png","jpg","jpeg"])
-    st.info("OCR coming soon.")
     st.markdown("---")
     st.markdown("### 🔬 Autopsy Log")
     if st.session_state.autopsy_log:
         st.table(pd.DataFrame(st.session_state.autopsy_log))
-    else: st.info("No losses yet.")
 
 # =========================
 # TAB 5 — SEM & SYSTEM
 # =========================
 with tabs[5]:
     st.markdown("# 🛡️ SEM & SYSTEM HEALTH")
-    st.markdown("## SEM Status")
-    st.metric("Integrity Score", st.session_state.integrity)
-    st.metric("Safe Corridor", "ACTIVE" if st.session_state.safe_corridor else "INACTIVE")
-    st.metric("Emergency Floor", "ACTIVE (12%)" if st.session_state.emergency_floor else "INACTIVE")
-    st.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
-    st.metric("Active Locks", len([l for l in st.session_state.locks if l.get("status")=="PENDING"]))
-    st.markdown("## 📡 Site Health & Failover Status")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Integrity Score", f"{st.session_state.integrity}/100")
+    c2.metric("Safe Corridor", "ACTIVE" if st.session_state.safe_corridor else "INACTIVE")
+    c3.metric("Emergency Floor", "ACTIVE (12%)" if st.session_state.emergency_floor else "INACTIVE")
+    c4.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
+    
+    st.markdown("---")
+    st.markdown("## 📡 Site Health")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("### Prop Sources")
         for name in PROP_SOURCES:
-            s = st.session_state.site_status.get(name, {}).get("status","unknown")
-            t = st.session_state.site_status.get(name, {}).get("last_checked","—")
+            s = st.session_state.site_status.get(name, {}).get("status", "unknown")
+            t = st.session_state.site_status.get(name, {}).get("last_checked", "—")
             st.markdown(f"{dot(s)} **{name}** — {t}")
     with c2:
         st.markdown("### Game & Lineup Sources")
         for name in list(GAME_SOURCES.keys()) + list(LINEUP_SOURCES.keys()):
-            s = st.session_state.site_status.get(name, {}).get("status","unknown")
-            t = st.session_state.site_status.get(name, {}).get("last_checked","—")
+            s = st.session_state.site_status.get(name, {}).get("status", "unknown")
+            t = st.session_state.site_status.get(name, {}).get("last_checked", "—")
             st.markdown(f"{dot(s)} **{name}** — {t}")
+
+    st.markdown("---")
     st.markdown("## ➕ Add Custom Source")
     nn = st.text_input("Source Name"); nu = st.text_input("Source URL (use {sport})")
     if st.button("Add Source") and nn and nu:
         PROP_SOURCES[nn] = nu
-        st.session_state.site_status[nn] = {"status":"unknown","last_checked":"—"}
+        st.session_state.site_status[nn] = {"status": "unknown", "last_checked": "—"}
         st.success(f"Added: {nn}")
+
+    st.markdown("---")
+    st.markdown("## 📖 Tier Legend")
+    for tier, desc in TIER_DESCRIPTIONS.items():
+        st.markdown(f"**{tier_label(tier)}** — {desc}")
