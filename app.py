@@ -198,28 +198,65 @@ def classify_loss(lock):
     if lock.get("override"): return "Logic Leak (Manual Override)"
     return "Low Edge / Noise"
 
+def mark_site_ok(name):
+    st.session_state.site_status[name] = {"status": "ok", "last_checked": datetime.now().strftime("%H:%M:%S")}
+
+def mark_site_fail(name):
+    st.session_state.site_status[name] = {"status": "fail", "last_checked": datetime.now().strftime("%H:%M:%S")}
+
+def mark_site_degraded(name):
+    st.session_state.site_status[name] = {"status": "degraded", "last_checked": datetime.now().strftime("%H:%M:%S")}
+
 def check_board_ready(sport="NBA"):
-    try:
-        url = PROP_SOURCES["BettingPros"].replace("{sport}", sport.lower())
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            tables = soup.find_all("table")
-            if tables and len(tables[0].find_all("tr")) > 2:
-                st.session_state.board_ready = True
-                st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
-                st.session_state.last_scan_time = st.session_state.board_check_time
-                st.session_state.estimated_ready_time = None
-                return True
-        st.session_state.board_ready = False
+    """Ping ALL prop and game sources with failover. Return True if ANY source has tomorrow's data."""
+    sport_lower = sport.lower()
+    tomorrow = date.today() + timedelta(days=1)
+    tomorrow_formats = [
+        tomorrow.strftime("%b %d"), tomorrow.strftime("%B %d"),
+        tomorrow.strftime("%m/%d"), tomorrow.strftime("%Y-%m-%d"),
+    ]
+    
+    sources_to_check = []
+    for name, url_template in PROP_SOURCES.items():
+        sources_to_check.append((name, url_template.replace("{sport}", sport_lower), "props"))
+    for name, url_template in GAME_SOURCES.items():
+        sources_to_check.append((name, url_template.replace("{sport}", sport_lower), "games"))
+    
+    ready_sources = []
+    
+    for name, url, source_type in sources_to_check:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                page_text = soup.get_text()
+                date_found = any(fmt in page_text for fmt in tomorrow_formats)
+                tables = soup.find_all("table")
+                has_table_data = any(len(table.find_all("tr")) > 3 for table in tables)
+                has_content = len(page_text.strip()) > 500
+                
+                if date_found or has_table_data or has_content:
+                    ready_sources.append(name)
+                    mark_site_ok(name)
+                else:
+                    mark_site_degraded(name)
+            else:
+                mark_site_fail(name)
+        except:
+            mark_site_fail(name)
+    
+    if ready_sources:
+        st.session_state.board_ready = True
         st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
-        if st.session_state.estimated_ready_time is None:
-            st.session_state.estimated_ready_time = (datetime.now() + timedelta(hours=4)).strftime("%I:%M %p ET")
-        return False
-    except:
-        st.session_state.board_ready = False
-        st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
-        return False
+        st.session_state.last_scan_time = st.session_state.board_check_time
+        st.session_state.estimated_ready_time = None
+        return True
+    
+    st.session_state.board_ready = False
+    st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
+    if st.session_state.estimated_ready_time is None:
+        st.session_state.estimated_ready_time = (datetime.now() + timedelta(hours=4)).strftime("%I:%M %p ET")
+    return False
 
 def board_ready_badge():
     if st.session_state.board_ready:
@@ -234,30 +271,27 @@ def load_button_label():
     return "🔴 Load Board (No Data)"
 
 def parse_manual_input(text):
-    """Parse a single prop or game line from manual override input."""
     results = []
     for line in text.strip().split("\n"):
         line = line.strip()
         if not line: continue
-        
-        # Try game line first: "OKC -8.5" or "Lakers ML" or "DET @ CLE Over 216.5"
         game_match = re.match(r"(.+?)\s+([+-]?\d+\.?\d*)\s*$", line)
         if game_match and ("@" in line or "vs" in line.lower() or any(t in line for t in ["ML", "Over", "Under"])):
             results.append({"type": "GAME", "raw": line})
             continue
-        
-        # Try prop: "LeBron James OVER 21.5 Points"
         prop_match = re.match(r"(.+?)\s+(OVER|UNDER)\s+([\d.]+)\s+(.+)", line, re.IGNORECASE)
         if prop_match:
-            player = prop_match.group(1).strip()
-            side = prop_match.group(2).upper()
-            line_val = float(prop_match.group(3))
-            prop_type = prop_match.group(4).strip()
-            results.append({"type": "PROP", "player": player, "side": side, "line": line_val, "prop": prop_type, "raw": line})
+            results.append({
+                "type": "PROP",
+                "player": prop_match.group(1).strip(),
+                "side": prop_match.group(2).upper(),
+                "line": float(prop_match.group(3)),
+                "prop": prop_match.group(4).strip(),
+                "raw": line,
+            })
     return results
 
 def run_manual_council(props_list):
-    """Run the 8-model Council on manually input props."""
     results = []
     for item in props_list:
         if item["type"] != "PROP": continue
@@ -405,12 +439,6 @@ def build_game_parlay():
         seen.add(item["Matchup"])
     return legs
 
-def mark_site_ok(name):
-    st.session_state.site_status[name] = {"status": "ok", "last_checked": datetime.now().strftime("%H:%M:%S")}
-
-def mark_site_fail(name):
-    st.session_state.site_status[name] = {"status": "fail", "last_checked": datetime.now().strftime("%H:%M:%S")}
-
 def parse_pasted_results(text):
     results = []
     for line in text.strip().split("\n"):
@@ -475,7 +503,7 @@ with tabs[0]:
     # ===== MANUAL OVERRIDE SECTION =====
     st.markdown("---")
     st.markdown("## ⚡ MANUAL OVERRIDE — QUICK PROP LOOKUP")
-    st.markdown("Paste a single prop, game line, or full slip. One per line. Screenshots coming soon.")
+    st.markdown("Paste a single prop, game line, or full slip. One per line.")
     manual_input = st.text_area(
         "Paste props or games here",
         placeholder="LeBron James OVER 21.5 Points\nOKC -8.5\nJames Harden OVER 5.5 Rebounds",
@@ -491,7 +519,7 @@ with tabs[0]:
                     st.session_state.manual_results = run_manual_council(parsed)
                     st.success(f"Analyzed {len(st.session_state.manual_results)} props.")
                 else:
-                    st.warning("Could not parse input. Use format: 'Player OVER/UNDER Line Prop'")
+                    st.warning("Could not parse. Use: Player OVER/UNDER Line Prop")
     with col_m2:
         st.file_uploader("📸 Upload Screenshot", type=["png","jpg","jpeg"], key="manual_screenshot")
     with col_m3:
@@ -499,7 +527,6 @@ with tabs[0]:
             st.session_state.manual_results = None
             st.rerun()
 
-    # Show manual override results
     if st.session_state.manual_results:
         st.markdown("### ⚡ Manual Override Results")
         for i, item in enumerate(st.session_state.manual_results):
@@ -508,25 +535,22 @@ with tabs[0]:
                 for model in MODELS:
                     vote = item["Votes"].get(model["name"], 0)
                     reason = item["Reasons"].get(model["name"], "")
-                    emoji = "✅" if vote == 1 else "❌"
-                    st.caption(f"{emoji} {model['name']}: {reason}")
-                c1, c2 = st.columns(2)
-                with c1:
-                    override_flag = item["Tier"] not in ("SOVEREIGN", "ELITE") or any(k in item["Prop"].upper() for k in ["PRA", "COMBO", "REB+AST", "PTS+A"])
-                    if st.button(f"🔒 Lock This", key=f"manual_lock_{i}"):
-                        lid = generate_lock_id()
-                        st.session_state.locks.append({
-                            "id": lid, "type": "PROP",
-                            "player": item["Player"],
-                            "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
-                            "side": item["Side"], "line": item["Line"],
-                            "tier": item["Tier"],
-                            "status": "PENDING", "result": None,
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "parlay_id": lid,
-                            "override": override_flag,
-                        })
-                        st.success(f"Locked: {lid}")
+                    st.caption(f"{'✅' if vote == 1 else '❌'} {model['name']}: {reason}")
+                override_flag = item["Tier"] not in ("SOVEREIGN", "ELITE") or any(k in item["Prop"].upper() for k in ["PRA", "COMBO", "REB+AST", "PTS+A"])
+                if st.button(f"🔒 Lock This", key=f"manual_lock_{i}"):
+                    lid = generate_lock_id()
+                    st.session_state.locks.append({
+                        "id": lid, "type": "PROP",
+                        "player": item["Player"],
+                        "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
+                        "side": item["Side"], "line": item["Line"],
+                        "tier": item["Tier"],
+                        "status": "PENDING", "result": None,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "parlay_id": lid,
+                        "override": override_flag,
+                    })
+                    st.success(f"Locked: {lid}")
     st.markdown("---")
     
     # ===== MAIN BOARD =====
@@ -740,7 +764,7 @@ with tabs[4]:
     st.metric("Emergency Floor", "ACTIVE (12%)" if st.session_state.emergency_floor else "INACTIVE")
     st.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
     st.metric("Active Locks", len([l for l in st.session_state.locks if l.get("status")=="PENDING"]))
-    st.markdown("## 📡 Site Health")
+    st.markdown("## 📡 Site Health & Failover Status")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("### Prop Sources")
