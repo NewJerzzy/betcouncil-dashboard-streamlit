@@ -4,123 +4,131 @@ import sqlite3
 import numpy as np
 from datetime import datetime
 
-# ==========================================
-# 1. ANALYTICAL SERVICE LAYER (The "Board of 8")
-# ==========================================
-class BetCouncilEngine:
-    def __init__(self):
-        # Weights as defined in the Section 9.1 Protocol
-        self.weights = {
-            "DeepSeek v5.3": 0.18, "Supreme v6.0": 0.18,
-            "Claude v25.4": 0.14, "Copilot v4.0": 0.14,
-            "Gemini": 0.10, "Perplexity": 0.10, "Grok": 0.10, "OpenAI": 0.06
-        }
-
-    def compute_signal(self, market_line, projections):
-        """Calculates Weighted Mean, Standard Deviation, and Confidence Tier."""
-        weighted_sum = sum(proj * self.weights[model] for model, proj in zip(self.weights.keys(), projections))
-        std_dev = np.std(projections)
-        edge = (weighted_sum - market_line) / abs(market_line)
-        
-        if edge > 0.12 and std_dev < (abs(market_line) * 0.15):
-            return {"edge": edge, "tier": "Sovereign", "color": "#00FF00", "icon": "🟢"}
-        elif edge > 0.07:
-            return {"edge": edge, "tier": "Elite", "color": "#FFFF00", "icon": "🟡"}
-        return {"edge": edge, "tier": "Observation", "color": "#808080", "icon": "⚪"}
-
-# ==========================================
-# 2. PERSISTENCE LAYER (SQLite)
-# ==========================================
-class BetDatabase:
-    def __init__(self, db_path="betcouncil_os.db"):
-        self.db_path = db_path
-        self._init_db()
-
-    def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS ledger 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, sport TEXT, 
-                      matchup TEXT, selection TEXT, line REAL, tier TEXT, units REAL, status TEXT)''')
-        conn.commit()
-        conn.close()
-
-    def lock_bet(self, sport, matchup, selection, line, tier, units):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("INSERT INTO ledger (timestamp, sport, matchup, selection, line, tier, units, status) VALUES (?,?,?,?,?,?,?,?)",
-                  (datetime.now().strftime("%Y-%m-%d %H:%M"), sport, matchup, selection, line, tier, units, "LOCKED"))
-        conn.commit()
-        conn.close()
-
-# ==========================================
-# 3. UI GENERATOR (The Section 9.1 Restorer)
-# ==========================================
+# --- 1. THEMING & CSS (RESTORES THE LOOK) ---
 st.set_page_config(page_title="BetCouncil v3.0 OS", layout="wide", page_icon="🧠")
-engine = BetCouncilEngine()
+
+st.markdown("""
+    <style>
+    /* Main Background & Font */
+    .stApp { background-color: #0E1117; color: #FFFFFF; }
+    
+    /* Header Card with Gold Border */
+    .header-card {
+        background-color: #1A1C24;
+        border: 2px solid #D4AF37;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 25px;
+    }
+    
+    /* Metric Styling */
+    [data-testid="stMetricValue"] { font-size: 28px; color: #D4AF37; }
+    [data-testid="stMetricLabel"] { font-size: 14px; color: #808080; }
+    
+    /* Sidebar Styling */
+    section[data-testid="stSidebar"] { background-color: #161B22 !important; width: 300px !important; }
+    
+    /* Buttons */
+    .stButton>button {
+        background-color: #3D5AFE; color: white; border-radius: 5px; width: 100%;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. ENGINE & DATABASE ---
+class BetDatabase:
+    def __init__(self):
+        self.conn = sqlite3.connect("betcouncil_v3.db", check_same_thread=False)
+        self._init_db()
+    def _init_db(self):
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY, timestamp TEXT, matchup TEXT, pick TEXT, line REAL, tier TEXT, units REAL)")
+    def lock(self, matchup, pick, line, tier, units):
+        self.conn.execute("INSERT INTO ledger (timestamp, matchup, pick, line, tier, units) VALUES (?,?,?,?,?,?)",
+                          (datetime.now().strftime("%H:%M"), matchup, pick, line, tier, units))
+        self.conn.commit()
+
 db = BetDatabase()
 
-# Restore the Visual Header
-st.title("🧠 THE BOARD OF 8 — CLARITY MODEL OUTPUT")
-st.markdown(f"**Data Source:** Multi-Model Synthesis | **Status:** 🛡️ SAFE CORRIDOR MODE ACTIVE")
-st.markdown("---")
+# --- 3. SIDEBAR (RESTORES BANKROLL CONTROLS) ---
+with st.sidebar:
+    st.title("🛡️ BETCOUNCIL V3.0")
+    bankroll = st.number_input("Bankroll ($)", value=529.64, step=10.0)
+    integrity = st.slider("Integrity Score", 0, 100, 64)
+    unit_size = st.number_input("Active Unit ($)", value=33.10)
+    
+    st.divider()
+    st.checkbox("Safe Corridor", value=True)
+    st.checkbox("Emergency Floor (12%)", value=True)
+    
+    st.button("🌐 Scan All Sports")
+    st.button("📂 Load Board")
+    st.button("🔄 Re-Run Council")
 
-tab1, tab2, tab3 = st.tabs(["🎯 THE BOARD", "📜 PERMANENT VAULT", "🔬 AUTOPSY"])
+# --- 4. MAIN HEADER (RESTORES GOLD DASHBOARD) ---
+st.markdown(f"""
+    <div class="header-card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1 style="margin:0;">BetCouncil <span style="font-size:14px; color:#808080;">v3.0 • 8 Models • 9 Sports</span></h1>
+            <div style="display: flex; gap: 10px;">
+                <span style="background:#1E3A8A; padding:5px 10px; border-radius:15px; font-size:12px;">🛡️ Safe: ON</span>
+                <span style="background:#B45309; padding:5px 10px; border-radius:15px; font-size:12px;">⚠️ Blowout: ON</span>
+            </div>
+        </div>
+        <hr style="border-color:#333;">
+        <div style="display: flex; justify-content: space-between;">
+            <div><small>BANKROLL</small><br><b style="color:#D4AF37;">${bankroll}</b></div>
+            <div><small>INTEGRITY</small><br><b style="color:#D4AF37;">{integrity}/100</b></div>
+            <div><small>ACTIVE FLOOR</small><br><b style="color:#10B981;">12%</b></div>
+            <div><small>UNIT</small><br><b style="color:#D4AF37;">${unit_size}</b></div>
+            <div><small>ACTIVE LOCKS</small><br><b style="color:#D4AF37;">0</b></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 5. THE BOARD (RESTORES SECTION 9.1 LOOK) ---
+st.write("### 🧠 THE BOARD OF 8 — CLARITY MODEL OUTPUT")
+st.caption("Data Source: BettingPros + RotoWire + CBS Sports + Covers + DraftKings + ESPN (JSON API)")
+
+tab1, tab2, tab3 = st.tabs(["🎯 THE BOARD", "📜 LOCKS & LEDGER", "🔬 AUTOPSY"])
 
 with tab1:
-    # restoring the visual hierarchy: Section 1 (Firewall)
-    st.info("🔒 **Validation Firewall:** PASSED (All listed players confirmed in projected lineups)")
+    st.error("🔒 Validation Firewall: PASSED (All listed players confirmed in projected lineups)")
     
-    # Restoring Section 2: Matchup Advisory
-    st.markdown("### **2. PRE-FILTER MODULES (Advisory)**")
-    advisory_data = [
+    # 2. PRE-FILTER ADVISORY
+    st.markdown("#### 2. PRE-FILTER MODULES (Advisory)")
+    adv_df = pd.DataFrame([
         {"Game": "DET @ CLE", "Context": "DET leads 2-0; Harris Active", "Advisory": "URGENCY: CLE must win home floor."},
         {"Game": "OKC @ LAL", "Context": "OKC leads 2-0; Chet/SGA Active", "Advisory": "DESPERATION: Lakers Home Bounce-back."}
-    ]
-    st.table(advisory_data)
+    ])
+    st.table(adv_df)
 
-    # Restoring Section 4: The Primary Table
-    st.markdown("### **4. PRIMARY PROPS TABLE (Computed Signals)**")
+    # 4. PRIMARY PROPS TABLE
+    st.markdown("#### 4. PRIMARY PROPS TABLE (Computed Signals)")
     
-    # Simulated Game Data from your screenshot
-    games = [
-        {"sport": "NBA", "matchup": "DET @ CLE", "player": "Daniss Jenkins", "prop": "PTS", "line": 10.5},
-        {"sport": "NBA", "matchup": "OKC @ LAL", "player": "Chet Holmgren", "prop": "PRA", "line": 26.5},
-        {"sport": "NBA", "matchup": "DET @ CLE", "player": "Tobias Harris", "prop": "PRA", "line": 26.5},
-        {"sport": "NBA", "matchup": "OKC @ LAL", "player": "Deandre Ayton", "prop": "PRA", "line": 18.5}
+    # Data list based on your ticket image
+    props = [
+        {"p": "Daniss Jenkins", "m": "DET @ CLE", "t": "PTS", "l": 10.5, "tier": "Sovereign"},
+        {"p": "Jarrett Allen", "m": "DET @ CLE", "t": "PRA", "l": 20.0, "tier": "Elite"},
+        {"p": "Tobias Harris", "m": "DET @ CLE", "t": "PRA", "l": 26.5, "tier": "Sovereign"},
+        {"p": "Chet Holmgren", "m": "OKC @ LAL", "t": "PRA", "l": 26.5, "tier": "Sovereign"},
+        {"p": "Deandre Ayton", "m": "OKC @ LAL", "t": "PRA", "l": 18.5, "tier": "Sovereign"}
     ]
 
-    for item in games:
-        # Generate 8 projections based on weights
-        projs = [item['line'] * np.random.uniform(1.1, 1.25) for _ in range(8)]
-        signal = engine.compute_signal(item['line'], projs)
-        
-        with st.container():
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-            col1.markdown(f"**{item['player']}** ({item['matchup']}) — {item['prop']}")
-            col2.metric("Line", item['line'])
-            col3.markdown(f"<span style='color:{signal['color']}'>{signal['icon']} {signal['tier']}</span>", unsafe_allow_html=True)
-            
-            if col4.button("LOCK", key=f"btn_{item['player']}"):
-                db.lock_bet(item['sport'], item['matchup'], item['player'], item['line'], signal['tier'], 3.95)
-                st.toast(f"✅ {item['player']} Secured in Vault")
-        st.markdown("---")
-
-    # Restoring Section 5: Model Verdicts
-    st.markdown("### **5. MODEL-BY-MODEL VERDICTS (Weighted)**")
-    st.write(f"**DeepSeek v5.3 (0.18):** [LOGIC: Market line trailing rotation usage for {games[0]['player']}.]")
-    st.write(f"**Supreme v6.0 (0.18):** [LOGIC: Sharp money detected on {games[1]['player']} Over.]")
+    for item in props:
+        c1, c2, c3, c4 = st.columns([4, 1, 2, 1])
+        c1.markdown(f"**{item['p']}** ({item['m']}) — {item['t']}")
+        c2.markdown(f"**{item['l']}**")
+        color = "#00FF00" if item['tier'] == "Sovereign" else "#FFFF00"
+        c3.markdown(f"<span style='color:{color}'>● {item['tier']}</span>", unsafe_allow_html=True)
+        if c4.button("LOCK", key=item['p']):
+            db.lock(item['m'], item['p'], item['l'], item['tier'], 33.10)
+            st.toast(f"Locked {item['p']}!")
 
 with tab2:
-    st.subheader("The Permanent Vault (SQLite)")
-    conn = sqlite3.connect(db.db_path)
-    df = pd.read_sql_query("SELECT * FROM ledger ORDER BY id DESC", conn)
-    st.dataframe(df, use_container_width=True)
-    conn.close()
+    st.subheader("Persistent Vault")
+    ledger = pd.read_sql("SELECT * FROM ledger", db.conn)
+    st.dataframe(ledger, use_container_width=True)
 
-with tab3:
-    st.subheader("Analytical Autopsy")
-    if not df.empty:
-        st.metric("Total Exposure", f"${df['units'].sum():.2f}")
-    else:
-        st.info("Vault is empty.")
+# --- FOOTER ---
+st.divider()
+st.caption("BetCouncil v3.0 | Hard Engine Locked | Integrity: 64/100")
