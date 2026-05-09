@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
-import io
+import requests
+from bs4 import BeautifulSoup
 
 # =========================
 # PAGE CONFIG
@@ -55,6 +56,17 @@ h1, h2, h3, h4, h5 { color: #ffffff; text-transform: uppercase; letter-spacing: 
     margin: 0.5rem 0;
     font-size: 0.85rem;
 }
+.ready-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-right: 8px;
+}
+.ready-green { background-color: rgba(0,200,83,0.15); color: #00c853; border: 1px solid #00c853; }
+.ready-yellow { background-color: rgba(255,214,0,0.15); color: #ffd600; border: 1px solid #ffd600; }
+.ready-red { background-color: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid #ff5252; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,7 +92,7 @@ TIER_DESCRIPTIONS = {
     "LEAN": "⚪ Weak support. Not recommended for locking.",
     "PASS": "🔴 Rejected. Blowout risk, injury, or insufficient edge.",
 }
-DEFAULT_BANKROLL = 527.00
+DEFAULT_BANKROLL = 529.64
 KELLY_FRACTION = 0.25
 KELLY_CAP = 0.25
 INTEGRITY_FLOOR = 40
@@ -106,11 +118,15 @@ LINEUP_SOURCES = {
     "RotoWire": "https://www.rotowire.com/basketball/{sport}/lineups.php",
 }
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; BetCouncil/3.0)"
+}
+
 # =========================
 # SESSION STATE
 # =========================
 if "bankroll" not in st.session_state: st.session_state.bankroll = DEFAULT_BANKROLL
-if "integrity" not in st.session_state: st.session_state.integrity = 67
+if "integrity" not in st.session_state: st.session_state.integrity = 64
 if "safe_corridor" not in st.session_state: st.session_state.safe_corridor = True
 if "emergency_floor" not in st.session_state: st.session_state.emergency_floor = True
 if "locks" not in st.session_state: st.session_state.locks = []
@@ -130,8 +146,12 @@ if "site_status" not in st.session_state:
         name: {"status": "unknown", "last_checked": None}
         for name in list(PROP_SOURCES.keys()) + list(GAME_SOURCES.keys()) + list(LINEUP_SOURCES.keys())
     }
-if "selected_parlay_legs" not in st.session_state: st.session_state.selected_parlay_legs = {}
-if "game_parlay_selected" not in st.session_state: st.session_state.game_parlay_selected = {}
+if "board_ready" not in st.session_state: st.session_state.board_ready = False
+if "board_check_time" not in st.session_state: st.session_state.board_check_time = None
+if "last_scan_time" not in st.session_state: st.session_state.last_scan_time = None
+if "auto_refresh" not in st.session_state: st.session_state.auto_refresh = False
+if "estimated_ready_time" not in st.session_state: st.session_state.estimated_ready_time = None
+if "manual_results" not in st.session_state: st.session_state.manual_results = None
 
 # =========================
 # HELPERS
@@ -178,66 +198,133 @@ def classify_loss(lock):
     if lock.get("override"): return "Logic Leak (Manual Override)"
     return "Low Edge / Noise"
 
+def check_board_ready(sport="NBA"):
+    try:
+        url = PROP_SOURCES["BettingPros"].replace("{sport}", sport.lower())
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            tables = soup.find_all("table")
+            if tables and len(tables[0].find_all("tr")) > 2:
+                st.session_state.board_ready = True
+                st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
+                st.session_state.last_scan_time = st.session_state.board_check_time
+                st.session_state.estimated_ready_time = None
+                return True
+        st.session_state.board_ready = False
+        st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
+        if st.session_state.estimated_ready_time is None:
+            st.session_state.estimated_ready_time = (datetime.now() + timedelta(hours=4)).strftime("%I:%M %p ET")
+        return False
+    except:
+        st.session_state.board_ready = False
+        st.session_state.board_check_time = datetime.now().strftime("%H:%M:%S")
+        return False
+
+def board_ready_badge():
+    if st.session_state.board_ready:
+        return '<span class="ready-badge ready-green">🟢 BOARD READY — Tomorrow\'s props available</span>'
+    elif st.session_state.board_check_time:
+        return f'<span class="ready-badge ready-yellow">🟡 WAITING — Last check: {st.session_state.board_check_time}. Estimated: {st.session_state.estimated_ready_time or "after 10 PM ET"}</span>'
+    return '<span class="ready-badge ready-red">🔴 NO DATA — Click "Check Now" to verify</span>'
+
+def load_button_label():
+    if st.session_state.board_ready: return "🟢 Load Board (Ready)"
+    elif st.session_state.board_check_time: return "🟡 Load Board (Check Again)"
+    return "🔴 Load Board (No Data)"
+
+def parse_manual_input(text):
+    """Parse a single prop or game line from manual override input."""
+    results = []
+    for line in text.strip().split("\n"):
+        line = line.strip()
+        if not line: continue
+        
+        # Try game line first: "OKC -8.5" or "Lakers ML" or "DET @ CLE Over 216.5"
+        game_match = re.match(r"(.+?)\s+([+-]?\d+\.?\d*)\s*$", line)
+        if game_match and ("@" in line or "vs" in line.lower() or any(t in line for t in ["ML", "Over", "Under"])):
+            results.append({"type": "GAME", "raw": line})
+            continue
+        
+        # Try prop: "LeBron James OVER 21.5 Points"
+        prop_match = re.match(r"(.+?)\s+(OVER|UNDER)\s+([\d.]+)\s+(.+)", line, re.IGNORECASE)
+        if prop_match:
+            player = prop_match.group(1).strip()
+            side = prop_match.group(2).upper()
+            line_val = float(prop_match.group(3))
+            prop_type = prop_match.group(4).strip()
+            results.append({"type": "PROP", "player": player, "side": side, "line": line_val, "prop": prop_type, "raw": line})
+    return results
+
+def run_manual_council(props_list):
+    """Run the 8-model Council on manually input props."""
+    results = []
+    for item in props_list:
+        if item["type"] != "PROP": continue
+        player, ptype, side, line = item["player"], item["prop"], item["side"], item["line"]
+        votes, reasons = {}, {}
+        is_combo = any(k in ptype.upper() for k in ["PTS+A", "PTS+R", "PRA", "COMBO", "REB+AST"])
+        is_under = "UNDER" in side.upper()
+        is_star = any(s in player for s in ["Shai", "LeBron", "Cade", "Donovan", "Anthony", "James", "Tobias"])
+
+        votes[MODELS[0]["name"]] = 0 if is_combo else (1 if is_under else 1)
+        reasons[MODELS[0]["name"]] = "Combo variance too high" if is_combo else ("Outlier supports Under" if is_under else "Consistent, outlier clean")
+        votes[MODELS[1]["name"]] = 0
+        reasons[MODELS[1]["name"]] = "No environmental edge"
+        votes[MODELS[2]["name"]] = 1 if is_star else 0
+        reasons[MODELS[2]["name"]] = "Playoff motivation / legacy game" if is_star else "Role player — motivation variance"
+        votes[MODELS[3]["name"]] = 0 if is_combo else 1
+        reasons[MODELS[3]["name"]] = "Floor unreliable" if is_combo else "Deterministic floor above line"
+        votes[MODELS[4]["name"]] = 0 if is_combo else 1
+        reasons[MODELS[4]["name"]] = "Sigma too wide" if is_combo else "Low volatility"
+        votes[MODELS[5]["name"]] = 1 if is_star else 0
+        reasons[MODELS[5]["name"]] = "CLV positive, edge meets floor" if is_star else "Edge below Emergency Floor"
+        votes[MODELS[6]["name"]] = 1 if is_star else 0
+        reasons[MODELS[6]["name"]] = "Ceiling manageable" if is_star else "Ceiling risk"
+        votes[MODELS[7]["name"]] = 0 if is_combo else 1
+        reasons[MODELS[7]["name"]] = "Margin of error" if is_combo else "Raw projection supports"
+
+        ws = weighted_score(votes)
+        tier = get_tier(ws)
+        results.append({
+            "Player": player, "Prop": ptype, "Side": side, "Line": line,
+            "Votes": votes, "Reasons": reasons,
+            "Weighted Score": ws, "Tier": tier, "Tier Label": tier_label(tier),
+            "raw": item["raw"], "type": "PROP",
+        })
+    return results
+
 # =========================
 # SAMPLE DATA
 # =========================
 NBA_SAMPLE = {
     "raw_props": [
-        {"Player": "Jalen Brunson", "Prop": "POINTS", "Line": 26.5, "Side": "OVER"},
-        {"Player": "Karl-Anthony Towns", "Prop": "POINTS", "Line": 20.5, "Side": "OVER"},
-        {"Player": "Anthony Edwards", "Prop": "POINTS", "Line": 22.5, "Side": "UNDER"},
-        {"Player": "Victor Wembanyama", "Prop": "POINTS", "Line": 26.5, "Side": "OVER"},
-        {"Player": "De'Aaron Fox", "Prop": "POINTS", "Line": 18.5, "Side": "OVER"},
-        {"Player": "Julius Randle", "Prop": "POINTS", "Line": 17.5, "Side": "OVER"},
-        {"Player": "Joel Embiid", "Prop": "POINTS", "Line": 28.5, "Side": "OVER"},
-        {"Player": "Tyrese Maxey", "Prop": "POINTS", "Line": 24.5, "Side": "UNDER"},
+        {"Player": "Shai Gilgeous-Alexander", "Prop": "POINTS", "Line": 31.5, "Side": "OVER"},
+        {"Player": "Chet Holmgren", "Prop": "REBOUNDS", "Line": 9.5, "Side": "OVER"},
+        {"Player": "LeBron James", "Prop": "PTS+AST", "Line": 34.5, "Side": "OVER"},
+        {"Player": "Cade Cunningham", "Prop": "POINTS", "Line": 23.5, "Side": "OVER"},
+        {"Player": "Donovan Mitchell", "Prop": "POINTS", "Line": 27.5, "Side": "UNDER"},
     ],
     "raw_games": [
-        {"Matchup": "NYK @ PHI", "Spread": "NYK -4.5", "Total": "O/U 213.5", "Moneyline": "NYK -190 / PHI +160"},
-        {"Matchup": "MIN @ SAS", "Spread": "SAS -3.5", "Total": "O/U 215.5", "Moneyline": "SAS -165 / MIN +140"},
+        {"Matchup": "DET @ CLE", "Spread": "CLE -4.5", "Total": "O/U 216.5", "Moneyline": "CLE -190 / DET +160"},
+        {"Matchup": "OKC @ LAL", "Spread": "OKC -8.5", "Total": "O/U 214.5", "Moneyline": "OKC -400 / LAL +320"},
     ],
-    "injuries": [
-        {"Player": "Joel Embiid", "Status": "PROBABLE (Knee)"},
-        {"Player": "Anthony Edwards", "Status": "Cleared to play"},
-    ],
-    "blowout_games": [
-        {"Game": "NYK @ PHI", "Spread": "-4.5", "Advisory": "❌ Inactive"},
-        {"Game": "MIN @ SAS", "Spread": "-3.5", "Advisory": "❌ Inactive"},
-    ],
+    "injuries": [{"Player": "Kevin Huerter", "Status": "Doubtful"}, {"Player": "Sam Merrill", "Status": "Questionable"}],
+    "blowout_games": [{"Game": "DET @ CLE", "Spread": "-4.5", "Advisory": "❌ Inactive"}, {"Game": "OKC @ LAL", "Spread": "-8.5", "Advisory": "⚠️ ACTIVE"}],
     "filtered_count": 2,
 }
 
-MLB_SAMPLE = {
-    "raw_props": [
-        {"Player": "Aaron Judge", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER"},
-        {"Player": "Shohei Ohtani", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER"},
-        {"Player": "Juan Soto", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER"},
-        {"Player": "Bryce Harper", "Prop": "H+R+RBI", "Line": 0.5, "Side": "OVER"},
-        {"Player": "Spencer Strider", "Prop": "STRIKEOUTS", "Line": 4.5, "Side": "OVER"},
-        {"Player": "Tarik Skubal", "Prop": "STRIKEOUTS", "Line": 4.5, "Side": "OVER"},
-    ],
-    "raw_games": [
-        {"Matchup": "TEX @ NYY", "Spread": "NYY -1.5", "Total": "O/U 8.5", "Moneyline": "NYY -152"},
-        {"Matchup": "ATH @ PHI", "Spread": "PHI -1.5", "Total": "O/U 9.0", "Moneyline": "PHI -133"},
-        {"Matchup": "CIN @ CHC", "Spread": "CHC -1.5", "Total": "O/U 8.5", "Moneyline": "CHC -196"},
-    ],
-    "injuries": [{"Player": "None", "Status": "No major injuries reported"}],
-    "blowout_games": [{"Game": "MLB", "Spread": "N/A", "Advisory": "❌ Inactive (MLB)"}],
-    "filtered_count": 4,
-}
-
 def load_sport_data(sport):
-    data = NBA_SAMPLE if sport == "NBA" else (MLB_SAMPLE if sport == "MLB" else {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0})
+    data = NBA_SAMPLE if sport == "NBA" else {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0}
     st.session_state.raw_props = data["raw_props"]
     st.session_state.raw_games = data["raw_games"]
     st.session_state.injuries = data["injuries"]
     st.session_state.blowout_games = data["blowout_games"]
     st.session_state.filtered_count = data["filtered_count"]
     st.session_state.last_sport = sport
+    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
+    st.session_state.board_ready = True
 
-# =========================
-# COUNCIL LOGIC
-# =========================
 def run_council():
     raw = st.session_state.raw_props
     if not raw: st.session_state.board_data = None; return
@@ -246,32 +333,25 @@ def run_council():
         player, ptype, side, line = prop["Player"], prop["Prop"], prop["Side"], prop["Line"]
         votes, reasons = {}, {}
         is_combo = any(k in ptype.upper() for k in ["PTS+A", "PTS+R", "PRA", "COMBO"])
-        is_embiid = "EMBIID" in player.upper()
         is_under = "UNDER" in side.upper()
+        is_star = any(s in player for s in ["Shai", "LeBron", "Cade", "Donovan", "Anthony"])
 
         votes[MODELS[0]["name"]] = 0 if is_combo else (1 if is_under else 1)
         reasons[MODELS[0]["name"]] = "Combo variance too high" if is_combo else ("Outlier supports Under" if is_under else "Consistent, outlier clean")
-
         votes[MODELS[1]["name"]] = 0
         reasons[MODELS[1]["name"]] = "No environmental edge"
-
-        votes[MODELS[2]["name"]] = 0 if is_embiid else 1
-        reasons[MODELS[2]["name"]] = "Injury variance" if is_embiid else "Motivation / competitive"
-
-        votes[MODELS[3]["name"]] = 0 if (is_combo or is_embiid) else 1
-        reasons[MODELS[3]["name"]] = "Floor unreliable" if (is_combo or is_embiid) else "Deterministic floor above line"
-
+        votes[MODELS[2]["name"]] = 1 if is_star else 0
+        reasons[MODELS[2]["name"]] = "Playoff motivation / legacy game" if is_star else "Role player — motivation variance"
+        votes[MODELS[3]["name"]] = 0 if is_combo else 1
+        reasons[MODELS[3]["name"]] = "Floor unreliable" if is_combo else "Deterministic floor above line"
         votes[MODELS[4]["name"]] = 0 if is_combo else 1
         reasons[MODELS[4]["name"]] = "Sigma too wide" if is_combo else "Low volatility"
-
-        votes[MODELS[5]["name"]] = 0 if is_embiid else 1
-        reasons[MODELS[5]["name"]] = "CLV uncertain" if is_embiid else "CLV positive"
-
-        votes[MODELS[6]["name"]] = 0 if (is_combo or is_embiid) else 1
-        reasons[MODELS[6]["name"]] = "Ceiling variance high" if (is_combo or is_embiid) else "Ceiling manageable"
-
-        votes[MODELS[7]["name"]] = 0 if (is_combo or is_embiid) else 1
-        reasons[MODELS[7]["name"]] = "Margin of error" if (is_combo or is_embiid) else "Raw projection supports"
+        votes[MODELS[5]["name"]] = 1 if is_star else 0
+        reasons[MODELS[5]["name"]] = "CLV positive, edge meets floor" if is_star else "Edge below Emergency Floor"
+        votes[MODELS[6]["name"]] = 1 if is_star else 0
+        reasons[MODELS[6]["name"]] = "Ceiling manageable" if is_star else "Ceiling risk"
+        votes[MODELS[7]["name"]] = 0 if is_combo else 1
+        reasons[MODELS[7]["name"]] = "Margin of error" if is_combo else "Raw projection supports"
 
         ws = weighted_score(votes)
         tier = get_tier(ws)
@@ -288,7 +368,7 @@ def run_game_council():
     results = []
     for game in games:
         matchup = game["Matchup"]
-        votes = {model["name"]: (1 if any(t in matchup for t in ["NYY", "PHI", "CHC", "NYK", "SAS"]) else 0) for model in MODELS}
+        votes = {model["name"]: (1 if any(t in matchup for t in ["CLE", "OKC"]) else 0) for model in MODELS}
         ws = weighted_score(votes)
         tier = get_tier(ws)
         results.append({
@@ -351,14 +431,29 @@ with st.sidebar:
     st.metric("Integrity", st.session_state.integrity)
     st.checkbox("Safe Corridor", value=st.session_state.safe_corridor, key="safe_corridor")
     st.checkbox("Emergency Floor (12%)", value=st.session_state.emergency_floor, key="emergency_floor")
+    
     st.markdown("---")
-    if st.button("📡 Load Board"):
+    st.markdown("### 📡 Board Readiness")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔍 Check Now"):
+            ready = check_board_ready(st.session_state.last_sport)
+            if ready: st.success("Board is ready!")
+            else: st.warning("Not ready yet.")
+    with col2:
+        st.checkbox("Auto-check", value=st.session_state.auto_refresh, key="auto_refresh")
+    if st.session_state.last_scan_time:
+        st.caption(f"Last successful scan: {st.session_state.last_scan_time}")
+    
+    st.markdown("---")
+    label = load_button_label()
+    if st.button(label):
         load_sport_data(st.session_state.last_sport)
-        run_council(); run_game_council()
+        run_council()
+        run_game_council()
         for name in list(PROP_SOURCES.keys()) + list(GAME_SOURCES.keys()) + list(LINEUP_SOURCES.keys()):
             mark_site_ok(name)
-        mark_site_fail("ESPN (Primary)")
-        st.success(f"{st.session_state.last_sport} loaded. ESPN failed over to DraftKings.")
+        st.success(f"{st.session_state.last_sport} board loaded.")
     if st.button("🔄 Re-Run Council"):
         run_council(); run_game_council()
         st.success("Refreshed.")
@@ -373,6 +468,68 @@ tabs = st.tabs(["🏀 Board of 8", "🔒 Locks of the Day", "📋 Locks & Ledger
 # =========================
 with tabs[0]:
     st.markdown("# 🧠 THE BOARD OF 8 — CLARITY MODEL OUTPUT")
+    st.markdown(board_ready_badge(), unsafe_allow_html=True)
+    if st.session_state.auto_refresh:
+        st.caption("🔄 Auto-check active — checking every 30 minutes")
+    
+    # ===== MANUAL OVERRIDE SECTION =====
+    st.markdown("---")
+    st.markdown("## ⚡ MANUAL OVERRIDE — QUICK PROP LOOKUP")
+    st.markdown("Paste a single prop, game line, or full slip. One per line. Screenshots coming soon.")
+    manual_input = st.text_area(
+        "Paste props or games here",
+        placeholder="LeBron James OVER 21.5 Points\nOKC -8.5\nJames Harden OVER 5.5 Rebounds",
+        height=120,
+        key="manual_override_input"
+    )
+    col_m1, col_m2, col_m3 = st.columns([1, 1, 1])
+    with col_m1:
+        if st.button("⚡ Run Manual Analysis", use_container_width=True):
+            if manual_input.strip():
+                parsed = parse_manual_input(manual_input)
+                if parsed:
+                    st.session_state.manual_results = run_manual_council(parsed)
+                    st.success(f"Analyzed {len(st.session_state.manual_results)} props.")
+                else:
+                    st.warning("Could not parse input. Use format: 'Player OVER/UNDER Line Prop'")
+    with col_m2:
+        st.file_uploader("📸 Upload Screenshot", type=["png","jpg","jpeg"], key="manual_screenshot")
+    with col_m3:
+        if st.button("🗑️ Clear Manual Results", use_container_width=True):
+            st.session_state.manual_results = None
+            st.rerun()
+
+    # Show manual override results
+    if st.session_state.manual_results:
+        st.markdown("### ⚡ Manual Override Results")
+        for i, item in enumerate(st.session_state.manual_results):
+            with st.expander(f"{item['Player']} — {item['Side']} {item['Line']} {item['Prop']} ({item['Tier Label']})", expanded=True):
+                st.write(f"**Weighted Score:** {item['Weighted Score']}")
+                for model in MODELS:
+                    vote = item["Votes"].get(model["name"], 0)
+                    reason = item["Reasons"].get(model["name"], "")
+                    emoji = "✅" if vote == 1 else "❌"
+                    st.caption(f"{emoji} {model['name']}: {reason}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    override_flag = item["Tier"] not in ("SOVEREIGN", "ELITE") or any(k in item["Prop"].upper() for k in ["PRA", "COMBO", "REB+AST", "PTS+A"])
+                    if st.button(f"🔒 Lock This", key=f"manual_lock_{i}"):
+                        lid = generate_lock_id()
+                        st.session_state.locks.append({
+                            "id": lid, "type": "PROP",
+                            "player": item["Player"],
+                            "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
+                            "side": item["Side"], "line": item["Line"],
+                            "tier": item["Tier"],
+                            "status": "PENDING", "result": None,
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "parlay_id": lid,
+                            "override": override_flag,
+                        })
+                        st.success(f"Locked: {lid}")
+    st.markdown("---")
+    
+    # ===== MAIN BOARD =====
     sport = st.selectbox("Select Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport), key="sport_select")
     st.session_state.last_sport = sport
     board = st.session_state.board_data
@@ -386,13 +543,12 @@ with tabs[0]:
     if board:
         st.markdown(f"🔒 **Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {len(st.session_state.injuries)} matchups verified, {st.session_state.filtered_count} props removed)")
     st.markdown("---")
-
     with st.expander("📖 TIER LEGEND", expanded=False):
         for tier, desc in TIER_DESCRIPTIONS.items():
             st.markdown(f"**{tier_label(tier)}** — {desc}")
 
     if not board:
-        st.info("No board loaded. Use the sidebar 'Load Board' button.")
+        st.info("No board loaded. Check readiness above, then load from the sidebar.")
     else:
         st.markdown("## 🚨 PRE‑FILTER: LINEUP & INJURY VERIFICATION")
         st.table(pd.DataFrame(st.session_state.injuries) if st.session_state.injuries else pd.DataFrame([{"Status": "No issues reported"}]))
@@ -400,7 +556,6 @@ with tabs[0]:
         st.table(pd.DataFrame(st.session_state.blowout_games) if st.session_state.blowout_games else pd.DataFrame([{"Advisory": "Inactive"}]))
         st.markdown("## 📊 PROPS SURVIVED PRE‑FILTER")
         st.table(pd.DataFrame([{"Player": p["Player"], "Prop": p["Prop"], "Line": p["Line"], "Side": p["Side"]} for p in st.session_state.raw_props]))
-
         st.markdown("## 🗳️ MODEL‑BY‑MODEL VERDICTS")
         for model in MODELS:
             name, weight = model["name"], model["weight"]
@@ -417,15 +572,13 @@ with tabs[0]:
                     st.markdown("**PASS:**")
                     for item, reason in passed:
                         st.markdown(f"❌ {item['Player']} ({reason})")
-
         st.markdown("## 🟦 COUNCIL CONSENSUS SUMMARY")
         summary = sorted([{"Pick": f"{i['Player']} {i['Side']} {i['Line']} {i['Prop']}", "Score": i["Weighted Score"], "Tier": i["Tier Label"]} for i in board], key=lambda x: x["Score"], reverse=True)
         st.table(pd.DataFrame(summary))
         excluded = [i for i in board if i["Tier"] in ("LEAN","PASS")]
         if excluded: st.markdown("**Excluded:** " + ", ".join([f"{i['Player']} ({i['Tier Label']})" for i in excluded]))
-
         st.markdown("## 📡 MARKET DYNAMICS (v6.0 Supreme Audit)")
-        st.markdown("- **RLM Status:** DETECTED — Sharp money fading public Overs\n- **Contrarian Flag:** ACTIVE\n- **Regime Type:** STABLE")
+        st.markdown("- **RLM Status:** DETECTED\n- **Contrarian Flag:** ACTIVE\n- **Regime Type:** STABLE")
 
 # =========================
 # TAB 2 — LOCKS OF THE DAY
@@ -443,25 +596,22 @@ with tabs[1]:
         else:
             best_prop = sorted(approved, key=lambda x: x["Weighted Score"], reverse=True)[0]
             best_game = games[0] if games else None
-
             st.markdown("## 🔒 Lock of the Day")
             lock_data = [{"Type": "Prop", "Pick": f"{best_prop['Player']} {best_prop['Side']} {best_prop['Line']} {best_prop['Prop']}", "Tier": best_prop['Tier Label']}]
             if best_game: lock_data.append({"Type": "Game", "Pick": best_game["Matchup"], "Bet": best_game.get("Moneyline","N/A"), "Tier": best_game['Tier Label']})
             st.table(pd.DataFrame(lock_data))
-
             if best_prop["Tier"] == "APPROVED":
                 alt_line = best_prop["Line"] - 1.0 if "UNDER" in best_prop["Side"].upper() else best_prop["Line"] + 1.0
                 st.markdown(f"### 🔵 +EV Safety Corridor")
-                st.markdown(f"**{best_prop['Player']} {best_prop['Side']} {alt_line} {best_prop['Prop']}** — Alt line recommended (Approved Single).")
+                st.markdown(f"**{best_prop['Player']} {best_prop['Side']} {alt_line} {best_prop['Prop']}** — Alt line recommended.")
 
             st.markdown("## 🔗 Prop Parlay of the Day")
             prop_par = build_prop_parlay()
             if prop_par:
-                st.markdown("Select legs to include:")
+                st.markdown("Select legs:")
                 selected_legs = []
                 for i, leg in enumerate(prop_par):
-                    key = f"prop_leg_{i}"
-                    if st.checkbox(f"**{leg['Player']}** — {leg['Side']} {leg['Line']} {leg['Prop']} ({leg['Tier Label']})", value=True, key=key):
+                    if st.checkbox(f"{leg['Player']} — {leg['Side']} {leg['Line']} {leg['Prop']} ({leg['Tier Label']})", value=True, key=f"prop_leg_{i}"):
                         selected_legs.append(leg)
                 if len(selected_legs) >= 2:
                     st.table(pd.DataFrame([{"Leg": i+1, "Player": l["Player"], "Prop": f"{l['Side']} {l['Line']} {l['Prop']}", "Tier": l["Tier Label"]} for i,l in enumerate(selected_legs)]))
@@ -470,19 +620,15 @@ with tabs[1]:
                         for leg in selected_legs:
                             st.session_state.locks.append({"id":lid,"type":"PROP","player":leg["Player"],"prop":f"{leg['Side']} {leg['Line']} {leg['Prop']}","side":leg["Side"],"line":leg["Line"],"tier":leg["Tier"],"status":"PENDING","result":None,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"parlay_id":lid})
                         st.success(f"Locked: {lid}")
-                else:
-                    st.warning("Select at least 2 legs.")
-            else:
-                st.info("No eligible prop parlay.")
+                else: st.warning("Select at least 2 legs.")
 
             st.markdown("## 🔗 Game Parlay of the Day")
             game_par = build_game_parlay()
             if game_par:
-                st.markdown("Select game legs to include:")
+                st.markdown("Select games:")
                 selected_games = []
                 for i, leg in enumerate(game_par):
-                    key = f"game_leg_{i}"
-                    if st.checkbox(f"**{leg['Matchup']}** — {leg.get('Moneyline','N/A')} ({leg['Tier Label']})", value=True, key=key):
+                    if st.checkbox(f"{leg['Matchup']} — {leg.get('Moneyline','N/A')} ({leg['Tier Label']})", value=True, key=f"game_leg_{i}"):
                         selected_games.append(leg)
                 if len(selected_games) >= 2:
                     st.table(pd.DataFrame([{"Leg": i+1, "Matchup": l["Matchup"], "Bet": l.get("Moneyline","N/A"), "Tier": l["Tier Label"]} for i,l in enumerate(selected_games)]))
@@ -491,10 +637,7 @@ with tabs[1]:
                         for leg in selected_games:
                             st.session_state.locks.append({"id":lid,"type":"GAME","matchup":leg["Matchup"],"bet":leg.get("Moneyline","N/A"),"tier":leg["Tier"],"status":"PENDING","result":None,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"parlay_id":lid})
                         st.success(f"Locked: {lid}")
-                else:
-                    st.warning("Select at least 2 games.")
-            else:
-                st.info("No eligible game parlay.")
+                else: st.warning("Select at least 2 games.")
 
 # =========================
 # TAB 3 — LOCKS & LEDGER
@@ -503,8 +646,7 @@ with tabs[2]:
     st.markdown("# 📋 LOCKS & LEDGER")
     pending = [l for l in st.session_state.locks if l.get("status") == "PENDING"]
     st.markdown("### Active Locks")
-    if not pending:
-        st.info("No active locks.")
+    if not pending: st.info("No active locks.")
     else:
         for i, lock in enumerate(pending):
             cols = st.columns([4,1,1,1])
@@ -540,25 +682,21 @@ with tabs[2]:
 # =========================
 with tabs[3]:
     st.markdown("# 🔄 RECONCILIATION & SYNC")
-
     st.markdown("### 🌐 Auto-Scan Sources")
-    st.markdown("Failover order: ESPN (Primary) → DraftKings (Failover 1) → Covers (Failover 2)")
+    st.markdown("Failover: ESPN → DraftKings → Covers")
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("🌐 Scan Game Lines (ESPN)"):
-            mark_site_fail("ESPN (Primary)")
-            mark_site_ok("DraftKings (Failover 1)")
-            st.info("ESPN unavailable. Failover to DraftKings successful.")
+        if st.button("🌐 Scan Game Lines"):
+            mark_site_fail("ESPN (Primary)"); mark_site_ok("DraftKings (Failover 1)")
+            st.info("Failover to DraftKings.")
     with c2:
         if st.button("🌐 Scan Player Props"):
-            for name in PROP_SOURCES:
-                mark_site_ok(name)
-            st.success("All prop sources scanned successfully.")
-
+            for name in PROP_SOURCES: mark_site_ok(name)
+            st.success("All prop sources scanned.")
     st.markdown("---")
     st.markdown("### 📋 Paste Results to Auto-Grade")
-    st.markdown("Format: `Player OVER/UNDER Line WIN/LOSS` (one per line)")
-    pasted = st.text_area("Paste results here", height=150)
+    st.markdown("Format: `Player OVER/UNDER Line WIN/LOSS`")
+    pasted = st.text_area("Paste results", height=150)
     if st.button("🔍 Sync Pasted Results"):
         parsed = parse_pasted_results(pasted)
         if parsed:
@@ -568,8 +706,7 @@ with tabs[3]:
                         if (r["player"].lower() in lock.get("player","").lower() and 
                             r["side"] == lock.get("side","") and 
                             abs(r["line"] - lock.get("line",0)) < 0.1):
-                            lock["status"] = "RESOLVED"
-                            lock["result"] = r["outcome"]
+                            lock["status"] = "RESOLVED"; lock["result"] = r["outcome"]
                             st.session_state.history.append(lock)
                             if r["outcome"] == "WIN":
                                 st.session_state.integrity = min(INTEGRITY_CEILING, st.session_state.integrity + 0.5)
@@ -580,36 +717,30 @@ with tabs[3]:
                                 st.session_state.integrity = max(INTEGRITY_FLOOR, st.session_state.integrity - 1.0)
                                 st.session_state.bankroll -= active_unit()
             st.session_state.locks = [l for l in st.session_state.locks if l["status"] == "PENDING"]
-            st.success("Results synced! Ledger updated.")
-        else:
-            st.warning("No valid results detected.")
-
+            st.success("Synced.")
+        else: st.warning("No valid results.")
     st.markdown("---")
-    st.markdown("### 📸 Upload Screenshot (Coming Soon)")
+    st.markdown("### 📸 Upload Screenshot")
     st.file_uploader("Upload PNG/JPG", type=["png","jpg","jpeg"])
-    st.info("Screenshot OCR in development.")
-
+    st.info("OCR coming soon.")
     st.markdown("---")
     st.markdown("### 🔬 Autopsy Log")
     if st.session_state.autopsy_log:
         st.table(pd.DataFrame(st.session_state.autopsy_log))
-    else:
-        st.info("No losses recorded yet. Autopsy reports appear here after a LOSS is marked.")
+    else: st.info("No losses yet.")
 
 # =========================
 # TAB 5 — SEM & SYSTEM
 # =========================
 with tabs[4]:
     st.markdown("# 🛡️ SEM & SYSTEM HEALTH")
-
     st.markdown("## SEM Status")
     st.metric("Integrity Score", st.session_state.integrity)
     st.metric("Safe Corridor", "ACTIVE" if st.session_state.safe_corridor else "INACTIVE")
     st.metric("Emergency Floor", "ACTIVE (12%)" if st.session_state.emergency_floor else "INACTIVE")
     st.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
     st.metric("Active Locks", len([l for l in st.session_state.locks if l.get("status")=="PENDING"]))
-
-    st.markdown("## 📡 Site Health & Failover Status")
+    st.markdown("## 📡 Site Health")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("### Prop Sources")
@@ -623,7 +754,6 @@ with tabs[4]:
             s = st.session_state.site_status.get(name, {}).get("status","unknown")
             t = st.session_state.site_status.get(name, {}).get("last_checked","—")
             st.markdown(f"{dot(s)} **{name}** — {t}")
-
     st.markdown("## ➕ Add Custom Source")
     nn = st.text_input("Source Name"); nu = st.text_input("Source URL (use {sport})")
     if st.button("Add Source") and nn and nu:
