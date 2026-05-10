@@ -10,8 +10,6 @@ import subprocess
 import shutil
 from scipy.stats import norm
 import time
-import psycopg2
-import psycopg2.extras
 
 st.set_page_config(page_title="BetCouncil v3.3 Hard Engine", page_icon="🛡️", layout="wide")
 
@@ -58,10 +56,8 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 .summary-card { background:linear-gradient(135deg, rgba(232,160,32,.08), #111a24); border:1px solid rgba(232,160,32,.25); border-radius:10px; padding:14px; font-size:15px; margin-bottom:14px; }
 .small-note { font-size:13px; color:#5a7088; }
 
-/* Larger info messages */
 .stInfo, .stSuccess, .stWarning, .stError { font-size:15px !important; }
 
-/* Summary section styling */
 .summary-header { background:linear-gradient(135deg, #1a0a2e, #0d1219); border:1px solid rgba(232,160,32,.35); border-radius:10px; padding:16px; margin-bottom:14px; }
 .summary-section-title { font-size:14px; color:#e8a020; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; font-weight:700; }
 .summary-table { width:100%; border-collapse:collapse; font-size:14px; margin-bottom:14px; }
@@ -80,7 +76,6 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 .model-pick { font-size:13px; padding:3px 0; }
 .lock-of-day { background:linear-gradient(135deg, rgba(232,160,32,.15), #0d1219); border:2px solid #e8a020; border-radius:12px; padding:16px; margin:14px 0; }
 
-/* Bolt-style prop card */
 .prop-card { background:#0d1219; border:1px solid #1c2a3a; border-radius:10px; padding:1rem; margin-bottom:.75rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
 .prop-card-left { flex:1; min-width:180px; }
 .prop-card-player { font-size:17px; font-weight:700; color:#f4f8fc; }
@@ -91,24 +86,20 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 .prop-card-right { text-align:right; }
 .prop-card-score { font-size:13px; color:#5a7088; font-family:monospace; margin-bottom:6px; }
 
-/* Sidebar styling */
 .sidebar-section { background:#0d1219; border:1px solid #1c2a3a; border-radius:8px; padding:12px; margin-bottom:10px; }
 .sidebar-value { font-size:20px; font-weight:700; color:#f4f8fc; }
 .sidebar-label { font-size:12px; color:#5a7088; text-transform:uppercase; letter-spacing:.5px; }
 .sidebar-change-green { font-size:13px; color:#0d9488; }
 .sidebar-sub { font-size:12px; color:#5a7088; }
 
-/* Validation firewall */
 .firewall-item { font-size:13px; padding:3px 0; display:flex; align-items:center; gap:6px; }
 .firewall-pass { color:#0d9488; }
 .firewall-fail { color:#d03030; }
 
-/* Models table */
 .model-table { font-size:14px !important; width:100%; border-collapse:collapse; }
 .model-table th { font-size:13px !important; padding:10px 8px !important; color:#5a7088 !important; text-align:left !important; border-bottom:2px solid #1c2a3a !important; }
 .model-table td { font-size:14px !important; padding:10px 8px !important; border-bottom:1px solid #1c2a3a !important; }
 
-/* Scan log */
 .scan-log { background:#0d1219; border:1px solid #1c2a3a; border-radius:6px; padding:10px; font-family:monospace; font-size:12px; max-height:300px; overflow-y:auto; margin-top:8px; }
 .log-ok { color:#0d9488; }
 .log-fail { color:#d03030; }
@@ -162,40 +153,7 @@ VEGASINSIDER_SLUG = {
     "WNBA": "wnba", "Soccer": "soccer", "Tennis": "tennis", "Golf": "golf", "UFC": "ufc",
 }
 
-# Market to database column mapping
-MARKET_COLUMN_MAP = {
-    "MLB": {
-        "STRIKEOUTS": "mlb_strikeouts",
-        "EARNED_RUNS": "mlb_earned_runs",
-        "TOTAL_BASES": "mlb_total_bases",
-        "HITS_ALLOWED": "mlb_hits_allowed",
-        "HR": "mlb_total_bases",
-    },
-    "NBA": {
-        "PTS": "nba_points",
-        "REB": "nba_rebounds",
-        "AST": "nba_assists",
-        "PRA": "nba_points",
-        "PR": "nba_points",
-        "PA": "nba_assists",
-    },
-    "WNBA": {
-        "PTS": "nba_points",
-        "REB": "nba_rebounds",
-        "AST": "nba_assists",
-    },
-    "NFL": {
-        "PASS_YDS": "nba_points",
-        "RUSH_YDS": "nba_rebounds",
-        "REC_YDS": "nba_assists",
-    },
-    "NHL": {
-        "PTS": "nba_points",
-        "SHOTS": "nba_rebounds",
-    },
-}
-
-# MLB Stadium Database
+# MLB Stadium Database (for weather)
 MLB_STADIUMS = {
     "ARI": {"name": "Chase Field", "type": "Dome", "lat": 33.4455, "lon": -112.0667},
     "ATL": {"name": "Truist Park", "type": "Open", "lat": 33.8908, "lon": -84.4678},
@@ -340,8 +298,6 @@ if "history" not in st.session_state: st.session_state.history = []
 if "locks" not in st.session_state: st.session_state.locks = []
 if "weather_data" not in st.session_state: st.session_state.weather_data = {}
 if "raw_games_for_summary" not in st.session_state: st.session_state.raw_games_for_summary = []
-if "db_connected" not in st.session_state: st.session_state.db_connected = False
-if "db_error" not in st.session_state: st.session_state.db_error = ""
 
 if "kelly_odds" not in st.session_state: st.session_state.kelly_odds = -110
 if "kelly_prob" not in st.session_state: st.session_state.kelly_prob = 55.0
@@ -351,25 +307,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.google.com/",
 }
-
-# ──────────────────────────────────────────────────────────────
-# Database Connection
-# ──────────────────────────────────────────────────────────────
-def get_db_connection():
-    """Connect to PostgreSQL. Returns connection or None."""
-    try:
-        conn = psycopg2.connect(
-            host="localhost",
-            port=5432,
-            database="betcouncil",
-            user="betcouncil_user",
-            password="betcouncil_password",
-            connect_timeout=5
-        )
-        return conn
-    except Exception as e:
-        st.session_state.db_error = str(e)[:100]
-        return None
 
 # ──────────────────────────────────────────────────────────────
 # Core Functions
@@ -417,68 +354,18 @@ def kelly(prob, odds):
     b = odds/100 if odds > 0 else 100/abs(odds)
     return max(0.0, min(((prob*(b+1)-1)/b), KELLY_CAP))
 
-# ──────────────────────────────────────────────────────────────
-# Database Query Functions
-# ──────────────────────────────────────────────────────────────
-def fetch_player_series_from_db(player_name, sport, market):
-    """Query PostgreSQL for last 15 performances for a given player/market."""
-    conn = get_db_connection()
-    if not conn:
-        return None
+def normal_wma(vals):
+    vals = np.array(vals, dtype=float)
+    w = np.arange(1, len(vals)+1)
+    return float(np.average(vals, weights=w))
 
-    try:
-        league = sport.upper()
-        column = MARKET_COLUMN_MAP.get(league, {}).get(market.upper(), None)
-        if not column:
-            return None
-
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        query = f"""
-            SELECT {column} as val, game_date
-            FROM player_performance pp
-            JOIN players p ON p.player_id = pp.player_id
-            WHERE p.name ILIKE %s AND p.league = %s
-            ORDER BY game_date DESC LIMIT 15
-        """
-        cur.execute(query, (f"%{player_name}%", league))
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if rows:
-            return [r['val'] for r in rows if r['val'] is not None]
-        return None
-    except Exception as e:
-        log_scan(f"DB query failed for {player_name}: {str(e)[:60]}", "fail")
-        return None
-
-def get_historical_floor(player_name, sport, market):
-    """Calculate 20th percentile of historical performance."""
-    series = fetch_player_series_from_db(player_name, sport, market)
-    if series and len(series) >= 5:
-        return float(np.percentile(series, 20))
-    return None
-
-def calculate_trend_score(player_name, sport, market, current_line):
-    """
-    Compare current prop line to historical floor.
-    If line is below historical floor, player consistently beats it → Sovereign.
-    """
-    floor = get_historical_floor(player_name, sport, market)
-    if floor is None:
-        return "UNKNOWN", 0.0
-
-    if current_line < floor:
-        edge_magnitude = (floor - current_line) / max(floor, 1)
-        if edge_magnitude > 0.25:
-            return "SOVEREIGN", edge_magnitude
-        elif edge_magnitude > 0.10:
-            return "ELITE", edge_magnitude
-        return "APPROVED", edge_magnitude
-    elif current_line <= floor * 1.1:
-        return "APPROVED", 0.0
-    else:
-        return "LEAN", -0.05
+def wsem(vals):
+    vals = np.array(vals[-8:], dtype=float)
+    if len(vals) < 2: return 1.0
+    w = np.arange(1, len(vals)+1)
+    mu = np.average(vals, weights=w)
+    var = np.average((vals-mu)**2, weights=w)
+    return float(max(np.sqrt(var/max(len(vals),1)), 0.5))
 
 # ──────────────────────────────────────────────────────────────
 # Weather Functions
@@ -492,7 +379,7 @@ def get_stadium_info(team_abbr, sport):
     return {"name": "Unknown", "type": "Open", "lat": 0, "lon": 0}
 
 def fetch_open_meteo(lat, lon):
-    """Fetch weather forecast from Open-Meteo API."""
+    """Fetch weather forecast from Open-Meteo API (free, no key needed)."""
     try:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=precipitation_probability,wind_speed_10m,wind_direction_10m&forecast_days=1"
         resp = requests.get(url, timeout=10)
@@ -503,15 +390,12 @@ def fetch_open_meteo(lat, lon):
             wind_speeds = hourly.get("wind_speed_10m", [0])
             wind_dirs = hourly.get("wind_direction_10m", [0])
 
-            # Get max values for the game window (approximate: use max of all hours)
             max_precip = max(precip_probs) if precip_probs else 0
             max_wind = max(wind_speeds) if wind_speeds else 0
 
-            # Determine if wind is blowing out (simplified: check if direction is toward outfield)
             wind_out = False
             if wind_dirs and max_wind > 12:
                 avg_dir = sum(wind_dirs) / len(wind_dirs)
-                # 180-360 degrees roughly = blowing out to center/right
                 if 135 < avg_dir < 315:
                     wind_out = True
 
@@ -525,7 +409,7 @@ def fetch_open_meteo(lat, lon):
         return {"precip_prob": 0, "wind_speed": 0, "wind_dir": "In"}
 
 def apply_weather_filter(home_team, sport):
-    """Apply weather advisory for a game. Returns (advisory_label, detail_text)."""
+    """Apply weather advisory for a game."""
     stadium = get_stadium_info(home_team, sport)
 
     if stadium["type"] == "Dome":
@@ -681,142 +565,22 @@ def parse_espn_json(html, sport):
     return out
 
 # ──────────────────────────────────────────────────────────────
-# Main Sport Data Loader
-# ──────────────────────────────────────────────────────────────
-def load_sport_data_live(sport):
-    all_props = []
-    all_games = []
-    raw_games = []
-    seen_props = set()
-    weather_results = {}
-
-    allowed_sources = SPORT_SOURCE_MAP.get(sport, ["BettingPros"])
-    log_scan(f"Scanning {sport} — {len(allowed_sources)} prop sources", "skip")
-
-    for source_name in allowed_sources:
-        url = build_source_url(source_name, sport)
-        if not url: continue
-        log_scan(f"Fetching {source_name}: {url}", "skip")
-        html = safe_fetch(url, source_name)
-        if html:
-            props = parse_props_generic(html, source_name)
-            for prop in props:
-                player = prop.get("player", prop.get("col1", ""))
-                prop_type = prop.get("market", prop.get("col2", ""))
-                try:
-                    line_str = prop.get("line", prop.get("odds", "0"))
-                    line = float(re.sub(r"[^\d.]+", "", str(line_str))) if line_str else 0
-                except:
-                    line = 0
-                key = (player, prop_type, line)
-                if key not in seen_props and player:
-                    seen_props.add(key)
-                    all_props.append({
-                        "Player": player, "Prop": prop_type, "Line": line, "Side": "OVER",
-                        "Sport": sport,
-                    })
-            log_scan(f"{source_name}: {len(props)} props extracted", "ok")
-        else:
-            log_scan(f"{source_name}: FAIL — moving to next source", "fail")
-
-    # Game lines: VegasInsider → ESPN failover
-    for gs_name in ["VegasInsider", "ESPN (JSON API)"]:
-        url = build_source_url(gs_name, sport)
-        if not url: continue
-        html = safe_fetch(url, gs_name)
-        if html:
-            if "ESPN" in gs_name:
-                games = parse_espn_json(html, sport)
-                raw_games = games
-            else:
-                parsed = parse_props_generic(html, gs_name)
-                raw_games = [{
-                    "matchup": g.get("matchup", ""),
-                    "spread": g.get("spread", "N/A"),
-                    "total": g.get("total", "N/A"),
-                } for g in parsed]
-                games = [{"Matchup": g.get("matchup", ""), "Sport": sport, "Spread": g.get("spread", "N/A"), "Total": g.get("total", "N/A")} for g in parsed]
-            if games:
-                all_games = games
-                break
-
-    # Weather for MLB
-    if sport.upper() == "MLB":
-        for game in raw_games:
-            matchup = game.get("matchup", "")
-            parts = matchup.split(" @ ")
-            if len(parts) == 2:
-                away, home = parts
-                # Extract team abbreviation from home team
-                home_abbr = home.split()[-1] if home else ""
-                advisory, detail = apply_weather_filter(home_abbr, sport)
-                weather_results[matchup] = {"advisory": advisory, "detail": detail}
-
-    # Fallback
-    if not all_props:
-        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
-        all_props = fallback["props"]
-        log_scan(f"No live props — using {sport} fallback data", "skip")
-    if not all_games:
-        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
-        all_games = fallback["games"]
-        log_scan(f"No live games — using {sport} fallback data", "skip")
-
-    st.session_state.board_data = run_council(all_props)
-    st.session_state.game_verdicts = run_game_council(all_games)
-    st.session_state.raw_games_for_summary = raw_games
-    st.session_state.weather_data = weather_results
-    st.session_state.summary_text = generate_full_summary(
-        st.session_state.board_data,
-        st.session_state.game_verdicts,
-        sport,
-        raw_games,
-        weather_results
-    )
-    st.session_state.last_sport = sport
-    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
-
-# ──────────────────────────────────────────────────────────────
-# Analysis Pipeline
+# Analysis Pipeline (Synthetic — no DB dependency)
 # ──────────────────────────────────────────────────────────────
 def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=None):
     bankroll = bankroll or get_bankroll()
-    league = sport.upper()
-
-    # Try DB query first
-    historical = fetch_player_series_from_db(player, sport, market)
-
-    if historical and len(historical) >= 5:
-        mu = float(np.mean(historical))
-        sigma = max(float(np.std(historical)), 0.5)
-        prob = float(1 - norm.cdf(line, mu, sigma) if pick.upper() == "OVER" else norm.cdf(line, mu, sigma))
-        impl = american_to_prob(odds)
-        edge = prob - impl
-
-        # Trend injection: compare line to historical floor
-        trend_tier, trend_bonus = calculate_trend_score(player, sport, market, line)
-        if trend_tier != "UNKNOWN":
-            # Boost edge if historical trend confirms
-            edge += trend_bonus * 0.5
-
-        tier = classify_tier(edge)
-        confidence = min(95, int(50 + (abs(edge) * 100)))
-    else:
-        # Fallback to synthetic
-        fallback_base = 24 if market in ("PTS","PRA","PR","PA") else 6 if market in ("REB","RUSH_YDS") else 5 if market in ("AST","REC_YDS") else 17
-        fallback_series = list(np.random.normal(fallback_base, max(2, fallback_base * 0.15), 10))
-        mu = float(np.mean(fallback_series))
-        sigma = max(float(np.std(fallback_series)), 0.75)
-        prob = float(1 - norm.cdf(line, mu, sigma) if pick.upper() == "OVER" else norm.cdf(line, mu, sigma))
-        impl = american_to_prob(odds)
-        edge = prob - impl
-        tier = classify_tier(edge)
-        confidence = 65
-
+    base = 24 if market in ("PTS","PRA","PR","PA") else 6 if market in ("REB","RUSH_YDS") else 5 if market in ("AST","REC_YDS") else 17
+    stats = list(np.random.normal(base, max(2, base*0.15), 10))
+    mu = normal_wma(stats)
+    sigma = max(wsem(stats), 0.75)
+    prob = float(1 - norm.cdf(line, mu, sigma) if pick.upper()=="OVER" else norm.cdf(line, mu, sigma))
+    impl = american_to_prob(odds)
+    edge = prob - impl
+    tier = classify_tier(edge)
     return {
-        "player": player, "market": market, "line": line, "pick": pick, "sport": sport, "odds": odds,
-        "prob": prob, "edge": edge, "kelly": kelly(prob, odds), "tier": tier,
-        "mu": mu, "sigma": sigma, "confidence": confidence, "source_status": "DB" if historical else "SYNTHETIC"
+        "player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,
+        "prob":prob,"edge":edge,"kelly":kelly(prob, odds),"tier":tier,
+        "mu":mu,"sigma":sigma,"confidence":65,"source_status":"SYNTHETIC"
     }
 
 def run_council(items):
@@ -850,7 +614,6 @@ def run_game_council(games):
 # FULL SUMMARY GENERATOR — Section 9.1 Format
 # ──────────────────────────────────────────────────────────────
 def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data):
-    """Generate the full Section 9.1 Synthesis summary."""
     if not board:
         return "No board loaded."
 
@@ -958,8 +721,100 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data):
 
     return "\n".join(lines)
 
-def build_summary_cards(board, games):
-    return []
+# ──────────────────────────────────────────────────────────────
+# Main Sport Data Loader
+# ──────────────────────────────────────────────────────────────
+def load_sport_data_live(sport):
+    all_props = []
+    all_games = []
+    raw_games = []
+    seen_props = set()
+    weather_results = {}
+
+    allowed_sources = SPORT_SOURCE_MAP.get(sport, ["BettingPros"])
+    log_scan(f"Scanning {sport} — {len(allowed_sources)} prop sources", "skip")
+
+    for source_name in allowed_sources:
+        url = build_source_url(source_name, sport)
+        if not url: continue
+        log_scan(f"Fetching {source_name}: {url}", "skip")
+        html = safe_fetch(url, source_name)
+        if html:
+            props = parse_props_generic(html, source_name)
+            for prop in props:
+                player = prop.get("player", prop.get("col1", ""))
+                prop_type = prop.get("market", prop.get("col2", ""))
+                try:
+                    line_str = prop.get("line", prop.get("odds", "0"))
+                    line = float(re.sub(r"[^\d.]+", "", str(line_str))) if line_str else 0
+                except:
+                    line = 0
+                key = (player, prop_type, line)
+                if key not in seen_props and player:
+                    seen_props.add(key)
+                    all_props.append({
+                        "Player": player, "Prop": prop_type, "Line": line, "Side": "OVER",
+                        "Sport": sport,
+                    })
+            log_scan(f"{source_name}: {len(props)} props extracted", "ok")
+        else:
+            log_scan(f"{source_name}: FAIL — moving to next source", "fail")
+
+    # Game lines: VegasInsider → ESPN failover
+    for gs_name in ["VegasInsider", "ESPN (JSON API)"]:
+        url = build_source_url(gs_name, sport)
+        if not url: continue
+        html = safe_fetch(url, gs_name)
+        if html:
+            if "ESPN" in gs_name:
+                games = parse_espn_json(html, sport)
+                raw_games = games
+            else:
+                parsed = parse_props_generic(html, gs_name)
+                raw_games = [{
+                    "matchup": g.get("matchup", ""),
+                    "spread": g.get("spread", "N/A"),
+                    "total": g.get("total", "N/A"),
+                } for g in parsed]
+                games = [{"Matchup": g.get("matchup", ""), "Sport": sport, "Spread": g.get("spread", "N/A"), "Total": g.get("total", "N/A")} for g in parsed]
+            if games:
+                all_games = games
+                break
+
+    # Weather for MLB
+    if sport.upper() == "MLB":
+        for game in raw_games:
+            matchup = game.get("matchup", "")
+            parts = matchup.split(" @ ")
+            if len(parts) == 2:
+                away, home = parts
+                home_abbr = home.split()[-1] if home else ""
+                advisory, detail = apply_weather_filter(home_abbr, sport)
+                weather_results[matchup] = {"advisory": advisory, "detail": detail}
+
+    # Fallback
+    if not all_props:
+        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
+        all_props = fallback["props"]
+        log_scan(f"No live props — using {sport} fallback data", "skip")
+    if not all_games:
+        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
+        all_games = fallback["games"]
+        log_scan(f"No live games — using {sport} fallback data", "skip")
+
+    st.session_state.board_data = run_council(all_props)
+    st.session_state.game_verdicts = run_game_council(all_games)
+    st.session_state.raw_games_for_summary = raw_games
+    st.session_state.weather_data = weather_results
+    st.session_state.summary_text = generate_full_summary(
+        st.session_state.board_data,
+        st.session_state.game_verdicts,
+        sport,
+        raw_games,
+        weather_results
+    )
+    st.session_state.last_sport = sport
+    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
 
 # ──────────────────────────────────────────────────────────────
 # Other Functions
@@ -1132,7 +987,7 @@ firewall_passed = sum(1 for v in firewall_checks.values() if v)
 with st.sidebar:
     st.markdown("""
     <div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div>
-    <div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — DB Engine Active</div>
+    <div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — Section 9.1 Synthesis</div>
     """, unsafe_allow_html=True)
 
     change_class = "sidebar-change-green" if daily_change_pct >= 0 else "red-text"
@@ -1190,15 +1045,6 @@ with st.sidebar:
         st.markdown(f"<div class='firewall-item {cls}'>{icon} {check_name}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # DB Status
-    db_status = "🟢 Connected" if st.session_state.db_connected else "🔴 Offline"
-    st.markdown(f"""
-    <div class='sidebar-section'>
-        <div class='sidebar-label'>DATABASE</div>
-        <div class='sidebar-value' style='font-size:14px;'>{db_status}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
     st.markdown("""
     <div class='sidebar-section'>
         <div class='sidebar-label'>QUARTER KELLY CALCULATOR</div>
@@ -1220,7 +1066,7 @@ with st.sidebar:
     st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
     sport = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport), key="sidebar_sport")
     if st.button("🟢 Load Board", use_container_width=True):
-        with st.spinner(f"Loading {sport} board — querying DB + scraping sources..."):
+        with st.spinner(f"Loading {sport} board..."):
             load_sport_data_live(sport)
         st.success(f"{sport} loaded — {st.session_state.last_scan_time}")
     if st.button("🔄 Re-Run Board", use_container_width=True):
@@ -1245,7 +1091,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · DB Engine + Section 9.1 Synthesis</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · Section 9.1 Synthesis + Weather + Cross-Sport</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -1254,7 +1100,7 @@ st.markdown(f"""
 <div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px;'>
 <div class='metric-box'><div class='metric-label'>Bankroll</div><div class='metric-value gold-text'>${bankroll:,.2f}</div></div>
 <div class='metric-box'><div class='metric-label'>Unit Size</div><div class='metric-value gold-text'>${unit_size:.2f}</div></div>
-<div class='metric-box'><div class='metric-label'>DB Status</div><div class='metric-value {"green-text" if st.session_state.db_connected else "red-text"}'>{'ONLINE' if st.session_state.db_connected else 'OFFLINE'}</div></div>
+<div class='metric-box'><div class='metric-label'>Integrity</div><div class='metric-value green-text'>{integrity}/100</div></div>
 <div class='metric-box'><div class='metric-label'>Sharp Ref</div><div class='metric-value {"green-text" if sharp.get("status")=="ok" else "yellow-text" if sharp.get("status")=="degraded" else "red-text"}'>{sharp.get("book","Pinnacle")}</div></div>
 </div></div>
 """, unsafe_allow_html=True)
@@ -1264,21 +1110,17 @@ st.markdown(f"""
 # ──────────────────────────────────────────────────────────────
 tabs = st.tabs(["🏀 Board of 8", "📊 Analysis", "🔒 Locks of Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🧠 Models", "⚙️ Settings"])
 
-# ────────── TAB 0: Board of 8 (Now with Full Summary) ──────────
+# ────────── TAB 0: Board of 8 (Full Summary) ──────────
 with tabs[0]:
     board = st.session_state.board_data or []
 
     if st.session_state.last_scan_time:
         st.markdown(f"<div class='small-note'>Last scan: {st.session_state.last_scan_time} · {st.session_state.last_sport}</div>", unsafe_allow_html=True)
 
-    # ── FULL SECTION 9.1 SUMMARY ──
     if st.session_state.summary_text and board:
-        summary_html = st.session_state.summary_text
-        # Convert markdown to HTML sections with proper styling
         st.markdown(st.session_state.summary_text)
         st.markdown("---")
 
-        # Lock of the Day card
         approved = [i for i in board if i.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")]
         if approved:
             best = approved[0]
@@ -1310,20 +1152,16 @@ with tabs[0]:
                 st.rerun()
 
     elif not board:
-        st.info("No board loaded yet. Click **Load Board** or **Re-Run Board** in the sidebar to analyze props and generate the full synthesis.")
-
-    elif not st.session_state.summary_text:
-        st.info("Summary pending — load a board first.")
+        st.info("No board loaded yet. Click **Load Board** or **Re-Run Board** in the sidebar.")
 
 # ────────── TAB 1: Analysis (Cross-Sport) ──────────
 with tabs[1]:
     st.markdown("# 🌍 Cross-Sport Best Bets")
     cross = st.session_state.cross_sport_board
     if not cross:
-        st.info("Click **'Scan All Sports'** in the sidebar to populate cross-sport data from all leagues.")
+        st.info("Click **'Scan All Sports'** in the sidebar.")
     else:
         st.markdown(f"**Scanned at:** {cross['scanned_at']} | **{len(SPORTS)} sports**")
-
         sport_results = cross.get('sport_results', {})
         if sport_results:
             st.markdown("### 📊 Sport-by-Sport Summary")
@@ -1337,7 +1175,6 @@ with tabs[1]:
                     prop_count = len(data.get('props', []))
                     game_count = len(data.get('games', []))
                     st.metric(sport_name, f"{prop_count} props", f"{game_count} games")
-
         st.markdown("---")
         st.markdown("## 🏆 Top Props Across All Sports")
         cross_props = cross.get('props', [])
@@ -1345,8 +1182,6 @@ with tabs[1]:
             for i, p in enumerate(cross_props[:8], 1):
                 tc = tier_color(p.get('Tier', 'PASS'))
                 st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {p.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{p.get('Player','')}</span> — {p.get('Side','')} {p.get('Line','')} {p.get('Prop','')} <span style='color:{tc};font-weight:600;'>{p.get('Tier Label','')}</span> <span style='font-family:monospace;color:#e8a020;float:right;'>Score {p.get('Weighted Score',0):.2f}</span></div>", unsafe_allow_html=True)
-        else:
-            st.info("No props found in cross-sport scan.")
 
 # ────────── TAB 2: Locks of Day ──────────
 with tabs[2]:
@@ -1371,7 +1206,7 @@ with tabs[2]:
             for i, leg in enumerate(prop_par[:5], 1):
                 st.markdown(f"<div class='section-card'><b>Leg {i}:</b> {leg['Player']} {leg['Side']} {leg['Line']} {leg['Prop']} — <span style='color:{tier_color(leg['Tier'])}'>{leg['Tier Label']}</span></div>", unsafe_allow_html=True)
     else:
-        st.info("Load a board first to see Locks of Day.")
+        st.info("Load a board first.")
 
 # ────────── TAB 3: Locks & Ledger ──────────
 with tabs[3]:
@@ -1454,7 +1289,6 @@ with tabs[6]:
     cols = st.columns(2)
     prop_source_names = list(PROP_SOURCES.keys())
     game_source_names = list(GAME_SOURCES.keys())
-
     with cols[0]:
         st.markdown("### Prop Sources")
         for name in prop_source_names:
@@ -1464,7 +1298,6 @@ with tabs[6]:
             label = "🟢 WORKING" if s == "ok" else "🔴 DOWN" if s == "fail" else "⚪ UNCHECKED"
             err_str = f" <span style='font-size:10px;color:#d03030;'>({err})</span>" if err and s == "fail" else ""
             st.markdown(f"<div class='section-card'>{label} <b>{name}</b> <span class='muted-text'>— {t}</span>{err_str}</div>", unsafe_allow_html=True)
-
     with cols[1]:
         st.markdown("### Game Sources")
         for name in game_source_names:
@@ -1475,22 +1308,6 @@ with tabs[6]:
             err_str = f" <span style='font-size:10px;color:#d03030;'>({err})</span>" if err and s == "fail" else ""
             st.markdown(f"<div class='section-card'>{label} <b>{name}</b> <span class='muted-text'>— {t}</span>{err_str}</div>", unsafe_allow_html=True)
 
-    # DB Status
-    st.markdown("---")
-    st.markdown("## 🗄️ Database Status")
-    if st.button("🔄 Test DB Connection", key="test_db"):
-        conn = get_db_connection()
-        if conn:
-            st.session_state.db_connected = True
-            st.session_state.db_error = ""
-            conn.close()
-            st.success("PostgreSQL connected successfully.")
-        else:
-            st.session_state.db_connected = False
-            st.error(f"Connection failed: {st.session_state.db_error}")
-    st.markdown(f"**Status:** {'🟢 Connected' if st.session_state.db_connected else '🔴 Offline'}")
-
-    # Scan log
     if st.session_state.scan_log:
         st.markdown("---")
         st.markdown("## 📜 Last Scan Log")
