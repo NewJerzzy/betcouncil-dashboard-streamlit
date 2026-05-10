@@ -8,7 +8,7 @@ import json
 import numpy as np
 import subprocess
 import shutil
-import math
+from scipy.stats import norm
 
 st.set_page_config(page_title="BetCouncil v3.2 Hard Engine", page_icon="🛡️", layout="wide")
 
@@ -113,21 +113,6 @@ def american_to_prob(odds):
     odds = int(odds)
     return 100/(odds+100) if odds > 0 else (-odds)/((-odds)+100)
 
-def prob_to_american(prob):
-    if prob <= 0:
-        return None
-    if prob >= 1:
-        return -10000
-    if prob >= 0.5:
-        return int(round(-100 * prob / (1 - prob)))
-    return int(round(100 * (1 - prob) / prob))
-
-def no_vig_prob(p1, p2):
-    s = (p1 or 0) + (p2 or 0)
-    if s <= 0:
-        return None
-    return p1 / s
-
 def classify_tier(edge):
     if edge >= 0.15: return "SOVEREIGN"
     if edge >= 0.08: return "ELITE"
@@ -206,12 +191,17 @@ def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=No
     stats = fetch_player_series(player, market, sport)
     mu = normal_wma(stats)
     sigma = max(wsem(stats), 0.75)
-    from scipy.stats import norm
     prob = float(1 - norm.cdf(line, mu, sigma) if pick.upper()=="OVER" else norm.cdf(line, mu, sigma))
     impl = american_to_prob(odds)
     edge = prob - impl
     tier = classify_tier(edge)
-    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob, odds),"tier":tier,"bolt_signal":"ELITE LOCK" if tier in ("SOVEREIGN","ELITE") else "PASS","mu":mu,"sigma":sigma,"cv":sigma/max(mu,1e-9),"minutes_cv":0.12,"confidence":85,"source_status":"OK"}
+    return {
+        "player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,
+        "prob":prob,"edge":edge,"kelly":kelly(prob, odds),"tier":tier,
+        "bolt_signal":"ELITE LOCK" if tier in ("SOVEREIGN","ELITE") else "PASS",
+        "mu":mu,"sigma":sigma,"cv":sigma/max(mu,1e-9),"minutes_cv":0.12,
+        "confidence":85,"source_status":"OK"
+    }
 
 def run_council(items):
     out = []
@@ -436,8 +426,7 @@ with tabs[1]:
                     st.success("Locked.")
     else:
         st.info("No board data loaded yet.")
-    if st.session_state.sharp_reference:
-        st.markdown(f"**Sharp Reference:** {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} — {sharp.get('status','unknown').upper()}")
+    st.markdown(f"**Sharp Reference:** {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} — {sharp.get('status','unknown').upper()}")
 
 with tabs[2]:
     st.markdown("# Locks of Day")
