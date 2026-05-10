@@ -99,23 +99,39 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 # ──────────────────────────────────────────────────────────────
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
+# DraftKings uses different URL slugs per sport
+DK_SPORT_SLUG = {
+    "NBA": "basketball/nba",
+    "WNBA": "basketball/wnba",
+    "NFL": "football/nfl",
+    "MLB": "baseball/mlb",
+    "NHL": "hockey/nhl",
+    "UFC": "mma/ufc",
+    "Golf": "golf",
+    "Tennis": "tennis",
+    "Soccer": "soccer",
+}
+
 PROP_SOURCES = {
     "BettingPros": "https://www.bettingpros.com/{sport}/props/",
     "RotoWire": "https://www.rotowire.com/betting/{sport}/player-props.php",
     "CBS Sports": "https://www.cbssports.com/{sport}/",
     "Covers": "https://www.covers.com/{sport}",
-    "DraftKings": "https://sportsbook.draftkings.com/page/{sport}-player-props",
+    "DraftKings": "https://sportsbook.draftkings.com/leagues/{dk_sport}/player-props",
     "CAPMMA": "https://capmma.com",
 }
+
 GAME_SOURCES = {
     "ESPN": "https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard",
-    "DraftKings": "https://sportsbook.draftkings.com/page/{sport}-game-lines",
+    "DraftKings": "https://sportsbook.draftkings.com/leagues/{dk_sport}/game-lines",
     "Covers": "https://www.covers.com/{sport}/odds",
 }
+
 LINEUP_SOURCES = {
     "DraftEdge": "https://draftedge.com/{sport}/{sport}-starting-lineups/",
     "RotoWire": "https://www.rotowire.com/basketball/{sport}/lineups.php",
 }
+
 ALL_SOURCES = {**PROP_SOURCES, **GAME_SOURCES, **LINEUP_SOURCES}
 
 SPORT_PATH = {
@@ -313,15 +329,25 @@ def build_source_url(url_template, source_name, sport):
     """Build URL with correct path for the sport type."""
     sport_lower = sport.lower()
     sport_path = SPORT_PATH.get(sport.upper(), f"{sport_lower}/{sport_lower}")
+    dk_sport = DK_SPORT_SLUG.get(sport.upper(), sport_lower)
 
     # CAPMMA doesn't use sport formatting
     if source_name == "CAPMMA":
         return url_template
 
+    # ESPN uses sport_path for API endpoint
     if source_name == "ESPN":
-        return url_template.format(sport_path=sport_path, sport=sport_lower)
+        return url_template.format(sport_path=sport_path, sport=sport_lower, dk_sport=dk_sport)
 
-    return url_template.format(sport=sport_lower, sport_path=sport_path)
+    # DraftKings uses dk_sport for league-specific paths
+    if source_name == "DraftKings":
+        return url_template.format(dk_sport=dk_sport, sport=sport_lower, sport_path=sport_path)
+
+    # RotoWire lineups need basketball/{sport} format
+    if source_name == "RotoWire" and "lineups" in url_template:
+        return url_template.format(sport=sport_lower, sport_path=sport_path, dk_sport=dk_sport)
+
+    return url_template.format(sport=sport_lower, sport_path=sport_path, dk_sport=dk_sport)
 
 def fetch_source(url_template, source_name, sport):
     """
@@ -342,6 +368,9 @@ def fetch_source(url_template, source_name, sport):
                 return None
         elif r.status_code in (403, 429):
             set_health(source_name, "degraded", f"HTTP {r.status_code}")
+            return None
+        elif r.status_code == 404:
+            set_health(source_name, "fail", f"HTTP 404 - URL: {u}")
             return None
         else:
             set_health(source_name, "fail", f"HTTP {r.status_code}")
@@ -591,6 +620,8 @@ def check_all_sources_health():
                 set_health(name, "ok")
             elif r.status_code in (403, 429):
                 set_health(name, "degraded", f"HTTP {r.status_code}")
+            elif r.status_code == 404:
+                set_health(name, "fail", f"HTTP 404 - URL: {u}")
             else:
                 set_health(name, "fail", f"HTTP {r.status_code}")
         except requests.exceptions.Timeout:
