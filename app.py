@@ -149,6 +149,16 @@ h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
     color: #5a6a7a;
     font-weight: 500;
 }
+.scan-status {
+    font-size: 12px;
+    font-family: monospace;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-right: 8px;
+}
+.scan-ok { color: #0ea5a0; }
+.scan-fail { color: #e04040; }
+.scan-skip { color: #6a7a8a; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -211,14 +221,13 @@ DK_SPORT_SLUG = {
     "Golf": "golf", "Tennis": "tennis", "Soccer": "soccer",
 }
 
-# Sport-specific source filtering — only use sources that support each sport
 SPORT_SOURCE_MAP = {
     "NBA": ["BettingPros", "RotoWire", "CBS Sports", "Covers", "DraftKings"],
     "MLB": ["BettingPros", "RotoWire", "CBS Sports", "Covers", "DraftKings"],
     "NHL": ["BettingPros", "RotoWire", "CBS Sports", "Covers", "DraftKings"],
     "NFL": ["BettingPros", "RotoWire", "CBS Sports", "Covers", "DraftKings"],
     "WNBA": ["BettingPros", "RotoWire", "DraftKings"],
-    "UFC": ["DraftKings", "CAPMMA"],
+    "UFC": ["DraftKings"],
     "Golf": ["BettingPros", "RotoWire", "DraftKings"],
     "Tennis": ["BettingPros", "RotoWire", "DraftKings"],
     "Soccer": ["BettingPros", "RotoWire", "Covers", "DraftKings"],
@@ -241,36 +250,7 @@ HEADERS = {
     "Referer": "https://www.google.com/",
 }
 
-REQUEST_TIMEOUT = 8
-
-def safe_fetch(url, name, sport):
-    """Fetch URL with timeout. Returns HTML string or None on failure."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 200:
-            mark_site_ok(name)
-            return resp.text
-        else:
-            mark_site_fail(name)
-            return None
-    except requests.Timeout:
-        mark_site_fail(name)
-        return None
-    except requests.ConnectionError:
-        mark_site_fail(name)
-        return None
-    except Exception:
-        mark_site_fail(name)
-        return None
-
-def build_source_url(source_name, sport):
-    """Build URL with proper DraftKings slug mapping."""
-    sport_lower = sport.lower()
-    sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
-    dk_sport = DK_SPORT_SLUG.get(sport.upper(), sport_lower)
-    url_templates = {**PROP_SOURCES, **GAME_SOURCES, **LINEUP_SOURCES}
-    template = url_templates.get(source_name, "")
-    return template.format(sport=sport_lower, sport_path=sport_path, dk_sport=dk_sport)
+REQUEST_TIMEOUT = 10
 
 # =========================
 # SESSION STATE
@@ -307,6 +287,7 @@ if "sharp_data" not in st.session_state: st.session_state.sharp_data = None
 if "sharp_available" not in st.session_state: st.session_state.sharp_available = False
 if "session_start" not in st.session_state: st.session_state.session_start = time.time()
 if "day_start_br" not in st.session_state: st.session_state.day_start_br = DEFAULT_BANKROLL
+if "scan_log" not in st.session_state: st.session_state.scan_log = []
 
 # =========================
 # HELPERS
@@ -352,6 +333,9 @@ def mark_site_ok(name):
 def mark_site_fail(name):
     st.session_state.site_status[name] = {"status": "fail", "last_checked": datetime.now().strftime("%H:%M:%S")}
 
+def log_scan(msg, status="skip"):
+    st.session_state.scan_log.append({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "status": status})
+
 def get_session_time():
     elapsed = int(time.time() - st.session_state.session_start)
     mins, secs = elapsed // 60, elapsed % 60
@@ -363,6 +347,90 @@ def get_daily_change():
     sign = "+" if change >= 0 else ""
     return f"{sign}{change:.1f}%"
 
+def build_source_url(source_name, sport):
+    sport_lower = sport.lower()
+    sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
+    dk_sport = DK_SPORT_SLUG.get(sport.upper(), sport_lower)
+    url_templates = {**PROP_SOURCES, **GAME_SOURCES, **LINEUP_SOURCES}
+    template = url_templates.get(source_name, "")
+    return template.format(sport=sport_lower, sport_path=sport_path, dk_sport=dk_sport)
+
+def safe_fetch(url, name):
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 200:
+            mark_site_ok(name)
+            log_scan(f"{name}: OK (200)", "ok")
+            return resp.text
+        else:
+            mark_site_fail(name)
+            log_scan(f"{name}: FAIL (HTTP {resp.status_code})", "fail")
+            return None
+    except requests.Timeout:
+        mark_site_fail(name)
+        log_scan(f"{name}: FAIL (timeout)", "fail")
+        return None
+    except requests.ConnectionError:
+        mark_site_fail(name)
+        log_scan(f"{name}: FAIL (connection)", "fail")
+        return None
+    except Exception as e:
+        mark_site_fail(name)
+        log_scan(f"{name}: FAIL ({str(e)[:50]})", "fail")
+        return None
+
+def parse_props_from_html(html, source_name):
+    """Generic prop parser that tries to extract player, prop, line, side from HTML tables."""
+    props = []
+    if not html: return props
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+    for table in tables:
+        rows = table.find_all("tr")
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) >= 3:
+                texts = [c.get_text(strip=True) for c in cols]
+                player = texts[0] if len(texts) > 0 else ""
+                line_str = texts[1] if len(texts) > 1 else ""
+                odds_str = texts[2] if len(texts) > 2 else ""
+                try:
+                    line = float(re.sub(r"[^\d.]+", "", line_str))
+                except:
+                    continue
+                prop_type = ""
+                if len(texts) > 3:
+                    prop_type = texts[3]
+                side = "OVER" if "over" in odds_str.lower() or "O" in odds_str else "UNDER"
+                props.append({
+                    "Player": player, "Prop": prop_type, "Line": line, "Side": side,
+                    "Odds": odds_str, "Source": source_name,
+                })
+    return props
+
+def parse_espn_games_json(html, sport):
+    """Parse ESPN JSON API response for game lines."""
+    games = []
+    if not html: return games
+    try:
+        data = json.loads(html)
+        for event in data.get("events", []):
+            matchup = event.get("shortName", "")
+            for comp in event.get("competitions", []):
+                odds_list = comp.get("odds", [])
+                if odds_list:
+                    games.append({
+                        "Matchup": matchup,
+                        "Spread": odds_list[0].get("details", ""),
+                        "Total": f"O/U {odds_list[0].get('overUnder', '')}",
+                        "Moneyline": odds_list[0].get("details", ""),
+                        "Sport": sport,
+                    })
+                    break
+    except:
+        pass
+    return games
+
 def fetch_sharp_reference(sport="nba"):
     sport_name = SHARP_REFERENCE["sport_map"].get(sport.lower(), sport.lower())
     try:
@@ -373,30 +441,19 @@ def fetch_sharp_reference(sport="nba"):
         if result.returncode == 0 and result.stdout.strip():
             mark_site_ok(SHARP_REFERENCE["name"])
             st.session_state.sharp_available = True
-            lines = []
-            for line in result.stdout.strip().split("\n"):
-                parts = line.split(",")
-                if len(parts) >= 5:
-                    lines.append({
-                        "matchup": parts[0].strip(), "market": parts[1].strip(),
-                        "pinnacle_line": parts[2].strip(), "pinnacle_odds": parts[3].strip(),
-                        "retail_line": parts[4].strip() if len(parts) > 4 else "",
-                    })
-            return lines
+            return []
         else:
             mark_site_fail(SHARP_REFERENCE["name"])
             st.session_state.sharp_available = False
             return []
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except:
         mark_site_fail(SHARP_REFERENCE["name"])
         st.session_state.sharp_available = False
         return []
 
 def get_sharp_ref_status():
     if st.session_state.sharp_available and st.session_state.sharp_data:
-        return f"Pinnacle via OddsHarvester ({len(st.session_state.sharp_data.get('lines', []))} lines)"
-    elif st.session_state.sharp_data is not None and not st.session_state.sharp_available:
-        return "Sharp Reference: unavailable"
+        return f"Pinnacle via OddsHarvester"
     return "Sharp Reference: not pulled"
 
 def parse_manual_input(text):
@@ -504,12 +561,6 @@ def build_game_parlay():
 
 def lock_single_prop(item):
     lid = generate_lock_id()
-    sharp_ref = None
-    if st.session_state.sharp_data and st.session_state.sharp_available:
-        for sl in st.session_state.sharp_data.get("lines", []):
-            if item["Player"].split()[-1].lower() in sl.get("matchup", "").lower():
-                sharp_ref = {"line": sl.get("pinnacle_line", ""), "odds": sl.get("pinnacle_odds", ""), "source": "Pinnacle via OddsHarvester"}
-                break
     st.session_state.locks.append({
         "id": lid, "type": "PROP", "player": item["Player"],
         "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
@@ -517,7 +568,6 @@ def lock_single_prop(item):
         "status": "PENDING", "result": None,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "parlay_id": lid, "override": item["Tier"] not in ("SOVEREIGN", "ELITE"),
-        "sharp_ref": sharp_ref,
     })
     return lid
 
@@ -530,42 +580,98 @@ def parse_pasted_results(text):
     return results
 
 # =========================
-# SAMPLE DATA
+# CORE: LOAD SPORT DATA FROM LIVE SOURCES
 # =========================
+def load_sport_data_live(sport):
+    """Scan all configured sources for a sport with full failover."""
+    st.session_state.scan_log = []
+    all_props = []
+    all_games = []
+    seen_props = set()
+
+    # Determine which prop sources to use for this sport
+    allowed_sources = SPORT_SOURCE_MAP.get(sport, ["BettingPros", "RotoWire"])
+    log_scan(f"Scanning {sport} — {len(allowed_sources)} prop sources configured", "skip")
+
+    # Scan prop sources
+    for source_name in allowed_sources:
+        url = build_source_url(source_name, sport)
+        log_scan(f"Fetching {source_name}: {url}", "skip")
+        html = safe_fetch(url, source_name)
+        if html:
+            props = parse_props_from_html(html, source_name)
+            for prop in props:
+                key = (prop["Player"], prop["Prop"], prop["Side"], prop["Line"])
+                if key not in seen_props:
+                    seen_props.add(key)
+                    prop["Sport"] = sport
+                    all_props.append(prop)
+            log_scan(f"{source_name}: {len(props)} props extracted", "ok")
+        else:
+            log_scan(f"{source_name}: FAIL — moving to next source", "fail")
+
+    # Scan game lines: ESPN → DraftKings → Covers
+    game_sources_order = ["ESPN (JSON API)", "DraftKings (Failover)", "Covers (Failover)"]
+    for gs_name in game_sources_order:
+        url = build_source_url(gs_name, sport)
+        log_scan(f"Fetching game lines: {gs_name}", "skip")
+        html = safe_fetch(url, gs_name)
+        if html:
+            if "ESPN" in gs_name:
+                games = parse_espn_games_json(html, sport)
+            else:
+                games = []
+            if games:
+                all_games = games
+                log_scan(f"{gs_name}: {len(games)} games found", "ok")
+                break
+            else:
+                log_scan(f"{gs_name}: no games parsed — trying next", "fail")
+        else:
+            log_scan(f"{gs_name}: FAIL — trying next", "fail")
+
+    # Fallback to sample data if nothing was found
+    if not all_props:
+        log_scan("No props from any source — using sample data", "fail")
+        data = get_sample_data(sport)
+        all_props = data["raw_props"]
+        all_games = data["raw_games"]
+    if not all_games:
+        data = get_sample_data(sport)
+        all_games = data["raw_games"]
+
+    st.session_state.raw_props = all_props
+    st.session_state.raw_games = all_games
+    st.session_state.injuries = []
+    st.session_state.blowout_games = []
+    st.session_state.filtered_count = 0
+    st.session_state.last_sport = sport
+    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
+    st.session_state.board_ready = True
+    st.session_state.board_data = run_council_on_props(all_props)
+    st.session_state.game_verdicts = run_game_council_on_games(all_games)
+
 def get_sample_data(sport):
     if sport == "NBA":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "NBA"} for p, t, l, s in [("Shai Gilgeous-Alexander", "POINTS", 31.5, "OVER"), ("Cade Cunningham", "POINTS", 23.5, "OVER"), ("Donovan Mitchell", "POINTS", 27.5, "UNDER")]],
             "raw_games": [{"Matchup": "OKC @ LAL", "Spread": "OKC -8.5", "Total": "O/U 214.5", "Moneyline": "OKC -400", "Sport": "NBA"}],
-            "injuries": [], "blowout_games": [{"Game": "OKC @ LAL", "Spread": "-8.5", "Advisory": "ACTIVE"}], "filtered_count": 1,
+            "injuries": [], "blowout_games": [], "filtered_count": 0,
         }
     if sport == "MLB":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "MLB"} for p, t, l, s in [("Aaron Judge", "H+R+RBI", 0.5, "OVER"), ("Spencer Strider", "STRIKEOUTS", 4.5, "OVER")]],
             "raw_games": [{"Matchup": "TEX @ NYY", "Spread": "NYY -1.5", "Total": "O/U 8.5", "Moneyline": "NYY -152", "Sport": "MLB"}],
-            "injuries": [], "blowout_games": [], "filtered_count": 1,
+            "injuries": [], "blowout_games": [], "filtered_count": 0,
         }
     return {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0}
 
-def load_sport_data(sport):
-    data = get_sample_data(sport)
-    st.session_state.raw_props = data["raw_props"]
-    st.session_state.raw_games = data["raw_games"]
-    st.session_state.injuries = data["injuries"]
-    st.session_state.blowout_games = data["blowout_games"]
-    st.session_state.filtered_count = data["filtered_count"]
-    st.session_state.last_sport = sport
-    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
-    st.session_state.board_ready = True
-    st.session_state.board_data = run_council_on_props(data["raw_props"])
-    st.session_state.game_verdicts = run_game_council_on_games(data["raw_games"])
-
-def scan_all_sports():
+def scan_all_sports_live():
     all_props, all_games = [], []
     for sport in SPORTS:
-        data = get_sample_data(sport)
-        all_props.extend(data["raw_props"])
-        all_games.extend(data["raw_games"])
+        load_sport_data_live(sport)
+        all_props.extend(st.session_state.raw_props)
+        all_games.extend(st.session_state.raw_games)
     prop_results = run_council_on_props(all_props)
     game_results = run_game_council_on_games(all_games)
     prop_results.sort(key=lambda x: x["Weighted Score"], reverse=True)
@@ -573,7 +679,6 @@ def scan_all_sports():
     st.session_state.cross_sport_board = {"props": prop_results, "games": game_results, "scanned_at": datetime.now().strftime("%H:%M:%S")}
     st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
     st.session_state.board_ready = True
-    fetch_sharp_reference("nba")
 
 # =========================
 # SIDEBAR
@@ -583,7 +688,7 @@ with st.sidebar:
     <div style="text-align:center;margin-bottom:16px;">
         <div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
         <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
-        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Sovereign Engine</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Live Scan Active</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -604,24 +709,24 @@ with st.sidebar:
     
     st.markdown("---")
     if st.button("Scan All Sports", use_container_width=True):
-        with st.spinner("Scanning all 9 leagues..."):
-            scan_all_sports()
+        with st.spinner("Scanning all 9 leagues from live sources..."):
+            scan_all_sports_live()
         amt = len(st.session_state.cross_sport_board["props"]) if st.session_state.cross_sport_board else 0
         st.success(f"All 9 leagues scanned - {amt} props")
     if st.button("Load Board", use_container_width=True):
-        with st.spinner(f"Loading {st.session_state.last_sport} board..."):
-            load_sport_data(st.session_state.last_sport)
-        st.success(f"{st.session_state.last_sport} loaded")
+        with st.spinner(f"Scanning {st.session_state.last_sport} from live sources..."):
+            load_sport_data_live(st.session_state.last_sport)
+        amt = len(st.session_state.raw_props)
+        st.success(f"{st.session_state.last_sport} loaded - {amt} props from live scan")
     if st.button("Re-Run Council", use_container_width=True):
         st.session_state.board_data = run_council_on_props(st.session_state.raw_props)
         st.session_state.game_verdicts = run_game_council_on_games(st.session_state.raw_games)
         st.success("Refreshed")
     if st.button("Pull Sharp Lines", use_container_width=True):
         with st.spinner("Pulling Pinnacle sharp lines..."):
-            lines = fetch_sharp_reference("nba")
-        if lines:
-            st.session_state.sharp_data = {"lines": lines, "pulled_at": datetime.now().strftime("%H:%M:%S")}
-            st.success(f"{len(lines)} Pinnacle lines pulled")
+            fetch_sharp_reference("nba")
+        if st.session_state.sharp_available:
+            st.success("Pinnacle lines pulled")
         else:
             st.warning("Unavailable - pip install oddsharvester")
 
@@ -683,30 +788,17 @@ with tabs[0]:
     st.markdown("# Cross-Sport Best Bets")
     cross = st.session_state.cross_sport_board
     if not cross:
-        st.info("Click 'Scan All Sports' in the sidebar to merge all 9 leagues.")
+        st.info("Click 'Scan All Sports' in the sidebar to merge all 9 leagues from live sources.")
     else:
         if st.session_state.sharp_available:
-            st.markdown(f"""<div class="sharp-ref-box"><span style="color:#0ea5a0;font-weight:600;">Sharp Reference Active</span> - Pinnacle · {len(st.session_state.sharp_data.get('lines', []))} lines</div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="sharp-ref-box"><span style="color:#0ea5a0;font-weight:600;">Sharp Reference Active</span> - Pinnacle</div>""", unsafe_allow_html=True)
         
         st.markdown("## Top Props")
         for i, p in enumerate(cross["props"][:6], 1):
             tc = tier_color(p["Tier"])
             edge_pct = p.get("EdgePct", int(p["Weighted Score"] * 100))
             edge_color = "#0ea5a0" if edge_pct >= 70 else "#4a90d9" if edge_pct >= 40 else "#6a7a8a"
-            st.markdown(f"""
-            <div class="prop-card" style="border-left:4px solid {tc};">
-                <div class="prop-card-header">
-                    <div>
-                        <div class="prop-card-player">{p['Player']}</div>
-                        <div class="prop-card-matchup">{p.get('Sport','')} · {p['Side']} {p['Line']} {p['Prop']}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div class="prop-card-edge" style="color:{edge_color};">{edge_pct}%</div>
-                        <div style="font-size:12px;color:{tc};font-weight:600;">{p['Tier Label']}</div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{p['Player']}</div><div class="prop-card-matchup">{p.get('Sport','')} · {p['Side']} {p['Line']} {p['Prop']}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:{edge_color};">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{p['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
             c1, _ = st.columns([1, 3])
             with c1:
                 if st.button(f"Lock", key=f"cross_lock_{i}"):
@@ -715,8 +807,7 @@ with tabs[0]:
         st.markdown("## Top Game Lines")
         for i, g in enumerate(cross["games"][:3], 1):
             tc = tier_color(g["Tier"])
-            edge_pct = g.get("EdgePct", int(g["Weighted Score"] * 100))
-            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{g['Matchup']}</div><div class="prop-card-matchup">{g.get('Sport','')} · {g.get('Moneyline','')}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:#0ea5a0;">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{g['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{g['Matchup']}</div><div class="prop-card-matchup">{g.get('Sport','')} · {g.get('Moneyline','')}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:#0ea5a0;">{g.get('EdgePct','')}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{g['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
 
 # Board of 8
 with tabs[1]:
@@ -754,7 +845,7 @@ with tabs[1]:
     board = st.session_state.board_data
 
     if not board:
-        st.info("Load a board from the sidebar to see the full Council breakdown.")
+        st.info("Click 'Load Board' in the sidebar to scan live sources.")
     else:
         st.markdown(f"**Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {len(st.session_state.injuries)} matchups verified, {st.session_state.filtered_count} props removed)")
         st.markdown("## Model Verdicts")
@@ -837,7 +928,7 @@ with tabs[2]:
                     if len(selected_g) >= 2 and st.button("Lock Games Parlay"):
                         lid = generate_lock_id()
                         for leg in selected_g:
-                            st.session_state.locks.append({"id": lid, "type": "GAME", "matchup": leg["Matchup"], "bet": leg.get("Moneyline", ""), "tier": leg["Tier"], "status": "PENDING", "result": None, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "parlay_id": lid, "sharp_ref": None})
+                            st.session_state.locks.append({"id": lid, "type": "GAME", "matchup": leg["Matchup"], "bet": leg.get("Moneyline", ""), "tier": leg["Tier"], "status": "PENDING", "result": None, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "parlay_id": lid})
                         st.success(f"Locked: {lid}")
                 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -851,10 +942,7 @@ with tabs[3]:
         for i, lock in enumerate(pending):
             cols = st.columns([4, 1, 1, 1])
             with cols[0]:
-                sharp_info = ""
-                if lock.get("sharp_ref"):
-                    sharp_info = f" | Pinnacle: {lock['sharp_ref'].get('line','')}"
-                st.markdown(f"**{lock.get('id')}** - {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))} | {lock.get('tier','?')}{sharp_info}")
+                st.markdown(f"**{lock.get('id')}** - {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))} | {lock.get('tier','?')}")
             with cols[1]:
                 if st.button("WIN", key=f"w_{i}"):
                     lock["status"] = "RESOLVED"; lock["result"] = "WIN"
@@ -926,6 +1014,15 @@ with tabs[5]:
             s = st.session_state.site_status.get(name, {}).get("status", "unknown")
             color = dot(s)
             st.markdown(f":{color}[●] **{name}**")
+
+    st.markdown("---")
+    st.markdown("## Scan Log")
+    if st.session_state.scan_log:
+        for entry in st.session_state.scan_log[-20:]:
+            status_class = f"scan-{entry['status']}"
+            st.markdown(f'<span class="scan-status {status_class}">[{entry["time"]}]</span> {entry["msg"]}', unsafe_allow_html=True)
+    else:
+        st.info("No scan has been run yet. Click 'Load Board' or 'Scan All Sports'.")
 
     st.markdown("---")
     st.markdown("## Tier Legend")
