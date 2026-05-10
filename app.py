@@ -309,11 +309,9 @@ def build_source_url(url_template, source_name, sport):
     sport_lower = sport.lower()
     sport_path = SPORT_PATH.get(sport.upper(), f"{sport_lower}/{sport_lower}")
 
-    # ESPN uses sport_path for API endpoint
     if source_name == "ESPN":
         return url_template.format(sport_path=sport_path, sport=sport_lower)
 
-    # DraftKings, Covers, BettingPros, RotoWire, CBS Sports use sport name
     return url_template.format(sport=sport_lower, sport_path=sport_path)
 
 def fetch_source(url_template, source_name, sport):
@@ -328,15 +326,12 @@ def fetch_source(url_template, source_name, sport):
         r = requests.get(u, timeout=15, headers=HEADERS)
 
         if r.status_code == 200:
-            # Site responded — check if content looks valid
             if r.text and len(r.text) > 500:
                 return r.text
             else:
-                # Responded but content too small/empty
                 set_health(source_name, "degraded", "Response too small")
                 return None
         elif r.status_code in (403, 429):
-            # Rate limited or blocked — not truly down
             set_health(source_name, "degraded", f"HTTP {r.status_code}")
             return None
         else:
@@ -354,14 +349,11 @@ def fetch_source(url_template, source_name, sport):
         return None
 
 def parse_simple_props(html, sport):
-    """Parse props from HTML text. Returns empty list if nothing found."""
     if not html: return []
     txt = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
     rows = []
-    # Try multiple patterns for better parsing
     for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3})\s+(OVER|UNDER)\s+([0-9]+(?:\.[0-9])?)", txt, re.I):
         rows.append({"Player":m.group(1).strip(),"Prop":"PTS","Line":float(m.group(3)),"Side":m.group(2).upper(),"Sport":sport})
-    # If no PTS props found, try generic numeric pattern
     if not rows:
         for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3}).*?([0-9]+(?:\.[0-9])?).*?(OVER|UNDER)", txt, re.I):
             rows.append({"Player":m.group(1).strip(),"Prop":"GEN","Line":float(m.group(2)),"Side":m.group(3).upper(),"Sport":sport})
@@ -374,23 +366,19 @@ def fetch_live_props(sport):
     If ALL sources fail, use sport-specific fallback.
     """
     all_rows = []
-    any_source_responded = False
 
     for name, url in PROP_SOURCES.items():
         html = fetch_source(url, name, sport)
         if html:
-            any_source_responded = True
             rows = parse_simple_props(html, sport)
             if rows:
                 all_rows.extend(rows)
-                set_health(name, "ok")  # Confirmed good — parse succeeded
+                set_health(name, "ok")
             else:
-                # Site responded but no props parsed — mark as degraded
                 current = st.session_state.site_status.get(name, {})
                 if current.get("status") != "ok":
                     set_health(name, "degraded", "No props parsed from response")
 
-    # If no live props found, use sport-specific fallback
     if not all_rows:
         fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
         return fallback["props"]
@@ -398,7 +386,6 @@ def fetch_live_props(sport):
     return all_rows
 
 def fetch_live_games(sport):
-    """Fetch live games with sport-specific fallback."""
     html = fetch_source(GAME_SOURCES["ESPN"], "ESPN", sport)
     out = []
     if html:
@@ -417,7 +404,6 @@ def fetch_live_games(sport):
         except Exception:
             set_health("ESPN", "degraded", "JSON parse failed")
 
-    # If no games found, use sport-specific fallback
     if not out:
         fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
         out = fallback.get("games", [{"Matchup": f"{sport} Game", "Sport": sport}])
@@ -446,10 +432,8 @@ def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=No
     }
 
 def run_council(items):
-    """Normalize items and run council voting."""
     out = []
     for item in items:
-        # Normalize fields
         player = item.get("Player") or item.get("player", "Unknown")
         prop_market = item.get("Prop") or item.get("prop", "PTS")
         line = item.get("Line") or item.get("line", 0)
@@ -640,7 +624,7 @@ def scan_all_sports():
         "props": run_council(all_props),
         "games": run_game_council(all_games),
         "scanned_at": datetime.now().strftime("%H:%M:%S"),
-        "sport_results": sport_results  # Per-sport breakdown
+        "sport_results": sport_results
     }
     st.session_state.sharp_reference = fetch_sharp_reference(st.session_state.last_sport)
 
@@ -657,7 +641,6 @@ session_seconds = int(time.time() - st.session_state.session_start)
 session_str = f"{session_seconds//60:02d}:{session_seconds%60:02d}"
 sharp = st.session_state.sharp_reference or {"status":"unknown","source":"OddsHarvester","line":None,"book":"Pinnacle","note":"not loaded"}
 
-# Floor determination
 if integrity < 40:
     floor_label = "EMERGENCY FLOOR"
     floor_pct = "12%"
@@ -668,7 +651,6 @@ else:
     floor_label = "REGULAR FLOOR"
     floor_pct = "4.5%"
 
-# Validation firewall checks
 sources_ok = sum(1 for v in st.session_state.site_status.values() if v.get("status") == "ok")
 sources_degraded = sum(1 for v in st.session_state.site_status.values() if v.get("status") == "degraded")
 total_sources = max(len(st.session_state.site_status), 1)
@@ -701,7 +683,6 @@ with st.sidebar:
     <div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.1 OS</div>
     """, unsafe_allow_html=True)
 
-    # Bankroll
     change_class = "sidebar-change-green" if daily_change_pct >= 0 else "red-text"
     change_sign = "+" if daily_change_pct >= 0 else ""
     st.markdown(f"""
@@ -716,7 +697,6 @@ with st.sidebar:
         st.session_state.bankroll = new_bankroll
         st.rerun()
 
-    # Integrity
     st.markdown(f"""
     <div class='sidebar-section'>
         <div class='sidebar-label'>INTEGRITY</div>
@@ -724,7 +704,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # SEM / Floor
     st.markdown(f"""
     <div class='sidebar-section'>
         <div class='sidebar-label'>SEM</div>
@@ -733,7 +712,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # Unit Size
     st.markdown(f"""
     <div class='sidebar-section'>
         <div class='sidebar-label'>UNIT SIZE</div>
@@ -742,7 +720,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # Session timer
     st.markdown(f"""
     <div class='sidebar-section'>
         <div class='sidebar-label'>SESSION</div>
@@ -750,7 +727,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # Validation Firewall
     st.markdown(f"""
     <div class='sidebar-section'>
         <div class='sidebar-label'>VALIDATION FIREWALL</div>
@@ -762,7 +738,6 @@ with st.sidebar:
         st.markdown(f"<div class='firewall-item {cls}'>{icon} {check_name}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Quarter Kelly Calculator
     st.markdown("""
     <div class='sidebar-section'>
         <div class='sidebar-label'>QUARTER KELLY CALCULATOR</div>
@@ -781,7 +756,6 @@ with st.sidebar:
     st.markdown("<div class='small-note'>Made in Bolt</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Sport selector and buttons
     st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
     sport = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport), key="sidebar_sport")
     if st.button("🟢 Load Board", use_container_width=True):
@@ -829,37 +803,45 @@ st.markdown(f"""
 # ──────────────────────────────────────────────────────────────
 tabs = st.tabs(["🏀 Board of 8", "📊 Analysis", "🔒 Locks of Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🧠 Models", "⚙️ Settings"])
 
-# ────────── TAB 0: Board of 8 (PRIMARY — moved to first position) ──────────
+# ────────── TAB 0: Board of 8 (PRIMARY) ──────────
 with tabs[0]:
     st.markdown("# 🏀 Board of 8")
 
-    # ── SUMMARY SECTION (always visible when data exists) ──
     board = st.session_state.board_data or []
-    games = st.session_state.game_verdicts or []
     summary_items = st.session_state.summary_items or []
 
+    # ── SUMMARY SECTION ──
     if st.session_state.summary_text:
         st.markdown("## 📋 Council Summary")
-        # Show summary text prominently
         for line in st.session_state.summary_text.split("\n\n"):
-            if line.strip():
-                st.markdown(f"<div class='summary-card'>{line}</div>", unsafe_allow_html=True)
+            line_stripped = line.strip()
+            if line_stripped:
+                st.markdown(f"<div class='summary-card'>{line_stripped}</div>", unsafe_allow_html=True)
 
-        # Show top prop and top game cards side by side
-        if summary_items:
-            cols = st.columns(min(2, len(summary_items)))
-            for i, card in enumerate(summary_items[:2]):
-                with cols[i]:
-                    st.markdown(f"""
-                    <div class='summary-card'>
-                        <div style='font-size:11px;color:#5a7088;text-transform:uppercase;'>{card['title']} · {card.get('sport','')}</div>
-                        <div style='font-size:16px;font-weight:700;color:#f4f8fc;'>{card['detail']}</div>
-                        <div style='margin-top:4px;'>
-                            <span style='color:{card['tier_color']};font-weight:700;'>{card['tier']}</span>
-                            <span style='font-family:monospace;color:#e8a020;float:right;'>Score {card['score']:.2f}</span>
+        # Summary cards side by side
+        if isinstance(summary_items, list) and len(summary_items) > 0:
+            valid_cards = [c for c in summary_items if isinstance(c, dict)]
+            if valid_cards:
+                cols = st.columns(min(2, len(valid_cards)))
+                for i, card in enumerate(valid_cards[:2]):
+                    with cols[i]:
+                        card_title = str(card.get('title', ''))
+                        card_sport = str(card.get('sport', ''))
+                        card_detail = str(card.get('detail', ''))
+                        card_tier = str(card.get('tier', ''))
+                        card_tier_color = str(card.get('tier_color', '#5a7088'))
+                        card_score = float(card.get('score', 0))
+
+                        st.markdown(f"""
+                        <div class='summary-card'>
+                            <div style='font-size:11px;color:#5a7088;text-transform:uppercase;'>{card_title} · {card_sport}</div>
+                            <div style='font-size:16px;font-weight:700;color:#f4f8fc;'>{card_detail}</div>
+                            <div style='margin-top:4px;'>
+                                <span style='color:{card_tier_color};font-weight:700;'>{card_tier}</span>
+                                <span style='font-family:monospace;color:#e8a020;float:right;'>Score {card_score:.2f}</span>
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
         st.markdown("---")
     else:
         st.info("No board loaded yet. Click **Load Board** or **Re-Run Board** in the sidebar to analyze props and see the summary.")
@@ -872,7 +854,6 @@ with tabs[0]:
             edge_pct = item.get('edge', 0) * 100
             edge_color = "#0d9488" if edge_pct >= 8 else "#e8a020" if edge_pct >= 4 else "#5a7088"
 
-            # Bolt-style prop card
             st.markdown(f"""
             <div class='prop-card' style='border-left:4px solid {tc};'>
                 <div class='prop-card-left'>
@@ -889,7 +870,16 @@ with tabs[0]:
 
             if item["Tier"] in ("SOVEREIGN","ELITE","APPROVED"):
                 if st.button(f"🔒 Lock it In", key=f"lock_board_{i}"):
-                    st.session_state.locks.append({"id":lock_single_prop(item),"type":"PROP","player":item["Player"],"prop":f"{item['Side']} {item['Line']} {item['Prop']}","tier":item["Tier"],"status":"PENDING","result":None})
+                    lock_id = lock_single_prop(item)
+                    st.session_state.locks.append({
+                        "id": lock_id,
+                        "type": "PROP",
+                        "player": item["Player"],
+                        "prop": f"{item['Side']} {item['Line']} {item['Prop']}",
+                        "tier": item["Tier"],
+                        "status": "PENDING",
+                        "result": None
+                    })
                     st.success(f"🔒 Locked: {item['Player']} {item['Side']} {item['Line']}")
                     st.rerun()
 
@@ -908,13 +898,15 @@ with tabs[1]:
     else:
         st.markdown(f"**Scanned at:** {cross['scanned_at']} | **{len(SPORTS)} sports**")
 
-        # Per-sport breakdown
         sport_results = cross.get('sport_results', {})
         if sport_results:
             st.markdown("### 📊 Sport-by-Sport Summary")
-            sport_cols = st.columns(min(4, len(SPORTS)))
-            for idx, (sport_name, data) in enumerate(sport_results.items()):
-                col_idx = idx % len(sport_cols)
+            sport_names = list(sport_results.keys())
+            num_cols = min(4, len(sport_names))
+            sport_cols = st.columns(num_cols)
+            for idx, sport_name in enumerate(sport_names):
+                data = sport_results[sport_name]
+                col_idx = idx % num_cols
                 with sport_cols[col_idx]:
                     prop_count = len(data.get('props', []))
                     game_count = len(data.get('games', []))
@@ -922,23 +914,31 @@ with tabs[1]:
 
         st.markdown("---")
         st.markdown("## 🏆 Top Props Across All Sports")
-        for i, p in enumerate(cross['props'][:8], 1):
-            tc = tier_color(p['Tier'])
-            st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {p.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{p['Player']}</span> — {p['Side']} {p['Line']} {p['Prop']} <span style='color:{tc};font-weight:600;'>{p['Tier Label']}</span> <span style='font-family:monospace;color:#e8a020;float:right;'>Score {p['Weighted Score']:.2f}</span></div>", unsafe_allow_html=True)
+        cross_props = cross.get('props', [])
+        if cross_props:
+            for i, p in enumerate(cross_props[:8], 1):
+                tc = tier_color(p.get('Tier', 'PASS'))
+                st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {p.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{p.get('Player','')}</span> — {p.get('Side','')} {p.get('Line','')} {p.get('Prop','')} <span style='color:{tc};font-weight:600;'>{p.get('Tier Label','')}</span> <span style='font-family:monospace;color:#e8a020;float:right;'>Score {p.get('Weighted Score',0):.2f}</span></div>", unsafe_allow_html=True)
+        else:
+            st.info("No props found in cross-sport scan.")
 
         st.markdown("## 🏟️ Top Game Lines Across All Sports")
-        for i, g in enumerate(cross['games'][:5], 1):
-            tc = tier_color(g['Tier'])
-            st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {g.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{g['Matchup']}</span> <span style='color:{tc};font-weight:600;'>{g['Tier Label']}</span></div>", unsafe_allow_html=True)
+        cross_games = cross.get('games', [])
+        if cross_games:
+            for i, g in enumerate(cross_games[:5], 1):
+                tc = tier_color(g.get('Tier', 'PASS'))
+                st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {g.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{g.get('Matchup','')}</span> <span style='color:{tc};font-weight:600;'>{g.get('Tier Label','')}</span></div>", unsafe_allow_html=True)
+        else:
+            st.info("No games found in cross-sport scan.")
 
         st.markdown(f"<div class='small-note'>Sharp Reference: {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} | Status: {sharp.get('status','unknown')} | Note: {sharp.get('note','')}</div>", unsafe_allow_html=True)
 
 # ────────── TAB 2: Locks of Day ──────────
 with tabs[2]:
     st.markdown("# 🔒 Locks of Day")
-    board = st.session_state.board_data or []
-    if board:
-        approved = [i for i in board if i["Tier"] in ("SOVEREIGN","ELITE","APPROVED")]
+    board_data_for_locks = st.session_state.board_data or []
+    if board_data_for_locks:
+        approved = [i for i in board_data_for_locks if i["Tier"] in ("SOVEREIGN","ELITE","APPROVED")]
         approved.sort(key=lambda x: x["Weighted Score"], reverse=True)
         if approved:
             best_prop = approved[0]
