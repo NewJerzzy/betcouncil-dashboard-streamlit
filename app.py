@@ -54,7 +54,7 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 .ok { background:rgba(13,148,136,.14); color:#0d9488; border:1px solid rgba(13,148,136,.45); }
 .fail { background:rgba(208,48,48,.14); color:#d03030; border:1px solid rgba(208,48,48,.45); }
 .unk { background:rgba(232,160,32,.14); color:#e8a020; border:1px solid rgba(232,160,32,.45); }
-.summary-card { background:linear-gradient(135deg, rgba(232,160,32,.08), #111a24); border:1px solid rgba(232,160,32,.25); border-radius:10px; padding:14px; font-size:15px; }
+.summary-card { background:linear-gradient(135deg, rgba(232,160,32,.08), #111a24); border:1px solid rgba(232,160,32,.25); border-radius:10px; padding:14px; font-size:15px; margin-bottom:14px; }
 .small-note { font-size:13px; color:#5a7088; }
 
 /* Info text bigger */
@@ -99,7 +99,6 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 # ──────────────────────────────────────────────────────────────
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
-# Updated sources with WNBA-specific URLs where available
 PROP_SOURCES = {
     "BettingPros": "https://www.bettingpros.com/{sport}/props/",
     "RotoWire": "https://www.rotowire.com/betting/{sport}/player-props.php",
@@ -126,47 +125,92 @@ SPORT_PATH = {
     "WNBA":"basketball/wnba",
 }
 
-# WNBA-specific prop fallback (realistic player pool)
-WNBA_FALLBACK_PROPS = [
-    {"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"},
-    {"Player":"Breanna Stewart","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"WNBA"},
-    {"Player":"Arike Ogunbowale","Prop":"PTS","Line":23.5,"Side":"UNDER","Sport":"WNBA"},
-    {"Player":"Caitlin Clark","Prop":"AST","Line":8.5,"Side":"OVER","Sport":"WNBA"},
-    {"Player":"Napheesa Collier","Prop":"REB","Line":9.5,"Side":"OVER","Sport":"WNBA"},
-    {"Player":"Sabrina Ionescu","Prop":"PTS","Line":20.5,"Side":"OVER","Sport":"WNBA"},
-    {"Player":"Jewell Loyd","Prop":"PTS","Line":19.5,"Side":"UNDER","Sport":"WNBA"},
-    {"Player":"Nneka Ogwumike","Prop":"REB","Line":7.5,"Side":"OVER","Sport":"WNBA"},
-]
-
-NBA_FALLBACK_PROPS = [
-    {"Player":"Shai Gilgeous-Alexander","Prop":"PTS","Line":31.5,"Side":"OVER","Sport":"NBA"},
-    {"Player":"Cade Cunningham","Prop":"PTS","Line":23.5,"Side":"OVER","Sport":"NBA"},
-    {"Player":"Donovan Mitchell","Prop":"PTS","Line":27.5,"Side":"UNDER","Sport":"NBA"},
-    {"Player":"Nikola Jokic","Prop":"AST","Line":9.5,"Side":"OVER","Sport":"NBA"},
-    {"Player":"Luka Doncic","Prop":"PTS","Line":33.5,"Side":"OVER","Sport":"NBA"},
-]
-
-NFL_FALLBACK_PROPS = [
-    {"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"},
-    {"Player":"Christian McCaffrey","Prop":"RUSH_YDS","Line":85.5,"Side":"OVER","Sport":"NFL"},
-]
-
-MLB_FALLBACK_PROPS = [
-    {"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},
-    {"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},
-]
-
-NHL_FALLBACK_PROPS = [
-    {"Player":"Connor McDavid","Prop":"PTS","Line":1.5,"Side":"OVER","Sport":"NHL"},
-    {"Player":"Auston Matthews","Prop":"SHOTS","Line":3.5,"Side":"OVER","Sport":"NHL"},
-]
-
-FALLBACK_MAP = {
-    "NBA": NBA_FALLBACK_PROPS,
-    "WNBA": WNBA_FALLBACK_PROPS,
-    "NFL": NFL_FALLBACK_PROPS,
-    "MLB": MLB_FALLBACK_PROPS,
-    "NHL": NHL_FALLBACK_PROPS,
+# ──────────────────────────────────────────────────────────────
+# SPORT-SPECIFIC FALLBACK DATA — Every sport gets its own props & games
+# ──────────────────────────────────────────────────────────────
+SPORT_FALLBACK_MAP = {
+    "NBA": {
+        "props": [
+            {"Player":"Shai Gilgeous-Alexander","Prop":"PTS","Line":31.5,"Side":"OVER","Sport":"NBA"},
+            {"Player":"Cade Cunningham","Prop":"PTS","Line":23.5,"Side":"OVER","Sport":"NBA"},
+            {"Player":"Donovan Mitchell","Prop":"PTS","Line":27.5,"Side":"UNDER","Sport":"NBA"},
+            {"Player":"Nikola Jokic","Prop":"AST","Line":9.5,"Side":"OVER","Sport":"NBA"},
+            {"Player":"Luka Doncic","Prop":"PTS","Line":33.5,"Side":"OVER","Sport":"NBA"},
+            {"Player":"Giannis Antetokounmpo","Prop":"REB","Line":12.5,"Side":"OVER","Sport":"NBA"},
+            {"Player":"Jayson Tatum","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"},
+        ],
+        "games": [{"Matchup":"OKC @ LAL","Sport":"NBA"},{"Matchup":"BOS @ DEN","Sport":"NBA"}]
+    },
+    "WNBA": {
+        "props": [
+            {"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"},
+            {"Player":"Breanna Stewart","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"WNBA"},
+            {"Player":"Arike Ogunbowale","Prop":"PTS","Line":23.5,"Side":"UNDER","Sport":"WNBA"},
+            {"Player":"Caitlin Clark","Prop":"AST","Line":8.5,"Side":"OVER","Sport":"WNBA"},
+            {"Player":"Napheesa Collier","Prop":"REB","Line":9.5,"Side":"OVER","Sport":"WNBA"},
+            {"Player":"Sabrina Ionescu","Prop":"PTS","Line":20.5,"Side":"OVER","Sport":"WNBA"},
+            {"Player":"Jewell Loyd","Prop":"PTS","Line":19.5,"Side":"UNDER","Sport":"WNBA"},
+            {"Player":"Nneka Ogwumike","Prop":"REB","Line":7.5,"Side":"OVER","Sport":"WNBA"},
+        ],
+        "games": [{"Matchup":"LV Aces @ NY Liberty","Sport":"WNBA"},{"Matchup":"MIN Lynx @ SEA Storm","Sport":"WNBA"}]
+    },
+    "NFL": {
+        "props": [
+            {"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"},
+            {"Player":"Christian McCaffrey","Prop":"RUSH_YDS","Line":85.5,"Side":"OVER","Sport":"NFL"},
+            {"Player":"Justin Jefferson","Prop":"REC_YDS","Line":95.5,"Side":"OVER","Sport":"NFL"},
+            {"Player":"Lamar Jackson","Prop":"RUSH_YDS","Line":55.5,"Side":"OVER","Sport":"NFL"},
+            {"Player":"Tyreek Hill","Prop":"REC_YDS","Line":80.5,"Side":"UNDER","Sport":"NFL"},
+        ],
+        "games": [{"Matchup":"KC @ BUF","Sport":"NFL"},{"Matchup":"SF @ PHI","Sport":"NFL"}]
+    },
+    "MLB": {
+        "props": [
+            {"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},
+            {"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},
+            {"Player":"Juan Soto","Prop":"HITS","Line":1.5,"Side":"OVER","Sport":"MLB"},
+            {"Player":"Mookie Betts","Prop":"TB","Line":1.5,"Side":"OVER","Sport":"MLB"},
+            {"Player":"Ronald Acuna Jr.","Prop":"SB","Line":0.5,"Side":"OVER","Sport":"MLB"},
+        ],
+        "games": [{"Matchup":"NYY @ LAD","Sport":"MLB"},{"Matchup":"ATL @ HOU","Sport":"MLB"}]
+    },
+    "NHL": {
+        "props": [
+            {"Player":"Connor McDavid","Prop":"PTS","Line":1.5,"Side":"OVER","Sport":"NHL"},
+            {"Player":"Auston Matthews","Prop":"SHOTS","Line":3.5,"Side":"OVER","Sport":"NHL"},
+            {"Player":"Nathan MacKinnon","Prop":"PTS","Line":1.5,"Side":"UNDER","Sport":"NHL"},
+            {"Player":"David Pastrnak","Prop":"SHOTS","Line":4.5,"Side":"OVER","Sport":"NHL"},
+        ],
+        "games": [{"Matchup":"EDM @ TOR","Sport":"NHL"},{"Matchup":"COL @ BOS","Sport":"NHL"}]
+    },
+    "UFC": {
+        "props": [
+            {"Player":"Fighter A","Prop":"SIG_STRIKES","Line":45.5,"Side":"OVER","Sport":"UFC"},
+            {"Player":"Fighter B","Prop":"TD","Line":2.5,"Side":"UNDER","Sport":"UFC"},
+        ],
+        "games": [{"Matchup":"UFC Main Event","Sport":"UFC"}]
+    },
+    "Golf": {
+        "props": [
+            {"Player":"Scottie Scheffler","Prop":"SCORE","Line":68.5,"Side":"UNDER","Sport":"Golf"},
+            {"Player":"Rory McIlroy","Prop":"SCORE","Line":69.5,"Side":"UNDER","Sport":"Golf"},
+        ],
+        "games": [{"Matchup":"PGA Tournament","Sport":"Golf"}]
+    },
+    "Tennis": {
+        "props": [
+            {"Player":"Carlos Alcaraz","Prop":"ACES","Line":8.5,"Side":"OVER","Sport":"Tennis"},
+            {"Player":"Iga Swiatek","Prop":"GAMES_WON","Line":12.5,"Side":"OVER","Sport":"Tennis"},
+        ],
+        "games": [{"Matchup":"ATP/WTA Match","Sport":"Tennis"}]
+    },
+    "Soccer": {
+        "props": [
+            {"Player":"Lionel Messi","Prop":"SHOTS","Line":3.5,"Side":"OVER","Sport":"Soccer"},
+            {"Player":"Kylian Mbappe","Prop":"SHOTS","Line":3.5,"Side":"OVER","Sport":"Soccer"},
+        ],
+        "games": [{"Matchup":"Soccer Match","Sport":"Soccer"}]
+    },
 }
 
 DEFAULT_BANKROLL = 1000.0
@@ -197,7 +241,7 @@ if "bankroll_start_of_day" not in st.session_state: st.session_state.bankroll_st
 if "integrity_score" not in st.session_state: st.session_state.integrity_score = 64
 if "session_start" not in st.session_state: st.session_state.session_start = time.time()
 if "site_status" not in st.session_state:
-    st.session_state.site_status = {n:{"status":"unknown","last_checked":""} for n in ALL_SOURCES}
+    st.session_state.site_status = {n:{"status":"unknown","last_checked":"","error":""} for n in ALL_SOURCES}
 if "cross_sport_board" not in st.session_state: st.session_state.cross_sport_board = None
 if "board_data" not in st.session_state: st.session_state.board_data = None
 if "game_verdicts" not in st.session_state: st.session_state.game_verdicts = None
@@ -221,8 +265,14 @@ def tier_color(t): return TIER_COLORS.get(t, "#5a7088")
 def tier_label(t): return TIER_LABELS.get(t, "—")
 def dot(s): return {"ok":"🟢","fail":"🔴","degraded":"🟡"}.get(s, "⚪")
 def get_bankroll(): return float(st.session_state.bankroll)
+
 def set_health(name, status, err=""):
-    st.session_state.site_status[name] = {"status":status, "last_checked":datetime.now().strftime("%H:%M:%S"), "error":err}
+    """Set health with tri-state: ok / degraded / fail"""
+    st.session_state.site_status[name] = {
+        "status": status,
+        "last_checked": datetime.now().strftime("%H:%M:%S"),
+        "error": err
+    }
 
 def american_to_prob(odds):
     odds = int(odds)
@@ -267,59 +317,88 @@ def build_source_url(url_template, source_name, sport):
     return url_template.format(sport=sport_lower, sport_path=sport_path)
 
 def fetch_source(url_template, source_name, sport):
-    """Fetch a source URL and update its health status."""
+    """
+    Fetch a source with health downgrade logic:
+    - 'ok' when fetch and parse both succeed
+    - 'degraded' when site responds but parsing is partial/empty
+    - 'fail' only when the request fails or page is unusable
+    """
     try:
         u = build_source_url(url_template, source_name, sport)
         r = requests.get(u, timeout=15, headers=HEADERS)
-        r.raise_for_status()
-        set_health(source_name, "ok")
-        return r.text
+
+        if r.status_code == 200:
+            # Site responded — check if content looks valid
+            if r.text and len(r.text) > 500:
+                return r.text
+            else:
+                # Responded but content too small/empty
+                set_health(source_name, "degraded", "Response too small")
+                return None
+        elif r.status_code in (403, 429):
+            # Rate limited or blocked — not truly down
+            set_health(source_name, "degraded", f"HTTP {r.status_code}")
+            return None
+        else:
+            set_health(source_name, "fail", f"HTTP {r.status_code}")
+            return None
+
     except requests.exceptions.Timeout:
-        set_health(source_name, "fail", "Timeout after 15s")
-        return None
-    except requests.exceptions.HTTPError as e:
-        set_health(source_name, "fail", f"HTTP {e.response.status_code if e.response else 'error'}")
+        set_health(source_name, "degraded", "Timeout")
         return None
     except requests.exceptions.ConnectionError:
-        set_health(source_name, "fail", "Connection failed")
+        set_health(source_name, "fail", "Connection refused")
         return None
     except Exception as e:
         set_health(source_name, "fail", str(e)[:80])
         return None
 
 def parse_simple_props(html, sport):
+    """Parse props from HTML text. Returns empty list if nothing found."""
     if not html: return []
     txt = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
     rows = []
+    # Try multiple patterns for better parsing
     for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3})\s+(OVER|UNDER)\s+([0-9]+(?:\.[0-9])?)", txt, re.I):
         rows.append({"Player":m.group(1).strip(),"Prop":"PTS","Line":float(m.group(3)),"Side":m.group(2).upper(),"Sport":sport})
+    # If no PTS props found, try generic numeric pattern
+    if not rows:
+        for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3}).*?([0-9]+(?:\.[0-9])?).*?(OVER|UNDER)", txt, re.I):
+            rows.append({"Player":m.group(1).strip(),"Prop":"GEN","Line":float(m.group(2)),"Side":m.group(3).upper(),"Sport":sport})
     return rows[:25]
 
 def fetch_live_props(sport):
-    """Fetch live props from all sources in parallel, collect all results."""
+    """
+    Fetch live props from ALL sources, collect all results.
+    If a source responds but parsing yields nothing, mark as degraded.
+    If ALL sources fail, use sport-specific fallback.
+    """
     all_rows = []
-    sources_checked = 0
+    any_source_responded = False
 
     for name, url in PROP_SOURCES.items():
         html = fetch_source(url, name, sport)
-        sources_checked += 1
         if html:
+            any_source_responded = True
             rows = parse_simple_props(html, sport)
             if rows:
                 all_rows.extend(rows)
+                set_health(name, "ok")  # Confirmed good — parse succeeded
+            else:
+                # Site responded but no props parsed — mark as degraded
+                current = st.session_state.site_status.get(name, {})
+                if current.get("status") != "ok":
+                    set_health(name, "degraded", "No props parsed from response")
 
     # If no live props found, use sport-specific fallback
     if not all_rows:
-        fallback = FALLBACK_MAP.get(sport.upper(), NBA_FALLBACK_PROPS)
-        # Mark prop sources as degraded since we're using fallback
-        for name in PROP_SOURCES:
-            current = st.session_state.site_status.get(name, {})
-            if current.get("status") != "ok":
-                set_health(name, "fail", "No data returned — using fallback")
-        return fallback
+        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
+        return fallback["props"]
+
     return all_rows
 
 def fetch_live_games(sport):
+    """Fetch live games with sport-specific fallback."""
     html = fetch_source(GAME_SOURCES["ESPN"], "ESPN", sport)
     out = []
     if html:
@@ -331,18 +410,18 @@ def fetch_live_games(sport):
                 home = next((x for x in competitors if x.get("homeAway") == "home"), {})
                 away = next((x for x in competitors if x.get("homeAway") == "away"), {})
                 out.append({"Matchup": f"{away.get('team', {}).get('shortDisplayName', '')} @ {home.get('team', {}).get('shortDisplayName', '')}", "Sport": sport})
+            if out:
+                set_health("ESPN", "ok")
+            else:
+                set_health("ESPN", "degraded", "No events in response")
         except Exception:
-            pass
-    # If no games, provide sport-specific fallback game
+            set_health("ESPN", "degraded", "JSON parse failed")
+
+    # If no games found, use sport-specific fallback
     if not out:
-        fallback_games = {
-            "WNBA": [{"Matchup": "LV Aces @ NY Liberty", "Sport": "WNBA"}],
-            "NBA": [{"Matchup": "OKC @ LAL", "Sport": "NBA"}],
-            "NFL": [{"Matchup": "KC @ BUF", "Sport": "NFL"}],
-            "MLB": [{"Matchup": "NYY @ LAD", "Sport": "MLB"}],
-            "NHL": [{"Matchup": "EDM @ TOR", "Sport": "NHL"}],
-        }
-        out = fallback_games.get(sport.upper(), [{"Matchup": f"{sport} Game 1", "Sport": sport}])
+        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP["NBA"])
+        out = fallback.get("games", [{"Matchup": f"{sport} Game", "Sport": sport}])
+
     return out
 
 def fetch_player_series(player, market, sport):
@@ -367,13 +446,22 @@ def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=No
     }
 
 def run_council(items):
+    """Normalize items and run council voting."""
     out = []
     for item in items:
-        res = analyze_prop(item["Player"], item["Prop"], item["Line"], item["Side"], item.get("Sport", "NBA"))
+        # Normalize fields
+        player = item.get("Player") or item.get("player", "Unknown")
+        prop_market = item.get("Prop") or item.get("prop", "PTS")
+        line = item.get("Line") or item.get("line", 0)
+        side = item.get("Side") or item.get("side", "OVER")
+        sport = item.get("Sport") or item.get("sport", "NBA")
+
+        res = analyze_prop(player, prop_market, line, side, sport)
         votes = {m["name"]: 1 if res["tier"] in ("SOVEREIGN","ELITE","APPROVED") else 0 for m in MODELS}
         score = round(sum(m["weight"]*votes[m["name"]] for m in MODELS), 3)
         tier = classify_tier(score)
-        out.append({**item, **res, "Votes":votes, "Weighted Score":score, "Tier":tier, "Tier Label":tier_label(tier)})
+        out.append({**item, **res, "Player":player,"Prop":prop_market,"Line":line,"Side":side,"Sport":sport,
+                    "Votes":votes, "Weighted Score":score, "Tier":tier, "Tier Label":tier_label(tier)})
     out.sort(key=lambda x: x["Weighted Score"], reverse=True)
     return out
 
@@ -388,18 +476,21 @@ def run_game_council(games):
 
 def summary_text(board, games):
     if not board and not games:
-        return "No live board loaded yet."
+        return "No live board loaded yet. Click 'Load Board' or 'Re-Run Board' in the sidebar to analyze props."
     top_prop = board[0] if board else None
     top_game = games[0] if games else None
     parts = []
     if top_prop:
-        parts.append(f"Best prop: {top_prop['Player']} {top_prop['Side']} {top_prop['Line']} {top_prop['Prop']} ({top_prop['Tier Label']}, {top_prop['Weighted Score']:.2f}).")
+        parts.append(f"🔥 Best Prop: **{top_prop['Player']}** — {top_prop['Side']} {top_prop['Line']} {top_prop['Prop']} ({top_prop['Tier Label']}, Score: {top_prop['Weighted Score']:.2f})")
     if top_game:
-        parts.append(f"Best game: {top_game['Matchup']} ({top_game['Tier Label']}, {top_game['Weighted Score']:.2f}).")
+        parts.append(f"🏟️ Best Game: **{top_game['Matchup']}** ({top_game['Tier Label']}, Score: {top_game['Weighted Score']:.2f})")
     if board:
-        approved = sum(1 for x in board if x['Tier'] in ('SOVEREIGN','ELITE','APPROVED'))
-        parts.append(f"Council board contains {approved} approved-or-better props after filtering.")
-    return " ".join(parts)
+        sovereign = sum(1 for x in board if x['Tier'] == 'SOVEREIGN')
+        elite = sum(1 for x in board if x['Tier'] == 'ELITE')
+        approved = sum(1 for x in board if x['Tier'] == 'APPROVED')
+        total_approved = sovereign + elite + approved
+        parts.append(f"📊 Board: {total_approved} approved-or-better props ({sovereign} Sovereign, {elite} Elite, {approved} Approved) of {len(board)} total analyzed.")
+    return "\n\n".join(parts)
 
 def build_summary_cards(board, games):
     if not board and not games:
@@ -407,10 +498,24 @@ def build_summary_cards(board, games):
     cards = []
     if board:
         top = board[0]
-        cards.append(f"<div class='summary-card'><b>Top Prop</b><br>{top['Player']} {top['Side']} {top['Line']} {top['Prop']}<br><span style='color:{tier_color(top['Tier'])}'>{top['Tier Label']}</span> · {top['Weighted Score']:.2f}</div>")
+        cards.append({
+            "title": "Top Prop",
+            "detail": f"{top['Player']} {top['Side']} {top['Line']} {top['Prop']}",
+            "tier": top['Tier Label'],
+            "tier_color": tier_color(top['Tier']),
+            "score": top['Weighted Score'],
+            "sport": top.get('Sport', '')
+        })
     if games:
         topg = games[0]
-        cards.append(f"<div class='summary-card'><b>Top Game</b><br>{topg['Matchup']}<br><span style='color:{tier_color(topg['Tier'])}'>{topg['Tier Label']}</span> · {topg['Weighted Score']:.2f}</div>")
+        cards.append({
+            "title": "Top Game",
+            "detail": topg['Matchup'],
+            "tier": topg['Tier Label'],
+            "tier_color": tier_color(topg['Tier']),
+            "score": topg['Weighted Score'],
+            "sport": topg.get('Sport', '')
+        })
     return cards
 
 def parse_manual_input(text):
@@ -483,26 +588,27 @@ def build_game_parlay():
     return legs
 
 def check_all_sources_health():
-    """Ping all sources to verify health status."""
+    """Ping all sources to verify health status with degraded fallback."""
     for name, url in ALL_SOURCES.items():
-        # Determine which sport category this source belongs to
-        test_sport = "NBA"  # Default test sport
+        test_sport = "NBA"
         try:
             u = build_source_url(url, name, test_sport)
             r = requests.get(u, timeout=10, headers=HEADERS)
-            r.raise_for_status()
-            set_health(name, "ok")
+            if r.status_code == 200 and r.text and len(r.text) > 500:
+                set_health(name, "ok")
+            elif r.status_code in (403, 429):
+                set_health(name, "degraded", f"HTTP {r.status_code}")
+            else:
+                set_health(name, "fail", f"HTTP {r.status_code}")
         except requests.exceptions.Timeout:
-            set_health(name, "fail", "Timeout")
-        except requests.exceptions.HTTPError as e:
-            set_health(name, "fail", f"HTTP {e.response.status_code if e.response else 'error'}")
+            set_health(name, "degraded", "Timeout")
         except requests.exceptions.ConnectionError:
             set_health(name, "fail", "Connection refused")
         except Exception as e:
             set_health(name, "fail", str(e)[:60])
 
 def load_sport_data(sport):
-    """Load board data for a specific sport."""
+    """Load board data for a specific sport with its own fallback data."""
     raw_props = fetch_live_props(sport)
     raw_games = fetch_live_games(sport)
     st.session_state.board_data = run_council(raw_props)
@@ -513,17 +619,28 @@ def load_sport_data(sport):
     st.session_state.last_sport = sport
 
 def scan_all_sports():
-    """Scan all sports for cross-sport board."""
+    """
+    Scan ALL sports and store per-sport results in cross_sport_board.
+    Each sport gets its own fallback if live data fails.
+    """
     all_props, all_games = [], []
+    sport_results = {}
+
     for sport in SPORTS:
         props = fetch_live_props(sport)
         games = fetch_live_games(sport)
         all_props.extend(props)
         all_games.extend(games)
+        sport_results[sport] = {
+            "props": props,
+            "games": games
+        }
+
     st.session_state.cross_sport_board = {
         "props": run_council(all_props),
         "games": run_game_council(all_games),
-        "scanned_at": datetime.now().strftime("%H:%M:%S")
+        "scanned_at": datetime.now().strftime("%H:%M:%S"),
+        "sport_results": sport_results  # Per-sport breakdown
     }
     st.session_state.sharp_reference = fetch_sharp_reference(st.session_state.last_sport)
 
@@ -552,23 +669,22 @@ else:
     floor_pct = "4.5%"
 
 # Validation firewall checks
-sources_online = sum(1 for v in st.session_state.site_status.values() if v.get("status") == "ok")
+sources_ok = sum(1 for v in st.session_state.site_status.values() if v.get("status") == "ok")
+sources_degraded = sum(1 for v in st.session_state.site_status.values() if v.get("status") == "degraded")
 total_sources = max(len(st.session_state.site_status), 1)
-# Check if any source was checked in last 5 minutes
 recent_check = False
 for v in st.session_state.site_status.values():
     last = v.get("last_checked", "")
     if last:
         try:
-            lt = datetime.strptime(last, "%H:%M:%S").time()
-            now = datetime.now().time()
+            datetime.strptime(last, "%H:%M:%S")
             recent_check = True
             break
         except:
             pass
 
 firewall_checks = {
-    "All core sources online": sources_online >= max(total_sources - 2, 1),
+    "All core sources online": (sources_ok + sources_degraded) >= max(total_sources - 2, 1),
     "No stale data (>5 min)": recent_check,
     "Integrity Score > 60": integrity > 60,
     "Sovereign models aligned": True,
@@ -577,7 +693,7 @@ firewall_checks = {
 firewall_passed = sum(1 for v in firewall_checks.values() if v)
 
 # ──────────────────────────────────────────────────────────────
-# SIDEBAR — Redesigned per inspo UIs
+# SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
@@ -603,7 +719,7 @@ with st.sidebar:
     # Integrity
     st.markdown(f"""
     <div class='sidebar-section'>
-        <div class='sidebar-label'>INTEGRITY <span style='font-size:11px;color:#0d9488;cursor:pointer;'>VIEW SEM →</span></div>
+        <div class='sidebar-label'>INTEGRITY</div>
         <div class='sidebar-value' style='color:#0d9488;'>{integrity}<span style='font-size:14px;color:#5a7088;'> /100</span></div>
     </div>
     """, unsafe_allow_html=True)
@@ -668,10 +784,6 @@ with st.sidebar:
     # Sport selector and buttons
     st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
     sport = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport), key="sidebar_sport")
-    if st.button("🌍 Scan All Sports", use_container_width=True):
-        with st.spinner("Scanning all sports..."):
-            scan_all_sports()
-        st.success("Cross-sport scan complete.")
     if st.button("🟢 Load Board", use_container_width=True):
         with st.spinner(f"Loading {sport} board..."):
             load_sport_data(sport)
@@ -679,6 +791,10 @@ with st.sidebar:
     if st.button("🔄 Re-Run Board", use_container_width=True):
         with st.spinner("Re-running board..."):
             load_sport_data(st.session_state.last_sport)
+    if st.button("🌍 Scan All Sports", use_container_width=True):
+        with st.spinner("Scanning all sports..."):
+            scan_all_sports()
+        st.success("Cross-sport scan complete.")
     if st.button("🔍 Check Site Health", use_container_width=True):
         with st.spinner("Checking all sources..."):
             check_all_sources_health()
@@ -709,38 +825,47 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────
-# TABS
+# TABS — Board of 8 FIRST (primary workflow), then Analysis
 # ──────────────────────────────────────────────────────────────
-tabs = st.tabs(["📊 Analysis", "🏀 Board of 8", "🔒 Locks of Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🧠 Models", "⚙️ Settings"])
+tabs = st.tabs(["🏀 Board of 8", "📊 Analysis", "🔒 Locks of Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🧠 Models", "⚙️ Settings"])
 
-# ────────── TAB 0: Analysis (Cross-Sport) ──────────
+# ────────── TAB 0: Board of 8 (PRIMARY — moved to first position) ──────────
 with tabs[0]:
-    st.markdown("# 🌍 Cross-Sport Best Bets")
-    cross = st.session_state.cross_sport_board
-    if not cross:
-        st.info("Click 'Scan All Sports' in the sidebar to populate cross-sport data.")
-    else:
-        st.markdown(f"**Scanned at:** {cross['scanned_at']} | **{len(SPORTS)} sports**")
-        st.markdown("## Top Props")
-        for i, p in enumerate(cross['props'][:5], 1):
-            tc = tier_color(p['Tier'])
-            st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {p.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{p['Player']} {p['Side']} {p['Line']} {p['Prop']}</span> <span style='color:{tc};font-weight:600;'>{p['Tier Label']}</span> <span style='font-family:monospace;color:#e8a020;float:right;'>{p['Weighted Score']:.2f}</span></div>", unsafe_allow_html=True)
-        st.markdown("## Top Game Lines")
-        for i, g in enumerate(cross['games'][:3], 1):
-            tc = tier_color(g['Tier'])
-            st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {g.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{g['Matchup']}</span> <span style='color:{tc};font-weight:600;'>{g['Tier Label']}</span></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-note'>Sharp Reference: {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} | Status: {sharp.get('status','unknown')} | Note: {sharp.get('note','')}</div>", unsafe_allow_html=True)
-
-# ────────── TAB 1: Board of 8 (Bolt-style prop cards) ──────────
-with tabs[1]:
     st.markdown("# 🏀 Board of 8")
-    if st.session_state.summary_text:
-        st.markdown(f"<div class='summary-card'>{st.session_state.summary_text}</div>", unsafe_allow_html=True)
-    else:
-        st.info("Load a board from the sidebar to generate the summary.")
 
-    st.markdown("## Main Board")
+    # ── SUMMARY SECTION (always visible when data exists) ──
     board = st.session_state.board_data or []
+    games = st.session_state.game_verdicts or []
+    summary_items = st.session_state.summary_items or []
+
+    if st.session_state.summary_text:
+        st.markdown("## 📋 Council Summary")
+        # Show summary text prominently
+        for line in st.session_state.summary_text.split("\n\n"):
+            if line.strip():
+                st.markdown(f"<div class='summary-card'>{line}</div>", unsafe_allow_html=True)
+
+        # Show top prop and top game cards side by side
+        if summary_items:
+            cols = st.columns(min(2, len(summary_items)))
+            for i, card in enumerate(summary_items[:2]):
+                with cols[i]:
+                    st.markdown(f"""
+                    <div class='summary-card'>
+                        <div style='font-size:11px;color:#5a7088;text-transform:uppercase;'>{card['title']} · {card.get('sport','')}</div>
+                        <div style='font-size:16px;font-weight:700;color:#f4f8fc;'>{card['detail']}</div>
+                        <div style='margin-top:4px;'>
+                            <span style='color:{card['tier_color']};font-weight:700;'>{card['tier']}</span>
+                            <span style='font-family:monospace;color:#e8a020;float:right;'>Score {card['score']:.2f}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        st.markdown("---")
+    else:
+        st.info("No board loaded yet. Click **Load Board** or **Re-Run Board** in the sidebar to analyze props and see the summary.")
+
+    # ── MAIN BOARD ──
+    st.markdown("## Main Board — Prop Analysis")
     if board:
         for i, item in enumerate(board):
             tc = tier_color(item['Tier'])
@@ -759,19 +884,54 @@ with tabs[1]:
                     <div class='prop-card-tier' style='color:{tc};'>{item['Tier Label']}</div>
                 </div>
                 <div class='prop-card-right'>
-                    <div class='prop-card-score'>Score {item['Weighted Score']:.2f}</div>
+                    <div class='prop-card-score'>Council Score {item['Weighted Score']:.2f}</div>
             """, unsafe_allow_html=True)
 
             if item["Tier"] in ("SOVEREIGN","ELITE","APPROVED"):
                 if st.button(f"🔒 Lock it In", key=f"lock_board_{i}"):
                     st.session_state.locks.append({"id":lock_single_prop(item),"type":"PROP","player":item["Player"],"prop":f"{item['Side']} {item['Line']} {item['Prop']}","tier":item["Tier"],"status":"PENDING","result":None})
-                    st.success("Locked.")
+                    st.success(f"🔒 Locked: {item['Player']} {item['Side']} {item['Line']}")
                     st.rerun()
 
             st.markdown("</div></div>", unsafe_allow_html=True)
     else:
-        st.info("No board data loaded yet. Use 'Load Board' or 'Re-Run Board' in the sidebar.")
-    st.markdown(f"**Sharp Reference:** {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} — {sharp.get('status','unknown').upper()}")
+        st.info("No board data loaded yet. Use **Load Board** or **Re-Run Board** in the sidebar.")
+
+    st.markdown(f"<div class='small-note'>Sharp Reference: {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} — {sharp.get('status','unknown').upper()}</div>", unsafe_allow_html=True)
+
+# ────────── TAB 1: Analysis (Cross-Sport) ──────────
+with tabs[1]:
+    st.markdown("# 🌍 Cross-Sport Best Bets")
+    cross = st.session_state.cross_sport_board
+    if not cross:
+        st.info("Click **'Scan All Sports'** in the sidebar to populate cross-sport data from all leagues.")
+    else:
+        st.markdown(f"**Scanned at:** {cross['scanned_at']} | **{len(SPORTS)} sports**")
+
+        # Per-sport breakdown
+        sport_results = cross.get('sport_results', {})
+        if sport_results:
+            st.markdown("### 📊 Sport-by-Sport Summary")
+            sport_cols = st.columns(min(4, len(SPORTS)))
+            for idx, (sport_name, data) in enumerate(sport_results.items()):
+                col_idx = idx % len(sport_cols)
+                with sport_cols[col_idx]:
+                    prop_count = len(data.get('props', []))
+                    game_count = len(data.get('games', []))
+                    st.metric(sport_name, f"{prop_count} props", f"{game_count} games")
+
+        st.markdown("---")
+        st.markdown("## 🏆 Top Props Across All Sports")
+        for i, p in enumerate(cross['props'][:8], 1):
+            tc = tier_color(p['Tier'])
+            st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {p.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{p['Player']}</span> — {p['Side']} {p['Line']} {p['Prop']} <span style='color:{tc};font-weight:600;'>{p['Tier Label']}</span> <span style='font-family:monospace;color:#e8a020;float:right;'>Score {p['Weighted Score']:.2f}</span></div>", unsafe_allow_html=True)
+
+        st.markdown("## 🏟️ Top Game Lines Across All Sports")
+        for i, g in enumerate(cross['games'][:5], 1):
+            tc = tier_color(g['Tier'])
+            st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {g.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{g['Matchup']}</span> <span style='color:{tc};font-weight:600;'>{g['Tier Label']}</span></div>", unsafe_allow_html=True)
+
+        st.markdown(f"<div class='small-note'>Sharp Reference: {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} | Status: {sharp.get('status','unknown')} | Note: {sharp.get('note','')}</div>", unsafe_allow_html=True)
 
 # ────────── TAB 2: Locks of Day ──────────
 with tabs[2]:
@@ -782,12 +942,26 @@ with tabs[2]:
         approved.sort(key=lambda x: x["Weighted Score"], reverse=True)
         if approved:
             best_prop = approved[0]
-            st.markdown(f"<div class='summary-card'><b>Lock of the Day</b><br>{best_prop['Player']} {best_prop['Side']} {best_prop['Line']} {best_prop['Prop']}<br><span style='color:{tier_color(best_prop['Tier'])}'>{best_prop['Tier Label']}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class='summary-card' style='border:2px solid {tier_color(best_prop['Tier'])};'>
+                <div style='font-size:14px;color:#5a7088;'>LOCK OF THE DAY</div>
+                <div style='font-size:20px;font-weight:700;color:#f4f8fc;margin-top:4px;'>{best_prop['Player']}</div>
+                <div style='font-size:16px;color:#e8f0f8;'>{best_prop['Side']} {best_prop['Line']} {best_prop['Prop']}</div>
+                <div style='margin-top:6px;'><span style='color:{tier_color(best_prop['Tier'])};font-weight:700;font-size:15px;'>{best_prop['Tier Label']}</span> <span style='font-family:monospace;color:#e8a020;float:right;'>Score {best_prop['Weighted Score']:.2f}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+
         prop_par = build_prop_parlay()
         if prop_par:
-            st.markdown("## Props Parlay Candidates")
+            st.markdown("## 🎯 Props Parlay Candidates")
             for i, leg in enumerate(prop_par[:5], 1):
-                st.write(f"{i}. {leg['Player']} {leg['Side']} {leg['Line']} {leg['Prop']} — {leg['Tier Label']}")
+                st.markdown(f"<div class='section-card'><b>Leg {i}:</b> {leg['Player']} {leg['Side']} {leg['Line']} {leg['Prop']} — <span style='color:{tier_color(leg['Tier'])}'>{leg['Tier Label']}</span></div>", unsafe_allow_html=True)
+
+        game_par = build_game_parlay()
+        if game_par:
+            st.markdown("## 🏟️ Game Parlay Candidates")
+            for i, leg in enumerate(game_par[:4], 1):
+                st.markdown(f"<div class='section-card'><b>Leg {i}:</b> {leg['Matchup']} — <span style='color:{tier_color(leg['Tier'])}'>{leg['Tier Label']}</span></div>", unsafe_allow_html=True)
     else:
         st.info("Load a board first to see Locks of Day.")
 
@@ -866,8 +1040,7 @@ with tabs[6]:
     c3.metric("Emergency Floor", "ACTIVE")
     c4.metric("Bankroll", f"${bankroll:,.2f}")
 
-    st.markdown("## Site Health")
-    # Add button to refresh health
+    st.markdown("## Site Health (Green=OK · Yellow=Degraded · Red=Down)")
     if st.button("🔄 Refresh Site Health", key="refresh_health"):
         check_all_sources_health()
         st.rerun()
@@ -882,9 +1055,9 @@ with tabs[6]:
             t = st.session_state.site_status.get(name, {}).get("last_checked", "") or "—"
             err = st.session_state.site_status.get(name, {}).get("error", "")
             cls = "ok" if s == "ok" else "fail" if s == "fail" else "unk"
-            label = "WORKING" if s == "ok" else "DOWN" if s == "fail" else "UNCHECKED"
-            err_str = f" <span style='font-size:10px;color:#d03030;'>({err})</span>" if err and s == "fail" else ""
-            st.markdown(f"<div class='section-card'>{dot(s)} <span class='badge {cls}'>{label}</span> <b>{name}</b> <span class='muted-text'>— {t}</span>{err_str}</div>", unsafe_allow_html=True)
+            label = "🟢 WORKING" if s == "ok" else "🟡 DEGRADED" if s == "degraded" else "🔴 DOWN" if s == "fail" else "⚪ UNCHECKED"
+            err_str = f" <span style='font-size:10px;color:#d03030;'>({err})</span>" if err and s in ("fail","degraded") else ""
+            st.markdown(f"<div class='section-card'>{label} <b>{name}</b> <span class='muted-text'>— {t}</span>{err_str}</div>", unsafe_allow_html=True)
     with cols[1]:
         st.markdown("### Game / Lineup Sources")
         for name in right_names:
@@ -892,8 +1065,8 @@ with tabs[6]:
             t = st.session_state.site_status.get(name, {}).get("last_checked", "") or "—"
             err = st.session_state.site_status.get(name, {}).get("error", "")
             cls = "ok" if s == "ok" else "fail" if s == "fail" else "unk"
-            label = "WORKING" if s == "ok" else "DOWN" if s == "fail" else "UNCHECKED"
-            err_str = f" <span style='font-size:10px;color:#d03030;'>({err})</span>" if err and s == "fail" else ""
-            st.markdown(f"<div class='section-card'>{dot(s)} <span class='badge {cls}'>{label}</span> <b>{name}</b> <span class='muted-text'>— {t}</span>{err_str}</div>", unsafe_allow_html=True)
+            label = "🟢 WORKING" if s == "ok" else "🟡 DEGRADED" if s == "degraded" else "🔴 DOWN" if s == "fail" else "⚪ UNCHECKED"
+            err_str = f" <span style='font-size:10px;color:#d03030;'>({err})</span>" if err and s in ("fail","degraded") else ""
+            st.markdown(f"<div class='section-card'>{label} <b>{name}</b> <span class='muted-text'>— {t}</span>{err_str}</div>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown(f"**Sharp Reference:** {sharp.get('book','Pinnacle')} via {sharp.get('source','OddsHarvester')} | Status: {sharp.get('status','unknown')} | Line: {sharp.get('line')} | Note: {sharp.get('note','')}")
