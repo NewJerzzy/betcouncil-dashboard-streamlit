@@ -627,17 +627,33 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — Section 9.1 Synthesis</div>',unsafe_allow_html=True)
-    cc="sidebar-change-green" if daily_change_pct>=0 else "red-text"; cs="+" if daily_change_pct>=0 else ""
-    st.markdown(f'<div class="sidebar-section"><div class="sidebar-label">BANKROLL</div><div class="sidebar-value">{"<span class=\\"teal-text\\">" if daily_change_pct>=0 else "<span class=\\"red-text\\">"}${bankroll:,.2f}</span></div><div class="{cc}">{cs}{daily_change_pct:.1f}% today</div></div>',unsafe_allow_html=True)
+    
+    change_class = "sidebar-change-green" if daily_change_pct >= 0 else "red-text"
+    change_sign = "+" if daily_change_pct >= 0 else ""
+    color_span = '<span class="teal-text">' if daily_change_pct >= 0 else '<span class="red-text">'
+    
+    st.markdown(
+        f'<div class="sidebar-section">'
+        f'<div class="sidebar-label">BANKROLL</div>'
+        f'<div class="sidebar-value">{color_span}${bankroll:,.2f}</span></div>'
+        f'<div class="{change_class}">{change_sign}{daily_change_pct:.1f}% today</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+    
     nb=st.number_input("Adjust",value=float(bankroll),step=10.0,key="sb_bankroll",label_visibility="collapsed")
     if nb!=bankroll: st.session_state.bankroll=nb; st.rerun()
+    
     st.markdown(f'<div class="sidebar-section"><div class="sidebar-label">INTEGRITY</div><div class="sidebar-value" style="color:#0d9488;">{integrity}<span style="font-size:14px;color:#5a7088;"> /100</span></div></div>',unsafe_allow_html=True)
     st.markdown(f'<div class="sidebar-section"><div class="sidebar-label">SEM</div><div class="sidebar-value" style="font-size:14px;color:#e8a020;">{floor_label}</div><div class="sidebar-sub">({floor_pct} edge threshold)</div></div>',unsafe_allow_html=True)
     st.markdown(f'<div class="sidebar-section"><div class="sidebar-label">UNIT SIZE</div><div class="sidebar-value">${unit_size:.2f}</div><div class="sidebar-sub">{KELLY_FRACTION} Kelly Fraction</div></div>',unsafe_allow_html=True)
     st.markdown(f'<div class="sidebar-section"><div class="sidebar-label">SESSION</div><div class="sidebar-value" style="font-family:monospace;">{session_str}</div></div>',unsafe_allow_html=True)
+    
     st.markdown(f'<div class="sidebar-section"><div class="sidebar-label">VALIDATION FIREWALL</div><div style="font-size:20px;font-weight:700;color:#0d9488;margin-bottom:6px;">{firewall_passed}/5 PASSED</div>',unsafe_allow_html=True)
-    for cn,p in firewall_checks.items(): st.markdown(f'<div class="firewall-item {"firewall-pass" if p else "firewall-fail"}">{"✅" if p else "❌"} {cn}</div>',unsafe_allow_html=True)
+    for cn,p in firewall_checks.items():
+        st.markdown(f'<div class="firewall-item {"firewall-pass" if p else "firewall-fail"}">{"✅" if p else "❌"} {cn}</div>',unsafe_allow_html=True)
     st.markdown('</div>',unsafe_allow_html=True)
+    
     st.markdown('<div class="sidebar-section"><div class="sidebar-label">QUARTER KELLY CALCULATOR</div>',unsafe_allow_html=True)
     c1,c2=st.columns(2)
     with c1:
@@ -649,6 +665,7 @@ with st.sidebar:
     st.session_state.kelly_odds=ko; st.session_state.kelly_prob=kp
     kr=kelly(kp/100.0,ko)
     st.markdown(f'<div style="font-size:16px;font-weight:700;color:#0d9488;margin-top:4px;">Kelly Stake: {kr*100:.1f}%</div><div class="small-note">Made in Bolt</div></div>',unsafe_allow_html=True)
+    
     st.markdown('<div class="sidebar-section">',unsafe_allow_html=True)
     sport=st.selectbox("Sport",SPORTS,index=SPORTS.index(st.session_state.last_sport),key="sidebar_sport")
     if st.button("🟢 Load Board",use_container_width=True):
