@@ -237,11 +237,6 @@ SHARP_REFERENCE = {
     "name": "OddsHarvester / OddsPortal (Pinnacle Sharp Line)",
     "cost": "Free - open-source pip package",
     "install_cmd": "pip install oddsharvester",
-    "sport_map": {
-        "nba": "basketball", "mlb": "baseball", "nhl": "hockey",
-        "nfl": "football", "wnba": "basketball", "golf": "golf",
-        "tennis": "tennis", "soccer": "soccer",
-    },
 }
 
 HEADERS = {
@@ -379,8 +374,11 @@ def safe_fetch(url, name):
         log_scan(f"{name}: FAIL ({str(e)[:50]})", "fail")
         return None
 
-def parse_props_from_html(html, source_name):
-    """Generic prop parser that tries to extract player, prop, line, side from HTML tables."""
+# =========================
+# SITE-SPECIFIC PARSERS
+# =========================
+def parse_bettingpros(html):
+    """Parse BettingPros prop tables."""
     props = []
     if not html: return props
     soup = BeautifulSoup(html, "html.parser")
@@ -389,71 +387,98 @@ def parse_props_from_html(html, source_name):
         rows = table.find_all("tr")
         for row in rows:
             cols = row.find_all("td")
-            if len(cols) >= 3:
-                texts = [c.get_text(strip=True) for c in cols]
-                player = texts[0] if len(texts) > 0 else ""
-                line_str = texts[1] if len(texts) > 1 else ""
-                odds_str = texts[2] if len(texts) > 2 else ""
-                try:
-                    line = float(re.sub(r"[^\d.]+", "", line_str))
-                except:
-                    continue
-                prop_type = ""
-                if len(texts) > 3:
-                    prop_type = texts[3]
-                side = "OVER" if "over" in odds_str.lower() or "O" in odds_str else "UNDER"
-                props.append({
-                    "Player": player, "Prop": prop_type, "Line": line, "Side": side,
-                    "Odds": odds_str, "Source": source_name,
-                })
+            if len(cols) >= 4:
+                player = cols[0].get_text(strip=True)
+                prop_text = cols[1].get_text(strip=True)
+                over_odds = cols[2].get_text(strip=True)
+                under_odds = cols[3].get_text(strip=True)
+                line_match = re.search(r"([\d.]+)", prop_text)
+                if line_match and player:
+                    line = float(line_match.group(1))
+                    prop_type = re.sub(r"[\d.]+", "", prop_text).strip()
+                    props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "OVER", "Odds": over_odds})
+                    props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "UNDER", "Odds": under_odds})
     return props
 
-def parse_espn_games_json(html, sport):
-    """Parse ESPN JSON API response for game lines."""
+def parse_rotowire(html):
+    """Parse RotoWire player props tables."""
+    props = []
+    if not html: return props
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+    for table in tables:
+        rows = table.find_all("tr")
+        for row in rows:
+            cols = row.find_all("td")
+            texts = [c.get_text(strip=True) for c in cols]
+            if len(texts) >= 5:
+                player = texts[0]
+                prop_type = texts[1]
+                try:
+                    line = float(re.sub(r"[^\d.]+", "", texts[2]))
+                except:
+                    continue
+                over_odds = texts[3]
+                under_odds = texts[4]
+                if player and prop_type:
+                    props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "OVER", "Odds": over_odds})
+                    props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "UNDER", "Odds": under_odds})
+    return props
+
+def parse_props_generic(html):
+    """Generic fallback parser."""
+    props = []
+    if not html: return props
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+    for table in tables:
+        rows = table.find_all("tr")
+        for row in rows:
+            cols = row.find_all("td")
+            texts = [c.get_text(strip=True) for c in cols]
+            if len(texts) >= 3:
+                player = texts[0]
+                try:
+                    line = float(re.sub(r"[^\d.]+", "", texts[1]))
+                except:
+                    continue
+                prop_type = texts[2] if len(texts) > 2 else ""
+                props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "OVER", "Odds": ""})
+    return props
+
+def parse_espn_json(html, sport):
+    """Parse ESPN JSON API for game lines."""
     games = []
     if not html: return games
     try:
         data = json.loads(html)
         for event in data.get("events", []):
             matchup = event.get("shortName", "")
+            status = event.get("status", {}).get("type", {}).get("description", "")
             for comp in event.get("competitions", []):
                 odds_list = comp.get("odds", [])
-                if odds_list:
-                    games.append({
-                        "Matchup": matchup,
-                        "Spread": odds_list[0].get("details", ""),
-                        "Total": f"O/U {odds_list[0].get('overUnder', '')}",
-                        "Moneyline": odds_list[0].get("details", ""),
-                        "Sport": sport,
-                    })
+                for odds in odds_list:
+                    spread = odds.get("details", "")
+                    over_under = odds.get("overUnder", "")
+                    if spread or over_under:
+                        games.append({
+                            "Matchup": matchup,
+                            "Spread": spread,
+                            "Total": f"O/U {over_under}" if over_under else "",
+                            "Moneyline": spread,
+                            "Sport": sport,
+                        })
+                        break
+                if games and games[-1]["Matchup"] == matchup:
                     break
-    except:
-        pass
+    except Exception as e:
+        log_scan(f"ESPN JSON parse error: {str(e)[:60]}", "fail")
     return games
 
 def fetch_sharp_reference(sport="nba"):
-    sport_name = SHARP_REFERENCE["sport_map"].get(sport.lower(), sport.lower())
-    try:
-        result = subprocess.run(
-            ["oddsharvester", "upcoming", "-s", sport_name, "--headless"],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            mark_site_ok(SHARP_REFERENCE["name"])
-            st.session_state.sharp_available = True
-            return []
-        else:
-            mark_site_fail(SHARP_REFERENCE["name"])
-            st.session_state.sharp_available = False
-            return []
-    except:
-        mark_site_fail(SHARP_REFERENCE["name"])
-        st.session_state.sharp_available = False
-        return []
+    return []
 
 def get_sharp_ref_status():
-    if st.session_state.sharp_available and st.session_state.sharp_data:
-        return f"Pinnacle via OddsHarvester"
     return "Sharp Reference: not pulled"
 
 def parse_manual_input(text):
@@ -583,23 +608,25 @@ def parse_pasted_results(text):
 # CORE: LOAD SPORT DATA FROM LIVE SOURCES
 # =========================
 def load_sport_data_live(sport):
-    """Scan all configured sources for a sport with full failover."""
     st.session_state.scan_log = []
     all_props = []
     all_games = []
     seen_props = set()
 
-    # Determine which prop sources to use for this sport
     allowed_sources = SPORT_SOURCE_MAP.get(sport, ["BettingPros", "RotoWire"])
-    log_scan(f"Scanning {sport} — {len(allowed_sources)} prop sources configured", "skip")
+    log_scan(f"Scanning {sport} — {len(allowed_sources)} prop sources", "skip")
 
-    # Scan prop sources
     for source_name in allowed_sources:
         url = build_source_url(source_name, sport)
         log_scan(f"Fetching {source_name}: {url}", "skip")
         html = safe_fetch(url, source_name)
         if html:
-            props = parse_props_from_html(html, source_name)
+            if source_name == "BettingPros":
+                props = parse_bettingpros(html)
+            elif source_name == "RotoWire":
+                props = parse_rotowire(html)
+            else:
+                props = parse_props_generic(html)
             for prop in props:
                 key = (prop["Player"], prop["Prop"], prop["Side"], prop["Line"])
                 if key not in seen_props:
@@ -610,7 +637,6 @@ def load_sport_data_live(sport):
         else:
             log_scan(f"{source_name}: FAIL — moving to next source", "fail")
 
-    # Scan game lines: ESPN → DraftKings → Covers
     game_sources_order = ["ESPN (JSON API)", "DraftKings (Failover)", "Covers (Failover)"]
     for gs_name in game_sources_order:
         url = build_source_url(gs_name, sport)
@@ -618,7 +644,7 @@ def load_sport_data_live(sport):
         html = safe_fetch(url, gs_name)
         if html:
             if "ESPN" in gs_name:
-                games = parse_espn_games_json(html, sport)
+                games = parse_espn_json(html, sport)
             else:
                 games = []
             if games:
@@ -630,7 +656,6 @@ def load_sport_data_live(sport):
         else:
             log_scan(f"{gs_name}: FAIL — trying next", "fail")
 
-    # Fallback to sample data if nothing was found
     if not all_props:
         log_scan("No props from any source — using sample data", "fail")
         data = get_sample_data(sport)
@@ -723,12 +748,7 @@ with st.sidebar:
         st.session_state.game_verdicts = run_game_council_on_games(st.session_state.raw_games)
         st.success("Refreshed")
     if st.button("Pull Sharp Lines", use_container_width=True):
-        with st.spinner("Pulling Pinnacle sharp lines..."):
-            fetch_sharp_reference("nba")
-        if st.session_state.sharp_available:
-            st.success("Pinnacle lines pulled")
-        else:
-            st.warning("Unavailable - pip install oddsharvester")
+        st.info("Sharp reference requires pip install oddsharvester")
 
 # =========================
 # COMMAND BAR
@@ -790,9 +810,6 @@ with tabs[0]:
     if not cross:
         st.info("Click 'Scan All Sports' in the sidebar to merge all 9 leagues from live sources.")
     else:
-        if st.session_state.sharp_available:
-            st.markdown(f"""<div class="sharp-ref-box"><span style="color:#0ea5a0;font-weight:600;">Sharp Reference Active</span> - Pinnacle</div>""", unsafe_allow_html=True)
-        
         st.markdown("## Top Props")
         for i, p in enumerate(cross["props"][:6], 1):
             tc = tier_color(p["Tier"])
@@ -812,7 +829,7 @@ with tabs[0]:
 # Board of 8
 with tabs[1]:
     st.markdown("# Board of 8")
-    st.markdown(f"**Sources:** BettingPros · RotoWire · CBS · Covers · DraftKings · ESPN · {get_sharp_ref_status()}")
+    st.markdown(f"**Sources:** BettingPros · RotoWire · CBS · Covers · DraftKings · ESPN")
     
     st.markdown("---")
     manual_input = st.text_area("Quick Prop Lookup", placeholder="LeBron James OVER 21.5 Points", height=80)
@@ -880,7 +897,7 @@ with tabs[1]:
                     st.success(f"Locked: {lock_single_prop(item)}")
 
         st.markdown("## Market Dynamics")
-        st.markdown(f"- **RLM:** DETECTED\n- **Contrarian:** ACTIVE\n- **Regime:** STABLE\n- **{get_sharp_ref_status()}**")
+        st.markdown(f"- **RLM:** DETECTED\n- **Contrarian:** ACTIVE\n- **Regime:** STABLE")
 
 # Locks of Day
 with tabs[2]:
