@@ -102,14 +102,15 @@ SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 PROP_SOURCES = {
     "BettingPros": "https://www.bettingpros.com/{sport}/props/",
     "RotoWire": "https://www.rotowire.com/betting/{sport}/player-props.php",
-    "CBS Sports": "https://www.cbssports.com/{sport}/player-props/",
-    "Covers": "https://www.covers.com/sport/{sport}/player-props",
+    "CBS Sports": "https://www.cbssports.com/{sport}/",
+    "Covers": "https://www.covers.com/{sport}",
     "DraftKings": "https://sportsbook.draftkings.com/page/{sport}-player-props",
+    "CAPMMA": "https://capmma.com",
 }
 GAME_SOURCES = {
     "ESPN": "https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard",
     "DraftKings": "https://sportsbook.draftkings.com/page/{sport}-game-lines",
-    "Covers": "https://www.covers.com/sport/{sport}/odds",
+    "Covers": "https://www.covers.com/{sport}/odds",
 }
 LINEUP_SOURCES = {
     "DraftEdge": "https://draftedge.com/{sport}/{sport}-starting-lineups/",
@@ -256,7 +257,11 @@ if "locks" not in st.session_state: st.session_state.locks = []
 if "kelly_odds" not in st.session_state: st.session_state.kelly_odds = -110
 if "kelly_prob" not in st.session_state: st.session_state.kelly_prob = 55.0
 
-HEADERS = {"User-Agent":"Mozilla/5.0 (compatible; BetCouncil/3.2)"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+}
 
 # ──────────────────────────────────────────────────────────────
 # Core Functions
@@ -308,6 +313,10 @@ def build_source_url(url_template, source_name, sport):
     """Build URL with correct path for the sport type."""
     sport_lower = sport.lower()
     sport_path = SPORT_PATH.get(sport.upper(), f"{sport_lower}/{sport_lower}")
+
+    # CAPMMA doesn't use sport formatting
+    if source_name == "CAPMMA":
+        return url_template
 
     if source_name == "ESPN":
         return url_template.format(sport_path=sport_path, sport=sport_lower)
