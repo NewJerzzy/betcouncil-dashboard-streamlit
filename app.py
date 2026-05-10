@@ -151,7 +151,7 @@ h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTS — v3.2 WITH NEW SOURCES
+# CONSTANTS — v3.2 WITH CORRECTED ROUTING
 # =========================
 MODELS = [
     {"name": "v5.3 DeepSeek - Outlier Suppression", "weight": 0.18, "em": "🐋"},
@@ -179,39 +179,33 @@ INTEGRITY_FLOOR = 40
 INTEGRITY_CEILING = 100
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
-# UPDATED PROP SOURCES — Server-rendered, scraper-friendly
+# Base URL templates — {sport} will be replaced with the sport-specific slug
 PROP_SOURCES = {
     "BettingPros": "https://www.bettingpros.com/{sport}/picks/player-props/",
     "OddsTrader": "https://oddstrader.com/{sport}/player-props/",
-    "NumberFire": "https://www.numberfire.com/{sport}/daily-fantasy/daily-basketball-projections",
     "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
     "DraftKings": "https://sportsbook.draftkings.com/leagues/{dk_sport}/player-props",
 }
 
-# UPDATED GAME SOURCES — Server-rendered with failover
 GAME_SOURCES = {
     "VegasInsider": "https://www.vegasinsider.com/{sport}/odds/las-vegas/",
-    "TeamRankings": "https://www.teamrankings.com/{sport}/odds/",
-    "SportsbookReview": "https://www.sportsbookreview.com/betting-odds/{sport}-basketball/",
     "ESPN (JSON API)": "https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard",
 }
 
-LINEUP_SOURCES = {
-    "DraftEdge": "https://draftedge.com/{sport}/{sport}-starting-lineups/",
-    "RotoWire": "https://www.rotowire.com/basketball/{sport}/lineups.php",
-}
-
+# Sport-specific path mappings
 SPORT_PATH_MAP = {
     "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl",
     "nfl": "football/nfl", "wnba": "basketball/wnba",
 }
 
+# DraftKings league slug mapping
 DK_SPORT_SLUG = {
     "NBA": "basketball/nba", "WNBA": "basketball/wnba", "NFL": "football/nfl",
     "MLB": "baseball/mlb", "NHL": "hockey/nhl", "UFC": "mma/ufc",
     "Golf": "golf", "Tennis": "tennis", "Soccer": "soccer",
 }
 
+# Sport-specific source lists — only sources that support each sport
 SPORT_SOURCE_MAP = {
     "NBA": ["BettingPros", "OddsTrader", "SportsBettingDime", "DraftKings"],
     "MLB": ["BettingPros", "OddsTrader", "SportsBettingDime", "DraftKings"],
@@ -221,7 +215,26 @@ SPORT_SOURCE_MAP = {
     "UFC": ["DraftKings"],
     "Golf": ["BettingPros", "DraftKings"],
     "Tennis": ["BettingPros", "DraftKings"],
-    "Soccer": ["BettingPros", "DraftKings"],
+    "Soccer": ["BettingPros", "OddsTrader"],
+}
+
+# Sport-specific URL slug overrides — each sport uses different paths on each site
+SPORT_URL_SLUG = {
+    "NBA": "nba",
+    "MLB": "mlb",
+    "NHL": "nhl",
+    "NFL": "nfl",
+    "WNBA": "wnba",
+    "UFC": "ufc",
+    "Golf": "golf",
+    "Tennis": "tennis",
+    "Soccer": "soccer",
+}
+
+# Game line sport-specific slug overrides for VegasInsider
+VEGASINSIDER_SLUG = {
+    "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
+    "WNBA": "wnba", "Soccer": "soccer", "Tennis": "tennis", "Golf": "golf", "UFC": "ufc",
 }
 
 SHARP_REFERENCE = {
@@ -262,7 +275,7 @@ if "raw_games" not in st.session_state: st.session_state.raw_games = []
 if "site_status" not in st.session_state:
     st.session_state.site_status = {
         name: {"status": "unknown", "last_checked": None}
-        for name in list(PROP_SOURCES.keys()) + list(GAME_SOURCES.keys()) + list(LINEUP_SOURCES.keys())
+        for name in list(PROP_SOURCES.keys()) + list(GAME_SOURCES.keys())
     }
     st.session_state.site_status[SHARP_REFERENCE["name"]] = {"status": "unknown", "last_checked": None}
 if "board_ready" not in st.session_state: st.session_state.board_ready = False
@@ -334,12 +347,25 @@ def get_daily_change():
     return f"{sign}{change:.1f}%"
 
 def build_source_url(source_name, sport):
-    sport_lower = sport.lower()
+    """Build URL with correct sport-specific slug for each source."""
+    sport_lower = SPORT_URL_SLUG.get(sport, sport.lower())
     sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
-    dk_sport = DK_SPORT_SLUG.get(sport.upper(), sport_lower)
-    url_templates = {**PROP_SOURCES, **GAME_SOURCES, **LINEUP_SOURCES}
-    template = url_templates.get(source_name, "")
-    return template.format(sport=sport_lower, sport_path=sport_path, dk_sport=dk_sport)
+    dk_sport = DK_SPORT_SLUG.get(sport, sport_lower)
+    vi_sport = VEGASINSIDER_SLUG.get(sport, sport_lower)
+
+    if source_name == "BettingPros":
+        return f"https://www.bettingpros.com/{sport_lower}/picks/player-props/"
+    elif source_name == "OddsTrader":
+        return f"https://oddstrader.com/{sport_lower}/player-props/"
+    elif source_name == "SportsBettingDime":
+        return f"https://www.sportsbettingdime.com/{sport_lower}/props/"
+    elif source_name == "DraftKings":
+        return f"https://sportsbook.draftkings.com/leagues/{dk_sport}/player-props"
+    elif source_name == "VegasInsider":
+        return f"https://www.vegasinsider.com/{vi_sport}/odds/las-vegas/"
+    elif source_name == "ESPN (JSON API)":
+        return f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
+    return ""
 
 def safe_fetch(url, name):
     try:
@@ -386,7 +412,6 @@ def parse_props_generic(html):
     return props
 
 def parse_espn_json(html, sport):
-    """Updated ESPN parser — uses events[].competitions[].odds[].details"""
     games = []
     if not html: return games
     try:
@@ -394,22 +419,10 @@ def parse_espn_json(html, sport):
         for event in data.get("events", []):
             matchup = event.get("shortName", "")
             for comp in event.get("competitions", []):
-                odds_list = comp.get("odds", [])
-                for odds in odds_list:
-                    details = odds.get("details", "")
-                    over_under = odds.get("overUnder", "")
-                    games.append({
-                        "Matchup": matchup,
-                        "Spread": details or "N/A",
-                        "Total": f"O/U {over_under}" if over_under else "N/A",
-                        "Moneyline": details or "N/A",
-                        "Sport": sport,
-                    })
-                    break
-                if games and games[-1]["Matchup"] == matchup:
-                    break
-    except Exception as e:
-        log_scan(f"ESPN JSON parse error: {str(e)[:60]}", "fail")
+                games.append({"Matchup": matchup, "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": sport})
+                break
+    except:
+        pass
     return games
 
 def fetch_sharp_reference(sport="nba"):
@@ -555,6 +568,7 @@ def load_sport_data_live(sport):
 
     for source_name in allowed_sources:
         url = build_source_url(source_name, sport)
+        if not url: continue
         log_scan(f"Fetching {source_name}: {url}", "skip")
         html = safe_fetch(url, source_name)
         if html:
@@ -569,17 +583,17 @@ def load_sport_data_live(sport):
         else:
             log_scan(f"{source_name}: FAIL — moving to next source", "fail")
 
-    game_sources_order = ["VegasInsider", "TeamRankings", "SportsbookReview", "ESPN (JSON API)"]
+    game_sources_order = ["VegasInsider", "ESPN (JSON API)"]
     for gs_name in game_sources_order:
         url = build_source_url(gs_name, sport)
+        if not url: continue
         log_scan(f"Fetching game lines: {gs_name}", "skip")
         html = safe_fetch(url, gs_name)
         if html:
             if "ESPN" in gs_name:
                 games = parse_espn_json(html, sport)
             else:
-                games = parse_props_generic(html)
-                games = [{"Matchup": g.get("Player", ""), "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": sport} for g in games[:10]]
+                games = []
             if games:
                 all_games = games
                 log_scan(f"{gs_name}: {len(games)} games found", "ok")
@@ -593,7 +607,6 @@ def load_sport_data_live(sport):
         log_scan("No props from any source — using sample data", "fail")
         data = get_sample_data(sport)
         all_props = data["raw_props"]
-        all_games = data["raw_games"]
     if not all_games:
         data = get_sample_data(sport)
         all_games = data["raw_games"]
@@ -646,7 +659,7 @@ with st.sidebar:
     <div style="text-align:center;margin-bottom:16px;">
         <div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
         <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
-        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Live Scan Active</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Smart Routing</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -667,15 +680,15 @@ with st.sidebar:
     
     st.markdown("---")
     if st.button("Scan All Sports", use_container_width=True):
-        with st.spinner("Scanning all 9 leagues from live sources..."):
+        with st.spinner("Scanning all 9 leagues..."):
             scan_all_sports_live()
         amt = len(st.session_state.cross_sport_board["props"]) if st.session_state.cross_sport_board else 0
         st.success(f"All 9 leagues scanned - {amt} props")
     if st.button("Load Board", use_container_width=True):
-        with st.spinner(f"Scanning {st.session_state.last_sport} from live sources..."):
+        with st.spinner(f"Scanning {st.session_state.last_sport}..."):
             load_sport_data_live(st.session_state.last_sport)
         amt = len(st.session_state.raw_props)
-        st.success(f"{st.session_state.last_sport} loaded - {amt} props from live scan")
+        st.success(f"{st.session_state.last_sport} loaded - {amt} props")
     if st.button("Re-Run Council", use_container_width=True):
         st.session_state.board_data = run_council_on_props(st.session_state.raw_props)
         st.session_state.game_verdicts = run_game_council_on_games(st.session_state.raw_games)
@@ -741,7 +754,7 @@ with tabs[0]:
     st.markdown("# Cross-Sport Best Bets")
     cross = st.session_state.cross_sport_board
     if not cross:
-        st.info("Click 'Scan All Sports' in the sidebar to merge all 9 leagues from live sources.")
+        st.info("Click 'Scan All Sports' in the sidebar.")
     else:
         st.markdown("## Top Props")
         for i, p in enumerate(cross["props"][:6], 1):
@@ -749,63 +762,52 @@ with tabs[0]:
             edge_pct = p.get("EdgePct", int(p["Weighted Score"] * 100))
             edge_color = "#0ea5a0" if edge_pct >= 70 else "#4a90d9" if edge_pct >= 40 else "#6a7a8a"
             st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{p['Player']}</div><div class="prop-card-matchup">{p.get('Sport','')} · {p['Side']} {p['Line']} {p['Prop']}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:{edge_color};">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{p['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
-            c1, _ = st.columns([1, 3])
-            with c1:
-                if st.button(f"Lock", key=f"cross_lock_{i}"):
-                    st.success(f"Locked: {lock_single_prop(p)}")
-
+            if st.button(f"Lock", key=f"cross_{i}"):
+                st.success(f"Locked: {lock_single_prop(p)}")
         st.markdown("## Top Game Lines")
         for i, g in enumerate(cross["games"][:3], 1):
             tc = tier_color(g["Tier"])
-            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{g['Matchup']}</div><div class="prop-card-matchup">{g.get('Sport','')} · {g.get('Moneyline','')}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:#0ea5a0;">{g.get('EdgePct','')}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{g['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{g['Matchup']}</div><div class="prop-card-matchup">{g.get('Sport','')}</div></div><div style="text-align:right;"><div style="font-size:12px;color:{tc};font-weight:600;">{g['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
 
 # Board of 8
 with tabs[1]:
     st.markdown("# Board of 8")
-    st.markdown(f"**Sources:** BettingPros · OddsTrader · SportsBettingDime · DraftKings · VegasInsider · ESPN")
-    
+    st.markdown("**Sources:** BettingPros · OddsTrader · SportsBettingDime · DraftKings · VegasInsider · ESPN")
     st.markdown("---")
     manual_input = st.text_area("Quick Prop Lookup", placeholder="LeBron James OVER 21.5 Points", height=80)
-    c1, _ = st.columns([1, 3])
-    with c1:
-        if st.button("Analyze"):
-            if manual_input.strip():
-                parsed = parse_manual_input(manual_input)
-                if parsed:
-                    st.session_state.manual_results = []
-                    for item in parsed:
-                        cooked = run_council_on_props([{"Player": item["player"], "Prop": item["prop"], "Side": item["side"], "Line": item["line"], "Sport": "NBA"}])
-                        if cooked:
-                            cooked[0]["EdgePct"] = int(cooked[0]["Weighted Score"] * 100)
-                            st.session_state.manual_results.append(cooked[0])
-                    st.success(f"Analyzed {len(st.session_state.manual_results)} prop(s)")
-
+    if st.button("Analyze"):
+        if manual_input.strip():
+            parsed = parse_manual_input(manual_input)
+            if parsed:
+                st.session_state.manual_results = []
+                for item in parsed:
+                    cooked = run_council_on_props([{"Player": item["player"], "Prop": item["prop"], "Side": item["side"], "Line": item["line"], "Sport": "NBA"}])
+                    if cooked:
+                        cooked[0]["EdgePct"] = int(cooked[0]["Weighted Score"] * 100)
+                        st.session_state.manual_results.append(cooked[0])
+                st.success(f"Analyzed {len(st.session_state.manual_results)} prop(s)")
     if st.session_state.manual_results:
         for i, item in enumerate(st.session_state.manual_results):
             tc = tier_color(item["Tier"])
             edge_pct = item.get("EdgePct", int(item["Weighted Score"] * 100))
             edge_color = "#0ea5a0" if edge_pct >= 70 else "#4a90d9" if edge_pct >= 40 else "#6a7a8a"
             st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{item['Player']}</div><div class="prop-card-matchup">{item['Side']} {item['Line']} {item['Prop']}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:{edge_color};">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{item['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
-            if st.button(f"Lock", key=f"man_lock_{i}"):
+            if st.button(f"Lock", key=f"man_{i}"):
                 st.success(f"Locked: {lock_single_prop(item)}")
-
     st.markdown("---")
     sport = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport))
     st.session_state.last_sport = sport
     board = st.session_state.board_data
-
     if not board:
-        st.info("Click 'Load Board' in the sidebar to scan live sources.")
+        st.info("Click 'Load Board' in the sidebar.")
     else:
-        st.markdown(f"**Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {len(st.session_state.injuries)} matchups verified, {st.session_state.filtered_count} props removed)")
+        st.markdown(f"**Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {st.session_state.filtered_count} props removed)")
         st.markdown("## Model Verdicts")
         for model in MODELS:
-            name = model["name"]
-            weight = model["weight"]
-            em = model["em"]
+            name, weight, em = model["name"], model["weight"], model["em"]
             approves = sum(1 for item in board if item["Votes"].get(name, 0) == 1)
             passes = sum(1 for item in board if item["Votes"].get(name, 0) == 0)
-            with st.expander(f"{em} {name} · wt:{weight} · Approve:{approves} Pass:{passes}"):
+            with st.expander(f"{em} {name} · wt:{weight} · ✓{approves} ○{passes}"):
                 for item in board:
                     vote = item["Votes"].get(name, 0)
                     reason = item["Reasons"].get(name, "")
@@ -816,10 +818,8 @@ with tabs[1]:
                     reason = item["Reasons"].get(name, "")
                     if vote != 1:
                         st.markdown(f"❌ {item['Player']} - {reason}")
-
         st.markdown("## Council Consensus")
-        sorted_board = sorted(board, key=lambda x: x["Weighted Score"], reverse=True)
-        for i, item in enumerate(sorted_board):
+        for i, item in enumerate(sorted(board, key=lambda x: x["Weighted Score"], reverse=True)):
             tc = tier_color(item["Tier"])
             approvals = sum(1 for v in item["Votes"].values() if v == 1)
             edge_pct = item.get("EdgePct", int(item["Weighted Score"] * 100))
@@ -828,57 +828,47 @@ with tabs[1]:
             if item["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED"):
                 if st.button(f"Lock", key=f"cons_{i}"):
                     st.success(f"Locked: {lock_single_prop(item)}")
-
         st.markdown("## Market Dynamics")
-        st.markdown(f"- **RLM:** DETECTED\n- **Contrarian:** ACTIVE\n- **Regime:** STABLE")
+        st.markdown("- **RLM:** DETECTED\n- **Contrarian:** ACTIVE\n- **Regime:** STABLE")
 
 # Locks of Day
 with tabs[2]:
-    st.markdown("# Locks & Parlays of the Day")
+    st.markdown("# Locks & Parlays")
     board = st.session_state.board_data
-    games = st.session_state.game_verdicts
-    if not board:
-        st.info("Load a board first.")
+    if not board: st.info("Load a board first.")
     else:
         approved = [i for i in board if i["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
         if approved:
-            best_prop = sorted(approved, key=lambda x: x["Weighted Score"], reverse=True)[0]
-            best_game = games[0] if games else None
-            st.markdown("## Lock of the Day")
-            edge_pct = best_prop.get("EdgePct", int(best_prop["Weighted Score"] * 100))
-            tc = tier_color(best_prop["Tier"])
-            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{best_prop['Player']}</div><div class="prop-card-matchup">{best_prop['Side']} {best_prop['Line']} {best_prop['Prop']}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:#0ea5a0;">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{best_prop['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
-            if best_game:
-                st.markdown(f"**Game:** {best_game['Matchup']} - {best_game.get('Moneyline','')} ({best_game['Tier Label']})")
-
+            best = sorted(approved, key=lambda x: x["Weighted Score"], reverse=True)[0]
+            tc = tier_color(best["Tier"])
+            edge_pct = best.get("EdgePct", int(best["Weighted Score"] * 100))
+            st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{best['Player']}</div><div class="prop-card-matchup">{best['Side']} {best['Line']} {best['Prop']}</div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:#0ea5a0;">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{best['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
             col_p, col_g = st.columns(2)
             with col_p:
-                st.markdown("""<div class="parlay-card"><h4 style="color:#0ea5a0;margin:0 0 10px 0;">Props Parlay</h4>""", unsafe_allow_html=True)
+                st.markdown("""<div class="parlay-card"><h4 style="color:#0ea5a0;">Props Parlay</h4>""", unsafe_allow_html=True)
                 prop_par = build_prop_parlay()
                 if prop_par:
                     selected = []
                     for i, leg in enumerate(prop_par):
-                        if st.checkbox(f"{leg['Player']} - {leg['Side']} {leg['Line']} {leg['Prop']} ({leg['Tier Label']})", value=True, key=f"pp_{i}"):
+                        if st.checkbox(f"{leg['Player']} - {leg['Side']} {leg['Line']} {leg['Prop']}", value=True, key=f"pp_{i}"):
                             selected.append(leg)
                     if len(selected) >= 2 and st.button("Lock Props Parlay"):
                         lid = generate_lock_id()
-                        for leg in selected:
-                            lock_single_prop(leg)
+                        for leg in selected: lock_single_prop(leg)
                         st.success(f"Locked: {lid}")
                 st.markdown("</div>", unsafe_allow_html=True)
-
             with col_g:
-                st.markdown("""<div class="game-parlay-card"><h4 style="color:#4a90d9;margin:0 0 10px 0;">Games Parlay</h4>""", unsafe_allow_html=True)
+                st.markdown("""<div class="game-parlay-card"><h4 style="color:#4a90d9;">Games Parlay</h4>""", unsafe_allow_html=True)
                 game_par = build_game_parlay()
                 if game_par:
                     selected_g = []
                     for i, leg in enumerate(game_par):
-                        if st.checkbox(f"{leg['Matchup']} - {leg.get('Moneyline','')} ({leg['Tier Label']})", value=True, key=f"gp_{i}"):
+                        if st.checkbox(f"{leg['Matchup']}", value=True, key=f"gp_{i}"):
                             selected_g.append(leg)
                     if len(selected_g) >= 2 and st.button("Lock Games Parlay"):
                         lid = generate_lock_id()
                         for leg in selected_g:
-                            st.session_state.locks.append({"id": lid, "type": "GAME", "matchup": leg["Matchup"], "bet": leg.get("Moneyline", ""), "tier": leg["Tier"], "status": "PENDING", "result": None, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "parlay_id": lid})
+                            st.session_state.locks.append({"id": lid, "type": "GAME", "matchup": leg["Matchup"], "bet": "", "tier": leg["Tier"], "status": "PENDING", "result": None, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "parlay_id": lid})
                         st.success(f"Locked: {lid}")
                 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -886,13 +876,12 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("# Locks & Ledger")
     pending = [l for l in st.session_state.locks if l.get("status") == "PENDING"]
-    if not pending:
-        st.info("No active locks.")
+    if not pending: st.info("No active locks.")
     else:
         for i, lock in enumerate(pending):
             cols = st.columns([4, 1, 1, 1])
             with cols[0]:
-                st.markdown(f"**{lock.get('id')}** - {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))} | {lock.get('tier','?')}")
+                st.markdown(f"**{lock.get('id')}** - {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))}")
             with cols[1]:
                 if st.button("WIN", key=f"w_{i}"):
                     lock["status"] = "RESOLVED"; lock["result"] = "WIN"
@@ -911,7 +900,6 @@ with tabs[3]:
             with cols[3]:
                 if st.button("X", key=f"rm_{i}"):
                     st.session_state.locks.pop(i); st.rerun()
-
     if st.session_state.history:
         st.markdown("### Resolved")
         st.table(pd.DataFrame([{"ID": h.get("id"), "Pick": h.get("player", h.get("matchup")), "Result": h.get("result")} for h in st.session_state.history[-10:]]))
@@ -920,7 +908,7 @@ with tabs[3]:
 with tabs[4]:
     st.markdown("# Reconciliation")
     pasted = st.text_area("Paste results: Player OVER/UNDER Line WIN/LOSS", height=120)
-    if st.button("Sync Results"):
+    if st.button("Sync"):
         parsed = parse_pasted_results(pasted)
         if parsed:
             for lock in st.session_state.locks:
@@ -950,7 +938,6 @@ with tabs[5]:
     c2.metric("Safe Corridor", "ACTIVE")
     c3.metric("Floor", "12%")
     c4.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
-
     st.markdown("---")
     st.markdown("## Site Health")
     c1, c2 = st.columns(2)
@@ -960,11 +947,10 @@ with tabs[5]:
             color = dot(s)
             st.markdown(f":{color}[●] **{name}**")
     with c2:
-        for name in list(GAME_SOURCES.keys()) + list(LINEUP_SOURCES.keys()):
+        for name in list(GAME_SOURCES.keys()):
             s = st.session_state.site_status.get(name, {}).get("status", "unknown")
             color = dot(s)
             st.markdown(f":{color}[●] **{name}**")
-
     st.markdown("---")
     st.markdown("## Scan Log")
     if st.session_state.scan_log:
@@ -972,8 +958,7 @@ with tabs[5]:
             status_class = f"scan-{entry['status']}"
             st.markdown(f'<span class="scan-status {status_class}">[{entry["time"]}]</span> {entry["msg"]}', unsafe_allow_html=True)
     else:
-        st.info("No scan has been run yet. Click 'Load Board' or 'Scan All Sports'.")
-
+        st.info("No scan run yet.")
     st.markdown("---")
     st.markdown("## Tier Legend")
     for tier in ["SOVEREIGN", "ELITE", "APPROVED", "LEAN", "PASS"]:
