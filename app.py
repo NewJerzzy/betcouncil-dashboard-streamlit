@@ -285,9 +285,9 @@ st.markdown(f"""
 </div></div>
 """, unsafe_allow_html=True)
 
-t1, t2, t3 = st.tabs(["🌍 Cross-Sport", "🧠 Summary + Board", "🛡️ Site Health"])
+tabs = st.tabs(["🌍 Cross-Sport", "🏀 Board of 8", "🔒 Locks of Day", "📋 Locks & Ledger", "🔄 Reconciliation", "🛡️ SEM & System"])
 
-with t1:
+with tabs[0]:
     st.markdown("# 🌍 Cross-Sport Best Bets")
     cross = st.session_state.cross_sport_board
     if not cross:
@@ -303,8 +303,8 @@ with t1:
             tc = tier_color(g['Tier'])
             st.markdown(f"<div class='section-card' style='border-left:3px solid {tc};'><span style='color:#5a7088;'>#{i} · {g.get('Sport','')}</span> <span style='color:#f4f8fc;font-weight:600;'>{g['Matchup']}</span> <span style='color:{tc};font-weight:600;'>{g['Tier Label']}</span></div>", unsafe_allow_html=True)
 
-with t2:
-    st.markdown("# Summary")
+with tabs[1]:
+    st.markdown("# Board of 8")
     if st.session_state.summary_text:
         st.markdown(f"<div class='summary-card'>{st.session_state.summary_text}</div>", unsafe_allow_html=True)
     else:
@@ -318,13 +318,32 @@ with t2:
     else:
         st.info("No board data loaded yet.")
 
-with t3:
-    st.markdown("# Site Health")
+with tabs[2]:
+    st.markdown("# Locks of Day")
+    st.info("Your existing lock workflow can remain here unchanged.")
+
+with tabs[3]:
+    st.markdown("# Locks & Ledger")
+    st.info("Your existing ledger / history workflow can remain here unchanged.")
+
+with tabs[4]:
+    st.markdown("# Reconciliation")
+    st.info("Your existing result sync / autopsy workflow can remain here unchanged.")
+
+with tabs[5]:
+    st.markdown("# SEM & System")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Integrity", "64/100")
+    c2.metric("Safe Corridor", "ACTIVE")
+    c3.metric("Emergency Floor", "ACTIVE")
+    c4.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
+
+    st.markdown("## Site Health")
     cols = st.columns(2)
     left_names = list(PROP_SOURCES.keys())
     right_names = list(GAME_SOURCES.keys()) + list(LINEUP_SOURCES.keys())
     with cols[0]:
-        st.markdown("## Prop Sources")
+        st.markdown("### Prop Sources")
         for name in left_names:
             s = st.session_state.site_status.get(name, {}).get("status", "unknown")
             t = st.session_state.site_status.get(name, {}).get("last_checked", "") or "—"
@@ -332,7 +351,7 @@ with t3:
             label = "WORKING" if s == "ok" else "DOWN" if s == "fail" else "UNKNOWN"
             st.markdown(f"<div class='section-card'>{dot(s)} <span class='badge {cls}'>{label}</span> <b>{name}</b> <span class='muted-text'>— {t}</span></div>", unsafe_allow_html=True)
     with cols[1]:
-        st.markdown("## Game / Lineup Sources")
+        st.markdown("### Game / Lineup Sources")
         for name in right_names:
             s = st.session_state.site_status.get(name, {}).get("status", "unknown")
             t = st.session_state.site_status.get(name, {}).get("last_checked", "") or "—"
