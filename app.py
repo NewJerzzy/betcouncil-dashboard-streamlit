@@ -151,7 +151,7 @@ h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTS — v3.2 WITH CORRECTED ROUTING
+# CONSTANTS — v3.2 FINAL
 # =========================
 MODELS = [
     {"name": "v5.3 DeepSeek - Outlier Suppression", "weight": 0.18, "em": "🐋"},
@@ -179,62 +179,53 @@ INTEGRITY_FLOOR = 40
 INTEGRITY_CEILING = 100
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
-# Base URL templates — {sport} will be replaced with the sport-specific slug
+# Prop sources — DraftKings removed (JS-only, confirmed 0 results)
 PROP_SOURCES = {
     "BettingPros": "https://www.bettingpros.com/{sport}/picks/player-props/",
     "OddsTrader": "https://oddstrader.com/{sport}/player-props/",
     "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
-    "DraftKings": "https://sportsbook.draftkings.com/leagues/{dk_sport}/player-props",
 }
 
+# Game line sources
 GAME_SOURCES = {
     "VegasInsider": "https://www.vegasinsider.com/{sport}/odds/las-vegas/",
     "ESPN (JSON API)": "https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard",
 }
 
-# Sport-specific path mappings
+# Sport-specific source lists — DraftKings removed
+SPORT_SOURCE_MAP = {
+    "NBA":    ["BettingPros", "OddsTrader", "SportsBettingDime"],
+    "MLB":    ["BettingPros", "OddsTrader", "SportsBettingDime"],
+    "NHL":    ["BettingPros", "OddsTrader", "SportsBettingDime"],
+    "NFL":    ["BettingPros", "OddsTrader", "SportsBettingDime"],
+    "WNBA":  ["BettingPros"],
+    "UFC":   ["BettingPros"],
+    "Golf":  ["BettingPros"],
+    "Tennis":["BettingPros"],
+    "Soccer":["BettingPros", "OddsTrader"],
+}
+
+# URL slug mappings
+SPORT_URL_SLUG = {
+    "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
+    "WNBA": "wnba", "UFC": "ufc", "Golf": "golf",
+    "Tennis": "tennis", "Soccer": "soccer",
+}
+
 SPORT_PATH_MAP = {
     "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl",
     "nfl": "football/nfl", "wnba": "basketball/wnba",
 }
 
-# DraftKings league slug mapping
+VEGASINSIDER_SLUG = {
+    "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
+    "WNBA": "wnba", "Soccer": "soccer", "Tennis": "tennis", "Golf": "golf", "UFC": "ufc",
+}
+
 DK_SPORT_SLUG = {
     "NBA": "basketball/nba", "WNBA": "basketball/wnba", "NFL": "football/nfl",
     "MLB": "baseball/mlb", "NHL": "hockey/nhl", "UFC": "mma/ufc",
     "Golf": "golf", "Tennis": "tennis", "Soccer": "soccer",
-}
-
-# Sport-specific source lists — only sources that support each sport
-SPORT_SOURCE_MAP = {
-    "NBA": ["BettingPros", "OddsTrader", "SportsBettingDime", "DraftKings"],
-    "MLB": ["BettingPros", "OddsTrader", "SportsBettingDime", "DraftKings"],
-    "NHL": ["BettingPros", "OddsTrader", "SportsBettingDime", "DraftKings"],
-    "NFL": ["BettingPros", "OddsTrader", "SportsBettingDime", "DraftKings"],
-    "WNBA": ["BettingPros", "DraftKings"],
-    "UFC": ["DraftKings"],
-    "Golf": ["BettingPros", "DraftKings"],
-    "Tennis": ["BettingPros", "DraftKings"],
-    "Soccer": ["BettingPros", "OddsTrader"],
-}
-
-# Sport-specific URL slug overrides — each sport uses different paths on each site
-SPORT_URL_SLUG = {
-    "NBA": "nba",
-    "MLB": "mlb",
-    "NHL": "nhl",
-    "NFL": "nfl",
-    "WNBA": "wnba",
-    "UFC": "ufc",
-    "Golf": "golf",
-    "Tennis": "tennis",
-    "Soccer": "soccer",
-}
-
-# Game line sport-specific slug overrides for VegasInsider
-VEGASINSIDER_SLUG = {
-    "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
-    "WNBA": "wnba", "Soccer": "soccer", "Tennis": "tennis", "Golf": "golf", "UFC": "ufc",
 }
 
 SHARP_REFERENCE = {
@@ -347,10 +338,8 @@ def get_daily_change():
     return f"{sign}{change:.1f}%"
 
 def build_source_url(source_name, sport):
-    """Build URL with correct sport-specific slug for each source."""
     sport_lower = SPORT_URL_SLUG.get(sport, sport.lower())
     sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
-    dk_sport = DK_SPORT_SLUG.get(sport, sport_lower)
     vi_sport = VEGASINSIDER_SLUG.get(sport, sport_lower)
 
     if source_name == "BettingPros":
@@ -359,8 +348,6 @@ def build_source_url(source_name, sport):
         return f"https://oddstrader.com/{sport_lower}/player-props/"
     elif source_name == "SportsBettingDime":
         return f"https://www.sportsbettingdime.com/{sport_lower}/props/"
-    elif source_name == "DraftKings":
-        return f"https://sportsbook.draftkings.com/leagues/{dk_sport}/player-props"
     elif source_name == "VegasInsider":
         return f"https://www.vegasinsider.com/{vi_sport}/odds/las-vegas/"
     elif source_name == "ESPN (JSON API)":
@@ -391,25 +378,85 @@ def safe_fetch(url, name):
         log_scan(f"{name}: FAIL ({str(e)[:50]})", "fail")
         return None
 
-def parse_props_generic(html):
-    props = []
-    if not html: return props
+# =========================
+# SITE-SPECIFIC PARSERS (THE FIX)
+# =========================
+def parse_props_generic(html, source_name=""):
     soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table")
-    for table in tables:
-        rows = table.find_all("tr")
+    results = []
+
+    # --- VEGASINSIDER ---
+    if source_name == "VegasInsider":
+        rows = soup.select("table.odds-table tr")
         for row in rows:
-            cols = row.find_all("td")
-            texts = [c.get_text(strip=True) for c in cols]
-            if len(texts) >= 3:
-                player = texts[0]
-                try:
-                    line = float(re.sub(r"[^\d.]+", "", texts[1]))
-                except:
-                    continue
-                prop_type = texts[2] if len(texts) > 2 else ""
-                props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "OVER", "Odds": ""})
-    return props
+            cols = row.select("td")
+            if len(cols) >= 3:
+                results.append({
+                    "matchup": cols[0].get_text(strip=True),
+                    "spread":  cols[1].get_text(strip=True),
+                    "total":   cols[2].get_text(strip=True),
+                })
+        if not results:
+            for block in soup.select(".vi-container .odds-block"):
+                teams = block.select(".team-name")
+                odds  = block.select(".odds-value")
+                if teams:
+                    results.append({
+                        "matchup": " vs ".join(t.get_text(strip=True) for t in teams),
+                        "odds":    [o.get_text(strip=True) for o in odds],
+                    })
+
+    # --- ODDSTRADER ---
+    elif source_name == "OddsTrader":
+        for card in soup.select(".prop-card, .player-prop-card, .market-card"):
+            player = card.select_one(".player-name, .prop-player, h3")
+            market = card.select_one(".prop-type, .market-name, .prop-label")
+            line   = card.select_one(".prop-line, .odds-value, .line-value")
+            if player:
+                results.append({
+                    "player": player.get_text(strip=True),
+                    "market": market.get_text(strip=True) if market else "N/A",
+                    "line":   line.get_text(strip=True)   if line   else "N/A",
+                })
+
+    # --- SPORTSBETTINGDIME ---
+    elif source_name == "SportsBettingDime":
+        for row in soup.select(".props-table tr, .prop-row, .player-prop"):
+            player = row.select_one(".player, .athlete-name, td:first-child")
+            market = row.select_one(".market, .prop-type, td:nth-child(2)")
+            odds   = row.select_one(".odds, .price, td:nth-child(3)")
+            if player and player.get_text(strip=True):
+                results.append({
+                    "player": player.get_text(strip=True),
+                    "market": market.get_text(strip=True) if market else "N/A",
+                    "odds":   odds.get_text(strip=True)   if odds   else "N/A",
+                })
+
+    # --- BETTINGPROS ---
+    elif source_name == "BettingPros":
+        for card in soup.select(".pick-card, .prop-pick, .player-pick-card"):
+            player = card.select_one(".player-name, .pick-player, h3, h4")
+            market = card.select_one(".pick-type, .prop-market, .pick-label")
+            line   = card.select_one(".pick-line, .prop-value, .consensus")
+            if player:
+                results.append({
+                    "player": player.get_text(strip=True),
+                    "market": market.get_text(strip=True) if market else "N/A",
+                    "line":   line.get_text(strip=True)   if line   else "N/A",
+                })
+
+    # --- GENERIC FALLBACK (tables only) ---
+    else:
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cols = row.find_all("td")
+                if len(cols) >= 2:
+                    results.append({
+                        "col1": cols[0].get_text(strip=True),
+                        "col2": cols[1].get_text(strip=True),
+                    })
+
+    return results
 
 def parse_espn_json(html, sport):
     games = []
@@ -572,19 +619,27 @@ def load_sport_data_live(sport):
         log_scan(f"Fetching {source_name}: {url}", "skip")
         html = safe_fetch(url, source_name)
         if html:
-            props = parse_props_generic(html)
+            props = parse_props_generic(html, source_name)
             for prop in props:
-                key = (prop["Player"], prop["Prop"], prop["Side"], prop["Line"])
-                if key not in seen_props:
+                player = prop.get("player", prop.get("col1", ""))
+                prop_type = prop.get("market", prop.get("col2", ""))
+                try:
+                    line_str = prop.get("line", prop.get("odds", "0"))
+                    line = float(re.sub(r"[^\d.]+", "", str(line_str))) if line_str else 0
+                except:
+                    line = 0
+                key = (player, prop_type, line)
+                if key not in seen_props and player:
                     seen_props.add(key)
-                    prop["Sport"] = sport
-                    all_props.append(prop)
+                    all_props.append({
+                        "Player": player, "Prop": prop_type, "Line": line, "Side": "OVER",
+                        "Sport": sport,
+                    })
             log_scan(f"{source_name}: {len(props)} props extracted", "ok")
         else:
             log_scan(f"{source_name}: FAIL — moving to next source", "fail")
 
-    game_sources_order = ["VegasInsider", "ESPN (JSON API)"]
-    for gs_name in game_sources_order:
+    for gs_name in ["VegasInsider", "ESPN (JSON API)"]:
         url = build_source_url(gs_name, sport)
         if not url: continue
         log_scan(f"Fetching game lines: {gs_name}", "skip")
@@ -593,15 +648,11 @@ def load_sport_data_live(sport):
             if "ESPN" in gs_name:
                 games = parse_espn_json(html, sport)
             else:
-                games = []
+                games = [{"Matchup": g.get("matchup", ""), "Spread": g.get("spread", "N/A"), "Total": g.get("total", "N/A"), "Moneyline": "N/A", "Sport": sport} for g in parse_props_generic(html, gs_name)]
             if games:
                 all_games = games
                 log_scan(f"{gs_name}: {len(games)} games found", "ok")
                 break
-            else:
-                log_scan(f"{gs_name}: no games parsed — trying next", "fail")
-        else:
-            log_scan(f"{gs_name}: FAIL — trying next", "fail")
 
     if not all_props:
         log_scan("No props from any source — using sample data", "fail")
@@ -613,9 +664,6 @@ def load_sport_data_live(sport):
 
     st.session_state.raw_props = all_props
     st.session_state.raw_games = all_games
-    st.session_state.injuries = []
-    st.session_state.blowout_games = []
-    st.session_state.filtered_count = 0
     st.session_state.last_sport = sport
     st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
     st.session_state.board_ready = True
@@ -627,15 +675,13 @@ def get_sample_data(sport):
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "NBA"} for p, t, l, s in [("Shai Gilgeous-Alexander", "POINTS", 31.5, "OVER"), ("Cade Cunningham", "POINTS", 23.5, "OVER"), ("Donovan Mitchell", "POINTS", 27.5, "UNDER")]],
             "raw_games": [{"Matchup": "OKC @ LAL", "Spread": "OKC -8.5", "Total": "O/U 214.5", "Moneyline": "OKC -400", "Sport": "NBA"}],
-            "injuries": [], "blowout_games": [], "filtered_count": 0,
         }
     if sport == "MLB":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "MLB"} for p, t, l, s in [("Aaron Judge", "H+R+RBI", 0.5, "OVER"), ("Spencer Strider", "STRIKEOUTS", 4.5, "OVER")]],
             "raw_games": [{"Matchup": "TEX @ NYY", "Spread": "NYY -1.5", "Total": "O/U 8.5", "Moneyline": "NYY -152", "Sport": "MLB"}],
-            "injuries": [], "blowout_games": [], "filtered_count": 0,
         }
-    return {"raw_props": [], "raw_games": [], "injuries": [], "blowout_games": [], "filtered_count": 0}
+    return {"raw_props": [], "raw_games": []}
 
 def scan_all_sports_live():
     all_props, all_games = [], []
@@ -659,7 +705,7 @@ with st.sidebar:
     <div style="text-align:center;margin-bottom:16px;">
         <div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
         <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
-        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Smart Routing</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Final</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -772,7 +818,7 @@ with tabs[0]:
 # Board of 8
 with tabs[1]:
     st.markdown("# Board of 8")
-    st.markdown("**Sources:** BettingPros · OddsTrader · SportsBettingDime · DraftKings · VegasInsider · ESPN")
+    st.markdown("**Sources:** BettingPros · OddsTrader · SportsBettingDime · VegasInsider · ESPN")
     st.markdown("---")
     manual_input = st.text_area("Quick Prop Lookup", placeholder="LeBron James OVER 21.5 Points", height=80)
     if st.button("Analyze"):
@@ -801,7 +847,7 @@ with tabs[1]:
     if not board:
         st.info("Click 'Load Board' in the sidebar.")
     else:
-        st.markdown(f"**Validation Firewall:** PASSED ({len(st.session_state.blowout_games)} games, {st.session_state.filtered_count} props removed)")
+        st.markdown(f"**Validation Firewall:** PASSED ({st.session_state.filtered_count} props removed)")
         st.markdown("## Model Verdicts")
         for model in MODELS:
             name, weight, em = model["name"], model["weight"], model["em"]
