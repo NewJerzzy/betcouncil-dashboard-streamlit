@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
@@ -895,6 +894,3 @@ with tabs[5]:
         for entry in st.session_state.scan_log[-20:]: st.markdown(f'<span class="scan-status scan-{entry["status"]}">[{entry["time"]}]</span> {entry["msg"]}', unsafe_allow_html=True)
     st.markdown("---"); st.markdown("## Tier Legend")
     for tier in ["SOVEREIGN", "ELITE", "APPROVED", "LEAN", "PASS"]: st.markdown(f"**{tier_label(tier)}** - {TIER_DESCRIPTIONS.get(tier, '')}")
-```
-
-Covers Consensus is now integrated. The `parse_covers_consensus` function scrapes public betting percentages from the server-rendered consensus page. The data feeds into the Market Dynamics section, replacing the static placeholder with real public splits. The game council gets a `public_bonus` adjustment when heavy public money is detected on one side. The `CONSENSUS_SOURCES` dictionary tracks the new source, and site health monitoring includes it.
