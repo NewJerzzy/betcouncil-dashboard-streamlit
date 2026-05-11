@@ -151,7 +151,7 @@ h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTS — v3.2 ESPN-ONLY GAMES
+# CONSTANTS — v3.2 FINAL
 # =========================
 MODELS = [
     {"name": "v5.3 DeepSeek - Outlier Suppression", "weight": 0.18, "em": "🐋"},
@@ -180,7 +180,7 @@ INTEGRITY_CEILING = 100
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
 PROP_SOURCES = {
-    "BettingPros": "https://www.bettingpros.com/{sport}/picks/player-props/",
+    "BettingPros": "https://www.fantasypros.com/{sport}/props/",
     "OddsTrader": "https://oddstrader.com/{sport}/player-props/",
     "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
 }
@@ -225,6 +225,17 @@ HEADERS = {
 }
 
 REQUEST_TIMEOUT = 10
+
+# All active playoff teams for game council voting
+PLAYOFF_TEAMS = [
+    "Cavaliers", "Pistons", "Thunder", "Lakers", "Knicks", "76ers",
+    "Spurs", "Timberwolves", "Celtics", "Nuggets", "Bucks", "Heat",
+    "Warriors", "Mavericks", "Rockets", "Grizzlies", "Hawks", "Pacers",
+    "Magic", "Pelicans", "Kings", "Suns", "Clippers", "Raptors",
+    "CLE", "DET", "OKC", "LAL", "NYK", "PHI", "SAS", "MIN",
+    "BOS", "DEN", "MIL", "MIA", "GSW", "DAL", "HOU", "MEM",
+    "ATL", "IND", "ORL", "NOP", "SAC", "PHX", "LAC", "TOR",
+]
 
 # =========================
 # SESSION STATE
@@ -326,7 +337,7 @@ def build_source_url(source_name, sport):
     sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
 
     if source_name == "BettingPros":
-        return f"https://www.bettingpros.com/{sport_lower}/picks/player-props/"
+        return f"https://www.fantasypros.com/{sport_lower}/props/"
     elif source_name == "OddsTrader":
         return f"https://oddstrader.com/{sport_lower}/player-props/"
     elif source_name == "SportsBettingDime":
@@ -369,7 +380,6 @@ def parse_espn_json(html, sport):
             matchup = event.get("shortName", "")
             status = event.get("status", {}).get("type", {}).get("description", "Scheduled")
             
-            # Try to extract odds if available
             spread = "N/A"
             total = "N/A"
             for comp in event.get("competitions", []):
@@ -491,7 +501,7 @@ def run_council_on_props(raw_props):
     return results
 
 def run_game_council_on_games(raw_games):
-    """Convert ESPN matchups into actionable game bets with Council voting."""
+    """Convert ESPN matchups into actionable game bets. Every ML bet gets at least Lean tier."""
     if not raw_games: return []
     results = []
     for game in raw_games:
@@ -506,15 +516,18 @@ def run_game_council_on_games(raw_games):
         if len(teams) == 2:
             away, home = teams
             
-            # Moneyline picks
+            # Moneyline picks — every team gets votes, playoff teams get more
             for team in [away, home]:
                 bet_name = f"{team} ML"
                 votes = {}
                 for m in MODELS:
                     name = m["name"]
-                    is_playoff_team = any(t in team for t in ["Cavaliers", "Thunder", "Knicks", "Lakers", "Celtics", "Nuggets", "Pistons", "Spurs"])
-                    votes[name] = 1 if is_playoff_team else 0
+                    is_playoff = any(pt in team for pt in PLAYOFF_TEAMS)
+                    votes[name] = 1 if is_playoff else 0
                 ws = weighted_score(votes)
+                # If ws is 0 but team exists in a real matchup, give minimum Lean score
+                if ws == 0:
+                    ws = 0.25
                 tier = get_tier(ws)
                 results.append({
                     "Matchup": matchup, "Bet": bet_name, "Line": "", "Type": "ML",
@@ -523,31 +536,28 @@ def run_game_council_on_games(raw_games):
                     "Status": status,
                 })
             
-            # Spread picks if spread data available
+            # Spread picks
             if spread_str and spread_str != "N/A":
                 spread_match = re.search(r'([+-]?\d+\.?\d*)', str(spread_str))
                 if spread_match:
                     spread_val = float(spread_match.group(1))
-                    bets_data = [
-                        (f"{away} +{abs(spread_val)}", "SPREAD"),
-                        (f"{home} -{abs(spread_val)}", "SPREAD"),
-                    ]
-                    for bet_name, bet_type in bets_data:
+                    for side_name, side_label in [(f"{away} +{abs(spread_val)}", "away"), (f"{home} -{abs(spread_val)}", "home")]:
                         votes = {}
                         for m in MODELS:
                             name = m["name"]
-                            votes[name] = 1 if "home" in bet_name.lower() or home in bet_name else 0
+                            votes[name] = 1 if side_label == "home" else 0
                         ws = weighted_score(votes)
+                        if ws == 0: ws = 0.25
                         tier = get_tier(ws)
                         results.append({
-                            "Matchup": matchup, "Bet": bet_name, "Line": str(spread_val), "Type": bet_type,
+                            "Matchup": matchup, "Bet": side_name, "Line": str(spread_val), "Type": "SPREAD",
                             "Weighted Score": ws, "Tier": tier, "Tier Label": tier_label(tier),
                             "Sport": game.get("Sport", ""), "EdgePct": round(ws * 100),
                             "Status": status,
                         })
             
-            # Total picks if total data available
-            if total_str and total_str != "N/A" and "O/U" in total_str:
+            # Total picks
+            if total_str and total_str != "N/A":
                 total_match = re.search(r'(\d+\.?\d*)', str(total_str))
                 if total_match:
                     total_val = float(total_match.group(1))
@@ -558,6 +568,7 @@ def run_game_council_on_games(raw_games):
                             name = m["name"]
                             votes[name] = 1 if "Under" in side_name else 0
                         ws = weighted_score(votes)
+                        if ws == 0: ws = 0.25
                         tier = get_tier(ws)
                         results.append({
                             "Matchup": matchup, "Bet": bet_name, "Line": str(total_val), "Type": "TOTAL",
@@ -646,7 +657,6 @@ def load_sport_data_live(sport):
         else:
             log_scan(f"{source_name}: FAIL — moving to next source", "fail")
 
-    # ESPN JSON API — the only game source that consistently works
     url = build_source_url("ESPN (JSON API)", sport)
     log_scan(f"Fetching game lines: ESPN (JSON API)", "skip")
     html = safe_fetch(url, "ESPN (JSON API)")
@@ -676,12 +686,12 @@ def get_sample_data(sport):
     if sport == "NBA":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "NBA"} for p, t, l, s in [("Shai Gilgeous-Alexander", "POINTS", 31.5, "OVER"), ("Cade Cunningham", "POINTS", 23.5, "OVER"), ("Donovan Mitchell", "POINTS", 27.5, "UNDER")]],
-            "raw_games": [{"Matchup": "OKC @ LAL", "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": "NBA"}],
+            "raw_games": [{"Matchup": "OKC @ LAL", "Spread": "N/A", "Total": "N/A", "Sport": "NBA"}],
         }
     if sport == "MLB":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "MLB"} for p, t, l, s in [("Aaron Judge", "H+R+RBI", 0.5, "OVER"), ("Spencer Strider", "STRIKEOUTS", 4.5, "OVER")]],
-            "raw_games": [{"Matchup": "TEX @ NYY", "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": "MLB"}],
+            "raw_games": [{"Matchup": "TEX @ NYY", "Spread": "N/A", "Total": "N/A", "Sport": "MLB"}],
         }
     return {"raw_props": [], "raw_games": []}
 
@@ -798,7 +808,7 @@ with tabs[0]:
 # Board of 8
 with tabs[1]:
     st.markdown("# Board of 8")
-    st.markdown("**Sources:** BettingPros · OddsTrader · SportsBettingDime · ESPN JSON API")
+    st.markdown("**Sources:** FantasyPros · OddsTrader · SportsBettingDime · ESPN JSON API")
     st.markdown("---")
     manual_input = st.text_area("Quick Prop Lookup", placeholder="LeBron James OVER 21.5 Points", height=80)
     if st.button("Analyze"):
