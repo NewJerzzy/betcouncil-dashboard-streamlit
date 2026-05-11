@@ -63,22 +63,21 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 # ──────────────────────────────────────────────────────────────
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
-PROP_SOURCES = {"BettingPros": True, "OddsTrader": True, "SportsBettingDime": True}
-GAME_SOURCES = {"VegasInsider": True, "ESPN (JSON API)": True}
-ALL_SOURCES = {**PROP_SOURCES, **GAME_SOURCES}
-
-SPORT_SOURCE_MAP = {
-    "NBA": ["BettingPros", "OddsTrader", "SportsBettingDime"],
-    "MLB": ["BettingPros", "OddsTrader", "SportsBettingDime"],
-    "NHL": ["BettingPros", "OddsTrader", "SportsBettingDime"],
-    "NFL": ["BettingPros", "OddsTrader", "SportsBettingDime"],
-    "WNBA": ["BettingPros"], "UFC": ["BettingPros"], "Golf": ["BettingPros"],
-    "Tennis": ["BettingPros"], "Soccer": ["BettingPros", "OddsTrader"],
+GAME_SOURCES = {
+    "VegasInsider": True,
+    "ESPN (JSON API)": True,
 }
+
+CONSENSUS_SOURCES = {
+    "VSIN Betting Splits": True,
+}
+
+ALL_SOURCES = {**GAME_SOURCES, **CONSENSUS_SOURCES}
 
 SPORT_URL_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf","Tennis":"tennis","Soccer":"soccer"}
 SPORT_PATH_MAP = {"nba":"basketball/nba","mlb":"baseball/mlb","nhl":"hockey/nhl","nfl":"football/nfl","wnba":"basketball/wnba"}
 VEGASINSIDER_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","Soccer":"soccer","Tennis":"tennis","Golf":"golf","UFC":"ufc"}
+VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf/pga","Tennis":"tennis","Soccer":"soccer"}
 
 MLB_STADIUMS = {
     "ARI":{"name":"Chase Field","type":"Dome","lat":33.4455,"lon":-112.0667},
@@ -112,7 +111,7 @@ MLB_STADIUMS = {
     "WAS":{"name":"Nationals Park","type":"Open","lat":38.8730,"lon":-77.0074},
 }
 
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 10
 DEFAULT_BANKROLL = 1000.0
 KELLY_FRACTION = 0.25
 KELLY_CAP = 0.25
@@ -163,8 +162,7 @@ if "history" not in st.session_state: st.session_state.history = []
 if "locks" not in st.session_state: st.session_state.locks = []
 if "weather_data" not in st.session_state: st.session_state.weather_data = {}
 if "raw_games_for_summary" not in st.session_state: st.session_state.raw_games_for_summary = []
-if "raw_props_seen" not in st.session_state: st.session_state.raw_props_seen = set()
-if "raw_props_total" not in st.session_state: st.session_state.raw_props_total = 0
+if "consensus_data" not in st.session_state: st.session_state.consensus_data = {}
 if "kelly_odds" not in st.session_state: st.session_state.kelly_odds = -110
 if "kelly_prob" not in st.session_state: st.session_state.kelly_prob = 55.0
 
@@ -263,13 +261,11 @@ def calculate_game_integrity(raw_games):
     else: d="High Variance — Check Multiple Books"
     return i,d
 
-def calculate_prop_integrity(seen_count, total_raw):
-    if total_raw==0: return 50,"No data"
-    dr=seen_count/max(total_raw,1)
-    if total_raw<=5: return 50,"Limited Data — Low Source Coverage"
-    if dr>0.8: return 85,"Strong Source Agreement — Lines Stable"
-    if dr>0.5: return 67,"Market Volatility Detected"
-    return 45,"High Volatility — Sources Disagree"
+def calculate_prop_integrity(props_count):
+    if props_count==0: return 50,"No data"
+    if props_count>=10: return 85,"Strong Source Agreement — Lines Stable"
+    if props_count>=5: return 67,"Market Volatility Detected"
+    return 45,"Limited Data — Low Source Coverage"
 
 def calculate_council_integrity(board):
     if not board: return 50,"No council data"
@@ -305,17 +301,20 @@ def build_source_url(source_name, sport):
     sl=SPORT_URL_SLUG.get(sport,sport.lower())
     sp=SPORT_PATH_MAP.get(sl,f"basketball/{sl}")
     vi=VEGASINSIDER_SLUG.get(sport,sl)
-    if source_name=="BettingPros": return f"https://www.bettingpros.com/{sl}/picks/player-props/"
-    if source_name=="OddsTrader": return f"https://oddstrader.com/{sl}/player-props/"
-    if source_name=="SportsBettingDime": return f"https://www.sportsbettingdime.com/{sl}/props/"
+    vs=VSIN_SPORT_SLUG.get(sport,sl)
     if source_name=="VegasInsider": return f"https://www.vegasinsider.com/{vi}/odds/las-vegas/"
     if source_name=="ESPN (JSON API)": return f"https://site.api.espn.com/apis/site/v2/sports/{sp}/scoreboard"
+    if source_name=="VSIN Betting Splits": return f"https://data.vsin.com/{vs}/betting-splits/"
     return ""
 
 def safe_fetch(url, name):
     try:
         r=requests.get(url,headers=HEADERS,timeout=REQUEST_TIMEOUT)
-        if r.status_code==200: mark_site_ok(name); log_scan(f"{name}: OK","ok"); return r.text
+        if r.status_code==200:
+            if r.text and len(r.text)>200:
+                mark_site_ok(name); log_scan(f"{name}: OK","ok"); return r.text
+            else:
+                mark_site_fail(name,"Empty response"); log_scan(f"{name}: Empty","fail"); return None
         else: mark_site_fail(name,f"HTTP {r.status_code}"); log_scan(f"{name}: FAIL ({r.status_code})","fail"); return None
     except requests.Timeout: mark_site_fail(name,"Timeout"); log_scan(f"{name}: TIMEOUT","fail"); return None
     except requests.ConnectionError: mark_site_fail(name,"Connection"); log_scan(f"{name}: CONNECTION","fail"); return None
@@ -324,40 +323,16 @@ def safe_fetch(url, name):
 # ──────────────────────────────────────────────────────────────
 # PARSERS
 # ──────────────────────────────────────────────────────────────
-def parse_props_generic(html, source_name=""):
+def parse_vegasinsider(html):
     soup=BeautifulSoup(html,"html.parser")
     results=[]
-    if source_name=="VegasInsider":
-        for row in soup.select("table.odds-table tr"):
-            cols=row.select("td")
-            if len(cols)>=3: results.append({"matchup":cols[0].get_text(strip=True),"spread":cols[1].get_text(strip=True),"total":cols[2].get_text(strip=True)})
-        if not results:
-            for block in soup.select(".vi-container .odds-block"):
-                teams=block.select(".team-name"); odds=block.select(".odds-value")
-                if teams: results.append({"matchup":" vs ".join(t.get_text(strip=True) for t in teams),"odds":[o.get_text(strip=True) for o in odds]})
-    elif source_name=="OddsTrader":
-        for card in soup.select(".prop-card,.player-prop-card,.market-card"):
-            p=card.select_one(".player-name,.prop-player,h3")
-            m=card.select_one(".prop-type,.market-name,.prop-label")
-            l=card.select_one(".prop-line,.odds-value,.line-value")
-            if p: results.append({"player":p.get_text(strip=True),"market":m.get_text(strip=True) if m else "N/A","line":l.get_text(strip=True) if l else "N/A"})
-    elif source_name=="SportsBettingDime":
-        for row in soup.select(".props-table tr,.prop-row,.player-prop"):
-            p=row.select_one(".player,.athlete-name,td:first-child")
-            m=row.select_one(".market,.prop-type,td:nth-child(2)")
-            o=row.select_one(".odds,.price,td:nth-child(3)")
-            if p and p.get_text(strip=True): results.append({"player":p.get_text(strip=True),"market":m.get_text(strip=True) if m else "N/A","odds":o.get_text(strip=True) if o else "N/A"})
-    elif source_name=="BettingPros":
-        for card in soup.select(".pick-card,.prop-pick,.player-pick-card"):
-            p=card.select_one(".player-name,.pick-player,h3,h4")
-            m=card.select_one(".pick-type,.prop-market,.pick-label")
-            l=card.select_one(".pick-line,.prop-value,.consensus")
-            if p: results.append({"player":p.get_text(strip=True),"market":m.get_text(strip=True) if m else "N/A","line":l.get_text(strip=True) if l else "N/A"})
-    else:
-        for table in soup.find_all("table"):
-            for row in table.find_all("tr"):
-                cols=row.find_all("td")
-                if len(cols)>=2: results.append({"col1":cols[0].get_text(strip=True),"col2":cols[1].get_text(strip=True)})
+    for row in soup.select("table.odds-table tr"):
+        cols=row.select("td")
+        if len(cols)>=3: results.append({"matchup":cols[0].get_text(strip=True),"spread":cols[1].get_text(strip=True),"total":cols[2].get_text(strip=True)})
+    if not results:
+        for block in soup.select(".vi-container .odds-block"):
+            teams=block.select(".team-name"); odds=block.select(".odds-value")
+            if teams: results.append({"matchup":" vs ".join(t.get_text(strip=True) for t in teams),"odds":[o.get_text(strip=True) for o in odds]})
     return results
 
 def parse_espn_json(html, sport):
@@ -373,6 +348,14 @@ def parse_espn_json(html, sport):
     except: pass
     return out
 
+def parse_vsin_consensus(html):
+    soup=BeautifulSoup(html,"html.parser")
+    results={}
+    for row in soup.select("table tr,.splits-row"):
+        cols=row.select("td")
+        if len(cols)>=3: results[cols[0].get_text(strip=True)]=f"{cols[2].get_text(strip=True)} on {cols[1].get_text(strip=True)}"
+    return results
+
 # ──────────────────────────────────────────────────────────────
 # ANALYSIS PIPELINE
 # ──────────────────────────────────────────────────────────────
@@ -383,7 +366,7 @@ def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=No
     mu=normal_wma(stats); sigma=max(wsem(stats),0.75)
     prob=float(1-norm.cdf(line,mu,sigma) if pick.upper()=="OVER" else norm.cdf(line,mu,sigma))
     edge=prob-american_to_prob(odds); tier=classify_tier(edge)
-    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob,odds),"tier":tier,"mu":mu,"sigma":sigma,"confidence":65,"source_status":"SYNTHETIC"}
+    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob,odds),"tier":tier,"mu":mu,"sigma":sigma,"confidence":65,"source_status":"FALLBACK"}
 
 def run_council(items):
     out=[]
@@ -412,11 +395,11 @@ def run_game_council(games):
 # ──────────────────────────────────────────────────────────────
 # FULL SUMMARY GENERATOR
 # ──────────────────────────────────────────────────────────────
-def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, props_seen_count, props_total_raw):
+def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, consensus_data):
     if not board: return "No board loaded."
     now=datetime.now(); date_str=now.strftime("%A, %B %d, %Y"); sport_display=sport.upper()
     g_int,g_desc=calculate_game_integrity(raw_games)
-    p_int,p_desc=calculate_prop_integrity(props_seen_count,props_total_raw)
+    p_int,p_desc=calculate_prop_integrity(len(board))
     c_int,c_desc=calculate_council_integrity(board)
     approved=[i for i in board if i.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")]
     best_prop=approved[0] if approved else None
@@ -424,26 +407,29 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     l_int,l_desc=calculate_lock_integrity(best_prop,best_game,board)
     wp=[]
     for matchup,w in weather_data.items(): wp.append(f"{matchup.split(' @ ')[-1]} {w['advisory']}")
-    wl=" · ".join(wp) if wp else "No MLB games"
+    wl=" · ".join(wp) if wp else "N/A"
     L=[]
     L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.3\n")
     L.append(f"**{sport_display} — {date_str}** | **Scanned:** {st.session_state.last_scan_time} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE\n")
-    L.append(f"🔒 **Sources:** BettingPros ✅ · OddsTrader ✅ · SportsBettingDime ✅ · VegasInsider ✅ · ESPN ✅\n")
+    L.append(f"🔒 **Sources:** ESPN ✅ · VegasInsider ✅ · VSIN ✅\n")
     L.append(f"---\n")
     L.append(f"## 🚨 GAME LINES (What VegasInsider Shows)\n")
     L.append(f"📊 **GAME INTEGRITY: {g_int}%** ({g_desc})\n")
     if raw_games:
         L.append(f"| # | Matchup | Spread | Total |\n| --- | --- | --- | --- |")
-        for i,g in enumerate(raw_games[:10],1): L.append(f"| {i} | **{g.get('matchup','')}** | {g.get('spread','N/A')} | {g.get('total','N/A')} |")
+        for i,g in enumerate(raw_games[:10],1):
+            m=g.get("matchup","")
+            if consensus_data and m in consensus_data: m+=f" (Public: {consensus_data[m]})"
+            L.append(f"| {i} | **{m}** | {g.get('spread','N/A')} | {g.get('total','N/A')} |")
         L.append(f"\n*Weather: {wl}*")
     else: L.append(f"*No game lines scraped*")
     L.append(f"\n---\n")
-    L.append(f"## 📊 PLAYER PROPS (What the Scrapers Found — {len(board)} survived dedup)\n")
+    L.append(f"## 📊 PLAYER PROPS (Fallback Data — {len(board)} available)\n")
     L.append(f"📊 **PROP INTEGRITY: {p_int}%** ({p_desc})\n")
     if board:
         L.append(f"| # | Player | Prop | Line | Side |\n| --- | --- | --- | --- | --- |")
         for i,item in enumerate(board[:12],1): L.append(f"| {i} | **{item['Player']}** | {item['Prop']} | {item['Line']} | {item['Side']} |")
-    else: L.append(f"*No props survived*")
+    else: L.append(f"*No props available*")
     L.append(f"\n---\n")
     L.append(f"## 🗳️ COUNCIL VERDICT (8 Models · Weighted Consensus)\n")
     L.append(f"📊 **COUNCIL INTEGRITY: {c_int}%** ({c_desc})\n")
@@ -468,24 +454,11 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
 # DATA LOADER
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
-    all_props,all_games,raw_games=[],[],[]
-    seen=set(); weather_results={}; total_raw=0
-    allowed=SPORT_SOURCE_MAP.get(sport,["BettingPros"])
-    log_scan(f"Scanning {sport} — {len(allowed)} sources","skip")
-    for sn in allowed:
-        url=build_source_url(sn,sport)
-        if not url: continue
-        html=safe_fetch(url,sn)
-        if html:
-            props=parse_props_generic(html,sn); total_raw+=len(props)
-            for prop in props:
-                player=prop.get("player",prop.get("col1",""))
-                pt=prop.get("market",prop.get("col2",""))
-                try: line=float(re.sub(r"[^\d.]+","",str(prop.get("line",prop.get("odds","0"))))) if prop.get("line",prop.get("odds","0")) else 0
-                except: line=0
-                key=(player,pt,line)
-                if key not in seen and player: seen.add(key); all_props.append({"Player":player,"Prop":pt,"Line":line,"Side":"OVER","Sport":sport})
-            log_scan(f"{sn}: {len(props)} props","ok")
+    all_games,raw_games=[],[]
+    weather_results={}; consensus_results={}
+    log_scan(f"Loading {sport} board...","skip")
+    
+    # Game lines: VegasInsider → ESPN failover
     for gsn in ["VegasInsider","ESPN (JSON API)"]:
         url=build_source_url(gsn,sport)
         if not url: continue
@@ -494,24 +467,37 @@ def load_sport_data_live(sport):
             if "ESPN" in gsn:
                 games=parse_espn_json(html,sport); raw_games=games
             else:
-                parsed=parse_props_generic(html,gsn)
+                parsed=parse_vegasinsider(html)
                 raw_games=[{"matchup":g.get("matchup",""),"spread":g.get("spread","N/A"),"total":g.get("total","N/A")} for g in parsed]
                 games=[{"Matchup":g.get("matchup",""),"Sport":sport,"Spread":g.get("spread","N/A"),"Total":g.get("total","N/A")} for g in parsed]
             if games: all_games=games; break
+    
+    # VSIN Consensus
+    vsin_url=build_source_url("VSIN Betting Splits",sport)
+    if vsin_url:
+        vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
+        if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
+    
+    # Weather for MLB
     if sport.upper()=="MLB":
         for game in raw_games:
             parts=game.get("matchup","").split(" @ ")
             if len(parts)==2:
                 ha=parts[1].split()[-1] if parts[1] else ""
                 a,d=apply_weather_filter(ha,sport); weather_results[game["matchup"]]={"advisory":a,"detail":d}
-    if not all_props: all_props=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])["props"]; log_scan(f"Using {sport} fallback","skip")
-    if not all_games: all_games=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])["games"]; log_scan(f"Using {sport} fallback games","skip")
-    st.session_state.raw_props_seen=seen; st.session_state.raw_props_total=total_raw
+    
+    # Props from fallback
+    fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
+    all_props=fallback["props"]
+    if not all_games: all_games=fallback["games"]
+    
     st.session_state.board_data=run_council(all_props)
     st.session_state.game_verdicts=run_game_council(all_games)
     st.session_state.raw_games_for_summary=raw_games; st.session_state.weather_data=weather_results
-    st.session_state.summary_text=generate_full_summary(st.session_state.board_data,st.session_state.game_verdicts,sport,raw_games,weather_results,len(seen),total_raw)
+    st.session_state.consensus_data=consensus_results
+    st.session_state.summary_text=generate_full_summary(st.session_state.board_data,st.session_state.game_verdicts,sport,raw_games,weather_results,consensus_results)
     st.session_state.last_sport=sport; st.session_state.last_scan_time=datetime.now().strftime("%H:%M:%S")
+    log_scan(f"Board ready — {len(all_props)} props, {len(all_games)} games","ok")
 
 # ──────────────────────────────────────────────────────────────
 # UTILITY FUNCTIONS
@@ -558,10 +544,10 @@ def build_game_parlay():
 
 def check_all_sources_health():
     log_scan("Health check...","skip")
-    for n in PROP_SOURCES:
+    for n in GAME_SOURCES:
         u=build_source_url(n,"NBA")
         if u: log_scan(f"Checking {n}: {u}","skip"); safe_fetch(u,n)
-    for n in GAME_SOURCES:
+    for n in CONSENSUS_SOURCES:
         u=build_source_url(n,"NBA")
         if u: log_scan(f"Checking {n}: {u}","skip"); safe_fetch(u,n)
 
@@ -570,31 +556,16 @@ def scan_all_sports():
     sr={}
     log_scan("Cross-sport scan...","skip")
     for sport in SPORTS:
-        allowed=SPORT_SOURCE_MAP.get(sport,["BettingPros"])
-        sp,sg=[],[]
-        seen=set()
-        for sn in allowed:
-            u=build_source_url(sn,sport)
-            if not u: continue
-            html=safe_fetch(u,sn)
-            if html:
-                for prop in parse_props_generic(html,sn):
-                    p=prop.get("player",prop.get("col1",""))
-                    pt=prop.get("market",prop.get("col2",""))
-                    try: l=float(re.sub(r"[^\d.]+","",str(prop.get("line",prop.get("odds","0"))))) if prop.get("line",prop.get("odds","0")) else 0
-                    except: l=0
-                    k=(p,pt,l)
-                    if k not in seen and p: seen.add(k); sp.append({"Player":p,"Prop":pt,"Line":l,"Side":"OVER","Sport":sport})
+        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
+        sp=fallback["props"]; sg=fallback["games"]
         for gsn in ["VegasInsider","ESPN (JSON API)"]:
             u=build_source_url(gsn,sport)
             if not u: continue
             html=safe_fetch(u,gsn)
             if html:
-                if "ESPN" in gsn: sg=parse_espn_json(html,sport)
-                else: sg=[{"Matchup":g.get("matchup",""),"Sport":sport} for g in parse_props_generic(html,gsn)]
-                if sg: break
-        if not sp: sp=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])["props"]
-        if not sg: sg=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])["games"]
+                if "ESPN" in gsn: sg2=parse_espn_json(html,sport)
+                else: sg2=[{"Matchup":g.get("matchup",""),"Sport":sport} for g in parse_vegasinsider(html)]
+                if sg2: sg=sg2; break
         sr[sport]={"props":sp,"games":sg}
         ap.extend(sp); ag.extend(sg)
     st.session_state.cross_sport_board={"props":run_council(ap),"games":run_game_council(ag),"scanned_at":datetime.now().strftime("%H:%M:%S"),"sport_results":sr}
@@ -689,7 +660,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · Section 9.1 + Integrity Scores</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · Section 9.1 + Integrity Scores + VSIN</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -706,25 +677,45 @@ st.markdown(f"""
 # ──────────────────────────────────────────────────────────────
 # TABS
 # ──────────────────────────────────────────────────────────────
-tabs=st.tabs(["🏀 Board of 8","📊 Analysis","🔒 Locks of Day","📋 Locks & Ledger","🔄 Reconciliation","🧠 Models","⚙️ Settings"])
+tabs=st.tabs(["📋 Summary","🏀 Board of 8","📊 Analysis","🔒 Locks of Day","📋 Locks & Ledger","🔄 Reconciliation","🧠 Models","⚙️ Settings"])
 
 with tabs[0]:
+    st.markdown("# 📋 Council Summary")
+    if st.session_state.summary_text:
+        st.markdown(st.session_state.summary_text)
+    else:
+        st.info("No board loaded yet. Click **Load Board** in the sidebar to generate the full synthesis.")
+
+with tabs[1]:
+    st.markdown("# 🏀 Board of 8 — Prop Analysis")
     board=st.session_state.board_data or []
     if st.session_state.last_scan_time: st.markdown(f'<div class="small-note">Last scan: {st.session_state.last_scan_time} · {st.session_state.last_sport}</div>',unsafe_allow_html=True)
-    if st.session_state.summary_text and board:
-        st.markdown(st.session_state.summary_text)
-        st.markdown("---")
+    if board:
         approved=[i for i in board if i.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")]
         if approved:
             best=approved[0]
             st.markdown(f'<div class="lock-of-day"><div style="font-size:12px;color:#e8a020;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">🔒 LOCK OF THE DAY</div><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;"><div><div style="font-size:18px;font-weight:700;color:#f4f8fc;">{best["Player"]}</div><div style="font-size:14px;color:#5a7088;">{best["Side"]} {best["Line"]} {best["Prop"]}</div></div><div style="text-align:center;"><div style="font-size:12px;color:#5a7088;">Council Score</div><div style="font-size:24px;font-weight:800;color:#e8a020;">{best["Weighted Score"]:.2f}</div><div style="font-size:14px;font-weight:700;color:{tier_color(best["Tier"])};">{best["Tier Label"]}</div></div></div></div>',unsafe_allow_html=True)
-            if st.button("🔒 Lock This Pick",key="lock_summary"):
+            if st.button("🔒 Lock This Pick",key="lock_board"):
                 lid=lock_single_prop(best)
                 st.session_state.locks.append({"id":lid,"type":"PROP","player":best["Player"],"prop":f"{best['Side']} {best['Line']} {best['Prop']}","tier":best["Tier"],"status":"PENDING","result":None})
                 st.success(f"Locked: {best['Player']} {best['Side']} {best['Line']}"); st.rerun()
-    elif not board: st.info("No board loaded. Click Load Board in the sidebar.")
+        st.markdown("---")
+        for i,item in enumerate(board):
+            tc=tier_color(item['Tier'])
+            edge_pct=item.get('edge',0)*100
+            edge_color="#0d9488" if edge_pct>=8 else "#e8a020" if edge_pct>=4 else "#5a7088"
+            st.markdown(f'<div class="section-card" style="border-left:4px solid {tc};"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;"><div style="flex:1;min-width:180px;"><div style="font-size:17px;font-weight:700;color:#f4f8fc;">{item["Player"]}</div><div style="font-size:14px;color:#5a7088;">{item["Side"]} {item["Line"]} {item["Prop"]} · {item.get("Sport","NBA")}</div></div><div style="text-align:center;"><div style="font-size:30px;font-weight:800;color:{edge_color};">{edge_pct:.1f}%</div><div style="font-size:12px;font-family:monospace;color:{tc};">{item["Tier Label"]}</div></div><div style="text-align:right;"><div style="font-size:13px;color:#5a7088;font-family:monospace;">Score {item["Weighted Score"]:.2f}</div>',unsafe_allow_html=True)
+            if item["Tier"] in ("SOVEREIGN","ELITE","APPROVED"):
+                if st.button(f"🔒 Lock it In",key=f"lock_prop_{i}"):
+                    lid=lock_single_prop(item)
+                    st.session_state.locks.append({"id":lid,"type":"PROP","player":item["Player"],"prop":f"{item['Side']} {item['Line']} {item['Prop']}","tier":item["Tier"],"status":"PENDING","result":None})
+                    st.success(f"Locked: {item['Player']} {item['Side']} {item['Line']}"); st.rerun()
+            st.markdown('</div></div>',unsafe_allow_html=True)
+    else:
+        st.info("No board data loaded. Use **Load Board** in the sidebar.")
+    st.markdown(f'<div class="small-note">Sharp Reference: {sharp.get("book","Pinnacle")} via {sharp.get("source","OddsHarvester")} — {sharp.get("status","unknown").upper()}</div>',unsafe_allow_html=True)
 
-with tabs[1]:
+with tabs[2]:
     st.markdown("# 🌍 Cross-Sport Best Bets")
     cross=st.session_state.cross_sport_board
     if not cross: st.info("Click 'Scan All Sports' in the sidebar.")
@@ -744,7 +735,7 @@ with tabs[1]:
                 tc=tier_color(p.get('Tier','PASS'))
                 st.markdown(f'<div class="section-card" style="border-left:3px solid {tc};"><span style="color:#5a7088;">#{i} · {p.get("Sport","")}</span> <span style="color:#f4f8fc;font-weight:600;">{p.get("Player","")}</span> — {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")} <span style="color:{tc};font-weight:600;">{p.get("Tier Label","")}</span> <span style="font-family:monospace;color:#e8a020;float:right;">Score {p.get("Weighted Score",0):.2f}</span></div>',unsafe_allow_html=True)
 
-with tabs[2]:
+with tabs[3]:
     st.markdown("# 🔒 Locks of Day")
     bdl=st.session_state.board_data or []
     if bdl:
@@ -759,7 +750,7 @@ with tabs[2]:
             for i,leg in enumerate(pp[:5],1): st.markdown(f'<div class="section-card"><b>Leg {i}:</b> {leg["Player"]} {leg["Side"]} {leg["Line"]} {leg["Prop"]} — <span style="color:{tier_color(leg["Tier"])};">{leg["Tier Label"]}</span></div>',unsafe_allow_html=True)
     else: st.info("Load a board first.")
 
-with tabs[3]:
+with tabs[4]:
     st.markdown("# 📋 Locks & Ledger")
     if not st.session_state.locks: st.info("No active locks.")
     else:
@@ -774,18 +765,18 @@ with tabs[3]:
                 if st.button("🗑️",key=f"rm_{i}"): st.session_state.locks.pop(i); st.rerun()
     if st.session_state.history: st.markdown("### Resolved"); st.table(pd.DataFrame(st.session_state.history))
 
-with tabs[4]:
+with tabs[5]:
     st.markdown("# 🔄 Reconciliation")
     st.info("Workflow unchanged.")
 
-with tabs[5]:
+with tabs[6]:
     st.markdown("# 🧠 Council Models — Fixed Weights")
     mr=""
     for m in MODELS: mr+=f'<tr><td style="color:#f4f8fc;font-weight:600;font-size:14px;">{m["name"]}</td><td style="color:#5a7088;font-size:14px;">{m["specialty"]}</td><td style="color:#e8a020;font-family:monospace;font-size:15px;font-weight:700;">{m["weight"]:.2f}</td><td style="color:#5a7088;font-size:13px;">{m["function"]}</td></tr>'
     st.markdown(f'<table class="model-table"><thead><tr><th>MODEL</th><th>SPECIALTY</th><th>WEIGHT</th><th>CORE FUNCTION</th></tr></thead><tbody>{mr}</tbody></table><div class="small-note" style="margin-top:10px;">Total: {sum(m["weight"] for m in MODELS):.2f} / 1.00</div>',unsafe_allow_html=True)
     st.markdown("---\n## Tier Thresholds (Fixed)\n| SCORE | TIER |\n|---|---|\n| ≥ 0.70 | ⚡ Sovereign Lock |\n| 0.55–0.69 | 🟡 Elite Edge |\n| 0.40–0.54 | 🔵 Approved Single |\n| 0.20–0.39 | 🟠 Lean |\n| < 0.20 | 🔴 PASS |")
 
-with tabs[6]:
+with tabs[7]:
     st.markdown("# ⚙️ SEM & System")
     c1,c2,c3,c4=st.columns(4)
     c1.metric("Integrity",f"{integrity}/100"); c2.metric("Safe Corridor","ACTIVE"); c3.metric("Emergency Floor","ACTIVE"); c4.metric("Bankroll",f"${bankroll:,.2f}")
@@ -793,15 +784,6 @@ with tabs[6]:
     if st.button("🔄 Refresh",key="rh"): check_all_sources_health(); st.rerun()
     cl,cr=st.columns(2)
     with cl:
-        st.markdown("### Prop Sources")
-        for n in PROP_SOURCES:
-            s=st.session_state.site_status.get(n,{}).get("status","unknown")
-            t=st.session_state.site_status.get(n,{}).get("last_checked","") or "—"
-            e=st.session_state.site_status.get(n,{}).get("error","")
-            lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
-            es=f' <span style="font-size:10px;color:#d03030;">({e})</span>' if e and s=="fail" else ""
-            st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span>{es}</div>',unsafe_allow_html=True)
-    with cr:
         st.markdown("### Game Sources")
         for n in GAME_SOURCES:
             s=st.session_state.site_status.get(n,{}).get("status","unknown")
@@ -810,6 +792,18 @@ with tabs[6]:
             lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
             es=f' <span style="font-size:10px;color:#d03030;">({e})</span>' if e and s=="fail" else ""
             st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span>{es}</div>',unsafe_allow_html=True)
+    with cr:
+        st.markdown("### Consensus Sources")
+        for n in CONSENSUS_SOURCES:
+            s=st.session_state.site_status.get(n,{}).get("status","unknown")
+            t=st.session_state.site_status.get(n,{}).get("last_checked","") or "—"
+            e=st.session_state.site_status.get(n,{}).get("error","")
+            lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
+            es=f' <span style="font-size:10px;color:#d03030;">({e})</span>' if e and s=="fail" else ""
+            st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span>{es}</div>',unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("### Prop Data Source")
+    st.info("Props use curated fallback data. Live prop scraping from BettingPros/FantasyPros/OddsTrader/SportsBettingDime is disabled — these sites are JS-rendered and return empty shells with requests.get().")
     if st.session_state.scan_log:
         st.markdown("---\n## 📜 Scan Log")
         lh='<div class="scan-log">'
