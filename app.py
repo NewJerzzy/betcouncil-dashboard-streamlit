@@ -126,8 +126,17 @@ MODELS = [
     {"name":"Base Model","specialty":"Raw Projection Layer","weight":0.06,"function":"Raw MA + basic pace, no adjustments, prevents groupthink"},
 ]
 
+# Updated NBA fallback with actual playoff players from ESPN data
 SPORT_FALLBACK_MAP = {
-    "NBA":{"props":[{"Player":"Shai Gilgeous-Alexander","Prop":"PTS","Line":31.5,"Side":"OVER","Sport":"NBA"},{"Player":"Cade Cunningham","Prop":"PTS","Line":23.5,"Side":"OVER","Sport":"NBA"},{"Player":"Donovan Mitchell","Prop":"PTS","Line":27.5,"Side":"UNDER","Sport":"NBA"},{"Player":"Nikola Jokic","Prop":"AST","Line":9.5,"Side":"OVER","Sport":"NBA"},{"Player":"Luka Doncic","Prop":"PTS","Line":33.5,"Side":"OVER","Sport":"NBA"},{"Player":"Giannis Antetokounmpo","Prop":"REB","Line":12.5,"Side":"OVER","Sport":"NBA"},{"Player":"Jayson Tatum","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"}],"games":[{"Matchup":"OKC @ LAL","Sport":"NBA"},{"Matchup":"BOS @ DEN","Sport":"NBA"}]},
+    "NBA":{"props":[
+        {"Player":"Jalen Brunson","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"},
+        {"Player":"Karl-Anthony Towns","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"NBA"},
+        {"Player":"Anthony Edwards","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"NBA"},
+        {"Player":"Joel Embiid","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"},
+        {"Player":"Miles McBride","Prop":"PTS","Line":18.5,"Side":"OVER","Sport":"NBA"},
+        {"Player":"Rudy Gobert","Prop":"REB","Line":10.5,"Side":"OVER","Sport":"NBA"},
+        {"Player":"Josh Hart","Prop":"REB","Line":8.5,"Side":"OVER","Sport":"NBA"},
+    ],"games":[{"Matchup":"NY @ PHI","Sport":"NBA"},{"Matchup":"SA @ MIN","Sport":"NBA"}]},
     "WNBA":{"props":[{"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Breanna Stewart","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Arike Ogunbowale","Prop":"PTS","Line":23.5,"Side":"UNDER","Sport":"WNBA"},{"Player":"Caitlin Clark","Prop":"AST","Line":8.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Napheesa Collier","Prop":"REB","Line":9.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Sabrina Ionescu","Prop":"PTS","Line":20.5,"Side":"OVER","Sport":"WNBA"}],"games":[{"Matchup":"LV Aces @ NY Liberty","Sport":"WNBA"}]},
     "NFL":{"props":[{"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"},{"Player":"Christian McCaffrey","Prop":"RUSH_YDS","Line":85.5,"Side":"OVER","Sport":"NFL"},{"Player":"Justin Jefferson","Prop":"REC_YDS","Line":95.5,"Side":"OVER","Sport":"NFL"}],"games":[{"Matchup":"KC @ BUF","Sport":"NFL"}]},
     "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},{"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},{"Player":"Juan Soto","Prop":"HITS","Line":1.5,"Side":"OVER","Sport":"MLB"},{"Player":"Mookie Betts","Prop":"TB","Line":1.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"},{"Matchup":"ATL @ HOU","Sport":"MLB"}]},
@@ -335,7 +344,7 @@ def safe_fetch(url, name):
     except Exception as e: mark_site_fail(name,str(e)[:50]); log_scan(f"{name}: {str(e)[:50]}","fail"); return None
 
 # ──────────────────────────────────────────────────────────────
-# VALIDATION LAYER (StatMuse, B-Ref, FantasyPros — dormant)
+# VALIDATION LAYER (StatMuse, B-Ref, FantasyPros)
 # ──────────────────────────────────────────────────────────────
 def _statmuse_next_data(html):
     m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',html,re.DOTALL)
@@ -586,7 +595,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     return "\n".join(L)
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER (RotoWire removed)
+# DATA LOADER
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
