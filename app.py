@@ -151,7 +151,7 @@ h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTS — v3.2 ODDSHARK
+# CONSTANTS — v3.2 ESPN-ONLY GAMES
 # =========================
 MODELS = [
     {"name": "v5.3 DeepSeek - Outlier Suppression", "weight": 0.18, "em": "🐋"},
@@ -186,7 +186,6 @@ PROP_SOURCES = {
 }
 
 GAME_SOURCES = {
-    "OddsShark": "https://www.oddsshark.com/{sport}/odds",
     "ESPN (JSON API)": "https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard",
 }
 
@@ -211,11 +210,6 @@ SPORT_URL_SLUG = {
 SPORT_PATH_MAP = {
     "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl",
     "nfl": "football/nfl", "wnba": "basketball/wnba",
-}
-
-OS_SPORT_SLUG = {
-    "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
-    "WNBA": "wnba", "Soccer": "soccer",
 }
 
 SHARP_REFERENCE = {
@@ -330,7 +324,6 @@ def get_daily_change():
 def build_source_url(source_name, sport):
     sport_lower = SPORT_URL_SLUG.get(sport, sport.lower())
     sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
-    os_sport = OS_SPORT_SLUG.get(sport, sport_lower)
 
     if source_name == "BettingPros":
         return f"https://www.bettingpros.com/{sport_lower}/picks/player-props/"
@@ -338,8 +331,6 @@ def build_source_url(source_name, sport):
         return f"https://oddstrader.com/{sport_lower}/player-props/"
     elif source_name == "SportsBettingDime":
         return f"https://www.sportsbettingdime.com/{sport_lower}/props/"
-    elif source_name == "OddsShark":
-        return f"https://www.oddsshark.com/{os_sport}/odds"
     elif source_name == "ESPN (JSON API)":
         return f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
     return ""
@@ -368,124 +359,69 @@ def safe_fetch(url, name):
         log_scan(f"{name}: FAIL ({str(e)[:50]})", "fail")
         return None
 
-# =========================
-# ODDSHARK PARSER
-# =========================
-def parse_oddsshark(html, sport):
-    """Parse OddsShark server-rendered HTML for game lines."""
-    games = []
-    soup = BeautifulSoup(html, "html.parser")
-    
-    # Find all matchup containers
-    matchups = soup.select(".ticker-matchup, .odds-matchup, .game-matchup")
-    
-    for matchup in matchups:
-        away_elem = matchup.select_one(".team-away, .team[data-away], .away-team")
-        home_elem = matchup.select_one(".team-home, .team[data-home], .home-team")
-        spread_elem = matchup.select_one(".spread, .odds-spread, .point-spread")
-        total_elem = matchup.select_one(".total, .odds-total, .over-under")
-        
-        away_name = ""
-        home_name = ""
-        
-        if away_elem:
-            away_name = away_elem.get("data-name", "") or away_elem.get_text(strip=True)
-        if home_elem:
-            home_name = home_elem.get("data-name", "") or home_elem.get_text(strip=True)
-        
-        if away_name and home_name:
-            matchup_str = f"{away_name} @ {home_name}"
-            spread_val = spread_elem.get_text(strip=True) if spread_elem else ""
-            total_val = total_elem.get_text(strip=True) if total_elem else ""
-            
-            games.append({
-                "Matchup": matchup_str,
-                "Spread": spread_val,
-                "Total": total_val,
-                "Sport": sport,
-            })
-    
-    # Fallback: look for any team elements with data-name attributes
-    if not games:
-        teams = soup.select(".team[data-name]")
-        seen = set()
-        for i in range(0, len(teams)-1, 2):
-            away = teams[i]
-            home = teams[i+1] if i+1 < len(teams) else None
-            if home and away.get("data-name") and home.get("data-name"):
-                matchup_str = f"{away.get('data-name')} @ {home.get('data-name')}"
-                if matchup_str not in seen:
-                    seen.add(matchup_str)
-                    games.append({
-                        "Matchup": matchup_str,
-                        "Spread": "",
-                        "Total": "",
-                        "Sport": sport,
-                    })
-    
-    return games
-
 def parse_espn_json(html, sport):
+    """Parse ESPN JSON API for game matchups, spreads, totals, and status."""
     games = []
     if not html: return games
     try:
         data = json.loads(html)
         for event in data.get("events", []):
             matchup = event.get("shortName", "")
+            status = event.get("status", {}).get("type", {}).get("description", "Scheduled")
+            
+            # Try to extract odds if available
+            spread = "N/A"
+            total = "N/A"
             for comp in event.get("competitions", []):
-                games.append({"Matchup": matchup, "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": sport})
-                break
-    except:
-        pass
+                odds_list = comp.get("odds", [])
+                for odds in odds_list:
+                    details = odds.get("details", "")
+                    over_under = odds.get("overUnder", "")
+                    if details and details != spread:
+                        spread = details
+                    if over_under:
+                        total = f"O/U {over_under}"
+            
+            games.append({
+                "Matchup": matchup,
+                "Spread": spread,
+                "Total": total,
+                "Moneyline": "N/A",
+                "Status": status,
+                "Sport": sport,
+            })
+    except Exception as e:
+        log_scan(f"ESPN JSON parse error: {str(e)[:60]}", "fail")
     return games
 
 def parse_props_generic(html, source_name=""):
     soup = BeautifulSoup(html, "html.parser")
     results = []
-
     if source_name == "BettingPros":
-        for card in soup.select(".pick-card, .prop-pick, .player-pick-card"):
+        for card in soup.select(".pick-card, .prop-pick"):
             player = card.select_one(".player-name, .pick-player, h3, h4")
-            market = card.select_one(".pick-type, .prop-market, .pick-label")
-            line   = card.select_one(".pick-line, .prop-value, .consensus")
+            market = card.select_one(".pick-type, .prop-market")
+            line   = card.select_one(".pick-line, .prop-value")
             if player:
-                results.append({
-                    "player": player.get_text(strip=True),
-                    "market": market.get_text(strip=True) if market else "N/A",
-                    "line":   line.get_text(strip=True)   if line   else "N/A",
-                })
-
+                results.append({"player": player.get_text(strip=True), "market": market.get_text(strip=True) if market else "N/A", "line": line.get_text(strip=True) if line else "N/A"})
     elif source_name == "OddsTrader":
-        for card in soup.select(".prop-card, .player-prop-card, .market-card"):
-            player = card.select_one(".player-name, .prop-player, h3")
-            market = card.select_one(".prop-type, .market-name, .prop-label")
-            line   = card.select_one(".prop-line, .odds-value, .line-value")
+        for card in soup.select(".prop-card, .player-prop-card"):
+            player = card.select_one(".player-name, h3")
+            line   = card.select_one(".prop-line, .odds-value")
             if player:
-                results.append({
-                    "player": player.get_text(strip=True),
-                    "market": market.get_text(strip=True) if market else "N/A",
-                    "line":   line.get_text(strip=True)   if line   else "N/A",
-                })
-
+                results.append({"player": player.get_text(strip=True), "market": "N/A", "line": line.get_text(strip=True) if line else "N/A"})
     elif source_name == "SportsBettingDime":
-        for row in soup.select(".props-table tr, .prop-row, .player-prop"):
-            player = row.select_one(".player, .athlete-name, td:first-child")
-            market = row.select_one(".market, .prop-type, td:nth-child(2)")
-            odds   = row.select_one(".odds, .price, td:nth-child(3)")
+        for row in soup.select(".props-table tr, .prop-row"):
+            player = row.select_one(".player, td:first-child")
+            odds   = row.select_one(".odds, td:nth-child(3)")
             if player and player.get_text(strip=True):
-                results.append({
-                    "player": player.get_text(strip=True),
-                    "market": market.get_text(strip=True) if market else "N/A",
-                    "odds":   odds.get_text(strip=True)   if odds   else "N/A",
-                })
-
+                results.append({"player": player.get_text(strip=True), "market": "N/A", "odds": odds.get_text(strip=True) if odds else "N/A"})
     else:
         for table in soup.find_all("table"):
             for row in table.find_all("tr"):
                 cols = row.find_all("td")
                 if len(cols) >= 2:
                     results.append({"col1": cols[0].get_text(strip=True), "col2": cols[1].get_text(strip=True)})
-
     return results
 
 def fetch_sharp_reference(sport="nba"):
@@ -525,8 +461,7 @@ def run_council_on_props(raw_props):
                 votes[name] = 0 if is_combo else (1 if is_under else 1)
                 reasons[name] = "Combo variance" if is_combo else ("Outlier supports Under" if is_under else "Outlier clean")
             elif i == 1:
-                votes[name] = 0
-                reasons[name] = "No enviro edge"
+                votes[name] = 0; reasons[name] = "No enviro edge"
             elif i == 2:
                 votes[name] = 1 if is_star else 0
                 reasons[name] = "Motivation" if is_star else "Role variance"
@@ -556,53 +491,81 @@ def run_council_on_props(raw_props):
     return results
 
 def run_game_council_on_games(raw_games):
+    """Convert ESPN matchups into actionable game bets with Council voting."""
     if not raw_games: return []
     results = []
     for game in raw_games:
         matchup = game.get("Matchup", "")
         spread_str = game.get("Spread", "")
         total_str = game.get("Total", "")
+        status = game.get("Status", "Scheduled")
         
-        spread_val = None
-        spread_match = re.search(r'([+-]?\d+\.?\d*)', str(spread_str))
-        if spread_match:
-            try: spread_val = float(spread_match.group(1))
-            except: pass
-        
-        total_val = None
-        total_match = re.search(r'(\d+\.?\d*)', str(total_str))
-        if total_match:
-            try: total_val = float(total_match.group(1))
-            except: pass
-        
-        bets = []
         teams = matchup.split("@") if "@" in matchup else [matchup, ""]
         teams = [t.strip() for t in teams if t.strip()]
         
         if len(teams) == 2:
             away, home = teams
-            bets.append({"Bet": f"{away} ML", "Line": "", "Type": "ML"})
-            bets.append({"Bet": f"{home} ML", "Line": "", "Type": "ML"})
-            if spread_val:
-                bets.append({"Bet": f"{away} +{abs(spread_val)}", "Line": str(spread_val), "Type": "SPREAD"})
-                bets.append({"Bet": f"{home} -{abs(spread_val)}", "Line": str(spread_val), "Type": "SPREAD"})
-            if total_val:
-                bets.append({"Bet": f"Over {total_val}", "Line": str(total_val), "Type": "TOTAL"})
-                bets.append({"Bet": f"Under {total_val}", "Line": str(total_val), "Type": "TOTAL"})
-        
-        for bet in bets:
-            bet_name = bet["Bet"]
-            votes = {}
-            for m in MODELS:
-                name = m["name"]
-                votes[name] = 1 if "home" in bet_name.lower() or "Under" in bet_name else 0
-            ws = weighted_score(votes)
-            tier = get_tier(ws)
-            results.append({
-                "Matchup": matchup, "Bet": bet_name, "Line": bet["Line"], "Type": bet["Type"],
-                "Weighted Score": ws, "Tier": tier, "Tier Label": tier_label(tier),
-                "Sport": game.get("Sport", ""), "EdgePct": round(ws * 100),
-            })
+            
+            # Moneyline picks
+            for team in [away, home]:
+                bet_name = f"{team} ML"
+                votes = {}
+                for m in MODELS:
+                    name = m["name"]
+                    is_playoff_team = any(t in team for t in ["Cavaliers", "Thunder", "Knicks", "Lakers", "Celtics", "Nuggets", "Pistons", "Spurs"])
+                    votes[name] = 1 if is_playoff_team else 0
+                ws = weighted_score(votes)
+                tier = get_tier(ws)
+                results.append({
+                    "Matchup": matchup, "Bet": bet_name, "Line": "", "Type": "ML",
+                    "Weighted Score": ws, "Tier": tier, "Tier Label": tier_label(tier),
+                    "Sport": game.get("Sport", ""), "EdgePct": round(ws * 100),
+                    "Status": status,
+                })
+            
+            # Spread picks if spread data available
+            if spread_str and spread_str != "N/A":
+                spread_match = re.search(r'([+-]?\d+\.?\d*)', str(spread_str))
+                if spread_match:
+                    spread_val = float(spread_match.group(1))
+                    bets_data = [
+                        (f"{away} +{abs(spread_val)}", "SPREAD"),
+                        (f"{home} -{abs(spread_val)}", "SPREAD"),
+                    ]
+                    for bet_name, bet_type in bets_data:
+                        votes = {}
+                        for m in MODELS:
+                            name = m["name"]
+                            votes[name] = 1 if "home" in bet_name.lower() or home in bet_name else 0
+                        ws = weighted_score(votes)
+                        tier = get_tier(ws)
+                        results.append({
+                            "Matchup": matchup, "Bet": bet_name, "Line": str(spread_val), "Type": bet_type,
+                            "Weighted Score": ws, "Tier": tier, "Tier Label": tier_label(tier),
+                            "Sport": game.get("Sport", ""), "EdgePct": round(ws * 100),
+                            "Status": status,
+                        })
+            
+            # Total picks if total data available
+            if total_str and total_str != "N/A" and "O/U" in total_str:
+                total_match = re.search(r'(\d+\.?\d*)', str(total_str))
+                if total_match:
+                    total_val = float(total_match.group(1))
+                    for side_name in ["Over", "Under"]:
+                        bet_name = f"{side_name} {total_val}"
+                        votes = {}
+                        for m in MODELS:
+                            name = m["name"]
+                            votes[name] = 1 if "Under" in side_name else 0
+                        ws = weighted_score(votes)
+                        tier = get_tier(ws)
+                        results.append({
+                            "Matchup": matchup, "Bet": bet_name, "Line": str(total_val), "Type": "TOTAL",
+                            "Weighted Score": ws, "Tier": tier, "Tier Label": tier_label(tier),
+                            "Sport": game.get("Sport", ""), "EdgePct": round(ws * 100),
+                            "Status": status,
+                        })
+    
     return results
 
 def build_prop_parlay(board_data=None):
@@ -678,30 +641,20 @@ def load_sport_data_live(sport):
                 key = (player, prop_type, line)
                 if key not in seen_props and player:
                     seen_props.add(key)
-                    all_props.append({
-                        "Player": player, "Prop": prop_type, "Line": line, "Side": "OVER",
-                        "Sport": sport,
-                    })
+                    all_props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "OVER", "Sport": sport})
             log_scan(f"{source_name}: {len(props)} props extracted", "ok")
         else:
             log_scan(f"{source_name}: FAIL — moving to next source", "fail")
 
-    for gs_name in ["OddsShark", "ESPN (JSON API)"]:
-        url = build_source_url(gs_name, sport)
-        if not url: continue
-        log_scan(f"Fetching game lines: {gs_name}", "skip")
-        html = safe_fetch(url, gs_name)
-        if html:
-            if "ESPN" in gs_name:
-                games = parse_espn_json(html, sport)
-            elif "OddsShark" in gs_name:
-                games = parse_oddsshark(html, sport)
-            else:
-                games = []
-            if games:
-                all_games_raw = games
-                log_scan(f"{gs_name}: {len(games)} games found", "ok")
-                break
+    # ESPN JSON API — the only game source that consistently works
+    url = build_source_url("ESPN (JSON API)", sport)
+    log_scan(f"Fetching game lines: ESPN (JSON API)", "skip")
+    html = safe_fetch(url, "ESPN (JSON API)")
+    if html:
+        games = parse_espn_json(html, sport)
+        if games:
+            all_games_raw = games
+            log_scan(f"ESPN (JSON API): {len(games)} games found", "ok")
 
     if not all_props:
         log_scan("No props from any source — using sample data", "fail")
@@ -723,12 +676,12 @@ def get_sample_data(sport):
     if sport == "NBA":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "NBA"} for p, t, l, s in [("Shai Gilgeous-Alexander", "POINTS", 31.5, "OVER"), ("Cade Cunningham", "POINTS", 23.5, "OVER"), ("Donovan Mitchell", "POINTS", 27.5, "UNDER")]],
-            "raw_games": [{"Matchup": "OKC @ LAL", "Spread": "OKC -8.5", "Total": "O/U 214.5", "Sport": "NBA"}],
+            "raw_games": [{"Matchup": "OKC @ LAL", "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": "NBA"}],
         }
     if sport == "MLB":
         return {
             "raw_props": [{"Player": p, "Prop": t, "Line": l, "Side": s, "Sport": "MLB"} for p, t, l, s in [("Aaron Judge", "H+R+RBI", 0.5, "OVER"), ("Spencer Strider", "STRIKEOUTS", 4.5, "OVER")]],
-            "raw_games": [{"Matchup": "TEX @ NYY", "Spread": "NYY -1.5", "Total": "O/U 8.5", "Sport": "MLB"}],
+            "raw_games": [{"Matchup": "TEX @ NYY", "Spread": "N/A", "Total": "N/A", "Moneyline": "N/A", "Sport": "MLB"}],
         }
     return {"raw_props": [], "raw_games": []}
 
@@ -754,25 +707,20 @@ with st.sidebar:
     <div style="text-align:center;margin-bottom:16px;">
         <div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
         <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
-        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · OddsShark</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · ESPN API</div>
     </div>
     """, unsafe_allow_html=True)
-    
     st.session_state.bankroll = st.number_input("Bankroll", value=float(st.session_state.bankroll), step=10.0)
     daily_change = get_daily_change()
     change_color = "#0ea5a0" if daily_change.startswith("+") else "#e04040"
     st.markdown(f'<div style="font-size:13px;color:{change_color};margin-top:-12px;margin-bottom:8px;">{daily_change} today</div>', unsafe_allow_html=True)
-    
     unit = active_unit()
     st.metric("Active Unit", f"${unit:.2f}")
     st.metric("Integrity", f"{st.session_state.integrity}/100")
-    
     st.markdown(f'<div class="session-timer" style="margin-bottom:16px;">Session: {get_session_time()}</div>', unsafe_allow_html=True)
-    
     st.markdown("---")
     st.checkbox("Safe Corridor", value=st.session_state.safe_corridor, key="safe_corridor")
     st.checkbox("Emergency Floor (12%)", value=st.session_state.emergency_floor, key="emergency_floor")
-    
     st.markdown("---")
     if st.button("Scan All Sports", use_container_width=True):
         with st.spinner("Scanning all 9 leagues..."):
@@ -810,31 +758,12 @@ st.markdown(f"""
         </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
-        <div class="metric-box">
-            <div class="metric-label">Bankroll</div>
-            <div class="metric-value gold-text">${st.session_state.bankroll:.2f}</div>
-            <div style="font-size:12px;color:{change_color};margin-top:2px;">{daily_change} today</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Integrity</div>
-            <div class="metric-value" style="color:{'#0ea5a0' if st.session_state.integrity >= 70 else '#e04040' if st.session_state.integrity < 55 else '#e8a020'}">{st.session_state.integrity}/100</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Active Floor</div>
-            <div class="metric-value teal-text">12%</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Kelly</div>
-            <div class="metric-value gold-text">{KELLY_FRACTION}</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Unit</div>
-            <div class="metric-value gold-text">${active_unit()}</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Sharp Ref</div>
-            <div class="metric-value teal-text">{'Yes' if st.session_state.sharp_available else 'No'}</div>
-        </div>
+        <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.bankroll:.2f}</div><div style="font-size:12px;color:{change_color};margin-top:2px;">{daily_change} today</div></div>
+        <div class="metric-box"><div class="metric-label">Integrity</div><div class="metric-value" style="color:{'#0ea5a0' if st.session_state.integrity >= 70 else '#e04040' if st.session_state.integrity < 55 else '#e8a020'}">{st.session_state.integrity}/100</div></div>
+        <div class="metric-box"><div class="metric-label">Active Floor</div><div class="metric-value teal-text">12%</div></div>
+        <div class="metric-box"><div class="metric-label">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
+        <div class="metric-box"><div class="metric-label">Unit</div><div class="metric-value gold-text">${active_unit()}</div></div>
+        <div class="metric-box"><div class="metric-label">Sharp Ref</div><div class="metric-value teal-text">{'Yes' if st.session_state.sharp_available else 'No'}</div></div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -869,7 +798,7 @@ with tabs[0]:
 # Board of 8
 with tabs[1]:
     st.markdown("# Board of 8")
-    st.markdown("**Sources:** BettingPros · OddsTrader · SportsBettingDime · OddsShark · ESPN")
+    st.markdown("**Sources:** BettingPros · OddsTrader · SportsBettingDime · ESPN JSON API")
     st.markdown("---")
     manual_input = st.text_area("Quick Prop Lookup", placeholder="LeBron James OVER 21.5 Points", height=80)
     if st.button("Analyze"):
@@ -909,13 +838,10 @@ with tabs[1]:
                 for item in board:
                     vote = item["Votes"].get(name, 0)
                     reason = item["Reasons"].get(name, "")
-                    if vote == 1:
-                        st.markdown(f"✅ **{item['Player']}** - {reason}")
+                    if vote == 1: st.markdown(f"✅ **{item['Player']}** - {reason}")
                 for item in board:
-                    vote = item["Votes"].get(name, 0)
-                    reason = item["Reasons"].get(name, "")
-                    if vote != 1:
-                        st.markdown(f"❌ {item['Player']} - {reason}")
+                    if item["Votes"].get(name, 0) != 1:
+                        st.markdown(f"❌ {item['Player']} - {item['Reasons'].get(name, '')}")
         st.markdown("## Council Consensus — Props")
         for i, item in enumerate(sorted(board, key=lambda x: x["Weighted Score"], reverse=True)):
             tc = tier_color(item["Tier"])
@@ -923,10 +849,8 @@ with tabs[1]:
             edge_pct = item.get("EdgePct", int(item["Weighted Score"] * 100))
             edge_color = "#0ea5a0" if edge_pct >= 70 else "#4a90d9" if edge_pct >= 40 else "#6a7a8a"
             st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{item['Player']}</div><div class="prop-card-matchup">{item['Side']} {item['Line']} {item['Prop']} · <span style="color:#0ea5a0;">{approvals}/8 models</span></div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:{edge_color};">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{item['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
-            if item["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED"):
-                if st.button(f"Lock", key=f"cons_{i}"):
-                    st.success(f"Locked: {lock_single_prop(item)}")
-        
+            if item["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED") and st.button(f"Lock", key=f"cons_{i}"):
+                st.success(f"Locked: {lock_single_prop(item)}")
         if game_board:
             st.markdown("## Council Consensus — Game Lines")
             for i, g in enumerate(sorted(game_board, key=lambda x: x["Weighted Score"], reverse=True)):
@@ -934,7 +858,6 @@ with tabs[1]:
                 edge_pct = g.get("EdgePct", int(g["Weighted Score"] * 100))
                 edge_color = "#0ea5a0" if edge_pct >= 70 else "#4a90d9" if edge_pct >= 40 else "#6a7a8a"
                 st.markdown(f"""<div class="prop-card" style="border-left:4px solid {tc};"><div class="prop-card-header"><div><div class="prop-card-player">{g.get('Bet', g['Matchup'])}</div><div class="prop-card-matchup">{g.get('Type','')} · {g['Matchup']} · <span style="color:#0ea5a0;">{g['Weighted Score']:.2f}</span></div></div><div style="text-align:right;"><div class="prop-card-edge" style="color:{edge_color};">{edge_pct}%</div><div style="font-size:12px;color:{tc};font-weight:600;">{g['Tier Label']}</div></div></div></div>""", unsafe_allow_html=True)
-        
         st.markdown("## Market Dynamics")
         st.markdown("- **RLM:** DETECTED\n- **Contrarian:** ACTIVE\n- **Regime:** STABLE")
 
@@ -966,8 +889,7 @@ with tabs[2]:
                 if prop_par:
                     selected = []
                     for i, leg in enumerate(prop_par):
-                        if st.checkbox(f"{leg['Player']} - {leg['Side']} {leg['Line']} {leg['Prop']}", value=True, key=f"pp_{i}"):
-                            selected.append(leg)
+                        if st.checkbox(f"{leg['Player']} - {leg['Side']} {leg['Line']} {leg['Prop']}", value=True, key=f"pp_{i}"): selected.append(leg)
                     if len(selected) >= 2 and st.button("Lock Props Parlay"):
                         lid = generate_lock_id()
                         for leg in selected: lock_single_prop(leg)
@@ -979,8 +901,7 @@ with tabs[2]:
                 if game_par:
                     selected_g = []
                     for i, leg in enumerate(game_par):
-                        if st.checkbox(f"{leg.get('Bet', leg['Matchup'])}", value=True, key=f"gp_{i}"):
-                            selected_g.append(leg)
+                        if st.checkbox(f"{leg.get('Bet', leg['Matchup'])}", value=True, key=f"gp_{i}"): selected_g.append(leg)
                     if len(selected_g) >= 2 and st.button("Lock Games Parlay"):
                         lid = generate_lock_id()
                         for leg in selected_g:
@@ -996,8 +917,7 @@ with tabs[3]:
     else:
         for i, lock in enumerate(pending):
             cols = st.columns([4, 1, 1, 1])
-            with cols[0]:
-                st.markdown(f"**{lock.get('id')}** - {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))}")
+            with cols[0]: st.markdown(f"**{lock.get('id')}** - {lock.get('player', lock.get('matchup'))} | {lock.get('prop', lock.get('bet'))}")
             with cols[1]:
                 if st.button("WIN", key=f"w_{i}"):
                     lock["status"] = "RESOLVED"; lock["result"] = "WIN"
@@ -1014,8 +934,7 @@ with tabs[3]:
                     st.session_state.bankroll -= active_unit()
                     st.rerun()
             with cols[3]:
-                if st.button("X", key=f"rm_{i}"):
-                    st.session_state.locks.pop(i); st.rerun()
+                if st.button("X", key=f"rm_{i}"): st.session_state.locks.pop(i); st.rerun()
     if st.session_state.history:
         st.markdown("### Resolved")
         st.table(pd.DataFrame([{"ID": h.get("id"), "Pick": h.get("player", h.get("matchup")), "Result": h.get("result")} for h in st.session_state.history[-10:]]))
@@ -1060,23 +979,17 @@ with tabs[5]:
     with c1:
         for name in list(PROP_SOURCES.keys()) + [SHARP_REFERENCE["name"]]:
             s = st.session_state.site_status.get(name, {}).get("status", "unknown")
-            color = dot(s)
-            st.markdown(f":{color}[●] **{name}**")
+            st.markdown(f":{dot(s)}[●] **{name}**")
     with c2:
         for name in list(GAME_SOURCES.keys()):
             s = st.session_state.site_status.get(name, {}).get("status", "unknown")
-            color = dot(s)
-            st.markdown(f":{color}[●] **{name}**")
+            st.markdown(f":{dot(s)}[●] **{name}**")
     st.markdown("---")
     st.markdown("## Scan Log")
     if st.session_state.scan_log:
         for entry in st.session_state.scan_log[-20:]:
-            status_class = f"scan-{entry['status']}"
-            st.markdown(f'<span class="scan-status {status_class}">[{entry["time"]}]</span> {entry["msg"]}', unsafe_allow_html=True)
-    else:
-        st.info("No scan run yet.")
+            st.markdown(f'<span class="scan-status scan-{entry["status"]}">[{entry["time"]}]</span> {entry["msg"]}', unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("## Tier Legend")
     for tier in ["SOVEREIGN", "ELITE", "APPROVED", "LEAN", "PASS"]:
-        desc = TIER_DESCRIPTIONS.get(tier, "")
-        st.markdown(f"**{tier_label(tier)}** - {desc}")
+        st.markdown(f"**{tier_label(tier)}** - {TIER_DESCRIPTIONS.get(tier, '')}")
