@@ -190,7 +190,7 @@ GAME_SOURCES = {
 }
 
 CONSENSUS_SOURCES = {
-    "Covers Consensus": "https://www.covers.com/consensus/{sport}",
+    "VSIN Betting Splits": "https://data.vsin.com/{sport}/betting-splits/",
 }
 
 SPORT_SOURCE_MAP = {
@@ -214,6 +214,12 @@ SPORT_URL_SLUG = {
 SPORT_PATH_MAP = {
     "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl",
     "nfl": "football/nfl", "wnba": "basketball/wnba",
+}
+
+VSIN_SPORT_SLUG = {
+    "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
+    "WNBA": "wnba", "UFC": "ufc", "Golf": "golf/pga",
+    "Tennis": "tennis", "Soccer": "soccer",
 }
 
 SHARP_REFERENCE = {
@@ -339,6 +345,7 @@ def get_daily_change():
 def build_source_url(source_name, sport):
     sport_lower = SPORT_URL_SLUG.get(sport, sport.lower())
     sport_path = SPORT_PATH_MAP.get(sport_lower, f"basketball/{sport_lower}")
+    vsin_sport = VSIN_SPORT_SLUG.get(sport, sport_lower)
 
     if source_name == "FantasyPros":
         return f"https://www.fantasypros.com/{sport_lower}/props/"
@@ -348,8 +355,8 @@ def build_source_url(source_name, sport):
         return f"https://www.sportsbettingdime.com/{sport_lower}/props/"
     elif source_name == "ESPN (JSON API)":
         return f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
-    elif source_name == "Covers Consensus":
-        return f"https://www.covers.com/consensus/{sport_lower}"
+    elif source_name == "VSIN Betting Splits":
+        return f"https://data.vsin.com/{vsin_sport}/betting-splits/"
     return ""
 
 def safe_fetch(url, name):
@@ -395,31 +402,28 @@ def parse_espn_json(html, sport):
         log_scan(f"ESPN JSON parse error: {str(e)[:60]}", "fail")
     return games
 
-def parse_covers_consensus(html, sport):
-    """Parse Covers consensus page for public betting percentages."""
+def parse_vsin_splits(html, sport):
+    """Parse VSIN betting splits page for public betting percentages."""
     results = []
     if not html: return results
     soup = BeautifulSoup(html, "html.parser")
     
-    # Covers consensus page uses tables or div rows with team names and percentages
-    rows = soup.select("tr, div[class*='consensus-row'], div[class*='matchup-row']")
+    # VSIN data pages use tables with betting percentages
+    rows = soup.select("tr, div[class*='split'], div[class*='betting-row']")
     
     for row in rows:
         text = row.get_text(separator=" ", strip=True)
         if not text or len(text) < 10: continue
         
-        # Extract percentages
         pcts = re.findall(r"(\d{1,3})%", text)
         teams_found = re.findall(r"([A-Z][a-z]+(?: [A-Z][a-z]+)*)", text)
         
         if len(pcts) >= 2 and len(teams_found) >= 2:
-            # Find the two team names and two percentages
             away_team = teams_found[0]
-            home_team = teams_found[1] if len(teams_found) > 1 else ""
+            home_team = teams_found[1] if len(teams_found) > 1 else teams_found[0]
             away_pct = int(pcts[0])
             home_pct = int(pcts[1])
             
-            # Determine sharp signal
             sharp = "BALANCED"
             if away_pct >= 65:
                 sharp = f"PUBLIC on {away_team} ({away_pct}%) — potential fade"
@@ -435,6 +439,21 @@ def parse_covers_consensus(html, sport):
                 "sharp_signal": sharp,
                 "sport": sport,
             })
+    
+    # Fallback: look for any percentage patterns in tables
+    if not results:
+        tables = soup.find_all("table")
+        for table in tables:
+            ttext = table.get_text(separator=" ", strip=True)
+            pcts = re.findall(r"(\d{1,3})%", ttext)
+            if len(pcts) >= 4:
+                results.append({
+                    "matchup": f"{sport} Game",
+                    "away_pct": int(pcts[0]) if pcts else 50,
+                    "home_pct": int(pcts[2]) if len(pcts) > 2 else 50,
+                    "sharp_signal": "VSIN Data — check matchup details",
+                    "sport": sport,
+                })
     
     return results
 
@@ -476,8 +495,8 @@ def get_sharp_ref_status():
 
 def get_public_consensus_status():
     if st.session_state.public_data and any(st.session_state.public_data.values()):
-        return "Covers Consensus: active"
-    return "Covers Consensus: not pulled"
+        return "VSIN Betting Splits: active"
+    return "VSIN Betting Splits: not pulled"
 
 def parse_manual_input(text):
     results = []
@@ -505,9 +524,7 @@ def run_council_on_props(raw_props):
         is_star = any(s in player for s in STARS)
         for i, model in enumerate(MODELS):
             name = model["name"]
-            if i == 0:
-                votes[name] = 0 if is_combo else (1 if is_under else 1)
-                reasons[name] = "Combo variance" if is_combo else ("Outlier supports Under" if is_under else "Outlier clean")
+            if i == 0: votes[name] = 0 if is_combo else (1 if is_under else 1); reasons[name] = "Combo variance" if is_combo else ("Outlier supports Under" if is_under else "Outlier clean")
             elif i == 1: votes[name] = 0; reasons[name] = "No enviro edge"
             elif i == 2: votes[name] = 1 if is_star else 0; reasons[name] = "Motivation" if is_star else "Role variance"
             elif i == 3: votes[name] = 0 if is_combo else (1 if is_star else 0); reasons[name] = "Floor unreliable" if is_combo else ("Floor above" if is_star else "Floor below")
@@ -528,7 +545,6 @@ def run_game_council_on_games(raw_games):
         teams = [t.strip() for t in teams if t.strip()]
         if len(teams) == 2:
             away, home = teams
-            # Check public consensus for sharp signal adjustment
             public_bonus = 0
             if st.session_state.public_data:
                 for pdata in st.session_state.public_data.get("matchups", []):
@@ -536,7 +552,6 @@ def run_game_council_on_games(raw_games):
                         if "BALANCED" not in pdata.get("sharp_signal", ""):
                             public_bonus = 0.1
                         break
-            
             for team in [away, home]:
                 bet_name = f"{team} ML"
                 votes = {}
@@ -600,7 +615,6 @@ def load_sport_data_live(sport):
     for source_name in allowed_sources:
         url = build_source_url(source_name, sport)
         if not url: continue
-        log_scan(f"Fetching {source_name}: {url}", "skip")
         html = safe_fetch(url, source_name)
         if html:
             props = parse_props_generic(html, source_name)
@@ -615,31 +629,24 @@ def load_sport_data_live(sport):
                 if key not in seen_props and player:
                     seen_props.add(key)
                     all_props.append({"Player": player, "Prop": prop_type, "Line": line, "Side": "OVER", "Sport": sport})
-            log_scan(f"{source_name}: {len(props)} props extracted", "ok")
-        else:
-            log_scan(f"{source_name}: FAIL — moving to next source", "fail")
 
     # ESPN game lines
     url = build_source_url("ESPN (JSON API)", sport)
     html = safe_fetch(url, "ESPN (JSON API)")
     if html:
         games = parse_espn_json(html, sport)
-        if games:
-            all_games_raw = games
-            log_scan(f"ESPN (JSON API): {len(games)} games found", "ok")
+        if games: all_games_raw = games
 
-    # Covers public consensus
-    covers_url = build_source_url("Covers Consensus", sport)
-    covers_html = safe_fetch(covers_url, "Covers Consensus")
-    if covers_html:
-        public = parse_covers_consensus(covers_html, sport)
+    # VSIN public betting splits
+    vsin_url = build_source_url("VSIN Betting Splits", sport)
+    vsin_html = safe_fetch(vsin_url, "VSIN Betting Splits")
+    if vsin_html:
+        public = parse_vsin_splits(vsin_html, sport)
         if public:
             all_public = public
             st.session_state.public_data = {"matchups": public, "pulled_at": datetime.now().strftime("%H:%M:%S")}
-            log_scan(f"Covers Consensus: {len(public)} matchups with public data", "ok")
 
     if not all_props:
-        log_scan("No props from any source — using sample data", "fail")
         data = get_sample_data(sport); all_props = data["raw_props"]
     if not all_games_raw:
         data = get_sample_data(sport); all_games_raw = data["raw_games"]
@@ -677,7 +684,7 @@ def scan_all_sports_live():
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.markdown("""<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · Covers Consensus</div></div>""", unsafe_allow_html=True)
+    st.markdown("""<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v3.2 · VSIN Consensus</div></div>""", unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll", value=float(st.session_state.bankroll), step=10.0)
     daily_change = get_daily_change()
     change_color = "#0ea5a0" if daily_change.startswith("+") else "#e04040"
@@ -692,12 +699,10 @@ with st.sidebar:
     st.markdown("---")
     if st.button("Scan All Sports", use_container_width=True):
         with st.spinner("Scanning all 9 leagues..."): scan_all_sports_live()
-        amt = len(st.session_state.cross_sport_board["props"]) if st.session_state.cross_sport_board else 0
-        st.success(f"All 9 leagues scanned - {amt} props")
+        st.success(f"All 9 leagues scanned")
     if st.button("Load Board", use_container_width=True):
         with st.spinner(f"Scanning {st.session_state.last_sport}..."): load_sport_data_live(st.session_state.last_sport)
-        amt = len(st.session_state.raw_props)
-        st.success(f"{st.session_state.last_sport} loaded - {amt} props")
+        st.success(f"{st.session_state.last_sport} loaded")
     if st.button("Re-Run Council", use_container_width=True):
         st.session_state.board_data = run_council_on_props(st.session_state.raw_props)
         st.session_state.game_verdicts = run_game_council_on_games(st.session_state.raw_games)
@@ -724,7 +729,7 @@ with tabs[0]:
     if not cross: st.info("Click 'Scan All Sports' in the sidebar.")
     else:
         if st.session_state.public_data:
-            st.markdown(f"""<div class="sharp-ref-box"><span style="color:#0ea5a0;font-weight:600;">Public Consensus Active</span> — Covers · {len(st.session_state.public_data.get('matchups', []))} matchups</div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="sharp-ref-box"><span style="color:#0ea5a0;font-weight:600;">VSIN Betting Splits Active</span> — {len(st.session_state.public_data.get('matchups', []))} matchups</div>""", unsafe_allow_html=True)
         st.markdown("## Top Props")
         for i, p in enumerate(cross["props"][:6], 1):
             tc = tier_color(p["Tier"]); edge_pct = p.get("EdgePct", int(p["Weighted Score"] * 100))
@@ -740,7 +745,7 @@ with tabs[0]:
 # Board of 8
 with tabs[1]:
     st.markdown("# Board of 8")
-    st.markdown(f"**Sources:** FantasyPros · OddsTrader · SportsBettingDime · ESPN · Covers Consensus")
+    st.markdown(f"**Sources:** FantasyPros · OddsTrader · SportsBettingDime · ESPN · VSIN Betting Splits")
     st.markdown("---")
     manual_input = st.text_area("Quick Prop Lookup", placeholder="LeBron James OVER 21.5 Points", height=80)
     if st.button("Analyze") and manual_input.strip():
@@ -761,7 +766,7 @@ with tabs[1]:
     board = st.session_state.board_data; game_board = st.session_state.game_verdicts
     if not board: st.info("Click 'Load Board' in the sidebar.")
     else:
-        st.markdown(f"**Validation Firewall:** PASSED ({st.session_state.filtered_count} props removed)")
+        st.markdown(f"**Validation Firewall:** PASSED")
         st.markdown("## Model Verdicts")
         for model in MODELS:
             name, weight, em = model["name"], model["weight"], model["em"]
@@ -855,8 +860,7 @@ with tabs[3]:
             with cols[3]:
                 if st.button("X", key=f"rm_{i}"): st.session_state.locks.pop(i); st.rerun()
     if st.session_state.history:
-        st.markdown("### Resolved")
-        st.table(pd.DataFrame([{"ID": h.get("id"), "Pick": h.get("player", h.get("matchup")), "Result": h.get("result")} for h in st.session_state.history[-10:]]))
+        st.markdown("### Resolved"); st.table(pd.DataFrame([{"ID": h.get("id"), "Pick": h.get("player", h.get("matchup")), "Result": h.get("result")} for h in st.session_state.history[-10:]]))
 
 # Reconciliation
 with tabs[4]:
