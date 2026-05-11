@@ -323,6 +323,17 @@ def safe_fetch(url, name):
 # ──────────────────────────────────────────────────────────────
 # PARSERS
 # ──────────────────────────────────────────────────────────────
+def parse_espn_json(html, sport):
+    """Parse ESPN JSON API — uses the built-in shortName field."""
+    out=[]
+    try:
+        js=json.loads(html)
+        for ev in js.get("events",[]):
+            sn=ev.get("shortName","")
+            if sn: out.append({"Matchup":sn,"Sport":sport})
+    except: pass
+    return out
+
 def parse_vegasinsider(html):
     soup=BeautifulSoup(html,"html.parser")
     results=[]
@@ -334,19 +345,6 @@ def parse_vegasinsider(html):
             teams=block.select(".team-name"); odds=block.select(".odds-value")
             if teams: results.append({"matchup":" vs ".join(t.get_text(strip=True) for t in teams),"odds":[o.get_text(strip=True) for o in odds]})
     return results
-
-def parse_espn_json(html, sport):
-    out=[]
-    try:
-        js=json.loads(html)
-        for ev in js.get("events",[]):
-            comp=(ev.get("competitions") or [{}])[0]
-            competitors=comp.get("competitors") or []
-            home=next((x for x in competitors if x.get("homeAway")=="home"),{})
-            away=next((x for x in competitors if x.get("homeAway")=="away"),{})
-            out.append({"Matchup":f"{away.get('team',{}).get('shortDisplayName','AWAY')} @ {home.get('team',{}).get('shortDisplayName','HOME')}","Sport":sport})
-    except: pass
-    return out
 
 def parse_vsin_consensus(html):
     soup=BeautifulSoup(html,"html.parser")
@@ -413,7 +411,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     L.append(f"**{sport_display} — {date_str}** | **Scanned:** {st.session_state.last_scan_time} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE\n")
     L.append(f"🔒 **Sources:** ESPN ✅ · VegasInsider ✅ · VSIN ✅\n")
     L.append(f"---\n")
-    L.append(f"## 🚨 GAME LINES (What VegasInsider Shows)\n")
+    L.append(f"## 🚨 GAME LINES (ESPN Live Data)\n")
     L.append(f"📊 **GAME INTEGRITY: {g_int}%** ({g_desc})\n")
     if raw_games:
         L.append(f"| # | Matchup | Spread | Total |\n| --- | --- | --- | --- |")
@@ -458,19 +456,20 @@ def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
     log_scan(f"Loading {sport} board...","skip")
     
-    # Game lines: VegasInsider → ESPN failover
-    for gsn in ["VegasInsider","ESPN (JSON API)"]:
+    # Game lines: ESPN FIRST (clean JSON), VegasInsider as fallback
+    for gsn in ["ESPN (JSON API)","VegasInsider"]:
         url=build_source_url(gsn,sport)
         if not url: continue
         html=safe_fetch(url,gsn)
         if html:
             if "ESPN" in gsn:
-                games=parse_espn_json(html,sport); raw_games=games
+                games=parse_espn_json(html,sport)
+                raw_games=[{"matchup":g["Matchup"],"spread":"N/A","total":"N/A"} for g in games]
             else:
                 parsed=parse_vegasinsider(html)
                 raw_games=[{"matchup":g.get("matchup",""),"spread":g.get("spread","N/A"),"total":g.get("total","N/A")} for g in parsed]
                 games=[{"Matchup":g.get("matchup",""),"Sport":sport,"Spread":g.get("spread","N/A"),"Total":g.get("total","N/A")} for g in parsed]
-            if games: all_games=games; break
+            if games: all_games=games; log_scan(f"{gsn}: {len(games)} games","ok"); break
     
     # VSIN Consensus
     vsin_url=build_source_url("VSIN Betting Splits",sport)
@@ -558,7 +557,7 @@ def scan_all_sports():
     for sport in SPORTS:
         fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
         sp=fallback["props"]; sg=fallback["games"]
-        for gsn in ["VegasInsider","ESPN (JSON API)"]:
+        for gsn in ["ESPN (JSON API)","VegasInsider"]:
             u=build_source_url(gsn,sport)
             if not u: continue
             html=safe_fetch(u,gsn)
@@ -660,7 +659,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · Section 9.1 + Integrity Scores + VSIN</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · ESPN Live Games + Fallback Props + VSIN Consensus</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -681,10 +680,8 @@ tabs=st.tabs(["📋 Summary","🏀 Board of 8","📊 Analysis","🔒 Locks of Da
 
 with tabs[0]:
     st.markdown("# 📋 Council Summary")
-    if st.session_state.summary_text:
-        st.markdown(st.session_state.summary_text)
-    else:
-        st.info("No board loaded yet. Click **Load Board** in the sidebar to generate the full synthesis.")
+    if st.session_state.summary_text: st.markdown(st.session_state.summary_text)
+    else: st.info("No board loaded yet. Click **Load Board** in the sidebar.")
 
 with tabs[1]:
     st.markdown("# 🏀 Board of 8 — Prop Analysis")
@@ -711,8 +708,7 @@ with tabs[1]:
                     st.session_state.locks.append({"id":lid,"type":"PROP","player":item["Player"],"prop":f"{item['Side']} {item['Line']} {item['Prop']}","tier":item["Tier"],"status":"PENDING","result":None})
                     st.success(f"Locked: {item['Player']} {item['Side']} {item['Line']}"); st.rerun()
             st.markdown('</div></div>',unsafe_allow_html=True)
-    else:
-        st.info("No board data loaded. Use **Load Board** in the sidebar.")
+    else: st.info("No board data loaded. Use **Load Board** in the sidebar.")
     st.markdown(f'<div class="small-note">Sharp Reference: {sharp.get("book","Pinnacle")} via {sharp.get("source","OddsHarvester")} — {sharp.get("status","unknown").upper()}</div>',unsafe_allow_html=True)
 
 with tabs[2]:
@@ -803,7 +799,7 @@ with tabs[7]:
             st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span>{es}</div>',unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### Prop Data Source")
-    st.info("Props use curated fallback data. Live prop scraping from BettingPros/FantasyPros/OddsTrader/SportsBettingDime is disabled — these sites are JS-rendered and return empty shells with requests.get().")
+    st.info("Props use curated fallback data. Live prop scraping from JS-rendered sites (BettingPros/FantasyPros/OddsTrader/SportsBettingDime) is not currently available.")
     if st.session_state.scan_log:
         st.markdown("---\n## 📜 Scan Log")
         lh='<div class="scan-log">'
