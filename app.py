@@ -12,6 +12,19 @@ import shutil
 from scipy.stats import norm
 import time
 import unicodedata
+import importlib
+import sys
+
+# Auto-install curl_cffi if missing
+def _ensure_curl_cffi():
+    if importlib.util.find_spec("curl_cffi") is None:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "curl_cffi", "--break-system-packages", "--quiet"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+_ensure_curl_cffi()
+from curl_cffi import requests as cf_requests
 
 st.set_page_config(page_title="BetCouncil v3.3 Hard Engine", page_icon="🛡️", layout="wide")
 
@@ -74,7 +87,15 @@ SPORT_PATH_MAP = {"nba":"basketball/nba","mlb":"baseball/mlb","nhl":"hockey/nhl"
 VEGASINSIDER_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","Soccer":"soccer","Tennis":"tennis","Golf":"golf","UFC":"ufc"}
 VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf/pga","Tennis":"tennis","Soccer":"soccer"}
 
-PRIZEPICKS_LEAGUE_IDS = {"NBA": 7, "NFL": 9, "MLB": 2, "NHL": 1, "WNBA": 3, "UFC": 20, "Golf": 6, "Tennis": 5, "Soccer": 10}
+PP_LEAGUE_IDS = {"NBA":7,"NFL":9,"MLB":2,"NHL":8,"WNBA":10,"UFC":20,"Golf":6,"Tennis":5,"Soccer":14}
+
+PP_STAT_MAP = {
+    "Points":"PTS","Rebounds":"REB","Assists":"AST","Pts+Rebs+Asts":"PRA","Pts+Asts":"PA","Pts+Rebs":"PR",
+    "Steals":"STL","Blocked Shots":"BLK","Turnovers":"TOV","3-Pointers Made":"3P","Fantasy Score":"PRA",
+    "Hits":"H","Runs Batted In":"RBI","Strikeouts":"SO","Pitcher Strikeouts":"SO",
+    "Passing Yards":"PASS_YDS","Rushing Yards":"RUSH_YDS","Receiving Yards":"REC_YDS","Receptions":"REC","Passing TDs":"PASS_TD",
+    "Goals":"G","Assists (NHL)":"A","Shots on Goal":"SOG","Points (NHL)":"NHL_PTS",
+}
 
 MLB_STADIUMS = {
     "ARI":{"name":"Chase Field","type":"Dome","lat":33.4455,"lon":-112.0667},
@@ -322,58 +343,57 @@ def safe_fetch(url, name):
     except Exception as e: mark_site_fail(name,str(e)[:50]); log_scan(f"{name}: {str(e)[:50]}","fail"); return None
 
 # ──────────────────────────────────────────────────────────────
-# PRIZEPICKS API — Live Player Props
+# PRIZEPICKS API — curl_cffi for TLS fingerprint bypass
 # ──────────────────────────────────────────────────────────────
 def fetch_prizepicks_props(sport):
-    """Fetch live player props from PrizePicks API."""
-    league_id = PRIZEPICKS_LEAGUE_IDS.get(sport.upper())
-    if not league_id:
+    league_id = PP_LEAGUE_IDS.get(sport.upper())
+    if league_id is None:
         return []
+    url = "https://api.prizepicks.com/projections"
+    params = {"league_id": league_id, "per_page": 250, "single_stat": "true"}
     try:
-        url = "https://api.prizepicks.com/projections"
-        params = {"league_id": league_id, "per_page": 250, "single_stat": "true"}
-        resp = requests.get(url, params=params, headers=SCRAPER_HEADERS, timeout=15)
+        resp = cf_requests.get(url, params=params, impersonate="chrome120", timeout=15)
         if resp.status_code != 200:
             log_scan(f"PrizePicks: HTTP {resp.status_code}", "fail")
             return []
-        
         data = resp.json()
-        included = data.get("included", [])
+    except Exception as e:
+        log_scan(f"PrizePicks: {str(e)[:50]}", "fail")
+        return []
+    
+    try:
         projections = data.get("data", [])
-        
-        # Build player lookup from included
-        players = {}
-        for item in included:
-            if item.get("type") == "new_player":
-                pid = item.get("id")
-                attrs = item.get("attributes", {})
-                players[pid] = {
-                    "name": attrs.get("name", ""),
+        included = data.get("included", [])
+        player_lookup = {}
+        for obj in included:
+            if obj.get("type") == "new_player":
+                pid = obj["id"]
+                attrs = obj.get("attributes", {})
+                player_lookup[pid] = {
+                    "name": attrs.get("display_name") or attrs.get("name", "Unknown"),
                     "team": attrs.get("team", ""),
                 }
-        
         props = []
         for proj in projections:
-            attrs = proj.get("attributes", {})
-            player_id = attrs.get("player_id")
-            stat_type = attrs.get("stat_type", "")
-            line_score = attrs.get("line_score")
-            player_info = players.get(player_id, {})
-            player_name = player_info.get("name", f"Player {player_id}")
-            
-            if player_name and stat_type and line_score is not None:
-                props.append({
-                    "Player": player_name,
-                    "Prop": stat_type.upper().replace(" ", "_"),
-                    "Line": float(line_score),
-                    "Side": "OVER",
-                    "Sport": sport.upper(),
-                })
-        
+            try:
+                attrs = proj.get("attributes", {})
+                line = attrs.get("line_score")
+                stat = attrs.get("stat_type", "")
+                if line is None or not stat:
+                    continue
+                pid_data = proj.get("relationships", {}).get("new_player", {}).get("data", {})
+                pid = pid_data.get("id", "")
+                player = player_lookup.get(pid, {}).get("name", "Unknown")
+                if player == "Unknown":
+                    continue
+                market = PP_STAT_MAP.get(stat, stat.upper().replace(" ", "_"))
+                props.append({"Player": player, "Prop": market, "Line": float(line), "Side": "OVER", "Sport": sport.upper()})
+            except (KeyError, TypeError, ValueError):
+                continue
         log_scan(f"PrizePicks: {len(props)} live props fetched", "ok")
         return props
     except Exception as e:
-        log_scan(f"PrizePicks: {str(e)[:50]}", "fail")
+        log_scan(f"PrizePicks parse error: {str(e)[:50]}", "fail")
         return []
 
 # ──────────────────────────────────────────────────────────────
@@ -490,13 +510,12 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     return "\n".join(L)
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER — PrizePicks API for live props
+# DATA LOADER — PrizePicks with curl_cffi
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
     log_scan(f"Loading {sport} board...","skip")
     
-    # Game lines - ESPN
     espn_url=build_source_url("ESPN (JSON API)",sport)
     raw_games=[]
     if espn_url:
@@ -510,13 +529,11 @@ def load_sport_data_live(sport):
     else:
         all_games=[]
     
-    # VSIN Consensus
     vsin_url=build_source_url("VSIN Betting Splits",sport)
     if vsin_url:
         vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
         if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
     
-    # Weather for MLB
     if sport.upper()=="MLB":
         for game in raw_games:
             parts=game.get("matchup","").split(" @ ")
@@ -524,24 +541,18 @@ def load_sport_data_live(sport):
                 ha=parts[1].split()[-1] if parts[1] else ""
                 a,d=apply_weather_filter(ha,sport); weather_results[game["matchup"]]={"advisory":a,"detail":d}
     
-    # Props — LIVE from PrizePicks API
-    all_props = fetch_prizepicks_props(sport)
-    if not all_props:
-        # Fallback only if PrizePicks fails
+    all_props=fetch_prizepicks_props(sport)
+    if all_props:
+        seen=set(); deduped=[]
+        for p in all_props:
+            key=(p["Player"],p["Prop"],p["Line"])
+            if key not in seen: seen.add(key); deduped.append(p)
+        all_props=deduped
+        log_scan(f"Props: {len(all_props)} live from PrizePicks","ok")
+    else:
         fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
         all_props=fallback["props"]
         log_scan(f"PrizePicks unavailable — {len(all_props)} fallback props","skip")
-    else:
-        # Deduplicate by player + stat
-        seen=set()
-        deduped=[]
-        for p in all_props:
-            key=(p["Player"],p["Prop"],p["Line"])
-            if key not in seen:
-                seen.add(key)
-                deduped.append(p)
-        all_props=deduped
-        log_scan(f"Props: {len(all_props)} live from PrizePicks","ok")
     
     if not all_games:
         fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
@@ -606,8 +617,7 @@ def check_all_sources_health():
     for n in CONSENSUS_SOURCES:
         u=build_source_url(n,"NBA")
         if u: log_scan(f"Checking {n}","skip"); safe_fetch(u,n)
-    # Test PrizePicks
-    pp = fetch_prizepicks_props("NBA")
+    pp=fetch_prizepicks_props("NBA")
     if pp: log_scan("PrizePicks API: OK","ok")
     else: log_scan("PrizePicks API: FAIL","fail")
 
@@ -616,7 +626,6 @@ def scan_all_sports():
     sr={}
     log_scan("Cross-sport scan...","skip")
     for sport in SPORTS:
-        # Try PrizePicks first
         sp=fetch_prizepicks_props(sport)
         if not sp:
             fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
@@ -625,8 +634,7 @@ def scan_all_sports():
         espn_url=build_source_url("ESPN (JSON API)",sport)
         if espn_url:
             html=safe_fetch(espn_url,"ESPN (JSON API)")
-            if html:
-                sg=parse_espn_json(html,sport)
+            if html: sg=parse_espn_json(html,sport)
         if not sg:
             fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
             sg=fallback["games"]
