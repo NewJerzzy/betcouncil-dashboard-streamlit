@@ -73,7 +73,6 @@ SPORT_URL_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba",
 SPORT_PATH_MAP = {"nba":"basketball/nba","mlb":"baseball/mlb","nhl":"hockey/nhl","nfl":"football/nfl","wnba":"basketball/wnba"}
 VEGASINSIDER_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","Soccer":"soccer","Tennis":"tennis","Golf":"golf","UFC":"ufc"}
 VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf/pga","Tennis":"tennis","Soccer":"soccer"}
-STATMUSE_SLUGS = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"mma","Golf":"golf","Tennis":"tennis","Soccer":"soccer"}
 
 MLB_STADIUMS = {
     "ARI":{"name":"Chase Field","type":"Dome","lat":33.4455,"lon":-112.0667},
@@ -127,25 +126,16 @@ MODELS = [
 ]
 
 SPORT_FALLBACK_MAP = {
-    "NBA":{"props":[],"games":[{"Matchup":"OKC @ LAL","Sport":"NBA"}]},
+    "NBA":{"props":[{"Player":"Shai Gilgeous-Alexander","Prop":"PTS","Line":31.5,"Side":"OVER","Sport":"NBA"},{"Player":"Cade Cunningham","Prop":"PTS","Line":23.5,"Side":"OVER","Sport":"NBA"},{"Player":"Donovan Mitchell","Prop":"PTS","Line":27.5,"Side":"UNDER","Sport":"NBA"},{"Player":"Nikola Jokic","Prop":"AST","Line":9.5,"Side":"OVER","Sport":"NBA"},{"Player":"Luka Doncic","Prop":"PTS","Line":33.5,"Side":"OVER","Sport":"NBA"},{"Player":"Giannis Antetokounmpo","Prop":"REB","Line":12.5,"Side":"OVER","Sport":"NBA"},{"Player":"Jayson Tatum","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"}],"games":[{"Matchup":"OKC @ LAL","Sport":"NBA"},{"Matchup":"BOS @ DEN","Sport":"NBA"}]},
     "WNBA":{"props":[{"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Breanna Stewart","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Arike Ogunbowale","Prop":"PTS","Line":23.5,"Side":"UNDER","Sport":"WNBA"},{"Player":"Caitlin Clark","Prop":"AST","Line":8.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Napheesa Collier","Prop":"REB","Line":9.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Sabrina Ionescu","Prop":"PTS","Line":20.5,"Side":"OVER","Sport":"WNBA"}],"games":[{"Matchup":"LV Aces @ NY Liberty","Sport":"WNBA"}]},
     "NFL":{"props":[{"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"},{"Player":"Christian McCaffrey","Prop":"RUSH_YDS","Line":85.5,"Side":"OVER","Sport":"NFL"},{"Player":"Justin Jefferson","Prop":"REC_YDS","Line":95.5,"Side":"OVER","Sport":"NFL"}],"games":[{"Matchup":"KC @ BUF","Sport":"NFL"}]},
-    "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},{"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},{"Player":"Juan Soto","Prop":"HITS","Line":1.5,"Side":"OVER","Sport":"MLB"},{"Player":"Mookie Betts","Prop":"TB","Line":1.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"}]},
+    "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},{"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},{"Player":"Juan Soto","Prop":"HITS","Line":1.5,"Side":"OVER","Sport":"MLB"},{"Player":"Mookie Betts","Prop":"TB","Line":1.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"},{"Matchup":"ATL @ HOU","Sport":"MLB"}]},
     "NHL":{"props":[{"Player":"Connor McDavid","Prop":"PTS","Line":1.5,"Side":"OVER","Sport":"NHL"},{"Player":"Auston Matthews","Prop":"SHOTS","Line":3.5,"Side":"OVER","Sport":"NHL"}],"games":[{"Matchup":"EDM @ TOR","Sport":"NHL"}]},
     "UFC":{"props":[],"games":[{"Matchup":"UFC Main Event","Sport":"UFC"}]},
     "Golf":{"props":[],"games":[{"Matchup":"PGA Tournament","Sport":"Golf"}]},
     "Tennis":{"props":[],"games":[{"Matchup":"ATP/WTA Match","Sport":"Tennis"}]},
     "Soccer":{"props":[],"games":[{"Matchup":"Soccer Match","Sport":"Soccer"}]},
 }
-
-FP_URLS = {
-    "NBA": ["https://www.fantasypros.com/nba/stats/avg-overall.php"],
-    "NFL": ["https://www.fantasypros.com/nfl/stats/qb.php"],
-    "MLB": ["https://www.fantasypros.com/mlb/stats/avg-overall.php"],
-    "NHL": ["https://www.fantasypros.com/nhl/stats/avg-overall.php"],
-}
-
-BREF_STAT_MAP = {"PTS":"PTS","REB":"TRB","AST":"AST","STL":"STL","BLK":"BLK","TOV":"TOV","3P":"3P","PRA":None,"PR":None,"PA":None}
 
 # ──────────────────────────────────────────────────────────────
 # SESSION STATE
@@ -168,7 +158,6 @@ if "locks" not in st.session_state: st.session_state.locks = []
 if "weather_data" not in st.session_state: st.session_state.weather_data = {}
 if "raw_games_for_summary" not in st.session_state: st.session_state.raw_games_for_summary = []
 if "consensus_data" not in st.session_state: st.session_state.consensus_data = {}
-if "bref_cache" not in st.session_state: st.session_state.bref_cache = {}
 if "kelly_odds" not in st.session_state: st.session_state.kelly_odds = -110
 if "kelly_prob" not in st.session_state: st.session_state.kelly_prob = 55.0
 
@@ -335,130 +324,37 @@ def safe_fetch(url, name):
     except Exception as e: mark_site_fail(name,str(e)[:50]); log_scan(f"{name}: {str(e)[:50]}","fail"); return None
 
 # ──────────────────────────────────────────────────────────────
-# VALIDATION LAYER (StatMuse, B-Ref, FantasyPros)
+# PARSERS
 # ──────────────────────────────────────────────────────────────
-def _statmuse_next_data(html):
-    m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',html,re.DOTALL)
-    if not m: return None
-    try: return json.loads(m.group(1))
-    except: return None
-
-def query_statmuse(player_name, stat_type, sport="nba"):
-    sm_sport=STATMUSE_SLUGS.get(sport.upper(),sport.lower())
-    slug=f"{player_name}-{stat_type}-last-10-games".replace(" ","-").lower()
-    url=f"https://www.statmuse.com/{sm_sport}/ask/{slug}"
+def parse_espn_json(html, sport):
+    out=[]
     try:
-        resp=requests.get(url,headers=SCRAPER_HEADERS,timeout=12)
-        resp.raise_for_status()
-        html=resp.text
-        nd=_statmuse_next_data(html)
-        if nd:
-            try:
-                modules=nd["props"]["pageProps"]["cmsPage"]["modules"]
-                for mod in modules:
-                    grid=mod.get("gridTable") or mod.get("grid") or {}
-                    col_defs=grid.get("columns",[]); rows=grid.get("rows",[])
-                    if not rows: continue
-                    headers=[str(c.get("value",c.get("heading",""))).upper() for c in col_defs]
-                    stat_idx=next((i for i,h in enumerate(headers) if stat_type.upper() in h),1)
-                    vals=[]
-                    for row in rows:
-                        try: vals.append(float(row["columns"][stat_idx]["value"]))
-                        except: pass
-                    if vals: return round(sum(vals)/len(vals),2)
-            except: pass
-        tables=pd.read_html(io.StringIO(html))
-        for t in tables:
-            col_upper=[str(c).upper() for c in t.columns]
-            if stat_type.upper() in col_upper:
-                idx=col_upper.index(stat_type.upper())
-                vals=pd.to_numeric(t.iloc[:,idx],errors="coerce").dropna()
-                if not vals.empty: return round(float(vals.mean()),2)
+        js=json.loads(html)
+        for ev in js.get("events",[]):
+            sn=ev.get("shortName","")
+            if sn: out.append({"Matchup":sn,"Sport":sport})
     except: pass
-    return None
+    return out
 
-def _bref_candidate_slugs(player_name):
-    def ascii_only(s): return re.sub(r"[^a-z]","",unicodedata.normalize("NFKD",s.lower()))
-    parts=player_name.strip().split()
-    if len(parts)<2: return []
-    first,last=parts[0],parts[-1]
-    base=ascii_only(last)[:5]+ascii_only(first)[:2]
-    return [f"{base}{str(n).zfill(2)}" for n in range(1,6)]
+def parse_vegasinsider(html):
+    soup=BeautifulSoup(html,"html.parser")
+    results=[]
+    for row in soup.select("table.odds-table tr"):
+        cols=row.select("td")
+        if len(cols)>=3: results.append({"matchup":cols[0].get_text(strip=True),"spread":cols[1].get_text(strip=True),"total":cols[2].get_text(strip=True)})
+    if not results:
+        for block in soup.select(".vi-container .odds-block"):
+            teams=block.select(".team-name"); odds=block.select(".odds-value")
+            if teams: results.append({"matchup":" vs ".join(t.get_text(strip=True) for t in teams),"odds":[o.get_text(strip=True) for o in odds]})
+    return results
 
-def get_bref_auto_slug(player_name):
-    cache_key=player_name.lower()
-    if cache_key in st.session_state.bref_cache: return st.session_state.bref_cache[cache_key]
-    last_name_lower=player_name.strip().split()[-1].lower()
-    for slug in _bref_candidate_slugs(player_name):
-        url=f"https://www.basketball-reference.com/players/{slug[0]}/{slug}.html"
-        try:
-            time.sleep(2)
-            resp=requests.get(url,headers=SCRAPER_HEADERS,timeout=10)
-            if resp.status_code==200 and last_name_lower in resp.text.lower():
-                st.session_state.bref_cache[cache_key]=slug; return slug
-        except: pass
-    search_url=f"https://www.basketball-reference.com/search/search.fcgi?search={player_name.replace(' ','+')}"
-    try:
-        time.sleep(2)
-        resp=requests.get(search_url,headers=SCRAPER_HEADERS,allow_redirects=True,timeout=12)
-        if resp.status_code==200 and "/players/" in resp.url:
-            slug=resp.url.split("/")[-1].replace(".html","")
-            st.session_state.bref_cache[cache_key]=slug; return slug
-    except: pass
-    return None
-
-def query_bref_stats(player_name):
-    slug=get_bref_auto_slug(player_name)
-    if not slug: return None
-    url=f"https://www.basketball-reference.com/players/{slug[0]}/{slug}.html"
-    try:
-        time.sleep(3)
-        resp=requests.get(url,headers=SCRAPER_HEADERS,timeout=12)
-        resp.raise_for_status()
-        tables=pd.read_html(io.StringIO(resp.text),attrs={"id":"per_game"})
-        if tables:
-            df=tables[0]
-            mask=df["Season"].notna()&~df["Season"].astype(str).str.contains(r"Career|season|Did Not",case=False,na=False)
-            df=df[mask]
-            if not df.empty: return df.iloc[-1].to_dict()
-    except: pass
-    return None
-
-def bref_stat_for_market(bref_row, market):
-    if bref_row is None: return None
-    try:
-        if market=="PRA": return sum(float(bref_row.get(k,0) or 0) for k in ("PTS","TRB","AST"))
-        if market=="PR": return float(bref_row.get("PTS",0) or 0)+float(bref_row.get("TRB",0) or 0)
-        if market=="PA": return float(bref_row.get("PTS",0) or 0)+float(bref_row.get("AST",0) or 0)
-        bref_key=BREF_STAT_MAP.get(market.upper(),market.upper())
-        if bref_key and bref_key in bref_row: return float(bref_row[bref_key])
-    except: pass
-    return None
-
-def query_fantasypros_consensus(sport="nba"):
-    urls=FP_URLS.get(sport.upper(),[f"https://www.fantasypros.com/{sport.lower()}/stats/avg-overall.php"])
-    for url in urls:
-        try:
-            resp=requests.get(url,headers=SCRAPER_HEADERS,timeout=12)
-            resp.raise_for_status()
-            tables=pd.read_html(io.StringIO(resp.text))
-            for t in tables:
-                if isinstance(t.columns,pd.MultiIndex):
-                    t.columns=[" ".join(str(c) for c in col if str(c)!="nan").strip() for col in t.columns]
-                col_str=" ".join(str(c) for c in t.columns).lower()
-                if "player" in col_str and len(t)>=5: return t.to_dict(orient="records")
-        except: continue
-    return []
-
-def build_fp_lookup(fp_data):
-    lookup={}
-    for row in fp_data:
-        name_col=next((k for k in row if "player" in str(k).lower()),None)
-        if not name_col: continue
-        raw=str(row[name_col]).strip()
-        name=re.sub(r"\s+[A-Z]{2,4}$","",raw).strip()
-        if name: lookup[name.lower()]=row
-    return lookup
+def parse_vsin_consensus(html):
+    soup=BeautifulSoup(html,"html.parser")
+    results={}
+    for row in soup.select("table tr,.splits-row"):
+        cols=row.select("td")
+        if len(cols)>=3: results[cols[0].get_text(strip=True)]=f"{cols[2].get_text(strip=True)} on {cols[1].get_text(strip=True)}"
+    return results
 
 # ──────────────────────────────────────────────────────────────
 # ANALYSIS PIPELINE
@@ -470,7 +366,7 @@ def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=No
     mu=normal_wma(stats); sigma=max(wsem(stats),0.75)
     prob=float(1-norm.cdf(line,mu,sigma) if pick.upper()=="OVER" else norm.cdf(line,mu,sigma))
     edge=prob-american_to_prob(odds); tier=classify_tier(edge)
-    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob,odds),"tier":tier,"mu":mu,"sigma":sigma,"confidence":65,"data_source":"SYNTHETIC"}
+    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob,odds),"tier":tier,"mu":mu,"sigma":sigma,"confidence":65}
 
 def run_council(items):
     out=[]
@@ -495,50 +391,6 @@ def run_game_council(games):
         out.append({**g,"Weighted Score":score,"Tier":tier,"Tier Label":tier_label(tier)})
     out.sort(key=lambda x:x["Weighted Score"],reverse=True)
     return out
-
-# ──────────────────────────────────────────────────────────────
-# PARSERS
-# ──────────────────────────────────────────────────────────────
-def parse_espn_json(html, sport):
-    """Parse ESPN JSON for matchups AND active player names from leaders."""
-    out=[]
-    players=[]
-    try:
-        js=json.loads(html)
-        for ev in js.get("events",[]):
-            sn=ev.get("shortName","")
-            if sn: out.append({"Matchup":sn,"Sport":sport})
-            for comp in ev.get("competitions",[]):
-                for competitor in comp.get("competitors",[]):
-                    team_name=competitor.get("team",{}).get("shortDisplayName","")
-                    for leader_cat in competitor.get("leaders",[]):
-                        for leader in leader_cat.get("leaders",[]):
-                            athlete=leader.get("athlete",{})
-                            player_name=athlete.get("fullName","")
-                            if player_name and player_name not in [p["Player"] for p in players]:
-                                players.append({"Player":player_name,"Team":team_name,"Sport":sport})
-    except: pass
-    return out,players
-
-def parse_vegasinsider(html):
-    soup=BeautifulSoup(html,"html.parser")
-    results=[]
-    for row in soup.select("table.odds-table tr"):
-        cols=row.select("td")
-        if len(cols)>=3: results.append({"matchup":cols[0].get_text(strip=True),"spread":cols[1].get_text(strip=True),"total":cols[2].get_text(strip=True)})
-    if not results:
-        for block in soup.select(".vi-container .odds-block"):
-            teams=block.select(".team-name"); odds=block.select(".odds-value")
-            if teams: results.append({"matchup":" vs ".join(t.get_text(strip=True) for t in teams),"odds":[o.get_text(strip=True) for o in odds]})
-    return results
-
-def parse_vsin_consensus(html):
-    soup=BeautifulSoup(html,"html.parser")
-    results={}
-    for row in soup.select("table tr,.splits-row"):
-        cols=row.select("td")
-        if len(cols)>=3: results[cols[0].get_text(strip=True)]=f"{cols[2].get_text(strip=True)} on {cols[1].get_text(strip=True)}"
-    return results
 
 # ──────────────────────────────────────────────────────────────
 # FULL SUMMARY GENERATOR
@@ -571,7 +423,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
             L.append(f"| {i} | **{m}** | {g.get('spread','N/A')} | {g.get('total','N/A')} |")
         L.append(f"\n*Weather: {wl}*")
     L.append(f"\n---\n")
-    L.append(f"## 📊 PLAYER PROPS ({len(board)} from ESPN leaders)\n")
+    L.append(f"## 📊 PLAYER PROPS ({len(board)} available)\n")
     L.append(f"📊 **PROP INTEGRITY: {p_int}%** ({p_desc})\n")
     if board:
         L.append(f"| # | Player | Prop | Line | Side |\n| --- | --- | --- | --- | --- |")
@@ -597,33 +449,30 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     return "\n".join(L)
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER (ESPN players used for props)
+# DATA LOADER
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
-    weather_results={}; consensus_results={}; espn_players=[]
+    weather_results={}; consensus_results={}
     log_scan(f"Loading {sport} board...","skip")
     
-    # Game lines + players from ESPN
     espn_url=build_source_url("ESPN (JSON API)",sport)
     raw_games=[]
     if espn_url:
         html=safe_fetch(espn_url,"ESPN (JSON API)")
         if html:
-            raw_games,espn_players=parse_espn_json(html,sport)
+            raw_games=parse_espn_json(html,sport)
             all_games=[{"Matchup":g["Matchup"],"Sport":sport,"Spread":"N/A","Total":"N/A"} for g in raw_games]
-            log_scan(f"ESPN: {len(all_games)} games, {len(espn_players)} players","ok")
+            log_scan(f"ESPN: {len(all_games)} games","ok")
         else:
             all_games=[]
     else:
         all_games=[]
     
-    # VSIN Consensus
     vsin_url=build_source_url("VSIN Betting Splits",sport)
     if vsin_url:
         vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
         if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
     
-    # Weather for MLB
     if sport.upper()=="MLB":
         for game in raw_games:
             parts=game.get("matchup","").split(" @ ")
@@ -631,28 +480,10 @@ def load_sport_data_live(sport):
                 ha=parts[1].split()[-1] if parts[1] else ""
                 a,d=apply_weather_filter(ha,sport); weather_results[game["matchup"]]={"advisory":a,"detail":d}
     
-    # Props - build from ESPN players if available
-    if espn_players:
-        all_props=[]
-        market_cycle=["PTS","AST","REB"]
-        for i,p in enumerate(espn_players[:10]):
-            market=market_cycle[i%3]
-            line=22.5 if market in ("PTS","AST") else 8.5
-            all_props.append({"Player":p["Player"],"Prop":market,"Line":line,"Side":"OVER","Sport":sport})
-        log_scan(f"Props: {len(all_props)} from ESPN leaders","ok")
-    else:
-        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-        all_props=fallback["props"]
-        log_scan(f"Props: {len(all_props)} from fallback","skip")
-    
-    if not all_games:
-        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-        all_games=fallback["games"]
-    
-    # FantasyPros for line guidance
-    fp_data=query_fantasypros_consensus(sport) if sport.upper() in FP_URLS else []
-    fp_lookup=build_fp_lookup(fp_data) if fp_data else {}
-    if fp_data: log_scan(f"FantasyPros: {len(fp_lookup)} players indexed","ok")
+    fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
+    all_props=fallback["props"]
+    if not all_games: all_games=fallback["games"]
+    log_scan(f"Props: {len(all_props)} from fallback","skip")
     
     st.session_state.board_data=run_council(all_props)
     st.session_state.game_verdicts=run_game_council(all_games)
@@ -725,11 +556,8 @@ def scan_all_sports():
         if espn_url:
             html=safe_fetch(espn_url,"ESPN (JSON API)")
             if html:
-                sg2,espn_p=parse_espn_json(html,sport)
+                sg2=parse_espn_json(html,sport)
                 if sg2: sg=sg2
-                if espn_p:
-                    sp=[]
-                    for i,p in enumerate(espn_p[:10]): sp.append({"Player":p["Player"],"Prop":"PTS","Line":22.5,"Side":"OVER","Sport":sport})
         sr[sport]={"props":sp,"games":sg}
         ap.extend(sp); ag.extend(sg)
     st.session_state.cross_sport_board={"props":run_council(ap),"games":run_game_council(ag),"scanned_at":datetime.now().strftime("%H:%M:%S"),"sport_results":sr}
@@ -761,7 +589,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — ESPN Live Players</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — ESPN + VSIN</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -789,7 +617,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">',unsafe_allow_html=True)
     sport=st.selectbox("Sport",SPORTS,index=SPORTS.index(st.session_state.last_sport),key="sidebar_sport")
     if st.button("🟢 Load Board",use_container_width=True):
-        with st.spinner(f"Loading {sport} from ESPN..."): load_sport_data_live(sport)
+        with st.spinner(f"Loading {sport}..."): load_sport_data_live(sport)
         st.success(f"{sport} loaded — {st.session_state.last_scan_time}")
     if st.button("🔄 Re-Run Board",use_container_width=True):
         with st.spinner("Re-running..."): load_sport_data_live(st.session_state.last_sport)
@@ -809,7 +637,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · ESPN Live Players + VSIN Consensus</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · ESPN Live Games + VSIN Consensus</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -939,9 +767,14 @@ with tabs[7]:
             es=f' <span style="font-size:10px;color:#d03030;">({e})</span>' if e and s=="fail" else ""
             st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span>{es}</div>',unsafe_allow_html=True)
     with cr:
-        st.markdown("### Validation Sources")
-        extra={"VSIN Betting Splits":"🟢" if st.session_state.site_status.get("VSIN Betting Splits",{}).get("status")=="ok" else "⚪","FantasyPros":"🟢 Active","StatMuse":"🟡 Dormant","B-Ref":"🟡 Dormant"}
-        for n,lb in extra.items(): st.markdown(f'<div class="section-card">{lb} <b>{n}</b></div>',unsafe_allow_html=True)
+        st.markdown("### Consensus Sources")
+        for n in CONSENSUS_SOURCES:
+            s=st.session_state.site_status.get(n,{}).get("status","unknown")
+            t=st.session_state.site_status.get(n,{}).get("last_checked","") or "—"
+            e=st.session_state.site_status.get(n,{}).get("error","")
+            lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
+            es=f' <span style="font-size:10px;color:#d03030;">({e})</span>' if e and s=="fail" else ""
+            st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span>{es}</div>',unsafe_allow_html=True)
     if st.session_state.scan_log:
         st.markdown("---\n## 📜 Scan Log")
         lh='<div class="scan-log">'
