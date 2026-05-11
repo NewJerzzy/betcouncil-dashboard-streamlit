@@ -126,20 +126,11 @@ MODELS = [
     {"name":"Base Model","specialty":"Raw Projection Layer","weight":0.06,"function":"Raw MA + basic pace, no adjustments, prevents groupthink"},
 ]
 
-# Updated NBA fallback with actual playoff players from ESPN data
 SPORT_FALLBACK_MAP = {
-    "NBA":{"props":[
-        {"Player":"Jalen Brunson","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"},
-        {"Player":"Karl-Anthony Towns","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"NBA"},
-        {"Player":"Anthony Edwards","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"NBA"},
-        {"Player":"Joel Embiid","Prop":"PTS","Line":28.5,"Side":"OVER","Sport":"NBA"},
-        {"Player":"Miles McBride","Prop":"PTS","Line":18.5,"Side":"OVER","Sport":"NBA"},
-        {"Player":"Rudy Gobert","Prop":"REB","Line":10.5,"Side":"OVER","Sport":"NBA"},
-        {"Player":"Josh Hart","Prop":"REB","Line":8.5,"Side":"OVER","Sport":"NBA"},
-    ],"games":[{"Matchup":"NY @ PHI","Sport":"NBA"},{"Matchup":"SA @ MIN","Sport":"NBA"}]},
+    "NBA":{"props":[],"games":[{"Matchup":"OKC @ LAL","Sport":"NBA"}]},
     "WNBA":{"props":[{"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Breanna Stewart","Prop":"PTS","Line":22.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Arike Ogunbowale","Prop":"PTS","Line":23.5,"Side":"UNDER","Sport":"WNBA"},{"Player":"Caitlin Clark","Prop":"AST","Line":8.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Napheesa Collier","Prop":"REB","Line":9.5,"Side":"OVER","Sport":"WNBA"},{"Player":"Sabrina Ionescu","Prop":"PTS","Line":20.5,"Side":"OVER","Sport":"WNBA"}],"games":[{"Matchup":"LV Aces @ NY Liberty","Sport":"WNBA"}]},
     "NFL":{"props":[{"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"},{"Player":"Christian McCaffrey","Prop":"RUSH_YDS","Line":85.5,"Side":"OVER","Sport":"NFL"},{"Player":"Justin Jefferson","Prop":"REC_YDS","Line":95.5,"Side":"OVER","Sport":"NFL"}],"games":[{"Matchup":"KC @ BUF","Sport":"NFL"}]},
-    "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},{"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},{"Player":"Juan Soto","Prop":"HITS","Line":1.5,"Side":"OVER","Sport":"MLB"},{"Player":"Mookie Betts","Prop":"TB","Line":1.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"},{"Matchup":"ATL @ HOU","Sport":"MLB"}]},
+    "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"},{"Player":"Shohei Ohtani","Prop":"STRIKEOUTS","Line":7.5,"Side":"OVER","Sport":"MLB"},{"Player":"Juan Soto","Prop":"HITS","Line":1.5,"Side":"OVER","Sport":"MLB"},{"Player":"Mookie Betts","Prop":"TB","Line":1.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"}]},
     "NHL":{"props":[{"Player":"Connor McDavid","Prop":"PTS","Line":1.5,"Side":"OVER","Sport":"NHL"},{"Player":"Auston Matthews","Prop":"SHOTS","Line":3.5,"Side":"OVER","Sport":"NHL"}],"games":[{"Matchup":"EDM @ TOR","Sport":"NHL"}]},
     "UFC":{"props":[],"games":[{"Matchup":"UFC Main Event","Sport":"UFC"}]},
     "Golf":{"props":[],"games":[{"Matchup":"PGA Tournament","Sport":"Golf"}]},
@@ -509,14 +500,25 @@ def run_game_council(games):
 # PARSERS
 # ──────────────────────────────────────────────────────────────
 def parse_espn_json(html, sport):
+    """Parse ESPN JSON for matchups AND active player names from leaders."""
     out=[]
+    players=[]
     try:
         js=json.loads(html)
         for ev in js.get("events",[]):
             sn=ev.get("shortName","")
             if sn: out.append({"Matchup":sn,"Sport":sport})
+            for comp in ev.get("competitions",[]):
+                for competitor in comp.get("competitors",[]):
+                    team_name=competitor.get("team",{}).get("shortDisplayName","")
+                    for leader_cat in competitor.get("leaders",[]):
+                        for leader in leader_cat.get("leaders",[]):
+                            athlete=leader.get("athlete",{})
+                            player_name=athlete.get("fullName","")
+                            if player_name and player_name not in [p["Player"] for p in players]:
+                                players.append({"Player":player_name,"Team":team_name,"Sport":sport})
     except: pass
-    return out
+    return out,players
 
 def parse_vegasinsider(html):
     soup=BeautifulSoup(html,"html.parser")
@@ -569,7 +571,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
             L.append(f"| {i} | **{m}** | {g.get('spread','N/A')} | {g.get('total','N/A')} |")
         L.append(f"\n*Weather: {wl}*")
     L.append(f"\n---\n")
-    L.append(f"## 📊 PLAYER PROPS ({len(board)} available)\n")
+    L.append(f"## 📊 PLAYER PROPS ({len(board)} from ESPN leaders)\n")
     L.append(f"📊 **PROP INTEGRITY: {p_int}%** ({p_desc})\n")
     if board:
         L.append(f"| # | Player | Prop | Line | Side |\n| --- | --- | --- | --- | --- |")
@@ -595,21 +597,21 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     return "\n".join(L)
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER
+# DATA LOADER (ESPN players used for props)
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
-    weather_results={}; consensus_results={}
+    weather_results={}; consensus_results={}; espn_players=[]
     log_scan(f"Loading {sport} board...","skip")
     
-    # Game lines - ESPN only
+    # Game lines + players from ESPN
     espn_url=build_source_url("ESPN (JSON API)",sport)
     raw_games=[]
     if espn_url:
         html=safe_fetch(espn_url,"ESPN (JSON API)")
         if html:
-            raw_games=parse_espn_json(html,sport)
+            raw_games,espn_players=parse_espn_json(html,sport)
             all_games=[{"Matchup":g["Matchup"],"Sport":sport,"Spread":"N/A","Total":"N/A"} for g in raw_games]
-            log_scan(f"ESPN: {len(all_games)} games","ok")
+            log_scan(f"ESPN: {len(all_games)} games, {len(espn_players)} players","ok")
         else:
             all_games=[]
     else:
@@ -629,16 +631,28 @@ def load_sport_data_live(sport):
                 ha=parts[1].split()[-1] if parts[1] else ""
                 a,d=apply_weather_filter(ha,sport); weather_results[game["matchup"]]={"advisory":a,"detail":d}
     
-    # Props - FantasyPros for lines where available, fallback for player names
+    # Props - build from ESPN players if available
+    if espn_players:
+        all_props=[]
+        market_cycle=["PTS","AST","REB"]
+        for i,p in enumerate(espn_players[:10]):
+            market=market_cycle[i%3]
+            line=22.5 if market in ("PTS","AST") else 8.5
+            all_props.append({"Player":p["Player"],"Prop":market,"Line":line,"Side":"OVER","Sport":sport})
+        log_scan(f"Props: {len(all_props)} from ESPN leaders","ok")
+    else:
+        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
+        all_props=fallback["props"]
+        log_scan(f"Props: {len(all_props)} from fallback","skip")
+    
+    if not all_games:
+        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
+        all_games=fallback["games"]
+    
+    # FantasyPros for line guidance
     fp_data=query_fantasypros_consensus(sport) if sport.upper() in FP_URLS else []
     fp_lookup=build_fp_lookup(fp_data) if fp_data else {}
-    
-    fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-    all_props=fallback["props"]
-    if not all_games: all_games=fallback["games"]
-    
     if fp_data: log_scan(f"FantasyPros: {len(fp_lookup)} players indexed","ok")
-    log_scan(f"Props: {len(all_props)} from fallback","skip")
     
     st.session_state.board_data=run_council(all_props)
     st.session_state.game_verdicts=run_game_council(all_games)
@@ -711,8 +725,11 @@ def scan_all_sports():
         if espn_url:
             html=safe_fetch(espn_url,"ESPN (JSON API)")
             if html:
-                sg2=parse_espn_json(html,sport)
+                sg2,espn_p=parse_espn_json(html,sport)
                 if sg2: sg=sg2
+                if espn_p:
+                    sp=[]
+                    for i,p in enumerate(espn_p[:10]): sp.append({"Player":p["Player"],"Prop":"PTS","Line":22.5,"Side":"OVER","Sport":sport})
         sr[sport]={"props":sp,"games":sg}
         ap.extend(sp); ag.extend(sg)
     st.session_state.cross_sport_board={"props":run_council(ap),"games":run_game_council(ag),"scanned_at":datetime.now().strftime("%H:%M:%S"),"sport_results":sr}
@@ -744,7 +761,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — ESPN + VSIN + FantasyPros</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.3 OS — ESPN Live Players</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -772,7 +789,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">',unsafe_allow_html=True)
     sport=st.selectbox("Sport",SPORTS,index=SPORTS.index(st.session_state.last_sport),key="sidebar_sport")
     if st.button("🟢 Load Board",use_container_width=True):
-        with st.spinner(f"Loading {sport}..."): load_sport_data_live(sport)
+        with st.spinner(f"Loading {sport} from ESPN..."): load_sport_data_live(sport)
         st.success(f"{sport} loaded — {st.session_state.last_scan_time}")
     if st.button("🔄 Re-Run Board",use_container_width=True):
         with st.spinner("Re-running..."): load_sport_data_live(st.session_state.last_sport)
@@ -792,7 +809,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · ESPN + VSIN + FantasyPros</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.3 · ESPN Live Players + VSIN Consensus</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
