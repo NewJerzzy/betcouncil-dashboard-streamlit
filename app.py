@@ -12,7 +12,7 @@ import shutil
 from scipy.stats import norm
 import time
 
-st.set_page_config(page_title="BetCouncil v3.4.3 Multi-Source Engine", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v3.4.4 Multi-Source Engine", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -74,22 +74,25 @@ VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba"
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
 
-# v3.4.3 — URL fixes + data quality blacklist
 PROP_SCRAPER_URLS = {
-    "DraftEdge": "https://draftedge.com/projections/",
+    "DraftEdge": "https://draftedge.com/{sport}/{sport}-daily-projections/",
     "BettingPros": "https://www.bettingpros.com/{sport}/odds/player-props/",
     "OddsTrader": "https://www.oddstrader.com/betting/{sport}-playoff-betting-trends/",
     "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
 }
 
-# Keywords that indicate a row is NOT an NBA prop
-PROP_BLACKLIST = ['Soccer', 'Formula', 'Since', 'January', 'February', 'March', 'April',
-                  'NCAAB', 'NCAA', 'WNBA', 'NFL', 'NHL', 'MLB', 'UFC', 'Golf', 'Tennis',
-                  'Trends', 'History', 'Record', 'Season']
+# v3.4.4 — Stricter blacklist
+PROP_NAME_BLACKLIST = [
+    "Soccer", "Formula", "Guide", "Totals", "All", "Game",
+    "May", "2026", "2025", "April", "June", "July", "March",
+    "NCAAB", "NCAA", "WNBA", "NFL", "NHL", "MLB", "UFC", "Golf", "Tennis",
+    "Trends", "History", "Record", "Season", "Since", "January", "February",
+    "Loading", "Filter", "Search", "Sign Up", "Login", "Subscribe",
+    "LineStar", "DraftEdge", "BettingPros", "OddsTrader", "SportsBetting",
+    "Picks", "Props", "Slate", "Matchup", "Schedule", "Standings",
+]
 
-# NBA stat keywords — a prop must contain at least one of these
-NBA_STAT_KEYWORDS = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'TOV', '3P', 'Points', 'Rebounds', 'Assists',
-                     'Steals', 'Blocks', 'Turnovers', 'Three', 'PRA', 'PR', 'PA']
+MAX_PROP_LINE = 80  # No NBA prop line exceeds this
 
 MLB_STADIUMS = {
     "ARI":{"name":"Chase Field","type":"Dome","lat":33.4455,"lon":-112.0667},
@@ -319,11 +322,7 @@ def build_source_url(source_name, sport):
     sl=SPORT_URL_SLUG.get(sport,sport.lower())
     if source_name=="ESPN (JSON API)": return f"https://site.api.espn.com/apis/site/v2/sports/{sp}/scoreboard"
     if source_name=="VSIN Betting Splits": return f"https://data.vsin.com/{vs}/betting-splits/"
-    if source_name in PROP_SCRAPER_URLS:
-        url = PROP_SCRAPER_URLS[source_name]
-        if "{sport}" in url:
-            return url.format(sport=sl)
-        return url
+    if source_name in PROP_SCRAPER_URLS: return PROP_SCRAPER_URLS[source_name].format(sport=sl)
     return ""
 
 def safe_fetch(url, name):
@@ -343,19 +342,51 @@ def safe_fetch(url, name):
         return None
 
 # ──────────────────────────────────────────────────────────────
-# PROP SCRAPERS v3.4.3 — With data quality filters
+# PROP VALIDATION
 # ──────────────────────────────────────────────────────────────
-def is_valid_nba_prop(text):
-    """Check if a text string looks like a valid NBA prop."""
-    text_upper = text.upper()
-    # Must not contain blacklisted words
-    for bl in PROP_BLACKLIST:
-        if bl.upper() in text_upper:
+def is_valid_nba_prop(name, line=None):
+    """Reject garbage rows — sidebar links, headers, dates, non-basketball text."""
+    if not name or len(name) < 3:
+        return False
+    for bl in PROP_NAME_BLACKLIST:
+        if bl.lower() in name.lower():
             return False
-    # Must contain at least one NBA stat keyword or a number
-    has_stat = any(kw.upper() in text_upper for kw in NBA_STAT_KEYWORDS)
-    has_number = bool(re.search(r'[0-9]+(?:\.[0-9])?', text))
-    return has_stat or has_number
+    if line is not None:
+        try:
+            lf = float(line)
+            if lf <= 0 or lf > MAX_PROP_LINE:
+                return False
+        except (ValueError, TypeError):
+            return False
+    if re.match(r'^\d', name):
+        return False
+    if len(name.split()) == 1:
+        return False
+    if not re.match(r'^[A-Z]', name):
+        return False
+    return True
+
+# ──────────────────────────────────────────────────────────────
+# PROP SCRAPERS v3.4.4
+# ──────────────────────────────────────────────────────────────
+def scrape_sbd(html):
+    """SportsBettingDime — only target .props-table, not the whole page."""
+    soup = BeautifulSoup(html, "html.parser")
+    props = []
+    for row in soup.select(".props-table tr, .prop-row, .bet-row"):
+        cells = row.select("td, th")
+        if len(cells) >= 3:
+            player = cells[0].get_text(strip=True)
+            line_text = cells[1].get_text(strip=True)
+            try:
+                line = float(re.sub(r"[^\d.]", "", line_text))
+            except ValueError:
+                continue
+            if is_valid_nba_prop(player, line):
+                props.append({"Player": player, "Prop": "PTS", "Line": line, "Side": "OVER", "source": "SBD"})
+    if not props:
+        props = scrape_props_generic(html, "SBD")
+    return props
 
 def scrape_props_generic(html, source_name):
     soup = BeautifulSoup(html, "html.parser")
@@ -363,13 +394,13 @@ def scrape_props_generic(html, source_name):
     props = []
     for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,2})\s+(?:OVER|UNDER\s+)?([0-9]+(?:\.[0-9])?)", text):
         player = m.group(1).strip()
+        line_val = m.group(2)
         try:
-            line = float(m.group(2))
-            context = text[max(0,m.start()-50):m.end()+50]
-            if line > 0.5 and len(player.split()) >= 2 and is_valid_nba_prop(context):
-                props.append({"Player": player, "Prop": "PTS", "Line": line, "Side": "OVER", "source": source_name})
+            line = float(line_val)
         except ValueError:
-            pass
+            continue
+        if is_valid_nba_prop(player, line):
+            props.append({"Player": player, "Prop": "PTS", "Line": line, "Side": "OVER", "source": source_name})
     return props
 
 def scrape_draftedge(html):
@@ -379,45 +410,43 @@ def scrape_draftedge(html):
         for row in table.select("tr"):
             cells = row.select("td, th")
             if len(cells) >= 3:
-                player_cell = cells[0].get_text(strip=True)
-                if re.match(r"^[A-Z][a-z]+\s[A-Z][a-z]+", player_cell):
-                    row_text = " ".join(c.get_text(strip=True) for c in cells)
-                    if not is_valid_nba_prop(row_text):
-                        continue
-                    for cell in cells[1:]:
-                        try:
-                            val = float(cell.get_text(strip=True))
-                            if 0.5 < val < 100:
-                                props.append({"Player": player_cell, "Prop": "PTS", "Line": val, "Side": "OVER", "source": "DraftEdge"})
-                        except ValueError:
-                            pass
+                player = cells[0].get_text(strip=True)
+                if not is_valid_nba_prop(player):
+                    continue
+                for cell in cells[1:]:
+                    try:
+                        val = float(cell.get_text(strip=True))
+                        if 0.5 < val < MAX_PROP_LINE:
+                            props.append({"Player": player, "Prop": "PTS", "Line": val, "Side": "OVER", "source": "DraftEdge"})
+                    except ValueError:
+                        pass
     if not props:
         for row in soup.select("tr"):
             cells = row.select("td")
             if len(cells) >= 4:
-                player_cell = cells[0].get_text(strip=True)
-                if re.match(r"^[A-Z][a-z]+\s[A-Z][a-z]+", player_cell):
-                    row_text = " ".join(c.get_text(strip=True) for c in cells)
-                    if not is_valid_nba_prop(row_text):
-                        continue
-                    for cell in cells[1:]:
-                        try:
-                            val = float(cell.get_text(strip=True))
-                            if 0.5 < val < 100:
-                                props.append({"Player": player_cell, "Prop": "PTS", "Line": val, "Side": "OVER", "source": "DraftEdge"})
-                        except ValueError:
-                            pass
+                player = cells[0].get_text(strip=True)
+                if not is_valid_nba_prop(player):
+                    continue
+                for cell in cells[1:]:
+                    try:
+                        val = float(cell.get_text(strip=True))
+                        if 0.5 < val < MAX_PROP_LINE:
+                            props.append({"Player": player, "Prop": "PTS", "Line": val, "Side": "OVER", "source": "DraftEdge"})
+                    except ValueError:
+                        pass
     return props
 
 def fetch_all_prop_sources(sport):
     all_props = []
     sl = SPORT_URL_SLUG.get(sport, sport.lower())
     for source_name, url_template in PROP_SCRAPER_URLS.items():
-        url = url_template.format(sport=sl) if "{sport}" in url_template else url_template
+        url = url_template.format(sport=sl)
         html = safe_fetch(url, source_name)
         if not html:
             continue
-        if source_name == "DraftEdge":
+        if source_name == "SportsBettingDime":
+            props = scrape_sbd(html)
+        elif source_name == "DraftEdge":
             props = scrape_draftedge(html)
         else:
             props = scrape_props_generic(html, source_name)
@@ -455,7 +484,7 @@ def fetch_linestar_props(sport):
             player_name = players.get(bet.get("PlayerId"), "")
             stat_name = bet_types.get(bet.get("StatId"), "")
             line = bet.get("OverUnderValue")
-            if player_name and stat_name and line is not None:
+            if player_name and stat_name and line is not None and is_valid_nba_prop(player_name, line):
                 props.append({"Player": player_name, "Prop": stat_name.upper().replace(" ", "_").replace("-", "_"), "Line": float(line), "Side": "OVER", "source": "LineStar"})
         game_list = []
         for g in data.get("Games", []):
@@ -546,7 +575,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     for matchup,w in weather_data.items(): wp.append(f"{matchup.split(' @ ')[-1]} {w['advisory']}")
     wl=" · ".join(wp) if wp else "N/A"
     L=[]
-    L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.4.3\n")
+    L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.4.4\n")
     L.append(f"**{sport_display} — {date_str}** | **Scanned:** {st.session_state.last_scan_time} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE\n")
     L.append(f"🔒 **Sources:** LineStar ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅ · SBD ✅ · ESPN ✅ · VSIN ✅\n")
     L.append(f"---\n")
@@ -772,7 +801,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.4.3 OS — Data Quality Filters</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.4.4 OS — Surgical Data Scrub</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -811,7 +840,7 @@ with st.sidebar:
         with st.spinner("Checking..."): check_all_sources_health()
         st.success("Health check complete.")
     st.markdown('</div>',unsafe_allow_html=True)
-    st.markdown(f'<div class="small-note" style="margin-top:12px;">8 MODELS · 7 SOURCES · QUALITY FILTERS</div>',unsafe_allow_html=True)
+    st.markdown(f'<div class="small-note" style="margin-top:12px;">8 MODELS · QUALITY FILTERED</div>',unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────
 # COMMAND BAR
@@ -820,7 +849,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.4.3 · Data Quality Filters Active</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.4.4 · Surgical Clean Data</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
