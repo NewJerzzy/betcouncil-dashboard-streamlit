@@ -72,12 +72,28 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 # ──────────────────────────────────────────────────────────────
 SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"]
 
+# Only these sports have real data sources — cross-sport scan ignores the rest
+SCANNABLE_SPORTS = ["NBA", "MLB", "NHL", "NFL", "WNBA"]
+
 GAME_SOURCES = {"ESPN (JSON API)": True}
 CONSENSUS_SOURCES = {"VSIN Betting Splits": True}
 ALL_SOURCES = {**GAME_SOURCES, **CONSENSUS_SOURCES}
 
 SPORT_URL_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf","Tennis":"tennis","Soccer":"soccer"}
-SPORT_PATH_MAP = {"nba":"basketball/nba","mlb":"baseball/mlb","nhl":"hockey/nhl","nfl":"football/nfl","wnba":"basketball/wnba"}
+
+# FIX: Added missing sports so ESPN doesn't build bad URLs
+SPORT_PATH_MAP = {
+    "nba":    "basketball/nba",
+    "mlb":    "baseball/mlb",
+    "nhl":    "hockey/nhl",
+    "nfl":    "football/nfl",
+    "wnba":   "basketball/wnba",
+    "ufc":    None,      # ESPN has no UFC scoreboard
+    "golf":   None,      # ESPN golf uses different API
+    "tennis": None,      # ESPN tennis uses different API
+    "soccer": "soccer/usa.1",  # MLS only valid soccer path
+}
+
 VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf/pga","Tennis":"tennis","Soccer":"soccer"}
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
@@ -190,7 +206,7 @@ SPORT_FALLBACK_MAP = {
 }
 
 # ──────────────────────────────────────────────────────────────
-# SESSION STATE — FIXED: initialized to [] not None
+# SESSION STATE — initialized to [] not None
 # ──────────────────────────────────────────────────────────────
 if "bankroll" not in st.session_state: st.session_state.bankroll = DEFAULT_BANKROLL
 if "bankroll_start_of_day" not in st.session_state: st.session_state.bankroll_start_of_day = DEFAULT_BANKROLL
@@ -199,8 +215,8 @@ if "session_start" not in st.session_state: st.session_state.session_start = tim
 if "site_status" not in st.session_state: st.session_state.site_status = {n:{"status":"unknown","last_checked":"","error":""} for n in ALL_SOURCES}
 if "scan_log" not in st.session_state: st.session_state.scan_log = []
 if "cross_sport_board" not in st.session_state: st.session_state.cross_sport_board = None
-if "board_data" not in st.session_state: st.session_state.board_data = []   # ← FIXED: was None
-if "game_verdicts" not in st.session_state: st.session_state.game_verdicts = []  # ← FIXED: was None
+if "board_data" not in st.session_state: st.session_state.board_data = []
+if "game_verdicts" not in st.session_state: st.session_state.game_verdicts = []
 if "last_sport" not in st.session_state: st.session_state.last_sport = "NBA"
 if "last_scan_time" not in st.session_state: st.session_state.last_scan_time = ""
 if "summary_text" not in st.session_state: st.session_state.summary_text = ""
@@ -354,30 +370,32 @@ def calculate_lock_integrity(best_prop, best_game, board):
     return i,d
 
 # ──────────────────────────────────────────────────────────────
-# URL BUILDER + FETCHER
+# URL BUILDER + FETCHER — FIX: skip unsupported sports
 # ──────────────────────────────────────────────────────────────
 def build_source_url(source_name, sport):
-    sp=SPORT_PATH_MAP.get(sport.lower(), f"basketball/{sport.lower()}")
-    vs=VSIN_SPORT_SLUG.get(sport,sport.lower())
-    if source_name=="ESPN (JSON API)": return f"https://site.api.espn.com/apis/site/v2/sports/{sp}/scoreboard"
-    if source_name=="VSIN Betting Splits": return f"https://data.vsin.com/{vs}/betting-splits/"
+    sp = SPORT_PATH_MAP.get(sport.lower())
+    vs = VSIN_SPORT_SLUG.get(sport, sport.lower())
+
+    if source_name == "ESPN (JSON API)":
+        if not sp:          # UFC / Golf / Tennis → skip, don't build bad URL
+            return ""
+        return f"https://site.api.espn.com/apis/site/v2/sports/{sp}/scoreboard"
+
+    if source_name == "VSIN Betting Splits":
+        return f"https://data.vsin.com/{vs}/betting-splits/"
+
     if source_name in PROP_SCRAPER_URLS:
         url_map = PROP_SCRAPER_URLS[source_name]
         sport_upper = sport.upper()
         if sport_upper in url_map:
             return url_map[sport_upper]
-        sl = SPORT_URL_SLUG.get(sport, sport.lower())
-        if source_name == "DraftEdge":
-            return f"https://draftedge.com/{sl}/{sl}-daily-projections/"
-        if source_name == "BettingPros":
-            return f"https://www.bettingpros.com/{sl}/odds/player-props/"
-        if source_name == "OddsTrader":
-            return f"https://www.oddstrader.com/{sl}/player-props/"
-        if source_name == "SportsBettingDime":
-            return f"https://www.sportsbettingdime.com/{sl}/props/"
+        return ""           # sport not mapped → return empty, skip silently
+
     return ""
 
 def safe_fetch(url, name):
+    if not url:
+        return None
     try:
         r=requests.get(url,headers=SCRAPER_HEADERS,timeout=REQUEST_TIMEOUT)
         if r.status_code==200:
@@ -689,7 +707,6 @@ def load_sport_data_live(sport):
     board = run_council(all_props)
     game_board = run_game_council(all_games)
     
-    # Store integrity scores in session state
     g_int, g_desc = calculate_game_integrity(raw_games)
     p_int, p_desc = calculate_prop_integrity(len(board))
     c_int, c_desc = calculate_council_integrity(board)
@@ -769,14 +786,13 @@ def check_all_sources_health():
         if u: safe_fetch(u,n); log_scan(f"Checked {n}","skip")
     ls_props, _ = fetch_linestar_props("NBA")
     log_scan(f"LineStar: {'OK' if ls_props else 'FAIL'}","ok" if ls_props else "fail")
-    scraped = fetch_all_prop_sources("NBA")
-    log_scan(f"Scrapers: {len(scraped)} props total","ok")
 
+# FIX: Only scan sports with real data sources
 def scan_all_sports():
     ap,ag=[],[]
     sr={}
     log_scan("Cross-sport scan...","skip")
-    for sport in SPORTS:
+    for sport in SCANNABLE_SPORTS:
         ls_props, ls_games = fetch_linestar_props(sport)
         scraped = fetch_all_prop_sources(sport)
         all_p = ls_props + scraped
@@ -1068,7 +1084,7 @@ with tabs[2]:
     cross=st.session_state.cross_sport_board
     if not cross: st.info("Click 'Scan All Sports' in the sidebar.")
     else:
-        st.markdown(f"**Scanned:** {cross['scanned_at']} | **{len(SPORTS)} sports**")
+        st.markdown(f"**Scanned:** {cross['scanned_at']} | **{len(SCANNABLE_SPORTS)} sports**")
         sr2=cross.get('sport_results',{})
         if sr2:
             st.markdown("### 📊 Sport-by-Sport Summary")
