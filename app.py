@@ -74,7 +74,6 @@ VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba"
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
 
-# v3.4 Scraper URLs — per the other model's verified directory
 PROP_SCRAPER_URLS = {
     "DraftEdge": "https://draftedge.com/{sport}/{sport}-fantasy-player-prop-picks/",
     "BettingPros": "https://www.bettingpros.com/{sport}/picks/prop-bets/",
@@ -330,15 +329,12 @@ def safe_fetch(url, name):
         return None
 
 # ──────────────────────────────────────────────────────────────
-# MULTI-SOURCE PROP SCRAPERS (v3.4)
+# MULTI-SOURCE PROP SCRAPERS
 # ──────────────────────────────────────────────────────────────
 def scrape_props_generic(html, source_name):
-    """Generic prop scraper — looks for player names + numbers in HTML text."""
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ", strip=True)
     props = []
-    
-    # Pattern: "Player Name OVER/UNDER 12.5" or "Player Name 28.5 points"
     for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,2})\s+(?:OVER|UNDER\s+)?([0-9]+(?:\.[0-9])?)", text):
         player = m.group(1).strip()
         try:
@@ -347,19 +343,15 @@ def scrape_props_generic(html, source_name):
                 props.append({"Player": player, "Prop": "PTS", "Line": line, "Side": "OVER", "source": source_name})
         except ValueError:
             pass
-    
     return props
 
 def scrape_draftedge(html):
-    """DraftEdge has MSE projection tables — look for their specific structure."""
     soup = BeautifulSoup(html, "html.parser")
     props = []
-    
     for row in soup.select("tr"):
         cells = row.select("td")
         if len(cells) >= 4:
             player_cell = cells[0].get_text(strip=True)
-            # Look for player names (2+ words, starts with capital)
             if re.match(r"^[A-Z][a-z]+\s[A-Z][a-z]+", player_cell):
                 for i, cell in enumerate(cells[1:], 1):
                     try:
@@ -371,32 +363,26 @@ def scrape_draftedge(html):
     return props
 
 def fetch_all_prop_sources(sport):
-    """Scrape all configured prop sources. Returns combined, deduped list."""
     all_props = []
     sl = SPORT_URL_SLUG.get(sport, sport.lower())
-    
     for source_name, url_template in PROP_SCRAPER_URLS.items():
         url = url_template.format(sport=sl)
         html = safe_fetch(url, source_name)
         if not html:
             continue
-        
-        # Use source-specific parser if available, otherwise generic
         if source_name == "DraftEdge":
             props = scrape_draftedge(html)
         else:
             props = scrape_props_generic(html, source_name)
-        
         if props:
             log_scan(f"{source_name}: {len(props)} props extracted","ok")
             all_props.extend(props)
         else:
             log_scan(f"{source_name}: 0 props extracted","skip")
-    
     return all_props
 
 # ──────────────────────────────────────────────────────────────
-# LINESTAR API — Primary prop source
+# LINESTAR API
 # ──────────────────────────────────────────────────────────────
 def fetch_linestar_props(sport):
     sport_id = LINESTAR_SPORT_IDS.get(sport.upper())
@@ -413,12 +399,10 @@ def fetch_linestar_props(sport):
     except Exception as e:
         log_scan(f"LineStar: {str(e)[:50]}", "fail")
         return [], []
-    
     try:
         players = {p["Id"]: p["Name"] for p in data.get("Players", [])}
         bet_types = {b["Id"]: b["StatName"] for b in data.get("BetTypes", [])}
         team_lookup = {t["Id"]: t["Abbreviation"] for t in data.get("Teams", [])}
-        
         props = []
         for bet in data.get("PropBets", []):
             player_name = players.get(bet.get("PlayerId"), "")
@@ -426,13 +410,11 @@ def fetch_linestar_props(sport):
             line = bet.get("OverUnderValue")
             if player_name and stat_name and line is not None:
                 props.append({"Player": player_name, "Prop": stat_name.upper().replace(" ", "_").replace("-", "_"), "Line": float(line), "Side": "OVER", "source": "LineStar"})
-        
         game_list = []
         for g in data.get("Games", []):
             away = team_lookup.get(g.get("AwayTeamId"), "AWAY")
             home = team_lookup.get(g.get("HomeTeamId"), "HOME")
             game_list.append({"Matchup": f"{away} @ {home}", "Sport": sport, "Spread": f"{home} {g.get('VegasLineHome', 0):+.1f}", "Total": str(g.get('VegasTotals', 'N/A'))})
-        
         log_scan(f"LineStar: {len(props)} props, {len(game_list)} games", "ok")
         return props, game_list
     except Exception as e:
@@ -453,16 +435,13 @@ def parse_espn_json(html, sport):
     return out
 
 def parse_vegasinsider_next_data(html):
-    """Extract odds from VegasInsider's __NEXT_DATA__ JSON block."""
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
     if not m:
         return []
     try:
         nd = json.loads(m.group(1))
         games = []
-        # Walk the Next.js props structure to find game data
         props_data = nd.get("props", {}).get("pageProps", {})
-        # The exact path varies — try common patterns
         for key in ["games", "odds", "matchups", "events"]:
             if key in props_data:
                 for g in props_data[key]:
@@ -487,19 +466,17 @@ def parse_vsin_consensus(html):
 # ──────────────────────────────────────────────────────────────
 # ANALYSIS PIPELINE
 # ──────────────────────────────────────────────────────────────
-def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=None):
+def analyze_prop(player, market, line, pick, sport="NBA", odds=-110, bankroll=None, data_source="LIVE"):
     bankroll=bankroll or get_bankroll()
     base=24 if market in ("PTS","PRA","PR","PA") else 6 if market in ("REB","RUSH_YDS") else 5 if market in ("AST","REC_YDS") else 17
     stats=list(np.random.normal(base,max(2,base*0.15),10))
     mu=normal_wma(stats); sigma=max(wsem(stats),0.75)
     prob=float(1-norm.cdf(line,mu,sigma) if pick.upper()=="OVER" else norm.cdf(line,mu,sigma))
     edge=prob-american_to_prob(odds); tier=classify_tier(edge)
-    # Multi-source bonus: if prop came from 2+ sources, boost edge
-    source_list = str(item.get("source","")).split(",")
-    if len(source_list) >= 2:
+    if data_source and "," in str(data_source):
         edge += 0.02
         tier = classify_tier(edge)
-    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob,odds),"tier":tier,"mu":mu,"sigma":sigma,"confidence":65,"data_source":source_list[0] if source_list else "LIVE"}
+    return {"player":player,"market":market,"line":line,"pick":pick,"sport":sport,"odds":odds,"prob":prob,"edge":edge,"kelly":kelly(prob,odds),"tier":tier,"mu":mu,"sigma":sigma,"confidence":65,"data_source":data_source}
 
 def run_council(items):
     out=[]
@@ -509,7 +486,8 @@ def run_council(items):
         l=item.get("Line") or item.get("line",0)
         s=item.get("Side") or item.get("side","OVER")
         sp=item.get("Sport") or item.get("sport","NBA")
-        res=analyze_prop(p,m,l,s,sp)
+        ds=item.get("source",item.get("data_source","LIVE"))
+        res=analyze_prop(p,m,l,s,sp,data_source=ds)
         votes={md["name"]:1 if res["tier"] in ("SOVEREIGN","ELITE","APPROVED") else 0 for md in MODELS}
         score=round(sum(md["weight"]*votes[md["name"]] for md in MODELS),3)
         tier=classify_tier(score)
@@ -582,19 +560,15 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     return "\n".join(L)
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER — Multi-source props
+# DATA LOADER
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
     log_scan(f"Loading {sport} board...","skip")
     
-    # LineStar - primary prop + game source
     ls_props, ls_games = fetch_linestar_props(sport)
-    
-    # Multi-source prop scraping
     scraped_props = fetch_all_prop_sources(sport)
     
-    # Merge: LineStar first, then scraped (deduped by player+stat)
     all_props_dict = {}
     for p in ls_props:
         key = (p["Player"], p["Prop"])
@@ -603,7 +577,6 @@ def load_sport_data_live(sport):
     for p in scraped_props:
         key = (p["Player"], p["Prop"])
         if key in all_props_dict:
-            # Multi-source confirmation — add source tag
             existing_source = all_props_dict[key].get("source", "")
             new_source = p.get("source", "")
             if new_source not in existing_source:
@@ -613,7 +586,6 @@ def load_sport_data_live(sport):
     
     all_props = list(all_props_dict.values())
     
-    # Game lines
     espn_url=build_source_url("ESPN (JSON API)",sport)
     raw_games=[]
     if espn_url:
@@ -630,13 +602,11 @@ def load_sport_data_live(sport):
     else:
         all_games=[]
     
-    # VSIN Consensus
     vsin_url=build_source_url("VSIN Betting Splits",sport)
     if vsin_url:
         vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
         if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
     
-    # Weather for MLB
     if sport.upper()=="MLB":
         for game in raw_games:
             parts=game.get("matchup","").split(" @ ")
@@ -644,13 +614,12 @@ def load_sport_data_live(sport):
                 ha=parts[1].split()[-1] if parts[1] else ""
                 a,d=apply_weather_filter(ha,sport); weather_results[game["matchup"]]={"advisory":a,"detail":d}
     
-    # Fallback
     if not all_props:
         fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
         all_props=fallback["props"]
         log_scan(f"All sources failed — {len(all_props)} fallback props","skip")
     else:
-        log_scan(f"Props: {len(all_props)} combined from {len(PROP_SCRAPER_URLS)+1} sources","ok")
+        log_scan(f"Props: {len(all_props)} combined from multiple sources","ok")
     
     if not all_games:
         fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
