@@ -75,6 +75,7 @@ CONSENSUS_SOURCES = {"VSIN Betting Splits": True}
 ALL_SOURCES = {**GAME_SOURCES, **CONSENSUS_SOURCES}
 
 SPORT_URL_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf","Tennis":"tennis","Soccer":"soccer"}
+VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf/pga","Tennis":"tennis","Soccer":"soccer"}
 
 # Verified ESPN endpoints for all 9 sports
 SPORT_PATH_MAP = {
@@ -89,11 +90,19 @@ SPORT_PATH_MAP = {
     "soccer": "soccer/usa.1",
 }
 
-VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba","UFC":"ufc","Golf":"golf/pga","Tennis":"tennis","Soccer":"soccer"}
+# ESPN team abbreviation → MLB stadium dict key fix
+ESPN_TO_STADIUM_ABBR = {
+    "WSH": "WAS",
+    "CLG": "CLE",
+    "KCR": "KC",
+    "SDP": "SD",
+    "SFG": "SF",
+    "TBR": "TB",
+    "CHW": "CWS",
+}
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
 
-# All 9 sports with verified URLs
 PROP_SCRAPER_URLS = {
     "DraftEdge": {
         "NBA":   "https://draftedge.com/nba/nba-daily-projections/",
@@ -204,8 +213,9 @@ MODELS = [
     {"name":"Base Model","specialty":"Raw Projection Layer","weight":0.06,"function":"Raw MA + basic pace, no adjustments, prevents groupthink"},
 ]
 
+# Fallback with empty NBA props — no misleading stale data
 SPORT_FALLBACK_MAP = {
-    "NBA":{"props":[{"Player":"Shai Gilgeous-Alexander","Prop":"PTS","Line":31.5,"Side":"OVER","Sport":"NBA"}],"games":[{"Matchup":"OKC @ LAL","Sport":"NBA"}]},
+    "NBA":{"props":[],"games":[{"Matchup":"No NBA games found","Sport":"NBA"}]},
     "WNBA":{"props":[{"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"}],"games":[{"Matchup":"LV Aces @ NY Liberty","Sport":"WNBA"}]},
     "NFL":{"props":[{"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"}],"games":[{"Matchup":"KC @ BUF","Sport":"NFL"}]},
     "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"}]},
@@ -294,11 +304,13 @@ def wsem(vals):
     return float(max(np.sqrt(var/max(len(vals),1)),0.5))
 
 # ──────────────────────────────────────────────────────────────
-# WEATHER
+# WEATHER (with ESPN abbreviation fix)
 # ──────────────────────────────────────────────────────────────
 def get_stadium_info(team_abbr, sport):
     if sport.upper()=="MLB":
-        s=MLB_STADIUMS.get(team_abbr.upper())
+        # Normalize ESPN abbreviation to stadium dict key
+        normalized = ESPN_TO_STADIUM_ABBR.get(team_abbr.upper(), team_abbr.upper())
+        s=MLB_STADIUMS.get(normalized)
         if s: return s
     return {"name":"Unknown","type":"Open","lat":0,"lon":0}
 
@@ -328,24 +340,33 @@ def apply_weather_filter(home_team, sport):
     return "✅ Clear","Ideal"
 
 # ──────────────────────────────────────────────────────────────
-# INTEGRITY SCORES
+# INTEGRITY SCORES (fixed for missing spread/total)
 # ──────────────────────────────────────────────────────────────
 def calculate_game_integrity(raw_games):
-    if not raw_games: return 50,"No data"
-    sc=0
+    if not raw_games: return 50, "No data"
+    valid, flagged = 0, 0
     for g in raw_games:
+        spread_raw = str(g.get("spread", g.get("Spread", "N/A")))
+        total_raw  = str(g.get("total",  g.get("Total",  "N/A")))
+        if spread_raw == "N/A" or total_raw == "N/A":
+            continue   # skip rows without lines
         try:
-            s=float(re.sub(r"[^\d.\-]+","",str(g.get("spread","0"))))
-            t=float(re.sub(r"[^\d.\-]+","",str(g.get("total","0"))))
-            if abs(s)>15: sc+=1
-            if t>240 or t<180: sc+=1
-        except: sc+=1
-    i=int(100-(sc/(max(len(raw_games)*2,1))*100))
-    i=max(30,min(98,i))
-    if i>=85: d="Consensus High — Heavy Sharp Alignment"
-    elif i>=65: d="Moderate Alignment — Some Line Variance"
-    else: d="High Variance — Check Multiple Books"
-    return i,d
+            s = float(re.sub(r"[^\d.\-]+", "", spread_raw))
+            t = float(re.sub(r"[^\d.\-]+", "", total_raw))
+            valid += 1
+            # MLB-aware thresholds: spread >15 unusual, total <5 or >14 unusual
+            if abs(s) > 15 or t < 5 or t > 14:
+                flagged += 1
+        except (ValueError, TypeError):
+            flagged += 1
+    if valid == 0:
+        return 50, "No line data — VegasInsider needed"
+    score = int(100 - (flagged / valid * 100))
+    score = max(30, min(98, score))
+    if score >= 85:   desc = "Consensus High — Sharp Alignment"
+    elif score >= 65: desc = "Moderate Alignment — Some Variance"
+    else:             desc = "High Variance — Check Multiple Books"
+    return score, desc
 
 def calculate_prop_integrity(props_count):
     if props_count==0: return 50,"No data"
@@ -645,20 +666,22 @@ def run_game_council(games):
     return out
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER
+# DATA LOADER (Restored VegasInsider, improved fallback & weather)
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
     log_scan(f"Loading {sport} board...","skip")
     
+    # 1. LineStar props & games
     ls_props, ls_games = fetch_linestar_props(sport)
+    
+    # 2. Multi-source scraped props
     scraped_props = fetch_all_prop_sources(sport)
     
     all_props_dict = {}
     for p in ls_props:
         key = (p["Player"], p["Prop"])
         all_props_dict[key] = p
-    
     for p in scraped_props:
         key = (p["Player"], p["Prop"])
         if key in all_props_dict:
@@ -668,9 +691,9 @@ def load_sport_data_live(sport):
                 all_props_dict[key]["source"] = existing_source + "," + new_source
         else:
             all_props_dict[key] = p
-    
     all_props = list(all_props_dict.values())
     
+    # 3. ESPN games (matchups only)
     espn_url=build_source_url("ESPN (JSON API)",sport)
     raw_games=[]
     if espn_url:
@@ -679,36 +702,69 @@ def load_sport_data_live(sport):
             raw_games=parse_espn_json(html,sport)
             log_scan(f"ESPN: {len(raw_games)} games","ok")
     
-    if ls_games:
-        all_games=ls_games
-        raw_games=[{"matchup":g["Matchup"],"spread":g["Spread"],"total":g["Total"]} for g in ls_games]
-    elif raw_games:
-        all_games=[{"Matchup":g["Matchup"],"Sport":sport,"Spread":"N/A","Total":"N/A"} for g in raw_games]
-    else:
-        all_games=[]
+    # 4. VegasInsider lines (restored)
+    vi_lines = {}
+    sl = SPORT_URL_SLUG.get(sport, sport.lower())
+    vi_url = f"https://www.vegasinsider.com/{sl}/odds/las-vegas/"
+    vi_html = safe_fetch(vi_url, "VegasInsider")
+    if vi_html:
+        soup = BeautifulSoup(vi_html, "html.parser")
+        for row in soup.select("tr"):
+            cells = row.select("td")
+            if len(cells) >= 3:
+                teams  = cells[0].get_text(strip=True)
+                spread = cells[1].get_text(strip=True)
+                total  = cells[2].get_text(strip=True)
+                if teams:
+                    vi_lines[teams] = {"spread": spread, "total": total}
+        log_scan(f"VegasInsider: {len(vi_lines)} lines","ok")
     
+    # Merge ESPN matchups with VegasInsider lines
+    if ls_games:
+        all_games = ls_games
+        raw_games = [{"matchup":g["Matchup"],"spread":g["Spread"],"total":g["Total"]} for g in ls_games]
+    elif raw_games:
+        all_games = []
+        for g in raw_games:
+            m = g.get("Matchup","")
+            vi = vi_lines.get(m, {})
+            all_games.append({
+                "Matchup": m,
+                "Sport":   sport,
+                "Spread":  vi.get("spread", "N/A"),
+                "Total":   vi.get("total",  "N/A"),
+            })
+        raw_games = [{"matchup":g["Matchup"],"spread":g["Spread"],"total":g["Total"]} for g in all_games]
+    else:
+        all_games = []
+    
+    # 5. VSIN consensus
     vsin_url=build_source_url("VSIN Betting Splits",sport)
     if vsin_url:
         vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
         if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
     
+    # 6. Weather (MLB only)
     if sport.upper()=="MLB":
         for game in raw_games:
             parts=game.get("matchup","").split(" @ ")
             if len(parts)==2:
-                ha=parts[1].split()[-1] if parts[1] else ""
-                a,d=apply_weather_filter(ha,sport); weather_results[game["matchup"]]={"advisory":a,"detail":d}
+                ha = parts[1].split()[-1] if parts[1] else ""
+                a,d = apply_weather_filter(ha,sport)
+                weather_results[game["matchup"]]={"advisory":a,"detail":d}
     
+    # 7. Fallback (empty for NBA, generic for others)
     if not all_props:
-        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-        all_props=fallback["props"]
-        log_scan(f"All sources failed — {len(all_props)} fallback props","skip")
-    else:
-        log_scan(f"Props: {len(all_props)} combined from multiple sources","ok")
-    
+        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP.get("NBA", {}))
+        fb_props = fallback.get("props", [])
+        if fb_props:
+            all_props = fb_props
+            log_scan(f"All sources failed — {len(all_props)} fallback props","skip")
+        else:
+            log_scan(f"All sources failed — no props available for {sport}","warn")
     if not all_games:
-        fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-        all_games=fallback["games"]
+        fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP.get("NBA", {}))
+        all_games = fallback.get("games", [])
     
     board = run_council(all_props)
     game_board = run_game_council(all_games)
@@ -806,8 +862,8 @@ def scan_all_sports():
             for p in all_p: deduped[(p["Player"],p["Prop"])]=p
             sp=list(deduped.values())
         else:
-            fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-            sp=fallback["props"]
+            fallback=SPORT_FALLBACK_MAP.get(sport.upper(),{})
+            sp=fallback.get("props", [])
         if ls_games:
             sg=ls_games
         else:
@@ -817,8 +873,8 @@ def scan_all_sports():
                 html=safe_fetch(espn_url,"ESPN (JSON API)")
                 if html: sg=parse_espn_json(html,sport)
             if not sg:
-                fallback=SPORT_FALLBACK_MAP.get(sport.upper(),SPORT_FALLBACK_MAP["NBA"])
-                sg=fallback["games"]
+                fallback=SPORT_FALLBACK_MAP.get(sport.upper(),{})
+                sg=fallback.get("games", [])
         sr[sport]={"props":sp,"games":sg}
         ap.extend(sp); ag.extend(sg)
     st.session_state.cross_sport_board={"props":run_council(ap),"games":run_game_council(ag),"scanned_at":datetime.now().strftime("%H:%M:%S"),"sport_results":sr}
@@ -850,7 +906,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5.1 OS — All 9 Sports</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5.1 OS — Lines Fixed</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -883,13 +939,13 @@ with st.sidebar:
     if st.button("🔄 Re-Run Board",use_container_width=True):
         with st.spinner("Re-running..."): load_sport_data_live(st.session_state.last_sport)
     if st.button("🌍 Scan All Sports",use_container_width=True):
-        with st.spinner("Scanning all 9 sports..."): scan_all_sports()
+        with st.spinner("Scanning all..."): scan_all_sports()
         st.success("Cross-sport complete.")
     if st.button("🔍 Check Site Health",use_container_width=True):
         with st.spinner("Checking..."): check_all_sources_health()
         st.success("Health check complete.")
     st.markdown('</div>',unsafe_allow_html=True)
-    st.markdown(f'<div class="small-note" style="margin-top:12px;">8 MODELS · 9 SPORTS</div>',unsafe_allow_html=True)
+    st.markdown(f'<div class="small-note" style="margin-top:12px;">8 MODELS · FULL STACK</div>',unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────
 # COMMAND BAR
@@ -898,7 +954,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5.1 · All 9 Sports · Zero 400/404</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5.1 · VegasInsider Lines Restored</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -922,7 +978,7 @@ with tabs[0]:
     st.markdown(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5.1")
     sport_display = st.session_state.get('last_sport', 'NBA').upper()
     st.markdown(f"**{sport_display} Slate — {datetime.now().strftime('%A, %B %d, %Y')}** | **Scanned:** {st.session_state.get('last_scan_time', datetime.now().strftime('%H:%M:%S'))} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE")
-    st.markdown("🔒 **Sources:** LineStar ✅ · ESPN ✅ · VSIN ✅ · SBD ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅")
+    st.markdown("🔒 **Sources:** LineStar ✅ · VegasInsider ✅ · ESPN ✅ · VSIN ✅ · SBD ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅")
     st.markdown("---")
 
     # 1. GAME LINES & WEATHER
