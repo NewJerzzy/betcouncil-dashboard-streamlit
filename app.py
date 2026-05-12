@@ -55,13 +55,15 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 .log-ok { color:#0d9488; }
 .log-fail { color:#d03030; }
 .log-skip { color:#5a7088; }
-
 .prop-card { background: #0d1219; border: 1px solid #1c2a3a; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem; }
 .prop-card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .prop-card-player { font-size: 17px; font-weight: 700; color: #f4f8fc; }
 .prop-card-matchup { font-size: 14px; color: #5a7088; }
 .prop-card-edge { font-size: 30px; font-weight: 800; }
 .parlay-card, .game-parlay-card { background: #0d1219; border: 1px solid #1c2a3a; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem; }
+
+/* Force table text to be bright for readability */
+.stTable table, .stTable tbody, .stTable td, .stTable th { color: #e8f0f8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1162,7 +1164,7 @@ with tabs[7]:
             lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
             st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span></div>',unsafe_allow_html=True)
         st.markdown("### Prop Sources")
-        st.markdown(f'<div class="section-card">🟢 <b>LineStar API</b> <span class="muted-text">— auto-period</span></div>')
+        st.markdown(f'<div class="section-card">🟢 <b>LineStar API</b> <span class="muted-text">— auto-period</span></div>', unsafe_allow_html=True)
         for n in PROP_SCRAPER_URLS:
             st.markdown(f'<div class="section-card">⚪ <b>{n}</b> <span class="muted-text">— pending scan</span></div>',unsafe_allow_html=True)
     with cr:
