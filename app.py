@@ -12,7 +12,7 @@ import shutil
 from scipy.stats import norm
 import time
 
-st.set_page_config(page_title="BetCouncil v3.4.4 Multi-Source Engine", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v3.5 Auto-Period Engine", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -81,7 +81,6 @@ PROP_SCRAPER_URLS = {
     "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
 }
 
-# v3.4.4 — Stricter blacklist
 PROP_NAME_BLACKLIST = [
     "Soccer", "Formula", "Guide", "Totals", "All", "Game",
     "May", "2026", "2025", "April", "June", "July", "March",
@@ -92,7 +91,7 @@ PROP_NAME_BLACKLIST = [
     "Picks", "Props", "Slate", "Matchup", "Schedule", "Standings",
 ]
 
-MAX_PROP_LINE = 80  # No NBA prop line exceeds this
+MAX_PROP_LINE = 80
 
 MLB_STADIUMS = {
     "ARI":{"name":"Chase Field","type":"Dome","lat":33.4455,"lon":-112.0667},
@@ -345,7 +344,6 @@ def safe_fetch(url, name):
 # PROP VALIDATION
 # ──────────────────────────────────────────────────────────────
 def is_valid_nba_prop(name, line=None):
-    """Reject garbage rows — sidebar links, headers, dates, non-basketball text."""
     if not name or len(name) < 3:
         return False
     for bl in PROP_NAME_BLACKLIST:
@@ -367,10 +365,9 @@ def is_valid_nba_prop(name, line=None):
     return True
 
 # ──────────────────────────────────────────────────────────────
-# PROP SCRAPERS v3.4.4
+# PROP SCRAPERS
 # ──────────────────────────────────────────────────────────────
 def scrape_sbd(html):
-    """SportsBettingDime — only target .props-table, not the whole page."""
     soup = BeautifulSoup(html, "html.parser")
     props = []
     for row in soup.select(".props-table tr, .prop-row, .bet-row"):
@@ -458,23 +455,36 @@ def fetch_all_prop_sources(sport):
     return all_props
 
 # ──────────────────────────────────────────────────────────────
-# LINESTAR API
+# LINESTAR API — Auto-calculated period ID
 # ──────────────────────────────────────────────────────────────
 def fetch_linestar_props(sport):
     sport_id = LINESTAR_SPORT_IDS.get(sport.upper())
     if not sport_id:
         return [], []
+    
+    # Auto-calculate period ID from today's date
+    base_date = date(2026, 5, 10)
+    base_period = 2587
+    today = date.today()
+    days_diff = (today - base_date).days
+    period_id = base_period + days_diff
+    
     try:
         url = "https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/GetPropBets"
-        params = {"periodId": 2587, "sport": sport_id}
+        params = {"periodId": period_id, "sport": sport_id}
         resp = requests.get(url, params=params, headers=SCRAPER_HEADERS, timeout=15)
         if resp.status_code != 200:
-            log_scan(f"LineStar: HTTP {resp.status_code}", "fail")
-            return [], []
+            # Try yesterday's period
+            params["periodId"] = period_id - 1
+            resp = requests.get(url, params=params, headers=SCRAPER_HEADERS, timeout=15)
+            if resp.status_code != 200:
+                log_scan(f"LineStar: HTTP {resp.status_code}", "fail")
+                return [], []
         data = resp.json()
     except Exception as e:
         log_scan(f"LineStar: {str(e)[:50]}", "fail")
         return [], []
+    
     try:
         players = {p["Id"]: p["Name"] for p in data.get("Players", [])}
         bet_types = {b["Id"]: b["StatName"] for b in data.get("BetTypes", [])}
@@ -491,7 +501,7 @@ def fetch_linestar_props(sport):
             away = team_lookup.get(g.get("AwayTeamId"), "AWAY")
             home = team_lookup.get(g.get("HomeTeamId"), "HOME")
             game_list.append({"Matchup": f"{away} @ {home}", "Sport": sport, "Spread": f"{home} {g.get('VegasLineHome', 0):+.1f}", "Total": str(g.get('VegasTotals', 'N/A'))})
-        log_scan(f"LineStar: {len(props)} props, {len(game_list)} games", "ok")
+        log_scan(f"LineStar: {len(props)} props, {len(game_list)} games (period {params.get('periodId', period_id)})", "ok")
         return props, game_list
     except Exception as e:
         log_scan(f"LineStar parse: {str(e)[:50]}", "fail")
@@ -575,7 +585,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     for matchup,w in weather_data.items(): wp.append(f"{matchup.split(' @ ')[-1]} {w['advisory']}")
     wl=" · ".join(wp) if wp else "N/A"
     L=[]
-    L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.4.4\n")
+    L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5\n")
     L.append(f"**{sport_display} — {date_str}** | **Scanned:** {st.session_state.last_scan_time} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE\n")
     L.append(f"🔒 **Sources:** LineStar ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅ · SBD ✅ · ESPN ✅ · VSIN ✅\n")
     L.append(f"---\n")
@@ -801,7 +811,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.4.4 OS — Surgical Data Scrub</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5 OS — Auto-Period Engine</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -840,7 +850,7 @@ with st.sidebar:
         with st.spinner("Checking..."): check_all_sources_health()
         st.success("Health check complete.")
     st.markdown('</div>',unsafe_allow_html=True)
-    st.markdown(f'<div class="small-note" style="margin-top:12px;">8 MODELS · QUALITY FILTERED</div>',unsafe_allow_html=True)
+    st.markdown(f'<div class="small-note" style="margin-top:12px;">8 MODELS · AUTO-PERIOD</div>',unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────
 # COMMAND BAR
@@ -849,7 +859,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.4.4 · Surgical Clean Data</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5 · Auto-Period · Self-Updating</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -978,9 +988,9 @@ with tabs[7]:
             lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
             st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span></div>',unsafe_allow_html=True)
         st.markdown("### Prop Sources")
+        st.markdown(f'<div class="section-card">🟢 <b>LineStar API</b> <span class="muted-text">— auto-period</span></div>')
         for n in PROP_SCRAPER_URLS:
             st.markdown(f'<div class="section-card">⚪ <b>{n}</b> <span class="muted-text">— pending scan</span></div>',unsafe_allow_html=True)
-        st.markdown(f'<div class="section-card">🟢 <b>LineStar API</b> <span class="muted-text">— primary</span></div>')
     with cr:
         st.markdown("### Consensus Sources")
         for n in CONSENSUS_SOURCES:
