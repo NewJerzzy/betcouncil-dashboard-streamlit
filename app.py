@@ -12,7 +12,7 @@ import shutil
 from scipy.stats import norm
 import time
 
-st.set_page_config(page_title="BetCouncil v3.5 Auto-Period Engine", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v3.5.1 Multi-Sport Engine", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -82,11 +82,36 @@ VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba"
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
 
+# v3.5.1 — Verified sport-specific URLs to fix MLB 404s
 PROP_SCRAPER_URLS = {
-    "DraftEdge": "https://draftedge.com/{sport}/{sport}-daily-projections/",
-    "BettingPros": "https://www.bettingpros.com/{sport}/odds/player-props/",
-    "OddsTrader": "https://www.oddstrader.com/betting/{sport}-playoff-betting-trends/",
-    "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
+    "DraftEdge": {
+        "NBA":  "https://draftedge.com/nba/nba-daily-projections/",
+        "MLB":  "https://draftedge.com/mlb/todays-mlb-batter-prop-breakdown/",
+        "NFL":  "https://draftedge.com/nfl/nfl-fantasy-football-player-props/",
+        "NHL":  "https://draftedge.com/nhl/player-projections/",
+        "WNBA": "https://draftedge.com/wnba/wnba-daily-projections/",
+    },
+    "BettingPros": {
+        "NBA":  "https://www.bettingpros.com/nba/odds/player-props/",
+        "MLB":  "https://www.bettingpros.com/mlb/odds/player-props/",
+        "NFL":  "https://www.bettingpros.com/nfl/odds/player-props/",
+        "NHL":  "https://www.bettingpros.com/nhl/odds/player-props/",
+        "WNBA": "https://www.bettingpros.com/wnba/odds/player-props/",
+    },
+    "OddsTrader": {
+        "NBA":  "https://www.oddstrader.com/nba/player-props/",
+        "MLB":  "https://www.oddstrader.com/mlb/player-props/",
+        "NFL":  "https://www.oddstrader.com/nfl/player-props/",
+        "NHL":  "https://www.oddstrader.com/nhl/player-props/",
+        "WNBA": "https://www.oddstrader.com/wnba/player-props/",
+    },
+    "SportsBettingDime": {
+        "NBA":  "https://www.sportsbettingdime.com/nba/props/",
+        "MLB":  "https://www.sportsbettingdime.com/mlb/props/",
+        "NFL":  "https://www.sportsbettingdime.com/nfl/props/",
+        "NHL":  "https://www.sportsbettingdime.com/nhl/props/",
+        "WNBA": "https://www.sportsbettingdime.com/wnba/props/",
+    },
 }
 
 PROP_NAME_BLACKLIST = [
@@ -334,10 +359,24 @@ def calculate_lock_integrity(best_prop, best_game, board):
 def build_source_url(source_name, sport):
     sp=SPORT_PATH_MAP.get(sport.lower(), f"basketball/{sport.lower()}")
     vs=VSIN_SPORT_SLUG.get(sport,sport.lower())
-    sl=SPORT_URL_SLUG.get(sport,sport.lower())
     if source_name=="ESPN (JSON API)": return f"https://site.api.espn.com/apis/site/v2/sports/{sp}/scoreboard"
     if source_name=="VSIN Betting Splits": return f"https://data.vsin.com/{vs}/betting-splits/"
-    if source_name in PROP_SCRAPER_URLS: return PROP_SCRAPER_URLS[source_name].format(sport=sl)
+    if source_name in PROP_SCRAPER_URLS:
+        url_map = PROP_SCRAPER_URLS[source_name]
+        sport_upper = sport.upper()
+        if sport_upper in url_map:
+            return url_map[sport_upper]
+        # fallback for sports not explicitly mapped (UFC, Golf, Tennis, Soccer)
+        sl = SPORT_URL_SLUG.get(sport, sport.lower())
+        # return a sensible default using the first pattern we have (e.g., SBD style)
+        if source_name == "DraftEdge":
+            return f"https://draftedge.com/{sl}/{sl}-daily-projections/"
+        if source_name == "BettingPros":
+            return f"https://www.bettingpros.com/{sl}/odds/player-props/"
+        if source_name == "OddsTrader":
+            return f"https://www.oddstrader.com/{sl}/player-props/"
+        if source_name == "SportsBettingDime":
+            return f"https://www.sportsbettingdime.com/{sl}/props/"
     return ""
 
 def safe_fetch(url, name):
@@ -451,9 +490,10 @@ def scrape_draftedge(html):
 
 def fetch_all_prop_sources(sport):
     all_props = []
-    sl = SPORT_URL_SLUG.get(sport, sport.lower())
-    for source_name, url_template in PROP_SCRAPER_URLS.items():
-        url = url_template.format(sport=sl)
+    for source_name in PROP_SCRAPER_URLS:
+        url = build_source_url(source_name, sport)
+        if not url:
+            continue
         html = safe_fetch(url, source_name)
         if not html:
             continue
@@ -791,7 +831,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5 OS — Command Center</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5.1 OS — Multi-Sport</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -839,7 +879,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5 · Command Center</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5.1 · Multi-Sport Verified URLs</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -860,7 +900,7 @@ tabs=st.tabs(["📋 Summary","🏀 Board of 8","📊 Analysis","🔒 Locks & Par
 
 # ────────── TAB 0: SUMMARY (COMMAND CENTER) ──────────
 with tabs[0]:
-    st.markdown(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5")
+    st.markdown(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5.1")
     sport_display = st.session_state.get('last_sport', 'NBA').upper()
     st.markdown(f"**{sport_display} Slate — {datetime.now().strftime('%A, %B %d, %Y')}** | **Scanned:** {st.session_state.get('last_scan_time', datetime.now().strftime('%H:%M:%S'))} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE")
     st.markdown("🔒 **Sources:** LineStar ✅ · ESPN ✅ · VSIN ✅ · SBD ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅")
