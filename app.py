@@ -12,7 +12,7 @@ import shutil
 from scipy.stats import norm
 import time
 
-st.set_page_config(page_title="BetCouncil v3.5.1 All-Sport Engine", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v3.5.2 All-Sport Engine", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -103,29 +103,11 @@ ESPN_TO_STADIUM_ABBR = {
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
 
+# CLEANED: Only sources confirmed to return real data
+# BettingPros & SportsBettingDime removed — JS-only shells, 0 returns
+# OddsTrader fixed — now targets editorial article text
+# DraftEdge kept but expected to return 0 until headless browser added
 PROP_SCRAPER_URLS = {
-    "DraftEdge": {
-        "NBA":   "https://draftedge.com/nba/nba-daily-projections/",
-        "MLB":   "https://draftedge.com/mlb/todays-mlb-batter-prop-breakdown/",
-        "NFL":   "https://draftedge.com/nfl/nfl-fantasy-football-player-props/",
-        "NHL":   "https://draftedge.com/nhl/player-projections/",
-        "WNBA":  "https://draftedge.com/wnba/wnba-daily-projections/",
-        "UFC":   "https://draftedge.com/ufc/ufc-fight-props/",
-        "Golf":  "https://draftedge.com/golf/pga-dfs-projections/",
-        "Tennis":"",
-        "Soccer":"",
-    },
-    "BettingPros": {
-        "NBA":   "https://www.bettingpros.com/nba/odds/player-props/",
-        "MLB":   "https://www.bettingpros.com/mlb/odds/player-props/",
-        "NFL":   "https://www.bettingpros.com/nfl/odds/player-props/",
-        "NHL":   "https://www.bettingpros.com/nhl/odds/player-props/",
-        "WNBA":  "https://www.bettingpros.com/wnba/odds/player-props/",
-        "UFC":   "https://www.bettingpros.com/ufc/odds/fighter-props/",
-        "Golf":  "https://www.bettingpros.com/golf/odds/player-props/",
-        "Tennis":"https://www.bettingpros.com/tennis/odds/player-props/",
-        "Soccer":"https://www.bettingpros.com/soccer/odds/player-props/",
-    },
     "OddsTrader": {
         "NBA":   "https://www.oddstrader.com/nba/player-props/",
         "MLB":   "https://www.oddstrader.com/mlb/player-props/",
@@ -137,16 +119,16 @@ PROP_SCRAPER_URLS = {
         "Tennis":"https://www.oddstrader.com/tennis/player-props/",
         "Soccer":"https://www.oddstrader.com/soccer/player-props/",
     },
-    "SportsBettingDime": {
-        "NBA":   "https://www.sportsbettingdime.com/nba/props/",
-        "MLB":   "https://www.sportsbettingdime.com/mlb/props/",
-        "NFL":   "https://www.sportsbettingdime.com/nfl/props/",
-        "NHL":   "https://www.sportsbettingdime.com/nhl/props/",
-        "WNBA":  "https://www.sportsbettingdime.com/wnba/props/",
-        "UFC":   "https://www.sportsbettingdime.com/ufc/props/",
-        "Golf":  "https://www.sportsbettingdime.com/golf/props/",
-        "Tennis":"https://www.sportsbettingdime.com/tennis/props/",
-        "Soccer":"https://www.sportsbettingdime.com/soccer/props/",
+    "DraftEdge": {
+        "NBA":   "https://draftedge.com/nba/nba-daily-projections/",
+        "MLB":   "https://draftedge.com/mlb/todays-mlb-batter-prop-breakdown/",
+        "NFL":   "https://draftedge.com/nfl/nfl-fantasy-football-player-props/",
+        "NHL":   "https://draftedge.com/nhl/player-projections/",
+        "WNBA":  "https://draftedge.com/wnba/wnba-daily-projections/",
+        "UFC":   "https://draftedge.com/ufc/ufc-fight-props/",
+        "Golf":  "https://draftedge.com/golf/pga-dfs-projections/",
+        "Tennis":"",
+        "Soccer":"",
     },
 }
 
@@ -236,14 +218,14 @@ MODELS = [
 # Fallback with empty NBA props — no misleading stale data
 SPORT_FALLBACK_MAP = {
     "NBA":{"props":[],"games":[{"Matchup":"No NBA games found","Sport":"NBA"}]},
-    "WNBA":{"props":[{"Player":"A'ja Wilson","Prop":"PTS","Line":26.5,"Side":"OVER","Sport":"WNBA"}],"games":[{"Matchup":"LV Aces @ NY Liberty","Sport":"WNBA"}]},
-    "NFL":{"props":[{"Player":"Patrick Mahomes","Prop":"PASS_YDS","Line":275.5,"Side":"OVER","Sport":"NFL"}],"games":[{"Matchup":"KC @ BUF","Sport":"NFL"}]},
-    "MLB":{"props":[{"Player":"Aaron Judge","Prop":"HR","Line":0.5,"Side":"OVER","Sport":"MLB"}],"games":[{"Matchup":"NYY @ LAD","Sport":"MLB"}]},
-    "NHL":{"props":[{"Player":"Connor McDavid","Prop":"PTS","Line":1.5,"Side":"OVER","Sport":"NHL"}],"games":[{"Matchup":"EDM @ TOR","Sport":"NHL"}]},
-    "UFC":{"props":[],"games":[{"Matchup":"UFC Main Event","Sport":"UFC"}]},
-    "Golf":{"props":[],"games":[{"Matchup":"PGA Tournament","Sport":"Golf"}]},
-    "Tennis":{"props":[],"games":[{"Matchup":"ATP/WTA Match","Sport":"Tennis"}]},
-    "Soccer":{"props":[],"games":[{"Matchup":"Soccer Match","Sport":"Soccer"}]},
+    "WNBA":{"props":[],"games":[{"Matchup":"No WNBA games found","Sport":"WNBA"}]},
+    "NFL":{"props":[],"games":[{"Matchup":"No NFL games found","Sport":"NFL"}]},
+    "MLB":{"props":[],"games":[{"Matchup":"No MLB games found","Sport":"MLB"}]},
+    "NHL":{"props":[],"games":[{"Matchup":"No NHL games found","Sport":"NHL"}]},
+    "UFC":{"props":[],"games":[{"Matchup":"No UFC events found","Sport":"UFC"}]},
+    "Golf":{"props":[],"games":[{"Matchup":"No Golf tournaments found","Sport":"Golf"}]},
+    "Tennis":{"props":[],"games":[{"Matchup":"No Tennis matches found","Sport":"Tennis"}]},
+    "Soccer":{"props":[],"games":[{"Matchup":"No Soccer matches found","Sport":"Soccer"}]},
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -360,7 +342,6 @@ def estimate_prop_lines(players, sport):
         position = player.get("position", "")
         
         # Vary stats slightly based on position and random factor for realism
-        position_multiplier = 1.0
         if sport_key == "NBA":
             if position in ("PG", "SG"):
                 base_stats_local = {"PTS": base_stats["PTS"] * 1.1, "AST": base_stats["AST"] * 1.2, 
@@ -374,7 +355,7 @@ def estimate_prop_lines(players, sport):
         
         elif sport_key == "MLB":
             base_stats_local = base_stats
-            position_multiplier = 1.2 if position in ("1B", "DH") else 0.9 if position in ("SS", "2B") else 1.0
+            # Don't over-complicate MLB — just use base stats with variance
         
         elif sport_key == "NFL":
             if position == "QB":
@@ -388,15 +369,15 @@ def estimate_prop_lines(players, sport):
             elif position in ("WR", "TE"):
                 props.append({"Player": name, "Prop": "REC_YDS", "Line": round(base_stats["REC_YDS"] * (0.8 + np.random.random() * 0.4)),
                             "Side": "OVER", "Sport": sport, "source": "ESPN+StatMuse"})
+            continue  # Skip generic stat generation for NFL
         
         elif sport_key == "NHL":
             base_stats_local = base_stats
-            position_multiplier = 1.3 if position in ("C", "RW", "LW") else 0.7
         
         else:
             base_stats_local = base_stats
             
-        # Generate props based on sport context
+        # Generate props for non-NFL sports
         if sport_key in ("NBA", "MLB", "NHL"):
             for stat_name, base_line in base_stats_local.items():
                 if sport_key == "NBA" and stat_name in ("PTS", "REB", "AST", "PRA"):
@@ -412,6 +393,17 @@ def estimate_prop_lines(players, sport):
                         })
                 elif sport_key == "MLB" and stat_name in ("HR", "H", "RBI", "R"):
                     adjusted_line = round(base_line * (0.85 + np.random.random() * 0.3), 2)
+                    if 0.1 < adjusted_line < MAX_PROP_LINE:
+                        props.append({
+                            "Player": name,
+                            "Prop": stat_name,
+                            "Line": adjusted_line,
+                            "Side": "OVER",
+                            "Sport": sport,
+                            "source": "ESPN+StatMuse"
+                        })
+                elif sport_key == "NHL" and stat_name in ("PTS", "GOALS", "ASSISTS", "SOG"):
+                    adjusted_line = round(base_line * (0.85 + np.random.random() * 0.3), 1)
                     if 0.1 < adjusted_line < MAX_PROP_LINE:
                         props.append({
                             "Player": name,
@@ -504,11 +496,12 @@ def calculate_game_integrity(raw_games):
     else:             desc = "High Variance — Check Multiple Books"
     return score, desc
 
-def calculate_prop_integrity(props_count):
+def calculate_prop_integrity(props_count, source_count=1):
     if props_count==0: return 50,"No data"
+    if source_count >= 2 and props_count >= 15: return 92,"Live Props — Multi-Source Verified"
     if props_count>=10: return 85,"Live Props — Multi-Source"
     if props_count>=5: return 67,"Live Props — Limited Slate"
-    return 45,"Limited Data — Low Source Coverage"
+    return 45,"Estimated Props — ESPN+StatMuse"
 
 def calculate_council_integrity(board):
     if not board: return 50,"No council data"
@@ -599,44 +592,65 @@ def is_valid_nba_prop(name, line=None):
     return True
 
 # ──────────────────────────────────────────────────────────────
-# PROP SCRAPERS
+# PROP SCRAPERS (CLEANED)
 # ──────────────────────────────────────────────────────────────
-def scrape_sbd(html):
+def scrape_oddstrader(html):
+    """
+    OddsTrader embeds editorial picks in article body text.
+    Pattern: "Player Name: Over/Under X.X Stat"
+    These are written directly in static HTML — no JS needed.
+    """
     soup = BeautifulSoup(html, "html.parser")
     props = []
-    for row in soup.select(".props-table tr, .prop-row, .bet-row"):
-        cells = row.select("td, th")
-        if len(cells) >= 3:
-            player = cells[0].get_text(strip=True)
-            line_text = cells[1].get_text(strip=True)
-            try:
-                line = float(re.sub(r"[^\d.]", "", line_text))
-            except ValueError:
-                continue
-            if is_valid_nba_prop(player, line):
-                props.append({"Player": player, "Prop": "PTS", "Line": line, "Side": "OVER", "source": "SBD"})
-    if not props:
-        props = scrape_props_generic(html, "SBD")
-    return props
-
-def scrape_props_generic(html, source_name):
-    soup = BeautifulSoup(html, "html.parser")
+    
+    # Get text from article body — OddsTrader puts picks in <p> tags
     text = soup.get_text(" ", strip=True)
-    props = []
-    for m in re.finditer(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,2})\s+(?:OVER|UNDER\s+)?([0-9]+(?:\.[0-9])?)", text):
+    
+    # Pattern 1: "Bam Adebayo: Over 23.5 Points+Assists"
+    for m in re.finditer(
+        r"([A-Z][a-z]+ [A-Z][a-z]+):\s*(Over|Under)\s+(\d+\.?\d*)\s+([A-Za-z\+\s\-]+?)(?:\s*\(|[-–]|\n|$|\.)",
+        text
+    ):
         player = m.group(1).strip()
-        line_val = m.group(2)
-        try:
-            line = float(line_val)
-        except ValueError:
-            continue
+        side   = m.group(2).upper()
+        line   = float(m.group(3))
+        market = m.group(4).strip().upper().replace(" ", "_").replace("-", "_")[:15]
+        
         if is_valid_nba_prop(player, line):
-            props.append({"Player": player, "Prop": "PTS", "Line": line, "Side": "OVER", "source": source_name})
+            props.append({
+                "Player": player,
+                "Prop":   market,
+                "Line":   line,
+                "Side":   side,
+                "source": "OddsTrader"
+            })
+    
+    # Pattern 2: Sometimes structured as "Player Over X.X (Stat)"
+    if not props:
+        for m in re.finditer(
+            r"([A-Z][a-z]+ [A-Z][a-z]+)\s+(Over|Under)\s+(\d+\.?\d*)",
+            text
+        ):
+            player = m.group(1).strip()
+            side   = m.group(2).upper()
+            line   = float(m.group(3))
+            
+            if is_valid_nba_prop(player, line):
+                props.append({
+                    "Player": player,
+                    "Prop":   "PTS",
+                    "Line":   line,
+                    "Side":   side,
+                    "source": "OddsTrader"
+                })
+    
     return props
 
 def scrape_draftedge(html):
+    """DraftEdge — currently JS-rendered, returns 0 until headless browser added."""
     soup = BeautifulSoup(html, "html.parser")
     props = []
+    # Attempt table extraction (unlikely to work with JS rendering)
     for table in soup.select(".projection-table, table.projection, .props-table, table"):
         for row in table.select("tr"):
             cells = row.select("td, th")
@@ -668,6 +682,7 @@ def scrape_draftedge(html):
     return props
 
 def fetch_all_prop_sources(sport):
+    """Fetch props from all configured sources — now only working scrapers."""
     all_props = []
     for source_name in PROP_SCRAPER_URLS:
         url = build_source_url(source_name, sport)
@@ -676,21 +691,26 @@ def fetch_all_prop_sources(sport):
         html = safe_fetch(url, source_name)
         if not html:
             continue
-        if source_name == "SportsBettingDime":
-            props = scrape_sbd(html)
+        
+        # Route to correct scraper based on source
+        if source_name == "OddsTrader":
+            props = scrape_oddstrader(html)
         elif source_name == "DraftEdge":
             props = scrape_draftedge(html)
         else:
-            props = scrape_props_generic(html, source_name)
+            # Generic fallback — unlikely to find anything
+            props = []
+        
         if props:
             log_scan(f"{source_name}: {len(props)} props","ok")
             all_props.extend(props)
         else:
             log_scan(f"{source_name}: 0 props","skip")
+    
     return all_props
 
 # ──────────────────────────────────────────────────────────────
-# LINESTAR API — Auto-calculated period ID
+# LINESTAR API — Auto-calculated period ID with retry
 # ──────────────────────────────────────────────────────────────
 def fetch_linestar_props(sport):
     sport_id = LINESTAR_SPORT_IDS.get(sport.upper())
@@ -707,6 +727,7 @@ def fetch_linestar_props(sport):
     periods_to_try = [period_id, period_id - 1, period_id - 2]
     
     data = None
+    used_period = None
     for pid in periods_to_try:
         try:
             url = "https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/GetPropBets"
@@ -716,6 +737,7 @@ def fetch_linestar_props(sport):
                 data = resp.json()
                 # Check if we actually got data
                 if data.get("PropBets") or data.get("Games"):
+                    used_period = pid
                     log_scan(f"LineStar period {pid}: data found", "ok")
                     break
                 else:
@@ -726,7 +748,7 @@ def fetch_linestar_props(sport):
             log_scan(f"LineStar period {pid}: {str(e)[:50]}", "fail")
     
     if not data or not (data.get("PropBets") or data.get("Games")):
-        log_scan(f"LineStar: No data in any period", "fail")
+        log_scan(f"LineStar: No data in any period","fail")
         return [], []
     
     try:
@@ -745,7 +767,7 @@ def fetch_linestar_props(sport):
             away = team_lookup.get(g.get("AwayTeamId"), "AWAY")
             home = team_lookup.get(g.get("HomeTeamId"), "HOME")
             game_list.append({"Matchup": f"{away} @ {home}", "Sport": sport, "Spread": f"{home} {g.get('VegasLineHome', 0):+.1f}", "Total": str(g.get('VegasTotals', 'N/A'))})
-        log_scan(f"LineStar: {len(props)} props, {len(game_list)} games (period {pid})", "ok")
+        log_scan(f"LineStar: {len(props)} props, {len(game_list)} games (period {used_period})", "ok")
         return props, game_list
     except Exception as e:
         log_scan(f"LineStar parse: {str(e)[:50]}", "fail")
@@ -813,7 +835,7 @@ def run_game_council(games):
     return out
 
 # ──────────────────────────────────────────────────────────────
-# DATA LOADER (Restored VegasInsider, improved fallback & weather)
+# DATA LOADER (ESPN roster fallback, cleaned scrapers)
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
@@ -822,13 +844,15 @@ def load_sport_data_live(sport):
     # 1. LineStar props & games
     ls_props, ls_games = fetch_linestar_props(sport)
     
-    # 2. Multi-source scraped props
+    # 2. Multi-source scraped props (OddsTrader + DraftEdge only)
     scraped_props = fetch_all_prop_sources(sport)
     
     all_props_dict = {}
+    source_count = 0
     for p in ls_props:
         key = (p["Player"], p["Prop"])
         all_props_dict[key] = p
+        source_count = max(source_count, 1)
     for p in scraped_props:
         key = (p["Player"], p["Prop"])
         if key in all_props_dict:
@@ -836,8 +860,10 @@ def load_sport_data_live(sport):
             new_source = p.get("source", "")
             if new_source not in existing_source:
                 all_props_dict[key]["source"] = existing_source + "," + new_source
+                source_count = max(source_count, all_props_dict[key]["source"].count(",") + 1)
         else:
             all_props_dict[key] = p
+            source_count = max(source_count, 1)
     all_props = list(all_props_dict.values())
     
     # 3. ESPN games (matchups only) — SAVE RAW JSON FOR FALLBACK
@@ -907,16 +933,17 @@ def load_sport_data_live(sport):
         # Try ESPN roster + StatMuse line estimation before giving up
         all_props, prop_source = get_props_v2(sport, espn_raw_json=espn_raw_json)
         if all_props:
-            log_scan(f"Props: {len(all_props)} from {prop_source}", "ok")
+            log_scan(f"Props: {len(all_props)} from {prop_source}","ok")
+            source_count = 0  # Estimated, not multi-source
         else:
-            # Ultimate fallback — use hardcoded fallback data
-            fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP.get("NBA", {}))
+            # Ultimate fallback — empty, no stale data
+            fallback = SPORT_FALLBACK_MAP.get(sport.upper(), {})
             fb_props = fallback.get("props", [])
             if fb_props:
                 all_props = fb_props
-                log_scan(f"All sources failed — {len(all_props)} fallback props", "warn")
+                log_scan(f"All sources failed — {len(all_props)} fallback props","warn")
             else:
-                log_scan(f"All sources failed — no props available for {sport}", "warn")
+                log_scan(f"All sources failed — no props available for {sport}","warn")
     
     if not all_games:
         fallback = SPORT_FALLBACK_MAP.get(sport.upper(), SPORT_FALLBACK_MAP.get("NBA", {}))
@@ -926,7 +953,7 @@ def load_sport_data_live(sport):
     game_board = run_game_council(all_games)
     
     g_int, g_desc = calculate_game_integrity(raw_games)
-    p_int, p_desc = calculate_prop_integrity(len(board))
+    p_int, p_desc = calculate_prop_integrity(len(board), source_count)
     c_int, c_desc = calculate_council_integrity(board)
     approved = [i for i in board if i.get("Tier") in ("SOVEREIGN", "ELITE", "APPROVED")]
     best_prop = approved[0] if approved else None
@@ -1069,7 +1096,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5.1 OS — Lines Fixed</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5.2 OS — Scrapers Cleaned</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -1117,7 +1144,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5.1 · VegasInsider Lines Restored</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5.2 · Scrapers Cleaned — Only Working Sources</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -1138,10 +1165,10 @@ tabs=st.tabs(["📋 Summary","🏀 Board of 8","📊 Analysis","🔒 Locks & Par
 
 # ────────── TAB 0: SUMMARY (COMMAND CENTER) ──────────
 with tabs[0]:
-    st.markdown(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5.1")
+    st.markdown(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5.2")
     sport_display = st.session_state.get('last_sport', 'NBA').upper()
     st.markdown(f"**{sport_display} Slate — {datetime.now().strftime('%A, %B %d, %Y')}** | **Scanned:** {st.session_state.get('last_scan_time', datetime.now().strftime('%H:%M:%S'))} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE")
-    st.markdown("🔒 **Sources:** LineStar ✅ · VegasInsider ✅ · ESPN ✅ · VSIN ✅ · SBD ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅")
+    st.markdown("🔒 **Sources:** ESPN ✅ · LineStar ✅ · VegasInsider ✅ · VSIN ✅ · OddsTrader ✅")
     st.markdown("---")
 
     # 1. GAME LINES & WEATHER
@@ -1439,13 +1466,16 @@ with tabs[7]:
             lb="🟢 WORKING" if s=="ok" else "🔴 DOWN" if s=="fail" else "⚪ UNCHECKED"
             st.markdown(f'<div class="section-card">{lb} <b>{n}</b> <span class="muted-text">— {t}</span></div>',unsafe_allow_html=True)
         st.markdown("### Prop Sources")
-        st.markdown(f'<div class="section-card">🟢 <b>LineStar API</b> <span class="muted-text">— auto-period</span></div>', unsafe_allow_html=True)
-        for n in PROP_SCRAPER_URLS:
-            st.markdown(f'<div class="section-card">⚪ <b>{n}</b> <span class="muted-text">— pending scan</span></div>',unsafe_allow_html=True)
+        st.markdown(f'<div class="section-card">🟢 <b>LineStar API</b> <span class="muted-text">— auto-period with retry</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-card">⚠️ <b>OddsTrader</b> <span class="muted-text">— editorial picks from HTML</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-card">🔴 <b>DraftEdge</b> <span class="muted-text">— JS-rendered, 0 returns</span></div>', unsafe_allow_html=True)
     with cr:
         st.markdown("### Consensus Sources")
         for n in CONSENSUS_SOURCES:
             st.markdown(f'<div class="section-card">⚪ <b>{n}</b></div>',unsafe_allow_html=True)
+        st.markdown("### Removed Sources")
+        st.markdown(f'<div class="section-card" style="opacity:0.6;">❌ <b>BettingPros</b> <span class="muted-text">— JS shell, 0 props</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-card" style="opacity:0.6;">❌ <b>SportsBettingDime</b> <span class="muted-text">— JS shell, 0 props</span></div>', unsafe_allow_html=True)
     if st.session_state.scan_log:
         st.markdown("---\n## 📜 Scan Log")
         lh='<div class="scan-log">'
