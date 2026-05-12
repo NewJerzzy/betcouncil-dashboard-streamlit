@@ -12,7 +12,7 @@ import shutil
 from scipy.stats import norm
 import time
 
-st.set_page_config(page_title="BetCouncil v3.4 Multi-Source Engine", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v3.4.1 Multi-Source Engine", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -74,10 +74,11 @@ VSIN_SPORT_SLUG = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba"
 
 LINESTAR_SPORT_IDS = {"NBA": 2, "NFL": 1, "MLB": 4, "NHL": 3, "WNBA": 7}
 
+# v3.4.1 — Updated URLs from log analysis
 PROP_SCRAPER_URLS = {
-    "DraftEdge": "https://draftedge.com/{sport}/{sport}-fantasy-player-prop-picks/",
-    "BettingPros": "https://www.bettingpros.com/{sport}/picks/prop-bets/",
-    "OddsTrader": "https://www.oddstrader.com/{sport}/odds/",
+    "DraftEdge": "https://draftedge.com/{sport}/{sport}-daily-projections/",
+    "BettingPros": "https://www.bettingpros.com/{sport}/odds/player-props/",
+    "OddsTrader": "https://www.oddstrader.com/betting/{sport}-playoff-betting-trends/",
     "SportsBettingDime": "https://www.sportsbettingdime.com/{sport}/props/",
 }
 
@@ -434,27 +435,6 @@ def parse_espn_json(html, sport):
     except: pass
     return out
 
-def parse_vegasinsider_next_data(html):
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if not m:
-        return []
-    try:
-        nd = json.loads(m.group(1))
-        games = []
-        props_data = nd.get("props", {}).get("pageProps", {})
-        for key in ["games", "odds", "matchups", "events"]:
-            if key in props_data:
-                for g in props_data[key]:
-                    if isinstance(g, dict):
-                        games.append({
-                            "matchup": g.get("name") or f"{g.get('away','')} @ {g.get('home','')}",
-                            "spread": str(g.get("spread", "N/A")),
-                            "total": str(g.get("total", "N/A")),
-                        })
-        return games
-    except:
-        return []
-
 def parse_vsin_consensus(html):
     soup=BeautifulSoup(html,"html.parser")
     results={}
@@ -520,7 +500,7 @@ def generate_full_summary(board, game_verdicts, sport, raw_games, weather_data, 
     for matchup,w in weather_data.items(): wp.append(f"{matchup.split(' @ ')[-1]} {w['advisory']}")
     wl=" · ".join(wp) if wp else "N/A"
     L=[]
-    L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.4\n")
+    L.append(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.4.1\n")
     L.append(f"**{sport_display} — {date_str}** | **Scanned:** {st.session_state.last_scan_time} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE\n")
     L.append(f"🔒 **Sources:** LineStar ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅ · SBD ✅ · ESPN ✅ · VSIN ✅\n")
     L.append(f"---\n")
@@ -746,7 +726,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.4 OS — Multi-Source Engine</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.4.1 OS — URL Fix Applied</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -794,7 +774,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.4 · 7-Source Multi-Engine</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.4.1 · URL Patches Applied</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
