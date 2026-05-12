@@ -584,7 +584,6 @@ def is_valid_nba_prop(name, line=None):
 # PROP SCRAPERS — VERIFIED WORKING (v3.5.3)
 # ──────────────────────────────────────────────────────────────
 
-# OddsTrader's editorial picks are date-stamped — check for "Today's NBA Player Props" or similar.
 def scrape_oddstrader(html):
     """
     OddsTrader embeds editorial picks in article body text.
@@ -595,10 +594,7 @@ def scrape_oddstrader(html):
     props = []
     
     text = soup.get_text(" ", strip=True)
-    
-    # Optional: verify the article is for today
-    # if date not in text: return []  # skip stale articles
-    
+
     # Pattern 1: "Bam Adebayo: Over 23.5 Points+Assists"
     for m in re.finditer(
         r"([A-Z][a-z]+ [A-Z][a-z]+):\s*(Over|Under)\s+(\d+\.?\d*)\s+([A-Za-z\+\s\-]+?)(?:\s*\(|[-–]|\n|$|\.)",
@@ -659,7 +655,6 @@ def scrape_docsports(html, sport="NBA"):
         "yards": "PASS_YDS",
     }
 
-    # Each article summary is in a <p> tag on the hub page
     text = soup.get_text(" ", strip=True)
 
     # Pattern 1: "Name's prop bets open at X pts, Y dimes, Z rebounds"
@@ -671,7 +666,6 @@ def scrape_docsports(html, sport="NBA"):
         player = m.group(1).strip()
         stats_str = m.group(2)
 
-        # Parse each stat/line pair
         for stat_m in re.finditer(r"([\d.]+)\s+(\w+)", stats_str):
             line = float(stat_m.group(1))
             stat_word = stat_m.group(2).lower().rstrip("s")
@@ -719,7 +713,6 @@ def fetch_all_prop_sources(sport):
             log_scan(f"{source_name}: fetch failed","fail")
             continue
         
-        # Route to correct scraper based on source
         if source_name == "OddsTrader":
             props = scrape_oddstrader(html)
         elif source_name == "DocSports":
@@ -736,22 +729,22 @@ def fetch_all_prop_sources(sport):
     return all_props
 
 # ──────────────────────────────────────────────────────────────
-# LINESTAR API — Auto-calculated period ID with retry
+# LINESTAR API — ONLY TODAY / TOMORROW (NO YESTERDAY FALLBACK)
 # ──────────────────────────────────────────────────────────────
 def fetch_linestar_props(sport):
     sport_id = LINESTAR_SPORT_IDS.get(sport.upper())
     if not sport_id:
         return [], []
-    
+
     base_date = date(2026, 5, 10)
     base_period = 2587
     today = date.today()
     days_diff = (today - base_date).days
     period_id = base_period + days_diff
-    
-    # Try current period, then yesterday, then day before
-    periods_to_try = [period_id, period_id - 1, period_id - 2]
-    
+
+    # Only try today and tomorrow — NEVER yesterday
+    periods_to_try = [period_id, period_id + 1]
+
     data = None
     used_period = None
     for pid in periods_to_try:
@@ -771,11 +764,11 @@ def fetch_linestar_props(sport):
                 log_scan(f"LineStar period {pid}: HTTP {resp.status_code}", "fail")
         except Exception as e:
             log_scan(f"LineStar period {pid}: {str(e)[:50]}", "fail")
-    
+
     if not data or not (data.get("PropBets") or data.get("Games")):
-        log_scan(f"LineStar: No data in any period","fail")
+        log_scan("LineStar: No data for today – skipping (will use other sources)", "warn")
         return [], []
-    
+
     try:
         players = {p["Id"]: p["Name"] for p in data.get("Players", [])}
         bet_types = {b["Id"]: b["StatName"] for b in data.get("BetTypes", [])}
@@ -866,10 +859,7 @@ def load_sport_data_live(sport):
     weather_results={}; consensus_results={}
     log_scan(f"Loading {sport} board...","skip")
     
-    # 1. LineStar props & games
     ls_props, ls_games = fetch_linestar_props(sport)
-    
-    # 2. Web scraped props (OddsTrader + DocSports)
     scraped_props = fetch_all_prop_sources(sport)
     
     all_props_dict = {}
@@ -896,7 +886,6 @@ def load_sport_data_live(sport):
     source_count = len(sources_seen)
     all_props = list(all_props_dict.values())
     
-    # 3. ESPN games — SAVE RAW JSON FOR FALLBACK
     espn_url=build_source_url("ESPN (JSON API)",sport)
     raw_games=[]
     espn_raw_json = None
@@ -907,7 +896,6 @@ def load_sport_data_live(sport):
             espn_raw_json = html
             log_scan(f"ESPN: {len(raw_games)} games","ok")
     
-    # 4. VegasInsider lines
     vi_lines = {}
     sl = SPORT_URL_SLUG.get(sport, sport.lower())
     vi_url = f"https://www.vegasinsider.com/{sl}/odds/las-vegas/"
@@ -924,7 +912,6 @@ def load_sport_data_live(sport):
                     vi_lines[teams] = {"spread": spread, "total": total}
         log_scan(f"VegasInsider: {len(vi_lines)} lines","ok")
     
-    # Merge games
     if ls_games:
         all_games = ls_games
         raw_games = [{"matchup":g["Matchup"],"spread":g["Spread"],"total":g["Total"]} for g in ls_games]
@@ -943,13 +930,11 @@ def load_sport_data_live(sport):
     else:
         all_games = []
     
-    # 5. VSIN consensus
     vsin_url=build_source_url("VSIN Betting Splits",sport)
     if vsin_url:
         vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
         if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
     
-    # 6. Weather (MLB only)
     if sport.upper()=="MLB":
         for game in raw_games:
             parts=game.get("matchup","").split(" @ ")
@@ -958,7 +943,6 @@ def load_sport_data_live(sport):
                 a,d = apply_weather_filter(ha,sport)
                 weather_results[game["matchup"]]={"advisory":a,"detail":d}
     
-    # 7. FALLBACK: ESPN roster extraction if no props found
     if not all_props:
         all_props, prop_source = get_props_v2(sport, espn_raw_json=espn_raw_json)
         if all_props:
@@ -1198,7 +1182,6 @@ with tabs[0]:
     st.markdown("🔒 **Sources:** ESPN ✅ · LineStar ✅ · VegasInsider ✅ · VSIN ✅ · OddsTrader ✅ · DocSports ✅")
     st.markdown("---")
 
-    # 1. GAME LINES & WEATHER
     st.markdown("## 🚨 GAME LINES (Live Data)")
     g_integrity = st.session_state.get('game_integrity', 50)
     gd = st.session_state.get('game_integrity_desc', 'No data')
@@ -1232,7 +1215,6 @@ with tabs[0]:
         st.info("No game data scanned.")
     st.markdown("---")
 
-    # 2. PLAYER PROPS
     st.markdown("## 📊 PLAYER PROPS (Multi-Source Scan)")
     p_integrity = st.session_state.get('prop_integrity', 50)
     pd2 = st.session_state.get('prop_integrity_desc', 'No data')
@@ -1245,7 +1227,6 @@ with tabs[0]:
         st.info("No prop data scanned.")
     st.markdown("---")
 
-    # 3. COUNCIL VERDICT
     st.markdown("## 🗳️ COUNCIL VERDICT (8 Models)")
     c_integrity = st.session_state.get('council_integrity', 50)
     cd = st.session_state.get('council_integrity_desc', 'No data')
@@ -1257,7 +1238,6 @@ with tabs[0]:
         st.table(df_v)
     st.markdown("---")
 
-    # 4. THE LOCK ZONE
     st.markdown("## 🔒 LOCKS OF THE DAY")
     l_integrity = st.session_state.get('lock_integrity', 50)
     ld = st.session_state.get('lock_integrity_desc', 'No data')
@@ -1277,7 +1257,6 @@ with tabs[0]:
         st.info("No approved picks available.")
     st.markdown("---")
 
-    # 5. DAILY PARLAY
     st.markdown("### 🎲 DAILY PARLAY SELECTIONS")
     col_p, col_g = st.columns(2)
     
@@ -1301,7 +1280,6 @@ with tabs[0]:
 
     st.markdown("---")
     
-    # 7. SYSTEM STATUS
     avg_integrity = (g_integrity + p_integrity + c_integrity) // 3
     bankroll_val = st.session_state.get('bankroll', 1000.0)
     unit_size_val = bankroll_val * KELLY_FRACTION * 0.015
