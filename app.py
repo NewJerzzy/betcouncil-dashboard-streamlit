@@ -190,7 +190,7 @@ SPORT_FALLBACK_MAP = {
 }
 
 # ──────────────────────────────────────────────────────────────
-# SESSION STATE
+# SESSION STATE — FIXED: initialized to [] not None
 # ──────────────────────────────────────────────────────────────
 if "bankroll" not in st.session_state: st.session_state.bankroll = DEFAULT_BANKROLL
 if "bankroll_start_of_day" not in st.session_state: st.session_state.bankroll_start_of_day = DEFAULT_BANKROLL
@@ -199,8 +199,8 @@ if "session_start" not in st.session_state: st.session_state.session_start = tim
 if "site_status" not in st.session_state: st.session_state.site_status = {n:{"status":"unknown","last_checked":"","error":""} for n in ALL_SOURCES}
 if "scan_log" not in st.session_state: st.session_state.scan_log = []
 if "cross_sport_board" not in st.session_state: st.session_state.cross_sport_board = None
-if "board_data" not in st.session_state: st.session_state.board_data = None
-if "game_verdicts" not in st.session_state: st.session_state.game_verdicts = None
+if "board_data" not in st.session_state: st.session_state.board_data = []   # ← FIXED: was None
+if "game_verdicts" not in st.session_state: st.session_state.game_verdicts = []  # ← FIXED: was None
 if "last_sport" not in st.session_state: st.session_state.last_sport = "NBA"
 if "last_scan_time" not in st.session_state: st.session_state.last_scan_time = ""
 if "summary_text" not in st.session_state: st.session_state.summary_text = ""
@@ -366,9 +366,7 @@ def build_source_url(source_name, sport):
         sport_upper = sport.upper()
         if sport_upper in url_map:
             return url_map[sport_upper]
-        # fallback for sports not explicitly mapped (UFC, Golf, Tennis, Soccer)
         sl = SPORT_URL_SLUG.get(sport, sport.lower())
-        # return a sensible default using the first pattern we have (e.g., SBD style)
         if source_name == "DraftEdge":
             return f"https://draftedge.com/{sl}/{sl}-daily-projections/"
         if source_name == "BettingPros":
@@ -922,8 +920,8 @@ with tabs[0]:
         weather_str = "No weather data available"
     st.markdown(f"🌡️ **Weather:** {weather_str}")
     
-    raw_games = st.session_state.get('raw_games_for_summary', [])
-    game_board = st.session_state.get('game_verdicts', [])
+    raw_games = st.session_state.get('raw_games_for_summary') or []
+    game_board = st.session_state.get('game_verdicts') or []
     if game_board:
         df_g = pd.DataFrame(game_board)
         cols = ['Matchup', 'Spread', 'Total']
@@ -945,7 +943,7 @@ with tabs[0]:
     p_integrity = st.session_state.get('prop_integrity', 50)
     pd2 = st.session_state.get('prop_integrity_desc', 'No data')
     st.markdown(f"📊 **PROP INTEGRITY: {p_integrity}%** ({pd2})")
-    board = st.session_state.get('board_data', [])
+    board = st.session_state.get('board_data') or []
     if board:
         df_p = pd.DataFrame(board)[['Player', 'Prop', 'Line', 'Side']].head(10)
         st.table(df_p)
@@ -976,7 +974,7 @@ with tabs[0]:
         best_p = max(approved, key=lambda x: x.get('Weighted Score', 0))
         st.success(f"🏆 **TOP PROP:** {best_p['Player']} {best_p['Side']} {best_p['Line']} {best_p['Prop']} — {best_p.get('Tier Label', '')}")
         
-        game_verdicts = st.session_state.get('game_verdicts', [])
+        game_verdicts = st.session_state.get('game_verdicts') or []
         approved_games = [g for g in game_verdicts if g.get('Tier') in ('SOVEREIGN', 'ELITE', 'APPROVED')]
         if approved_games:
             best_g = max(approved_games, key=lambda x: x.get('Weighted Score', 0))
