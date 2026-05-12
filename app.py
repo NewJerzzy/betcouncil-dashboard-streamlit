@@ -55,6 +55,13 @@ h4,h5 { font-size:16px !important; color:#f4f8fc; text-transform:uppercase; lett
 .log-ok { color:#0d9488; }
 .log-fail { color:#d03030; }
 .log-skip { color:#5a7088; }
+
+.prop-card { background: #0d1219; border: 1px solid #1c2a3a; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem; }
+.prop-card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.prop-card-player { font-size: 17px; font-weight: 700; color: #f4f8fc; }
+.prop-card-matchup { font-size: 14px; color: #5a7088; }
+.prop-card-edge { font-size: 30px; font-weight: 800; }
+.parlay-card, .game-parlay-card { background: #0d1219; border: 1px solid #1c2a3a; border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -177,9 +184,13 @@ if "weather_data" not in st.session_state: st.session_state.weather_data = {}
 if "raw_games_for_summary" not in st.session_state: st.session_state.raw_games_for_summary = []
 if "consensus_data" not in st.session_state: st.session_state.consensus_data = {}
 if "game_integrity" not in st.session_state: st.session_state.game_integrity = 50
+if "game_integrity_desc" not in st.session_state: st.session_state.game_integrity_desc = "No data"
 if "prop_integrity" not in st.session_state: st.session_state.prop_integrity = 50
+if "prop_integrity_desc" not in st.session_state: st.session_state.prop_integrity_desc = "No data"
 if "council_integrity" not in st.session_state: st.session_state.council_integrity = 50
+if "council_integrity_desc" not in st.session_state: st.session_state.council_integrity_desc = "No data"
 if "lock_integrity" not in st.session_state: st.session_state.lock_integrity = 50
+if "lock_integrity_desc" not in st.session_state: st.session_state.lock_integrity_desc = "No data"
 if "kelly_odds" not in st.session_state: st.session_state.kelly_odds = -110
 if "kelly_prob" not in st.session_state: st.session_state.kelly_prob = 55.0
 
@@ -778,7 +789,7 @@ firewall_passed=sum(1 for v in firewall_checks.values() if v)
 # SIDEBAR
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5 OS — Auto-Period Engine</div>',unsafe_allow_html=True)
+    st.markdown('<div style="font-size:24px;font-weight:800;color:#f4f8fc;letter-spacing:1px;margin-bottom:6px;">🛡️ BetCouncil</div><div style="font-size:12px;color:#5a7088;margin-bottom:14px;">3.5 OS — Command Center</div>',unsafe_allow_html=True)
     change_class="sidebar-change-green" if daily_change_pct>=0 else "red-text"
     change_sign="+" if daily_change_pct>=0 else ""
     color_span='<span class="teal-text">' if daily_change_pct>=0 else '<span class="red-text">'
@@ -826,7 +837,7 @@ st.markdown(f"""
 <div class='command-bar'>
 <div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;'>
 <div style='width:42px;height:42px;background:linear-gradient(135deg,#e8a020,#b07010);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;'>⚡</div>
-<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5 · Auto-Period · Self-Updating</div></div>
+<div><div style='font-size:22px;font-weight:700;color:#f4f8fc;letter-spacing:1px;'>BetCouncil</div><div style='font-size:12px;color:#5a7088;'>v3.5 · Command Center</div></div>
 <div style='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;'>
 <span class='toggle-btn active'>🛡️ Safe: ON</span>
 <span class='toggle-btn active'>⚠️ Blowout: ON</span>
@@ -845,24 +856,39 @@ st.markdown(f"""
 # ──────────────────────────────────────────────────────────────
 tabs=st.tabs(["📋 Summary","🏀 Board of 8","📊 Analysis","🔒 Locks & Parlays","📋 Locks & Ledger","🔄 Reconciliation","🧠 Models","⚙️ Settings"])
 
-# ────────── TAB 0: SUMMARY (STREAMLIT COMPONENTS) ──────────
+# ────────── TAB 0: SUMMARY (COMMAND CENTER) ──────────
 with tabs[0]:
     st.markdown(f"# 🧠 THE BOARD OF 8 — BETCOUNCIL v3.5")
-    
-    current_time = datetime.now().strftime("%H:%M:%S")
     sport_display = st.session_state.get('last_sport', 'NBA').upper()
-    st.markdown(f"**{sport_display} Slate — {datetime.now().strftime('%A, %B %d, %Y')}** | **Scanned:** {st.session_state.get('last_scan_time', current_time)} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE")
+    st.markdown(f"**{sport_display} Slate — {datetime.now().strftime('%A, %B %d, %Y')}** | **Scanned:** {st.session_state.get('last_scan_time', datetime.now().strftime('%H:%M:%S'))} | **Status:** 🛡️ SAFE CORRIDOR ACTIVE")
     st.markdown("🔒 **Sources:** LineStar ✅ · ESPN ✅ · VSIN ✅ · SBD ✅ · DraftEdge ✅ · BettingPros ✅ · OddsTrader ✅")
     st.markdown("---")
-    
-    # 1. GAME LINES
+
+    # 1. GAME LINES & WEATHER
     st.markdown("## 🚨 GAME LINES (Live Data)")
-    gi = st.session_state.get('game_integrity', 50)
+    g_integrity = st.session_state.get('game_integrity', 50)
     gd = st.session_state.get('game_integrity_desc', 'No data')
-    st.markdown(f"📊 **GAME INTEGRITY: {gi}%** ({gd})")
+    st.markdown(f"📊 **GAME INTEGRITY: {g_integrity}%** ({gd})")
+    
+    weather_data = st.session_state.get('weather_data', {})
+    if weather_data:
+        wp = []
+        for m, w in weather_data.items():
+            wp.append(f"{m.split(' @ ')[-1]}: {w['advisory']}")
+        weather_str = " | ".join(wp)
+    else:
+        weather_str = "No weather data available"
+    st.markdown(f"🌡️ **Weather:** {weather_str}")
     
     raw_games = st.session_state.get('raw_games_for_summary', [])
-    if raw_games:
+    game_board = st.session_state.get('game_verdicts', [])
+    if game_board:
+        df_g = pd.DataFrame(game_board)
+        cols = ['Matchup', 'Spread', 'Total']
+        available = [c for c in cols if c in df_g.columns]
+        if available:
+            st.table(df_g[available].head(10))
+    elif raw_games:
         df_g = pd.DataFrame(raw_games)
         cols = ['matchup', 'spread', 'total']
         available = [c for c in cols if c in df_g.columns]
@@ -870,70 +896,101 @@ with tabs[0]:
             st.table(df_g[available].head(10).rename(columns={'matchup':'Matchup','spread':'Spread','total':'Total'}))
     else:
         st.info("No game data scanned.")
-    
-    # Weather
-    weather_data = st.session_state.get('weather_data', {})
-    if weather_data:
-        wp = []
-        for m, w in weather_data.items():
-            wp.append(f"{m.split(' @ ')[-1]} {w['advisory']}")
-        st.caption(f"Weather: {' · '.join(wp)}")
-    else:
-        st.caption("Weather: N/A")
     st.markdown("---")
-    
-    # 2. PLAYER PROPS
+
+    # 2. PLAYER PROPS (Multi-Source Scan)
     st.markdown("## 📊 PLAYER PROPS (Multi-Source Scan)")
-    pi = st.session_state.get('prop_integrity', 50)
+    p_integrity = st.session_state.get('prop_integrity', 50)
     pd2 = st.session_state.get('prop_integrity_desc', 'No data')
-    st.markdown(f"📊 **PROP INTEGRITY: {pi}%** ({pd2})")
-    
+    st.markdown(f"📊 **PROP INTEGRITY: {p_integrity}%** ({pd2})")
     board = st.session_state.get('board_data', [])
     if board:
-        df_p = pd.DataFrame(board)[['Player','Prop','Line','Side']].head(12)
+        df_p = pd.DataFrame(board)[['Player', 'Prop', 'Line', 'Side']].head(10)
         st.table(df_p)
     else:
         st.info("No prop data scanned.")
     st.markdown("---")
-    
-    # 3. COUNCIL VERDICT
-    st.markdown("## 🗳️ COUNCIL VERDICT (8 Models · Weighted Consensus)")
-    ci = st.session_state.get('council_integrity', 50)
+
+    # 3. COUNCIL VERDICT (Weighted Consensus)
+    st.markdown("## 🗳️ COUNCIL VERDICT (8 Models)")
+    c_integrity = st.session_state.get('council_integrity', 50)
     cd = st.session_state.get('council_integrity_desc', 'No data')
-    st.markdown(f"📊 **COUNCIL INTEGRITY: {ci}%** ({cd})")
-    
+    st.markdown(f"📊 **COUNCIL INTEGRITY: {c_integrity}%** ({cd})")
     if board:
         verdict = sorted(board, key=lambda x: x.get('Weighted Score', 0), reverse=True)
-        df_v = pd.DataFrame(verdict)[['Player','Weighted Score','Tier Label']].head(10)
-        df_v.columns = ['Pick','Score','Tier']
+        df_v = pd.DataFrame(verdict)[['Player', 'Weighted Score', 'Tier Label']].head(10)
+        df_v.columns = ['Player', 'Score', 'Tier']
         st.table(df_v)
     st.markdown("---")
-    
-    # 4. LOCKS OF THE DAY
+
+    # 4. THE LOCK ZONE (Actionable Output)
     st.markdown("## 🔒 LOCKS OF THE DAY")
-    li = st.session_state.get('lock_integrity', 50)
+    l_integrity = st.session_state.get('lock_integrity', 50)
     ld = st.session_state.get('lock_integrity_desc', 'No data')
-    st.markdown(f"📊 **LOCK INTEGRITY: {li}%** ({ld})")
+    st.markdown(f"📊 **LOCK INTEGRITY: {l_integrity}%** ({ld})")
     
-    approved = [i for i in board if i.get('Tier') in ('SOVEREIGN','ELITE','APPROVED')]
+    approved = [i for i in board if i.get('Tier') in ('SOVEREIGN', 'ELITE', 'APPROVED')]
     if approved:
-        top_lock = max(approved, key=lambda x: x.get('Weighted Score', 0))
-        game_board = st.session_state.get('game_verdicts', [])
-        approved_games = [g for g in game_board if g.get('Tier') in ('SOVEREIGN','ELITE','APPROVED')]
+        best_p = max(approved, key=lambda x: x.get('Weighted Score', 0))
+        st.success(f"🏆 **TOP PROP:** {best_p['Player']} {best_p['Side']} {best_p['Line']} {best_p['Prop']} — {best_p.get('Tier Label', '')}")
         
-        st.success(f"**TOP PROP:** {top_lock['Player']} {top_lock['Side']} {top_lock['Line']} {top_lock['Prop']} — {top_lock.get('Tier Label','')}")
-        
+        game_verdicts = st.session_state.get('game_verdicts', [])
+        approved_games = [g for g in game_verdicts if g.get('Tier') in ('SOVEREIGN', 'ELITE', 'APPROVED')]
         if approved_games:
-            best_game = max(approved_games, key=lambda x: x.get('Weighted Score', 0))
-            st.success(f"**TOP GAME:** {best_game.get('Matchup','')} — {best_game.get('Tier Label','')}")
+            best_g = max(approved_games, key=lambda x: x.get('Weighted Score', 0))
+            st.info(f"🏟️ **TOP GAME:** {best_g.get('Matchup', '')} — {best_g.get('Tier Label', '')}")
     else:
         st.info("No approved picks available.")
+
+    # 5. ⚡ TOP +EV OPPORTUNITIES
+    st.markdown("### ⚡ TOP +EV OPPORTUNITIES")
+    if approved:
+        top_ev = sorted(approved, key=lambda x: x.get('Weighted Score', 0), reverse=True)[:5]
+        ev_rows = []
+        for i, item in enumerate(top_ev, 1):
+            ev_rows.append({
+                "#": i,
+                "Type": "Prop",
+                "Selection": item['Player'],
+                "Line": f"{item['Side']} {item['Line']} {item['Prop']}",
+                "Edge": f"{item.get('Weighted Score', 0)*100:.1f}%",
+                "Tier": item.get('Tier', '')[:3].upper()
+            })
+        st.table(pd.DataFrame(ev_rows))
+    else:
+        st.info("No +EV opportunities available.")
+
+    # 6. DAILY PARLAY SELECTIONS
+    st.markdown("### 🎲 DAILY PARLAY SELECTIONS")
+    col_p, col_g = st.columns(2)
+    
+    prop_par = build_prop_parlay()
+    game_par = build_game_parlay()
+    
+    with col_p:
+        if prop_par and len(prop_par) >= 2:
+            legs_text = " + ".join([f"{l['Player']} {l['Side']} {l['Line']} {l['Prop']}" for l in prop_par[:3]])
+            payout = 100 * len(prop_par[:3]) + 945
+            st.success(f"**Player Parlay ({len(prop_par[:3])}-Leg)**\n\n{legs_text}\n\n**Payout: +{payout}**")
+        else:
+            st.info("Player Parlay: Not enough props available")
+    
+    with col_g:
+        if game_par and len(game_par) >= 2:
+            legs_text = " + ".join([f"{g.get('Bet', g['Matchup'])}" for g in game_par[:2]])
+            st.success(f"**Game Parlay ({len(game_par[:2])}-Leg)**\n\n{legs_text}\n\n**Payout: +260**")
+        else:
+            st.info("Game Parlay: Not enough games available")
+
     st.markdown("---")
     
-    # 5. SYSTEM STATUS
-    st.markdown("## 🛡️ SYSTEM STATUS")
-    avg_integrity = (gi + pi + ci) // 3
-    st.markdown(f"**Integrity:** {avg_integrity}/100 · **Bankroll:** ${bankroll:,.2f} · **Unit:** ${unit_size:.2f} · **Session:** {session_str}")
+    # 7. SYSTEM STATUS (Footer)
+    avg_integrity = (g_integrity + p_integrity + c_integrity) // 3
+    bankroll_val = st.session_state.get('bankroll', 1000.0)
+    unit_size_val = bankroll_val * KELLY_FRACTION * 0.015
+    session_seconds_val = int(time.time() - st.session_state.get('session_start', time.time()))
+    session_str_val = f"{session_seconds_val//60:02d}:{session_seconds_val%60:02d}"
+    st.markdown(f"**Integrity:** {avg_integrity}/100 · **Bankroll:** ${bankroll_val:,.2f} · **Unit:** ${unit_size_val:.2f} · **Session:** {session_str_val}")
 
 # ────────── TAB 1: BOARD OF 8 ──────────
 with tabs[1]:
@@ -941,9 +998,9 @@ with tabs[1]:
     board=st.session_state.board_data or []
     if st.session_state.last_scan_time: st.markdown(f'<div class="small-note">Last scan: {st.session_state.last_scan_time} · {st.session_state.last_sport}</div>',unsafe_allow_html=True)
     if board:
-        approved=[i for i in board if i.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")]
-        if approved:
-            best=approved[0]
+        approved2=[i for i in board if i.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")]
+        if approved2:
+            best=approved2[0]
             st.markdown(f'<div class="lock-of-day"><div style="font-size:12px;color:#e8a020;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">🔒 LOCK OF THE DAY</div><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;"><div><div style="font-size:18px;font-weight:700;color:#f4f8fc;">{best["Player"]}</div><div style="font-size:14px;color:#5a7088;">{best["Side"]} {best["Line"]} {best["Prop"]}</div></div><div style="text-align:center;"><div style="font-size:12px;color:#5a7088;">Council Score</div><div style="font-size:24px;font-weight:800;color:#e8a020;">{best["Weighted Score"]:.2f}</div><div style="font-size:14px;font-weight:700;color:{tier_color(best["Tier"])};">{best["Tier Label"]}</div></div></div></div>',unsafe_allow_html=True)
             if st.button("🔒 Lock This Pick",key="lock_board"):
                 lid=lock_single_prop(best)
@@ -989,17 +1046,16 @@ with tabs[2]:
 # ────────── TAB 3: LOCKS & PARLAYS ──────────
 with tabs[3]:
     st.markdown("# 🔒 Locks & Parlays")
-    board = st.session_state.board_data or []
-    game_board = st.session_state.game_verdicts or []
-    if not board:
+    board_lp = st.session_state.board_data or []
+    game_board_lp = st.session_state.game_verdicts or []
+    if not board_lp:
         st.info("Load a board first.")
     else:
-        approved = [i for i in board if i["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
-        approved_games = [g for g in game_board if g["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+        approved_lp = [i for i in board_lp if i["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
+        approved_games_lp = [g for g in game_board_lp if g["Tier"] in ("SOVEREIGN", "ELITE", "APPROVED")]
 
-        # Lock of the Day: Prop
-        if approved:
-            best = sorted(approved, key=lambda x: x["Weighted Score"], reverse=True)[0]
+        if approved_lp:
+            best = sorted(approved_lp, key=lambda x: x["Weighted Score"], reverse=True)[0]
             tc = tier_color(best["Tier"])
             edge_pct = int(best["Weighted Score"] * 100)
             st.markdown("## Lock of the Day — Prop")
@@ -1007,9 +1063,8 @@ with tabs[3]:
             if st.button("🔒 Lock Prop of the Day", key="lock_prop_day"):
                 st.success(f"Locked: {lock_single_prop(best)}")
 
-        # Lock of the Day: Game
-        if approved_games:
-            best_game = sorted(approved_games, key=lambda x: x["Weighted Score"], reverse=True)[0]
+        if approved_games_lp:
+            best_game = sorted(approved_games_lp, key=lambda x: x["Weighted Score"], reverse=True)[0]
             tc_g = tier_color(best_game["Tier"])
             edge_pct_g = int(best_game["Weighted Score"] * 100)
             st.markdown("## Lock of the Day — Game")
@@ -1018,28 +1073,27 @@ with tabs[3]:
                 st.session_state.locks.append({"id": f"LOCK-{date.today().strftime('%m%d')}-{len(st.session_state.locks)+1:02d}","type":"GAME","matchup":best_game["Matchup"],"bet":best_game.get("Bet",""),"tier":best_game["Tier"],"status":"PENDING","result":None,"timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                 st.success("Game locked.")
 
-        # Parlays
         col_p, col_g = st.columns(2)
         with col_p:
             st.markdown("""<div class="parlay-card"><h4 style="color:#0ea5a0;">Props Parlay</h4>""", unsafe_allow_html=True)
-            prop_par = build_prop_parlay()
-            if prop_par:
-                selected = []
-                for i, leg in enumerate(prop_par):
+            prop_par_lp = build_prop_parlay()
+            if prop_par_lp:
+                selected_p = []
+                for i, leg in enumerate(prop_par_lp):
                     if st.checkbox(f"{leg['Player']} - {leg['Side']} {leg['Line']} {leg['Prop']}", value=True, key=f"pp_{i}"):
-                        selected.append(leg)
-                if len(selected) >= 2 and st.button("Lock Props Parlay", key="lock_props_parlay"):
-                    for leg in selected:
+                        selected_p.append(leg)
+                if len(selected_p) >= 2 and st.button("Lock Props Parlay", key="lock_props_parlay"):
+                    for leg in selected_p:
                         lock_single_prop(leg)
                     st.success("Props parlay locked.")
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_g:
             st.markdown("""<div class="game-parlay-card"><h4 style="color:#4a90d9;">Games Parlay</h4>""", unsafe_allow_html=True)
-            game_par = build_game_parlay()
-            if game_par:
+            game_par_lp = build_game_parlay()
+            if game_par_lp:
                 selected_g = []
-                for i, leg in enumerate(game_par):
+                for i, leg in enumerate(game_par_lp):
                     if st.checkbox(f"{leg.get('Bet', leg['Matchup'])}", value=True, key=f"gp_{i}"):
                         selected_g.append(leg)
                 if len(selected_g) >= 2 and st.button("Lock Games Parlay", key="lock_games_parlay"):
@@ -1048,12 +1102,11 @@ with tabs[3]:
                     st.success("Games parlay locked.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # Top +EV Opportunities
-        if approved:
+        if approved_lp:
             st.markdown("---")
             st.markdown("## ⚡ Top +EV Opportunities")
             st.caption("Highest‑edge individual props from the Council consensus.")
-            top_ev = sorted(approved, key=lambda x: x["Weighted Score"], reverse=True)[:5]
+            top_ev = sorted(approved_lp, key=lambda x: x["Weighted Score"], reverse=True)[:5]
             ev_rows = []
             for i, item in enumerate(top_ev, 1):
                 ev_rows.append({"#": i,"Player": item["Player"],"Prop": f"{item['Side']} {item['Line']} {item['Prop']}","Edge": f"{int(item['Weighted Score']*100)}%","Tier": item["Tier Label"]})
