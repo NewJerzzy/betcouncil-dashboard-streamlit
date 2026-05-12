@@ -583,6 +583,8 @@ def is_valid_nba_prop(name, line=None):
 # ──────────────────────────────────────────────────────────────
 # PROP SCRAPERS — VERIFIED WORKING (v3.5.3)
 # ──────────────────────────────────────────────────────────────
+
+# OddsTrader's editorial picks are date-stamped — check for "Today's NBA Player Props" or similar.
 def scrape_oddstrader(html):
     """
     OddsTrader embeds editorial picks in article body text.
@@ -593,6 +595,9 @@ def scrape_oddstrader(html):
     props = []
     
     text = soup.get_text(" ", strip=True)
+    
+    # Optional: verify the article is for today
+    # if date not in text: return []  # skip stale articles
     
     # Pattern 1: "Bam Adebayo: Over 23.5 Points+Assists"
     for m in re.finditer(
