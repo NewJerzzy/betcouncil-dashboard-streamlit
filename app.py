@@ -189,6 +189,41 @@ MLB_STADIUMS = {
     "WAS":{"name":"Nationals Park","type":"Open","lat":38.8730,"lon":-77.0074},
 }
 
+# Mapping for VegasInsider team names → abbreviations (MLB)
+VI_TEAM_MAP = {
+    "Arizona Diamondbacks": "ARI",
+    "Atlanta Braves": "ATL",
+    "Baltimore Orioles": "BAL",
+    "Boston Red Sox": "BOS",
+    "Chicago Cubs": "CHC",
+    "Chicago White Sox": "CHW",
+    "Cincinnati Reds": "CIN",
+    "Cleveland Guardians": "CLE",
+    "Colorado Rockies": "COL",
+    "Detroit Tigers": "DET",
+    "Houston Astros": "HOU",
+    "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA",
+    "Los Angeles Dodgers": "LAD",
+    "Miami Marlins": "MIA",
+    "Milwaukee Brewers": "MIL",
+    "Minnesota Twins": "MIN",
+    "New York Mets": "NYM",
+    "New York Yankees": "NYY",
+    "Philadelphia Phillies": "PHI",
+    "Pittsburgh Pirates": "PIT",
+    "San Diego Padres": "SD",
+    "Seattle Mariners": "SEA",
+    "San Francisco Giants": "SF",
+    "St. Louis Cardinals": "STL",
+    "Tampa Bay Rays": "TB",
+    "Texas Rangers": "TEX",
+    "Toronto Blue Jays": "TOR",
+    "Washington Nationals": "WAS",
+    "Athletics": "ATH",
+    "Oakland Athletics": "OAK",   # still possible
+}
+
 REQUEST_TIMEOUT = 12
 DEFAULT_BANKROLL = 1000.0
 KELLY_FRACTION = 0.25
@@ -853,17 +888,29 @@ def run_game_council(games):
     return out
 
 # ──────────────────────────────────────────────────────────────
+# HELPER: convert full team name to abbreviation using VI_TEAM_MAP
+# ──────────────────────────────────────────────────────────────
+def _team_abbr(name):
+    """Map full team name to abbreviation if possible, else return uppercase of first word."""
+    if name in VI_TEAM_MAP:
+        return VI_TEAM_MAP[name]
+    # fallback: take the last word if it's 2 or 3 letters? Better: use first word abbreviation
+    # simple: return name[:3].upper() but might be wrong. For NBA/NFL we might need separate maps.
+    # For now, we'll trust the map covers MLB, and for other sports the match might be direct.
+    return name.upper().replace(" ", "")[:3]  # crude but better than nothing
+
+# ──────────────────────────────────────────────────────────────
 # DATA LOADER (ESPN roster fallback, 3 working scrapers)
 # ──────────────────────────────────────────────────────────────
 def load_sport_data_live(sport):
-    weather_results={}; consensus_results={}
+    weather_results = {}
+    consensus_results = {}
     log_scan(f"Loading {sport} board...","skip")
     
     ls_props, ls_games = fetch_linestar_props(sport)
     scraped_props = fetch_all_prop_sources(sport)
     
     all_props_dict = {}
-    source_count = 0
     sources_seen = set()
     
     for p in ls_props:
@@ -886,13 +933,13 @@ def load_sport_data_live(sport):
     source_count = len(sources_seen)
     all_props = list(all_props_dict.values())
     
-    espn_url=build_source_url("ESPN (JSON API)",sport)
-    raw_games=[]
+    espn_url = build_source_url("ESPN (JSON API)", sport)
+    raw_games = []
     espn_raw_json = None
     if espn_url:
-        html=safe_fetch(espn_url,"ESPN (JSON API)")
+        html = safe_fetch(espn_url, "ESPN (JSON API)")
         if html:
-            raw_games=parse_espn_json(html,sport)
+            raw_games = parse_espn_json(html, sport)
             espn_raw_json = html
             log_scan(f"ESPN: {len(raw_games)} games","ok")
     
@@ -905,12 +952,31 @@ def load_sport_data_live(sport):
         for row in soup.select("tr"):
             cells = row.select("td")
             if len(cells) >= 3:
-                teams  = cells[0].get_text(strip=True)
+                teams = cells[0].get_text(strip=True)
                 spread = cells[1].get_text(strip=True)
-                total  = cells[2].get_text(strip=True)
+                total = cells[2].get_text(strip=True)
                 if teams:
                     vi_lines[teams] = {"spread": spread, "total": total}
         log_scan(f"VegasInsider: {len(vi_lines)} lines","ok")
+    
+    # Build normalized VI lookup: sorted tuple of abbreviations -> line data
+    vi_normalized = {}
+    for key, val in vi_lines.items():
+        # key is like "Los Angeles Angels vs Cleveland Guardians"
+        parts = re.split(r'\s+vs\.?\s+', key, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            away = _team_abbr(parts[0].strip())
+            home = _team_abbr(parts[1].strip())
+            pair = tuple(sorted([away, home]))
+            vi_normalized[pair] = val
+        else:
+            # try other separators
+            parts = key.split("@")
+            if len(parts) == 2:
+                away = _team_abbr(parts[0].strip())
+                home = _team_abbr(parts[1].strip())
+                pair = tuple(sorted([away, home]))
+                vi_normalized[pair] = val
     
     if ls_games:
         all_games = ls_games
@@ -918,30 +984,39 @@ def load_sport_data_live(sport):
     elif raw_games:
         all_games = []
         for g in raw_games:
-            m = g.get("Matchup","")
-            vi = vi_lines.get(m, {})
+            m = g.get("Matchup","")   # "LAA @ CLE"
+            # try direct match first (fallback)
+            vi = vi_lines.get(m)
+            if not vi:
+                # attempt normalisation
+                parts = m.split("@")
+                if len(parts) == 2:
+                    away = _team_abbr(parts[0].strip())
+                    home = _team_abbr(parts[1].strip())
+                    pair = tuple(sorted([away, home]))
+                    vi = vi_normalized.get(pair)
             all_games.append({
                 "Matchup": m,
                 "Sport":   sport,
-                "Spread":  vi.get("spread", "N/A"),
-                "Total":   vi.get("total",  "N/A"),
+                "Spread":  vi.get("spread", "N/A") if vi else "N/A",
+                "Total":   vi.get("total",  "N/A") if vi else "N/A",
             })
         raw_games = [{"matchup":g["Matchup"],"spread":g["Spread"],"total":g["Total"]} for g in all_games]
     else:
         all_games = []
     
-    vsin_url=build_source_url("VSIN Betting Splits",sport)
+    vsin_url = build_source_url("VSIN Betting Splits", sport)
     if vsin_url:
-        vsin_html=safe_fetch(vsin_url,"VSIN Betting Splits")
-        if vsin_html: consensus_results=parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
+        vsin_html = safe_fetch(vsin_url, "VSIN Betting Splits")
+        if vsin_html: consensus_results = parse_vsin_consensus(vsin_html); log_scan(f"VSIN: {len(consensus_results)} splits","ok")
     
-    if sport.upper()=="MLB":
+    if sport.upper() == "MLB":
         for game in raw_games:
-            parts=game.get("matchup","").split(" @ ")
-            if len(parts)==2:
+            parts = game.get("matchup","").split(" @ ")
+            if len(parts) == 2:
                 ha = parts[1].split()[-1] if parts[1] else ""
-                a,d = apply_weather_filter(ha,sport)
-                weather_results[game["matchup"]]={"advisory":a,"detail":d}
+                a,d = apply_weather_filter(ha, sport)
+                weather_results[game["matchup"]] = {"advisory":a,"detail":d}
     
     if not all_props:
         all_props, prop_source = get_props_v2(sport, espn_raw_json=espn_raw_json)
