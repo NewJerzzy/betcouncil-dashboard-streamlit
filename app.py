@@ -7,13 +7,14 @@ import time
 import hashlib
 import pickle
 import os
+import json
 import unicodedata
 from math import exp, factorial
 
 # =========================
 # PAGE CONFIG
 # =========================
-st.set_page_config(page_title="BetCouncil v4.4 – Chairman", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v4.5 – Automatic", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -68,6 +69,10 @@ h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
 .teal-text  { color: #0ea5a0; }
 .red-text   { color: #e04040; }
 .muted-text { color: #6a7a8a; }
+.injury-badge {
+    background-color: #e04040; color: white; font-size: 10px;
+    padding: 2px 6px; border-radius: 12px; margin-left: 6px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,6 +91,11 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 HEADERS               = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
 
+# JSON persistence paths
+HISTORY_PATH = os.path.join(CACHE_DIR, "history.json")
+LOCKS_PATH = os.path.join(CACHE_DIR, "locks.json")
+BANKROLL_PATH = os.path.join(CACHE_DIR, "bankroll.json")
+
 TIER_COLORS = {
     "SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0",
     "APPROVED":  "#4a90d9", "LEAN":  "#7a8a9a", "PASS": "#e04040",
@@ -99,189 +109,162 @@ TIER_DESCRIPTIONS = {
 }
 
 # =========================
-# PLAYER SEASON AVERAGES (Hardcoded Fallback)
+# PERSISTENCE LAYER (Auto‑save/load - only on startup)
 # =========================
-PLAYER_AVERAGES = {
-    "NBA": {
-        "LeBron James":            {"PTS": 23.7, "REB": 8.5,  "AST": 8.3,  "PRA": 40.5},
-        "Luka Doncic":             {"PTS": 28.1, "REB": 9.3,  "AST": 8.7,  "PRA": 46.1},
-        "Nikola Jokic":            {"PTS": 29.4, "REB": 13.0, "AST": 10.2, "PRA": 52.6},
-        "Shai Gilgeous-Alexander": {"PTS": 31.5, "REB": 5.5,  "AST": 6.5,  "PRA": 43.5},
-        "Giannis Antetokounmpo":   {"PTS": 30.4, "REB": 11.9, "AST": 6.5,  "PRA": 48.8},
-        "Jayson Tatum":            {"PTS": 27.5, "REB": 8.7,  "AST": 4.9,  "PRA": 41.1},
-        "Stephen Curry":           {"PTS": 26.4, "REB": 4.5,  "AST": 5.1,  "PRA": 36.0},
-        "Kevin Durant":            {"PTS": 27.1, "REB": 6.6,  "AST": 5.0,  "PRA": 38.7},
-        "Anthony Davis":           {"PTS": 24.7, "REB": 12.6, "AST": 3.5,  "PRA": 40.8},
-        "Damian Lillard":          {"PTS": 24.3, "REB": 4.4,  "AST": 7.0,  "PRA": 35.7},
-        "Devin Booker":            {"PTS": 27.1, "REB": 4.5,  "AST": 6.9,  "PRA": 38.5},
-        "Donovan Mitchell":        {"PTS": 27.5, "REB": 5.0,  "AST": 5.5,  "PRA": 38.0},
-        "Jimmy Butler":            {"PTS": 20.8, "REB": 5.3,  "AST": 5.0,  "PRA": 31.1},
-        "Trae Young":              {"PTS": 25.7, "REB": 2.8,  "AST": 10.8, "PRA": 39.3},
-        "Domantas Sabonis":        {"PTS": 19.4, "REB": 13.7, "AST": 8.2,  "PRA": 41.3},
-        "Karl-Anthony Towns":      {"PTS": 21.8, "REB": 8.3,  "AST": 3.0,  "PRA": 33.1},
-        "Bam Adebayo":             {"PTS": 20.4, "REB": 10.2, "AST": 3.5,  "PRA": 34.1},
-        "Rudy Gobert":             {"PTS": 14.0, "REB": 12.9, "AST": 1.2,  "PRA": 28.1},
-        "Tyrese Haliburton":       {"PTS": 20.1, "REB": 3.8,  "AST": 10.9, "PRA": 34.8},
-        "Jalen Brunson":           {"PTS": 28.7, "REB": 3.7,  "AST": 7.4,  "PRA": 39.8},
-        "Cade Cunningham":         {"PTS": 25.3, "REB": 6.0,  "AST": 9.0,  "PRA": 40.3},
-        "Victor Wembanyama":       {"PTS": 21.4, "REB": 10.6, "AST": 3.9,  "PRA": 35.9},
-        "Paolo Banchero":          {"PTS": 22.6, "REB": 6.9,  "AST": 5.4,  "PRA": 34.9},
-        "Evan Mobley":             {"PTS": 18.0, "REB": 9.4,  "AST": 2.9,  "PRA": 30.3},
-        "Darius Garland":          {"PTS": 20.6, "REB": 2.7,  "AST": 6.7,  "PRA": 30.0},
-        "Tobias Harris":           {"PTS": 14.5, "REB": 5.8,  "AST": 2.1,  "PRA": 22.4},
-        "Ja Morant":               {"PTS": 25.1, "REB": 5.6,  "AST": 8.1,  "PRA": 38.8},
-        "Zion Williamson":         {"PTS": 22.9, "REB": 5.8,  "AST": 5.0,  "PRA": 33.7},
-        "Jamal Murray":            {"PTS": 21.2, "REB": 4.2,  "AST": 6.5,  "PRA": 31.9},
-        "Michael Porter Jr.":      {"PTS": 16.7, "REB": 6.9,  "AST": 1.4,  "PRA": 25.0},
-        "Aaron Gordon":            {"PTS": 14.4, "REB": 6.5,  "AST": 3.5,  "PRA": 24.4},
-        "Jalen Williams":          {"PTS": 23.9, "REB": 4.5,  "AST": 5.6,  "PRA": 34.0},
-        "Alperen Sengun":          {"PTS": 21.1, "REB": 9.3,  "AST": 5.0,  "PRA": 35.4},
-        "Desmond Bane":            {"PTS": 21.5, "REB": 4.8,  "AST": 4.2,  "PRA": 30.5},
-        "Scottie Barnes":          {"PTS": 19.9, "REB": 8.2,  "AST": 6.1,  "PRA": 34.2},
-        "Franz Wagner":            {"PTS": 19.7, "REB": 5.2,  "AST": 3.7,  "PRA": 28.6},
-        "De'Aaron Fox":            {"PTS": 25.2, "REB": 4.5,  "AST": 5.9,  "PRA": 35.6},
-        "Pascal Siakam":           {"PTS": 21.3, "REB": 7.8,  "AST": 4.5,  "PRA": 33.6},
-        "Kawhi Leonard":           {"PTS": 23.7, "REB": 6.1,  "AST": 3.6,  "PRA": 33.4},
-        "Luguentz Dort":           {"PTS": 13.7, "REB": 3.8,  "AST": 1.9,  "PRA": 19.4},
-    },
-    "MLB": {
-        "Aaron Judge":             {"HR": 0.15, "H": 1.2,  "RBI": 0.9, "R": 0.9},
-        "Shohei Ohtani":           {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Mookie Betts":            {"HR": 0.12, "H": 1.2,  "RBI": 0.7, "R": 0.9},
-        "Ronald Acuna Jr.":        {"HR": 0.13, "H": 1.2,  "RBI": 0.8, "R": 0.9},
-        "Bryce Harper":            {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Juan Soto":               {"HR": 0.13, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Freddie Freeman":         {"HR": 0.11, "H": 1.2,  "RBI": 0.7, "R": 0.8},
-        "Jose Ramirez":            {"HR": 0.12, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Pete Alonso":             {"HR": 0.15, "H": 1.0,  "RBI": 0.9, "R": 0.7},
-        "Vladimir Guerrero Jr.":   {"HR": 0.12, "H": 1.2,  "RBI": 0.8, "R": 0.8},
-        "Francisco Lindor":        {"HR": 0.12, "H": 1.1,  "RBI": 0.7, "R": 0.8},
-        "Bobby Witt Jr.":          {"HR": 0.12, "H": 1.2,  "RBI": 0.8, "R": 0.9},
-        "Gunnar Henderson":        {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Elly De La Cruz":         {"HR": 0.10, "H": 1.0,  "RBI": 0.6, "R": 0.7},
-        "Corbin Carroll":          {"HR": 0.08, "H": 1.1,  "RBI": 0.5, "R": 0.8},
-        "Paul Skenes":             {"SO": 8.5,  "H": 0.3,  "ER": 0.4},
-        "Spencer Strider":         {"SO": 9.2,  "H": 0.3,  "ER": 0.5},
-        "Gerrit Cole":             {"SO": 8.8,  "H": 0.4,  "ER": 0.5},
-        "Zack Wheeler":            {"SO": 8.4,  "H": 0.4,  "ER": 0.5},
-        "Tarik Skubal":            {"SO": 9.0,  "H": 0.3,  "ER": 0.4},
-    },
-    "NFL": {
-        "Patrick Mahomes":         {"PASS_YDS": 280, "TD": 2.2},
-        "Josh Allen":              {"PASS_YDS": 260, "RUSH_YDS": 35,  "TD": 2.5},
-        "Jalen Hurts":             {"PASS_YDS": 230, "RUSH_YDS": 45,  "TD": 2.2},
-        "Lamar Jackson":           {"PASS_YDS": 220, "RUSH_YDS": 65,  "TD": 2.0},
-        "Joe Burrow":              {"PASS_YDS": 270, "TD": 2.0},
-        "Justin Herbert":          {"PASS_YDS": 265, "TD": 2.0},
-        "Dak Prescott":            {"PASS_YDS": 260, "TD": 2.0},
-        "Christian McCaffrey":     {"RUSH_YDS": 85,  "REC_YDS": 45,  "TD": 1.0},
-        "Derrick Henry":           {"RUSH_YDS": 90,  "TD": 0.9},
-        "Saquon Barkley":          {"RUSH_YDS": 80,  "REC_YDS": 35,  "TD": 0.8},
-        "Tyreek Hill":             {"REC_YDS": 95,  "TD": 0.8},
-        "Justin Jefferson":        {"REC_YDS": 90,  "TD": 0.7},
-        "Ja'Marr Chase":           {"REC_YDS": 85,  "TD": 0.7},
-        "Travis Kelce":            {"REC_YDS": 70,  "TD": 0.6},
-        "CeeDee Lamb":             {"REC_YDS": 92,  "TD": 0.7},
-        "A.J. Brown":              {"REC_YDS": 88,  "TD": 0.7},
-    },
-    "NHL": {
-        "Connor McDavid":          {"PTS": 1.5,  "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5},
-        "Leon Draisaitl":          {"PTS": 1.4,  "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
-        "Nathan MacKinnon":        {"PTS": 1.4,  "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4},
-        "David Pastrnak":          {"PTS": 1.2,  "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
-        "Nikita Kucherov":         {"PTS": 1.5,  "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0},
-        "Auston Matthews":         {"PTS": 1.2,  "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
-        "Mitch Marner":            {"PTS": 1.2,  "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8},
-        "Cale Makar":              {"PTS": 0.9,  "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
-        "Kirill Kaprizov":         {"PTS": 1.1,  "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2},
-        "Mikko Rantanen":          {"PTS": 1.3,  "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
-        "Matthew Tkachuk":         {"PTS": 1.1,  "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0},
-        "Brayden Point":           {"PTS": 1.1,  "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
-        "Sam Reinhart":            {"PTS": 1.0,  "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0},
-        "Aleksander Barkov":       {"PTS": 1.0,  "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8},
-    },
-    "WNBA": {
-        "A'ja Wilson":             {"PTS": 26.0, "REB": 9.4,  "AST": 2.4, "PRA": 37.8},
-        "Breanna Stewart":         {"PTS": 21.8, "REB": 8.6,  "AST": 3.8, "PRA": 34.2},
-        "Sabrina Ionescu":         {"PTS": 19.4, "REB": 4.5,  "AST": 6.3, "PRA": 30.2},
-        "Kelsey Plum":             {"PTS": 18.9, "REB": 2.8,  "AST": 4.2, "PRA": 25.9},
-        "Napheesa Collier":        {"PTS": 20.1, "REB": 9.3,  "AST": 2.7, "PRA": 32.1},
-        "Caitlin Clark":           {"PTS": 19.2, "REB": 5.7,  "AST": 8.4, "PRA": 33.3},
-        "Angel Reese":             {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1},
-        "Alyssa Thomas":           {"PTS": 12.5, "REB": 9.2,  "AST": 7.1, "PRA": 28.8},
-        "Jackie Young":            {"PTS": 17.3, "REB": 4.1,  "AST": 4.0, "PRA": 25.4},
-    },
-}
+def load_json_data(path, default):
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except:
+            return default
+    return default
 
-DEFAULT_AVERAGES = {
-    "NBA":  {"PTS": 10.0, "REB": 4.0,    "AST": 2.5,    "PRA": 16.5},
-    "MLB":  {"HR": 0.05,  "H": 0.8,      "RBI": 0.3,    "R": 0.3,    "SO": 5.0},
-    "NFL":  {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
-    "NHL":  {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
-    "WNBA": {"PTS": 8.0,  "REB": 3.5,   "AST": 2.0,    "PRA": 13.5},
-}
-
-STAT_NORMALIZE = {
-    ("NBA",  "Points"):           "PTS",
-    ("NBA",  "Rebounds"):         "REB",
-    ("NBA",  "Assists"):          "AST",
-    ("NBA",  "Pts+Reb+Ast"):      "PRA",
-    ("NBA",  "Pts+Reb"):          "PRA",
-    ("NBA",  "Pts+Ast"):          "PRA",
-    ("NBA",  "Reb+Ast"):          "PRA",
-    ("MLB",  "Home Runs"):        "HR",
-    ("MLB",  "Hits"):             "H",
-    ("MLB",  "RBIs"):             "RBI",
-    ("MLB",  "Runs"):             "R",
-    ("MLB",  "Strikeouts"):       "SO",
-    ("MLB",  "Earned Runs"):      "ER",
-    ("NFL",  "Passing Yards"):    "PASS_YDS",
-    ("NFL",  "Rushing Yards"):    "RUSH_YDS",
-    ("NFL",  "Receiving Yards"):  "REC_YDS",
-    ("NFL",  "Touchdowns"):       "TD",
-    ("NHL",  "Points"):           "PTS",
-    ("NHL",  "Goals"):            "GOALS",
-    ("NHL",  "Assists"):          "ASSISTS",
-    ("NHL",  "Shots On Goal"):    "SOG",
-    ("WNBA", "Points"):           "PTS",
-    ("WNBA", "Rebounds"):         "REB",
-    ("WNBA", "Assists"):          "AST",
-    ("WNBA", "Pts+Reb+Ast"):      "PRA",
-}
-
-POISSON_STATS = {"HR", "GOALS", "TD", "SO"}
+def save_json_data(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
 
 # =========================
-# CACHE
+# NBA LAST 10 GAMES ROLLING AVERAGE
 # =========================
-def cached_fetch(url, ttl_minutes=25):
-    cache_key  = hashlib.md5(url.encode()).hexdigest()
-    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
-    if os.path.exists(cache_path):
-        age = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age < ttl_minutes:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
-            if cached and cached.get("data"):
-                return cached
+BBREF_SLUGS = {
+    "LeBron James": "jamesle01", "Luka Doncic": "doncilu01", "Nikola Jokic": "jokicni01",
+    "Shai Gilgeous-Alexander": "gilgesh01", "Giannis Antetokounmpo": "antetgi01",
+    "Jayson Tatum": "tatumja01", "Stephen Curry": "curryst01", "Kevin Durant": "duranke01",
+    "Anthony Davis": "davisan02", "Damian Lillard": "lillada01", "Devin Booker": "bookede01",
+    "Donovan Mitchell": "mitchdo01", "Jimmy Butler": "butleji01", "Trae Young": "youngtr01",
+    "Domantas Sabonis": "sabondo01", "Karl-Anthony Towns": "townska01", "Bam Adebayo": "adebaba01",
+    "Rudy Gobert": "goberru01", "Tyrese Haliburton": "halibty01", "Jalen Brunson": "brunsja01",
+    "Cade Cunningham": "cunnica01", "Victor Wembanyama": "wembavi01", "Paolo Banchero": "banchpa01",
+    "Evan Mobley": "mobleev01", "Darius Garland": "garlda01", "Tobias Harris": "harrito02",
+    "Ja Morant": "moranja01", "Zion Williamson": "willizi01", "Jamal Murray": "murraja01",
+    "Michael Porter Jr.": "portemi01", "Aaron Gordon": "gordoar01", "Jalen Williams": "willija05",
+    "Alperen Sengun": "sengual01", "Desmond Bane": "banede01", "Scottie Barnes": "barnesc01",
+    "Franz Wagner": "wagnefr01", "De'Aaron Fox": "foxde01", "Pascal Siakam": "siakapa01",
+    "Kawhi Leonard": "leonaka01", "Luguentz Dort": "dortlu01",
+}
+
+def fetch_last_10_games(player_name):
+    slug = BBREF_SLUGS.get(player_name)
+    if not slug:
+        return None
+    url = f"https://www.basketball-reference.com/players/{slug[0]}/{slug}/gamelog/2025"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data and data.get("data"):
-                with open(cache_path, "wb") as f:
-                    pickle.dump(data, f)
-            return data
-        return None
+        if resp.status_code != 200:
+            return None
+        rows = re.findall(r'<tr class="(?:full_table|partial_table)">(.*?)</table>', resp.text, re.DOTALL)
+        games = []
+        for row in rows[:15]:
+            if "Did Not Play" in row or "Inactive" in row:
+                continue
+            pts_match = re.search(r'data-stat="pts">(\d+)</td>', row)
+            reb_match = re.search(r'data-stat="trb">(\d+)</td>', row)
+            ast_match = re.search(r'data-stat="ast">(\d+)</td>', row)
+            if pts_match and reb_match and ast_match:
+                games.append({"PTS": int(pts_match.group(1)), "REB": int(reb_match.group(1)), "AST": int(ast_match.group(1))})
+            if len(games) >= 10:
+                break
+        if len(games) < 5:
+            return None
+        avg = {
+            "PTS": round(sum(g["PTS"] for g in games) / len(games), 1),
+            "REB": round(sum(g["REB"] for g in games) / len(games), 1),
+            "AST": round(sum(g["AST"] for g in games) / len(games), 1),
+            "PRA": round((sum(g["PTS"] for g in games) + sum(g["REB"] for g in games) + sum(g["AST"] for g in games)) / len(games), 1),
+        }
+        return avg
     except:
         return None
 
+def fetch_nba_rolling_averages():
+    cache_path = os.path.join(CACHE_DIR, "nba_rolling_avgs.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    rolling = {}
+    for player in BBREF_SLUGS.keys():
+        last10 = fetch_last_10_games(player)
+        if last10:
+            rolling[player] = last10
+        time.sleep(0.5)
+    if rolling:
+        with open(cache_path, "wb") as f:
+            pickle.dump(rolling, f)
+    return rolling
+
 # =========================
-# BALLDONTLIE — LIVE NBA AVERAGES (cached 24 hours, batched request)
+# WEIGHTED AVERAGE
+# =========================
+def get_weighted_average(player_name, season_avg, last10_avg, is_playoff=False):
+    if last10_avg is None:
+        return season_avg
+    if is_playoff:
+        return last10_avg
+    return {
+        "PTS": round(last10_avg.get("PTS", season_avg.get("PTS", 0)) * 0.7 + season_avg.get("PTS", 0) * 0.3, 1),
+        "REB": round(last10_avg.get("REB", season_avg.get("REB", 0)) * 0.7 + season_avg.get("REB", 0) * 0.3, 1),
+        "AST": round(last10_avg.get("AST", season_avg.get("AST", 0)) * 0.7 + season_avg.get("AST", 0) * 0.3, 1),
+        "PRA": round(last10_avg.get("PRA", season_avg.get("PRA", 0)) * 0.7 + season_avg.get("PRA", 0) * 0.3, 1),
+    }
+
+# =========================
+# ESPN INJURY POLLER
+# =========================
+def fetch_injury_news(sport):
+    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
+    path = slug_map.get(sport, "")
+    if not path:
+        return {}
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/news"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        injuries = {}
+        for article in data.get("articles", []):
+            headline = article.get("headline", "")
+            if "injury" in headline.lower() or "out" in headline.lower() or "questionable" in headline.lower():
+                players = re.findall(r'([A-Z][a-z]+ [A-Z][a-z]+)', headline)
+                for p in players:
+                    if "out" in headline.lower():
+                        injuries[p] = "Out"
+                    elif "questionable" in headline.lower() or "day-to-day" in headline.lower():
+                        injuries[p] = "Questionable"
+        return injuries
+    except:
+        return {}
+
+# =========================
+# PLAYOFF DETECTION
+# =========================
+def is_playoff_game(sport):
+    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
+    path = slug_map.get(sport, "")
+    if not path:
+        return False
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        for event in data.get("events", []):
+            season_type = event.get("season", {}).get("type", "")
+            if season_type == 3:
+                return True
+        return False
+    except:
+        return False
+
+# =========================
+# BALLDONTLIE API
 # =========================
 BDL_API_KEY = "9d7c9ea5-54ea-4084-b0d0-2541ac7c360d"
 
-# Map player name -> balldontlie player_id for the ~40 most bet NBA players
 BDL_PLAYER_IDS = {
     "LeBron James": 237, "Luka Doncic": 140, "Nikola Jokic": 279,
     "Shai Gilgeous-Alexander": 484, "Giannis Antetokounmpo": 15,
@@ -300,7 +283,6 @@ BDL_PLAYER_IDS = {
 }
 
 def fetch_nba_averages_bdl():
-    """Fetch NBA per-game averages from balldontlie. One batched call, cached 24 hours."""
     cache_path = os.path.join(CACHE_DIR, "bdl_nba_avgs.pkl")
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
@@ -335,6 +317,128 @@ def fetch_nba_averages_bdl():
         return avgs
     except:
         return {}
+
+# =========================
+# HARDCODED FALLBACK AVERAGES (MLB, NFL, NHL, WNBA)
+# =========================
+PLAYER_AVERAGES = {
+    "NBA": {},
+    "MLB": {
+        "Aaron Judge": {"HR": 0.15, "H": 1.2, "RBI": 0.9, "R": 0.9},
+        "Shohei Ohtani": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
+        "Mookie Betts": {"HR": 0.12, "H": 1.2, "RBI": 0.7, "R": 0.9},
+        "Ronald Acuna Jr.": {"HR": 0.13, "H": 1.2, "RBI": 0.8, "R": 0.9},
+        "Bryce Harper": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
+        "Juan Soto": {"HR": 0.13, "H": 1.1, "RBI": 0.8, "R": 0.8},
+        "Freddie Freeman": {"HR": 0.11, "H": 1.2, "RBI": 0.7, "R": 0.8},
+        "Jose Ramirez": {"HR": 0.12, "H": 1.1, "RBI": 0.8, "R": 0.8},
+        "Pete Alonso": {"HR": 0.15, "H": 1.0, "RBI": 0.9, "R": 0.7},
+        "Vladimir Guerrero Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.8},
+        "Francisco Lindor": {"HR": 0.12, "H": 1.1, "RBI": 0.7, "R": 0.8},
+        "Bobby Witt Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.9},
+        "Gunnar Henderson": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
+        "Elly De La Cruz": {"HR": 0.10, "H": 1.0, "RBI": 0.6, "R": 0.7},
+        "Corbin Carroll": {"HR": 0.08, "H": 1.1, "RBI": 0.5, "R": 0.8},
+        "Paul Skenes": {"SO": 8.5, "H": 0.3, "ER": 0.4},
+        "Spencer Strider": {"SO": 9.2, "H": 0.3, "ER": 0.5},
+        "Gerrit Cole": {"SO": 8.8, "H": 0.4, "ER": 0.5},
+        "Zack Wheeler": {"SO": 8.4, "H": 0.4, "ER": 0.5},
+        "Tarik Skubal": {"SO": 9.0, "H": 0.3, "ER": 0.4},
+    },
+    "NFL": {
+        "Patrick Mahomes": {"PASS_YDS": 280, "TD": 2.2},
+        "Josh Allen": {"PASS_YDS": 260, "RUSH_YDS": 35, "TD": 2.5},
+        "Jalen Hurts": {"PASS_YDS": 230, "RUSH_YDS": 45, "TD": 2.2},
+        "Lamar Jackson": {"PASS_YDS": 220, "RUSH_YDS": 65, "TD": 2.0},
+        "Joe Burrow": {"PASS_YDS": 270, "TD": 2.0},
+        "Justin Herbert": {"PASS_YDS": 265, "TD": 2.0},
+        "Dak Prescott": {"PASS_YDS": 260, "TD": 2.0},
+        "Christian McCaffrey": {"RUSH_YDS": 85, "REC_YDS": 45, "TD": 1.0},
+        "Derrick Henry": {"RUSH_YDS": 90, "TD": 0.9},
+        "Saquon Barkley": {"RUSH_YDS": 80, "REC_YDS": 35, "TD": 0.8},
+        "Tyreek Hill": {"REC_YDS": 95, "TD": 0.8},
+        "Justin Jefferson": {"REC_YDS": 90, "TD": 0.7},
+        "Ja'Marr Chase": {"REC_YDS": 85, "TD": 0.7},
+        "Travis Kelce": {"REC_YDS": 70, "TD": 0.6},
+        "CeeDee Lamb": {"REC_YDS": 92, "TD": 0.7},
+        "A.J. Brown": {"REC_YDS": 88, "TD": 0.7},
+    },
+    "NHL": {
+        "Connor McDavid": {"PTS": 1.5, "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5},
+        "Leon Draisaitl": {"PTS": 1.4, "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
+        "Nathan MacKinnon": {"PTS": 1.4, "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4},
+        "David Pastrnak": {"PTS": 1.2, "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
+        "Nikita Kucherov": {"PTS": 1.5, "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0},
+        "Auston Matthews": {"PTS": 1.2, "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
+        "Mitch Marner": {"PTS": 1.2, "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8},
+        "Cale Makar": {"PTS": 0.9, "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
+        "Kirill Kaprizov": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2},
+        "Mikko Rantanen": {"PTS": 1.3, "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
+        "Matthew Tkachuk": {"PTS": 1.1, "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0},
+        "Brayden Point": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
+        "Sam Reinhart": {"PTS": 1.0, "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0},
+        "Aleksander Barkov": {"PTS": 1.0, "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8},
+    },
+    "WNBA": {
+        "A'ja Wilson": {"PTS": 26.0, "REB": 9.4, "AST": 2.4, "PRA": 37.8},
+        "Breanna Stewart": {"PTS": 21.8, "REB": 8.6, "AST": 3.8, "PRA": 34.2},
+        "Sabrina Ionescu": {"PTS": 19.4, "REB": 4.5, "AST": 6.3, "PRA": 30.2},
+        "Kelsey Plum": {"PTS": 18.9, "REB": 2.8, "AST": 4.2, "PRA": 25.9},
+        "Napheesa Collier": {"PTS": 20.1, "REB": 9.3, "AST": 2.7, "PRA": 32.1},
+        "Caitlin Clark": {"PTS": 19.2, "REB": 5.7, "AST": 8.4, "PRA": 33.3},
+        "Angel Reese": {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1},
+        "Alyssa Thomas": {"PTS": 12.5, "REB": 9.2, "AST": 7.1, "PRA": 28.8},
+        "Jackie Young": {"PTS": 17.3, "REB": 4.1, "AST": 4.0, "PRA": 25.4},
+    },
+}
+
+DEFAULT_AVERAGES = {
+    "NBA": {"PTS": 10.0, "REB": 4.0, "AST": 2.5, "PRA": 16.5},
+    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
+    "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
+    "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
+    "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
+}
+
+STAT_NORMALIZE = {
+    ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
+    ("NBA", "Pts+Reb+Ast"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
+    ("NBA", "Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
+    ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
+    ("MLB", "Earned Runs"): "ER", ("NFL", "Passing Yards"): "PASS_YDS",
+    ("NFL", "Rushing Yards"): "RUSH_YDS", ("NFL", "Receiving Yards"): "REC_YDS",
+    ("NFL", "Touchdowns"): "TD", ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS",
+    ("NHL", "Assists"): "ASSISTS", ("NHL", "Shots On Goal"): "SOG",
+    ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB", ("WNBA", "Assists"): "AST",
+    ("WNBA", "Pts+Reb+Ast"): "PRA",
+}
+
+POISSON_STATS = {"HR", "GOALS", "TD", "SO"}
+
+# =========================
+# CACHE
+# =========================
+def cached_fetch(url, ttl_minutes=25):
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age < ttl_minutes:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached and cached.get("data"):
+                return cached
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data and data.get("data"):
+                with open(cache_path, "wb") as f:
+                    pickle.dump(data, f)
+            return data
+        return None
+    except:
+        return None
 
 # =========================
 # NAME MATCHING
@@ -390,10 +494,7 @@ def _parse_prizepicks_response(data, sport, seen):
         if key in seen:
             continue
         seen.add(key)
-        props.append({
-            "Player": name, "Prop": stat, "Line": line,
-            "Side": "OVER", "Sport": sport, "source": "PrizePicks",
-        })
+        props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks"})
     return props
 
 def scrape_prizepicks(sport):
@@ -447,10 +548,11 @@ def scrape_prizepicks(sport):
 # GAME LINES — ESPN
 # =========================
 def fetch_game_lines(sport):
+    from datetime import timedelta
     slug_map = {"NBA":"basketball/nba","MLB":"baseball/mlb","NFL":"football/nfl","NHL":"hockey/nhl","WNBA":"basketball/wnba"}
     path = slug_map.get(sport, "")
     if not path:
-        return []
+        return [], False
     def _fetch_date(target_date):
         date_str = target_date.strftime("%Y%m%d")
         url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
@@ -458,25 +560,26 @@ def fetch_game_lines(sport):
             resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             if resp.status_code == 200:
                 events = resp.json().get("events", [])
+                playoff = any(e.get("season", {}).get("type", 0) == 3 for e in events)
                 return [{"Matchup": e.get("shortName", ""),
                          "Status": e.get("status", {}).get("type", {}).get("description", ""),
-                         "Date": target_date.strftime("%a %b %d"), "Sport": sport} for e in events]
+                         "Date": target_date.strftime("%a %b %d"), "Sport": sport} for e in events], playoff
         except:
             pass
-        return []
+        return [], False
     today = date.today()
     tomorrow = today + timedelta(days=1)
-    today_games = _fetch_date(today)
+    today_games, playoff = _fetch_date(today)
     all_final = all(g["Status"].lower() in ("final","game over","final/ot","final/so","postponed") for g in today_games) if today_games else True
     if all_final:
-        tomorrow_games = _fetch_date(tomorrow)
+        tomorrow_games, playoff = _fetch_date(tomorrow)
         if tomorrow_games:
-            return tomorrow_games
-        return today_games
-    return today_games
+            return tomorrow_games, playoff
+        return today_games, playoff
+    return today_games, playoff
 
 # =========================
-# EDGE & KELLY
+# EDGE & KELLY & PARLAY
 # =========================
 def poisson_prob_over(line, avg):
     if avg <= 0:
@@ -520,6 +623,22 @@ def get_tier(edge):
     if edge >= 0.02: return "LEAN"
     return "PASS"
 
+def parlay_prob(probs):
+    combined = 1.0
+    for p in probs:
+        combined *= p
+    return combined
+
+def parlay_payout(probs, odds=-110):
+    combined = parlay_prob(probs)
+    if combined <= 0:
+        return 0
+    fair_decimal = 1 / combined
+    if fair_decimal >= 2.0:
+        return round((fair_decimal - 1) * 100)
+    else:
+        return round(-100 / (fair_decimal - 1))
+
 def active_unit():
     return round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
 
@@ -534,54 +653,87 @@ def get_daily_change():
     return f"{'+'if change>=0 else''}{change:.1f}%"
 
 # =========================
-# MAIN LOAD
+# MAIN LOAD (does NOT reload persistence on every board load)
 # =========================
 def load_sport_data(sport):
-    # NBA: merge live balldontlie data (priority) over hardcoded fallback
-    if sport == "NBA":
-        live_avgs = fetch_nba_averages_bdl()
-        avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
-    else:
-        avgs = PLAYER_AVERAGES.get(sport, {})
-    defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
+
+    # Fetch NBA rolling averages (fully automatic)
+    rolling_avgs = {}
+    if sport == "NBA":
+        rolling_avgs = fetch_nba_rolling_averages()
+        live_avgs = fetch_nba_averages_bdl()
+        season_avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
+    else:
+        season_avgs = PLAYER_AVERAGES.get(sport, {})
+
+    defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     props = scrape_prizepicks(sport)
     if not props:
-        return [], fetch_game_lines(sport), 0, 0
+        games, _ = fetch_game_lines(sport)
+        return [], games, 0, 0
+
+    injuries = fetch_injury_news(sport)
+    games, is_playoff = fetch_game_lines(sport)
+
     enriched = []
     skipped_def = skipped_edge = 0
+
     for p in props:
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
         player = p["Player"]
-        side = p["Side"]
-        player_stats, using_default = find_player_avg(player, avgs)
-        if using_default:
-            skipped_def += 1
-            if skip_def:
-                continue
-            avg = defaults.get(stat_norm, p["Line"])
+        line = p["Line"]
+
+        if sport == "NBA" and player in season_avgs:
+            season_avg = season_avgs.get(player, {})
+            last10 = rolling_avgs.get(player, None)
+            avg_dict = get_weighted_average(player, season_avg, last10, is_playoff)
+            using_default = False
         else:
-            avg = player_stats.get(stat_norm, defaults.get(stat_norm, p["Line"]))
-        edge, prob = compute_edge(p["Line"], avg, side, stat_norm)
-        if edge < min_edge:
+            player_stats, using_default = find_player_avg(player, season_avgs)
+            if using_default:
+                skipped_def += 1
+                if skip_def:
+                    continue
+                avg_dict = {stat_norm: defaults.get(stat_norm, line)}
+            else:
+                avg_dict = player_stats
+            avg_dict = {k: v for k, v in avg_dict.items()}
+
+        avg = avg_dict.get(stat_norm, defaults.get(stat_norm, line))
+
+        best_edge = -1
+        best_side = "OVER"
+        best_prob = 0.5
+        for side in ["OVER", "UNDER"]:
+            edge, prob = compute_edge(line, avg, side, stat_norm)
+            if edge > best_edge:
+                best_edge = edge
+                best_side = side
+                best_prob = prob
+
+        if best_edge < min_edge:
             skipped_edge += 1
             continue
-        tier = get_tier(edge)
+
+        tier = get_tier(best_edge)
+        injury_flag = injuries.get(player, "")
         enriched.append({
-            "Player": player, "Prop": stat_raw, "Line": p["Line"], "Side": side,
-            "Avg": avg, "Edge": edge, "EdgePct": f"{edge:.1%}", "Prob": prob,
-            "Wager": kelly_unit(prob, st.session_state.bankroll), "Tier": tier,
+            "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side,
+            "Avg": avg, "Edge": best_edge, "EdgePct": f"{best_edge:.1%}", "Prob": best_prob,
+            "Wager": kelly_unit(best_prob, st.session_state.bankroll), "Tier": tier,
             "Quality": "Lookup" if not using_default else "Default",
             "Model": "Poisson" if stat_norm in POISSON_STATS else "Linear",
-            "Sport": sport,
+            "Sport": sport, "Injury": injury_flag,
         })
+
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
-    return enriched, fetch_game_lines(sport), skipped_def, skipped_edge
+    return enriched, games, skipped_def, skipped_edge
 
 # =========================
-# SESSION STATE
+# SESSION STATE & PERSISTENCE (load only once at startup)
 # =========================
 _ss = {
     "bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL,
@@ -594,6 +746,14 @@ for k, v in _ss.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Load persisted data only once on app startup
+if "persistence_loaded" not in st.session_state:
+    st.session_state.bankroll = load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL)
+    st.session_state.day_start_br = st.session_state.bankroll
+    st.session_state.history = load_json_data(HISTORY_PATH, [])
+    st.session_state.locks = load_json_data(LOCKS_PATH, [])
+    st.session_state.persistence_loaded = True
+
 # =========================
 # SIDEBAR
 # =========================
@@ -604,7 +764,7 @@ with st.sidebar:
              clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
              display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
         <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
-        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v4.4 · Chairman Mode</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v4.5 · Fully Automatic</div>
     </div>""", unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
     dc = get_daily_change()
@@ -647,6 +807,7 @@ with st.sidebar:
     if st.button("Reset Bankroll", width="stretch"):
         st.session_state.bankroll = DEFAULT_BANKROLL
         st.session_state.day_start_br = DEFAULT_BANKROLL
+        save_json_data(BANKROLL_PATH, st.session_state.bankroll)
         st.rerun()
 
 # =========================
@@ -659,7 +820,7 @@ scan_t = st.session_state.last_scan_time or "—"
 st.markdown(f"""
 <div class="command-bar">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.4 — Chairman Mode</div>
+    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.5 — Fully Automatic</div>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
       <span style="font-size:12px;color:#6a7a8a;">Session: {get_session_time()}</span>
       <span style="font-size:12px;border:1px solid #0ea5a0;color:#0ea5a0;background:rgba(14,165,160,0.1);padding:4px 10px;border-radius:20px;">{pending} Lock{"s" if pending!=1 else ""}</span>
@@ -676,16 +837,16 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 # =========================
-# TABS
+# TABS (ALL 6 FULLY IMPLEMENTED)
 # =========================
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "⚙️ System"])
 
-# TAB 0 — SUMMARY
+# ----- TAB 0: SUMMARY -----
 with tabs[0]:
-    st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.4")
+    st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.5")
     today_str = date.today().strftime("%A, %B %d, %Y")
-    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Averages:** {AVERAGES_LAST_UPDATED}")
-    st.markdown("🔒 **Source:** PrizePicks API (live) · ESPN Scoreboard · Hardcoded Season Averages")
+    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Averages:** Automatic (NBA rolling)")
+    st.markdown("🔒 **Source:** PrizePicks API (live) · ESPN Scoreboard · NBA Rolling Averages (last 10 games)")
     st.markdown("---")
     st.markdown("## 🏟️ TODAY'S GAMES")
     if st.session_state.games:
@@ -697,8 +858,16 @@ with tabs[0]:
     board = st.session_state.board_data
     if board:
         top8 = board[:8]
-        rows = [{"Player": p["Player"], "Prop": p["Prop"], "Line": p["Line"], "Avg": p["Avg"], "Edge": p["EdgePct"], "Prob": f"{p['Prob']:.1%}", "Wager": f"${p['Wager']:.2f}", "Tier": p["Tier"], "Model": p["Model"]} for p in top8]
-        st.table(pd.DataFrame(rows))
+        rows = []
+        for p in top8:
+            injury_badge = f' <span class="injury-badge">{p.get("Injury", "")}</span>' if p.get("Injury") else ""
+            rows.append({
+                "Player": p["Player"] + injury_badge,
+                "Prop": f"{p['Side']} {p['Line']} {p['Prop']}",
+                "Avg": p["Avg"], "Edge": p["EdgePct"], "Prob": f"{p['Prob']:.1%}",
+                "Wager": f"${p['Wager']:.2f}", "Tier": p["Tier"],
+            })
+        st.markdown(pd.DataFrame(rows).to_html(escape=False, index=False), unsafe_allow_html=True)
     else:
         st.info("No props loaded.")
     st.markdown("---")
@@ -709,9 +878,11 @@ with tabs[0]:
     best = (sovereign or elite or approved or [None])[0]
     if best:
         tc = TIER_COLORS.get(best["Tier"], "#0ea5a0")
-        st.success(f"🏆 **TOP LOCK:** {best['Player']} OVER {best['Line']} {best['Prop']} — [{best['Tier']}]  Edge: {best['EdgePct']} | Prob: {best['Prob']:.1%} | Wager: ${best['Wager']:.2f} | Model: {best['Model']}")
+        injury_text = f" – INJURY: {best.get('Injury')}" if best.get("Injury") else ""
+        st.success(f"🏆 **TOP LOCK:** {best['Player']} {best['Side']} {best['Line']} {best['Prop']} — [{best['Tier']}]  Edge: {best['EdgePct']} | Prob: {best['Prob']:.1%} | Wager: ${best['Wager']:.2f}{injury_text}")
         if st.button("🔒 Lock This Pick"):
-            st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": "OVER", "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")})
+            st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": best["Side"], "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")})
+            save_json_data(LOCKS_PATH, st.session_state.locks)
             st.success(f"Locked {best['Player']} — Wager: ${best['Wager']:.2f}")
             st.rerun()
     else:
@@ -719,7 +890,7 @@ with tabs[0]:
     st.markdown("---")
     st.markdown("### ⚡ TOP +EV OPPORTUNITIES")
     if board:
-        ev_rows = [{"#": i+1, "Player": p["Player"], "Selection": f"OVER {p['Line']} {p['Prop']}", "Edge": p["EdgePct"], "Prob": f"{p['Prob']:.1%}", "Wager": f"${p['Wager']:.2f}", "Tier": p["Tier"]} for i, p in enumerate(board[:5])]
+        ev_rows = [{"#": i+1, "Player": p["Player"], "Selection": f"{p['Side']} {p['Line']} {p['Prop']}", "Edge": p["EdgePct"], "Prob": f"{p['Prob']:.1%}", "Wager": f"${p['Wager']:.2f}", "Tier": p["Tier"]} for i, p in enumerate(board[:5])]
         st.table(pd.DataFrame(ev_rows))
     st.markdown("---")
     st.markdown("### 🎲 DAILY PARLAY BUILDER")
@@ -730,8 +901,10 @@ with tabs[0]:
         top3 = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")][:3] if board else []
         if len(top3) >= 2:
             for p in top3:
-                st.write(f"• {p['Player']} O{p['Line']} {p['Prop']} ({p['EdgePct']})")
-            st.markdown(f"**Est. Payout: +{len(top3)*400+45}**")
+                st.write(f"• {p['Player']} {p['Side']} {p['Line']} {p['Prop']} ({p['EdgePct']})")
+            probs = [p["Prob"] for p in top3]
+            fair_payout = parlay_payout(probs)
+            st.markdown(f"**Fair Payout: {fair_payout}** (if offered > this, +EV)")
         else:
             st.write("Not enough high-confidence props for a parlay.")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -747,7 +920,7 @@ with tabs[0]:
     st.markdown("---")
     st.markdown(f"**Bankroll:** ${st.session_state.bankroll:.2f} · **Unit:** ${active_unit():.2f} · **Session:** {get_session_time()} · **Today:** {get_daily_change()}")
 
-# TAB 1 — FULL BOARD
+# ----- TAB 1: FULL BOARD -----
 with tabs[1]:
     st.markdown(f"## 📊 Full Board — {st.session_state.last_sport}")
     if st.session_state.board_data:
@@ -755,18 +928,20 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             df = pd.DataFrame(filtered)
-            disp = ["Player","Prop","Line","Avg","Edge","Prob","Wager","Tier","Model","Quality"]
+            disp = ["Player","Prop","Line","Side","Avg","Edge","Prob","Wager","Tier","Model","Quality","Injury"]
             styled = df[disp].style.format({"Line": "{:.1f}", "Avg": "{:.2f}", "Edge": "{:.1%}", "Prob": "{:.1%}", "Wager": "${:.2f}"}).background_gradient(subset=["Edge"], cmap="RdYlGn")
             st.dataframe(styled, width="stretch")
             st.markdown("---")
             st.markdown("### Lock a Prop")
-            options = [f"{r['Player']} — {r['Prop']} OVER {r['Line']}  (Edge: {r['Edge']:.1%} | {r['Tier']} | Wager: ${r['Wager']:.2f})" for r in filtered]
-            sel = st.selectbox("Select prop", range(len(options)), format_func=lambda i: options[i])
-            if st.button("🔒 Lock Selected"):
-                row = filtered[sel]
-                st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": "OVER", "wager": row["Wager"], "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")})
-                st.success(f"Locked {row['Player']} — Wager: ${row['Wager']:.2f}")
-                st.rerun()
+            options = [f"{r['Player']} — {r['Side']} {r['Line']} {r['Prop']} (Edge: {r['Edge']:.1%} | {r['Tier']} | Wager: ${r['Wager']:.2f})" for r in filtered]
+            if options:
+                sel = st.selectbox("Select prop", range(len(options)), format_func=lambda i: options[i])
+                if st.button("🔒 Lock Selected"):
+                    row = filtered[sel]
+                    st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": row["Side"], "wager": row["Wager"], "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")})
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    st.success(f"Locked {row['Player']} — Wager: ${row['Wager']:.2f}")
+                    st.rerun()
         else:
             st.info("No props match the selected tier filter.")
         st.markdown("---")
@@ -784,7 +959,7 @@ with tabs[1]:
     else:
         st.info("Select a sport and click **Load Board** in the sidebar.")
 
-# TAB 2 — GAME LINES
+# ----- TAB 2: GAME LINES -----
 with tabs[2]:
     st.markdown(f"## 🏟️ Game Lines — {st.session_state.last_sport}")
     if st.session_state.games:
@@ -793,27 +968,36 @@ with tabs[2]:
     else:
         st.info("No games found. Load the board first, or no games scheduled today.")
 
-# TAB 3 — LOCKS & LEDGER
+# ----- TAB 3: LOCKS & LEDGER -----
 with tabs[3]:
     st.markdown("## 🔒 Active Locks")
     if st.session_state.locks:
         for i, lock in enumerate(st.session_state.locks.copy()):
             tc = TIER_COLORS.get(lock.get("tier","APPROVED"), "#4a90d9")
             col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
-            col1.markdown(f"**{lock['player']}** OVER {lock['line']} {lock['prop']} — <span style='color:{tc};font-weight:700;'>{lock.get('tier','—')}</span> | Wager: **${lock['wager']:.2f}** | Edge: {lock.get('edge',0):.1%} | <span style='color:#5a6a7a;font-size:12px;'>{lock['timestamp']}</span>", unsafe_allow_html=True)
+            col1.markdown(f"**{lock['player']}** {lock['side']} {lock['line']} {lock['prop']} — <span style='color:{tc};font-weight:700;'>{lock.get('tier','—')}</span> | Wager: **${lock['wager']:.2f}** | Edge: {lock.get('edge',0):.1%} | <span style='color:#5a6a7a;font-size:12px;'>{lock['timestamp']}</span>", unsafe_allow_html=True)
             if col2.button("✅ WIN", key=f"win_{i}"):
                 profit = round(lock["wager"] * (100 / 110), 2)
                 st.session_state.bankroll += profit
                 st.session_state.history.append({**lock, "outcome":"WIN", "profit":profit, "loss":0, "net":profit})
+                save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+                save_json_data(HISTORY_PATH, st.session_state.history)
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
+                save_json_data(LOCKS_PATH, st.session_state.locks)
                 st.rerun()
             if col3.button("❌ LOSS", key=f"loss_{i}"):
                 st.session_state.bankroll -= lock["wager"]
                 st.session_state.history.append({**lock, "outcome":"LOSS", "profit":0, "loss":lock["wager"], "net":-lock["wager"]})
+                save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+                save_json_data(HISTORY_PATH, st.session_state.history)
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
+                save_json_data(LOCKS_PATH, st.session_state.locks)
                 st.rerun()
             if col4.button("↩ VOID", key=f"void_{i}"):
+                st.session_state.history.append({**lock, "outcome":"VOID", "profit":0, "loss":0, "net":0})
+                save_json_data(HISTORY_PATH, st.session_state.history)
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
+                save_json_data(LOCKS_PATH, st.session_state.locks)
                 st.rerun()
     else:
         st.info("No active locks. Go to the Board tab and lock a prop.")
@@ -833,7 +1017,7 @@ with tabs[3]:
     else:
         st.caption("No settled bets yet.")
 
-# TAB 4 — HISTORY
+# ----- TAB 4: HISTORY -----
 with tabs[4]:
     st.markdown("## 📈 Full Bet History")
     if st.session_state.history:
@@ -853,11 +1037,12 @@ with tabs[4]:
         st.dataframe(hist_df[cols], width="stretch")
         if st.button("Clear History"):
             st.session_state.history = []
+            save_json_data(HISTORY_PATH, [])
             st.rerun()
     else:
         st.info("No bet history yet.")
 
-# TAB 5 — SYSTEM
+# ----- TAB 5: SYSTEM -----
 with tabs[5]:
     st.markdown("## ⚙️ System Info")
     c1, c2 = st.columns(2)
@@ -885,9 +1070,15 @@ with tabs[5]:
         age_hours = (time.time() - os.path.getmtime(bdl_cache)) / 3600
         with open(bdl_cache, "rb") as f:
             bdl_data = pickle.load(f)
-        st.write(f"- NBA averages: balldontlie live ({len(bdl_data)} players, refreshed {age_hours:.1f}hrs ago)")
+        st.write(f"- NBA season averages: balldontlie live ({len(bdl_data)} players, refreshed {age_hours:.1f}hrs ago)")
     else:
-        st.write("- NBA averages: balldontlie (not yet fetched — load NBA board first)")
+        st.write("- NBA season averages: balldontlie (not yet fetched — load NBA board first)")
+    rolling_cache = os.path.join(CACHE_DIR, "nba_rolling_avgs.pkl")
+    if os.path.exists(rolling_cache):
+        age_hours = (time.time() - os.path.getmtime(rolling_cache)) / 3600
+        st.write(f"- NBA rolling averages (last 10 games): Basketball-Reference (refreshed {age_hours:.1f}hrs ago)")
+    else:
+        st.write("- NBA rolling averages: not yet fetched — load NBA board first")
     st.write("- MLB/NFL/NHL averages: Hardcoded — update PLAYER_AVERAGES dict weekly")
     st.markdown("---")
     st.markdown("**Edge Models**")
@@ -901,8 +1092,8 @@ with tabs[5]:
         st.markdown(f'<span style="color:{color};font-weight:700;">{tier}</span> — {TIER_DESCRIPTIONS[tier]}', unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("**Updating Player Averages**")
-    st.write("Edit `PLAYER_AVERAGES` in app.py and update `AVERAGES_LAST_UPDATED`.")
-    st.write("Sources: Basketball-Reference · Baseball-Reference · Pro-Football-Reference · Hockey-Reference")
+    st.write("For NBA: Fully automatic (balldontlie + Basketball-Reference rolling averages).")
+    st.write("For MLB/NFL/NHL: Edit `PLAYER_AVERAGES` dict and update `AVERAGES_LAST_UPDATED`.")
     st.markdown("---")
     st.markdown("**🔍 PrizePicks API Debug**")
     st.caption("Use this to diagnose why props might not be loading.")
