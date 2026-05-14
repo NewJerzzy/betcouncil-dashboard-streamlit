@@ -1,7 +1,5 @@
 streamlit
 pandas
-numpy
-scipy
 requests
 beautifulsoup4
-curl_cffi
+numpy
