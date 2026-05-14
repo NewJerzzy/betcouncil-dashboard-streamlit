@@ -274,62 +274,8 @@ def get_daily_change():
     return f"{'+' if change >= 0 else ''}{change:.1f}%"
 
 # =========================
-# NBA ROLLING AVERAGES (Basketball-Reference) — FIXED REGEX
+# NBA ROLLING AVERAGES — NBA STATS API (replaces Basketball-Reference)
 # =========================
-BBREF_SLUGS = {
-    "LeBron James": "jamesle01", "Luka Doncic": "doncilu01", "Nikola Jokic": "jokicni01",
-    "Shai Gilgeous-Alexander": "gilgesh01", "Giannis Antetokounmpo": "antetgi01",
-    "Jayson Tatum": "tatumja01", "Stephen Curry": "curryst01", "Kevin Durant": "duranke01",
-    "Anthony Davis": "davisan02", "Damian Lillard": "lillada01", "Devin Booker": "bookede01",
-    "Donovan Mitchell": "mitchdo01", "Jimmy Butler": "butleji01", "Trae Young": "youngtr01",
-    "Domantas Sabonis": "sabondo01", "Karl-Anthony Towns": "townska01", "Bam Adebayo": "adebaba01",
-    "Rudy Gobert": "goberru01", "Tyrese Haliburton": "halibty01", "Jalen Brunson": "brunsja01",
-    "Cade Cunningham": "cunnica01", "Victor Wembanyama": "wembavi01", "Paolo Banchero": "banchpa01",
-    "Evan Mobley": "mobleev01", "Darius Garland": "garlda01", "Tobias Harris": "harrito02",
-    "Ja Morant": "moranja01", "Zion Williamson": "willizi01", "Jamal Murray": "murraja01",
-    "Michael Porter Jr.": "portemi01", "Aaron Gordon": "gordoar01", "Jalen Williams": "willija05",
-    "Alperen Sengun": "sengual01", "Desmond Bane": "banede01", "Scottie Barnes": "barnesc01",
-    "Franz Wagner": "wagnefr01", "De'Aaron Fox": "foxde01", "Pascal Siakam": "siakapa01",
-    "Kawhi Leonard": "leonaka01", "Luguentz Dort": "dortlu01",
-}
-
-def fetch_last_10_games(player_name):
-    """Fetch last 10 game log from Basketball-Reference for a player."""
-    slug = BBREF_SLUGS.get(player_name)
-    if not slug:
-        return None
-    url = f"https://www.basketball-reference.com/players/{slug[0]}/{slug}/gamelog/2025"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        if resp.status_code != 200:
-            return None
-        # FIXED: Use correct HTML closing tag </tr> instead of </tr?>
-        rows = re.findall(r'<tr class="(?:full_table|partial_table)">(.*?)</tr>', resp.text, re.DOTALL)
-        games = []
-        for row in rows[:15]:
-            if "Did Not Play" in row or "Inactive" in row:
-                continue
-            # FIXED: Use </td> instead of </td?>
-            pts_match = re.search(r'data-stat="pts">(\d+)</td>', row)
-            reb_match = re.search(r'data-stat="trb">(\d+)</td>', row)
-            ast_match = re.search(r'data-stat="ast">(\d+)</td>', row)
-            if pts_match and reb_match and ast_match:
-                games.append({"PTS": int(pts_match.group(1)), "REB": int(reb_match.group(1)), "AST": int(ast_match.group(1))})
-            if len(games) >= 10:
-                break
-        if len(games) < 5:
-            return None
-        avg = {
-            "PTS": round(sum(g["PTS"] for g in games) / len(games), 1),
-            "REB": round(sum(g["REB"] for g in games) / len(games), 1),
-            "AST": round(sum(g["AST"] for g in games) / len(games), 1),
-            "PRA": round((sum(g["PTS"] for g in games) + sum(g["REB"] for g in games) + sum(g["AST"] for g in games)) / len(games), 1),
-        }
-        return avg
-    except Exception as e:
-        st.warning(f"Basketball-Reference fetch failed for {player_name}: {e}")
-        return None
-
 def fetch_nba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nba_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -337,15 +283,75 @@ def fetch_nba_rolling_averages():
         if age_hours < 24:
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
+
+    # NBA Stats API requires these exact headers or it hangs
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/",
+        "Connection": "keep-alive",
+        "Origin": "https://www.nba.com",
+    }
+
+    # Single call returns ALL players — last 10 games each
+    # Try playoffs first (current), fall back to regular season
+    urls = [
+        "https://stats.nba.com/stats/playergamelogs?Season=2024-25&SeasonType=Playoffs&PlayerOrTeam=P&LastNGames=10",
+        "https://stats.nba.com/stats/playergamelogs?Season=2024-25&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
+    ]
+
     rolling = {}
-    for player in BBREF_SLUGS.keys():
-        last10 = fetch_last_10_games(player)
-        if last10:
-            rolling[player] = last10
-        time.sleep(0.5)
+
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=nba_headers, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+
+            # NBA Stats API response structure:
+            # data["resultSets"][0]["headers"] = column names
+            # data["resultSets"][0]["rowSet"] = rows of data
+            result_set = data.get("resultSets", [{}])[0]
+            headers = result_set.get("headers", [])
+            rows = result_set.get("rowSet", [])
+
+            if not headers or not rows:
+                continue
+
+            # Map column names to indexes
+            col = {h: i for i, h in enumerate(headers)}
+
+            for row in rows:
+                player_name = row[col["PLAYER_NAME"]]
+                pts = row[col["PTS"]]
+                reb = row[col["REB"]]
+                ast = row[col["AST"]]
+
+                if player_name and pts is not None:
+                    rolling[player_name] = {
+                        "PTS": round(float(pts), 1),
+                        "REB": round(float(reb), 1),
+                        "AST": round(float(ast), 1),
+                        "PRA": round(float(pts) + float(reb) + float(ast), 1),
+                    }
+
+            if rolling:
+                break  # got data, stop trying
+
+        except Exception as e:
+            st.warning(f"NBA Stats API error: {e}")
+            continue
+
     if rolling:
         with open(cache_path, "wb") as f:
             pickle.dump(rolling, f)
+
     return rolling
 
 def get_weighted_average(player_name, season_avg, last10_avg, is_playoff=False):
@@ -361,7 +367,7 @@ def get_weighted_average(player_name, season_avg, last10_avg, is_playoff=False):
     }
 
 # =========================
-# BALLDONTLIE API
+# BALLDONTLIE API (Season Averages)
 # =========================
 BDL_API_KEY = "9d7c9ea5-54ea-4084-b0d0-2541ac7c360d"
 BDL_PLAYER_IDS = {
@@ -660,8 +666,8 @@ def load_sport_data(sport):
 
     rolling_avgs = {}
     if sport == "NBA":
-        rolling_avgs = fetch_nba_rolling_averages()
-        live_avgs = fetch_nba_averages_bdl()
+        rolling_avgs = fetch_nba_rolling_averages()  # NBA Stats API
+        live_avgs = fetch_nba_averages_bdl()         # balldontlie season averages
         season_avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
     else:
         season_avgs = PLAYER_AVERAGES.get(sport, {})
@@ -834,8 +840,8 @@ tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 L
 with tabs[0]:
     st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.6")
     today_str = date.today().strftime("%A, %B %d, %Y")
-    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Averages:** Automatic (NBA rolling) + SEM Calibration")
-    st.markdown("🔒 **Source:** PrizePicks API · ESPN Scoreboard · Rolling Averages · SEM Calibration")
+    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Averages:** Automatic (NBA rolling via API) + SEM Calibration")
+    st.markdown("🔒 **Source:** PrizePicks API · ESPN Scoreboard · NBA Stats API · SEM Calibration")
     st.markdown("---")
     st.markdown("## 🏟️ TODAY'S GAMES")
     if st.session_state.games:
@@ -986,7 +992,8 @@ with tabs[5]:
     st.markdown("**Data Sources**")
     st.write("- Props: PrizePicks public API (20-min cache)")
     st.write("- Game matchups: ESPN scoreboard API")
-    st.write("- NBA averages: balldontlie (live) + Basketball-Reference (rolling last 10 games)")
+    st.write("- NBA rolling averages (last 10 games): NBA Stats API (official)")
+    st.write("- NBA season averages: balldontlie API")
     st.write("- MLB/NFL/NHL/WNBA/Soccer/UFC: Hardcoded averages (update weekly)")
     st.markdown("---")
     st.markdown("**Edge Models & SEM**")
