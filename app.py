@@ -14,7 +14,7 @@ from math import exp, factorial
 # =========================
 # PAGE CONFIG
 # =========================
-st.set_page_config(page_title="BetCouncil v4.6 – Multi‑Signal Edge", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -95,7 +95,7 @@ PLAYER_AVERAGES_UFC = {
 HOME_BOOST = {"PTS": 1.5, "REB": 0.5, "AST": 0.4, "PRA": 2.4}
 AWAY_PENALTY = {"PTS": -1.5, "REB": -0.5, "AST": -0.4, "PRA": -2.4}
 
-# Teammate out usage spikes (key players)
+# Teammate out usage spikes
 TEAMMATE_OUT_BOOST = {
     "Luka Doncic": {"out_player": "Kyrie Irving", "PTS": 3.5, "AST": 1.5, "PRA": 5.0},
     "Shai Gilgeous-Alexander": {"out_player": "Jalen Williams", "PTS": 2.8, "AST": 1.2, "PRA": 4.0},
@@ -108,7 +108,7 @@ TEAMMATE_OUT_BOOST = {
     "Damian Lillard": {"out_player": "Giannis Antetokounmpo", "PTS": 3.0, "AST": 1.5, "PRA": 4.5},
 }
 
-# Expanded player-to-team mapping (100+ NBA players)
+# Expanded player-to-team mapping
 PLAYER_TEAM_MAP = {
     "LeBron James": "LAL", "Anthony Davis": "LAL", "Austin Reaves": "LAL", "D'Angelo Russell": "LAL",
     "Luka Doncic": "DAL", "Kyrie Irving": "DAL", "Tim Hardaway Jr.": "DAL", "Derrick Jones Jr.": "DAL",
@@ -384,7 +384,7 @@ def fetch_nba_rolling_averages():
     return rolling
 
 # =========================
-# NBA TEAM DEFENSIVE RATINGS — FIXED COLUMN DETECTION
+# NBA TEAM DEFENSIVE RATINGS
 # =========================
 def fetch_nba_team_defense():
     cache_path = os.path.join(CACHE_DIR, "nba_team_defense.pkl")
@@ -423,7 +423,6 @@ def fetch_nba_team_defense():
 
             col = {h: i for i, h in enumerate(headers)}
             
-            # FIXED: Try multiple possible column names for defensive rating
             def_rating_col = None
             for possible_name in ["DEF_RATING", "DEF_RTNG", "OPP_PTS", "PTS"]:
                 if possible_name in col:
@@ -506,206 +505,75 @@ def fetch_nba_averages_bdl():
         return {}
 
 # =========================
-# ESPN GAME LINES + HOME/AWAY (NO REST SIGNAL)
+# UNDERDOG PROPS FETCH (IMPROVED VERSION)
 # =========================
-def fetch_game_lines(sport):
-    if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
-        return [], False, {}, {}
-    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl", "WNBA": "basketball/wnba"}
-    path = slug_map.get(sport, "")
-    if not path:
-        return [], False, {}, {}
+def fetch_underdog_props(sport):
+    sport_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", 
+                 "NFL": "NFL", "WNBA": "WNBA"}
+    sport_id = sport_map.get(sport)
+    if not sport_id:
+        return []
     
-    def _fetch_date(target_date):
-        date_str = target_date.strftime("%Y%m%d")
-        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-            if resp.status_code == 200:
-                data = resp.json()
-                events = data.get("events", [])
-                playoff = any(e.get("season", {}).get("type", 0) == 3 for e in events)
-                games = []
-                home_teams = {}
-                away_teams = {}
-                
-                for event in events:
-                    matchup = event.get("shortName", "")
-                    status = event.get("status", {}).get("type", {}).get("description", "")
-                    
-                    for comp in event.get("competitions", []):
-                        for competitor in comp.get("competitors", []):
-                            team = competitor.get("team", {}).get("abbreviation", "")
-                            home_away = competitor.get("homeAway", "")
-                            if home_away == "home":
-                                home_teams[matchup] = team
-                            else:
-                                away_teams[matchup] = team
-                    
-                    games.append({"Matchup": matchup, "Status": status, "Date": target_date.strftime("%a %b %d"), "Sport": sport})
-                return games, playoff, home_teams, away_teams
-        except:
-            pass
-        return [], False, {}, {}
-    
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
-    today_games, playoff, home_teams, away_teams = _fetch_date(today)
-    all_final = all(g["Status"].lower() in ("final", "game over", "final/ot", "final/so", "postponed") for g in today_games) if today_games else True
-    if all_final:
-        tomorrow_games, playoff, home_teams, away_teams = _fetch_date(tomorrow)
-        if tomorrow_games:
-            return tomorrow_games, playoff, home_teams, away_teams
-        return today_games, playoff, home_teams, away_teams
-    return today_games, playoff, home_teams, away_teams
-
-# =========================
-# MULTI-SIGNAL EDGE CALCULATION (4 signals, rest removed)
-# =========================
-def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS"):
-    """
-    Combine 4 signals into a single edge (rest signal removed).
-    Weights redistributed: base 55%, defense 30%, location 15%
-    """
-    if player_avg <= 0:
-        return 0.0, 0.5, {}
-    
-    signals = {}
-    league_avg_def = 112.0
-    
-    # Signal 1: Base (line vs player average) — weight increased to 55%
-    if stat_key in ["HR", "GOALS", "TD", "SO"]:
-        prob = poisson_prob_over(line, player_avg)
-        if side.upper() == "UNDER":
-            prob = 1 - prob
-        base_edge = prob - 0.5
-    else:
-        diff = (line - player_avg) / player_avg
-        if side.upper() == "OVER":
-            base_edge = -diff
-        else:  # UNDER
-            base_edge = diff
-    signals["base"] = base_edge
-    
-    # Signal 2: Opponent defense adjustment (30%)
-    if opp_def_rating > 0:
-        def_adj = (opp_def_rating - league_avg_def) / league_avg_def
-        if side.upper() == "OVER":
-            signals["defense"] = -def_adj * 0.30
-        else:
-            signals["defense"] = def_adj * 0.30
-    else:
-        signals["defense"] = 0
-    
-    # Signal 3: Home/away adjustment (15%)
-    if side.upper() == "OVER":
-        location_adj = 0.05 if is_home else -0.05
-    else:
-        location_adj = -0.05 if is_home else 0.05
-    signals["location"] = location_adj
-    
-    # Signal 4: Teammate out usage spike (bonus, not weighted in base)
-    usage_adj = teammate_out_boost if teammate_out_boost else 0.0
-    signals["usage"] = usage_adj
-    
-    # Weighted combination (base 55%, defense 30%, location 15%)
-    weights = {"base": 0.55, "defense": 0.30, "location": 0.15, "usage": 0.0}
-    combined = (signals["base"] * weights["base"] + 
-                signals["defense"] * weights["defense"] + 
-                signals["location"] * weights["location"])
-    if usage_adj:
-        combined += usage_adj * 0.10
-    
-    combined = max(-EDGE_CAP, min(EDGE_CAP, combined))
-    prob = max(0.30, min(0.70, 0.5 + combined))
-    
-    return combined, prob, signals
-
-# =========================
-# ESPN INJURY & PLAYOFF DETECTION
-# =========================
-def fetch_injury_news(sport):
-    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
-    path = slug_map.get(sport, "")
-    if not path:
-        return {}
-    url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/news"
+    url = f"https://api.underdogfantasy.com/v2/over_under_lines?sport_id={sport_id}"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
-            return {}
+            return []
         data = resp.json()
-        injuries = {}
-        for article in data.get("articles", []):
-            headline = article.get("headline", "")
-            if "injury" in headline.lower() or "out" in headline.lower() or "questionable" in headline.lower():
-                players = re.findall(r'([A-Z][a-z]+ [A-Z][a-z]+)', headline)
-                for p in players:
-                    if "out" in headline.lower():
-                        injuries[p] = "Out"
-                    elif "questionable" in headline.lower() or "day-to-day" in headline.lower():
-                        injuries[p] = "Questionable"
-        return injuries
-    except:
-        return {}
-
-def is_playoff_game(sport):
-    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
-    path = slug_map.get(sport, "")
-    if not path:
-        return False
-    url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        if resp.status_code != 200:
-            return False
-        data = resp.json()
-        for event in data.get("events", []):
-            if event.get("season", {}).get("type", 0) == 3:
-                return True
-        return False
-    except:
-        return False
+        
+        # Build player lookup from first/last name
+        players = {
+            p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+            for p in data.get("players", [])
+        }
+        
+        # Build stat type name lookup
+        stats_map = {
+            s["id"]: s.get("display_name", s.get("name", ""))
+            for s in data.get("stat_types", [])
+        }
+        
+        # Build appearance lookup
+        appearances = {
+            a["id"]: a.get("player_id")
+            for a in data.get("appearances", [])
+        }
+        
+        props = []
+        seen = set()
+        
+        for line in data.get("over_under_lines", []):
+            appearance_id = line.get("appearance_id")
+            player_id = appearances.get(appearance_id)
+            name = players.get(player_id, "")
+            line_val = line.get("stat_value")
+            stat_type_id = line.get("stat_type_id")
+            stat_name = stats_map.get(stat_type_id, "")
+            
+            if not name or not stat_name or line_val is None:
+                continue
+            
+            key = (sport, name, stat_name, line_val)
+            if key in seen:
+                continue
+            seen.add(key)
+            
+            props.append({
+                "Player": name,
+                "Prop": stat_name,
+                "Line": float(line_val),
+                "Side": "OVER",
+                "Sport": sport,
+                "source": "Underdog"
+            })
+        return props
+    except Exception as e:
+        print(f"Underdog props error: {e}")
+        return []
 
 # =========================
-# PRIZEPICKS SCRAPER
+# PRIZEPICKS SCRAPER (with Underdog fallback)
 # =========================
-def _parse_prizepicks_response(data, sport, seen):
-    props = []
-    included = data.get("included", [])
-    players = {}
-    for item in included:
-        if item.get("type") in ("new_player", "player"):
-            players[item["id"]] = item.get("attributes", {}).get("name", "Unknown")
-    for proj in data.get("data", []):
-        if proj.get("type") != "projection":
-            continue
-        attrs = proj.get("attributes", {})
-        rel = proj.get("relationships", {})
-        player_rel = rel.get("new_player") or rel.get("player")
-        if not player_rel:
-            continue
-        pid = player_rel.get("data", {}).get("id")
-        name = players.get(pid, "")
-        if not name or name == "Unknown":
-            name = attrs.get("display_name", "") or attrs.get("name", "")
-        if not name:
-            continue
-        line = attrs.get("line_score")
-        stat = attrs.get("stat_type")
-        if line is None or not stat:
-            continue
-        try:
-            line = float(line)
-        except:
-            continue
-        key = (sport, pid, stat, line)
-        if key in seen:
-            continue
-        seen.add(key)
-        props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks"})
-    return props
-
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
     league = league_ids.get(sport.upper())
@@ -746,71 +614,238 @@ def scrape_prizepicks(sport):
                 continue
         if not data or not data.get("data"):
             continue
-        parsed = _parse_prizepicks_response(data, sport, seen)
-        all_props.extend(parsed)
-        if all_props:
-            break
-    return all_props
+        for proj in data["data"]:
+            if proj["type"] != "projection":
+                continue
+            attrs = proj["attributes"]
+            pid = proj["relationships"]["new_player"]["data"]["id"]
+            name = attrs.get("display_name", "") or attrs.get("name", "")
+            if not name:
+                continue
+            line = attrs.get("line_score")
+            stat = attrs.get("stat_type")
+            if line is None or not stat:
+                continue
+            try:
+                line = float(line)
+            except:
+                continue
+            key = (sport, pid, stat, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            all_props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks"})
+    
+    if all_props:
+        return all_props
+    # PrizePicks empty — try Underdog as fallback
+    st.info("PrizePicks unavailable — trying Underdog Fantasy...")
+    return fetch_underdog_props(sport)
 
 # =========================
-# HARDCODED FALLBACK AVERAGES
+# UNDERDOG INJURIES FETCH
 # =========================
-PLAYER_AVERAGES = {
-    "NBA": {},
-    "MLB": {"Aaron Judge": {"HR": 0.15, "H": 1.2, "RBI": 0.9, "R": 0.9}, "Shohei Ohtani": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
-             "Mookie Betts": {"HR": 0.12, "H": 1.2, "RBI": 0.7, "R": 0.9}, "Ronald Acuna Jr.": {"HR": 0.13, "H": 1.2, "RBI": 0.8, "R": 0.9},
-             "Bryce Harper": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Juan Soto": {"HR": 0.13, "H": 1.1, "RBI": 0.8, "R": 0.8},
-             "Freddie Freeman": {"HR": 0.11, "H": 1.2, "RBI": 0.7, "R": 0.8}, "Jose Ramirez": {"HR": 0.12, "H": 1.1, "RBI": 0.8, "R": 0.8},
-             "Pete Alonso": {"HR": 0.15, "H": 1.0, "RBI": 0.9, "R": 0.7}, "Vladimir Guerrero Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.8},
-             "Francisco Lindor": {"HR": 0.12, "H": 1.1, "RBI": 0.7, "R": 0.8}, "Bobby Witt Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.9},
-             "Gunnar Henderson": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Elly De La Cruz": {"HR": 0.10, "H": 1.0, "RBI": 0.6, "R": 0.7},
-             "Corbin Carroll": {"HR": 0.08, "H": 1.1, "RBI": 0.5, "R": 0.8}, "Paul Skenes": {"SO": 8.5, "H": 0.3, "ER": 0.4},
-             "Spencer Strider": {"SO": 9.2, "H": 0.3, "ER": 0.5}, "Gerrit Cole": {"SO": 8.8, "H": 0.4, "ER": 0.5},
-             "Zack Wheeler": {"SO": 8.4, "H": 0.4, "ER": 0.5}, "Tarik Skubal": {"SO": 9.0, "H": 0.3, "ER": 0.4}},
-    "NFL": {"Patrick Mahomes": {"PASS_YDS": 280, "TD": 2.2}, "Josh Allen": {"PASS_YDS": 260, "RUSH_YDS": 35, "TD": 2.5},
-            "Jalen Hurts": {"PASS_YDS": 230, "RUSH_YDS": 45, "TD": 2.2}, "Lamar Jackson": {"PASS_YDS": 220, "RUSH_YDS": 65, "TD": 2.0},
-            "Joe Burrow": {"PASS_YDS": 270, "TD": 2.0}, "Justin Herbert": {"PASS_YDS": 265, "TD": 2.0}, "Dak Prescott": {"PASS_YDS": 260, "TD": 2.0},
-            "Christian McCaffrey": {"RUSH_YDS": 85, "REC_YDS": 45, "TD": 1.0}, "Derrick Henry": {"RUSH_YDS": 90, "TD": 0.9},
-            "Saquon Barkley": {"RUSH_YDS": 80, "REC_YDS": 35, "TD": 0.8}, "Tyreek Hill": {"REC_YDS": 95, "TD": 0.8},
-            "Justin Jefferson": {"REC_YDS": 90, "TD": 0.7}, "Ja'Marr Chase": {"REC_YDS": 85, "TD": 0.7}, "Travis Kelce": {"REC_YDS": 70, "TD": 0.6},
-            "CeeDee Lamb": {"REC_YDS": 92, "TD": 0.7}, "A.J. Brown": {"REC_YDS": 88, "TD": 0.7}},
-    "NHL": {"Connor McDavid": {"PTS": 1.5, "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5}, "Leon Draisaitl": {"PTS": 1.4, "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
-            "Nathan MacKinnon": {"PTS": 1.4, "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4}, "David Pastrnak": {"PTS": 1.2, "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
-            "Nikita Kucherov": {"PTS": 1.5, "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0}, "Auston Matthews": {"PTS": 1.2, "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
-            "Mitch Marner": {"PTS": 1.2, "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8}, "Cale Makar": {"PTS": 0.9, "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
-            "Kirill Kaprizov": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2}, "Mikko Rantanen": {"PTS": 1.3, "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
-            "Matthew Tkachuk": {"PTS": 1.1, "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0}, "Brayden Point": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
-            "Sam Reinhart": {"PTS": 1.0, "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0}, "Aleksander Barkov": {"PTS": 1.0, "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8}},
-    "WNBA": {"A'ja Wilson": {"PTS": 26.0, "REB": 9.4, "AST": 2.4, "PRA": 37.8}, "Breanna Stewart": {"PTS": 21.8, "REB": 8.6, "AST": 3.8, "PRA": 34.2},
-             "Sabrina Ionescu": {"PTS": 19.4, "REB": 4.5, "AST": 6.3, "PRA": 30.2}, "Kelsey Plum": {"PTS": 18.9, "REB": 2.8, "AST": 4.2, "PRA": 25.9},
-             "Napheesa Collier": {"PTS": 20.1, "REB": 9.3, "AST": 2.7, "PRA": 32.1}, "Caitlin Clark": {"PTS": 19.2, "REB": 5.7, "AST": 8.4, "PRA": 33.3},
-             "Angel Reese": {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1}, "Alyssa Thomas": {"PTS": 12.5, "REB": 9.2, "AST": 7.1, "PRA": 28.8},
-             "Jackie Young": {"PTS": 17.3, "REB": 4.1, "AST": 4.0, "PRA": 25.4}},
-    "Soccer": PLAYER_AVERAGES_SOCCER,
-    "UFC": PLAYER_AVERAGES_UFC,
-}
+def fetch_underdog_injuries(sport):
+    """Fetch injury news from Underdog Fantasy API as fallback."""
+    sport_map = {"NBA": "NBA", "MLB": "MLB", 
+                 "NFL": "NFL", "NHL": "NHL"}
+    sport_id = sport_map.get(sport)
+    if not sport_id:
+        return {}
+    url = f"https://api.underdogfantasy.com/v2/news_items?sport_id={sport_id}"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return {}
+        injuries = {}
+        for item in resp.json().get("news_items", []):
+            content = item.get("content", "").lower()
+            player = item.get("player", {})
+            name = f"{player.get('first_name','')} {player.get('last_name','')}".strip()
+            if not name:
+                continue
+            if "out" in content and "ruled out" in content:
+                injuries[name] = "Out"
+            elif "questionable" in content or "day-to-day" in content:
+                injuries[name] = "Questionable"
+        return injuries
+    except Exception as e:
+        print(f"Underdog injuries error: {e}")
+        return {}
 
-DEFAULT_AVERAGES = {
-    "NBA": {"PTS": 10.0, "REB": 4.0, "AST": 2.5, "PRA": 16.5},
-    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
-    "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
-    "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
-    "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
-    "Soccer": {"GOALS": 0.25, "ASSISTS": 0.15, "SHOTS": 2.5},
-    "UFC": {"SIG_STR": 30, "TAKEDOWNS": 1.0, "CONTROL_TIME": 4.0},
-    "Golf": {}, "Tennis": {},
-}
+# =========================
+# ESPN INJURY FETCH (with Underdog merge)
+# =========================
+def fetch_injury_news(sport):
+    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
+    path = slug_map.get(sport, "")
+    if not path:
+        injuries = {}
+    else:
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/news"
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if resp.status_code != 200:
+                injuries = {}
+            else:
+                data = resp.json()
+                injuries = {}
+                for article in data.get("articles", []):
+                    headline = article.get("headline", "")
+                    if "injury" in headline.lower() or "out" in headline.lower() or "questionable" in headline.lower():
+                        players = re.findall(r'([A-Z][a-z]+ [A-Z][a-z]+)', headline)
+                        for p in players:
+                            if "out" in headline.lower():
+                                injuries[p] = "Out"
+                            elif "questionable" in headline.lower() or "day-to-day" in headline.lower():
+                                injuries[p] = "Questionable"
+        except:
+            injuries = {}
+    
+    # Merge Underdog injuries as fallback (Underdog overwrites ESPN on conflict)
+    underdog_injuries = fetch_underdog_injuries(sport)
+    injuries.update(underdog_injuries)
+    return injuries
 
-STAT_NORMALIZE = {
-    ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
-    ("NBA", "Pts+Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
-    ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
-    ("NFL", "Passing Yards"): "PASS_YDS", ("NFL", "Rushing Yards"): "RUSH_YDS",
-    ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
-    ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
-    ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
-    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
-}
+# =========================
+# ESPN GAME LINES (with odds extraction)
+# =========================
+def fetch_game_lines(sport):
+    if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
+        return [], False, {}, {}
+    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl", "WNBA": "basketball/wnba"}
+    path = slug_map.get(sport, "")
+    if not path:
+        return [], False, {}, {}
+    
+    def _fetch_date(target_date):
+        date_str = target_date.strftime("%Y%m%d")
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                events = data.get("events", [])
+                playoff = any(e.get("season", {}).get("type", 0) == 3 for e in events)
+                games = []
+                home_teams = {}
+                away_teams = {}
+                
+                for event in events:
+                    matchup = event.get("shortName", "")
+                    status = event.get("status", {}).get("type", {}).get("description", "")
+                    
+                    spread = "N/A"
+                    total = "N/A"
+                    home_ml = "N/A"
+                    away_ml = "N/A"
+                    provider = "ESPN"
+                    
+                    for comp in event.get("competitions", []):
+                        # Extract odds from ESPN response
+                        odds_data = comp.get("odds", [{}])[0] if comp.get("odds") else {}
+                        spread = odds_data.get("details", "N/A")
+                        total = odds_data.get("overUnder", "N/A")
+                        home_ml = odds_data.get("homeTeamOdds", {}).get("moneyLine", "N/A")
+                        away_ml = odds_data.get("awayTeamOdds", {}).get("moneyLine", "N/A")
+                        provider = odds_data.get("provider", {}).get("name", "ESPN")
+                        
+                        for competitor in comp.get("competitors", []):
+                            team = competitor.get("team", {}).get("abbreviation", "")
+                            home_away = competitor.get("homeAway", "")
+                            if home_away == "home":
+                                home_teams[matchup] = team
+                            else:
+                                away_teams[matchup] = team
+                    
+                    games.append({
+                        "Matchup": matchup,
+                        "Status": status,
+                        "Spread": spread,
+                        "Total": total,
+                        "Home ML": home_ml,
+                        "Away ML": away_ml,
+                        "Odds Source": provider,
+                        "Date": target_date.strftime("%a %b %d"),
+                        "Sport": sport
+                    })
+                return games, playoff, home_teams, away_teams
+        except Exception as e:
+            print(f"ESPN fetch error: {e}")
+        return [], False, {}, {}
+    
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    today_games, playoff, home_teams, away_teams = _fetch_date(today)
+    all_final = all(g["Status"].lower() in ("final", "game over", "final/ot", "final/so", "postponed") for g in today_games) if today_games else True
+    if all_final:
+        tomorrow_games, playoff, home_teams, away_teams = _fetch_date(tomorrow)
+        if tomorrow_games:
+            return tomorrow_games, playoff, home_teams, away_teams
+        return today_games, playoff, home_teams, away_teams
+    return today_games, playoff, home_teams, away_teams
+
+# =========================
+# MULTI-SIGNAL EDGE CALCULATION
+# =========================
+def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS"):
+    """
+    Combine 4 signals into a single edge.
+    Weights: base 55%, defense 30%, location 15%
+    """
+    if player_avg <= 0:
+        return 0.0, 0.5, {}
+    
+    signals = {}
+    league_avg_def = 112.0
+    
+    # Signal 1: Base (line vs player average) — weight 55%
+    if stat_key in ["HR", "GOALS", "TD", "SO"]:
+        prob = poisson_prob_over(line, player_avg)
+        if side.upper() == "UNDER":
+            prob = 1 - prob
+        base_edge = prob - 0.5
+    else:
+        diff = (line - player_avg) / player_avg
+        if side.upper() == "OVER":
+            base_edge = -diff
+        else:  # UNDER
+            base_edge = diff
+    signals["base"] = base_edge
+    
+    # Signal 2: Opponent defense adjustment (30%)
+    if opp_def_rating > 0:
+        def_adj = (opp_def_rating - league_avg_def) / league_avg_def
+        if side.upper() == "OVER":
+            signals["defense"] = -def_adj * 0.30
+        else:
+            signals["defense"] = def_adj * 0.30
+    else:
+        signals["defense"] = 0
+    
+    # Signal 3: Home/away adjustment (15%)
+    if side.upper() == "OVER":
+        location_adj = 0.05 if is_home else -0.05
+    else:
+        location_adj = -0.05 if is_home else 0.05
+    signals["location"] = location_adj
+    
+    # Signal 4: Teammate out usage spike (bonus)
+    usage_adj = teammate_out_boost if teammate_out_boost else 0.0
+    signals["usage"] = usage_adj
+    
+    # Weighted combination
+    weights = {"base": 0.55, "defense": 0.30, "location": 0.15, "usage": 0.0}
+    combined = (signals["base"] * weights["base"] + 
+                signals["defense"] * weights["defense"] + 
+                signals["location"] * weights["location"])
+    if usage_adj:
+        combined += usage_adj * 0.10
+    
+    combined = max(-EDGE_CAP, min(EDGE_CAP, combined))
+    prob = max(0.30, min(0.70, 0.5 + combined))
+    
+    return combined, prob, signals
 
 # =========================
 # MAIN LOAD FUNCTION
@@ -861,7 +896,7 @@ def load_sport_data(sport):
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
         player = p["Player"]
         line = p["Line"]
-        side = p["Side"]  # "OVER" from PrizePicks
+        side = p["Side"]
 
         if sport == "NBA" and player in season_avgs:
             season_avg = season_avgs.get(player, {})
@@ -912,7 +947,7 @@ def load_sport_data(sport):
                 if usage_boost > 0.10:
                     usage_boost = 0.10
 
-        # Evaluate BOTH OVER and UNDER (PrizePicks only gives OVER lines, but we can still compute UNDER)
+        # Evaluate both OVER and UNDER
         best_edge = -1
         best_side = side
         best_prob = 0.5
@@ -953,6 +988,65 @@ def load_sport_data(sport):
     return enriched, games, skipped_def, skipped_edge
 
 # =========================
+# HARDCODED FALLBACK AVERAGES
+# =========================
+PLAYER_AVERAGES.update({
+    "MLB": {"Aaron Judge": {"HR": 0.15, "H": 1.2, "RBI": 0.9, "R": 0.9}, "Shohei Ohtani": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
+             "Mookie Betts": {"HR": 0.12, "H": 1.2, "RBI": 0.7, "R": 0.9}, "Ronald Acuna Jr.": {"HR": 0.13, "H": 1.2, "RBI": 0.8, "R": 0.9},
+             "Bryce Harper": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Juan Soto": {"HR": 0.13, "H": 1.1, "RBI": 0.8, "R": 0.8},
+             "Freddie Freeman": {"HR": 0.11, "H": 1.2, "RBI": 0.7, "R": 0.8}, "Jose Ramirez": {"HR": 0.12, "H": 1.1, "RBI": 0.8, "R": 0.8},
+             "Pete Alonso": {"HR": 0.15, "H": 1.0, "RBI": 0.9, "R": 0.7}, "Vladimir Guerrero Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.8},
+             "Francisco Lindor": {"HR": 0.12, "H": 1.1, "RBI": 0.7, "R": 0.8}, "Bobby Witt Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.9},
+             "Gunnar Henderson": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Elly De La Cruz": {"HR": 0.10, "H": 1.0, "RBI": 0.6, "R": 0.7},
+             "Corbin Carroll": {"HR": 0.08, "H": 1.1, "RBI": 0.5, "R": 0.8}, "Paul Skenes": {"SO": 8.5, "H": 0.3, "ER": 0.4},
+             "Spencer Strider": {"SO": 9.2, "H": 0.3, "ER": 0.5}, "Gerrit Cole": {"SO": 8.8, "H": 0.4, "ER": 0.5},
+             "Zack Wheeler": {"SO": 8.4, "H": 0.4, "ER": 0.5}, "Tarik Skubal": {"SO": 9.0, "H": 0.3, "ER": 0.4}},
+    "NFL": {"Patrick Mahomes": {"PASS_YDS": 280, "TD": 2.2}, "Josh Allen": {"PASS_YDS": 260, "RUSH_YDS": 35, "TD": 2.5},
+            "Jalen Hurts": {"PASS_YDS": 230, "RUSH_YDS": 45, "TD": 2.2}, "Lamar Jackson": {"PASS_YDS": 220, "RUSH_YDS": 65, "TD": 2.0},
+            "Joe Burrow": {"PASS_YDS": 270, "TD": 2.0}, "Justin Herbert": {"PASS_YDS": 265, "TD": 2.0}, "Dak Prescott": {"PASS_YDS": 260, "TD": 2.0},
+            "Christian McCaffrey": {"RUSH_YDS": 85, "REC_YDS": 45, "TD": 1.0}, "Derrick Henry": {"RUSH_YDS": 90, "TD": 0.9},
+            "Saquon Barkley": {"RUSH_YDS": 80, "REC_YDS": 35, "TD": 0.8}, "Tyreek Hill": {"REC_YDS": 95, "TD": 0.8},
+            "Justin Jefferson": {"REC_YDS": 90, "TD": 0.7}, "Ja'Marr Chase": {"REC_YDS": 85, "TD": 0.7}, "Travis Kelce": {"REC_YDS": 70, "TD": 0.6},
+            "CeeDee Lamb": {"REC_YDS": 92, "TD": 0.7}, "A.J. Brown": {"REC_YDS": 88, "TD": 0.7}},
+    "NHL": {"Connor McDavid": {"PTS": 1.5, "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5}, "Leon Draisaitl": {"PTS": 1.4, "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
+            "Nathan MacKinnon": {"PTS": 1.4, "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4}, "David Pastrnak": {"PTS": 1.2, "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
+            "Nikita Kucherov": {"PTS": 1.5, "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0}, "Auston Matthews": {"PTS": 1.2, "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
+            "Mitch Marner": {"PTS": 1.2, "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8}, "Cale Makar": {"PTS": 0.9, "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
+            "Kirill Kaprizov": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2}, "Mikko Rantanen": {"PTS": 1.3, "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
+            "Matthew Tkachuk": {"PTS": 1.1, "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0}, "Brayden Point": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
+            "Sam Reinhart": {"PTS": 1.0, "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0}, "Aleksander Barkov": {"PTS": 1.0, "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8}},
+    "WNBA": {"A'ja Wilson": {"PTS": 26.0, "REB": 9.4, "AST": 2.4, "PRA": 37.8}, "Breanna Stewart": {"PTS": 21.8, "REB": 8.6, "AST": 3.8, "PRA": 34.2},
+             "Sabrina Ionescu": {"PTS": 19.4, "REB": 4.5, "AST": 6.3, "PRA": 30.2}, "Kelsey Plum": {"PTS": 18.9, "REB": 2.8, "AST": 4.2, "PRA": 25.9},
+             "Napheesa Collier": {"PTS": 20.1, "REB": 9.3, "AST": 2.7, "PRA": 32.1}, "Caitlin Clark": {"PTS": 19.2, "REB": 5.7, "AST": 8.4, "PRA": 33.3},
+             "Angel Reese": {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1}, "Alyssa Thomas": {"PTS": 12.5, "REB": 9.2, "AST": 7.1, "PRA": 28.8},
+             "Jackie Young": {"PTS": 17.3, "REB": 4.1, "AST": 4.0, "PRA": 25.4}},
+    "Soccer": PLAYER_AVERAGES_SOCCER,
+    "UFC": PLAYER_AVERAGES_UFC,
+})
+
+DEFAULT_AVERAGES = {
+    "NBA": {"PTS": 10.0, "REB": 4.0, "AST": 2.5, "PRA": 16.5},
+    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
+    "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
+    "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
+    "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
+    "Soccer": {"GOALS": 0.25, "ASSISTS": 0.15, "SHOTS": 2.5},
+    "UFC": {"SIG_STR": 30, "TAKEDOWNS": 1.0, "CONTROL_TIME": 4.0},
+    "Golf": {}, "Tennis": {},
+}
+
+STAT_NORMALIZE = {
+    ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
+    ("NBA", "Pts+Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
+    ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
+    ("NFL", "Passing Yards"): "PASS_YDS", ("NFL", "Rushing Yards"): "RUSH_YDS",
+    ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
+    ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
+    ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
+    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
+}
+
+# =========================
 # SESSION STATE & PERSISTENCE
 # =========================
 _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_start": time.time(),
@@ -973,7 +1067,7 @@ if "persistence_loaded" not in st.session_state:
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;">v4.6 · Multi‑Signal Edge</div></div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;">v4.6 · Complete</div></div>', unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
@@ -987,7 +1081,7 @@ with st.sidebar:
     st.markdown("---")
     sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0)
     if st.button("Load Board", width="stretch"):
-        with st.spinner(f"Fetching {sport_sel} from PrizePicks..."):
+        with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge = load_sport_data(sport_sel)
             st.session_state.board_data = board
             st.session_state.games = games
@@ -1026,7 +1120,7 @@ scan_t = st.session_state.last_scan_time or "—"
 st.markdown(f"""
 <div class="command-bar">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.6 — Multi‑Signal Edge</div>
+    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.6 — Complete</div>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
       <span style="font-size:12px;color:#6a7a8a;">Session: {get_session_time()}</span>
       <span style="font-size:12px;border:1px solid #0ea5a0;color:#0ea5a0;background:rgba(14,165,160,0.1);padding:4px 10px;border-radius:20px;">{pending} Lock{"s" if pending!=1 else ""}</span>
@@ -1051,12 +1145,15 @@ tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 L
 with tabs[0]:
     st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.6")
     today_str = date.today().strftime("%A, %B %d, %Y")
-    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (Base/Defense/Location/Usage)")
-    st.markdown("🔒 **Source:** PrizePicks API · NBA Stats API · Team Defense · Home/Away")
+    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (4 signals)")
+    st.markdown("🔒 **Sources:** PrizePicks (primary) · Underdog (fallback) · ESPN Odds")
     st.markdown("---")
     st.markdown("## 🏟️ TODAY'S GAMES")
     if st.session_state.games:
-        st.table(pd.DataFrame(st.session_state.games))
+        df_games = pd.DataFrame(st.session_state.games)
+        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Date"]
+        display_cols = [c for c in display_cols if c in df_games.columns]
+        st.table(df_games[display_cols])
     else:
         st.info("No games loaded. Click 'Load Board' in the sidebar.")
     st.markdown("---")
@@ -1128,13 +1225,17 @@ with tabs[1]:
     else:
         st.info("Select a sport and click Load Board.")
 
-# ----- TAB 2: GAME LINES -----
+# ----- TAB 2: GAME LINES (with odds display) -----
 with tabs[2]:
     st.markdown(f"## 🏟️ Game Lines — {st.session_state.last_sport}")
     if st.session_state.games:
-        st.dataframe(pd.DataFrame(st.session_state.games), width="stretch")
+        games_df = pd.DataFrame(st.session_state.games)
+        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Odds Source", "Date"]
+        display_cols = [c for c in display_cols if c in games_df.columns]
+        st.dataframe(games_df[display_cols], width="stretch")
+        st.caption("Odds from ESPN API. Lines may not be available for all games.")
     else:
-        st.info("No games found.")
+        st.info("No games found. Load the board first, or no games scheduled today.")
 
 # ----- TAB 3: LOCKS & LEDGER -----
 with tabs[3]:
@@ -1220,9 +1321,9 @@ with tabs[5]:
         st.info("No calibration data yet. Resolve locks to build SEM history.")
     st.markdown("---")
     st.markdown("**Data Sources**")
-    st.write("- Props: PrizePicks public API (20-min cache)")
-    st.write("- Game matchups: ESPN scoreboard API")
-    st.write("- NBA rolling averages (last 10 games): NBA Stats API")
+    st.write("- Props: PrizePicks API (primary) / Underdog API (fallback)")
+    st.write("- Game matchups + odds: ESPN scoreboard API")
+    st.write("- NBA rolling averages: NBA Stats API")
     st.write("- NBA team defensive ratings: NBA Stats API")
     st.write("- NBA season averages: balldontlie API")
     st.write("- MLB/NFL/NHL/WNBA/Soccer/UFC: Hardcoded averages (update weekly)")
