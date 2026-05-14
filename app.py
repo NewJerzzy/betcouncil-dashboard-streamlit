@@ -8,6 +8,9 @@ import json
 import time
 import numpy as np
 from scipy.stats import norm
+import hashlib
+import pickle
+import os
 
 # =========================
 # PAGE CONFIG
@@ -275,6 +278,27 @@ STATMUSE_AVERAGES = {
 
 MAX_PROP_LINE = 80
 
+# ---------- CACHE FOR PRIZEPICKS ----------
+CACHE_DIR = "/tmp/prizepicks_cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def _cached_fetch(url, ttl_minutes=20):
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        mtime = os.path.getmtime(cache_path)
+        age = (time.time() - mtime) / 60
+        if age < ttl_minutes:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    return None
+
+def _cache_response(url, data):
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    with open(cache_path, "wb") as f:
+        pickle.dump(data, f)
+
 # =========================
 # SESSION STATE
 # =========================
@@ -442,9 +466,8 @@ def build_source_url(source_name, sport):
     """Get URL for a prop source using the new PROP_SCRAPER_URLS mapping"""
     if source_name in PROP_SCRAPER_URLS:
         return PROP_SCRAPER_URLS[source_name].get(sport, "")
-    # PrizePicks doesn't need a URL since we use API directly
     if source_name == "PrizePicks":
-        return f"PRIZEPICKS_API:{sport}"  # non-empty placeholder to satisfy checks
+        return f"PRIZEPICKS_API:{sport}"  # placeholder
     if source_name == "VegasInsider":
         sport_lower = SPORT_URL_SLUG.get(sport, sport.lower())
         return f"https://www.vegasinsider.com/{sport_lower}/odds/las-vegas/"
@@ -647,8 +670,9 @@ def scrape_docsports(html, sport="NBA"):
 
 def scrape_prizepicks(sport):
     """
-    Fetch player props from PrizePicks public API.
-    Uses two fallback URLs: live games + all projections.
+    Fetch live player props from PrizePicks API with caching.
+    sport: "NBA", "MLB", "NHL", "NFL", "WNBA", "UFC", "Golf", "Tennis", "Soccer"
+    Returns list of dicts: [{"Player": str, "Prop": str, "Line": float, "Side": "OVER", "Sport": str}]
     """
     league_ids = {
         "NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8,
@@ -659,62 +683,68 @@ def scrape_prizepicks(sport):
         return []
 
     urls = [
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code=CA&game_mode=prizepools",
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true"
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true",
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code=CA&game_mode=prizepools"
     ]
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
-        "Referer": "https://app.prizepicks.com/",
-        "Accept": "application/json",
-    }
+    api_headers = {"User-Agent": HEADERS["User-Agent"], "Referer": "https://app.prizepicks.com/"}
 
     all_props = []
-    seen_keys = set()
+    seen = set()
 
     for url in urls:
-        try:
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            if not data.get("data"):
+        data = _cached_fetch(url)
+        if data is None:
+            try:
+                resp = requests.get(url, headers=api_headers, timeout=REQUEST_TIMEOUT)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("data"):
+                        _cache_response(url, data)
+                    else:
+                        data = None
+                else:
+                    continue
+            except:
                 continue
 
-            # Build player lookup
-            players = {}
-            for item in data.get("included", []):
-                if item["type"] == "new_player":
-                    players[item["id"]] = item["attributes"]["name"]
-
-            for proj in data["data"]:
-                if proj["type"] != "projection":
-                    continue
-                attrs = proj["attributes"]
-                player_id = proj["relationships"]["new_player"]["data"]["id"]
-                player_name = players.get(player_id, "Unknown")
-                line = attrs.get("line_score")
-                stat = attrs.get("stat_type")
-                if not (player_name and line is not None and stat):
-                    continue
-                try:
-                    line = float(line)
-                except:
-                    continue
-                key = (player_id, stat, line)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                all_props.append({
-                    "Player": player_name,
-                    "Prop": stat,
-                    "Line": line,
-                    "Side": "OVER",
-                    "Sport": sport,
-                    "source": "PrizePicks"
-                })
-        except Exception as e:
-            log_scan(f"PrizePicks API error: {str(e)[:50]}", "fail")
+        if not data or not data.get("data"):
             continue
+
+        # Build player lookup
+        players = {}
+        for item in data.get("included", []):
+            if item.get("type") == "new_player":
+                players[item["id"]] = item["attributes"]["name"]
+
+        # Extract props
+        for proj in data.get("data", []):
+            if proj.get("type") != "projection":
+                continue
+            attrs = proj.get("attributes", {})
+            player_id = proj.get("relationships", {}).get("new_player", {}).get("data", {}).get("id")
+            if not player_id:
+                continue
+            player_name = players.get(player_id, "Unknown")
+            line = attrs.get("line_score")
+            stat = attrs.get("stat_type")
+            if not (player_name and line is not None and stat):
+                continue
+            try:
+                line = float(line)
+            except:
+                continue
+            key = (sport, player_id, stat, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            all_props.append({
+                "Player": player_name,
+                "Prop": stat,
+                "Line": line,
+                "Side": "OVER",
+                "Sport": sport,
+                "source": "PrizePicks"
+            })
 
     mark_site_ok("PrizePicks")
     log_scan(f"PrizePicks: {len(all_props)} props", "ok" if all_props else "skip")
