@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import re
 import requests
 import time
@@ -10,200 +10,218 @@ import os
 import unicodedata
 from math import exp, factorial
 
-st.set_page_config(
-    page_title="BetCouncil v4.3",
-    page_icon="🛡️",
-    layout="wide"
-)
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="BetCouncil v4.4 – Chairman", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-body, .stApp { background-color: #060c14; color: #e8f0f8; font-family: 'Inter', sans-serif; }
-h1 { color: #ffffff; font-size: 26px; font-weight: 700; }
-h2 { color: #e0e8f0; font-size: 20px; }
-h3 { color: #c0c8d0; font-size: 16px; }
+body, .stApp, .main {
+    background-color: #060c14; color: #e8f0f8;
+    font-family: 'Inter', system-ui, sans-serif; font-size: 15px;
+}
+h1 { font-size: 28px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px; }
+h2 { font-size: 20px; font-weight: 600; color: #e0e8f0; letter-spacing: -0.3px; }
+h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
+h4 { font-size: 15px; font-weight: 600; color: #c0c8d0; }
 .stButton > button {
-    background-color: #0ea5a0; color: #fff; border: none;
+    background-color: #0ea5a0; color: #ffffff; border: none;
     border-radius: 8px; padding: 8px 18px; font-weight: 600;
-    transition: all 0.2s;
+    font-size: 14px; transition: all 0.2s;
 }
 .stButton > button:hover { background-color: #0d9488; transform: translateY(-1px); }
-.metric-card {
-    background: #0d1520; border: 1px solid #1a2a3a;
-    border-radius: 8px; padding: 12px; text-align: center;
+.command-bar {
+    background: linear-gradient(135deg, rgba(14,165,160,0.08), #0d1520);
+    border: 1px solid rgba(14,165,160,0.3); border-top: 3px solid #0ea5a0;
+    border-radius: 0 0 12px 12px; padding: 18px 22px; margin-bottom: 16px;
 }
+.metric-box {
+    background: #0d1520; border: 1px solid #1a2a3a;
+    border-radius: 8px; padding: 10px 14px; text-align: center;
+}
+.metric-label {
+    font-size: 11px; color: #6a7a8a; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px;
+}
+.metric-value { font-size: 20px; font-weight: 700; }
+.prop-card {
+    background: linear-gradient(135deg, #0d1520, #111c28);
+    border: 1px solid #1a2a3a; border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 8px; transition: border-color 0.2s;
+}
+.prop-card:hover { border-color: #0ea5a0; }
+.parlay-card {
+    background: linear-gradient(135deg, rgba(14,165,160,0.06), #0f1825);
+    border: 1px solid rgba(14,165,160,0.25); border-radius: 10px; padding: 16px;
+}
+.game-parlay-card {
+    background: linear-gradient(135deg, rgba(74,144,217,0.06), #0f1825);
+    border: 1px solid rgba(74,144,217,0.25); border-radius: 10px; padding: 16px;
+}
+.section-card {
+    background: linear-gradient(135deg, #0d1520, #0f1825);
+    border: 1px solid #1a2a3a; border-radius: 10px; padding: 16px; margin-bottom: 10px;
+}
+.gold-text  { color: #e8a020; }
+.teal-text  { color: #0ea5a0; }
+.red-text   { color: #e04040; }
+.muted-text { color: #6a7a8a; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
 # CONSTANTS
 # =========================
-DEFAULT_BANKROLL  = 468.49
-KELLY_FRACTION    = 0.25
-ODDS              = -110
-EDGE_CAP          = 0.20
-MIN_EDGE_DEFAULT  = 0.02
-REQUEST_TIMEOUT   = 10
-CACHE_DIR         = "/tmp/betcouncil_cache"
+DEFAULT_BANKROLL      = 468.49
+KELLY_FRACTION        = 0.25
+KELLY_CAP             = 0.25
+ODDS                  = -110
+EDGE_CAP              = 0.20
+MIN_EDGE_DEFAULT      = 0.02
+REQUEST_TIMEOUT       = 10
+CACHE_DIR             = "/tmp/betcouncil_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-}
-
+HEADERS               = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
+
+TIER_COLORS = {
+    "SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0",
+    "APPROVED":  "#4a90d9", "LEAN":  "#7a8a9a", "PASS": "#e04040",
+}
+TIER_DESCRIPTIONS = {
+    "SOVEREIGN": "Edge ≥ 15% — Highest confidence",
+    "ELITE":     "Edge ≥ 10% — Strong edge",
+    "APPROVED":  "Edge ≥ 5%  — Solid value",
+    "LEAN":      "Edge ≥ 2%  — Marginal",
+    "PASS":      "Edge < 2%  — No value",
+}
 
 # =========================
 # PLAYER SEASON AVERAGES
 # Update this dict weekly.
-# Sources: Basketball-Reference, Baseball-Reference, Pro-Football-Reference, Hockey-Reference
 # =========================
 PLAYER_AVERAGES = {
     "NBA": {
-        "LeBron James":              {"PTS": 23.7, "REB": 8.5,  "AST": 8.3,  "PRA": 40.5},
-        "Luka Doncic":               {"PTS": 28.1, "REB": 9.3,  "AST": 8.7,  "PRA": 46.1},
-        "Nikola Jokic":              {"PTS": 29.4, "REB": 13.0, "AST": 10.2, "PRA": 52.6},
-        "Shai Gilgeous-Alexander":   {"PTS": 31.5, "REB": 5.5,  "AST": 6.5,  "PRA": 43.5},
-        "Giannis Antetokounmpo":     {"PTS": 30.4, "REB": 11.9, "AST": 6.5,  "PRA": 48.8},
-        "Jayson Tatum":              {"PTS": 27.5, "REB": 8.7,  "AST": 4.9,  "PRA": 41.1},
-        "Stephen Curry":             {"PTS": 26.4, "REB": 4.5,  "AST": 5.1,  "PRA": 36.0},
-        "Kevin Durant":              {"PTS": 27.1, "REB": 6.6,  "AST": 5.0,  "PRA": 38.7},
-        "Anthony Davis":             {"PTS": 24.7, "REB": 12.6, "AST": 3.5,  "PRA": 40.8},
-        "Damian Lillard":            {"PTS": 24.3, "REB": 4.4,  "AST": 7.0,  "PRA": 35.7},
-        "Devin Booker":              {"PTS": 27.1, "REB": 4.5,  "AST": 6.9,  "PRA": 38.5},
-        "Donovan Mitchell":          {"PTS": 27.5, "REB": 5.0,  "AST": 5.5,  "PRA": 38.0},
-        "Jimmy Butler":              {"PTS": 20.8, "REB": 5.3,  "AST": 5.0,  "PRA": 31.1},
-        "Trae Young":                {"PTS": 25.7, "REB": 2.8,  "AST": 10.8, "PRA": 39.3},
-        "Domantas Sabonis":          {"PTS": 19.4, "REB": 13.7, "AST": 8.2,  "PRA": 41.3},
-        "Karl-Anthony Towns":        {"PTS": 21.8, "REB": 8.3,  "AST": 3.0,  "PRA": 33.1},
-        "Bam Adebayo":               {"PTS": 20.4, "REB": 10.2, "AST": 3.5,  "PRA": 34.1},
-        "Rudy Gobert":               {"PTS": 14.0, "REB": 12.9, "AST": 1.2,  "PRA": 28.1},
-        "Tyrese Haliburton":         {"PTS": 20.1, "REB": 3.8,  "AST": 10.9, "PRA": 34.8},
-        "Jalen Brunson":             {"PTS": 28.7, "REB": 3.7,  "AST": 7.4,  "PRA": 39.8},
-        "Cade Cunningham":           {"PTS": 25.3, "REB": 6.0,  "AST": 9.0,  "PRA": 40.3},
-        "Victor Wembanyama":         {"PTS": 21.4, "REB": 10.6, "AST": 3.9,  "PRA": 35.9},
-        "Paolo Banchero":            {"PTS": 22.6, "REB": 6.9,  "AST": 5.4,  "PRA": 34.9},
-        "Evan Mobley":               {"PTS": 18.0, "REB": 9.4,  "AST": 2.9,  "PRA": 30.3},
-        "Darius Garland":            {"PTS": 20.6, "REB": 2.7,  "AST": 6.7,  "PRA": 30.0},
-        "Tobias Harris":             {"PTS": 14.5, "REB": 5.8,  "AST": 2.1,  "PRA": 22.4},
-        "Ja Morant":                 {"PTS": 25.1, "REB": 5.6,  "AST": 8.1,  "PRA": 38.8},
-        "Zion Williamson":           {"PTS": 22.9, "REB": 5.8,  "AST": 5.0,  "PRA": 33.7},
-        "Kawhi Leonard":             {"PTS": 23.7, "REB": 6.1,  "AST": 3.6,  "PRA": 33.4},
-        "Pascal Siakam":             {"PTS": 21.3, "REB": 7.8,  "AST": 4.5,  "PRA": 33.6},
-        "De'Aaron Fox":              {"PTS": 25.2, "REB": 4.5,  "AST": 5.9,  "PRA": 35.6},
-        "Alperen Sengun":            {"PTS": 21.1, "REB": 9.3,  "AST": 5.0,  "PRA": 35.4},
-        "Desmond Bane":              {"PTS": 21.5, "REB": 4.8,  "AST": 4.2,  "PRA": 30.5},
-        "Scottie Barnes":            {"PTS": 19.9, "REB": 8.2,  "AST": 6.1,  "PRA": 34.2},
-        "Franz Wagner":              {"PTS": 19.7, "REB": 5.2,  "AST": 3.7,  "PRA": 28.6},
-        "Jalen Williams":            {"PTS": 23.9, "REB": 4.5,  "AST": 5.6,  "PRA": 34.0},
-        "Luguentz Dort":             {"PTS": 13.7, "REB": 3.8,  "AST": 1.9,  "PRA": 19.4},
-        "Aaron Gordon":              {"PTS": 14.4, "REB": 6.5,  "AST": 3.5,  "PRA": 24.4},
-        "Michael Porter Jr.":        {"PTS": 16.7, "REB": 6.9,  "AST": 1.4,  "PRA": 25.0},
-        "Jamal Murray":              {"PTS": 21.2, "REB": 4.2,  "AST": 6.5,  "PRA": 31.9},
+        "LeBron James":            {"PTS": 23.7, "REB": 8.5,  "AST": 8.3,  "PRA": 40.5},
+        "Luka Doncic":             {"PTS": 28.1, "REB": 9.3,  "AST": 8.7,  "PRA": 46.1},
+        "Nikola Jokic":            {"PTS": 29.4, "REB": 13.0, "AST": 10.2, "PRA": 52.6},
+        "Shai Gilgeous-Alexander": {"PTS": 31.5, "REB": 5.5,  "AST": 6.5,  "PRA": 43.5},
+        "Giannis Antetokounmpo":   {"PTS": 30.4, "REB": 11.9, "AST": 6.5,  "PRA": 48.8},
+        "Jayson Tatum":            {"PTS": 27.5, "REB": 8.7,  "AST": 4.9,  "PRA": 41.1},
+        "Stephen Curry":           {"PTS": 26.4, "REB": 4.5,  "AST": 5.1,  "PRA": 36.0},
+        "Kevin Durant":            {"PTS": 27.1, "REB": 6.6,  "AST": 5.0,  "PRA": 38.7},
+        "Anthony Davis":           {"PTS": 24.7, "REB": 12.6, "AST": 3.5,  "PRA": 40.8},
+        "Damian Lillard":          {"PTS": 24.3, "REB": 4.4,  "AST": 7.0,  "PRA": 35.7},
+        "Devin Booker":            {"PTS": 27.1, "REB": 4.5,  "AST": 6.9,  "PRA": 38.5},
+        "Donovan Mitchell":        {"PTS": 27.5, "REB": 5.0,  "AST": 5.5,  "PRA": 38.0},
+        "Jimmy Butler":            {"PTS": 20.8, "REB": 5.3,  "AST": 5.0,  "PRA": 31.1},
+        "Trae Young":              {"PTS": 25.7, "REB": 2.8,  "AST": 10.8, "PRA": 39.3},
+        "Domantas Sabonis":        {"PTS": 19.4, "REB": 13.7, "AST": 8.2,  "PRA": 41.3},
+        "Karl-Anthony Towns":      {"PTS": 21.8, "REB": 8.3,  "AST": 3.0,  "PRA": 33.1},
+        "Bam Adebayo":             {"PTS": 20.4, "REB": 10.2, "AST": 3.5,  "PRA": 34.1},
+        "Rudy Gobert":             {"PTS": 14.0, "REB": 12.9, "AST": 1.2,  "PRA": 28.1},
+        "Tyrese Haliburton":       {"PTS": 20.1, "REB": 3.8,  "AST": 10.9, "PRA": 34.8},
+        "Jalen Brunson":           {"PTS": 28.7, "REB": 3.7,  "AST": 7.4,  "PRA": 39.8},
+        "Cade Cunningham":         {"PTS": 25.3, "REB": 6.0,  "AST": 9.0,  "PRA": 40.3},
+        "Victor Wembanyama":       {"PTS": 21.4, "REB": 10.6, "AST": 3.9,  "PRA": 35.9},
+        "Paolo Banchero":          {"PTS": 22.6, "REB": 6.9,  "AST": 5.4,  "PRA": 34.9},
+        "Evan Mobley":             {"PTS": 18.0, "REB": 9.4,  "AST": 2.9,  "PRA": 30.3},
+        "Darius Garland":          {"PTS": 20.6, "REB": 2.7,  "AST": 6.7,  "PRA": 30.0},
+        "Tobias Harris":           {"PTS": 14.5, "REB": 5.8,  "AST": 2.1,  "PRA": 22.4},
+        "Ja Morant":               {"PTS": 25.1, "REB": 5.6,  "AST": 8.1,  "PRA": 38.8},
+        "Zion Williamson":         {"PTS": 22.9, "REB": 5.8,  "AST": 5.0,  "PRA": 33.7},
+        "Jamal Murray":            {"PTS": 21.2, "REB": 4.2,  "AST": 6.5,  "PRA": 31.9},
+        "Michael Porter Jr.":      {"PTS": 16.7, "REB": 6.9,  "AST": 1.4,  "PRA": 25.0},
+        "Aaron Gordon":            {"PTS": 14.4, "REB": 6.5,  "AST": 3.5,  "PRA": 24.4},
+        "Jalen Williams":          {"PTS": 23.9, "REB": 4.5,  "AST": 5.6,  "PRA": 34.0},
+        "Alperen Sengun":          {"PTS": 21.1, "REB": 9.3,  "AST": 5.0,  "PRA": 35.4},
+        "Desmond Bane":            {"PTS": 21.5, "REB": 4.8,  "AST": 4.2,  "PRA": 30.5},
+        "Scottie Barnes":          {"PTS": 19.9, "REB": 8.2,  "AST": 6.1,  "PRA": 34.2},
+        "Franz Wagner":            {"PTS": 19.7, "REB": 5.2,  "AST": 3.7,  "PRA": 28.6},
+        "De'Aaron Fox":            {"PTS": 25.2, "REB": 4.5,  "AST": 5.9,  "PRA": 35.6},
+        "Pascal Siakam":           {"PTS": 21.3, "REB": 7.8,  "AST": 4.5,  "PRA": 33.6},
+        "Kawhi Leonard":           {"PTS": 23.7, "REB": 6.1,  "AST": 3.6,  "PRA": 33.4},
+        "Luguentz Dort":           {"PTS": 13.7, "REB": 3.8,  "AST": 1.9,  "PRA": 19.4},
     },
     "MLB": {
-        "Aaron Judge":               {"HR": 0.15, "H": 1.2,  "RBI": 0.9, "R": 0.9},
-        "Shohei Ohtani":             {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Mookie Betts":              {"HR": 0.12, "H": 1.2,  "RBI": 0.7, "R": 0.9},
-        "Ronald Acuna Jr.":          {"HR": 0.13, "H": 1.2,  "RBI": 0.8, "R": 0.9},
-        "Bryce Harper":              {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Juan Soto":                 {"HR": 0.13, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Freddie Freeman":           {"HR": 0.11, "H": 1.2,  "RBI": 0.7, "R": 0.8},
-        "Jose Ramirez":              {"HR": 0.12, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Pete Alonso":               {"HR": 0.15, "H": 1.0,  "RBI": 0.9, "R": 0.7},
-        "Vladimir Guerrero Jr.":     {"HR": 0.12, "H": 1.2,  "RBI": 0.8, "R": 0.8},
-        "Francisco Lindor":          {"HR": 0.12, "H": 1.1,  "RBI": 0.7, "R": 0.8},
-        "Corbin Carroll":            {"HR": 0.08, "H": 1.1,  "RBI": 0.5, "R": 0.8},
-        "Gunnar Henderson":          {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
-        "Bobby Witt Jr.":            {"HR": 0.12, "H": 1.2,  "RBI": 0.8, "R": 0.9},
-        "Elly De La Cruz":           {"HR": 0.10, "H": 1.0,  "RBI": 0.6, "R": 0.7},
-        "Corey Seager":              {"HR": 0.12, "H": 1.1,  "RBI": 0.7, "R": 0.7},
-        "Mike Trout":                {"HR": 0.14, "H": 1.0,  "RBI": 0.8, "R": 0.8},
-        "Matt Olson":                {"HR": 0.15, "H": 1.0,  "RBI": 0.9, "R": 0.7},
-        "Bo Bichette":               {"HR": 0.11, "H": 1.2,  "RBI": 0.7, "R": 0.8},
-        "Paul Skenes":               {"SO": 8.5,  "H": 0.3,  "ER": 0.4},
-        "Spencer Strider":           {"SO": 9.2,  "H": 0.3,  "ER": 0.5},
-        "Gerrit Cole":               {"SO": 8.8,  "H": 0.4,  "ER": 0.5},
-        "Zack Wheeler":              {"SO": 8.4,  "H": 0.4,  "ER": 0.5},
-        "Tarik Skubal":              {"SO": 9.0,  "H": 0.3,  "ER": 0.4},
-        "Logan Webb":                {"SO": 7.2,  "H": 0.5,  "ER": 0.5},
-        "Chris Sale":                {"SO": 7.8,  "H": 0.4,  "ER": 0.5},
+        "Aaron Judge":             {"HR": 0.15, "H": 1.2,  "RBI": 0.9, "R": 0.9},
+        "Shohei Ohtani":           {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
+        "Mookie Betts":            {"HR": 0.12, "H": 1.2,  "RBI": 0.7, "R": 0.9},
+        "Ronald Acuna Jr.":        {"HR": 0.13, "H": 1.2,  "RBI": 0.8, "R": 0.9},
+        "Bryce Harper":            {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
+        "Juan Soto":               {"HR": 0.13, "H": 1.1,  "RBI": 0.8, "R": 0.8},
+        "Freddie Freeman":         {"HR": 0.11, "H": 1.2,  "RBI": 0.7, "R": 0.8},
+        "Jose Ramirez":            {"HR": 0.12, "H": 1.1,  "RBI": 0.8, "R": 0.8},
+        "Pete Alonso":             {"HR": 0.15, "H": 1.0,  "RBI": 0.9, "R": 0.7},
+        "Vladimir Guerrero Jr.":   {"HR": 0.12, "H": 1.2,  "RBI": 0.8, "R": 0.8},
+        "Francisco Lindor":        {"HR": 0.12, "H": 1.1,  "RBI": 0.7, "R": 0.8},
+        "Bobby Witt Jr.":          {"HR": 0.12, "H": 1.2,  "RBI": 0.8, "R": 0.9},
+        "Gunnar Henderson":        {"HR": 0.14, "H": 1.1,  "RBI": 0.8, "R": 0.8},
+        "Elly De La Cruz":         {"HR": 0.10, "H": 1.0,  "RBI": 0.6, "R": 0.7},
+        "Corbin Carroll":          {"HR": 0.08, "H": 1.1,  "RBI": 0.5, "R": 0.8},
+        "Paul Skenes":             {"SO": 8.5,  "H": 0.3,  "ER": 0.4},
+        "Spencer Strider":         {"SO": 9.2,  "H": 0.3,  "ER": 0.5},
+        "Gerrit Cole":             {"SO": 8.8,  "H": 0.4,  "ER": 0.5},
+        "Zack Wheeler":            {"SO": 8.4,  "H": 0.4,  "ER": 0.5},
+        "Tarik Skubal":            {"SO": 9.0,  "H": 0.3,  "ER": 0.4},
     },
     "NFL": {
-        "Patrick Mahomes":           {"PASS_YDS": 280, "TD": 2.2},
-        "Josh Allen":                {"PASS_YDS": 260, "RUSH_YDS": 35,  "TD": 2.5},
-        "Jalen Hurts":               {"PASS_YDS": 230, "RUSH_YDS": 45,  "TD": 2.2},
-        "Lamar Jackson":             {"PASS_YDS": 220, "RUSH_YDS": 65,  "TD": 2.0},
-        "Joe Burrow":                {"PASS_YDS": 270, "TD": 2.0},
-        "Justin Herbert":            {"PASS_YDS": 265, "TD": 2.0},
-        "Dak Prescott":              {"PASS_YDS": 260, "TD": 2.0},
-        "Trevor Lawrence":           {"PASS_YDS": 250, "TD": 1.8},
-        "Kirk Cousins":              {"PASS_YDS": 260, "TD": 2.0},
-        "Christian McCaffrey":       {"RUSH_YDS": 85,  "REC_YDS": 45,  "TD": 1.0},
-        "Derrick Henry":             {"RUSH_YDS": 90,  "TD": 0.9},
-        "Saquon Barkley":            {"RUSH_YDS": 80,  "REC_YDS": 35,  "TD": 0.8},
-        "Tyreek Hill":               {"REC_YDS": 95,  "TD": 0.8},
-        "Justin Jefferson":          {"REC_YDS": 90,  "TD": 0.7},
-        "Ja'Marr Chase":             {"REC_YDS": 85,  "TD": 0.7},
-        "Travis Kelce":              {"REC_YDS": 70,  "TD": 0.6},
-        "CeeDee Lamb":               {"REC_YDS": 92,  "TD": 0.7},
-        "Stefon Diggs":              {"REC_YDS": 72,  "TD": 0.5},
-        "Davante Adams":             {"REC_YDS": 78,  "TD": 0.6},
-        "Cooper Kupp":               {"REC_YDS": 68,  "TD": 0.5},
-        "A.J. Brown":                {"REC_YDS": 88,  "TD": 0.7},
-        "Deebo Samuel":              {"REC_YDS": 65,  "TD": 0.5},
-        "Sam LaPorta":               {"REC_YDS": 58,  "TD": 0.5},
+        "Patrick Mahomes":         {"PASS_YDS": 280, "TD": 2.2},
+        "Josh Allen":              {"PASS_YDS": 260, "RUSH_YDS": 35,  "TD": 2.5},
+        "Jalen Hurts":             {"PASS_YDS": 230, "RUSH_YDS": 45,  "TD": 2.2},
+        "Lamar Jackson":           {"PASS_YDS": 220, "RUSH_YDS": 65,  "TD": 2.0},
+        "Joe Burrow":              {"PASS_YDS": 270, "TD": 2.0},
+        "Justin Herbert":          {"PASS_YDS": 265, "TD": 2.0},
+        "Dak Prescott":            {"PASS_YDS": 260, "TD": 2.0},
+        "Christian McCaffrey":     {"RUSH_YDS": 85,  "REC_YDS": 45,  "TD": 1.0},
+        "Derrick Henry":           {"RUSH_YDS": 90,  "TD": 0.9},
+        "Saquon Barkley":          {"RUSH_YDS": 80,  "REC_YDS": 35,  "TD": 0.8},
+        "Tyreek Hill":             {"REC_YDS": 95,  "TD": 0.8},
+        "Justin Jefferson":        {"REC_YDS": 90,  "TD": 0.7},
+        "Ja'Marr Chase":           {"REC_YDS": 85,  "TD": 0.7},
+        "Travis Kelce":            {"REC_YDS": 70,  "TD": 0.6},
+        "CeeDee Lamb":             {"REC_YDS": 92,  "TD": 0.7},
+        "A.J. Brown":              {"REC_YDS": 88,  "TD": 0.7},
     },
     "NHL": {
-        "Connor McDavid":            {"PTS": 1.5,  "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5},
-        "Leon Draisaitl":            {"PTS": 1.4,  "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
-        "Nathan MacKinnon":          {"PTS": 1.4,  "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4},
-        "David Pastrnak":            {"PTS": 1.2,  "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
-        "Nikita Kucherov":           {"PTS": 1.5,  "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0},
-        "Auston Matthews":           {"PTS": 1.2,  "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
-        "Mitch Marner":              {"PTS": 1.2,  "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8},
-        "Cale Makar":                {"PTS": 0.9,  "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
-        "Kirill Kaprizov":           {"PTS": 1.1,  "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2},
-        "Mikko Rantanen":            {"PTS": 1.3,  "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
-        "Brad Marchand":             {"PTS": 0.9,  "GOALS": 0.3, "ASSISTS": 0.6, "SOG": 2.8},
-        "Matthew Tkachuk":           {"PTS": 1.1,  "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0},
-        "Artemi Panarin":            {"PTS": 1.2,  "GOALS": 0.5, "ASSISTS": 0.7, "SOG": 3.1},
-        "Roman Josi":                {"PTS": 0.8,  "GOALS": 0.2, "ASSISTS": 0.6, "SOG": 2.5},
-        "Adam Fox":                  {"PTS": 0.9,  "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.4},
-        "Jake Guentzel":             {"PTS": 0.9,  "GOALS": 0.4, "ASSISTS": 0.5, "SOG": 3.0},
-        "Brayden Point":             {"PTS": 1.1,  "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
-        "Sam Reinhart":              {"PTS": 1.0,  "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0},
-        "Aleksander Barkov":         {"PTS": 1.0,  "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8},
-        "Elias Pettersson":          {"PTS": 1.0,  "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.9},
+        "Connor McDavid":          {"PTS": 1.5,  "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5},
+        "Leon Draisaitl":          {"PTS": 1.4,  "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
+        "Nathan MacKinnon":        {"PTS": 1.4,  "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4},
+        "David Pastrnak":          {"PTS": 1.2,  "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
+        "Nikita Kucherov":         {"PTS": 1.5,  "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0},
+        "Auston Matthews":         {"PTS": 1.2,  "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
+        "Mitch Marner":            {"PTS": 1.2,  "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8},
+        "Cale Makar":              {"PTS": 0.9,  "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
+        "Kirill Kaprizov":         {"PTS": 1.1,  "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2},
+        "Mikko Rantanen":          {"PTS": 1.3,  "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
+        "Matthew Tkachuk":         {"PTS": 1.1,  "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0},
+        "Brayden Point":           {"PTS": 1.1,  "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
+        "Sam Reinhart":            {"PTS": 1.0,  "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0},
+        "Aleksander Barkov":       {"PTS": 1.0,  "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8},
     },
     "WNBA": {
-        "A'ja Wilson":               {"PTS": 26.0, "REB": 9.4,  "AST": 2.4, "PRA": 37.8},
-        "Breanna Stewart":           {"PTS": 21.8, "REB": 8.6,  "AST": 3.8, "PRA": 34.2},
-        "Sabrina Ionescu":           {"PTS": 19.4, "REB": 4.5,  "AST": 6.3, "PRA": 30.2},
-        "Kelsey Plum":               {"PTS": 18.9, "REB": 2.8,  "AST": 4.2, "PRA": 25.9},
-        "Napheesa Collier":          {"PTS": 20.1, "REB": 9.3,  "AST": 2.7, "PRA": 32.1},
-        "Jackie Young":              {"PTS": 17.3, "REB": 4.1,  "AST": 4.0, "PRA": 25.4},
-        "Alyssa Thomas":             {"PTS": 12.5, "REB": 9.2,  "AST": 7.1, "PRA": 28.8},
-        "Caitlin Clark":             {"PTS": 19.2, "REB": 5.7,  "AST": 8.4, "PRA": 33.3},
-        "Angel Reese":               {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1},
-        "Jonquel Jones":             {"PTS": 15.5, "REB": 8.4,  "AST": 2.6, "PRA": 26.5},
-        "Dearica Hamby":             {"PTS": 14.2, "REB": 8.9,  "AST": 2.5, "PRA": 25.6},
-        "Kahleah Copper":            {"PTS": 17.5, "REB": 4.2,  "AST": 2.8, "PRA": 24.5},
-        "Aliyah Boston":             {"PTS": 14.0, "REB": 8.0,  "AST": 3.2, "PRA": 25.2},
-        "DiJonai Carrington":        {"PTS": 14.8, "REB": 4.9,  "AST": 2.4, "PRA": 22.1},
+        "A'ja Wilson":             {"PTS": 26.0, "REB": 9.4,  "AST": 2.4, "PRA": 37.8},
+        "Breanna Stewart":         {"PTS": 21.8, "REB": 8.6,  "AST": 3.8, "PRA": 34.2},
+        "Sabrina Ionescu":         {"PTS": 19.4, "REB": 4.5,  "AST": 6.3, "PRA": 30.2},
+        "Kelsey Plum":             {"PTS": 18.9, "REB": 2.8,  "AST": 4.2, "PRA": 25.9},
+        "Napheesa Collier":        {"PTS": 20.1, "REB": 9.3,  "AST": 2.7, "PRA": 32.1},
+        "Caitlin Clark":           {"PTS": 19.2, "REB": 5.7,  "AST": 8.4, "PRA": 33.3},
+        "Angel Reese":             {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1},
+        "Alyssa Thomas":           {"PTS": 12.5, "REB": 9.2,  "AST": 7.1, "PRA": 28.8},
+        "Jackie Young":            {"PTS": 17.3, "REB": 4.1,  "AST": 4.0, "PRA": 25.4},
     },
 }
 
 DEFAULT_AVERAGES = {
-    "NBA":  {"PTS": 10.0, "REB": 4.0,   "AST": 2.5,   "PRA": 16.5},
-    "MLB":  {"HR": 0.05,  "H": 0.8,     "RBI": 0.3,   "R": 0.3,   "SO": 5.0},
+    "NBA":  {"PTS": 10.0, "REB": 4.0,    "AST": 2.5,    "PRA": 16.5},
+    "MLB":  {"HR": 0.05,  "H": 0.8,      "RBI": 0.3,    "R": 0.3,    "SO": 5.0},
     "NFL":  {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
-    "NHL":  {"PTS": 0.45, "GOALS": 0.18,"ASSISTS": 0.27,"SOG": 1.8},
-    "WNBA": {"PTS": 8.0,  "REB": 3.5,   "AST": 2.0,   "PRA": 13.5},
+    "NHL":  {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
+    "WNBA": {"PTS": 8.0,  "REB": 3.5,   "AST": 2.0,    "PRA": 13.5},
 }
 
-# Sport-aware stat name normalization (PrizePicks labels → internal keys)
 STAT_NORMALIZE = {
     ("NBA",  "Points"):           "PTS",
     ("NBA",  "Rebounds"):         "REB",
@@ -232,7 +250,6 @@ STAT_NORMALIZE = {
     ("WNBA", "Pts+Reb+Ast"):      "PRA",
 }
 
-# Stats where Poisson model is more accurate than linear % deviation
 POISSON_STATS = {"HR", "GOALS", "TD", "SO"}
 
 # =========================
@@ -250,7 +267,7 @@ def cached_fetch(url, ttl_minutes=25):
         resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 200:
             data = resp.json()
-            if data.get("data"):   # only cache non-empty responses
+            if data.get("data"):
                 with open(cache_path, "wb") as f:
                     pickle.dump(data, f)
             return data
@@ -259,8 +276,7 @@ def cached_fetch(url, ttl_minutes=25):
         return None
 
 # =========================
-# NAME NORMALIZATION
-# Handles accents (Acuña → Acuna) and suffixes (Jr., Sr., II, III)
+# NAME MATCHING
 # =========================
 def normalize_name(s):
     s = unicodedata.normalize("NFD", s)
@@ -269,12 +285,11 @@ def normalize_name(s):
     return s
 
 def find_player_avg(player_name, avgs_dict):
-    """Return (stats_dict, using_default). Tries exact then accent-normalized match."""
     if player_name in avgs_dict:
         return avgs_dict[player_name], False
-    norm_target = normalize_name(player_name)
+    norm = normalize_name(player_name)
     for key, val in avgs_dict.items():
-        if normalize_name(key) == norm_target:
+        if normalize_name(key) == norm:
             return val, False
     return {}, True
 
@@ -289,21 +304,16 @@ def scrape_prizepicks(sport):
     league = league_ids.get(sport.upper())
     if not league:
         return []
-
-    # Broad endpoint first (no state restriction), CA-scoped second
     urls = [
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true",
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code=CA&game_mode=prizepools",
     ]
-
     all_props = []
-    seen      = set()
-
+    seen = set()
     for url in urls:
         data = cached_fetch(url, ttl_minutes=20)
         if not data or not data.get("data"):
             continue
-
         players = {
             item["id"]: item["attributes"]["name"]
             for item in data.get("included", [])
@@ -328,28 +338,20 @@ def scrape_prizepicks(sport):
                 continue
             seen.add(key)
             all_props.append({
-                "Player": name,
-                "Prop":   stat,
-                "Line":   line,
-                "Side":   "OVER",
-                "Sport":  sport,
-                "source": "PrizePicks",
+                "Player": name, "Prop": stat, "Line": line,
+                "Side": "OVER", "Sport": sport, "source": "PrizePicks",
             })
-
         if all_props:
-            break  # got data from first URL, skip second
-
+            break
     return all_props
 
 # =========================
-# GAME MATCHUPS — ESPN scoreboard (free, no key needed, no odds)
+# GAME LINES — ESPN
 # =========================
 def fetch_game_lines(sport):
     slug_map = {
-        "NBA":  "basketball/nba",
-        "MLB":  "baseball/mlb",
-        "NFL":  "football/nfl",
-        "NHL":  "hockey/nhl",
+        "NBA": "basketball/nba", "MLB": "baseball/mlb",
+        "NFL": "football/nfl",   "NHL": "hockey/nhl",
         "WNBA": "basketball/wnba",
     }
     path = slug_map.get(sport, "")
@@ -361,7 +363,11 @@ def fetch_game_lines(sport):
         if resp.status_code == 200:
             data = resp.json()
             return [
-                {"Matchup": e.get("shortName", ""), "Status": e.get("status", {}).get("type", {}).get("description", ""), "Sport": sport}
+                {
+                    "Matchup": e.get("shortName", ""),
+                    "Status":  e.get("status", {}).get("type", {}).get("description", ""),
+                    "Sport":   sport,
+                }
                 for e in data.get("events", [])
             ]
     except:
@@ -371,51 +377,63 @@ def fetch_game_lines(sport):
 # =========================
 # EDGE & KELLY
 # =========================
-def poisson_prob_over(line, avg_per_game):
-    """P(X > line) using Poisson distribution. Best for HR, goals, TDs, strikeouts."""
-    if avg_per_game <= 0:
+def poisson_prob_over(line, avg):
+    if avg <= 0:
         return 0.5
     k = int(line)
     try:
-        p_at_or_under = sum(
-            (avg_per_game ** i * exp(-avg_per_game)) / factorial(i)
-            for i in range(k + 1)
-        )
-        return round(1 - p_at_or_under, 4)
+        p_under = sum((avg**i * exp(-avg)) / factorial(i) for i in range(k + 1))
+        return round(1 - p_under, 4)
     except:
         return 0.5
 
 def compute_edge(line, player_avg, side="OVER", stat_key="PTS"):
     if player_avg <= 0:
         return 0.0, 0.5
-
     if stat_key in POISSON_STATS:
-        # Poisson model for low-frequency binary-ish events
         prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
             prob = 1 - prob
         edge = prob - 0.5
     else:
-        # Linear deviation model for counting stats
-        diff  = (line - player_avg) / player_avg
-        edge  = -diff if side.upper() == "OVER" else diff
-        edge  = max(-EDGE_CAP, min(EDGE_CAP, edge))
-        prob  = max(0.30, min(0.70, 0.5 + edge))
-
+        diff = (line - player_avg) / player_avg
+        edge = -diff if side.upper() == "OVER" else diff
+        edge = max(-EDGE_CAP, min(EDGE_CAP, edge))
+        prob = max(0.30, min(0.70, 0.5 + edge))
     return round(edge, 4), round(prob, 4)
 
-def kelly_unit(prob, bankroll, odds=ODDS):
+def kelly_unit(prob, bankroll):
     if prob <= 0.5:
         return 0.0
-    b     = 100 / abs(odds) if odds < 0 else odds / 100
+    b     = 100 / abs(ODDS)
     q     = 1 - prob
     kelly = (b * prob - q) / b
     if kelly <= 0:
         return 0.0
-    return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * 0.25), 2)
+    return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * KELLY_CAP), 2)
+
+def get_tier(edge):
+    if edge >= 0.15: return "SOVEREIGN"
+    if edge >= 0.10: return "ELITE"
+    if edge >= 0.05: return "APPROVED"
+    if edge >= 0.02: return "LEAN"
+    return "PASS"
+
+def active_unit():
+    return round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
+
+def get_session_time():
+    elapsed = int(time.time() - st.session_state.session_start)
+    return f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+
+def get_daily_change():
+    if st.session_state.day_start_br == 0:
+        return "0.0%"
+    change = (st.session_state.bankroll - st.session_state.day_start_br) / st.session_state.day_start_br * 100
+    return f"{'+'if change>=0 else''}{change:.1f}%"
 
 # =========================
-# MAIN LOAD FUNCTION
+# MAIN LOAD
 # =========================
 def load_sport_data(sport):
     avgs     = PLAYER_AVERAGES.get(sport, {})
@@ -427,9 +445,8 @@ def load_sport_data(sport):
     if not props:
         return [], fetch_game_lines(sport), 0, 0
 
-    enriched     = []
-    skipped_def  = 0
-    skipped_edge = 0
+    enriched = []
+    skipped_def = skipped_edge = 0
 
     for p in props:
         stat_raw  = p["Prop"]
@@ -453,177 +470,391 @@ def load_sport_data(sport):
             skipped_edge += 1
             continue
 
+        tier = get_tier(edge)
         enriched.append({
             "Player":  player,
             "Prop":    stat_raw,
             "Line":    p["Line"],
+            "Side":    side,
             "Avg":     avg,
             "Edge":    edge,
+            "EdgePct": f"{edge:.1%}",
             "Prob":    prob,
             "Wager":   kelly_unit(prob, st.session_state.bankroll),
+            "Tier":    tier,
             "Quality": "Lookup" if not using_default else "Default",
             "Model":   "Poisson" if stat_norm in POISSON_STATS else "Linear",
+            "Sport":   sport,
         })
 
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
     return enriched, fetch_game_lines(sport), skipped_def, skipped_edge
 
 # =========================
-# SESSION STATE INIT
+# SESSION STATE
 # =========================
-_ss_defaults = {
-    "bankroll":      DEFAULT_BANKROLL,
-    "locks":         [],
-    "history":       [],
-    "min_edge":      MIN_EDGE_DEFAULT,
-    "skip_defaults": True,
-    "last_sport":    "NBA",
-    "board_data":    [],
-    "games":         [],
+_ss = {
+    "bankroll":       DEFAULT_BANKROLL,
+    "day_start_br":   DEFAULT_BANKROLL,
+    "session_start":  time.time(),
+    "locks":          [],
+    "history":        [],
+    "min_edge":       MIN_EDGE_DEFAULT,
+    "skip_defaults":  True,
+    "last_sport":     "NBA",
+    "board_data":     [],
+    "games":          [],
+    "last_scan_time": None,
+    "board_ready":    False,
+    "n_skipped_def":  0,
+    "n_skipped_edge": 0,
 }
-for _k, _v in _ss_defaults.items():
-    if _k not in st.session_state:
-        st.session_state[_k] = _v
+for k, v in _ss.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # =========================
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.markdown("# 🛡️ BetCouncil v4.3")
-    st.markdown(f"*Averages updated: {AVERAGES_LAST_UPDATED}*")
-    st.markdown("---")
+    st.markdown("""
+    <div style="text-align:center;margin-bottom:16px;">
+        <div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);
+             clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+             display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
+        <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v4.4 · Chairman Mode</div>
+    </div>""", unsafe_allow_html=True)
 
     st.session_state.bankroll = st.number_input(
         "Bankroll ($)", value=float(st.session_state.bankroll), step=10.0
     )
+    dc       = get_daily_change()
+    dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
+    st.markdown(f'<div style="font-size:13px;color:{dc_color};margin-top:-12px;margin-bottom:8px;">{dc} today</div>',
+                unsafe_allow_html=True)
+    st.metric("Active Unit", f"${active_unit():.2f}")
+    st.markdown(f'<div style="font-size:12px;color:#5a6a7a;margin-bottom:16px;">Session: {get_session_time()}</div>',
+                unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.subheader("Chairman Strategy")
     st.session_state.min_edge = st.slider(
-        "Min Edge (%)", 0, 15,
-        int(st.session_state.min_edge * 100), step=1
+        "Min Edge (%)", 0, 15, int(st.session_state.min_edge * 100), step=1
     ) / 100.0
     st.session_state.skip_defaults = st.checkbox(
-        "Skip unknown players",
-        value=st.session_state.skip_defaults
+        "Skip unknown players", value=st.session_state.skip_defaults
     )
 
     st.markdown("---")
     _sport_list = ["NBA", "MLB", "NHL", "WNBA", "NFL"]
     _last = st.session_state.last_sport if st.session_state.last_sport in _sport_list else "NBA"
-    sport = st.selectbox("Sport", _sport_list, index=_sport_list.index(_last))
+    sport_sel = st.selectbox("Sport", _sport_list, index=_sport_list.index(_last))
 
     if st.button("Load Board", use_container_width=True):
-        with st.spinner(f"Fetching {sport} props from PrizePicks..."):
-            board, games, n_def, n_edge = load_sport_data(sport)
-            st.session_state.board_data = board
-            st.session_state.games      = games
-            st.session_state.last_sport = sport
+        with st.spinner(f"Fetching {sport_sel} from PrizePicks..."):
+            board, games, n_def, n_edge = load_sport_data(sport_sel)
+            st.session_state.board_data     = board
+            st.session_state.games          = games
+            st.session_state.last_sport     = sport_sel
+            st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
+            st.session_state.board_ready    = True
+            st.session_state.n_skipped_def  = n_def
+            st.session_state.n_skipped_edge = n_edge
         if board:
-            st.success(f"{len(board)} props found")
+            st.success(f"{len(board)} props loaded")
             if n_def:
                 st.info(f"{n_def} unknown players skipped")
-            if n_edge:
-                st.caption(f"{n_edge} props below edge threshold")
         else:
-            st.warning(
-                "No props returned. PrizePicks may not have lines posted yet "
-                "for today's slate. Try again closer to game time."
-            )
+            st.warning("No props yet. Check back closer to game time.")
 
     st.markdown("---")
-    st.metric("Bankroll", f"${st.session_state.bankroll:.2f}")
-
     _wins   = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
     _losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
     if _wins + _losses > 0:
+        _net = sum(h.get("net", 0) for h in st.session_state.history)
         st.metric("Record", f"{_wins}W – {_losses}L")
-        _net   = sum(h.get("net", 0) for h in st.session_state.history)
-        _color = "green" if _net >= 0 else "red"
-        st.markdown(
-            f'<p style="color:{_color};font-weight:700;">Net P&L: ${_net:.2f}</p>',
-            unsafe_allow_html=True
-        )
+        _c = "green" if _net >= 0 else "red"
+        st.markdown(f'<p style="color:{_c};font-weight:700;font-size:14px;">Net: ${_net:.2f}</p>',
+                    unsafe_allow_html=True)
 
     if st.button("Reset Bankroll", use_container_width=True):
-        st.session_state.bankroll = DEFAULT_BANKROLL
+        st.session_state.bankroll     = DEFAULT_BANKROLL
+        st.session_state.day_start_br = DEFAULT_BANKROLL
         st.rerun()
 
 # =========================
-# MAIN TABS
+# COMMAND BAR
 # =========================
-tabs = st.tabs(["📊 Props", "🏟️ Games", "🔒 Locks", "📈 History", "⚙️ System"])
+pending  = len([l for l in st.session_state.locks if l.get("status") == "PENDING"])
+dc       = get_daily_change()
+dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
+scan_t   = st.session_state.last_scan_time or "—"
 
-# ---- PROPS ----
+st.markdown(f"""
+<div class="command-bar">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.4 — Chairman Mode</div>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+      <span style="font-size:12px;color:#6a7a8a;">Session: {get_session_time()}</span>
+      <span style="font-size:12px;border:1px solid #0ea5a0;color:#0ea5a0;
+             background:rgba(14,165,160,0.1);padding:4px 10px;border-radius:20px;">
+        {pending} Lock{"s" if pending!=1 else ""}
+      </span>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
+    <div class="metric-box">
+      <div class="metric-label">Bankroll</div>
+      <div class="metric-value gold-text">${st.session_state.bankroll:.2f}</div>
+      <div style="font-size:12px;color:{dc_color};">{dc} today</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Unit</div>
+      <div class="metric-value teal-text">${active_unit():.2f}</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Min Edge</div>
+      <div class="metric-value gold-text">{st.session_state.min_edge*100:.0f}%</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Kelly</div>
+      <div class="metric-value gold-text">{KELLY_FRACTION}</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Props Loaded</div>
+      <div class="metric-value teal-text">{len(st.session_state.board_data)}</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Last Scan</div>
+      <div class="metric-value" style="font-size:13px;color:#6a7a8a;">{scan_t}</div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# =========================
+# TABS
+# =========================
+tabs = st.tabs([
+    "📋 Summary",
+    "📊 Full Board",
+    "🏟️ Game Lines",
+    "🔒 Locks & Ledger",
+    "📈 History",
+    "⚙️ System",
+])
+
+# ─────────────────────────────────
+# TAB 0 — SUMMARY
+# ─────────────────────────────────
 with tabs[0]:
-    st.markdown(f"## Props — {st.session_state.last_sport}")
+    st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.4")
+    today_str = date.today().strftime("%A, %B %d, %Y")
+    st.markdown(
+        f"**{st.session_state.last_sport} Slate — {today_str}** | "
+        f"**Scanned:** {scan_t} | "
+        f"**Averages:** {AVERAGES_LAST_UPDATED}"
+    )
+    st.markdown("🔒 **Source:** PrizePicks API (live) · ESPN Scoreboard · Hardcoded Season Averages")
+    st.markdown("---")
 
-    if st.session_state.board_data:
-        df = pd.DataFrame(st.session_state.board_data)
+    st.markdown("## 🏟️ TODAY'S GAMES")
+    if st.session_state.games:
+        st.table(pd.DataFrame(st.session_state.games))
+    else:
+        st.info("No games loaded. Click 'Load Board' in the sidebar.")
+    st.markdown("---")
 
-        styled = df.style.format({
-            "Line":  "{:.1f}",
-            "Avg":   "{:.2f}",
-            "Edge":  "{:.1%}",
-            "Prob":  "{:.1%}",
-            "Wager": "${:.2f}",
-        }).background_gradient(subset=["Edge"], cmap="RdYlGn")
+    st.markdown("## 📊 PLAYER PROPS — TOP PICKS")
+    board = st.session_state.board_data
+    if board:
+        top8 = board[:8]
+        rows = [{
+            "Player": p["Player"], "Prop": p["Prop"], "Line": p["Line"],
+            "Avg": p["Avg"], "Edge": p["EdgePct"], "Prob": f"{p['Prob']:.1%}",
+            "Wager": f"${p['Wager']:.2f}", "Tier": p["Tier"], "Model": p["Model"],
+        } for p in top8]
+        st.table(pd.DataFrame(rows))
+    else:
+        st.info("No props loaded.")
+    st.markdown("---")
 
-        st.dataframe(styled, use_container_width=True)
+    st.markdown("## 🔒 LOCK OF THE DAY")
+    sovereign = [p for p in board if p["Tier"] == "SOVEREIGN"]
+    elite     = [p for p in board if p["Tier"] == "ELITE"]
+    approved  = [p for p in board if p["Tier"] == "APPROVED"]
+    best      = (sovereign or elite or approved or [None])[0]
 
-        st.markdown("### Lock a Prop")
-        options = [
-            f"{r['Player']} — {r['Prop']} OVER {r['Line']}  "
-            f"(Edge: {r['Edge']:.1%} | Wager: ${r['Wager']:.2f} | {r['Model']})"
-            for r in st.session_state.board_data
-        ]
-        sel = st.selectbox("Select prop", range(len(options)),
-                           format_func=lambda i: options[i])
-        if st.button("🔒 Lock Selected"):
-            row = st.session_state.board_data[sel]
+    if best:
+        tc = TIER_COLORS.get(best["Tier"], "#0ea5a0")
+        st.success(
+            f"🏆 **TOP LOCK:** {best['Player']} OVER {best['Line']} {best['Prop']} — "
+            f"[{best['Tier']}]  Edge: {best['EdgePct']} | Prob: {best['Prob']:.1%} | "
+            f"Wager: ${best['Wager']:.2f} | Model: {best['Model']}"
+        )
+        if st.button("🔒 Lock This Pick"):
             st.session_state.locks.append({
-                "player":    row["Player"],
-                "prop":      row["Prop"],
-                "line":      row["Line"],
-                "side":      "OVER",
-                "wager":     row["Wager"],
-                "prob":      row["Prob"],
-                "edge":      row["Edge"],
+                "player": best["Player"], "prop": best["Prop"],
+                "line": best["Line"], "side": "OVER",
+                "wager": best["Wager"], "prob": best["Prob"],
+                "edge": best["Edge"], "tier": best["Tier"],
+                "status": "PENDING",
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
             })
-            st.success(
-                f"Locked {row['Player']} {row['Prop']} OVER {row['Line']} "
-                f"— Wager: ${row['Wager']:.2f}"
-            )
+            st.success(f"Locked {best['Player']} — Wager: ${best['Wager']:.2f}")
             st.rerun()
+    else:
+        st.info("Load the board to see today's top lock.")
+    st.markdown("---")
+
+    st.markdown("### ⚡ TOP +EV OPPORTUNITIES")
+    if board:
+        ev_rows = [{
+            "#": i+1, "Player": p["Player"],
+            "Selection": f"OVER {p['Line']} {p['Prop']}",
+            "Edge": p["EdgePct"], "Prob": f"{p['Prob']:.1%}",
+            "Wager": f"${p['Wager']:.2f}", "Tier": p["Tier"],
+        } for i, p in enumerate(board[:5])]
+        st.table(pd.DataFrame(ev_rows))
+    st.markdown("---")
+
+    st.markdown("### 🎲 DAILY PARLAY BUILDER")
+    col_p, col_g = st.columns(2)
+    with col_p:
+        st.markdown('<div class="parlay-card">', unsafe_allow_html=True)
+        st.markdown("**⚡ Player Prop Parlay**")
+        top3 = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")][:3]
+        if len(top3) >= 2:
+            for p in top3:
+                st.write(f"• {p['Player']} O{p['Line']} {p['Prop']} ({p['EdgePct']})")
+            st.markdown(f"**Est. Payout: +{len(top3)*400+45}**")
+        else:
+            st.write("Not enough high-confidence props for a parlay.")
+        st.markdown('</div>', unsafe_allow_html=True)
+    with col_g:
+        st.markdown('<div class="game-parlay-card">', unsafe_allow_html=True)
+        st.markdown("**🏟️ Today's Matchups**")
+        if st.session_state.games:
+            for g in st.session_state.games[:4]:
+                st.write(f"• {g['Matchup']}")
+        else:
+            st.write("Load board to see today's games.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown(
+        f"**Bankroll:** ${st.session_state.bankroll:.2f} · "
+        f"**Unit:** ${active_unit():.2f} · "
+        f"**Session:** {get_session_time()} · "
+        f"**Today:** {get_daily_change()}"
+    )
+
+# ─────────────────────────────────
+# TAB 1 — FULL BOARD
+# ─────────────────────────────────
+with tabs[1]:
+    st.markdown(f"## 📊 Full Board — {st.session_state.last_sport}")
+
+    if st.session_state.board_data:
+        tier_filter = st.multiselect(
+            "Filter by Tier",
+            ["SOVEREIGN", "ELITE", "APPROVED", "LEAN"],
+            default=["SOVEREIGN", "ELITE", "APPROVED"],
+        )
+        filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
+
+        if filtered:
+            df = pd.DataFrame(filtered)
+            disp = ["Player","Prop","Line","Avg","Edge","Prob","Wager","Tier","Model","Quality"]
+            styled = df[disp].style.format({
+                "Line": "{:.1f}", "Avg": "{:.2f}",
+                "Edge": "{:.1%}", "Prob": "{:.1%}", "Wager": "${:.2f}",
+            }).background_gradient(subset=["Edge"], cmap="RdYlGn")
+            st.dataframe(styled, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### Lock a Prop")
+            options = [
+                f"{r['Player']} — {r['Prop']} OVER {r['Line']}  "
+                f"(Edge: {r['Edge']:.1%} | {r['Tier']} | Wager: ${r['Wager']:.2f})"
+                for r in filtered
+            ]
+            sel = st.selectbox("Select prop", range(len(options)),
+                               format_func=lambda i: options[i])
+            if st.button("🔒 Lock Selected"):
+                row = filtered[sel]
+                st.session_state.locks.append({
+                    "player": row["Player"], "prop": row["Prop"],
+                    "line": row["Line"], "side": "OVER",
+                    "wager": row["Wager"], "prob": row["Prob"],
+                    "edge": row["Edge"], "tier": row["Tier"],
+                    "status": "PENDING",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                })
+                st.success(f"Locked {row['Player']} — Wager: ${row['Wager']:.2f}")
+                st.rerun()
+        else:
+            st.info("No props match the selected tier filter.")
+
+        st.markdown("---")
+        st.markdown("### Tier Breakdown")
+        tier_counts = {}
+        for p in st.session_state.board_data:
+            tier_counts[p["Tier"]] = tier_counts.get(p["Tier"], 0) + 1
+        tcols = st.columns(max(len(tier_counts), 1))
+        for i, (tier, count) in enumerate(sorted(tier_counts.items())):
+            color = TIER_COLORS.get(tier, "#6a7a8a")
+            tcols[i].markdown(
+                f'<div class="metric-box">'
+                f'<div class="metric-label">{tier}</div>'
+                f'<div class="metric-value" style="color:{color};">{count}</div>'
+                f'<div style="font-size:11px;color:#6a7a8a;">{TIER_DESCRIPTIONS.get(tier,"")}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+        if st.session_state.n_skipped_def or st.session_state.n_skipped_edge:
+            st.markdown("---")
+            st.caption(
+                f"ℹ️ {st.session_state.n_skipped_def} unknown players skipped · "
+                f"{st.session_state.n_skipped_edge} below edge threshold"
+            )
     else:
         st.info("Select a sport and click **Load Board** in the sidebar.")
 
-# ---- GAMES ----
-with tabs[1]:
-    st.markdown(f"## Games Today — {st.session_state.last_sport}")
+# ─────────────────────────────────
+# TAB 2 — GAME LINES
+# ─────────────────────────────────
+with tabs[2]:
+    st.markdown(f"## 🏟️ Game Lines — {st.session_state.last_sport}")
     if st.session_state.games:
         st.dataframe(pd.DataFrame(st.session_state.games), use_container_width=True)
-        st.caption("Matchups from ESPN. No odds — use your sportsbook for live lines.")
+        st.caption("Matchups from ESPN. No spread/total via free API — use sportsbook for live odds.")
     else:
         st.info("No games found. Load the board first, or no games scheduled today.")
 
-# ---- LOCKS ----
-with tabs[2]:
-    st.markdown("## Active Locks")
+# ─────────────────────────────────
+# TAB 3 — LOCKS & LEDGER
+# ─────────────────────────────────
+with tabs[3]:
+    st.markdown("## 🔒 Active Locks")
     if st.session_state.locks:
         for i, lock in enumerate(st.session_state.locks.copy()):
+            tc = TIER_COLORS.get(lock.get("tier","APPROVED"), "#4a90d9")
             col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
-            col1.write(
-                f"**{lock['player']}** {lock['side']} {lock['line']} {lock['prop']} "
-                f"— Wager: **${lock['wager']:.2f}** | Edge: {lock['edge']:.1%}"
+            col1.markdown(
+                f"**{lock['player']}** OVER {lock['line']} {lock['prop']} — "
+                f"<span style='color:{tc};font-weight:700;'>{lock.get('tier','—')}</span> | "
+                f"Wager: **${lock['wager']:.2f}** | Edge: {lock.get('edge',0):.1%} | "
+                f"<span style='color:#5a6a7a;font-size:12px;'>{lock['timestamp']}</span>",
+                unsafe_allow_html=True
             )
             if col2.button("✅ WIN", key=f"win_{i}"):
                 profit = round(lock["wager"] * (100 / 110), 2)
                 st.session_state.bankroll += profit
                 st.session_state.history.append({
-                    **lock,
-                    "outcome": "WIN",
-                    "profit":  profit,
-                    "loss":    0,
-                    "net":     profit,
+                    **lock, "outcome":"WIN", "profit":profit, "loss":0, "net":profit,
                 })
                 st.session_state.locks = [
                     l for j, l in enumerate(st.session_state.locks) if j != i
@@ -632,11 +863,7 @@ with tabs[2]:
             if col3.button("❌ LOSS", key=f"loss_{i}"):
                 st.session_state.bankroll -= lock["wager"]
                 st.session_state.history.append({
-                    **lock,
-                    "outcome": "LOSS",
-                    "profit":  0,
-                    "loss":    lock["wager"],
-                    "net":     -lock["wager"],
+                    **lock, "outcome":"LOSS", "profit":0, "loss":lock["wager"], "net":-lock["wager"],
                 })
                 st.session_state.locks = [
                     l for j, l in enumerate(st.session_state.locks) if j != i
@@ -648,69 +875,96 @@ with tabs[2]:
                 ]
                 st.rerun()
     else:
-        st.info("No active locks. Go to Props tab and lock a selection.")
+        st.info("No active locks. Go to the Board tab and lock a prop.")
 
-# ---- HISTORY ----
-with tabs[3]:
-    st.markdown("## Bet History")
+    st.markdown("---")
+    st.markdown("## 📒 Ledger Summary")
     if st.session_state.history:
-        _wins  = sum(1 for h in st.session_state.history if h["outcome"] == "WIN")
-        _total = len(st.session_state.history)
-        _net   = sum(h.get("net", 0) for h in st.session_state.history)
-        _wagered = sum(h.get("wager", 0) for h in st.session_state.history)
-        _roi   = (_net / _wagered * 100) if _wagered > 0 else 0
+        wins    = sum(1 for h in st.session_state.history if h["outcome"] == "WIN")
+        total   = len(st.session_state.history)
+        net     = sum(h.get("net", 0) for h in st.session_state.history)
+        wagered = sum(h.get("wager", 0) for h in st.session_state.history)
+        roi     = (net / wagered * 100) if wagered > 0 else 0
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Record",   f"{wins}W – {total-wins}L")
+        c2.metric("Hit Rate", f"{wins/total:.1%}")
+        c3.metric("Net P&L",  f"${net:.2f}")
+        c4.metric("ROI",      f"{roi:.1f}%")
+    else:
+        st.caption("No settled bets yet.")
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Record",   f"{_wins}W – {_total - _wins}L")
-        c2.metric("Hit Rate", f"{_wins / _total:.1%}")
-        c3.metric("Net P&L",  f"${_net:.2f}")
-        c4.metric("ROI",      f"{_roi:.1f}%")
-
+# ─────────────────────────────────
+# TAB 4 — HISTORY
+# ─────────────────────────────────
+with tabs[4]:
+    st.markdown("## 📈 Full Bet History")
+    if st.session_state.history:
+        wins    = sum(1 for h in st.session_state.history if h["outcome"] == "WIN")
+        total   = len(st.session_state.history)
+        net     = sum(h.get("net", 0) for h in st.session_state.history)
+        wagered = sum(h.get("wager", 0) for h in st.session_state.history)
+        roi     = (net / wagered * 100) if wagered > 0 else 0
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Record",   f"{wins}W – {total-wins}L")
+        c2.metric("Hit Rate", f"{wins/total:.1%}")
+        c3.metric("Net P&L",  f"${net:.2f}")
+        c4.metric("ROI",      f"{roi:.1f}%")
         st.markdown("---")
         hist_df = pd.DataFrame(st.session_state.history)
-        _cols   = [c for c in
-                   ["timestamp", "player", "prop", "line", "side", "wager", "outcome", "net"]
-                   if c in hist_df.columns]
-        st.dataframe(hist_df[_cols], use_container_width=True)
-
+        cols = [c for c in
+                ["timestamp","player","prop","line","side","tier","wager","outcome","net"]
+                if c in hist_df.columns]
+        st.dataframe(hist_df[cols], use_container_width=True)
         if st.button("Clear History"):
             st.session_state.history = []
             st.rerun()
     else:
-        st.info("No bet history yet. Lock and resolve props to build your record.")
+        st.info("No bet history yet.")
 
-# ---- SYSTEM ----
-with tabs[4]:
-    st.markdown("## System Info")
+# ─────────────────────────────────
+# TAB 5 — SYSTEM
+# ─────────────────────────────────
+with tabs[5]:
+    st.markdown("## ⚙️ System Info")
     c1, c2 = st.columns(2)
     with c1:
-        st.write(f"**Bankroll:** ${st.session_state.bankroll:.2f}")
-        st.write(f"**Min Edge:** {st.session_state.min_edge * 100:.0f}%")
-        st.write(f"**Skip unknown players:** {st.session_state.skip_defaults}")
-        st.write(f"**Averages last updated:** {AVERAGES_LAST_UPDATED}")
+        st.markdown("**Configuration**")
+        st.write(f"Bankroll: ${st.session_state.bankroll:.2f}")
+        st.write(f"Min Edge: {st.session_state.min_edge*100:.0f}%")
+        st.write(f"Skip unknown players: {st.session_state.skip_defaults}")
+        st.write(f"Kelly fraction: {KELLY_FRACTION} (quarter-Kelly)")
+        st.write(f"Standard odds: {ODDS}")
+        st.write(f"Averages last updated: {AVERAGES_LAST_UPDATED}")
     with c2:
-        st.write(f"**Active locks:** {len(st.session_state.locks)}")
-        st.write(f"**History entries:** {len(st.session_state.history)}")
-        st.write(f"**Kelly fraction:** {KELLY_FRACTION} (quarter-Kelly)")
-        st.write(f"**Standard odds:** {ODDS}")
+        st.markdown("**Session Stats**")
+        st.write(f"Active locks: {len(st.session_state.locks)}")
+        st.write(f"History entries: {len(st.session_state.history)}")
+        st.write(f"Props loaded: {len(st.session_state.board_data)}")
+        st.write(f"Last scan: {st.session_state.last_scan_time or '—'}")
+        st.write(f"Session time: {get_session_time()}")
 
     st.markdown("---")
     st.markdown("**Data Sources**")
-    st.write("- Props: PrizePicks public API (20-min cache, no API key needed)")
-    st.write("- Game matchups: ESPN scoreboard API (free, no key needed)")
-    st.write("- Player averages: Hardcoded lookup — update `PLAYER_AVERAGES` dict weekly")
+    st.write("- Props: PrizePicks public API (20-min cache)")
+    st.write("- Game matchups: ESPN scoreboard API (free, no key)")
+    st.write("- Player averages: Hardcoded — update `PLAYER_AVERAGES` dict weekly")
 
     st.markdown("---")
     st.markdown("**Edge Models**")
-    st.write("- **Linear:** Counting stats (PTS, REB, AST, YDS). Edge = -(line - avg)/avg")
-    st.write("- **Poisson:** Low-frequency events (HR, Goals, TD, SO). Uses Poisson distribution.")
-    st.write("- **Kelly:** Quarter-Kelly sizing at standard -110 odds")
-    st.write("- **WIN profit:** wager × (100/110). LOSS deducts full wager.")
+    st.write("- **Linear** (PTS, REB, AST, YDS): Edge = -(line − avg) / avg")
+    st.write("  Positive when line is set BELOW the player's season average")
+    st.write("- **Poisson** (HR, Goals, TD, SO): Poisson distribution for low-frequency events")
+    st.write("- **Kelly**: Quarter-Kelly at -110. WIN profit = wager × (100/110)")
 
     st.markdown("---")
-    st.markdown("**Updating Averages**")
-    st.write("Edit `PLAYER_AVERAGES` in `app.py` and update `AVERAGES_LAST_UPDATED`.")
-    st.write("Sources: [Basketball-Reference](https://www.basketball-reference.com) · "
-             "[Baseball-Reference](https://www.baseball-reference.com) · "
-             "[Pro-Football-Reference](https://www.pro-football-reference.com) · "
-             "[Hockey-Reference](https://www.hockey-reference.com)")
+    st.markdown("**Tier System**")
+    for tier, color in TIER_COLORS.items():
+        st.markdown(
+            f'<span style="color:{color};font-weight:700;">{tier}</span> — {TIER_DESCRIPTIONS[tier]}',
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+    st.markdown("**Updating Player Averages**")
+    st.write("Edit `PLAYER_AVERAGES` in app.py and update `AVERAGES_LAST_UPDATED`.")
+    st.write("Sources: Basketball-Reference · Baseball-Reference · Pro-Football-Reference · Hockey-Reference")
