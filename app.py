@@ -99,7 +99,7 @@ TIER_DESCRIPTIONS = {
 }
 
 # =========================
-# PLAYER SEASON AVERAGES
+# PLAYER SEASON AVERAGES (Hardcoded Fallback)
 # =========================
 PLAYER_AVERAGES = {
     "NBA": {
@@ -277,6 +277,66 @@ def cached_fetch(url, ttl_minutes=25):
         return None
 
 # =========================
+# BALLDONTLIE — LIVE NBA AVERAGES (cached 24 hours, batched request)
+# =========================
+BDL_API_KEY = "9d7c9ea5-54ea-4084-b0d0-2541ac7c360d"
+
+# Map player name -> balldontlie player_id for the ~40 most bet NBA players
+BDL_PLAYER_IDS = {
+    "LeBron James": 237, "Luka Doncic": 140, "Nikola Jokic": 279,
+    "Shai Gilgeous-Alexander": 484, "Giannis Antetokounmpo": 15,
+    "Jayson Tatum": 484, "Stephen Curry": 115, "Kevin Durant": 135,
+    "Anthony Davis": 14, "Damian Lillard": 153, "Devin Booker": 70,
+    "Donovan Mitchell": 300, "Jimmy Butler": 85, "Trae Young": 571,
+    "Domantas Sabonis": 395, "Karl-Anthony Towns": 508, "Bam Adebayo": 2,
+    "Rudy Gobert": 185, "Tyrese Haliburton": 613, "Jalen Brunson": 86,
+    "Cade Cunningham": 625, "Victor Wembanyama": 794, "Paolo Banchero": 731,
+    "Evan Mobley": 694, "Darius Garland": 578, "Tobias Harris": 216,
+    "Ja Morant": 606, "Zion Williamson": 400, "Jamal Murray": 333,
+    "Michael Porter Jr.": 585, "Aaron Gordon": 5, "Jalen Williams": 746,
+    "Alperen Sengun": 700, "Desmond Bane": 616, "Scottie Barnes": 689,
+    "Franz Wagner": 709, "De'Aaron Fox": 170, "Pascal Siakam": 400,
+    "Kawhi Leonard": 232, "Luguentz Dort": 601,
+}
+
+def fetch_nba_averages_bdl():
+    """Fetch NBA per-game averages from balldontlie. One batched call, cached 24 hours."""
+    cache_path = os.path.join(CACHE_DIR, "bdl_nba_avgs.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    if not BDL_API_KEY:
+        return {}
+    ids = list(BDL_PLAYER_IDS.values())
+    params = "&".join([f"player_ids[]={pid}" for pid in ids])
+    url = f"https://api.balldontlie.io/v1/season_averages?season=2024&{params}"
+    headers = {"Authorization": BDL_API_KEY}
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json().get("data", [])
+        id_to_name = {v: k for k, v in BDL_PLAYER_IDS.items()}
+        avgs = {}
+        for p in data:
+            pid = p.get("player_id")
+            name = id_to_name.get(pid)
+            if not name:
+                continue
+            pts = round(float(p.get("pts", 0)), 1)
+            reb = round(float(p.get("reb", 0)), 1)
+            ast = round(float(p.get("ast", 0)), 1)
+            avgs[name] = {"PTS": pts, "REB": reb, "AST": ast, "PRA": round(pts + reb + ast, 1)}
+        if avgs:
+            with open(cache_path, "wb") as f:
+                pickle.dump(avgs, f)
+        return avgs
+    except:
+        return {}
+
+# =========================
 # NAME MATCHING
 # =========================
 def normalize_name(s):
@@ -337,10 +397,7 @@ def _parse_prizepicks_response(data, sport, seen):
     return props
 
 def scrape_prizepicks(sport):
-    league_ids = {
-        "NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7,
-        "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2,
-    }
+    league_ids = {"NBA":4,"MLB":5,"NHL":3,"NFL":7,"WNBA":8,"UFC":6,"Golf":11,"Tennis":12,"Soccer":2}
     league = league_ids.get(sport.upper())
     if not league:
         return []
@@ -350,10 +407,8 @@ def scrape_prizepicks(sport):
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true",
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&state_code=CA",
     ]
-    pp_headers = {
-        "User-Agent": HEADERS["User-Agent"], "Referer": "https://app.prizepicks.com/",
-        "Accept": "application/json", "X-Device-ID": "betcouncil-app",
-    }
+    pp_headers = {"User-Agent": HEADERS["User-Agent"], "Referer": "https://app.prizepicks.com/",
+                  "Accept": "application/json", "X-Device-ID": "betcouncil-app"}
     all_props = []
     seen = set()
     for url in urls:
@@ -392,11 +447,7 @@ def scrape_prizepicks(sport):
 # GAME LINES — ESPN
 # =========================
 def fetch_game_lines(sport):
-    slug_map = {
-        "NBA": "basketball/nba", "MLB": "baseball/mlb",
-        "NFL": "football/nfl",   "NHL": "hockey/nhl",
-        "WNBA": "basketball/wnba",
-    }
+    slug_map = {"NBA":"basketball/nba","MLB":"baseball/mlb","NFL":"football/nfl","NHL":"hockey/nhl","WNBA":"basketball/wnba"}
     path = slug_map.get(sport, "")
     if not path:
         return []
@@ -486,7 +537,12 @@ def get_daily_change():
 # MAIN LOAD
 # =========================
 def load_sport_data(sport):
-    avgs = PLAYER_AVERAGES.get(sport, {})
+    # NBA: merge live balldontlie data (priority) over hardcoded fallback
+    if sport == "NBA":
+        live_avgs = fetch_nba_averages_bdl()
+        avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
+    else:
+        avgs = PLAYER_AVERAGES.get(sport, {})
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -542,7 +598,14 @@ for k, v in _ss.items():
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.markdown("""<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v4.4 · Chairman Mode</div></div>""", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="text-align:center;margin-bottom:16px;">
+        <div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);
+             clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+             display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div>
+        <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:-0.5px;">BetCouncil</div>
+        <div style="font-size:11px;color:#4a8a8a;margin-top:2px;">v4.4 · Chairman Mode</div>
+    </div>""", unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
@@ -817,7 +880,15 @@ with tabs[5]:
     st.markdown("**Data Sources**")
     st.write("- Props: PrizePicks public API (20-min cache)")
     st.write("- Game matchups: ESPN scoreboard API (free, no key)")
-    st.write("- Player averages: Hardcoded — update `PLAYER_AVERAGES` dict weekly")
+    bdl_cache = os.path.join(CACHE_DIR, "bdl_nba_avgs.pkl")
+    if os.path.exists(bdl_cache):
+        age_hours = (time.time() - os.path.getmtime(bdl_cache)) / 3600
+        with open(bdl_cache, "rb") as f:
+            bdl_data = pickle.load(f)
+        st.write(f"- NBA averages: balldontlie live ({len(bdl_data)} players, refreshed {age_hours:.1f}hrs ago)")
+    else:
+        st.write("- NBA averages: balldontlie (not yet fetched — load NBA board first)")
+    st.write("- MLB/NFL/NHL averages: Hardcoded — update PLAYER_AVERAGES dict weekly")
     st.markdown("---")
     st.markdown("**Edge Models**")
     st.write("- **Linear** (PTS, REB, AST, YDS): Edge = -(line − avg) / avg")
