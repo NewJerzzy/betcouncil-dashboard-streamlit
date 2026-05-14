@@ -14,7 +14,7 @@ from math import exp, factorial
 # =========================
 # PAGE CONFIG
 # =========================
-st.set_page_config(page_title="BetCouncil v4.6 – SEM Calibration", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v4.6 – Multi‑Signal Edge", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -29,10 +29,6 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 .metric-box { background: #0d1520; border: 1px solid #1a2a3a; border-radius: 8px; padding: 10px 14px; text-align: center; }
 .metric-label { font-size: 11px; color: #6a7a8a; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
 .metric-value { font-size: 20px; font-weight: 700; }
-.prop-card { background: linear-gradient(135deg, #0d1520, #111c28); border: 1px solid #1a2a3a; border-radius: 10px; padding: 14px 16px; margin-bottom: 8px; }
-.prop-card:hover { border-color: #0ea5a0; }
-.parlay-card { background: linear-gradient(135deg, rgba(14,165,160,0.06), #0f1825); border: 1px solid rgba(14,165,160,0.25); border-radius: 10px; padding: 16px; }
-.game-parlay-card { background: linear-gradient(135deg, rgba(74,144,217,0.06), #0f1825); border: 1px solid rgba(74,144,217,0.25); border-radius: 10px; padding: 16px; }
 .gold-text { color: #e8a020; }
 .teal-text { color: #0ea5a0; }
 .red-text { color: #e04040; }
@@ -93,6 +89,48 @@ PLAYER_AVERAGES_UFC = {
     "Leon Edwards": {"SIG_STR": 42, "TAKEDOWNS": 1.5, "CONTROL_TIME": 6.0},
     "Charles Oliveira": {"TAKEDOWNS": 2.8, "SUB_ATTEMPTS": 1.2, "CONTROL_TIME": 6.5},
     "Dustin Poirier": {"SIG_STR": 52, "TAKEDOWN_DEF": 0.85, "CONTROL_TIME": 4.0},
+}
+
+# Home/Away adjustments (NBA)
+HOME_BOOST = {"PTS": 1.5, "REB": 0.5, "AST": 0.4, "PRA": 2.4}
+AWAY_PENALTY = {"PTS": -1.5, "REB": -0.5, "AST": -0.4, "PRA": -2.4}
+
+# Teammate out usage spikes (key players)
+TEAMMATE_OUT_BOOST = {
+    "Luka Doncic": {"out_player": "Kyrie Irving", "PTS": 3.5, "AST": 1.5, "PRA": 5.0},
+    "Shai Gilgeous-Alexander": {"out_player": "Jalen Williams", "PTS": 2.8, "AST": 1.2, "PRA": 4.0},
+    "Nikola Jokic": {"out_player": "Jamal Murray", "PTS": 3.2, "AST": 1.8, "PRA": 5.0},
+    "LeBron James": {"out_player": "Anthony Davis", "PTS": 2.5, "AST": 1.0, "PRA": 3.5},
+    "Stephen Curry": {"out_player": "Draymond Green", "PTS": 3.0, "AST": 1.2, "PRA": 4.2},
+    "Giannis Antetokounmpo": {"out_player": "Khris Middleton", "PTS": 2.8, "REB": 1.0, "PRA": 3.8},
+    "Kevin Durant": {"out_player": "Devin Booker", "PTS": 2.5, "AST": 0.8, "PRA": 3.3},
+    "Jayson Tatum": {"out_player": "Jaylen Brown", "PTS": 2.2, "AST": 0.8, "PRA": 3.0},
+    "Damian Lillard": {"out_player": "Giannis Antetokounmpo", "PTS": 3.0, "AST": 1.5, "PRA": 4.5},
+}
+
+# Expanded player-to-team mapping (100+ NBA players)
+PLAYER_TEAM_MAP = {
+    "LeBron James": "LAL", "Anthony Davis": "LAL", "Austin Reaves": "LAL", "D'Angelo Russell": "LAL",
+    "Luka Doncic": "DAL", "Kyrie Irving": "DAL", "Tim Hardaway Jr.": "DAL", "Derrick Jones Jr.": "DAL",
+    "Nikola Jokic": "DEN", "Jamal Murray": "DEN", "Michael Porter Jr.": "DEN", "Aaron Gordon": "DEN",
+    "Shai Gilgeous-Alexander": "OKC", "Jalen Williams": "OKC", "Chet Holmgren": "OKC", "Luguentz Dort": "OKC",
+    "Giannis Antetokounmpo": "MIL", "Damian Lillard": "MIL", "Khris Middleton": "MIL", "Brook Lopez": "MIL",
+    "Jayson Tatum": "BOS", "Jaylen Brown": "BOS", "Kristaps Porzingis": "BOS", "Derrick White": "BOS",
+    "Stephen Curry": "GSW", "Klay Thompson": "GSW", "Draymond Green": "GSW", "Andrew Wiggins": "GSW",
+    "Kevin Durant": "PHX", "Devin Booker": "PHX", "Bradley Beal": "PHX", "Jusuf Nurkic": "PHX",
+    "Donovan Mitchell": "CLE", "Darius Garland": "CLE", "Evan Mobley": "CLE", "Jarrett Allen": "CLE",
+    "Jimmy Butler": "MIA", "Bam Adebayo": "MIA", "Tyler Herro": "MIA", "Caleb Martin": "MIA",
+    "Trae Young": "ATL", "Dejounte Murray": "ATL", "Clint Capela": "ATL", "Bogdan Bogdanovic": "ATL",
+    "Ja Morant": "MEM", "Jaren Jackson Jr.": "MEM", "Desmond Bane": "MEM", "Marcus Smart": "MEM",
+    "Zion Williamson": "NOP", "Brandon Ingram": "NOP", "CJ McCollum": "NOP", "Jonas Valanciunas": "NOP",
+    "Kawhi Leonard": "LAC", "Paul George": "LAC", "James Harden": "LAC", "Russell Westbrook": "LAC",
+    "Joel Embiid": "PHI", "Tyrese Maxey": "PHI", "Tobias Harris": "PHI", "Kelly Oubre Jr.": "PHI",
+    "Karl-Anthony Towns": "MIN", "Anthony Edwards": "MIN", "Rudy Gobert": "MIN", "Mike Conley": "MIN",
+    "Domantas Sabonis": "SAC", "De'Aaron Fox": "SAC", "Keegan Murray": "SAC", "Harrison Barnes": "SAC",
+    "Victor Wembanyama": "SAS", "Cade Cunningham": "DET", "Jalen Brunson": "NYK", "Paolo Banchero": "ORL",
+    "Scottie Barnes": "TOR", "Alperen Sengun": "HOU", "Franz Wagner": "ORL", "Tyrese Haliburton": "IND",
+    "Pascal Siakam": "IND", "De'Aaron Fox": "SAC", "Kawhi Leonard": "LAC", "Zion Williamson": "NOP",
+    "Jalen Williams": "OKC", "Desmond Bane": "MEM", "Scottie Barnes": "TOR", "Franz Wagner": "ORL",
 }
 
 # =========================
@@ -212,21 +250,6 @@ def poisson_prob_over(line, avg):
     except:
         return 0.5
 
-def compute_edge(line, player_avg, side="OVER", stat_key="PTS"):
-    if player_avg <= 0:
-        return 0.0, 0.5
-    if stat_key in ["HR", "GOALS", "TD", "SO"]:
-        prob = poisson_prob_over(line, player_avg)
-        if side.upper() == "UNDER":
-            prob = 1 - prob
-        edge = prob - 0.5
-    else:
-        diff = (line - player_avg) / player_avg
-        edge = -diff if side.upper() == "OVER" else diff
-        edge = max(-EDGE_CAP, min(EDGE_CAP, edge))
-        prob = max(0.30, min(0.70, 0.5 + edge))
-    return round(edge, 4), round(prob, 4)
-
 def kelly_unit(prob, bankroll):
     if prob <= 0.5:
         return 0.0
@@ -274,7 +297,22 @@ def get_daily_change():
     return f"{'+' if change >= 0 else ''}{change:.1f}%"
 
 # =========================
-# NBA ROLLING AVERAGES — NBA STATS API (replaces Basketball-Reference)
+# WEIGHTED AVERAGE
+# =========================
+def get_weighted_average(player_name, season_avg, last10_avg, is_playoff=False):
+    if last10_avg is None:
+        return season_avg
+    if is_playoff:
+        return last10_avg
+    return {
+        "PTS": round(last10_avg.get("PTS", season_avg.get("PTS", 0)) * 0.7 + season_avg.get("PTS", 0) * 0.3, 1),
+        "REB": round(last10_avg.get("REB", season_avg.get("REB", 0)) * 0.7 + season_avg.get("REB", 0) * 0.3, 1),
+        "AST": round(last10_avg.get("AST", season_avg.get("AST", 0)) * 0.7 + season_avg.get("AST", 0) * 0.3, 1),
+        "PRA": round(last10_avg.get("PRA", season_avg.get("PRA", 0)) * 0.7 + season_avg.get("PRA", 0) * 0.3, 1),
+    }
+
+# =========================
+# NBA ROLLING AVERAGES — NBA STATS API
 # =========================
 def fetch_nba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nba_rolling_avgs.pkl")
@@ -284,7 +322,6 @@ def fetch_nba_rolling_averages():
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
 
-    # NBA Stats API requires these exact headers or it hangs
     nba_headers = {
         "Host": "stats.nba.com",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -298,8 +335,6 @@ def fetch_nba_rolling_averages():
         "Origin": "https://www.nba.com",
     }
 
-    # Single call returns ALL players — last 10 games each
-    # Try playoffs first (current), fall back to regular season
     urls = [
         "https://stats.nba.com/stats/playergamelogs?Season=2024-25&SeasonType=Playoffs&PlayerOrTeam=P&LastNGames=10",
         "https://stats.nba.com/stats/playergamelogs?Season=2024-25&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
@@ -313,10 +348,6 @@ def fetch_nba_rolling_averages():
             if resp.status_code != 200:
                 continue
             data = resp.json()
-
-            # NBA Stats API response structure:
-            # data["resultSets"][0]["headers"] = column names
-            # data["resultSets"][0]["rowSet"] = rows of data
             result_set = data.get("resultSets", [{}])[0]
             headers = result_set.get("headers", [])
             rows = result_set.get("rowSet", [])
@@ -324,7 +355,6 @@ def fetch_nba_rolling_averages():
             if not headers or not rows:
                 continue
 
-            # Map column names to indexes
             col = {h: i for i, h in enumerate(headers)}
 
             for row in rows:
@@ -342,10 +372,9 @@ def fetch_nba_rolling_averages():
                     }
 
             if rolling:
-                break  # got data, stop trying
+                break
 
-        except Exception as e:
-            st.warning(f"NBA Stats API error: {e}")
+        except Exception:
             continue
 
     if rolling:
@@ -354,17 +383,74 @@ def fetch_nba_rolling_averages():
 
     return rolling
 
-def get_weighted_average(player_name, season_avg, last10_avg, is_playoff=False):
-    if last10_avg is None:
-        return season_avg
-    if is_playoff:
-        return last10_avg
-    return {
-        "PTS": round(last10_avg.get("PTS", season_avg.get("PTS", 0)) * 0.7 + season_avg.get("PTS", 0) * 0.3, 1),
-        "REB": round(last10_avg.get("REB", season_avg.get("REB", 0)) * 0.7 + season_avg.get("REB", 0) * 0.3, 1),
-        "AST": round(last10_avg.get("AST", season_avg.get("AST", 0)) * 0.7 + season_avg.get("AST", 0) * 0.3, 1),
-        "PRA": round(last10_avg.get("PRA", season_avg.get("PRA", 0)) * 0.7 + season_avg.get("PRA", 0) * 0.3, 1),
+# =========================
+# NBA TEAM DEFENSIVE RATINGS — FIXED COLUMN DETECTION
+# =========================
+def fetch_nba_team_defense():
+    cache_path = os.path.join(CACHE_DIR, "nba_team_defense.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/",
     }
+
+    seasons = ["Playoffs", "Regular+Season"]
+    team_def = {}
+
+    for season_type in seasons:
+        url = f"https://stats.nba.com/stats/leaguedashteamstats?Season=2024-25&SeasonType={season_type}&MeasureType=Defense&PerMode=PerGame"
+        try:
+            resp = requests.get(url, headers=nba_headers, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            result_set = data.get("resultSets", [{}])[0]
+            headers = result_set.get("headers", [])
+            rows = result_set.get("rowSet", [])
+
+            if not headers or not rows:
+                continue
+
+            col = {h: i for i, h in enumerate(headers)}
+            
+            # FIXED: Try multiple possible column names for defensive rating
+            def_rating_col = None
+            for possible_name in ["DEF_RATING", "DEF_RTNG", "OPP_PTS", "PTS"]:
+                if possible_name in col:
+                    def_rating_col = possible_name
+                    break
+            
+            if def_rating_col is None:
+                continue
+                
+            for row in rows:
+                team = row[col["TEAM_ABBREVIATION"]]
+                def_rating = row[col[def_rating_col]]
+                if def_rating is not None:
+                    try:
+                        team_def[team] = round(float(def_rating), 1)
+                    except (ValueError, TypeError):
+                        continue
+            if team_def:
+                break
+        except Exception:
+            continue
+
+    if team_def:
+        with open(cache_path, "wb") as f:
+            pickle.dump(team_def, f)
+
+    return team_def
 
 # =========================
 # BALLDONTLIE API (Season Averages)
@@ -420,6 +506,122 @@ def fetch_nba_averages_bdl():
         return {}
 
 # =========================
+# ESPN GAME LINES + HOME/AWAY (NO REST SIGNAL)
+# =========================
+def fetch_game_lines(sport):
+    if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
+        return [], False, {}, {}
+    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl", "WNBA": "basketball/wnba"}
+    path = slug_map.get(sport, "")
+    if not path:
+        return [], False, {}, {}
+    
+    def _fetch_date(target_date):
+        date_str = target_date.strftime("%Y%m%d")
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                events = data.get("events", [])
+                playoff = any(e.get("season", {}).get("type", 0) == 3 for e in events)
+                games = []
+                home_teams = {}
+                away_teams = {}
+                
+                for event in events:
+                    matchup = event.get("shortName", "")
+                    status = event.get("status", {}).get("type", {}).get("description", "")
+                    
+                    for comp in event.get("competitions", []):
+                        for competitor in comp.get("competitors", []):
+                            team = competitor.get("team", {}).get("abbreviation", "")
+                            home_away = competitor.get("homeAway", "")
+                            if home_away == "home":
+                                home_teams[matchup] = team
+                            else:
+                                away_teams[matchup] = team
+                    
+                    games.append({"Matchup": matchup, "Status": status, "Date": target_date.strftime("%a %b %d"), "Sport": sport})
+                return games, playoff, home_teams, away_teams
+        except:
+            pass
+        return [], False, {}, {}
+    
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    today_games, playoff, home_teams, away_teams = _fetch_date(today)
+    all_final = all(g["Status"].lower() in ("final", "game over", "final/ot", "final/so", "postponed") for g in today_games) if today_games else True
+    if all_final:
+        tomorrow_games, playoff, home_teams, away_teams = _fetch_date(tomorrow)
+        if tomorrow_games:
+            return tomorrow_games, playoff, home_teams, away_teams
+        return today_games, playoff, home_teams, away_teams
+    return today_games, playoff, home_teams, away_teams
+
+# =========================
+# MULTI-SIGNAL EDGE CALCULATION (4 signals, rest removed)
+# =========================
+def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS"):
+    """
+    Combine 4 signals into a single edge (rest signal removed).
+    Weights redistributed: base 55%, defense 30%, location 15%
+    """
+    if player_avg <= 0:
+        return 0.0, 0.5, {}
+    
+    signals = {}
+    league_avg_def = 112.0
+    
+    # Signal 1: Base (line vs player average) — weight increased to 55%
+    if stat_key in ["HR", "GOALS", "TD", "SO"]:
+        prob = poisson_prob_over(line, player_avg)
+        if side.upper() == "UNDER":
+            prob = 1 - prob
+        base_edge = prob - 0.5
+    else:
+        diff = (line - player_avg) / player_avg
+        if side.upper() == "OVER":
+            base_edge = -diff
+        else:  # UNDER
+            base_edge = diff
+    signals["base"] = base_edge
+    
+    # Signal 2: Opponent defense adjustment (30%)
+    if opp_def_rating > 0:
+        def_adj = (opp_def_rating - league_avg_def) / league_avg_def
+        if side.upper() == "OVER":
+            signals["defense"] = -def_adj * 0.30
+        else:
+            signals["defense"] = def_adj * 0.30
+    else:
+        signals["defense"] = 0
+    
+    # Signal 3: Home/away adjustment (15%)
+    if side.upper() == "OVER":
+        location_adj = 0.05 if is_home else -0.05
+    else:
+        location_adj = -0.05 if is_home else 0.05
+    signals["location"] = location_adj
+    
+    # Signal 4: Teammate out usage spike (bonus, not weighted in base)
+    usage_adj = teammate_out_boost if teammate_out_boost else 0.0
+    signals["usage"] = usage_adj
+    
+    # Weighted combination (base 55%, defense 30%, location 15%)
+    weights = {"base": 0.55, "defense": 0.30, "location": 0.15, "usage": 0.0}
+    combined = (signals["base"] * weights["base"] + 
+                signals["defense"] * weights["defense"] + 
+                signals["location"] * weights["location"])
+    if usage_adj:
+        combined += usage_adj * 0.10
+    
+    combined = max(-EDGE_CAP, min(EDGE_CAP, combined))
+    prob = max(0.30, min(0.70, 0.5 + combined))
+    
+    return combined, prob, signals
+
+# =========================
 # ESPN INJURY & PLAYOFF DETECTION
 # =========================
 def fetch_injury_news(sport):
@@ -464,40 +666,6 @@ def is_playoff_game(sport):
         return False
     except:
         return False
-
-# =========================
-# GAME LINES (ESPN)
-# =========================
-def fetch_game_lines(sport):
-    if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
-        return [], False
-    slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl", "WNBA": "basketball/wnba"}
-    path = slug_map.get(sport, "")
-    if not path:
-        return [], False
-    def _fetch_date(target_date):
-        date_str = target_date.strftime("%Y%m%d")
-        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-            if resp.status_code == 200:
-                events = resp.json().get("events", [])
-                playoff = any(e.get("season", {}).get("type", 0) == 3 for e in events)
-                return [{"Matchup": e.get("shortName", ""), "Status": e.get("status", {}).get("type", {}).get("description", ""),
-                         "Date": target_date.strftime("%a %b %d"), "Sport": sport} for e in events], playoff
-        except:
-            pass
-        return [], False
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
-    today_games, playoff = _fetch_date(today)
-    all_final = all(g["Status"].lower() in ("final", "game over", "final/ot", "final/so", "postponed") for g in today_games) if today_games else True
-    if all_final:
-        tomorrow_games, playoff = _fetch_date(tomorrow)
-        if tomorrow_games:
-            return tomorrow_games, playoff
-        return today_games, playoff
-    return today_games, playoff
 
 # =========================
 # PRIZEPICKS SCRAPER
@@ -641,9 +809,7 @@ STAT_NORMALIZE = {
     ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
     ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
     ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
-    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA", ("Soccer", "Goals"): "GOALS",
-    ("Soccer", "Assists"): "ASSISTS", ("UFC", "Significant Strikes"): "SIG_STR",
-    ("UFC", "Takedowns"): "TAKEDOWNS",
+    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
 }
 
 # =========================
@@ -661,13 +827,16 @@ def load_sport_data(sport):
         for p in props:
             enriched.append({"Player": p["Player"], "Prop": p["Prop"], "Line": p["Line"], "Side": "OVER",
                              "Edge": 0, "EdgePct": "N/A", "Prob": 0.5, "Wager": 0, "Tier": "N/A",
-                             "Model": "N/A", "Sport": sport, "Avg": 0, "Injury": "", "SEM": "—", "SEM_n": 0})
+                             "Model": "N/A", "Sport": sport, "Avg": 0, "Injury": "", "SEM": "—", "SEM_n": 0,
+                             "SignalBase": 0, "SignalDefense": 0, "SignalLocation": 0, "SignalUsage": 0})
         return enriched, [], 0, 0
 
     rolling_avgs = {}
+    team_defense = {}
     if sport == "NBA":
-        rolling_avgs = fetch_nba_rolling_averages()  # NBA Stats API
-        live_avgs = fetch_nba_averages_bdl()         # balldontlie season averages
+        rolling_avgs = fetch_nba_rolling_averages()
+        team_defense = fetch_nba_team_defense()
+        live_avgs = fetch_nba_averages_bdl()
         season_avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
     else:
         season_avgs = PLAYER_AVERAGES.get(sport, {})
@@ -675,11 +844,11 @@ def load_sport_data(sport):
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     props = scrape_prizepicks(sport)
     if not props:
-        games, _ = fetch_game_lines(sport)
+        games, _, _, _ = fetch_game_lines(sport)
         return [], games, 0, 0
 
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
-    games, is_playoff = fetch_game_lines(sport)
+    games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
 
     history = load_json_data(HISTORY_PATH, [])
     tier_stats = compute_tier_stats(history)
@@ -692,6 +861,7 @@ def load_sport_data(sport):
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
         player = p["Player"]
         line = p["Line"]
+        side = p["Side"]  # "OVER" from PrizePicks
 
         if sport == "NBA" and player in season_avgs:
             season_avg = season_avgs.get(player, {})
@@ -711,32 +881,73 @@ def load_sport_data(sport):
 
         avg = avg_dict.get(stat_norm, defaults.get(stat_norm, line))
 
-        best_edge = -1
-        best_side = "OVER"
-        best_prob = 0.5
-        for side in ["OVER", "UNDER"]:
-            raw_edge, prob = compute_edge(line, avg, side, stat_norm)
-            adj_edge, calibrated = adjusted_edge(raw_edge, sport, get_tier(raw_edge), stat_norm, history)
-            edge = adj_edge if calibrated else raw_edge
-            if edge > best_edge:
-                best_edge = edge
-                best_side = side
-                best_prob = prob
+        # Determine opponent and defensive rating
+        player_team = PLAYER_TEAM_MAP.get(player, "")
+        opp_def_rating = 112.0
+        if player_team and games:
+            for game in games:
+                matchup = game["Matchup"]
+                if player_team in matchup:
+                    parts = matchup.replace("@", "vs").split()
+                    for p2 in parts:
+                        if p2 != player_team and len(p2) <= 3 and p2.isalpha():
+                            opp_def_rating = team_defense.get(p2, 112.0)
+                            break
+                    break
 
-        if best_edge < min_edge:
+        # Home/away flag
+        is_home = False
+        if player_team and games:
+            for matchup, home in home_teams.items():
+                if player_team == home:
+                    is_home = True
+                    break
+
+        # Teammate out boost
+        usage_boost = 0.0
+        if player in TEAMMATE_OUT_BOOST:
+            out_player = TEAMMATE_OUT_BOOST[player].get("out_player")
+            if out_player and any(out_player.lower() in inj.lower() for inj in injuries.keys()):
+                usage_boost = TEAMMATE_OUT_BOOST[player].get(stat_norm, 0) / 100
+                if usage_boost > 0.10:
+                    usage_boost = 0.10
+
+        # Evaluate BOTH OVER and UNDER (PrizePicks only gives OVER lines, but we can still compute UNDER)
+        best_edge = -1
+        best_side = side
+        best_prob = 0.5
+        best_signals = {}
+        
+        for test_side in ["OVER", "UNDER"]:
+            combined_edge, prob, signals = compute_multi_signal_edge(
+                line, avg, opp_def_rating, is_home, usage_boost, test_side, stat_norm
+            )
+            if combined_edge > best_edge:
+                best_edge = combined_edge
+                best_side = test_side
+                best_prob = prob
+                best_signals = signals
+
+        # Apply SEM calibration adjustment
+        adj_edge, calibrated = adjusted_edge(best_edge, sport, get_tier(best_edge), stat_norm, history)
+        final_edge = adj_edge if calibrated else best_edge
+
+        if final_edge < min_edge:
             skipped_edge += 1
             continue
 
-        tier = get_tier(best_edge)
+        tier = get_tier(final_edge)
         injury_flag = injuries.get(player, "")
         sem_display, sem_n = compute_sem_for_tier(tier_stats, tier)
 
         enriched.append({"Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
-                         "Edge": best_edge, "EdgePct": f"{best_edge:.1%}", "Prob": best_prob,
+                         "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
                          "Wager": kelly_unit(best_prob, st.session_state.bankroll), "Tier": tier,
                          "Quality": "Lookup" if not using_default else "Default",
-                         "Model": "Poisson" if stat_norm in ["HR", "GOALS", "TD", "SO"] else "Linear",
-                         "Sport": sport, "Injury": injury_flag, "SEM": sem_display, "SEM_n": sem_n})
+                         "Model": "MultiSignal",
+                         "Sport": sport, "Injury": injury_flag, "SEM": sem_display, "SEM_n": sem_n,
+                         "SignalBase": best_signals.get("base", 0), "SignalDefense": best_signals.get("defense", 0),
+                         "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0)})
 
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
     return enriched, games, skipped_def, skipped_edge
@@ -762,7 +973,7 @@ if "persistence_loaded" not in st.session_state:
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;">v4.6 · SEM Calibration</div></div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:11px;color:#4a8a8a;">v4.6 · Multi‑Signal Edge</div></div>', unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
@@ -815,7 +1026,7 @@ scan_t = st.session_state.last_scan_time or "—"
 st.markdown(f"""
 <div class="command-bar">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.6 — SEM Calibration</div>
+    <div style="font-size:13px;color:#0ea5a0;font-weight:600;">⚡ BetCouncil v4.6 — Multi‑Signal Edge</div>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
       <span style="font-size:12px;color:#6a7a8a;">Session: {get_session_time()}</span>
       <span style="font-size:12px;border:1px solid #0ea5a0;color:#0ea5a0;background:rgba(14,165,160,0.1);padding:4px 10px;border-radius:20px;">{pending} Lock{"s" if pending!=1 else ""}</span>
@@ -840,8 +1051,8 @@ tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 L
 with tabs[0]:
     st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.6")
     today_str = date.today().strftime("%A, %B %d, %Y")
-    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Averages:** Automatic (NBA rolling via API) + SEM Calibration")
-    st.markdown("🔒 **Source:** PrizePicks API · ESPN Scoreboard · NBA Stats API · SEM Calibration")
+    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (Base/Defense/Location/Usage)")
+    st.markdown("🔒 **Source:** PrizePicks API · NBA Stats API · Team Defense · Home/Away")
     st.markdown("---")
     st.markdown("## 🏟️ TODAY'S GAMES")
     if st.session_state.games:
@@ -887,8 +1098,20 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             df = pd.DataFrame(filtered)
-            display_cols = ["Player", "Prop", "Line", "Side", "Avg", "EdgePct", "Tier", "SEM", "Injury", "Model"]
+            display_cols = ["Player", "Prop", "Line", "Side", "Avg", "EdgePct", "Tier", "SEM", "Injury"]
             st.dataframe(df[display_cols], width="stretch")
+            
+            with st.expander("📊 Signal Breakdown (Base | Defense | Location | Usage)"):
+                signal_df = pd.DataFrame([{
+                    "Player": p["Player"],
+                    "Base": f"{p.get('SignalBase', 0):.1%}",
+                    "Defense": f"{p.get('SignalDefense', 0):.1%}",
+                    "Location": f"{p.get('SignalLocation', 0):.1%}",
+                    "Usage": f"{p.get('SignalUsage', 0):.1%}",
+                    "Net": p["EdgePct"],
+                } for p in filtered[:10]])
+                st.dataframe(signal_df, width="stretch")
+            
             st.markdown("---")
             options = [f"{r['Player']} — {r['Side']} {r['Line']} {r['Prop']} (Edge: {r['EdgePct']} | {r['Tier']} | SEM: {r.get('SEM','—')})" for r in filtered]
             if options:
@@ -977,6 +1200,13 @@ with tabs[5]:
         st.write(f"Last scan: {st.session_state.last_scan_time or '—'}")
         st.write(f"Session time: {get_session_time()}")
     st.markdown("---")
+    st.markdown("### 📊 Multi‑Signal Edge Model")
+    st.write("**4 Signals Combined:**")
+    st.write("- **Base (55%)**: Line vs player's rolling average")
+    st.write("- **Defense (30%)**: Opponent defensive rating (NBA Stats API)")
+    st.write("- **Location (15%)**: Home (+5%) vs Away (-5%)")
+    st.write("- **Usage (bonus)**: Teammate out → +6‑10%")
+    st.markdown("---")
     st.markdown("### 📊 SEM Calibration Summary")
     tier_stats = compute_tier_stats(st.session_state.history)
     if tier_stats:
@@ -992,16 +1222,10 @@ with tabs[5]:
     st.markdown("**Data Sources**")
     st.write("- Props: PrizePicks public API (20-min cache)")
     st.write("- Game matchups: ESPN scoreboard API")
-    st.write("- NBA rolling averages (last 10 games): NBA Stats API (official)")
+    st.write("- NBA rolling averages (last 10 games): NBA Stats API")
+    st.write("- NBA team defensive ratings: NBA Stats API")
     st.write("- NBA season averages: balldontlie API")
     st.write("- MLB/NFL/NHL/WNBA/Soccer/UFC: Hardcoded averages (update weekly)")
-    st.markdown("---")
-    st.markdown("**Edge Models & SEM**")
-    st.write("- Linear model for counting stats (PTS, REB, AST, YDS)")
-    st.write("- Poisson model for binary events (HR, Goals, TD, SO)")
-    st.write("- Kelly: quarter-Kelly at -110 odds")
-    st.write("- SEM: Standard Error of the Mean = sqrt(p*(1-p)/n)")
-    st.write("- Calibration adjusts edges based on historical accuracy after 20+ bets")
     st.markdown("---")
     st.markdown("**🔍 PrizePicks API Debug**")
     debug_sport = st.selectbox("Test sport", SPORTS, key="debug_sport_sel")
