@@ -140,29 +140,30 @@ TEAMMATE_OUT_BOOST = {
     "Damian Lillard": {"out_player": "Giannis Antetokounmpo", "PTS": 3.0, "AST": 1.5, "PRA": 4.5},
 }
 
-# Expanded player-to-team mapping
+# Expanded player-to-team mapping (duplicates removed)
 PLAYER_TEAM_MAP = {
     "LeBron James": "LAL", "Anthony Davis": "LAL", "Austin Reaves": "LAL", "D'Angelo Russell": "LAL",
-    "Luka Doncic": "DAL", "Kyrie Irving": "DAL", "Tim Hardaway Jr.": "DAL", "Derrick Jones Jr.": "DAL",
+    "Luka Doncic": "LAL", "Kyrie Irving": "DAL",
     "Nikola Jokic": "DEN", "Jamal Murray": "DEN", "Michael Porter Jr.": "DEN", "Aaron Gordon": "DEN",
     "Shai Gilgeous-Alexander": "OKC", "Jalen Williams": "OKC", "Chet Holmgren": "OKC", "Luguentz Dort": "OKC",
     "Giannis Antetokounmpo": "MIL", "Damian Lillard": "MIL", "Khris Middleton": "MIL", "Brook Lopez": "MIL",
     "Jayson Tatum": "BOS", "Jaylen Brown": "BOS", "Kristaps Porzingis": "BOS", "Derrick White": "BOS",
-    "Stephen Curry": "GSW", "Klay Thompson": "GSW", "Draymond Green": "GSW", "Andrew Wiggins": "GSW",
+    "Stephen Curry": "GSW", "Draymond Green": "GSW", "Andrew Wiggins": "GSW",
+    "Klay Thompson": "DAL",
     "Kevin Durant": "PHX", "Devin Booker": "PHX", "Bradley Beal": "PHX", "Jusuf Nurkic": "PHX",
+    "Paul George": "PHI",
     "Donovan Mitchell": "CLE", "Darius Garland": "CLE", "Evan Mobley": "CLE", "Jarrett Allen": "CLE",
     "Jimmy Butler": "MIA", "Bam Adebayo": "MIA", "Tyler Herro": "MIA", "Caleb Martin": "MIA",
     "Trae Young": "ATL", "Dejounte Murray": "ATL", "Clint Capela": "ATL", "Bogdan Bogdanovic": "ATL",
     "Ja Morant": "MEM", "Jaren Jackson Jr.": "MEM", "Desmond Bane": "MEM", "Marcus Smart": "MEM",
     "Zion Williamson": "NOP", "Brandon Ingram": "NOP", "CJ McCollum": "NOP", "Jonas Valanciunas": "NOP",
-    "Kawhi Leonard": "LAC", "Paul George": "LAC", "James Harden": "LAC", "Russell Westbrook": "LAC",
+    "Kawhi Leonard": "LAC", "James Harden": "LAC",
     "Joel Embiid": "PHI", "Tyrese Maxey": "PHI", "Tobias Harris": "PHI", "Kelly Oubre Jr.": "PHI",
     "Karl-Anthony Towns": "MIN", "Anthony Edwards": "MIN", "Rudy Gobert": "MIN", "Mike Conley": "MIN",
-    "Domantas Sabonis": "SAC", "De'Aaron Fox": "SAC", "Keegan Murray": "SAC", "Harrison Barnes": "SAC",
+    "Domantas Sabonis": "SAC", "De'Aaron Fox": "SAS", "Keegan Murray": "SAC", "Harrison Barnes": "SAC",
     "Victor Wembanyama": "SAS", "Cade Cunningham": "DET", "Jalen Brunson": "NYK", "Paolo Banchero": "ORL",
     "Scottie Barnes": "TOR", "Alperen Sengun": "HOU", "Franz Wagner": "ORL", "Tyrese Haliburton": "IND",
-    "Pascal Siakam": "IND", "De'Aaron Fox": "SAC", "Kawhi Leonard": "LAC", "Zion Williamson": "NOP",
-    "Jalen Williams": "OKC", "Desmond Bane": "MEM", "Scottie Barnes": "TOR", "Franz Wagner": "ORL",
+    "Pascal Siakam": "IND",
 }
 
 # Blowout thresholds
@@ -856,6 +857,10 @@ def fetch_nba_rolling_averages():
                 break
         except Exception:
             continue
+    if not rolling:
+        st.session_state["nba_api_status"] = "FAILED — blocked"
+    else:
+        st.session_state["nba_api_status"] = f"OK ({len(rolling)} players)"
     if rolling:
         with open(cache_path, "wb") as f:
             pickle.dump(rolling, f)
@@ -1091,7 +1096,7 @@ def fetch_nba_averages_bdl():
         return {}
     ids = list(BDL_PLAYER_IDS.values())
     params = "&".join([f"player_ids[]={pid}" for pid in ids])
-    url = f"https://api.balldontlie.io/v1/season_averages?season=2024&{params}"
+    url = f"https://api.balldontlie.io/v1/season_averages?season=2025&{params}"
     headers = {"Authorization": BDL_API_KEY}
     try:
         resp = requests.get(url, headers=headers, timeout=15)
@@ -1720,7 +1725,6 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating,
             base_edge = -diff
         else:
             base_edge = diff
-        # Regression dampener — lines >15% off average
         if player_avg > 0:
             pct_diff = abs(line - player_avg) / player_avg
             if pct_diff > 0.15:
@@ -1780,7 +1784,7 @@ def load_sport_data(sport):
                              "Model": "N/A", "Sport": sport, "Avg": 0, "Injury": "", "SEM": "—", "SEM_n": 0,
                              "SignalBase": 0, "SignalDefense": 0, "SignalLocation": 0, "SignalUsage": 0,
                              "SignalRest": 0, "SignalPace": 0, "SignalBlowout": 0, "WeatherNote": "",
-                             "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": ""})
+                             "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": "", "source": p.get("source","")})
         return enriched, [], 0, 0
 
     rolling_avgs = {}
@@ -1984,6 +1988,47 @@ def load_sport_data(sport):
                     blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup)
                     break
 
+        # Pace adjustment for NBA
+        pace_adj = 0.0
+        if sport == "NBA" and player_team:
+            NBA_TEAM_PACE = {
+                "MEM": 102.8, "SAC": 101.5, "BOS": 101.2,
+                "DAL": 100.8, "OKC": 100.5, "LAL": 100.2,
+                "DEN": 100.0, "PHX": 99.8, "GSW": 99.5,
+                "NOP": 99.2, "ATL": 99.0, "IND": 98.8,
+                "MIN": 98.5, "TOR": 98.3, "ORL": 98.0,
+                "HOU": 97.8, "SAS": 97.5, "DET": 97.3,
+                "LAC": 97.1, "MIL": 98.1, "CLE": 98.1,
+                "NYK": 97.8, "MIA": 97.3, "PHI": 97.0,
+            }
+            LEAGUE_AVG_PACE = 99.5
+            for game in games:
+                if player_team in game.get("Matchup", ""):
+                    parts = game["Matchup"].replace("@","vs").split()
+                    for p2 in parts:
+                        if p2 != player_team and len(p2)<=3 and p2.isalpha():
+                            player_pace = NBA_TEAM_PACE.get(player_team, 99.5)
+                            opp_pace = NBA_TEAM_PACE.get(p2, 99.5)
+                            combined_pace = (player_pace + opp_pace) / 2
+                            pace_adj = (combined_pace - 99.5) / 99.5
+                            break
+                    break
+        
+        # Game total adjustment
+        game_total_adj = 0.0
+        if sport == "NBA" and player_team:
+            for game in games:
+                if player_team in game.get("Matchup", ""):
+                    total = game.get("Total", "N/A")
+                    if total and total != "N/A":
+                        try:
+                            game_total_adj = (
+                                (float(total) - 225.0) / 225.0 * 0.05
+                            )
+                        except:
+                            pass
+                    break
+
         weather_adj = 0.0
         weather_note = ""
         if sport == "MLB":
@@ -2002,21 +2047,20 @@ def load_sport_data(sport):
                 ud_p.get("Prop","") == stat_raw):
                 ud_line_val = ud_p.get("Line")
                 break
-        eff_score, eff_label = market_efficiency_score(line, ud_line_val, 0, sport)
 
         over_edge, over_prob, over_signals = compute_multi_signal_edge(
             line, avg, opp_def_rating, is_home, usage_boost,
-            "OVER", stat_norm, 0.0, days_rest
+            "OVER", stat_norm, pace_adj, days_rest
         )
+        over_edge = max(-EDGE_CAP, min(EDGE_CAP,
+                        over_edge + blowout_adj + weather_adj + game_total_adj))
+        
         under_edge, under_prob, under_signals = compute_multi_signal_edge(
             line, avg, opp_def_rating, is_home, usage_boost,
-            "UNDER", stat_norm, 0.0, days_rest
+            "UNDER", stat_norm, pace_adj, days_rest
         )
-        
-        over_edge = max(-EDGE_CAP, min(EDGE_CAP,
-                        over_edge + blowout_adj + weather_adj))
         under_edge = max(-EDGE_CAP, min(EDGE_CAP,
-                         under_edge - blowout_adj - weather_adj))
+                         under_edge - blowout_adj - weather_adj - game_total_adj))
         
         if under_edge > over_edge and (under_edge - over_edge) > 0.05:
             best_edge = under_edge
@@ -2031,6 +2075,9 @@ def load_sport_data(sport):
 
         adj_edge, calibrated = adjusted_edge(best_edge, sport, get_tier(best_edge, sport), stat_norm, history)
         final_edge = adj_edge if calibrated else best_edge
+
+        # Market efficiency with actual final_edge
+        eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
 
         if final_edge < min_edge:
             skipped_edge += 1
@@ -2055,7 +2102,7 @@ def load_sport_data(sport):
             "SignalPace": best_signals.get("pace", 0),
             "SignalBlowout": blowout_adj, "WeatherNote": weather_note,
             "Movement": "", "Efficiency": eff_label, "EffScore": eff_score,
-            "SharpFlag": sharp_flag
+            "SharpFlag": sharp_flag, "source": p.get("source", "")
         })
 
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
@@ -2127,6 +2174,17 @@ STAT_NORMALIZE = {
     ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
     ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
     ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
+    ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
+    ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
+    ("NBA", "Pts+Rebs+Asts"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
+    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK", ("NBA", "Steals"): "STL",
+    ("NBA", "Turnovers"): "TOV", ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
+    ("WNBA", "Pts+Ast"): "PRA", ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
+    ("NBA", "points"): "PTS", ("NBA", "rebounds"): "REB", ("NBA", "assists"): "AST",
+    ("MLB", "Strikeouts"): "SO", ("MLB", "Hits"): "H", ("MLB", "Home Runs"): "HR",
+    ("Soccer", "Goals"): "GOALS", ("Soccer", "Assists"): "ASSISTS", ("Soccer", "Shots"): "SHOTS",
+    ("UFC", "Significant Strikes"): "SIG_STR", ("UFC", "Takedowns"): "TAKEDOWNS",
+    ("UFC", "Control Time"): "CONTROL_TIME",
 }
 
 # =========================
@@ -2230,7 +2288,14 @@ tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 L
 with tabs[0]:
     st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.6")
     today_str = date.today().strftime("%A, %B %d, %Y")
-    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (5 signals)")
+    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (5 signals + bonuses)")
+    
+    freshness = check_data_freshness()
+    if freshness:
+        with st.expander(f"⚠️ {len(freshness)} Data Freshness Warning(s)"):
+            for w in freshness:
+                st.warning(w)
+    
     st.markdown("🔒 **Sources:** PrizePicks (Partner API) · Underdog · ESPN Odds · OddsWrap")
     st.markdown("---")
     st.markdown("## 🏟️ TODAY'S GAMES")
@@ -2276,6 +2341,14 @@ with tabs[0]:
     else:
         st.caption("No significant line movement detected.")
     
+    st.markdown("### 📊 Book Line Discrepancies")
+    st.caption("Lines differing 0.5+ between PrizePicks and DraftKings/Bovada")
+    discrepancies = st.session_state.get("multibook_discrepancies", [])
+    if discrepancies:
+        st.dataframe(pd.DataFrame(discrepancies[:8]), width="stretch")
+    else:
+        st.caption("No significant discrepancies found.")
+    
     st.markdown("---")
     st.markdown("## 📊 PLAYER PROPS — TOP PICKS")
     board = st.session_state.board_data
@@ -2297,13 +2370,15 @@ with tabs[0]:
     if best:
         st.success(f"🏆 **TOP LOCK:** {best['Player']} {best['Side']} {best['Line']} {best['Prop']} — [{best['Tier']}]  Edge: {best['EdgePct']} | SEM: {best.get('SEM', '—')}")
         if st.button("🔒 Lock This Pick"):
-            st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": best["Side"],
-                                           "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"],
-                                           "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": best["Sport"]})
-            save_json_data(LOCKS_PATH, st.session_state.locks)
-            st.rerun()
-    else:
-        st.info("Load the board to see today's top lock.")
+            already = any(l.get("player") == best["Player"] and l.get("prop") == best["Prop"] for l in st.session_state.locks)
+            if not already:
+                st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": best["Side"],
+                                               "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"],
+                                               "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": best["Sport"]})
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                st.rerun()
+            else:
+                st.warning("Already locked")
 
 # ----- TAB 1: FULL BOARD -----
 with tabs[1]:
@@ -2313,7 +2388,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             df = pd.DataFrame(filtered)
-            display_cols = ["Player", "Prop", "Line", "Side", "Avg", "EdgePct", "Tier", "SharpFlag", "Efficiency", "SEM", "Injury", "Movement"]
+            display_cols = ["Player", "Prop", "Line", "Side", "Avg", "EdgePct", "Tier", "Wager", "SharpFlag", "Efficiency", "SEM", "Injury", "Movement", "source"]
             display_cols = [c for c in display_cols if c in df.columns]
             st.dataframe(df[display_cols], width="stretch")
             
@@ -2332,11 +2407,15 @@ with tabs[1]:
                 sel = st.selectbox("Select prop", range(len(options)), format_func=lambda i: options[i])
                 if st.button("🔒 Lock Selected"):
                     row = filtered[sel]
-                    st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": row["Side"],
-                                                   "wager": row["Wager"], "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"],
-                                                   "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": row["Sport"]})
-                    save_json_data(LOCKS_PATH, st.session_state.locks)
-                    st.rerun()
+                    already = any(l.get("player") == row["Player"] and l.get("prop") == row["Prop"] for l in st.session_state.locks)
+                    if not already:
+                        st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": row["Side"],
+                                                       "wager": row["Wager"], "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"],
+                                                       "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": row["Sport"]})
+                        save_json_data(LOCKS_PATH, st.session_state.locks)
+                        st.rerun()
+                    else:
+                        st.warning("Already locked")
         else:
             st.info("No props match selected filter.")
     else:
@@ -2535,6 +2614,17 @@ with tabs[5]:
     else:
         st.info("No calibration data yet.")
     st.markdown("---")
+    st.markdown("**🔍 Error Log**")
+    errors = st.session_state.get("errors", [])
+    if errors:
+        for err in errors[-5:]:
+            st.error(f"[{err.get('time','')}] {err.get('source','')}: {err.get('error','')}")
+        if st.button("Clear Error Log"):
+            st.session_state["errors"] = []
+            st.rerun()
+    else:
+        st.caption("No errors logged this session.")
+    st.markdown("---")
     st.markdown("### 📊 API Usage")
     api_usage_cols = st.columns(3)
     with api_usage_cols[0]:
@@ -2551,6 +2641,11 @@ with tabs[5]:
     st.write("- NBA/MLB/NHL/WNBA rolling averages: Stats APIs")
     st.write("- NBA season averages: balldontlie API")
     st.write("- MLB Weather: wttr.in free API")
+    nba_status = st.session_state.get("nba_api_status","Not fetched")
+    color = "green" if "OK" in str(nba_status) else "red" if "FAIL" in str(nba_status) else "gray"
+    st.markdown(f"**NBA Stats API:** :{color}[{nba_status}]")
+    if "FAILED" in str(nba_status):
+        st.warning("NBA rolling averages unavailable — using season averages only")
     st.markdown("---")
     st.markdown("**Cache Management**")
     cache_cols = st.columns(3)
@@ -2573,3 +2668,22 @@ with tabs[5]:
                 if os.path.exists(path):
                     os.remove(path)
             st.success("API counters reset")
+    st.markdown("---")
+    col_s1, col_s2 = st.columns(2)
+    if col_s1.button("Reset Session State"):
+        keys_to_keep = ["bankroll", "history", "locks", "persistence_loaded", "day_start_br"]
+        for k in list(st.session_state.keys()):
+            if k not in keys_to_keep:
+                del st.session_state[k]
+        st.success("Session reset")
+        st.rerun()
+    if col_s2.button("Clean Old Cache Files"):
+        cleaned = 0
+        cutoff = time.time() - (7 * 24 * 3600)
+        keep = ["history.json","locks.json","bankroll.json","calibration.json","line_movement.json","clv_tracking.json","sharp_flags.json"]
+        for f in os.listdir(CACHE_DIR):
+            fpath = os.path.join(CACHE_DIR, f)
+            if (os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff and f not in keep):
+                os.remove(fpath)
+                cleaned += 1
+        st.success(f"Cleaned {cleaned} old cache files")
