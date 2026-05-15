@@ -68,6 +68,7 @@ SHARP_PATH = os.path.join(CACHE_DIR, "sharp_flags.json")
 API_SPORTS_COUNTER_PATH = os.path.join(CACHE_DIR, "api_sports_counter.json")
 SPORTMONKS_COUNTER_PATH = os.path.join(CACHE_DIR, "sportmonks_counter.json")
 UNIFIED_COUNTER_PATH = os.path.join(CACHE_DIR, "unified_counter.json")
+ODDS_API_COUNTER_PATH = os.path.join(CACHE_DIR, "odds_api_counter.json")
 
 TIER_COLORS = {"SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0", "APPROVED": "#4a90d9", "LEAN": "#7a8a9a", "PASS": "#e04040"}
 TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPROVED": "Edge ≥ 5%", "LEAN": "Edge ≥ 2%", "PASS": "Edge < 2%"}
@@ -140,7 +141,7 @@ TEAMMATE_OUT_BOOST = {
     "Damian Lillard": {"out_player": "Giannis Antetokounmpo", "PTS": 3.0, "AST": 1.5, "PRA": 4.5},
 }
 
-# Expanded player-to-team mapping (duplicates removed)
+# Expanded player-to-team mapping (duplicates removed, trades updated)
 PLAYER_TEAM_MAP = {
     "LeBron James": "LAL", "Anthony Davis": "LAL", "Austin Reaves": "LAL", "D'Angelo Russell": "LAL",
     "Luka Doncic": "LAL", "Kyrie Irving": "DAL",
@@ -858,7 +859,7 @@ def fetch_nba_rolling_averages():
         except Exception:
             continue
     if not rolling:
-        st.session_state["nba_api_status"] = "FAILED — blocked"
+        st.session_state["nba_api_status"] = "FAILED — likely blocked by hosting"
     else:
         st.session_state["nba_api_status"] = f"OK ({len(rolling)} players)"
     if rolling:
@@ -967,7 +968,12 @@ def fetch_mlb_rolling_averages():
                     "n_games": len(last10)
                 }
             time.sleep(0.3)
-        except:
+        except Exception as e:
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": "fetch_mlb_rolling_averages",
+                "error": str(e)[:100]
+            })
             continue
     if rolling:
         with open(cache_path, "wb") as f:
@@ -1004,7 +1010,12 @@ def fetch_nhl_rolling_averages():
                 "n_games": len(last10)
             }
             time.sleep(0.3)
-        except:
+        except Exception as e:
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": "fetch_nhl_rolling_averages",
+                "error": str(e)[:100]
+            })
             continue
     if rolling:
         with open(cache_path, "wb") as f:
@@ -1160,7 +1171,7 @@ def fetch_underdog_props(sport):
         return []
 
 # =========================
-# PRIZEPICKS SCRAPER
+# PRIZEPICKS SCRAPER (Partner API primary)
 # =========================
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
@@ -1721,10 +1732,7 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating,
         base_edge = prob - 0.5
     else:
         diff = (line - player_avg) / player_avg
-        if side.upper() == "OVER":
-            base_edge = -diff
-        else:
-            base_edge = diff
+        base_edge = -diff if side.upper() == "OVER" else diff
         if player_avg > 0:
             pct_diff = abs(line - player_avg) / player_avg
             if pct_diff > 0.15:
@@ -1734,8 +1742,7 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating,
     # Signal 2: Defense (30%)
     if opp_def_rating > 0:
         def_adj = (opp_def_rating - league_avg_def) / league_avg_def
-        signals["defense"] = (-def_adj * 0.30 if side.upper() == "OVER"
-                              else def_adj * 0.30)
+        signals["defense"] = (-def_adj * 0.30 if side.upper() == "OVER" else def_adj * 0.30)
     else:
         signals["defense"] = 0
     
@@ -1752,7 +1759,6 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating,
     # Signal 5: Pace (5%)
     signals["pace"] = pace_adj if side.upper() == "OVER" else -pace_adj
     
-    # Weighted combination
     combined = (signals["base"] * 0.45 +
                 signals["defense"] * 0.30 +
                 signals["location"] * 0.15 +
@@ -1784,7 +1790,8 @@ def load_sport_data(sport):
                              "Model": "N/A", "Sport": sport, "Avg": 0, "Injury": "", "SEM": "—", "SEM_n": 0,
                              "SignalBase": 0, "SignalDefense": 0, "SignalLocation": 0, "SignalUsage": 0,
                              "SignalRest": 0, "SignalPace": 0, "SignalBlowout": 0, "WeatherNote": "",
-                             "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": "", "source": p.get("source","")})
+                             "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": "",
+                             "source": p.get("source","")})
         return enriched, [], 0, 0
 
     rolling_avgs = {}
@@ -1988,7 +1995,7 @@ def load_sport_data(sport):
                     blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup)
                     break
 
-        # Pace adjustment for NBA
+        # Pace adjustment (NBA only)
         pace_adj = 0.0
         if sport == "NBA" and player_team:
             NBA_TEAM_PACE = {
@@ -2001,20 +2008,19 @@ def load_sport_data(sport):
                 "LAC": 97.1, "MIL": 98.1, "CLE": 98.1,
                 "NYK": 97.8, "MIA": 97.3, "PHI": 97.0,
             }
-            LEAGUE_AVG_PACE = 99.5
             for game in games:
                 if player_team in game.get("Matchup", ""):
-                    parts = game["Matchup"].replace("@","vs").split()
+                    parts = game["Matchup"].replace("@", "vs").split()
                     for p2 in parts:
-                        if p2 != player_team and len(p2)<=3 and p2.isalpha():
+                        if p2 != player_team and len(p2) <= 3 and p2.isalpha():
                             player_pace = NBA_TEAM_PACE.get(player_team, 99.5)
                             opp_pace = NBA_TEAM_PACE.get(p2, 99.5)
                             combined_pace = (player_pace + opp_pace) / 2
                             pace_adj = (combined_pace - 99.5) / 99.5
                             break
                     break
-        
-        # Game total adjustment
+
+        # Game total adjustment (NBA only)
         game_total_adj = 0.0
         if sport == "NBA" and player_team:
             for game in games:
@@ -2022,9 +2028,7 @@ def load_sport_data(sport):
                     total = game.get("Total", "N/A")
                     if total and total != "N/A":
                         try:
-                            game_total_adj = (
-                                (float(total) - 225.0) / 225.0 * 0.05
-                            )
+                            game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
                         except:
                             pass
                     break
@@ -2176,13 +2180,17 @@ STAT_NORMALIZE = {
     ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
     ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
     ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
-    ("NBA", "Pts+Rebs+Asts"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
-    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK", ("NBA", "Steals"): "STL",
-    ("NBA", "Turnovers"): "TOV", ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
-    ("WNBA", "Pts+Ast"): "PRA", ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
+    ("NBA", "Pts+Reb+Ast"): "PRA", ("NBA", "Pts+Rebs+Asts"): "PRA",
+    ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
+    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
+    ("NBA", "Steals"): "STL", ("NBA", "Turnovers"): "TOV",
+    ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
+    ("WNBA", "Pts+Ast"): "PRA",
+    ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
     ("NBA", "points"): "PTS", ("NBA", "rebounds"): "REB", ("NBA", "assists"): "AST",
     ("MLB", "Strikeouts"): "SO", ("MLB", "Hits"): "H", ("MLB", "Home Runs"): "HR",
-    ("Soccer", "Goals"): "GOALS", ("Soccer", "Assists"): "ASSISTS", ("Soccer", "Shots"): "SHOTS",
+    ("Soccer", "Goals"): "GOALS", ("Soccer", "Assists"): "ASSISTS",
+    ("Soccer", "Shots"): "SHOTS",
     ("UFC", "Significant Strikes"): "SIG_STR", ("UFC", "Takedowns"): "TAKEDOWNS",
     ("UFC", "Control Time"): "CONTROL_TIME",
 }
@@ -2193,8 +2201,9 @@ STAT_NORMALIZE = {
 _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_start": time.time(),
        "locks": [], "history": [], "min_edge": MIN_EDGE_DEFAULT, "skip_defaults": True, "last_sport": "NBA",
        "board_data": [], "games": [], "last_scan_time": None, "board_ready": False, "n_skipped_def": 0, "n_skipped_edge": 0,
-       "errors": [], "game_line_movement": {}, "game_sharp_flags": {}, "oddswrap_props": [], "ud_props_compare": [],
-       "multibook_discrepancies": [], "nba_api_status": "Not yet fetched", "line_discrepancies": []}
+       "errors": [], "game_line_movement": {}, "game_sharp_flags": {}, "oddswrap_props": [],
+       "ud_props_compare": [], "multibook_discrepancies": [], "nba_api_status": "Not yet fetched",
+       "line_discrepancies": []}
 for k, v in _ss.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -2280,9 +2289,13 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 # =========================
-# TABS
+# TABS (7 including Line Shop)
 # =========================
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "⚙️ System"])
+tabs = st.tabs([
+    "📋 Summary", "📊 Full Board", "🏟️ Game Lines",
+    "🔒 Locks & Ledger", "📈 History", "🛒 Line Shop",
+    "⚙️ System"
+])
 
 # ----- TAB 0: SUMMARY -----
 with tabs[0]:
@@ -2290,10 +2303,10 @@ with tabs[0]:
     today_str = date.today().strftime("%A, %B %d, %Y")
     st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (5 signals + bonuses)")
     
-    freshness = check_data_freshness()
-    if freshness:
-        with st.expander(f"⚠️ {len(freshness)} Data Freshness Warning(s)"):
-            for w in freshness:
+    fw = check_data_freshness()
+    if fw:
+        with st.expander(f"⚠️ {len(fw)} Data Freshness Warning(s)"):
+            for w in fw:
                 st.warning(w)
     
     st.markdown("🔒 **Sources:** PrizePicks (Partner API) · Underdog · ESPN Odds · OddsWrap")
@@ -2364,6 +2377,7 @@ with tabs[0]:
         st.markdown(pd.DataFrame(rows).to_html(escape=False, index=False), unsafe_allow_html=True)
     else:
         st.info("No props loaded.")
+    
     st.markdown("---")
     st.markdown("## 🔒 LOCK OF THE DAY")
     best = next((p for p in board if p["Tier"] in ["SOVEREIGN", "ELITE", "APPROVED"]), None)
@@ -2372,13 +2386,42 @@ with tabs[0]:
         if st.button("🔒 Lock This Pick"):
             already = any(l.get("player") == best["Player"] and l.get("prop") == best["Prop"] for l in st.session_state.locks)
             if not already:
-                st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": best["Side"],
-                                               "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"],
-                                               "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": best["Sport"]})
+                st.session_state.locks.append({
+                    "player": best["Player"], "prop": best["Prop"],
+                    "line": best["Line"], "side": best["Side"],
+                    "wager": best["Wager"], "prob": best["Prob"],
+                    "edge": best["Edge"], "tier": best["Tier"],
+                    "status": "PENDING",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "sport": best["Sport"]
+                })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 st.rerun()
             else:
                 st.warning("Already locked")
+    
+    st.markdown("---")
+    st.markdown("## ⚡ Daily Parlay Builder")
+    top3 = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")][:3]
+    if len(top3) >= 2:
+        adjusted_probs, corr_notes = detect_correlations(top3)
+        for note in corr_notes:
+            if "⚠️" in note:
+                st.warning(note)
+            else:
+                st.info(note)
+        for p in top3:
+            st.write(f"• **{p['Player']}** {p['Side']} {p['Line']} {p['Prop']} — {p['EdgePct']} | ${p['Wager']:.2f}")
+        fp = parlay_payout(adjusted_probs)
+        cp = parlay_prob(adjusted_probs)
+        tw = sum(p["Wager"] for p in top3)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Combined Prob", f"{cp:.1%}")
+        c2.metric("Fair Payout", f"+{fp}")
+        c3.metric("Total Wagered", f"${tw:.2f}")
+        st.info(f"If hits: ${tw * (1 + fp/100):.2f}")
+    else:
+        st.caption("Need 2+ high-confidence props for parlay.")
 
 # ----- TAB 1: FULL BOARD -----
 with tabs[1]:
@@ -2409,9 +2452,15 @@ with tabs[1]:
                     row = filtered[sel]
                     already = any(l.get("player") == row["Player"] and l.get("prop") == row["Prop"] for l in st.session_state.locks)
                     if not already:
-                        st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": row["Side"],
-                                                       "wager": row["Wager"], "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"],
-                                                       "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": row["Sport"]})
+                        st.session_state.locks.append({
+                            "player": row["Player"], "prop": row["Prop"],
+                            "line": row["Line"], "side": row["Side"],
+                            "wager": row["Wager"], "prob": row["Prob"],
+                            "edge": row["Edge"], "tier": row["Tier"],
+                            "status": "PENDING",
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "sport": row["Sport"]
+                        })
                         save_json_data(LOCKS_PATH, st.session_state.locks)
                         st.rerun()
                     else:
@@ -2468,7 +2517,7 @@ with tabs[3]:
                 save_json_data(HISTORY_PATH, st.session_state.history)
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                clv = record_clv(lock, st.session_state.board_data)
+                record_clv(lock, st.session_state.board_data)
                 st.rerun()
             if col3.button("❌ LOSS", key=f"loss_{i}"):
                 st.session_state.bankroll -= lock["wager"]
@@ -2509,25 +2558,25 @@ with tabs[4]:
                 with col_a:
                     st.markdown("**Hit Rate by Tier**")
                     if "tier" in resolved.columns:
-                        tier_stats_hist = resolved.groupby("tier").apply(
+                        tier_stats_h = resolved.groupby("tier").apply(
                             lambda x: pd.Series({
                                 "Bets": len(x),
                                 "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}",
-                                "Net P&L": f"${x['net'].sum():.2f}" if "net" in x else "—"
+                                "Net": f"${x['net'].sum():.2f}" if "net" in x else "—"
                             })
                         ).reset_index()
-                        st.dataframe(tier_stats_hist, width="stretch")
+                        st.dataframe(tier_stats_h, width="stretch")
                 with col_b:
                     st.markdown("**Hit Rate by Sport**")
                     if "sport" in resolved.columns:
-                        sport_stats = resolved.groupby("sport").apply(
+                        sport_stats_h = resolved.groupby("sport").apply(
                             lambda x: pd.Series({
                                 "Bets": len(x),
                                 "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}",
-                                "Net P&L": f"${x['net'].sum():.2f}" if "net" in x else "—"
+                                "Net": f"${x['net'].sum():.2f}" if "net" in x else "—"
                             })
                         ).reset_index()
-                        st.dataframe(sport_stats, width="stretch")
+                        st.dataframe(sport_stats_h, width="stretch")
                 
                 st.markdown("**Current Streak**")
                 outcomes = resolved["outcome"].tolist()
@@ -2540,13 +2589,17 @@ with tabs[4]:
                         else:
                             break
                     color = "green" if streak_type == "WIN" else "red"
-                    st.markdown(f'<p style="color:{color};font-size:18px;font-weight:700;">Current Streak: {streak} {streak_type}{"s" if streak > 1 else ""}</p>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<p style="color:{color};font-size:18px;font-weight:700;">'
+                        f'Current Streak: {streak} {streak_type}{"s" if streak > 1 else ""}</p>',
+                        unsafe_allow_html=True
+                    )
                 
                 st.markdown("**Bankroll Over Time**")
                 if "net" in resolved.columns:
-                    resolved_copy = resolved.copy()
-                    resolved_copy["cumulative"] = DEFAULT_BANKROLL + resolved_copy["net"].cumsum()
-                    st.line_chart(resolved_copy["cumulative"])
+                    rc = resolved.copy()
+                    rc["cumulative"] = DEFAULT_BANKROLL + rc["net"].cumsum()
+                    st.line_chart(rc["cumulative"])
                 
                 st.markdown("**Closing Line Value**")
                 clv_data = load_json_data(CLV_PATH, [])
@@ -2554,23 +2607,90 @@ with tabs[4]:
                     clv_df = pd.DataFrame(clv_data)
                     avg_clv = clv_df["clv"].mean()
                     pos_rate = (clv_df["clv"] > 0).mean()
-                    col_c1, col_c2, col_c3 = st.columns(3)
-                    col_c1.metric("Avg CLV", f"{avg_clv:+.2f}")
-                    col_c2.metric("Positive CLV Rate", f"{pos_rate:.1%}")
-                    col_c3.metric("Bets Tracked", len(clv_data))
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Avg CLV", f"{avg_clv:+.2f}")
+                    c2.metric("Positive Rate", f"{pos_rate:.1%}")
+                    c3.metric("Tracked", len(clv_data))
                     if avg_clv > 0:
-                        st.success("✅ Positive CLV — your process is sound.")
+                        st.success("✅ Positive CLV — process is sound.")
                     else:
                         st.warning("⚠️ Negative CLV — lines moving against you.")
+                    st.dataframe(
+                        clv_df[["timestamp","player","prop","locked_line","closing_line","clv","tier"]].tail(10),
+                        width="stretch"
+                    )
                 else:
-                    st.caption("Need 5+ resolved bets for CLV analysis.")
+                    st.caption("Need 5+ resolved bets for CLV.")
         else:
             st.caption("Need 5+ bets for analytics.")
     else:
         st.info("No bet history yet.")
 
-# ----- TAB 5: SYSTEM -----
+# ----- TAB 5: LINE SHOP -----
 with tabs[5]:
+    st.markdown("## 🛒 Line Shopping")
+    st.caption("Best available lines across all sources")
+    board = st.session_state.board_data
+    ud_props = st.session_state.get("ud_props_compare", [])
+    ow_props = st.session_state.get("oddswrap_props", [])
+    if not board:
+        st.info("Load the board first.")
+    else:
+        ud_dict = {}
+        for p in ud_props:
+            k = normalize_name(p["Player"])
+            if k not in ud_dict:
+                ud_dict[k] = {}
+            ud_dict[k][p["Prop"]] = p["Line"]
+        ow_dict = {}
+        for p in ow_props:
+            k = normalize_name(p["Player"])
+            if k not in ow_dict:
+                ow_dict[k] = {}
+            book = p.get("Book","DK")
+            prop = p.get("Prop","")
+            if prop not in ow_dict[k]:
+                ow_dict[k][prop] = {}
+            ow_dict[k][prop][book] = p["Line"]
+        rows = []
+        for prop in board[:20]:
+            player = prop["Player"]
+            pn = prop["Prop"]
+            pp_line = prop["Line"]
+            side = prop["Side"]
+            norm = normalize_name(player)
+            ud_line = ud_dict.get(norm, {}).get(pn)
+            ow_lines = ow_dict.get(norm, {}).get(pn, {})
+            all_lines = {"PrizePicks": pp_line}
+            if ud_line:
+                all_lines["Underdog"] = ud_line
+            all_lines.update(ow_lines)
+            best_book = (min(all_lines, key=all_lines.get) if side == "OVER" else max(all_lines, key=all_lines.get))
+            best_line = all_lines[best_book]
+            rows.append({
+                "Player": player, "Prop": pn, "Side": side,
+                "PrizePicks": pp_line,
+                "Underdog": ud_line if ud_line else "—",
+                "Best Line": best_line, "Best Book": best_book,
+                "Saves": round(abs(best_line - pp_line), 1) if best_line != pp_line else 0,
+                "Tier": prop["Tier"],
+            })
+        st.dataframe(pd.DataFrame(rows), width="stretch")
+        best_opps = [r for r in rows if r["Best Book"] != "PrizePicks" and r["Saves"] >= 0.5]
+        if best_opps:
+            st.markdown("### 🔥 Better Lines Available")
+            st.dataframe(pd.DataFrame(best_opps)[["Player","Prop","PrizePicks","Best Line","Best Book","Saves","Tier"]], width="stretch")
+    
+    st.markdown("---")
+    st.markdown("### 📊 Cross-Book Discrepancies")
+    disc = st.session_state.get("multibook_discrepancies", [])
+    if disc:
+        st.dataframe(pd.DataFrame(disc[:10]), width="stretch")
+    else:
+        st.caption("No significant discrepancies found.")
+
+# ----- TAB 6: SYSTEM -----
+with tabs[6]:
     st.markdown("## ⚙️ System Info")
     c1, c2 = st.columns(2)
     with c1:
@@ -2614,7 +2734,7 @@ with tabs[5]:
     else:
         st.info("No calibration data yet.")
     st.markdown("---")
-    st.markdown("**🔍 Error Log**")
+    st.markdown("### 🔍 Error Log")
     errors = st.session_state.get("errors", [])
     if errors:
         for err in errors[-5:]:
@@ -2623,16 +2743,113 @@ with tabs[5]:
             st.session_state["errors"] = []
             st.rerun()
     else:
-        st.caption("No errors logged this session.")
+        st.caption("✅ No errors this session.")
     st.markdown("---")
-    st.markdown("### 📊 API Usage")
-    api_usage_cols = st.columns(3)
-    with api_usage_cols[0]:
-        st.write(format_api_usage(API_SPORTS_COUNTER_PATH, daily_limit=100, api_name="API-Sports"))
-    with api_usage_cols[1]:
-        st.write(format_api_usage(SPORTMONKS_COUNTER_PATH, monthly_limit=500, api_name="Sportmonks"))
-    with api_usage_cols[2]:
-        st.write(format_api_usage(UNIFIED_COUNTER_PATH, monthly_limit=200, api_name="Unified"))
+    st.markdown("### 📊 API Health Dashboard")
+    st.caption("All active API keys and free sources — usage tracked automatically")
+    
+    API_REGISTRY = [
+        {"name": "BallDontLie", "key": "BALLSDONTLIE_API_KEY",
+         "path": os.path.join(CACHE_DIR,"bdl_counter.json"),
+         "daily": None, "monthly": 200, "purpose": "NBA season averages"},
+        {"name": "Odds API", "key": "ODDS_API_KEY",
+         "path": ODDS_API_COUNTER_PATH,
+         "daily": None, "monthly": 450, "purpose": "Game lines + props"},
+        {"name": "API-Sports", "key": "API_SPORTS_KEY",
+         "path": API_SPORTS_COUNTER_PATH,
+         "daily": 100, "monthly": None, "purpose": "Player stats + injuries"},
+        {"name": "Sportmonks", "key": "SPORTMONKS_API_KEY",
+         "path": SPORTMONKS_COUNTER_PATH,
+         "daily": None, "monthly": 500, "purpose": "Soccer stats"},
+        {"name": "Unified API", "key": "UNIFIED_API_KEY",
+         "path": UNIFIED_COUNTER_PATH,
+         "daily": None, "monthly": 200, "purpose": "Multi-sport data"},
+    ]
+    
+    FREE_APIS = [
+        {"name": "PrizePicks Partner API", "cache": None, "purpose": "Primary props (1000/call)"},
+        {"name": "Underdog Fantasy API", "cache": None, "purpose": "Props fallback + injuries"},
+        {"name": "ESPN Scoreboard", "cache": None, "purpose": "Game lines + odds"},
+        {"name": "ESPN Core API", "cache": None, "purpose": "Line movement + sharp money"},
+        {"name": "NBA Stats API", "cache": "nba_rolling_avgs.pkl", "purpose": "NBA rolling averages"},
+        {"name": "MLB Stats API", "cache": "mlb_rolling_avgs.pkl", "purpose": "MLB rolling averages"},
+        {"name": "NHL API", "cache": "nhl_rolling_avgs.pkl", "purpose": "NHL rolling averages"},
+        {"name": "WNBA Stats API", "cache": "wnba_rolling_avgs.pkl", "purpose": "WNBA rolling averages"},
+        {"name": "wttr.in Weather", "cache": None, "purpose": "MLB weather signal"},
+        {"name": "OddsWrap SDK", "cache": None, "purpose": "DraftKings/Bovada lines"},
+    ]
+    
+    st.markdown("#### 🔑 Keyed APIs")
+    for api in API_REGISTRY:
+        counter = load_json_data(api["path"], {"count":0,"monthly_count":0,"date":"","month":""})
+        has_key = bool(st.secrets.get(api["key"],""))
+        if api["monthly"]:
+            used = counter.get("monthly_count", 0)
+            limit = api["monthly"]
+            remaining = limit - used
+            pct = used / limit if limit > 0 else 0
+            color = "🟢" if pct < 0.6 else "🟡" if pct < 0.85 else "🔴"
+            status = f"{color} {used}/{limit} monthly ({remaining} left)"
+        elif api["daily"]:
+            used = counter.get("count", 0)
+            limit = api["daily"]
+            remaining = limit - used
+            pct = used / limit if limit > 0 else 0
+            color = "🟢" if pct < 0.6 else "🟡" if pct < 0.85 else "🔴"
+            status = f"{color} {used}/{limit} today ({remaining} left)"
+        else:
+            status = "🟢 No limit"
+        key_status = "✅ Set" if has_key else "❌ Missing"
+        with st.expander(f"{api['name']} — {status} | Key: {key_status}"):
+            c1, c2 = st.columns(2)
+            c1.write(f"**Purpose:** {api['purpose']}")
+            c1.write(f"**Key:** {key_status}")
+            c2.write(f"**Usage:** {status}")
+            if st.button(f"Reset {api['name']}", key=f"rst_{api['name']}"):
+                save_json_data(api["path"], {"count":0,"monthly_count":0,"date":date.today().strftime("%Y-%m-%d"),"month":datetime.now().strftime("%Y-%m")})
+                st.success("Reset")
+                st.rerun()
+            if api["monthly"] and pct >= 0.85:
+                st.error("⚠️ Approaching monthly limit")
+            elif api["daily"] and pct >= 0.85:
+                st.error("⚠️ Approaching daily limit")
+    
+    st.markdown("#### 🆓 Free APIs")
+    free_rows = []
+    for api in FREE_APIS:
+        cache_age = "—"
+        status = "✅ Active"
+        if api.get("cache"):
+            cp = os.path.join(CACHE_DIR, api["cache"])
+            if os.path.exists(cp):
+                age = (time.time() - os.path.getmtime(cp)) / 3600
+                cache_age = f"{age:.1f}hrs ago"
+                status = "✅ Fresh" if age < 24 else "⚠️ Stale"
+            else:
+                cache_age = "Not fetched"
+                status = "⏳ Load board"
+        free_rows.append({
+            "API": api["name"],
+            "Purpose": api["purpose"],
+            "Cache": cache_age,
+            "Status": status,
+        })
+    st.dataframe(pd.DataFrame(free_rows), width="stretch", hide_index=True)
+    
+    st.markdown("#### 📈 Health Summary")
+    keys_set = sum(1 for a in API_REGISTRY if st.secrets.get(a["key"],""))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Keyed APIs Active", f"{keys_set}/{len(API_REGISTRY)}")
+    c2.metric("Free APIs", str(len(FREE_APIS)))
+    c3.metric("Total Sources", str(len(API_REGISTRY) + len(FREE_APIS)))
+    
+    st.markdown("---")
+    if st.button("🔄 Reset ALL API Counters"):
+        for api in API_REGISTRY:
+            save_json_data(api["path"], {"count":0,"monthly_count":0,"date":date.today().strftime("%Y-%m-%d"),"month":datetime.now().strftime("%Y-%m")})
+        st.success("All counters reset")
+        st.rerun()
+    
     st.markdown("---")
     st.markdown("**Data Sources**")
     st.write("- Props: PrizePicks Partner API (primary) / Public API / Underdog / OddsWrap")
@@ -2664,26 +2881,30 @@ with tabs[5]:
             st.success("All rolling caches cleared")
     with cache_cols[2]:
         if st.button("Clear All API Counters"):
-            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH]:
+            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH]:
                 if os.path.exists(path):
                     os.remove(path)
             st.success("API counters reset")
     st.markdown("---")
+    st.markdown("**⚡ Session Management**")
     col_s1, col_s2 = st.columns(2)
-    if col_s1.button("Reset Session State"):
-        keys_to_keep = ["bankroll", "history", "locks", "persistence_loaded", "day_start_br"]
+    if col_s1.button("🔄 Reset Session State"):
+        keep = ["bankroll","history","locks","persistence_loaded","day_start_br","session_start"]
         for k in list(st.session_state.keys()):
-            if k not in keys_to_keep:
+            if k not in keep:
                 del st.session_state[k]
-        st.success("Session reset")
+        st.success("Session reset — reload the board")
         st.rerun()
-    if col_s2.button("Clean Old Cache Files"):
+    if col_s2.button("🧹 Clean Old Cache Files"):
         cleaned = 0
         cutoff = time.time() - (7 * 24 * 3600)
-        keep = ["history.json","locks.json","bankroll.json","calibration.json","line_movement.json","clv_tracking.json","sharp_flags.json"]
-        for f in os.listdir(CACHE_DIR):
-            fpath = os.path.join(CACHE_DIR, f)
-            if (os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff and f not in keep):
-                os.remove(fpath)
-                cleaned += 1
-        st.success(f"Cleaned {cleaned} old cache files")
+        keep_files = ["history.json","locks.json","bankroll.json","calibration.json","line_movement.json","clv_tracking.json","sharp_flags.json","odds_api_counter.json","api_sports_counter.json","sportmonks_counter.json","unified_counter.json"]
+        try:
+            for f in os.listdir(CACHE_DIR):
+                fp = os.path.join(CACHE_DIR, f)
+                if (os.path.isfile(fp) and f not in keep_files and os.path.getmtime(fp) < cutoff):
+                    os.remove(fp)
+                    cleaned += 1
+            st.success(f"Cleaned {cleaned} old files")
+        except Exception as e:
+            st.error(f"Cleanup error: {e}")
