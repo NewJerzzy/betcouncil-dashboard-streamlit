@@ -71,6 +71,11 @@ UNIFIED_COUNTER_PATH = os.path.join(CACHE_DIR, "unified_counter.json")
 ODDS_API_COUNTER_PATH = os.path.join(CACHE_DIR, "odds_api_counter.json")
 BDL_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_counter.json")
 
+# GitHub Gist persistence
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
+GIST_API = "https://api.github.com/gists"
+
 TIER_COLORS = {"SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0", "APPROVED": "#4a90d9", "LEAN": "#7a8a9a", "PASS": "#e04040"}
 TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPROVED": "Edge ≥ 5%", "LEAN": "Edge ≥ 2%", "PASS": "Edge < 2%"}
 
@@ -464,6 +469,69 @@ ESPN_ATHLETE_IDS = {
 }
 
 # =========================
+# GIST PERSISTENCE FUNCTIONS
+# =========================
+def save_to_gist(data_type, data):
+    """
+    Save critical data to GitHub Gist for persistence
+    across Streamlit Cloud restarts.
+    data_type: 'history', 'locks', or 'bankroll'
+    """
+    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return False
+    try:
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        payload = {
+            "files": {
+                f"betcouncil_{data_type}.json": {
+                    "content": json.dumps(data, indent=2)
+                }
+            }
+        }
+        resp = requests.patch(
+            f"{GIST_API}/{GITHUB_GIST_ID}",
+            headers=headers,
+            json=payload,
+            timeout=10
+        )
+        return resp.status_code == 200
+    except:
+        return False
+
+def load_from_gist(data_type, default):
+    """
+    Load critical data from GitHub Gist.
+    Falls back to local /tmp if Gist unavailable.
+    """
+    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return None
+    try:
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        resp = requests.get(
+            f"{GIST_API}/{GITHUB_GIST_ID}",
+            headers=headers,
+            timeout=10
+        )
+        if resp.status_code != 200:
+            return None
+        files = resp.json().get("files", {})
+        file_data = files.get(
+            f"betcouncil_{data_type}.json", {}
+        )
+        content = file_data.get("content", "")
+        if content:
+            return json.loads(content)
+        return None
+    except:
+        return None
+
+# =========================
 # PERSISTENCE LAYER
 # =========================
 def load_json_data(path, default):
@@ -627,15 +695,31 @@ def poisson_prob_over(line, avg):
     except:
         return 0.5
 
-def kelly_unit(prob, bankroll):
-    if prob <= 0.5:
+def prizepicks_breakeven_prob(n_picks=2):
+    multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
+    return round((1 / multiplier) ** (1 / n_picks), 4)
+
+def calculate_prizepicks_ev(fair_prob, n_picks=2):
+    breakeven = prizepicks_breakeven_prob(n_picks)
+    return round(fair_prob - breakeven, 4)
+
+def kelly_unit_prizepicks(prob, bankroll, n_picks=2):
+    multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
+    breakeven = prizepicks_breakeven_prob(n_picks)
+    if prob <= breakeven:
         return 0.0
-    b = 100 / abs(ODDS)
+    b = multiplier - 1
     q = 1 - prob
     kelly = (b * prob - q) / b
     if kelly <= 0:
         return 0.0
-    return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * KELLY_CAP), 2)
+    return round(
+        min(kelly * KELLY_FRACTION * bankroll,
+            bankroll * KELLY_CAP), 2
+    )
+
+def kelly_unit(prob, bankroll, n_picks=2):
+    return kelly_unit_prizepicks(prob, bankroll, n_picks)
 
 def get_tier(edge, sport="NBA"):
     thresholds = TIER_THRESHOLDS.get(sport, TIER_THRESHOLDS["NBA"])
@@ -2166,7 +2250,6 @@ def load_sport_data(sport):
 
         # Steam move integration into edge
         if sharp_flag and best_side == "OVER":
-            # Find the matchup for this player's game
             player_matchup = next((g["Matchup"] for g in games 
                                    if player_team in g.get("Matchup","")), "")
             sharp_direction = game_sharp_flags.get(player_matchup, {}).get("direction", "")
@@ -2191,10 +2274,17 @@ def load_sport_data(sport):
         injury_flag = injuries.get(player, "")
         sem_display, sem_n = compute_sem_for_tier(tier_stats, tier)
 
+        # PrizePicks EV calculations
+        ev_2pick = calculate_prizepicks_ev(best_prob, 2)
+        ev_3pick = calculate_prizepicks_ev(best_prob, 3)
+        wager_2pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 2)
+        wager_3pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 3)
+
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
-            "Wager": kelly_unit(best_prob, st.session_state.bankroll), "Tier": tier,
+            "Wager": kelly_unit(best_prob, st.session_state.bankroll),  # default 2-pick
+            "Tier": tier,
             "Quality": "Lookup" if not using_default else "Default",
             "Model": "MultiSignal", "Sport": sport, "Injury": injury_flag,
             "SEM": sem_display, "SEM_n": sem_n,
@@ -2206,7 +2296,13 @@ def load_sport_data(sport):
             "SignalPace": best_signals.get("pace", 0),
             "SignalBlowout": blowout_adj, "WeatherNote": weather_note,
             "Movement": "", "Efficiency": eff_label, "EffScore": eff_score,
-            "SharpFlag": sharp_flag, "source": p.get("source", "")
+            "SharpFlag": sharp_flag, "source": p.get("source", ""),
+            "EV_2pick": f"{ev_2pick:+.1%}",
+            "EV_3pick": f"{ev_3pick:+.1%}",
+            "Wager_2pick": wager_2pick,
+            "Wager_3pick": wager_3pick,
+            "PlusEV_2": ev_2pick > 0,
+            "PlusEV_3": ev_3pick > 0,
         })
 
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
@@ -2234,10 +2330,24 @@ for k, v in _ss.items():
         st.session_state[k] = v
 
 if "persistence_loaded" not in st.session_state:
-    st.session_state.bankroll = load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL)
+    # Try Gist first, fall back to /tmp
+    gist_history = load_from_gist("history", None)
+    gist_locks = load_from_gist("locks", None)
+    gist_bankroll = load_from_gist("bankroll", None)
+    
+    st.session_state.history = (
+        gist_history if gist_history is not None
+        else load_json_data(HISTORY_PATH, [])
+    )
+    st.session_state.locks = (
+        gist_locks if gist_locks is not None
+        else load_json_data(LOCKS_PATH, [])
+    )
+    st.session_state.bankroll = (
+        gist_bankroll if gist_bankroll is not None
+        else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL)
+    )
     st.session_state.day_start_br = st.session_state.bankroll
-    st.session_state.history = load_json_data(HISTORY_PATH, [])
-    st.session_state.locks = load_json_data(LOCKS_PATH, [])
     st.session_state.persistence_loaded = True
 
 # =========================
@@ -2285,6 +2395,7 @@ with st.sidebar:
         st.session_state.bankroll = DEFAULT_BANKROLL
         st.session_state.day_start_br = DEFAULT_BANKROLL
         save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+        save_to_gist("bankroll", st.session_state.bankroll)
         st.rerun()
 
 # =========================
@@ -2421,6 +2532,7 @@ with tabs[0]:
                     "sport": best["Sport"]
                 })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
                 st.rerun()
             else:
                 st.warning("Already locked")
@@ -2472,7 +2584,10 @@ with tabs[0]:
                 f"Consider removing the weakest leg."
             )
         
-        st.info(f"If hits: ${1 * pp_multiplier:.1f}x your wager")
+        st.info(
+            f"If hits: ${tw * pp_multiplier:.2f} "
+            f"(${tw:.2f} × {pp_multiplier}x payout)"
+        )
     else:
         st.caption("Need 2+ high-confidence props for parlay.")
 
@@ -2484,7 +2599,12 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             df = pd.DataFrame(filtered)
-            display_cols = ["Player", "Prop", "Line", "Side", "Avg", "EdgePct", "Tier", "Wager", "SharpFlag", "Efficiency", "SEM", "Injury", "Movement", "source"]
+            display_cols = ["Player", "Prop", "Line", "Side",
+                            "Avg", "Prob", "EdgePct",
+                            "EV_2pick", "EV_3pick",
+                            "Wager_2pick", "Tier",
+                            "SharpFlag", "Efficiency", "SEM",
+                            "Injury", "Movement", "source"]
             display_cols = [c for c in display_cols if c in df.columns]
             st.dataframe(df[display_cols], width="stretch")
             
@@ -2508,13 +2628,15 @@ with tabs[1]:
                         st.session_state.locks.append({
                             "player": row["Player"], "prop": row["Prop"],
                             "line": row["Line"], "side": row["Side"],
-                            "wager": row["Wager"], "prob": row["Prob"],
+                            "wager": row.get("Wager_2pick", row["Wager"]),
+                            "prob": row["Prob"],
                             "edge": row["Edge"], "tier": row["Tier"],
                             "status": "PENDING",
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "sport": row["Sport"]
                         })
                         save_json_data(LOCKS_PATH, st.session_state.locks)
+                        save_to_gist("locks", st.session_state.locks)
                         st.rerun()
                     else:
                         st.warning("Already locked")
@@ -2563,27 +2685,35 @@ with tabs[3]:
             col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
             col1.write(f"**{lock['player']}** {lock['side']} {lock['line']} {lock['prop']} — {lock.get('tier','—')} | Wager: ${lock['wager']:.2f}")
             if col2.button("✅ WIN", key=f"win_{i}"):
-                profit = round(lock["wager"] * (100 / 110), 2)
+                # PrizePicks is DFS not -110 sportsbook
+                profit = round(lock["wager"] * 1.0, 2)
                 st.session_state.bankroll += profit
                 st.session_state.history.append({**lock, "outcome": "WIN", "profit": profit, "loss": 0, "net": profit})
                 save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+                save_to_gist("bankroll", st.session_state.bankroll)
                 save_json_data(HISTORY_PATH, st.session_state.history)
+                save_to_gist("history", st.session_state.history)
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
                 save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
                 record_clv(lock, st.session_state.board_data)
                 st.rerun()
             if col3.button("❌ LOSS", key=f"loss_{i}"):
                 st.session_state.bankroll -= lock["wager"]
                 st.session_state.history.append({**lock, "outcome": "LOSS", "profit": 0, "loss": lock["wager"], "net": -lock["wager"]})
                 save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+                save_to_gist("bankroll", st.session_state.bankroll)
                 save_json_data(HISTORY_PATH, st.session_state.history)
+                save_to_gist("history", st.session_state.history)
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
                 save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
                 record_clv(lock, st.session_state.board_data)
                 st.rerun()
             if col4.button("↩ VOID", key=f"void_{i}"):
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
                 save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
                 st.rerun()
     else:
         st.info("No active locks.")
@@ -2598,6 +2728,7 @@ with tabs[4]:
         if st.button("Clear History"):
             st.session_state.history = []
             save_json_data(HISTORY_PATH, [])
+            save_to_gist("history", st.session_state.history)
             st.rerun()
         
         st.markdown("---")
@@ -2775,6 +2906,29 @@ with tabs[6]:
     st.write("- UNDER only when edge differential > 5%")
     st.write("- Poisson for HR and Goals only")
     st.markdown("---")
+    st.markdown("### 💰 PrizePicks EV Model")
+    st.write("**Breakeven probability by pick count:**")
+    ev_rows = []
+    for n, mult in PRIZEPICKS_MULTIPLIERS.items():
+        be = prizepicks_breakeven_prob(n)
+        ev_rows.append({
+            "Picks": f"{n}-pick",
+            "Payout": f"{mult}x",
+            "Breakeven Per Leg": f"{be:.1%}",
+            "vs -110 (52.4%)": f"+{(be-0.524)*100:.1f}% harder",
+        })
+    st.dataframe(
+        pd.DataFrame(ev_rows),
+        width="stretch",
+        hide_index=True
+    )
+    st.caption(
+        "⚠️ PrizePicks props need to hit at 57.7%+ for a "
+        "2-pick to be +EV — not 52.4% like standard -110 "
+        "sportsbook betting. The EV_2pick and EV_3pick "
+        "columns in Full Board show true +EV per prop."
+    )
+    st.markdown("---")
     st.markdown("### 📊 SEM Calibration Summary")
     tier_stats = compute_tier_stats(st.session_state.history)
     if tier_stats:
@@ -2934,6 +3088,22 @@ with tabs[6]:
     st.markdown(f"**NBA Stats API:** :{color}[{nba_status}]")
     if "FAILED" in str(nba_status):
         st.warning("NBA rolling averages unavailable — using season averages only")
+    
+    st.markdown("---")
+    st.markdown("**💾 Data Persistence Status**")
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        st.success(
+            "✅ GitHub Gist persistence active — "
+            "history and locks survive server restarts"
+        )
+    else:
+        st.error(
+            "⚠️ No persistence configured — "
+            "history and locks will be lost on restart. "
+            "Add GITHUB_TOKEN and GITHUB_GIST_ID to "
+            "Streamlit secrets to enable persistence."
+        )
+    
     st.markdown("---")
     st.markdown("**Cache Management**")
     cache_cols = st.columns(3)
