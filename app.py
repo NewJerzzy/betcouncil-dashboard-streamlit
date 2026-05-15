@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 import re
 import requests
 import time
@@ -44,7 +44,7 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 # CONSTANTS
 # =========================
 DEFAULT_BANKROLL = 468.49
-KELLY_FRACTION = 0.15  # Reduced from 0.25 for prop betting risk profile
+KELLY_FRACTION = 0.15
 KELLY_CAP = 0.25
 ODDS = -110
 EDGE_CAP = 0.20
@@ -54,6 +54,15 @@ CACHE_DIR = "/tmp/betcouncil_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
+
+# Daily risk controls
+DAILY_RISK_CONTROLS = {
+    "max_daily_loss_pct": 0.15,
+    "max_locks_per_day": 8,
+    "stop_win_pct": 0.25,
+    "max_same_sport_locks": 4,
+    "max_same_game_locks": 2,
+}
 
 # JSON persistence paths
 HISTORY_PATH = os.path.join(CACHE_DIR, "history.json")
@@ -93,7 +102,6 @@ TIER_THRESHOLDS = {
 
 SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL", "Soccer", "UFC", "Golf", "Tennis"]
 
-# PrizePicks standard multipliers (flex play)
 PRIZEPICKS_MULTIPLIERS = {
     2: 3.0,
     3: 5.0,
@@ -101,9 +109,7 @@ PRIZEPICKS_MULTIPLIERS = {
     5: 20.0,
 }
 
-# =========================
-# API KEYS FROM SECRETS
-# =========================
+# API keys from secrets
 BDL_API_KEY = st.secrets.get("BALLSDONTLIE_API_KEY", "")
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
@@ -113,9 +119,7 @@ RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
 ODDS_API_IO_KEY = st.secrets.get("ODDS_API_IO_KEY", "")
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
 
-# =========================
-# HARDCODED BASELINES (moved before functions)
-# =========================
+# Hardcoded baselines (moved before functions)
 PLAYER_AVERAGES_SOCCER = {
     "Erling Haaland": {"GOALS": 0.85, "ASSISTS": 0.25, "SHOTS": 4.2},
     "Kylian Mbappe": {"GOALS": 0.75, "ASSISTS": 0.35, "SHOTS": 4.0},
@@ -198,8 +202,7 @@ STAT_NORMALIZE = {
     ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
     ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
     ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
-    ("NBA", "Pts+Reb+Ast"): "PRA", ("NBA", "Pts+Rebs+Asts"): "PRA",
-    ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
+    ("NBA", "Pts+Rebs+Asts"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
     ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
     ("NBA", "Steals"): "STL", ("NBA", "Turnovers"): "TOV",
     ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
@@ -213,9 +216,6 @@ STAT_NORMALIZE = {
     ("UFC", "Control Time"): "CONTROL_TIME",
 }
 
-# =========================
-# OTHER CONSTANTS
-# =========================
 HOME_BOOST = {"PTS": 1.5, "REB": 0.5, "AST": 0.4, "PRA": 2.4}
 AWAY_PENALTY = {"PTS": -1.5, "REB": -0.5, "AST": -0.4, "PRA": -2.4}
 
@@ -257,7 +257,7 @@ PLAYER_TEAM_MAP = {
 }
 
 BLOWOUT_THRESHOLDS = {
-    "NBA": 12, "NFL": 14, "MLB": 3, 
+    "NBA": 12, "NFL": 14, "MLB": 3,
     "NHL": 2, "WNBA": 10
 }
 
@@ -278,10 +278,7 @@ POSITIVE_CORRELATIONS = {
     ("Tyrese Haliburton", "Pascal Siakam"): 0.3,
 }
 
-WIND_HR_THRESHOLDS = {
-    "strong_out": 15,
-    "strong_in": 15,
-}
+WIND_HR_THRESHOLDS = {"strong_out": 15, "strong_in": 15}
 
 MLB_BALLPARKS = {
     "New York Yankees": {"city": "New York", "outdoor": True},
@@ -416,11 +413,7 @@ try:
 except ImportError:
     ODDSWRAP_AVAILABLE = False
 
-ODDSWRAP_SPORT_MAP = {
-    "NBA": "nba", "MLB": "mlb",
-    "NFL": "nfl", "NHL": "nhl"
-}
-
+ODDSWRAP_SPORT_MAP = {"NBA": "nba", "MLB": "mlb", "NFL": "nfl", "NHL": "nhl"}
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 ODDS_SPORTS_MAP = {
     "NBA": "basketball_nba",
@@ -429,7 +422,6 @@ ODDS_SPORTS_MAP = {
     "NHL": "icehockey_nhl",
     "WNBA": "basketball_wnba",
 }
-
 ESPN_CORE_BASE = "https://sports.core.api.espn.com/v2"
 ESPN_CORE_SPORT_MAP = {
     "NBA": "basketball/leagues/nba",
@@ -439,7 +431,6 @@ ESPN_CORE_SPORT_MAP = {
     "WNBA": "basketball/leagues/wnba",
     "Soccer": "soccer/leagues/eng.1",
 }
-
 ESPN_BET_PROVIDER_ID = 1002
 
 ESPN_ATHLETE_IDS = {
@@ -469,61 +460,76 @@ ESPN_ATHLETE_IDS = {
 }
 
 # =========================
-# GIST PERSISTENCE FUNCTIONS
+# EWMA FUNCTION
+# =========================
+def ewma_average(game_values, decay=0.85):
+    """
+    Exponentially weighted moving average.
+    Most recent game counts most.
+    decay=0.85: yesterday=100%, 2 ago=85%, 3 ago=72%
+    """
+    if not game_values:
+        return 0.0
+    weights = [decay**i for i in range(len(game_values))]
+    weighted = sum(v * w for v, w in zip(reversed(game_values), weights))
+    return round(weighted / sum(weights), 2)
+
+# =========================
+# DAILY RISK CONTROLS
+# =========================
+def check_daily_risk_limits(sport=None):
+    """
+    Returns (can_bet, reason) tuple.
+    Checks daily loss, lock count, and win limits.
+    """
+    bankroll = st.session_state.bankroll
+    day_start = st.session_state.day_start_br
+    
+    if day_start > 0:
+        daily_change = (bankroll - day_start) / day_start
+        if daily_change <= -DAILY_RISK_CONTROLS["max_daily_loss_pct"]:
+            return False, f"🛑 Daily stop-loss hit ({daily_change:.1%}). No more bets today."
+        if daily_change >= DAILY_RISK_CONTROLS["stop_win_pct"]:
+            return False, f"🏆 Stop-win triggered (+{daily_change:.1%}). Lock in today's profits."
+    
+    today = date.today().strftime("%Y-%m-%d")
+    today_locks = [l for l in st.session_state.history if l.get("timestamp", "").startswith(today)]
+    today_locks += [l for l in st.session_state.locks if l.get("timestamp", "").startswith(today)]
+    
+    if len(today_locks) >= DAILY_RISK_CONTROLS["max_locks_per_day"]:
+        return False, f"🛑 Max {DAILY_RISK_CONTROLS['max_locks_per_day']} locks per day reached."
+    
+    if sport:
+        sport_locks = [l for l in st.session_state.locks if l.get("sport") == sport]
+        if len(sport_locks) >= DAILY_RISK_CONTROLS["max_same_sport_locks"]:
+            return False, f"⚠️ Max {DAILY_RISK_CONTROLS['max_same_sport_locks']} {sport} locks reached."
+    
+    return True, ""
+
+# =========================
+# GIST PERSISTENCE
 # =========================
 def save_to_gist(data_type, data):
-    """
-    Save critical data to GitHub Gist for persistence
-    across Streamlit Cloud restarts.
-    data_type: 'history', 'locks', or 'bankroll'
-    """
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return False
     try:
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        payload = {
-            "files": {
-                f"betcouncil_{data_type}.json": {
-                    "content": json.dumps(data, indent=2)
-                }
-            }
-        }
-        resp = requests.patch(
-            f"{GIST_API}/{GITHUB_GIST_ID}",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
+        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        payload = {"files": {f"betcouncil_{data_type}.json": {"content": json.dumps(data, indent=2)}}}
+        resp = requests.patch(f"{GIST_API}/{GITHUB_GIST_ID}", headers=headers, json=payload, timeout=10)
         return resp.status_code == 200
     except:
         return False
 
 def load_from_gist(data_type, default):
-    """
-    Load critical data from GitHub Gist.
-    Falls back to local /tmp if Gist unavailable.
-    """
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return None
     try:
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        resp = requests.get(
-            f"{GIST_API}/{GITHUB_GIST_ID}",
-            headers=headers,
-            timeout=10
-        )
+        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        resp = requests.get(f"{GIST_API}/{GITHUB_GIST_ID}", headers=headers, timeout=10)
         if resp.status_code != 200:
             return None
         files = resp.json().get("files", {})
-        file_data = files.get(
-            f"betcouncil_{data_type}.json", {}
-        )
+        file_data = files.get(f"betcouncil_{data_type}.json", {})
         content = file_data.get("content", "")
         if content:
             return json.loads(content)
@@ -531,9 +537,6 @@ def load_from_gist(data_type, default):
     except:
         return None
 
-# =========================
-# PERSISTENCE LAYER
-# =========================
 def load_json_data(path, default):
     if os.path.exists(path):
         try:
@@ -593,7 +596,7 @@ def format_api_usage(counter_path, daily_limit=None, monthly_limit=None, api_nam
     return f"{api_name}: {' | '.join(parts)}" if parts else f"{api_name}: {counter['count']} calls"
 
 # =========================
-# SEM CALIBRATION FUNCTIONS
+# SEM CALIBRATION
 # =========================
 def compute_tier_stats(history):
     stats = {}
@@ -713,10 +716,7 @@ def kelly_unit_prizepicks(prob, bankroll, n_picks=2):
     kelly = (b * prob - q) / b
     if kelly <= 0:
         return 0.0
-    return round(
-        min(kelly * KELLY_FRACTION * bankroll,
-            bankroll * KELLY_CAP), 2
-    )
+    return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * KELLY_CAP), 2)
 
 def kelly_unit(prob, bankroll, n_picks=2):
     return kelly_unit_prizepicks(prob, bankroll, n_picks)
@@ -832,7 +832,7 @@ def market_efficiency_score(pp_line, ud_line, edge, sport):
     return score, label
 
 # =========================
-# CORRELATION DETECTION
+# CORRELATION DETECTION (with same-player parlay)
 # =========================
 def detect_correlations(parlay_props):
     notes = []
@@ -841,6 +841,11 @@ def detect_correlations(parlay_props):
     teams = [PLAYER_TEAM_MAP.get(p["Player"], "") for p in parlay_props]
     for i in range(len(players)):
         for j in range(i+1, len(players)):
+            # Same player appears twice — correlated
+            if players[i] == players[j]:
+                adjustment *= 0.75
+                notes.append(f"⚠️ {players[i]} has 2 props — outcomes are correlated (25% reduction)")
+                continue
             if teams[i] and teams[i] == teams[j]:
                 pair = (players[i], players[j])
                 pair_rev = (players[j], players[i])
@@ -1095,7 +1100,7 @@ def fetch_wnba_rolling_averages():
     return rolling
 
 # =========================
-# MLB ROLLING AVERAGES
+# MLB ROLLING AVERAGES (with EWMA)
 # =========================
 def fetch_mlb_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
@@ -1122,17 +1127,17 @@ def fetch_mlb_rolling_averages():
                 continue
             if is_pitcher:
                 rolling[player_name] = {
-                    "SO": round(sum(g["stat"].get("strikeOuts",0) for g in last10)/len(last10),1),
-                    "ER": round(sum(g["stat"].get("earnedRuns",0) for g in last10)/len(last10),1),
-                    "H": round(sum(g["stat"].get("hits",0) for g in last10)/len(last10),1),
+                    "SO": ewma_average([g["stat"].get("strikeOuts",0) for g in last10]),
+                    "ER": ewma_average([g["stat"].get("earnedRuns",0) for g in last10]),
+                    "H": ewma_average([g["stat"].get("hits",0) for g in last10]),
                     "n_games": len(last10)
                 }
             else:
                 rolling[player_name] = {
-                    "H": round(sum(g["stat"].get("hits",0) for g in last10)/len(last10),1),
-                    "HR": round(sum(g["stat"].get("homeRuns",0) for g in last10)/len(last10),2),
-                    "RBI": round(sum(g["stat"].get("rbi",0) for g in last10)/len(last10),1),
-                    "R": round(sum(g["stat"].get("runs",0) for g in last10)/len(last10),1),
+                    "H": ewma_average([g["stat"].get("hits",0) for g in last10]),
+                    "HR": ewma_average([g["stat"].get("homeRuns",0) for g in last10]),
+                    "RBI": ewma_average([g["stat"].get("rbi",0) for g in last10]),
+                    "R": ewma_average([g["stat"].get("runs",0) for g in last10]),
                     "n_games": len(last10)
                 }
             time.sleep(0.3)
@@ -1149,7 +1154,7 @@ def fetch_mlb_rolling_averages():
     return rolling
 
 # =========================
-# NHL ROLLING AVERAGES
+# NHL ROLLING AVERAGES (with EWMA)
 # =========================
 def fetch_nhl_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nhl_rolling_avgs.pkl")
@@ -1171,10 +1176,10 @@ def fetch_nhl_rolling_averages():
             if len(last10) < 3:
                 continue
             rolling[player_name] = {
-                "PTS": round(sum(g.get("points",0) for g in last10)/len(last10),1),
-                "GOALS": round(sum(g.get("goals",0) for g in last10)/len(last10),2),
-                "ASSISTS": round(sum(g.get("assists",0) for g in last10)/len(last10),2),
-                "SOG": round(sum(g.get("shots",0) for g in last10)/len(last10),1),
+                "PTS": ewma_average([g.get("points",0) for g in last10]),
+                "GOALS": ewma_average([g.get("goals",0) for g in last10]),
+                "ASSISTS": ewma_average([g.get("assists",0) for g in last10]),
+                "SOG": ewma_average([g.get("shots",0) for g in last10]),
                 "n_games": len(last10)
             }
             time.sleep(0.3)
@@ -1340,7 +1345,7 @@ def fetch_underdog_props(sport):
         return []
 
 # =========================
-# PRIZEPICKS SCRAPER (Partner API primary)
+# PRIZEPICKS SCRAPER (Partner API primary) + odds_type
 # =========================
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
@@ -1403,14 +1408,20 @@ def scrape_prizepicks(sport):
             if key in seen:
                 continue
             seen.add(key)
-            all_props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks"})
+            odds_type = attrs.get("odds_type", "standard")
+            all_props.append({
+                "Player": name, "Prop": stat,
+                "Line": line, "Side": "OVER",
+                "Sport": sport, "source": "PrizePicks",
+                "OddsType": odds_type,
+            })
     if all_props:
         return all_props
     st.info("PrizePicks unavailable — trying Underdog Fantasy...")
     return fetch_underdog_props(sport)
 
 # =========================
-# UNDERDOG INJURIES FETCH
+# UNDERDOG INJURIES FETCH (with recency filter)
 # =========================
 def fetch_underdog_injuries(sport):
     sport_map = {"NBA": "NBA", "MLB": "MLB", "NFL": "NFL", "NHL": "NHL"}
@@ -1429,6 +1440,15 @@ def fetch_underdog_injuries(sport):
             name = f"{player.get('first_name','')} {player.get('last_name','')}".strip()
             if not name:
                 continue
+            import_time = item.get("created_at", "")
+            if import_time:
+                try:
+                    item_dt = datetime.fromisoformat(import_time.replace("Z", "+00:00"))
+                    age_hours = (datetime.now(timezone.utc) - item_dt).total_seconds() / 3600
+                    if age_hours > 48:
+                        continue  # Skip stale injury reports
+                except:
+                    pass  # Keep if can't parse timestamp
             if "out" in content and "ruled out" in content:
                 injuries[name] = "Out"
             elif "questionable" in content or "day-to-day" in content:
@@ -1881,12 +1901,12 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
         return None
 
 # =========================
-# MULTI-SIGNAL EDGE CALCULATION
+# MULTI-SIGNAL EDGE CALCULATION (with odds_type)
 # =========================
 def compute_multi_signal_edge(line, player_avg, opp_def_rating,
                                is_home, teammate_out_boost,
                                side="OVER", stat_key="PTS",
-                               pace_adj=0.0, days_rest=2):
+                               pace_adj=0.0, days_rest=2, odds_type="standard"):
     if player_avg <= 0:
         return 0.0, 0.5, {}
     
@@ -1937,6 +1957,12 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating,
     if teammate_out_boost:
         combined += teammate_out_boost * 0.10
     
+    # Odds type adjustments
+    if odds_type == "demon":
+        combined *= 0.85
+    elif odds_type == "goblin":
+        combined *= 1.10
+    
     combined = max(-EDGE_CAP, min(EDGE_CAP, combined))
     prob = max(0.30, min(0.70, 0.5 + combined))
     return combined, prob, signals
@@ -1960,7 +1986,7 @@ def load_sport_data(sport):
                              "SignalBase": 0, "SignalDefense": 0, "SignalLocation": 0, "SignalUsage": 0,
                              "SignalRest": 0, "SignalPace": 0, "SignalBlowout": 0, "WeatherNote": "",
                              "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": "",
-                             "source": p.get("source","")})
+                             "source": p.get("source",""), "OddsType": "standard"})
         st.info(
             f"⚠️ {sport}: Lines displayed only. "
             "No statistical baseline available — "
@@ -2101,6 +2127,7 @@ def load_sport_data(sport):
         player = p["Player"]
         line = p["Line"]
         side = p["Side"]
+        odds_type = p.get("OddsType", "standard")
 
         if sport == "NBA" and player in season_avgs:
             season_avg = season_avgs.get(player, {})
@@ -2170,7 +2197,7 @@ def load_sport_data(sport):
                     blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup)
                     break
 
-        # Pace adjustment (NBA only) — using global NBA_TEAM_PACE
+        # Pace adjustment (NBA only)
         pace_adj = 0.0
         if sport == "NBA" and player_team:
             for game in games:
@@ -2219,14 +2246,14 @@ def load_sport_data(sport):
 
         over_edge, over_prob, over_signals = compute_multi_signal_edge(
             line, avg, opp_def_rating, is_home, usage_boost,
-            "OVER", stat_norm, pace_adj, days_rest
+            "OVER", stat_norm, pace_adj, days_rest, odds_type
         )
         over_edge = max(-EDGE_CAP, min(EDGE_CAP,
                         over_edge + blowout_adj + weather_adj + game_total_adj))
         
         under_edge, under_prob, under_signals = compute_multi_signal_edge(
             line, avg, opp_def_rating, is_home, usage_boost,
-            "UNDER", stat_norm, pace_adj, days_rest
+            "UNDER", stat_norm, pace_adj, days_rest, odds_type
         )
         under_edge = max(-EDGE_CAP, min(EDGE_CAP,
                          under_edge - blowout_adj - weather_adj - game_total_adj))
@@ -2280,10 +2307,22 @@ def load_sport_data(sport):
         wager_2pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 2)
         wager_3pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 3)
 
+        # Signal active tracking
+        signals_active = {
+            "base_positive": best_signals.get("base", 0) > 0,
+            "defense_positive": best_signals.get("defense", 0) > 0,
+            "location_home": is_home,
+            "back_to_back": days_rest == 0,
+            "sharp_flag": bool(sharp_flag),
+            "weather_active": weather_adj != 0,
+            "blowout_risk": blowout_adj < 0,
+            "usage_boost": usage_boost > 0,
+        }
+
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
-            "Wager": kelly_unit(best_prob, st.session_state.bankroll),  # default 2-pick
+            "Wager": kelly_unit(best_prob, st.session_state.bankroll),
             "Tier": tier,
             "Quality": "Lookup" if not using_default else "Default",
             "Model": "MultiSignal", "Sport": sport, "Injury": injury_flag,
@@ -2303,6 +2342,8 @@ def load_sport_data(sport):
             "Wager_3pick": wager_3pick,
             "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0,
+            "OddsType": odds_type,
+            "signals_active": signals_active,
         })
 
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
@@ -2330,23 +2371,13 @@ for k, v in _ss.items():
         st.session_state[k] = v
 
 if "persistence_loaded" not in st.session_state:
-    # Try Gist first, fall back to /tmp
     gist_history = load_from_gist("history", None)
     gist_locks = load_from_gist("locks", None)
     gist_bankroll = load_from_gist("bankroll", None)
     
-    st.session_state.history = (
-        gist_history if gist_history is not None
-        else load_json_data(HISTORY_PATH, [])
-    )
-    st.session_state.locks = (
-        gist_locks if gist_locks is not None
-        else load_json_data(LOCKS_PATH, [])
-    )
-    st.session_state.bankroll = (
-        gist_bankroll if gist_bankroll is not None
-        else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL)
-    )
+    st.session_state.history = (gist_history if gist_history is not None else load_json_data(HISTORY_PATH, []))
+    st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
+    st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
     st.session_state.day_start_br = st.session_state.bankroll
     st.session_state.persistence_loaded = True
 
@@ -2447,6 +2478,22 @@ with tabs[0]:
     
     st.markdown("🔒 **Sources:** PrizePicks (Partner API) · Underdog · ESPN Odds · OddsWrap")
     st.markdown("---")
+    
+    # Risk controls display
+    can_bet, risk_reason = check_daily_risk_limits()
+    if not can_bet:
+        st.error(f"🛑 **Risk Control Active:** {risk_reason}")
+    else:
+        today = date.today().strftime("%Y-%m-%d")
+        today_count = len([l for l in st.session_state.locks if l.get("timestamp","").startswith(today)]) + \
+                      len([h for h in st.session_state.history if h.get("timestamp","").startswith(today)])
+        remaining = DAILY_RISK_CONTROLS["max_locks_per_day"] - today_count
+        st.caption(
+            f"✅ Risk controls OK — {remaining} locks remaining today | "
+            f"Stop-loss: -{DAILY_RISK_CONTROLS['max_daily_loss_pct']:.0%} | "
+            f"Stop-win: +{DAILY_RISK_CONTROLS['stop_win_pct']:.0%}"
+        )
+    
     st.markdown("## 🏟️ TODAY'S GAMES")
     if st.session_state.games:
         df_games = pd.DataFrame(st.session_state.games)
@@ -2490,6 +2537,29 @@ with tabs[0]:
     else:
         st.caption("No significant line movement detected.")
     
+    # Prop line movement
+    st.markdown("### 📈 Prop Line Movement")
+    st.caption("Props that moved since last board load")
+    line_movement = st.session_state.get("line_movement", {})
+    if line_movement:
+        move_rows = []
+        for key, move in line_movement.items():
+            if abs(move.get("diff", 0)) >= 0.5:
+                move_rows.append({
+                    "Player": move["player"],
+                    "Prop": move["prop"],
+                    "Was": move["prev_line"],
+                    "Now": move["curr_line"],
+                    "Move": f"{move['direction']}{abs(move['diff'])}",
+                    "Signal": ("🔥 Sharp" if abs(move["diff"]) >= 1.0 else "⚡ Notable")
+                })
+        if move_rows:
+            st.dataframe(pd.DataFrame(move_rows), width="stretch")
+        else:
+            st.caption("No significant prop movement detected.")
+    else:
+        st.caption("Load board to track prop movements.")
+    
     st.markdown("### 📊 Book Line Discrepancies")
     st.caption("Lines differing 0.5+ between PrizePicks and DraftKings/Bovada")
     discrepancies = st.session_state.get("multibook_discrepancies", [])
@@ -2520,22 +2590,26 @@ with tabs[0]:
     if best:
         st.success(f"🏆 **TOP LOCK:** {best['Player']} {best['Side']} {best['Line']} {best['Prop']} — [{best['Tier']}]  Edge: {best['EdgePct']} | SEM: {best.get('SEM', '—')}")
         if st.button("🔒 Lock This Pick"):
-            already = any(l.get("player") == best["Player"] and l.get("prop") == best["Prop"] for l in st.session_state.locks)
-            if not already:
-                st.session_state.locks.append({
-                    "player": best["Player"], "prop": best["Prop"],
-                    "line": best["Line"], "side": best["Side"],
-                    "wager": best["Wager"], "prob": best["Prob"],
-                    "edge": best["Edge"], "tier": best["Tier"],
-                    "status": "PENDING",
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "sport": best["Sport"]
-                })
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
-                st.rerun()
+            can_bet, risk_reason = check_daily_risk_limits(best["Sport"])
+            if not can_bet:
+                st.error(risk_reason)
             else:
-                st.warning("Already locked")
+                already = any(l.get("player") == best["Player"] and l.get("prop") == best["Prop"] for l in st.session_state.locks)
+                if not already:
+                    st.session_state.locks.append({
+                        "player": best["Player"], "prop": best["Prop"],
+                        "line": best["Line"], "side": best["Side"],
+                        "wager": best["Wager"], "prob": best["Prob"],
+                        "edge": best["Edge"], "tier": best["Tier"],
+                        "status": "PENDING",
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "sport": best["Sport"]
+                    })
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    save_to_gist("locks", st.session_state.locks)
+                    st.rerun()
+                else:
+                    st.warning("Already locked")
     
     st.markdown("---")
     st.markdown("## ⚡ Daily Parlay Builder")
@@ -2555,7 +2629,6 @@ with tabs[0]:
         tw = sum(p["Wager"] for p in top3)
         n_picks = len(top3)
         
-        # PrizePicks actual multiplier
         pp_multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
         pp_breakeven = (1 / pp_multiplier)
         pp_ev = cp - pp_breakeven
@@ -2566,8 +2639,7 @@ with tabs[0]:
         c3.metric("Breakeven", f"{pp_breakeven:.1%}")
         
         if pp_ev > 0:
-            c4.metric("True EV", f"+{pp_ev:.1%}", 
-                     delta="✅ +EV")
+            c4.metric("True EV", f"+{pp_ev:.1%}", delta="✅ +EV")
             st.success(
                 f"This {n_picks}-pick is +EV on PrizePicks. "
                 f"Combined probability ({cp:.1%}) exceeds "
@@ -2575,8 +2647,7 @@ with tabs[0]:
                 f"Recommended wager: ${tw:.2f}"
             )
         else:
-            c4.metric("True EV", f"{pp_ev:.1%}",
-                     delta="❌ -EV")
+            c4.metric("True EV", f"{pp_ev:.1%}", delta="❌ -EV")
             st.error(
                 f"This {n_picks}-pick is -EV on PrizePicks. "
                 f"Combined probability ({cp:.1%}) is below "
@@ -2584,10 +2655,7 @@ with tabs[0]:
                 f"Consider removing the weakest leg."
             )
         
-        st.info(
-            f"If hits: ${tw * pp_multiplier:.2f} "
-            f"(${tw:.2f} × {pp_multiplier}x payout)"
-        )
+        st.info(f"If hits: ${tw * pp_multiplier:.2f} (${tw:.2f} × {pp_multiplier}x payout)")
     else:
         st.caption("Need 2+ high-confidence props for parlay.")
 
@@ -2602,7 +2670,7 @@ with tabs[1]:
             display_cols = ["Player", "Prop", "Line", "Side",
                             "Avg", "Prob", "EdgePct",
                             "EV_2pick", "EV_3pick",
-                            "Wager_2pick", "Tier",
+                            "Wager_2pick", "Tier", "OddsType",
                             "SharpFlag", "Efficiency", "SEM",
                             "Injury", "Movement", "source"]
             display_cols = [c for c in display_cols if c in df.columns]
@@ -2623,23 +2691,27 @@ with tabs[1]:
                 sel = st.selectbox("Select prop", range(len(options)), format_func=lambda i: options[i])
                 if st.button("🔒 Lock Selected"):
                     row = filtered[sel]
-                    already = any(l.get("player") == row["Player"] and l.get("prop") == row["Prop"] for l in st.session_state.locks)
-                    if not already:
-                        st.session_state.locks.append({
-                            "player": row["Player"], "prop": row["Prop"],
-                            "line": row["Line"], "side": row["Side"],
-                            "wager": row.get("Wager_2pick", row["Wager"]),
-                            "prob": row["Prob"],
-                            "edge": row["Edge"], "tier": row["Tier"],
-                            "status": "PENDING",
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "sport": row["Sport"]
-                        })
-                        save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)
-                        st.rerun()
+                    can_bet, risk_reason = check_daily_risk_limits(row["Sport"])
+                    if not can_bet:
+                        st.error(risk_reason)
                     else:
-                        st.warning("Already locked")
+                        already = any(l.get("player") == row["Player"] and l.get("prop") == row["Prop"] for l in st.session_state.locks)
+                        if not already:
+                            st.session_state.locks.append({
+                                "player": row["Player"], "prop": row["Prop"],
+                                "line": row["Line"], "side": row["Side"],
+                                "wager": row.get("Wager_2pick", row["Wager"]),
+                                "prob": row["Prob"],
+                                "edge": row["Edge"], "tier": row["Tier"],
+                                "status": "PENDING",
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "sport": row["Sport"]
+                            })
+                            save_json_data(LOCKS_PATH, st.session_state.locks)
+                            save_to_gist("locks", st.session_state.locks)
+                            st.rerun()
+                        else:
+                            st.warning("Already locked")
         else:
             st.info("No props match selected filter.")
     else:
@@ -2685,7 +2757,6 @@ with tabs[3]:
             col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
             col1.write(f"**{lock['player']}** {lock['side']} {lock['line']} {lock['prop']} — {lock.get('tier','—')} | Wager: ${lock['wager']:.2f}")
             if col2.button("✅ WIN", key=f"win_{i}"):
-                # PrizePicks is DFS not -110 sportsbook
                 profit = round(lock["wager"] * 1.0, 2)
                 st.session_state.bankroll += profit
                 st.session_state.history.append({**lock, "outcome": "WIN", "profit": profit, "loss": 0, "net": profit})
@@ -2805,6 +2876,30 @@ with tabs[4]:
                     )
                 else:
                     st.caption("Need 5+ resolved bets for CLV.")
+                
+                # Signal accuracy analysis
+                st.markdown("**Signal Accuracy Analysis**")
+                st.caption("Which signals are actually predictive (requires 10+ bets with each signal active)")
+                if len(st.session_state.history) >= 10:
+                    sig_data = []
+                    signal_names = ["base_positive", "defense_positive", "sharp_flag", "back_to_back",
+                                    "weather_active", "usage_boost"]
+                    for sig in signal_names:
+                        sig_bets = [b for b in st.session_state.history
+                                    if (b.get("signals_active", {}).get(sig)
+                                        and b.get("outcome") in ("WIN","LOSS"))]
+                        if len(sig_bets) >= 5:
+                            hit = sum(1 for b in sig_bets if b["outcome"] == "WIN") / len(sig_bets)
+                            sig_data.append({
+                                "Signal": sig.replace("_", " ").title(),
+                                "Bets": len(sig_bets),
+                                "Hit Rate": f"{hit:.1%}",
+                                "vs 50%": f"+{(hit-0.5)*100:.1f}%" if hit >= 0.5 else f"{(hit-0.5)*100:.1f}%"
+                            })
+                    if sig_data:
+                        st.dataframe(pd.DataFrame(sig_data), width="stretch", hide_index=True)
+                    else:
+                        st.caption("Need 5+ bets per signal for analysis.")
         else:
             st.caption("Need 5+ bets for analytics.")
     else:
@@ -2892,6 +2987,17 @@ with tabs[6]:
         st.write(f"Last scan: {st.session_state.last_scan_time or '—'}")
         st.write(f"Session time: {get_session_time()}")
     st.markdown("---")
+    st.markdown("### 🛡️ Daily Risk Controls")
+    st.write(f"Max locks/day: {DAILY_RISK_CONTROLS['max_locks_per_day']}")
+    st.write(f"Stop-loss: -{DAILY_RISK_CONTROLS['max_daily_loss_pct']:.0%} of bankroll")
+    st.write(f"Stop-win: +{DAILY_RISK_CONTROLS['stop_win_pct']:.0%} of bankroll")
+    st.write(f"Max same sport: {DAILY_RISK_CONTROLS['max_same_sport_locks']} locks")
+    can_bet, risk_msg = check_daily_risk_limits()
+    if can_bet:
+        st.success("✅ All risk controls green")
+    else:
+        st.error(f"🛑 {risk_msg}")
+    st.markdown("---")
     st.markdown("### 📊 Multi‑Signal Edge Model")
     st.write("**5 Signals + Bonuses:**")
     st.write("- **Base (45%)**: Line vs rolling average (dampened if >15% off)")
@@ -2917,11 +3023,7 @@ with tabs[6]:
             "Breakeven Per Leg": f"{be:.1%}",
             "vs -110 (52.4%)": f"+{(be-0.524)*100:.1f}% harder",
         })
-    st.dataframe(
-        pd.DataFrame(ev_rows),
-        width="stretch",
-        hide_index=True
-    )
+    st.dataframe(pd.DataFrame(ev_rows), width="stretch", hide_index=True)
     st.caption(
         "⚠️ PrizePicks props need to hit at 57.7%+ for a "
         "2-pick to be +EV — not 52.4% like standard -110 "
@@ -3092,17 +3194,9 @@ with tabs[6]:
     st.markdown("---")
     st.markdown("**💾 Data Persistence Status**")
     if GITHUB_TOKEN and GITHUB_GIST_ID:
-        st.success(
-            "✅ GitHub Gist persistence active — "
-            "history and locks survive server restarts"
-        )
+        st.success("✅ GitHub Gist persistence active — history and locks survive server restarts")
     else:
-        st.error(
-            "⚠️ No persistence configured — "
-            "history and locks will be lost on restart. "
-            "Add GITHUB_TOKEN and GITHUB_GIST_ID to "
-            "Streamlit secrets to enable persistence."
-        )
+        st.error("⚠️ No persistence configured — history and locks will be lost on restart. Add GITHUB_TOKEN and GITHUB_GIST_ID to Streamlit secrets to enable persistence.")
     
     st.markdown("---")
     st.markdown("**Cache Management**")
