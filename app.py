@@ -44,7 +44,7 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 # CONSTANTS
 # =========================
 DEFAULT_BANKROLL = 468.49
-KELLY_FRACTION = 0.25
+KELLY_FRACTION = 0.15  # Reduced from 0.25 for prop betting risk profile
 KELLY_CAP = 0.25
 ODDS = -110
 EDGE_CAP = 0.20
@@ -69,6 +69,7 @@ API_SPORTS_COUNTER_PATH = os.path.join(CACHE_DIR, "api_sports_counter.json")
 SPORTMONKS_COUNTER_PATH = os.path.join(CACHE_DIR, "sportmonks_counter.json")
 UNIFIED_COUNTER_PATH = os.path.join(CACHE_DIR, "unified_counter.json")
 ODDS_API_COUNTER_PATH = os.path.join(CACHE_DIR, "odds_api_counter.json")
+BDL_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_counter.json")
 
 TIER_COLORS = {"SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0", "APPROVED": "#4a90d9", "LEAN": "#7a8a9a", "PASS": "#e04040"}
 TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPROVED": "Edge ≥ 5%", "LEAN": "Edge ≥ 2%", "PASS": "Edge < 2%"}
@@ -87,6 +88,14 @@ TIER_THRESHOLDS = {
 
 SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL", "Soccer", "UFC", "Golf", "Tennis"]
 
+# PrizePicks standard multipliers (flex play)
+PRIZEPICKS_MULTIPLIERS = {
+    2: 3.0,
+    3: 5.0,
+    4: 10.0,
+    5: 20.0,
+}
+
 # =========================
 # API KEYS FROM SECRETS
 # =========================
@@ -99,7 +108,9 @@ RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
 ODDS_API_IO_KEY = st.secrets.get("ODDS_API_IO_KEY", "")
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
 
-# Hardcoded baselines for Soccer and UFC
+# =========================
+# HARDCODED BASELINES (moved before functions)
+# =========================
 PLAYER_AVERAGES_SOCCER = {
     "Erling Haaland": {"GOALS": 0.85, "ASSISTS": 0.25, "SHOTS": 4.2},
     "Kylian Mbappe": {"GOALS": 0.75, "ASSISTS": 0.35, "SHOTS": 4.0},
@@ -124,11 +135,85 @@ PLAYER_AVERAGES_UFC = {
     "Dustin Poirier": {"SIG_STR": 52, "TAKEDOWN_DEF": 0.85, "CONTROL_TIME": 4.0},
 }
 
-# Home/Away adjustments (NBA)
+PLAYER_AVERAGES = {}
+PLAYER_AVERAGES.update({
+    "NBA": {},
+    "MLB": {"Aaron Judge": {"HR": 0.15, "H": 1.2, "RBI": 0.9, "R": 0.9}, "Shohei Ohtani": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
+             "Mookie Betts": {"HR": 0.12, "H": 1.2, "RBI": 0.7, "R": 0.9}, "Ronald Acuna Jr.": {"HR": 0.13, "H": 1.2, "RBI": 0.8, "R": 0.9},
+             "Bryce Harper": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Juan Soto": {"HR": 0.13, "H": 1.1, "RBI": 0.8, "R": 0.8},
+             "Freddie Freeman": {"HR": 0.11, "H": 1.2, "RBI": 0.7, "R": 0.8}, "Jose Ramirez": {"HR": 0.12, "H": 1.1, "RBI": 0.8, "R": 0.8},
+             "Pete Alonso": {"HR": 0.15, "H": 1.0, "RBI": 0.9, "R": 0.7}, "Vladimir Guerrero Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.8},
+             "Francisco Lindor": {"HR": 0.12, "H": 1.1, "RBI": 0.7, "R": 0.8}, "Bobby Witt Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.9},
+             "Gunnar Henderson": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Elly De La Cruz": {"HR": 0.10, "H": 1.0, "RBI": 0.6, "R": 0.7},
+             "Corbin Carroll": {"HR": 0.08, "H": 1.1, "RBI": 0.5, "R": 0.8}, "Paul Skenes": {"SO": 8.5, "H": 0.3, "ER": 0.4},
+             "Spencer Strider": {"SO": 9.2, "H": 0.3, "ER": 0.5}, "Gerrit Cole": {"SO": 8.8, "H": 0.4, "ER": 0.5},
+             "Zack Wheeler": {"SO": 8.4, "H": 0.4, "ER": 0.5}, "Tarik Skubal": {"SO": 9.0, "H": 0.3, "ER": 0.4}},
+    "NFL": {"Patrick Mahomes": {"PASS_YDS": 280, "TD": 2.2}, "Josh Allen": {"PASS_YDS": 260, "RUSH_YDS": 35, "TD": 2.5},
+            "Jalen Hurts": {"PASS_YDS": 230, "RUSH_YDS": 45, "TD": 2.2}, "Lamar Jackson": {"PASS_YDS": 220, "RUSH_YDS": 65, "TD": 2.0},
+            "Joe Burrow": {"PASS_YDS": 270, "TD": 2.0}, "Justin Herbert": {"PASS_YDS": 265, "TD": 2.0}, "Dak Prescott": {"PASS_YDS": 260, "TD": 2.0},
+            "Christian McCaffrey": {"RUSH_YDS": 85, "REC_YDS": 45, "TD": 1.0}, "Derrick Henry": {"RUSH_YDS": 90, "TD": 0.9},
+            "Saquon Barkley": {"RUSH_YDS": 80, "REC_YDS": 35, "TD": 0.8}, "Tyreek Hill": {"REC_YDS": 95, "TD": 0.8},
+            "Justin Jefferson": {"REC_YDS": 90, "TD": 0.7}, "Ja'Marr Chase": {"REC_YDS": 85, "TD": 0.7}, "Travis Kelce": {"REC_YDS": 70, "TD": 0.6},
+            "CeeDee Lamb": {"REC_YDS": 92, "TD": 0.7}, "A.J. Brown": {"REC_YDS": 88, "TD": 0.7}},
+    "NHL": {"Connor McDavid": {"PTS": 1.5, "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5}, "Leon Draisaitl": {"PTS": 1.4, "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
+            "Nathan MacKinnon": {"PTS": 1.4, "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4}, "David Pastrnak": {"PTS": 1.2, "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
+            "Nikita Kucherov": {"PTS": 1.5, "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0}, "Auston Matthews": {"PTS": 1.2, "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
+            "Mitch Marner": {"PTS": 1.2, "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8}, "Cale Makar": {"PTS": 0.9, "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
+            "Kirill Kaprizov": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2}, "Mikko Rantanen": {"PTS": 1.3, "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
+            "Matthew Tkachuk": {"PTS": 1.1, "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0}, "Brayden Point": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
+            "Sam Reinhart": {"PTS": 1.0, "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0}, "Aleksander Barkov": {"PTS": 1.0, "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8}},
+    "WNBA": {"A'ja Wilson": {"PTS": 26.0, "REB": 9.4, "AST": 2.4, "PRA": 37.8}, "Breanna Stewart": {"PTS": 21.8, "REB": 8.6, "AST": 3.8, "PRA": 34.2},
+             "Sabrina Ionescu": {"PTS": 19.4, "REB": 4.5, "AST": 6.3, "PRA": 30.2}, "Kelsey Plum": {"PTS": 18.9, "REB": 2.8, "AST": 4.2, "PRA": 25.9},
+             "Napheesa Collier": {"PTS": 20.1, "REB": 9.3, "AST": 2.7, "PRA": 32.1}, "Caitlin Clark": {"PTS": 19.2, "REB": 5.7, "AST": 8.4, "PRA": 33.3},
+             "Angel Reese": {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1}, "Alyssa Thomas": {"PTS": 12.5, "REB": 9.2, "AST": 7.1, "PRA": 28.8},
+             "Jackie Young": {"PTS": 17.3, "REB": 4.1, "AST": 4.0, "PRA": 25.4}},
+    "Soccer": PLAYER_AVERAGES_SOCCER,
+    "UFC": PLAYER_AVERAGES_UFC,
+})
+
+DEFAULT_AVERAGES = {
+    "NBA": {"PTS": 10.0, "REB": 4.0, "AST": 2.5, "PRA": 16.5},
+    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
+    "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
+    "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
+    "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
+    "Soccer": {"GOALS": 0.25, "ASSISTS": 0.15, "SHOTS": 2.5},
+    "UFC": {"SIG_STR": 30, "TAKEDOWNS": 1.0, "CONTROL_TIME": 4.0},
+    "Golf": {}, "Tennis": {},
+}
+
+STAT_NORMALIZE = {
+    ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
+    ("NBA", "Pts+Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
+    ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
+    ("NFL", "Passing Yards"): "PASS_YDS", ("NFL", "Rushing Yards"): "RUSH_YDS",
+    ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
+    ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
+    ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
+    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
+    ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
+    ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
+    ("NBA", "Pts+Reb+Ast"): "PRA", ("NBA", "Pts+Rebs+Asts"): "PRA",
+    ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
+    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
+    ("NBA", "Steals"): "STL", ("NBA", "Turnovers"): "TOV",
+    ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
+    ("WNBA", "Pts+Ast"): "PRA",
+    ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
+    ("NBA", "points"): "PTS", ("NBA", "rebounds"): "REB", ("NBA", "assists"): "AST",
+    ("MLB", "Strikeouts"): "SO", ("MLB", "Hits"): "H", ("MLB", "Home Runs"): "HR",
+    ("Soccer", "Goals"): "GOALS", ("Soccer", "Assists"): "ASSISTS",
+    ("Soccer", "Shots"): "SHOTS",
+    ("UFC", "Significant Strikes"): "SIG_STR", ("UFC", "Takedowns"): "TAKEDOWNS",
+    ("UFC", "Control Time"): "CONTROL_TIME",
+}
+
+# =========================
+# OTHER CONSTANTS
+# =========================
 HOME_BOOST = {"PTS": 1.5, "REB": 0.5, "AST": 0.4, "PRA": 2.4}
 AWAY_PENALTY = {"PTS": -1.5, "REB": -0.5, "AST": -0.4, "PRA": -2.4}
 
-# Teammate out usage spikes
 TEAMMATE_OUT_BOOST = {
     "Luka Doncic": {"out_player": "Kyrie Irving", "PTS": 3.5, "AST": 1.5, "PRA": 5.0},
     "Shai Gilgeous-Alexander": {"out_player": "Jalen Williams", "PTS": 2.8, "AST": 1.2, "PRA": 4.0},
@@ -141,7 +226,6 @@ TEAMMATE_OUT_BOOST = {
     "Damian Lillard": {"out_player": "Giannis Antetokounmpo", "PTS": 3.0, "AST": 1.5, "PRA": 4.5},
 }
 
-# Expanded player-to-team mapping (duplicates removed, trades updated)
 PLAYER_TEAM_MAP = {
     "LeBron James": "LAL", "Anthony Davis": "LAL", "Austin Reaves": "LAL", "D'Angelo Russell": "LAL",
     "Luka Doncic": "LAL", "Kyrie Irving": "DAL",
@@ -167,20 +251,17 @@ PLAYER_TEAM_MAP = {
     "Pascal Siakam": "IND",
 }
 
-# Blowout thresholds
 BLOWOUT_THRESHOLDS = {
     "NBA": 12, "NFL": 14, "MLB": 3, 
     "NHL": 2, "WNBA": 10
 }
 
-# Negative correlations (opposing teams)
 NEGATIVE_CORRELATIONS = {
     ("Nikola Jokic", "Joel Embiid"): -0.3,
     ("Luka Doncic", "Shai Gilgeous-Alexander"): -0.2,
     ("Jayson Tatum", "Giannis Antetokounmpo"): -0.2,
 }
 
-# Positive correlations (same team)
 POSITIVE_CORRELATIONS = {
     ("Luka Doncic", "Kyrie Irving"): 0.4,
     ("Nikola Jokic", "Jamal Murray"): 0.35,
@@ -192,13 +273,11 @@ POSITIVE_CORRELATIONS = {
     ("Tyrese Haliburton", "Pascal Siakam"): 0.3,
 }
 
-# Wind impact on HR props (mph)
 WIND_HR_THRESHOLDS = {
     "strong_out": 15,
     "strong_in": 15,
 }
 
-# MLB Ballpark Locations Map
 MLB_BALLPARKS = {
     "New York Yankees": {"city": "New York", "outdoor": True},
     "New York Mets": {"city": "New York", "outdoor": True},
@@ -232,7 +311,6 @@ MLB_BALLPARKS = {
     "Oakland Athletics": {"city": "Oakland", "outdoor": True},
 }
 
-# MLB Player Team Map
 MLB_PLAYER_TEAM_MAP = {
     "Aaron Judge": "New York Yankees",
     "Shohei Ohtani": "Los Angeles Dodgers",
@@ -270,7 +348,6 @@ MLB_PLAYER_TEAM_MAP = {
     "Corey Seager": "Texas Rangers",
 }
 
-# WNBA Player IDs
 WNBA_PLAYER_IDS = {
     "A'ja Wilson": 1628932,
     "Breanna Stewart": 1626399,
@@ -288,7 +365,6 @@ WNBA_PLAYER_IDS = {
     "Jonquel Jones": 1628886,
 }
 
-# MLB Player IDs for rolling averages
 MLB_PLAYER_IDS = {
     "Aaron Judge": 592450, "Shohei Ohtani": 660271,
     "Mookie Betts": 605141, "Freddie Freeman": 518692,
@@ -307,7 +383,6 @@ MLB_PLAYER_IDS = {
     "Corey Seager": 608369,
 }
 
-# NHL Player IDs for rolling averages
 NHL_PLAYER_IDS = {
     "Connor McDavid": 8478402, "Leon Draisaitl": 8477934,
     "Nathan MacKinnon": 8477492, "David Pastrnak": 8477956,
@@ -319,7 +394,17 @@ NHL_PLAYER_IDS = {
     "Brady Tkachuk": 8481528,
 }
 
-# Try importing oddswrap
+NBA_TEAM_PACE = {
+    "MEM": 102.8, "SAC": 101.5, "BOS": 101.2,
+    "DAL": 100.8, "OKC": 100.5, "LAL": 100.2,
+    "DEN": 100.0, "PHX": 99.8, "GSW": 99.5,
+    "NOP": 99.2, "ATL": 99.0, "IND": 98.8,
+    "MIN": 98.5, "TOR": 98.3, "ORL": 98.0,
+    "HOU": 97.8, "SAS": 97.5, "DET": 97.3,
+    "LAC": 97.1, "MIL": 98.1, "CLE": 98.1,
+    "NYK": 97.8, "MIA": 97.3, "PHI": 97.0,
+}
+
 try:
     from oddswrap import OddsClient, Sport
     ODDSWRAP_AVAILABLE = True
@@ -340,9 +425,6 @@ ODDS_SPORTS_MAP = {
     "WNBA": "basketball_wnba",
 }
 
-# =========================
-# ESPN CORE API CONSTANTS
-# =========================
 ESPN_CORE_BASE = "https://sports.core.api.espn.com/v2"
 ESPN_CORE_SPORT_MAP = {
     "NBA": "basketball/leagues/nba",
@@ -500,6 +582,8 @@ def normalize_name(s):
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = re.sub(r"\s+(jr|sr|ii|iii)\.?$", "", s.lower().strip())
+    s = s.replace("-", " ").replace(".", "").replace("'", "")
+    s = re.sub(r"\s+", " ", s).strip()
     return s
 
 def find_player_avg(player_name, avgs_dict):
@@ -1128,6 +1212,7 @@ def fetch_nba_averages_bdl():
         if avgs:
             with open(cache_path, "wb") as f:
                 pickle.dump(avgs, f)
+        increment_api_counter(BDL_COUNTER_PATH)
         return avgs
     except:
         return {}
@@ -1792,6 +1877,11 @@ def load_sport_data(sport):
                              "SignalRest": 0, "SignalPace": 0, "SignalBlowout": 0, "WeatherNote": "",
                              "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": "",
                              "source": p.get("source","")})
+        st.info(
+            f"⚠️ {sport}: Lines displayed only. "
+            "No statistical baseline available — "
+            "edge calculation not possible for this sport."
+        )
         return enriched, [], 0, 0
 
     rolling_avgs = {}
@@ -1966,13 +2056,14 @@ def load_sport_data(sport):
                     is_home = True
                     break
 
+        # Fixed usage boost calculation
         usage_boost = 0.0
         if player in TEAMMATE_OUT_BOOST:
             out_player = TEAMMATE_OUT_BOOST[player].get("out_player")
             if out_player and any(out_player.lower() in inj.lower() for inj in injuries.keys()):
-                usage_boost = TEAMMATE_OUT_BOOST[player].get(stat_norm, 0) / 100
-                if usage_boost > 0.10:
-                    usage_boost = 0.10
+                raw_boost = TEAMMATE_OUT_BOOST[player].get(stat_norm, 0)
+                avg_val = avg if avg > 0 else 1
+                usage_boost = min(raw_boost / avg_val * 0.5, 0.10)
 
         sharp_flag = ""
         if player_team and games:
@@ -1995,19 +2086,9 @@ def load_sport_data(sport):
                     blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup)
                     break
 
-        # Pace adjustment (NBA only)
+        # Pace adjustment (NBA only) — using global NBA_TEAM_PACE
         pace_adj = 0.0
         if sport == "NBA" and player_team:
-            NBA_TEAM_PACE = {
-                "MEM": 102.8, "SAC": 101.5, "BOS": 101.2,
-                "DAL": 100.8, "OKC": 100.5, "LAL": 100.2,
-                "DEN": 100.0, "PHX": 99.8, "GSW": 99.5,
-                "NOP": 99.2, "ATL": 99.0, "IND": 98.8,
-                "MIN": 98.5, "TOR": 98.3, "ORL": 98.0,
-                "HOU": 97.8, "SAS": 97.5, "DET": 97.3,
-                "LAC": 97.1, "MIL": 98.1, "CLE": 98.1,
-                "NYK": 97.8, "MIA": 97.3, "PHI": 97.0,
-            }
             for game in games:
                 if player_team in game.get("Matchup", ""):
                     parts = game["Matchup"].replace("@", "vs").split()
@@ -2083,6 +2164,25 @@ def load_sport_data(sport):
         # Market efficiency with actual final_edge
         eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
 
+        # Steam move integration into edge
+        if sharp_flag and best_side == "OVER":
+            # Find the matchup for this player's game
+            player_matchup = next((g["Matchup"] for g in games 
+                                   if player_team in g.get("Matchup","")), "")
+            sharp_direction = game_sharp_flags.get(player_matchup, {}).get("direction", "")
+            if sharp_direction == "↑":
+                final_edge = min(final_edge * 1.10, EDGE_CAP)
+            elif sharp_direction == "↓":
+                final_edge = final_edge * 0.90
+        elif sharp_flag and best_side == "UNDER":
+            player_matchup = next((g["Matchup"] for g in games 
+                                   if player_team in g.get("Matchup","")), "")
+            sharp_direction = game_sharp_flags.get(player_matchup, {}).get("direction", "")
+            if sharp_direction == "↓":
+                final_edge = min(final_edge * 1.10, EDGE_CAP)
+            elif sharp_direction == "↑":
+                final_edge = final_edge * 0.90
+
         if final_edge < min_edge:
             skipped_edge += 1
             continue
@@ -2119,81 +2219,6 @@ def load_sport_data(sport):
         prop["Movement"] = (move.get("direction", "") + str(abs(move.get("diff", 0))) if move else "")
     
     return enriched, games, skipped_def, skipped_edge
-
-# =========================
-# HARDCODED FALLBACK AVERAGES
-# =========================
-PLAYER_AVERAGES = {}
-PLAYER_AVERAGES.update({
-    "MLB": {"Aaron Judge": {"HR": 0.15, "H": 1.2, "RBI": 0.9, "R": 0.9}, "Shohei Ohtani": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8},
-             "Mookie Betts": {"HR": 0.12, "H": 1.2, "RBI": 0.7, "R": 0.9}, "Ronald Acuna Jr.": {"HR": 0.13, "H": 1.2, "RBI": 0.8, "R": 0.9},
-             "Bryce Harper": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Juan Soto": {"HR": 0.13, "H": 1.1, "RBI": 0.8, "R": 0.8},
-             "Freddie Freeman": {"HR": 0.11, "H": 1.2, "RBI": 0.7, "R": 0.8}, "Jose Ramirez": {"HR": 0.12, "H": 1.1, "RBI": 0.8, "R": 0.8},
-             "Pete Alonso": {"HR": 0.15, "H": 1.0, "RBI": 0.9, "R": 0.7}, "Vladimir Guerrero Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.8},
-             "Francisco Lindor": {"HR": 0.12, "H": 1.1, "RBI": 0.7, "R": 0.8}, "Bobby Witt Jr.": {"HR": 0.12, "H": 1.2, "RBI": 0.8, "R": 0.9},
-             "Gunnar Henderson": {"HR": 0.14, "H": 1.1, "RBI": 0.8, "R": 0.8}, "Elly De La Cruz": {"HR": 0.10, "H": 1.0, "RBI": 0.6, "R": 0.7},
-             "Corbin Carroll": {"HR": 0.08, "H": 1.1, "RBI": 0.5, "R": 0.8}, "Paul Skenes": {"SO": 8.5, "H": 0.3, "ER": 0.4},
-             "Spencer Strider": {"SO": 9.2, "H": 0.3, "ER": 0.5}, "Gerrit Cole": {"SO": 8.8, "H": 0.4, "ER": 0.5},
-             "Zack Wheeler": {"SO": 8.4, "H": 0.4, "ER": 0.5}, "Tarik Skubal": {"SO": 9.0, "H": 0.3, "ER": 0.4}},
-    "NFL": {"Patrick Mahomes": {"PASS_YDS": 280, "TD": 2.2}, "Josh Allen": {"PASS_YDS": 260, "RUSH_YDS": 35, "TD": 2.5},
-            "Jalen Hurts": {"PASS_YDS": 230, "RUSH_YDS": 45, "TD": 2.2}, "Lamar Jackson": {"PASS_YDS": 220, "RUSH_YDS": 65, "TD": 2.0},
-            "Joe Burrow": {"PASS_YDS": 270, "TD": 2.0}, "Justin Herbert": {"PASS_YDS": 265, "TD": 2.0}, "Dak Prescott": {"PASS_YDS": 260, "TD": 2.0},
-            "Christian McCaffrey": {"RUSH_YDS": 85, "REC_YDS": 45, "TD": 1.0}, "Derrick Henry": {"RUSH_YDS": 90, "TD": 0.9},
-            "Saquon Barkley": {"RUSH_YDS": 80, "REC_YDS": 35, "TD": 0.8}, "Tyreek Hill": {"REC_YDS": 95, "TD": 0.8},
-            "Justin Jefferson": {"REC_YDS": 90, "TD": 0.7}, "Ja'Marr Chase": {"REC_YDS": 85, "TD": 0.7}, "Travis Kelce": {"REC_YDS": 70, "TD": 0.6},
-            "CeeDee Lamb": {"REC_YDS": 92, "TD": 0.7}, "A.J. Brown": {"REC_YDS": 88, "TD": 0.7}},
-    "NHL": {"Connor McDavid": {"PTS": 1.5, "GOALS": 0.6, "ASSISTS": 0.9, "SOG": 3.5}, "Leon Draisaitl": {"PTS": 1.4, "GOALS": 0.6, "ASSISTS": 0.8, "SOG": 3.2},
-            "Nathan MacKinnon": {"PTS": 1.4, "GOALS": 0.5, "ASSISTS": 0.9, "SOG": 3.4}, "David Pastrnak": {"PTS": 1.2, "GOALS": 0.6, "ASSISTS": 0.6, "SOG": 3.5},
-            "Nikita Kucherov": {"PTS": 1.5, "GOALS": 0.5, "ASSISTS": 1.0, "SOG": 3.0}, "Auston Matthews": {"PTS": 1.2, "GOALS": 0.7, "ASSISTS": 0.5, "SOG": 3.7},
-            "Mitch Marner": {"PTS": 1.2, "GOALS": 0.4, "ASSISTS": 0.8, "SOG": 2.8}, "Cale Makar": {"PTS": 0.9, "GOALS": 0.2, "ASSISTS": 0.7, "SOG": 2.5},
-            "Kirill Kaprizov": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.2}, "Mikko Rantanen": {"PTS": 1.3, "GOALS": 0.5, "ASSISTS": 0.8, "SOG": 3.0},
-            "Matthew Tkachuk": {"PTS": 1.1, "GOALS": 0.4, "ASSISTS": 0.7, "SOG": 3.0}, "Brayden Point": {"PTS": 1.1, "GOALS": 0.5, "ASSISTS": 0.6, "SOG": 3.1},
-            "Sam Reinhart": {"PTS": 1.0, "GOALS": 0.5, "ASSISTS": 0.5, "SOG": 3.0}, "Aleksander Barkov": {"PTS": 1.0, "GOALS": 0.4, "ASSISTS": 0.6, "SOG": 2.8}},
-    "WNBA": {"A'ja Wilson": {"PTS": 26.0, "REB": 9.4, "AST": 2.4, "PRA": 37.8}, "Breanna Stewart": {"PTS": 21.8, "REB": 8.6, "AST": 3.8, "PRA": 34.2},
-             "Sabrina Ionescu": {"PTS": 19.4, "REB": 4.5, "AST": 6.3, "PRA": 30.2}, "Kelsey Plum": {"PTS": 18.9, "REB": 2.8, "AST": 4.2, "PRA": 25.9},
-             "Napheesa Collier": {"PTS": 20.1, "REB": 9.3, "AST": 2.7, "PRA": 32.1}, "Caitlin Clark": {"PTS": 19.2, "REB": 5.7, "AST": 8.4, "PRA": 33.3},
-             "Angel Reese": {"PTS": 13.1, "REB": 13.1, "AST": 1.9, "PRA": 28.1}, "Alyssa Thomas": {"PTS": 12.5, "REB": 9.2, "AST": 7.1, "PRA": 28.8},
-             "Jackie Young": {"PTS": 17.3, "REB": 4.1, "AST": 4.0, "PRA": 25.4}},
-    "Soccer": PLAYER_AVERAGES_SOCCER,
-    "UFC": PLAYER_AVERAGES_UFC,
-})
-
-DEFAULT_AVERAGES = {
-    "NBA": {"PTS": 10.0, "REB": 4.0, "AST": 2.5, "PRA": 16.5},
-    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
-    "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
-    "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
-    "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
-    "Soccer": {"GOALS": 0.25, "ASSISTS": 0.15, "SHOTS": 2.5},
-    "UFC": {"SIG_STR": 30, "TAKEDOWNS": 1.0, "CONTROL_TIME": 4.0},
-    "Golf": {}, "Tennis": {},
-}
-
-STAT_NORMALIZE = {
-    ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
-    ("NBA", "Pts+Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
-    ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
-    ("NFL", "Passing Yards"): "PASS_YDS", ("NFL", "Rushing Yards"): "RUSH_YDS",
-    ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
-    ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
-    ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
-    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
-    ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
-    ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
-    ("NBA", "Pts+Reb+Ast"): "PRA", ("NBA", "Pts+Rebs+Asts"): "PRA",
-    ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
-    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
-    ("NBA", "Steals"): "STL", ("NBA", "Turnovers"): "TOV",
-    ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
-    ("WNBA", "Pts+Ast"): "PRA",
-    ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
-    ("NBA", "points"): "PTS", ("NBA", "rebounds"): "REB", ("NBA", "assists"): "AST",
-    ("MLB", "Strikeouts"): "SO", ("MLB", "Hits"): "H", ("MLB", "Home Runs"): "HR",
-    ("Soccer", "Goals"): "GOALS", ("Soccer", "Assists"): "ASSISTS",
-    ("Soccer", "Shots"): "SHOTS",
-    ("UFC", "Significant Strikes"): "SIG_STR", ("UFC", "Takedowns"): "TAKEDOWNS",
-    ("UFC", "Control Time"): "CONTROL_TIME",
-}
 
 # =========================
 # SESSION STATE & PERSISTENCE
@@ -2412,14 +2437,42 @@ with tabs[0]:
                 st.info(note)
         for p in top3:
             st.write(f"• **{p['Player']}** {p['Side']} {p['Line']} {p['Prop']} — {p['EdgePct']} | ${p['Wager']:.2f}")
+        
         fp = parlay_payout(adjusted_probs)
         cp = parlay_prob(adjusted_probs)
         tw = sum(p["Wager"] for p in top3)
-        c1, c2, c3 = st.columns(3)
+        n_picks = len(top3)
+        
+        # PrizePicks actual multiplier
+        pp_multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
+        pp_breakeven = (1 / pp_multiplier)
+        pp_ev = cp - pp_breakeven
+        
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Combined Prob", f"{cp:.1%}")
-        c2.metric("Fair Payout", f"+{fp}")
-        c3.metric("Total Wagered", f"${tw:.2f}")
-        st.info(f"If hits: ${tw * (1 + fp/100):.2f}")
+        c2.metric(f"PP {n_picks}-pick Pays", f"{pp_multiplier}x")
+        c3.metric("Breakeven", f"{pp_breakeven:.1%}")
+        
+        if pp_ev > 0:
+            c4.metric("True EV", f"+{pp_ev:.1%}", 
+                     delta="✅ +EV")
+            st.success(
+                f"This {n_picks}-pick is +EV on PrizePicks. "
+                f"Combined probability ({cp:.1%}) exceeds "
+                f"breakeven ({pp_breakeven:.1%}). "
+                f"Recommended wager: ${tw:.2f}"
+            )
+        else:
+            c4.metric("True EV", f"{pp_ev:.1%}",
+                     delta="❌ -EV")
+            st.error(
+                f"This {n_picks}-pick is -EV on PrizePicks. "
+                f"Combined probability ({cp:.1%}) is below "
+                f"breakeven ({pp_breakeven:.1%}). "
+                f"Consider removing the weakest leg."
+            )
+        
+        st.info(f"If hits: ${1 * pp_multiplier:.1f}x your wager")
     else:
         st.caption("Need 2+ high-confidence props for parlay.")
 
@@ -2750,7 +2803,7 @@ with tabs[6]:
     
     API_REGISTRY = [
         {"name": "BallDontLie", "key": "BALLSDONTLIE_API_KEY",
-         "path": os.path.join(CACHE_DIR,"bdl_counter.json"),
+         "path": BDL_COUNTER_PATH,
          "daily": None, "monthly": 200, "purpose": "NBA season averages"},
         {"name": "Odds API", "key": "ODDS_API_KEY",
          "path": ODDS_API_COUNTER_PATH,
@@ -2851,6 +2904,24 @@ with tabs[6]:
         st.rerun()
     
     st.markdown("---")
+    st.markdown("**OddsWrap SDK Status**")
+    if ODDSWRAP_AVAILABLE:
+        st.success("✅ OddsWrap installed — DraftKings, Bovada, BetRivers props available")
+        ow_cache = os.path.join(CACHE_DIR, f"oddswrap_props_{st.session_state.last_sport}.pkl")
+        if os.path.exists(ow_cache):
+            age = (time.time() - os.path.getmtime(ow_cache)) / 3600
+            with open(ow_cache, "rb") as f:
+                ow_data = pickle.load(f)
+            st.write(f"Last fetch: {len(ow_data)} props, {age:.1f}hrs ago")
+        if st.button("Clear OddsWrap Cache"):
+            for f in os.listdir(CACHE_DIR):
+                if f.startswith("oddswrap_"):
+                    os.remove(os.path.join(CACHE_DIR, f))
+            st.success("OddsWrap cache cleared")
+    else:
+        st.error("❌ OddsWrap not installed. Add to requirements.txt: git+https://github.com/sjhouston23/oddswrap.git")
+    
+    st.markdown("---")
     st.markdown("**Data Sources**")
     st.write("- Props: PrizePicks Partner API (primary) / Public API / Underdog / OddsWrap")
     st.write("- Game matchups + odds: ESPN scoreboard API")
@@ -2881,7 +2952,7 @@ with tabs[6]:
             st.success("All rolling caches cleared")
     with cache_cols[2]:
         if st.button("Clear All API Counters"):
-            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH]:
+            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH, BDL_COUNTER_PATH]:
                 if os.path.exists(path):
                     os.remove(path)
             st.success("API counters reset")
@@ -2898,7 +2969,7 @@ with tabs[6]:
     if col_s2.button("🧹 Clean Old Cache Files"):
         cleaned = 0
         cutoff = time.time() - (7 * 24 * 3600)
-        keep_files = ["history.json","locks.json","bankroll.json","calibration.json","line_movement.json","clv_tracking.json","sharp_flags.json","odds_api_counter.json","api_sports_counter.json","sportmonks_counter.json","unified_counter.json"]
+        keep_files = ["history.json","locks.json","bankroll.json","calibration.json","line_movement.json","clv_tracking.json","sharp_flags.json","odds_api_counter.json","api_sports_counter.json","sportmonks_counter.json","unified_counter.json","bdl_counter.json"]
         try:
             for f in os.listdir(CACHE_DIR):
                 fp = os.path.join(CACHE_DIR, f)
