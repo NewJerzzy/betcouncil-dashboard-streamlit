@@ -10,6 +10,7 @@ import os
 import json
 import unicodedata
 from math import exp, factorial
+import math
 
 # =========================
 # PAGE CONFIG
@@ -569,55 +570,23 @@ ESPN_ATHLETE_IDS = {
 # DISPLAY UTILITY
 # =========================
 def make_display_df(enriched_list):
-    """
-    Creates bettor-friendly display dataframe
-    from internal enriched data.
-    Renames columns, formats values, adds color.
-    """
     if not enriched_list:
         return pd.DataFrame()
-    
     df = pd.DataFrame(enriched_list)
-    
     rename_map = {
-        "Player": "Player",
-        "Prop": "Stat",
-        "Line": "Line",
-        "Side": "Play",
-        "Avg": "Avg (10g)",
-        "Prob": "Fair %",
-        "EdgePct": "Edge",
-        "EV_2pick": "2-Pick EV",
-        "EV_3pick": "3-Pick EV",
-        "Wager_2pick": "Bet Size",
-        "Tier": "Tier",
-        "SharpFlag": "Sharp $",
-        "Efficiency": "Market",
-        "SEM": "Confidence",
-        "Injury": "Injury",
-        "Movement": "Line Move",
-        "source": "Source",
-        "Trend": "Trend",
-        "Pitcher": "vs Pitcher",
-        "RefNote": "Ref",
-        "SampleSize": "Games",
+        "Player": "Player", "Prop": "Stat", "Line": "Line", "Side": "Play",
+        "Avg": "Avg (10g)", "Prob": "Fair %", "EdgePct": "Edge",
+        "EV_2pick": "2-Pick EV", "EV_3pick": "3-Pick EV",
+        "Wager_2pick": "Bet Size", "Tier": "Tier", "SharpFlag": "Sharp $",
+        "Efficiency": "Market", "SEM": "Confidence", "Injury": "Injury",
+        "Movement": "Line Move", "source": "Source", "Trend": "Trend",
+        "Pitcher": "vs Pitcher", "RefNote": "Ref", "SampleSize": "Games",
     }
-    
-    display_df = df.rename(
-        columns={k: v for k, v in rename_map.items()
-                 if k in df.columns}
-    )
-    
+    display_df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     if "Fair %" in display_df.columns:
-        display_df["Fair %"] = display_df["Fair %"].apply(
-            lambda x: f"{x:.1%}" if isinstance(x, float) else x
-        )
-    
+        display_df["Fair %"] = display_df["Fair %"].apply(lambda x: f"{x:.1%}" if isinstance(x, float) else x)
     if "Avg (10g)" in display_df.columns:
-        display_df["Avg (10g)"] = display_df["Avg (10g)"].apply(
-            lambda x: f"{x:.1f}" if isinstance(x, (int, float)) else x
-        )
-    
+        display_df["Avg (10g)"] = display_df["Avg (10g)"].apply(lambda x: f"{x:.1f}" if isinstance(x, (int, float)) else x)
     return display_df
 
 # =========================
@@ -1193,7 +1162,7 @@ def check_portfolio_correlation(new_prop, existing_locks, player_team_map, posit
             break
     return warnings
 
-def get_clv_edge_adjustment(sport, tier, history):
+def get_clv_edge_adjustment(sport, tier):
     try:
         clv_data = load_json_data(CLV_PATH, [])
         if not clv_data:
@@ -1425,7 +1394,6 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 h_power = power_ratings[home_team]
                 a_power = power_ratings[away_team]
                 power_diff = h_power - a_power
-                import math
                 h_fair = 1 / (1 + math.exp(-power_diff/7))
                 a_fair = 1 - h_fair
                 h_ml_edge = h_fair - h_implied
@@ -1906,7 +1874,20 @@ def scrape_prizepicks(sport):
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true",
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&state_code=CA",
     ]
-    pp_headers = {"User-Agent": HEADERS["User-Agent"], "Referer": "https://app.prizepicks.com/", "Accept": "application/json", "X-Device-ID": "betcouncil-app"}
+    pp_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://app.prizepicks.com/",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Origin": "https://app.prizepicks.com",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "X-Device-ID": "betcouncil-app-v4",
+        "Cache-Control": "no-cache",
+    }
     all_props = []
     seen = set()
     for url in urls:
@@ -1922,7 +1903,7 @@ def scrape_prizepicks(sport):
                     data = cached
         if data is None:
             try:
-                resp = requests.get(url, headers=pp_headers, timeout=REQUEST_TIMEOUT)
+                resp = requests.get(url, headers=pp_headers, timeout=15)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data and data.get("data"):
@@ -2469,7 +2450,11 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
                 signals["pace"] * weights.get("pace", 0.05))
     
     if teammate_out_boost:
-        combined += teammate_out_boost * 0.10
+        usage_signal = teammate_out_boost
+        combined += usage_signal
+        signals["usage"] = usage_signal
+    else:
+        signals["usage"] = 0.0
     
     if odds_type == "demon":
         combined *= 0.85
@@ -2535,6 +2520,8 @@ def load_sport_data(sport):
                     season_val = season_avgs[player].get(stat, val)
                     merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
                 season_avgs[player] = {**season_avgs[player], **merged}
+        mlb_pitchers = fetch_mlb_probable_pitchers()
+        st.session_state["mlb_pitchers"] = mlb_pitchers
     elif sport == "NHL":
         nhl_rolling = fetch_nhl_rolling_averages()
         season_avgs = dict(PLAYER_AVERAGES.get("NHL", {}))
@@ -2612,6 +2599,25 @@ def load_sport_data(sport):
         pass
 
     game_ids = fetch_espn_game_ids(sport)
+    if sport in ["NBA", "MLB"]:
+        officials_data = fetch_todays_referees(sport)
+        st.session_state["officials_data"] = officials_data
+    else:
+        st.session_state["officials_data"] = {}
+    
+    power_divergences = {}
+    if sport == "NBA":
+        for game in games:
+            matchup = game.get("Matchup","")
+            spread = game.get("Spread","")
+            h_team = home_teams.get(matchup,"")
+            a_team = away_teams.get(matchup,"")
+            if h_team and a_team:
+                div_score, div_note = power_rating_spread_divergence(h_team, a_team, spread)
+                if div_score > 0:
+                    power_divergences[matchup] = {"score": div_score, "note": div_note}
+    st.session_state["power_divergences"] = power_divergences
+    
     game_line_movement = {}
     game_sharp_flags = {}
     for matchup, event_id in game_ids.items():
@@ -2642,6 +2648,10 @@ def load_sport_data(sport):
             last10 = rolling_avgs.get(player, None)
             avg_dict = get_weighted_average(player, season_avg, last10, is_playoff)
             using_default = False
+            if last10 and isinstance(last10, dict):
+                avg_dict["n_games"] = last10.get("n_games", 10)
+            else:
+                avg_dict["n_games"] = 10
         else:
             player_stats, using_default = find_player_avg(player, season_avgs)
             if using_default:
@@ -2655,16 +2665,39 @@ def load_sport_data(sport):
 
         avg = avg_dict.get(stat_norm, defaults.get(stat_norm, line))
 
+        # Minutes-based projection for NBA
+        if sport == "NBA":
+            player_mins = rolling_avgs.get(player, {}).get("MIN")
+            if player_mins and player_mins > 0:
+                baseline_mins = 30.0
+                mins_factor = player_mins / baseline_mins
+                mins_factor = max(0.80, min(1.20, mins_factor))
+                avg = round(avg * mins_factor, 1)
+
         player_team = PLAYER_TEAM_MAP.get(player, "")
         opp_def_rating = 112.0
+        opp_team_abbrev = ""
         if player_team and games:
             for game in games:
                 matchup = game["Matchup"]
                 if player_team in matchup:
-                    parts = matchup.replace("@", "vs").split()
+                    parts = matchup.replace("@","vs").split()
                     for p2 in parts:
-                        if p2 != player_team and len(p2) <= 3 and p2.isalpha():
-                            opp_def_rating = team_defense.get(p2, 112.0)
+                        if (p2 != player_team and len(p2) <= 3 and p2.isalpha()):
+                            opp_team_abbrev = p2
+                            season_def = team_defense.get(p2, 112.0)
+                            recent_def = fetch_team_recent_defense(sport, p2, 5)
+                            if recent_def and recent_def.get("def_rating_recent"):
+                                opp_def_rating = round(recent_def["def_rating_recent"] * 0.6 + season_def * 0.4, 1)
+                            else:
+                                opp_def_rating = season_def
+                            if (sport == "NBA" and stat_norm == "PTS" and p2 in NBA_POSITION_DEFENSE):
+                                position = NBA_PLAYER_POSITIONS.get(player, "")
+                                if position:
+                                    pos_allowed = NBA_POSITION_DEFENSE[p2].get(position, LEAGUE_AVG_POSITION.get(position, 22.0))
+                                    league_pos_avg = LEAGUE_AVG_POSITION.get(position, 22.0)
+                                    pos_adj_rtg = round((pos_allowed / league_pos_avg) * 112.0, 1)
+                                    opp_def_rating = round(pos_adj_rtg * 0.5 + opp_def_rating * 0.5, 1)
                             break
                     break
 
@@ -2702,6 +2735,33 @@ def load_sport_data(sport):
                 if player_team in matchup:
                     spread = game.get("Spread", "—")
                     blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup)
+                    break
+
+        referee_adj = 0.0
+        ref_note = ""
+        officials_data = st.session_state.get("officials_data", {})
+        if officials_data and player_team:
+            for matchup, refs in officials_data.items():
+                if player_team in matchup:
+                    for ref in refs:
+                        if sport == "NBA":
+                            ref_data = NBA_REFEREE_TENDENCIES.get(ref, {})
+                            if ref_data and stat_norm == "PTS":
+                                referee_adj += ref_data.get("pts_adj", 0)
+                                foul_rate = ref_data.get("foul_rate", "")
+                                if foul_rate == "high":
+                                    ref_note = f"📋 {ref}: high foul rate"
+                                elif foul_rate == "low":
+                                    ref_note = f"📋 {ref}: physical game"
+                        elif sport == "MLB":
+                            ref_data = MLB_UMPIRE_TENDENCIES.get(ref, {})
+                            if ref_data and stat_norm == "SO":
+                                referee_adj += ref_data.get("so_adj", 0)
+                                zone = ref_data.get("zone", "")
+                                if zone == "large":
+                                    ref_note = f"⚾ {ref}: large zone"
+                                elif zone == "tight":
+                                    ref_note = f"⚾ {ref}: tight zone"
                     break
 
         pace_adj = 0.0
@@ -2742,6 +2802,21 @@ def load_sport_data(sport):
                     weather = fetch_weather_for_game(city, is_outdoor)
                     weather_adj, weather_note = weather_edge_adjustment(weather, stat_norm, "OVER")
 
+        pitcher_adj = 0.0
+        pitcher_name = ""
+        if sport == "MLB":
+            mlb_pitchers = st.session_state.get("mlb_pitchers", {})
+            team_full = MLB_PLAYER_TEAM_MAP.get(player,"")
+            if team_full and mlb_pitchers:
+                opp_data = mlb_pitchers.get(team_full, {})
+                opp_pitcher = opp_data.get("pitcher","")
+                if opp_pitcher:
+                    pitcher_era = MLB_PITCHER_ERA.get(opp_pitcher, LEAGUE_AVG_ERA)
+                    era_diff = pitcher_era - LEAGUE_AVG_ERA
+                    pitcher_adj = era_diff / 100.0
+                    pitcher_adj = max(-0.08, min(0.08, pitcher_adj))
+                    pitcher_name = opp_pitcher
+
         ud_line_val = None
         for ud_p in (ud_props_compare or []):
             if (normalize_name(ud_p.get("Player","")) == normalize_name(player) and
@@ -2753,13 +2828,15 @@ def load_sport_data(sport):
             line, avg, opp_def_rating, is_home, usage_boost,
             "OVER", stat_norm, pace_adj, days_rest, odds_type, sport
         )
-        over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj))
+        over_edge = max(-EDGE_CAP, min(EDGE_CAP,
+            over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj))
         
         under_edge, under_prob, under_signals = compute_multi_signal_edge(
             line, avg, opp_def_rating, is_home, usage_boost,
             "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport
         )
-        under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj))
+        under_edge = max(-EDGE_CAP, min(EDGE_CAP,
+            under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj))
         
         if under_edge > over_edge and (under_edge - over_edge) > 0.05:
             best_edge = under_edge
@@ -2798,7 +2875,7 @@ def load_sport_data(sport):
             if confidence_mult < 1.0:
                 final_edge = final_edge * confidence_mult
 
-        clv_mult, clv_note = get_clv_edge_adjustment(sport, get_tier(final_edge, sport), history)
+        clv_mult, clv_note = get_clv_edge_adjustment(sport, get_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
 
@@ -2853,7 +2930,7 @@ def load_sport_data(sport):
             "Trend": recency_flag, "TrendDir": trend,
             "SampleSize": n_games if n_games else "—",
             "ConfidenceMult": round(sample_size_confidence(avg_dict.get("n_games"), sport), 2),
-            "CLVAdj": clv_note,
+            "CLVAdj": clv_note, "RefNote": ref_note, "Pitcher": pitcher_name,
         })
 
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
@@ -2876,7 +2953,8 @@ _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_
        "errors": [], "game_line_movement": {}, "game_sharp_flags": {}, "oddswrap_props": [],
        "ud_props_compare": [], "multibook_discrepancies": [], "nba_api_status": "Not yet fetched",
        "line_discrepancies": [], "override_correlation_warning": False, "clv_adjustments": {},
-       "all_sports_results": None, "game_analysis": []}
+       "all_sports_results": None, "game_analysis": [], "officials_data": {}, "mlb_pitchers": {},
+       "power_divergences": {}}
 for k, v in _ss.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -3975,16 +4053,17 @@ with tabs[1]:
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             
             with st.expander("📊 Signal Breakdown"):
-                signal_cols = ["Player", "SignalBase", "SignalDefense", "SignalLocation", "SignalRest",
-                               "SignalPace", "SignalUsage", "SignalBlowout", "WeatherNote", "SampleSize",
-                               "ConfidenceMult", "EdgePct"]
-                signal_cols = [c for c in signal_cols if c in df.columns]
-                if signal_cols:
-                    signal_df = df[signal_cols].copy()
-                    for col in ["SignalBase", "SignalDefense", "SignalLocation", "SignalRest",
-                                "SignalPace", "SignalUsage", "SignalBlowout"]:
+                signal_df_raw = pd.DataFrame(filtered)
+                signal_cols_check = ["Player","SignalBase","SignalDefense","SignalLocation","SignalRest",
+                                     "SignalPace","SignalUsage","SignalBlowout","WeatherNote","SampleSize",
+                                     "ConfidenceMult","EdgePct"]
+                signal_cols_check = [c for c in signal_cols_check if c in signal_df_raw.columns]
+                if signal_cols_check:
+                    signal_df = signal_df_raw[signal_cols_check].copy()
+                    for col in ["SignalBase","SignalDefense","SignalLocation","SignalRest",
+                                "SignalPace","SignalUsage","SignalBlowout"]:
                         if col in signal_df.columns:
-                            signal_df[col] = signal_df[col].apply(lambda x: f"{x:.1%}" if isinstance(x, (int, float)) else x)
+                            signal_df[col] = signal_df[col].apply(lambda x: f"{x:.1%}" if isinstance(x,(int,float)) else x)
                     st.dataframe(signal_df.head(10), width="stretch")
             
             options = [f"{r['Player']} — {r['Side']} {r['Line']} {r['Prop']} (Edge: {r['EdgePct']} | {r['Tier']})" for r in filtered]
@@ -4105,8 +4184,70 @@ with tabs[3]:
     st.markdown("## 🔒 Active Locks")
     if st.session_state.locks:
         for i, lock in enumerate(st.session_state.locks.copy()):
-            col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
-            col1.write(f"**{lock['player']}** {lock['side']} {lock['line']} {lock['prop']} — {lock.get('tier','—')} | Wager: ${lock['wager']:.2f}")
+            tier_color = TIER_COLORS.get(lock.get("tier","LEAN"), "#7a8a9a")
+            edge_val = lock.get("edge", 0)
+            prob_val = lock.get("prob", 0)
+            ev_2 = calculate_prizepicks_ev(prob_val, 2)
+            ev_color = "#22c55e" if ev_2 > 0 else "#e04040"
+            st.markdown(f"""
+<div style="background:#0d1520;
+            border:1px solid #1a2a3a;
+            border-left:4px solid {tier_color};
+            border-radius:8px;
+            padding:12px 16px;
+            margin-bottom:8px;">
+  <div style="display:flex;
+              justify-content:space-between;
+              align-items:center;
+              flex-wrap:wrap;">
+    <div>
+      <span style="color:#e8f0f8;
+                   font-weight:700;
+                   font-size:15px;">
+        {lock['player']}
+      </span>
+      <span style="background:{tier_color};
+                   color:#000;
+                   font-size:10px;
+                   font-weight:700;
+                   padding:2px 8px;
+                   border-radius:12px;
+                   margin-left:8px;">
+        {lock.get('tier','—')}
+      </span>
+      <br/>
+      <span style="color:{tier_color};
+                   font-weight:600;">
+        {lock['side']} {lock['line']} {lock['prop']}
+      </span>
+      <span style="color:#6a7a8a;
+                   font-size:11px;
+                   margin-left:10px;">
+        {lock.get('sport','—')} | 
+        Locked: {lock.get('timestamp','—')}
+      </span>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:13px;
+                  color:#0ea5a0;
+                  font-weight:700;">
+        Edge: {edge_val:.1%}
+      </div>
+      <div style="font-size:13px;
+                  color:{ev_color};
+                  font-weight:600;">
+        2-pick EV: {ev_2:+.1%}
+      </div>
+      <div style="font-size:13px;
+                  color:#e8a020;
+                  font-weight:700;">
+        Wager: ${lock['wager']:.2f}
+      </div>
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
+            col1, col2, col3, col4 = st.columns([4,1,1,1])
+            col1.write("")
             if col2.button("✅ WIN", key=f"win_{i}"):
                 profit = round(lock["wager"] * 1.0, 2)
                 st.session_state.bankroll += profit
@@ -4145,6 +4286,7 @@ with tabs[4]:
     st.markdown("## 📈 Full Bet History")
     if st.session_state.history:
         hist_df = pd.DataFrame(st.session_state.history)
+        hist_df = hist_df.iloc[::-1].reset_index(drop=True)
         cols = [c for c in ["timestamp", "player", "prop", "line", "side", "tier", "wager", "outcome", "net"] if c in hist_df.columns]
         st.dataframe(hist_df[cols], width="stretch")
         if st.button("Clear History"):
@@ -4434,7 +4576,7 @@ with tabs[6]:
                     continue
                 avg_clv = sum(c.get("clv",0) for c in relevant) / len(relevant)
                 pos_rate = sum(1 for c in relevant if c.get("clv",0) > 0) / len(relevant)
-                mult, _ = get_clv_edge_adjustment(sp, tier, [])
+                mult, _ = get_clv_edge_adjustment(sp, tier)
                 clv_summary.append({
                     "Sport": sp, "Tier": tier, "N": len(relevant),
                     "Avg CLV": f"{avg_clv:+.2f}", "Positive Rate": f"{pos_rate:.0%}",
@@ -4459,6 +4601,44 @@ with tabs[6]:
             st.rerun()
     else:
         st.caption("✅ No errors this session.")
+    st.markdown("---")
+    st.markdown("### 🔍 PrizePicks API Debug")
+    if st.button("Test PrizePicks MLB Connection"):
+        results = []
+        test_urls = [
+            "https://partner-api.prizepicks.com/projections?per_page=1000&league_id=5",
+            "https://api.prizepicks.com/projections?league_id=5&per_page=250",
+            "https://api.prizepicks.com/projections?league_id=5&per_page=250&single_stat=true",
+        ]
+        test_headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Referer": "https://app.prizepicks.com/",
+            "Accept": "application/json",
+            "X-Device-ID": "betcouncil-app"
+        }
+        for url in test_urls:
+            try:
+                resp = requests.get(url, headers=test_headers, timeout=10)
+                data_count = 0
+                if resp.status_code == 200:
+                    data = resp.json()
+                    data_count = len(data.get("data", []))
+                results.append({
+                    "URL": url[:60] + "...",
+                    "Status": resp.status_code,
+                    "Props Found": data_count,
+                    "Result": "✅ OK" if resp.status_code == 200 and data_count > 0 
+                              else "⚠️ Empty" if resp.status_code == 200 
+                              else "❌ Failed"
+                })
+            except Exception as e:
+                results.append({
+                    "URL": url[:60] + "...",
+                    "Status": "Error",
+                    "Props Found": 0,
+                    "Result": f"❌ {str(e)[:50]}"
+                })
+        st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
     st.markdown("---")
     st.markdown("### 📊 API Health Dashboard")
     st.caption("All active API keys and free sources — usage tracked automatically")
