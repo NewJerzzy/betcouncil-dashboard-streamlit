@@ -86,6 +86,13 @@ BDL_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_counter.json")
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
 GIST_API = "https://api.github.com/gists"
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+
+# STEP 1: Add API key constant
+ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
+ODDSPAPI_COUNTER_PATH = os.path.join(CACHE_DIR, "oddspapi_counter.json")
+ODDSPAPI_FREE_TIER_DAILY_LIMIT = 100
+ODDSPAPI_FREE_TIER_MONTHLY_LIMIT = 1000
 
 TIER_COLORS = {"SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0", "APPROVED": "#4a90d9", "LEAN": "#7a8a9a", "PASS": "#e04040"}
 TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPROVED": "Edge ≥ 5%", "LEAN": "Edge ≥ 2%", "PASS": "Edge < 2%"}
@@ -2315,6 +2322,173 @@ def fetch_oddswrap_lines(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddswrap_lines", "error": str(e)[:100]})
     return lines_data
 
+# STEP 2: Add OddsPapi fetch function directly before load_sport_data()
+def fetch_oddspapi_props(sport):
+    """
+    OddsPapi fallback — only called when
+    PrizePicks AND Underdog both fail.
+    
+    Free tier protection:
+    - 90 minute cache per sport
+    - Daily call counter with hard stop
+    - Single batched request per call
+    - Never called as primary source
+    """
+    if not ODDSPAPI_KEY:
+        return []
+    
+    # Check daily limit — stop at 80%
+    counter = get_api_counter(ODDSPAPI_COUNTER_PATH)
+    daily_used = counter.get("count", 0)
+    monthly_used = counter.get("monthly_count", 0)
+    
+    if daily_used >= int(ODDSPAPI_FREE_TIER_DAILY_LIMIT * 0.8):
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_oddspapi_props",
+            "error": (
+                f"OddsPapi daily limit approached "
+                f"({daily_used}/"
+                f"{ODDSPAPI_FREE_TIER_DAILY_LIMIT})"
+                f" — skipping to protect free tier"
+            )
+        })
+        return []
+    
+    if monthly_used >= int(ODDSPAPI_FREE_TIER_MONTHLY_LIMIT * 0.8):
+        return []
+    
+    # 90 minute cache — aggressive to save calls
+    cache_path = os.path.join(CACHE_DIR, f"oddspapi_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.caption(
+                    f"📦 OddsPapi: using cached "
+                    f"data ({age_mins:.0f}m old)"
+                )
+                return cached
+    
+    sport_map = {
+        "NBA": "basketball_nba",
+        "MLB": "baseball_mlb",
+        "NHL": "icehockey_nhl",
+        "NFL": "americanfootball_nfl",
+        "WNBA": "basketball_wnba",
+    }
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+    
+    # Single batched call — most efficient
+    # Gets all bookmakers in one request
+    url = (
+        f"https://api.oddspapi.io/v1/odds"
+        f"?apikey={ODDSPAPI_KEY}"
+        f"&sport={sport_key}"
+        f"&markets=player_props"
+        f"&bookmakers=draftkings,fanduel,"
+        f"betmgm,bovada,caesars,pinnacle"
+    )
+    
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        
+        # Count this call regardless of result
+        increment_api_counter(ODDSPAPI_COUNTER_PATH)
+        
+        if resp.status_code == 429:
+            st.warning(
+                "⚠️ OddsPapi rate limit hit — "
+                "will retry after cache expires"
+            )
+            return []
+        
+        if resp.status_code == 403:
+            st.warning(
+                "⚠️ OddsPapi monthly limit "
+                "reached — free tier exhausted"
+            )
+            return []
+        
+        if resp.status_code != 200:
+            return []
+        
+        data = resp.json()
+        props = []
+        seen = set()
+        
+        for event in data.get("events", []):
+            for bookmaker in event.get("bookmakers", []):
+                book_name = bookmaker.get("key", "unknown")
+                for market in bookmaker.get("markets", []):
+                    market_key = market.get("key", "")
+                    if "player" not in market_key.lower():
+                        continue
+                    for outcome in market.get("outcomes", []):
+                        player = outcome.get("description", "")
+                        line = outcome.get("point")
+                        side = outcome.get("name", "")
+                        
+                        if not player:
+                            continue
+                        if line is None:
+                            continue
+                        if side.upper() not in ("OVER", "UNDER"):
+                            continue
+                        
+                        # Only keep OVER for consistency with our model
+                        if side.upper() != "OVER":
+                            continue
+                        
+                        # Normalize stat name
+                        stat_clean = (
+                            market_key
+                            .replace("player_", "")
+                            .replace("_", " ")
+                            .title()
+                        )
+                        
+                        # Deduplicate across books
+                        # Keep first occurrence (DraftKings priority)
+                        key = (sport, player, stat_clean, float(line))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        
+                        props.append({
+                            "Player": player,
+                            "Prop": stat_clean,
+                            "Line": float(line),
+                            "Side": "OVER",
+                            "Sport": sport,
+                            "source": f"OddsPapi_{book_name}",
+                            "OddsType": "standard"
+                        })
+        
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+            st.caption(
+                f"✅ OddsPapi: {len(props)} props "
+                f"fetched ({daily_used + 1}/"
+                f"{ODDSPAPI_FREE_TIER_DAILY_LIMIT}"
+                f" calls today)"
+            )
+        
+        return props
+        
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_oddspapi_props",
+            "error": str(e)[:100]
+        })
+        return []
+
 def compare_multibook_lines(pp_props, oddswrap_props):
     if not oddswrap_props:
         return []
@@ -2658,16 +2832,36 @@ def load_sport_data(sport):
     multibook_discrepancies = compare_multibook_lines(pp_props if pp_props else [], oddswrap_props)
     st.session_state["line_discrepancies"] = []
     st.session_state["multibook_discrepancies"] = multibook_discrepancies
+    
+    # STEP 3: Insert into fallback chain
     if pp_props:
         props = pp_props
     elif ud_props_compare:
         props = ud_props_compare
     elif oddswrap_props:
         props = [p for p in oddswrap_props if p["Side"] == "OVER"]
-        st.info("Using DraftKings/Bovada props as primary source")
+        st.info(
+            "Using DraftKings/Bovada props "
+            "as primary source"
+        )
     else:
-        games, _, _, _ = fetch_game_lines(sport)
-        return [], games, 0, 0, {}, {}
+        # Last resort — OddsPapi
+        # Only reaches here if ALL others failed
+        st.info(
+            "All primary sources unavailable — "
+            "trying OddsPapi backup..."
+        )
+        oddspapi_props = fetch_oddspapi_props(sport)
+        if oddspapi_props:
+            props = oddspapi_props
+            st.success(
+                f"✅ OddsPapi backup active — "
+                f"{len(oddspapi_props)} props loaded"
+            )
+        else:
+            games, _, _, _ = fetch_game_lines(sport)
+            return [], games, 0, 0, {}, {}
+    
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
     games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
     b2b_teams = set()
@@ -4144,7 +4338,15 @@ with tabs[6]:
         st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
     st.markdown("---")
     st.markdown("### 📊 API Health Dashboard")
-    API_REGISTRY = [{"name": "BallDontLie", "key": "BALLSDONTLIE_API_KEY", "path": BDL_COUNTER_PATH, "daily": None, "monthly": 200}, {"name": "Odds API", "key": "ODDS_API_KEY", "path": ODDS_API_COUNTER_PATH, "daily": None, "monthly": 450}, {"name": "API-Sports", "key": "API_SPORTS_KEY", "path": API_SPORTS_COUNTER_PATH, "daily": 100, "monthly": None}, {"name": "Sportmonks", "key": "SPORTMONKS_API_KEY", "path": SPORTMONKS_COUNTER_PATH, "daily": None, "monthly": 500}, {"name": "Unified API", "key": "UNIFIED_API_KEY", "path": UNIFIED_COUNTER_PATH, "daily": None, "monthly": 200}]
+    # STEP 4: Add OddsPapi to API_REGISTRY
+    API_REGISTRY = [
+        {"name": "BallDontLie", "key": "BALLSDONTLIE_API_KEY", "path": BDL_COUNTER_PATH, "daily": None, "monthly": 200},
+        {"name": "Odds API", "key": "ODDS_API_KEY", "path": ODDS_API_COUNTER_PATH, "daily": None, "monthly": 450},
+        {"name": "API-Sports", "key": "API_SPORTS_KEY", "path": API_SPORTS_COUNTER_PATH, "daily": 100, "monthly": None},
+        {"name": "Sportmonks", "key": "SPORTMONKS_API_KEY", "path": SPORTMONKS_COUNTER_PATH, "daily": None, "monthly": 500},
+        {"name": "Unified API", "key": "UNIFIED_API_KEY", "path": UNIFIED_COUNTER_PATH, "daily": None, "monthly": 200},
+        {"name": "OddsPapi", "key": "ODDSPAPI_KEY", "path": ODDSPAPI_COUNTER_PATH, "daily": ODDSPAPI_FREE_TIER_DAILY_LIMIT, "monthly": ODDSPAPI_FREE_TIER_MONTHLY_LIMIT},
+    ]
     for api in API_REGISTRY:
         counter = load_json_data(api["path"], {"count":0,"monthly_count":0})
         has_key = bool(st.secrets.get(api["key"],""))
@@ -4174,7 +4376,7 @@ with tabs[6]:
             st.success("All rolling caches cleared")
     with cache_cols[2]:
         if st.button("Clear All API Counters"):
-            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH, BDL_COUNTER_PATH]:
+            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH, BDL_COUNTER_PATH, ODDSPAPI_COUNTER_PATH]:
                 if os.path.exists(path):
                     os.remove(path)
             st.success("API counters reset")
