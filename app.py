@@ -3467,7 +3467,15 @@ with tabs[0]:
                 injury_html = f'<span style="background:#e04040;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;">{p["Injury"]}</span>'
             search_html = ""
             if p.get("SearchNeeded"):
-                search_html = f'<span style="background:#4a4a20;color:#e8d020;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;" title="Search: {p.get(\"SearchQuery\",\"\")}">🔍 Verify avg</span>'
+                search_query = p.get("SearchQuery", "")
+                search_html = (
+                    f'<span style="background:#4a4a20;'
+                    f'color:#e8d020;font-size:10px;'
+                    f'padding:2px 6px;border-radius:10px;'
+                    f'margin-left:6px;" '
+                    f'title="Search: {search_query}">'
+                    f'🔍 Verify avg</span>'
+                )
             sharp_html = ""
             if p.get("SharpFlag"):
                 sharp_html = f'<span style="color:#e8a020;font-size:11px;margin-left:8px;">{p["SharpFlag"]}</span>'
@@ -4338,7 +4346,6 @@ with tabs[6]:
         st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
     st.markdown("---")
     st.markdown("### 📊 API Health Dashboard")
-    # STEP 4: Add OddsPapi to API_REGISTRY
     API_REGISTRY = [
         {"name": "BallDontLie", "key": "BALLSDONTLIE_API_KEY", "path": BDL_COUNTER_PATH, "daily": None, "monthly": 200},
         {"name": "Odds API", "key": "ODDS_API_KEY", "path": ODDS_API_COUNTER_PATH, "daily": None, "monthly": 450},
