@@ -3352,12 +3352,43 @@ with tabs[0]:
             st.warning(PLAYOFF_DEFENSE_WARNING)
     
     st.markdown("---")
+    
+    # IMPROVED TODAY'S GAMES SECTION WITH WHITE TEXT, FORMATTING, AND EXPLANATIONS
     st.markdown("## 🏟️ TODAY'S GAMES")
+    st.caption("📊 **Column Guide:** • **Spread** = Run line (MLB) / Point spread • **Total** = Over/Under (combined runs) • **Home ML/Away ML** = Moneyline odds (N/A = not provided by ESPN API)")
+    
     if st.session_state.games:
         df_games = pd.DataFrame(st.session_state.games)
         display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Date"]
         display_cols = [c for c in display_cols if c in df_games.columns]
-        st.table(df_games[display_cols])
+        
+        # Create a copy for display
+        display_df = df_games[display_cols].copy()
+        
+        # Format Total column to show 1 decimal place
+        if "Total" in display_df.columns:
+            display_df["Total"] = display_df["Total"].apply(lambda x: f"{float(x):.1f}" if x not in ("N/A", "—", None) and str(x).replace('.','',1).isdigit() else "—")
+        
+        # Format Spread column to clean up the display
+        if "Spread" in display_df.columns:
+            display_df["Spread"] = display_df["Spread"].apply(lambda x: str(x).replace("N/A", "—") if x not in ("N/A", None) else "—")
+        
+        # Apply custom styling with proper alignment and white text
+        styled_df = display_df.style.set_properties(**{
+            'color': '#e8f0f8',
+            'background-color': '#0d1520',
+            'border-color': '#1a2a3a',
+            'text-align': 'left'
+        }).set_table_styles([
+            {'selector': 'th', 'props': [('text-align', 'left'), ('color', '#0ea5a0'), ('font-weight', '600')]},
+            {'selector': 'td', 'props': [('text-align', 'left')]},
+        ])
+        
+        st.dataframe(styled_df, width="stretch", use_container_width=True, hide_index=True)
+        
+        # Add a helpful note about the totals
+        st.caption("💡 **What does Total mean?** The projected combined runs scored by both teams. Bet OVER if you think more runs will be scored, UNDER if fewer.")
+        
     else:
         st.info("No games loaded.")
     
