@@ -4036,10 +4036,21 @@ with tabs[3]:
 </div>""", unsafe_allow_html=True)
             col1, col2, col3, col4 = st.columns([4,1,1,1])
             col1.write("")
+            
+            # FIX 1: WIN button with proper multiplier
             if col2.button("✅ WIN", key=f"win_{i}"):
-                profit = round(lock["wager"] * 1.0, 2)
+                pick_count = st.session_state.get("last_pick_count", 2)
+                multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
+                profit = round(lock["wager"] * multiplier, 2)
                 st.session_state.bankroll += profit
-                st.session_state.history.append({**lock, "outcome": "WIN", "profit": profit, "loss": 0, "net": profit, "pick_count": st.session_state.get("last_pick_count", 2), "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
+                st.session_state.history.append({
+                    **lock, "outcome": "WIN",
+                    "profit": profit, "loss": 0,
+                    "net": profit,
+                    "pick_count": pick_count,
+                    "stat_type": lock.get("prop", ""),
+                    "resolved_date": date.today().strftime("%Y-%m-%d")
+                })
                 save_json_data(BANKROLL_PATH, st.session_state.bankroll)
                 save_to_gist("bankroll", st.session_state.bankroll)
                 save_json_data(HISTORY_PATH, st.session_state.history)
@@ -4049,6 +4060,7 @@ with tabs[3]:
                 save_to_gist("locks", st.session_state.locks)
                 record_clv(lock, st.session_state.board_data)
                 st.rerun()
+            
             if col3.button("❌ LOSS", key=f"loss_{i}"):
                 st.session_state.bankroll -= lock["wager"]
                 st.session_state.history.append({**lock, "outcome": "LOSS", "profit": 0, "loss": lock["wager"], "net": -lock["wager"], "pick_count": st.session_state.get("last_pick_count", 2), "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
@@ -4363,7 +4375,18 @@ with tabs[6]:
     if st.button("Test PrizePicks MLB Connection"):
         results = []
         test_urls = ["https://partner-api.prizepicks.com/projections?per_page=1000&league_id=5", "https://api.prizepicks.com/projections?league_id=5&per_page=250", "https://api.prizepicks.com/projections?league_id=5&per_page=250&single_stat=true"]
-        test_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", "Referer": "https://app.prizepicks.com/", "Accept": "application/json", "X-Device-ID": "betcouncil-app"}
+        
+        # FIX 2: Updated test headers
+        test_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://app.prizepicks.com/",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://app.prizepicks.com",
+            "X-Device-ID": "betcouncil-app-v4",
+            "Cache-Control": "no-cache",
+        }
+        
         for url in test_urls:
             try:
                 resp = requests.get(url, headers=test_headers, timeout=10)
