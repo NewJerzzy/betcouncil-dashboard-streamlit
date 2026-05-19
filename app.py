@@ -94,6 +94,50 @@ ODDSPAPI_COUNTER_PATH = os.path.join(CACHE_DIR, "oddspapi_counter.json")
 ODDSPAPI_FREE_TIER_DAILY_LIMIT = 100
 ODDSPAPI_FREE_TIER_MONTHLY_LIMIT = 1000
 
+# ParlayPlay constants
+PARLAYPLAY_COUNTER_PATH = os.path.join(CACHE_DIR, "parlayplay_counter.json")
+PARLAYPLAY_DAILY_LIMIT = 200
+
+# BDL Props constants
+BDL_PROPS_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_props_counter.json")
+BDL_PROPS_DAILY_LIMIT = 60
+
+# Unified API budgets — shared across all functions using the same key
+API_BUDGETS = {
+    "BDL": {
+        "key": "BALLSDONTLIE_API_KEY",
+        "daily_limit": None,
+        "monthly_limit": 200,
+        "counter_path": os.path.join(CACHE_DIR, "bdl_unified_counter.json"),
+        "description": "BallDontLie (averages + props)",
+        "hard_stop_pct": 0.80,
+    },
+    "ODDSPAPI": {
+        "key": "ODDSPAPI_KEY",
+        "daily_limit": 100,
+        "monthly_limit": 1000,
+        "counter_path": os.path.join(CACHE_DIR, "oddspapi_counter.json"),
+        "description": "OddsPapi props fallback",
+        "hard_stop_pct": 0.80,
+    },
+    "PARLAYPLAY": {
+        "key": None,
+        "daily_limit": 200,
+        "monthly_limit": None,
+        "counter_path": os.path.join(CACHE_DIR, "parlayplay_counter.json"),
+        "description": "ParlayPlay NBA props",
+        "hard_stop_pct": 0.90,
+    },
+    "ESPN": {
+        "key": None,
+        "daily_limit": None,
+        "monthly_limit": None,
+        "counter_path": os.path.join(CACHE_DIR, "espn_counter.json"),
+        "description": "ESPN (unlimited public API)",
+        "hard_stop_pct": 1.0,
+    },
+}
+
 TIER_COLORS = {"SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0", "APPROVED": "#4a90d9", "LEAN": "#7a8a9a", "PASS": "#e04040"}
 TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPROVED": "Edge ≥ 5%", "LEAN": "Edge ≥ 2%", "PASS": "Edge < 2%"}
 
@@ -777,6 +821,103 @@ def format_api_usage(counter_path, daily_limit=None, monthly_limit=None, api_nam
     if monthly_limit:
         parts.append(f"{counter.get('monthly_count', 0)}/{monthly_limit} this month")
     return f"{api_name}: {' | '.join(parts)}" if parts else f"{api_name}: {counter['count']} calls"
+
+def api_budget_check(budget_key):
+    """
+    Centralized budget guardian.
+    Call before every external API request.
+    Returns (allowed, reason_string)
+    
+    Usage:
+        allowed, reason = api_budget_check("BDL")
+        if not allowed:
+            return []
+    """
+    budget = API_BUDGETS.get(budget_key)
+    if not budget:
+        return True, ""
+    
+    counter = get_api_counter(budget["counter_path"])
+    daily_used = counter.get("count", 0)
+    monthly_used = counter.get("monthly_count", 0)
+    stop_pct = budget.get("hard_stop_pct", 0.80)
+    
+    # Check daily limit
+    daily_limit = budget.get("daily_limit")
+    if daily_limit:
+        threshold = int(daily_limit * stop_pct)
+        if daily_used >= threshold:
+            reason = (
+                f"{budget_key} daily limit "
+                f"approached: {daily_used}/"
+                f"{daily_limit} calls used today. "
+                f"Protecting free tier."
+            )
+            return False, reason
+    
+    # Check monthly limit
+    monthly_limit = budget.get("monthly_limit")
+    if monthly_limit:
+        threshold = int(monthly_limit * stop_pct)
+        if monthly_used >= threshold:
+            reason = (
+                f"{budget_key} monthly limit "
+                f"approached: {monthly_used}/"
+                f"{monthly_limit} calls this month. "
+                f"Protecting free tier."
+            )
+            return False, reason
+    
+    return True, ""
+
+def api_budget_increment(budget_key):
+    """
+    Increment unified counter after every API call.
+    Always call this regardless of response status.
+    """
+    budget = API_BUDGETS.get(budget_key)
+    if budget:
+        increment_api_counter(budget["counter_path"])
+
+def api_budget_status(budget_key):
+    """
+    Returns current usage as display string.
+    Used in System tab.
+    """
+    budget = API_BUDGETS.get(budget_key)
+    if not budget:
+        return "Unknown"
+    
+    counter = get_api_counter(budget["counter_path"])
+    daily_used = counter.get("count", 0)
+    monthly_used = counter.get("monthly_count", 0)
+    parts = []
+    
+    daily_limit = budget.get("daily_limit")
+    monthly_limit = budget.get("monthly_limit")
+    
+    if daily_limit:
+        pct = daily_used / daily_limit * 100
+        color = (
+            "🔴" if pct >= 80
+            else "🟡" if pct >= 60
+            else "🟢"
+        )
+        parts.append(f"{color} {daily_used}/{daily_limit} today")
+    
+    if monthly_limit:
+        pct = monthly_used / monthly_limit * 100
+        color = (
+            "🔴" if pct >= 80
+            else "🟡" if pct >= 60
+            else "🟢"
+        )
+        parts.append(f"{color} {monthly_used}/{monthly_limit} this month")
+    
+    if not parts:
+        return f"📊 {daily_used} calls today"
+    
+    return " | ".join(parts)
 
 def compute_tier_stats(history):
     stats = {}
@@ -1974,6 +2115,16 @@ def fetch_nba_averages_bdl():
                 return pickle.load(f)
     if not BDL_API_KEY:
         return {}
+    
+    allowed, reason = api_budget_check("BDL")
+    if not allowed:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_nba_averages_bdl",
+            "error": reason
+        })
+        return {}
+    
     ids = list(BDL_PLAYER_IDS.values())
     params = "&".join([f"player_ids[]={pid}" for pid in ids])
     url = f"https://api.balldontlie.io/v1/season_averages?season=2025&{params}"
@@ -1997,7 +2148,7 @@ def fetch_nba_averages_bdl():
         if avgs:
             with open(cache_path, "wb") as f:
                 pickle.dump(avgs, f)
-        increment_api_counter(BDL_COUNTER_PATH)
+        api_budget_increment("BDL")
         return avgs
     except:
         return {}
@@ -2322,7 +2473,219 @@ def fetch_oddswrap_lines(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddswrap_lines", "error": str(e)[:100]})
     return lines_data
 
-# STEP 2: Add OddsPapi fetch function directly before load_sport_data()
+def fetch_parlayplay_props(sport):
+    """
+    ParlayPlay public endpoint — NBA only.
+    No API key required.
+    Community-discovered endpoint, may change.
+    """
+    if sport != "NBA":
+        return []
+    
+    allowed, reason = api_budget_check("PARLAYPLAY")
+    if not allowed:
+        return []
+    
+    cache_path = os.path.join(CACHE_DIR, "parlayplay_nba.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+    
+    url = (
+        "https://parlayplay.io/api/v1/crossgame/search/"
+        "?sport=Basketball&league=NBA"
+        "&includeAlt=true&version=2&includeBoost=true"
+    )
+    
+    try:
+        resp = requests.get(url, timeout=15, headers=HEADERS)
+        api_budget_increment("PARLAYPLAY")
+        
+        if resp.status_code != 200:
+            return []
+        
+        data = resp.json()
+        props = []
+        seen = set()
+        
+        for game in data.get("games", []):
+            for prop in game.get("props", []):
+                player_name = prop.get("player", {}).get("name", "")
+                stat_type = prop.get("stat", {}).get("name", "")
+                line = prop.get("line", 0)
+                
+                if not player_name or not stat_type:
+                    continue
+                if not line:
+                    continue
+                
+                key = (player_name, stat_type, float(line))
+                if key in seen:
+                    continue
+                seen.add(key)
+                
+                props.append({
+                    "Player": player_name,
+                    "Prop": stat_type,
+                    "Line": float(line),
+                    "Side": "OVER",
+                    "Sport": sport,
+                    "source": "ParlayPlay",
+                    "OddsType": "standard"
+                })
+        
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+        
+        return props[:100]
+        
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_parlayplay_props",
+            "error": str(e)[:100]
+        })
+        return []
+
+def fetch_bdl_props(sport):
+    """
+    BallDontLie player props endpoint.
+    Uses existing BDL API key — no new key needed.
+    Returns NBA player props from DraftKings
+    in same format as PrizePicks.
+    Only fires when PrizePicks + Underdog fail.
+    """
+    if sport != "NBA":
+        return []
+    
+    if not BDL_API_KEY:
+        return []
+    
+    allowed, reason = api_budget_check("BDL")
+    if not allowed:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_bdl_props",
+            "error": reason
+        })
+        return []
+    
+    daily_used = get_api_counter(API_BUDGETS["BDL"]["counter_path"]).get("count", 0)
+    
+    # 60 minute cache
+    cache_path = os.path.join(CACHE_DIR, "bdl_props_nba.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.caption(f"📦 BDL Props: using cached data ({age_mins:.0f}m old)")
+                return cached
+    
+    # Step 1 — get today's game IDs
+    today_str = date.today().strftime("%Y-%m-%d")
+    games_url = f"https://api.balldontlie.io/v1/games?dates[]={today_str}&per_page=30"
+    bdl_headers = {"Authorization": BDL_API_KEY}
+    
+    try:
+        games_resp = requests.get(games_url, headers=bdl_headers, timeout=10)
+        api_budget_increment("BDL")
+        
+        if games_resp.status_code != 200:
+            return []
+        
+        game_ids = [g["id"] for g in games_resp.json().get("data", [])]
+        
+        if not game_ids:
+            return []
+        
+        # Step 2 — get props for each game
+        all_props = []
+        seen = set()
+        
+        stat_map = {
+            "points": "Points",
+            "rebounds": "Rebounds",
+            "assists": "Assists",
+            "pts_reb_ast": "Pts+Reb+Ast",
+            "steals": "Steals",
+            "blocks": "Blocked Shots",
+            "three_pointers_made": "3-PT Made",
+            "turnovers": "Turnovers",
+        }
+        
+        for game_id in game_ids[:5]:
+            props_url = f"https://api.balldontlie.io/v1/player_props?game_id={game_id}"
+            try:
+                props_resp = requests.get(props_url, headers=bdl_headers, timeout=10)
+                api_budget_increment("BDL")
+                
+                if props_resp.status_code != 200:
+                    continue
+                
+                for prop in props_resp.json().get("data", []):
+                    if prop.get("market", {}).get("type") != "over_under":
+                        continue
+                    
+                    player = prop.get("player", {})
+                    player_name = f"{player.get('first_name','')} {player.get('last_name','')}".strip()
+                    
+                    prop_type = prop.get("prop_type", "")
+                    line = prop.get("line_value")
+                    
+                    if not player_name or not line:
+                        continue
+                    if not prop_type:
+                        continue
+                    
+                    stat_name = stat_map.get(prop_type, prop_type.replace("_", " ").title())
+                    
+                    try:
+                        line_val = float(line)
+                    except:
+                        continue
+                    
+                    key = (player_name, stat_name, line_val)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    
+                    all_props.append({
+                        "Player": player_name,
+                        "Prop": stat_name,
+                        "Line": line_val,
+                        "Side": "OVER",
+                        "Sport": "NBA",
+                        "source": "BDL_DraftKings",
+                        "OddsType": "standard"
+                    })
+                
+                time.sleep(0.3)
+                
+            except:
+                continue
+        
+        if all_props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_props, f)
+            st.caption(f"✅ BDL Props: {len(all_props)} props fetched ({daily_used + 1}/{BDL_PROPS_DAILY_LIMIT} calls today)")
+        
+        return all_props
+        
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_bdl_props",
+            "error": str(e)[:100]
+        })
+        return []
+
 def fetch_oddspapi_props(sport):
     """
     OddsPapi fallback — only called when
@@ -2337,26 +2700,16 @@ def fetch_oddspapi_props(sport):
     if not ODDSPAPI_KEY:
         return []
     
-    # Check daily limit — stop at 80%
-    counter = get_api_counter(ODDSPAPI_COUNTER_PATH)
-    daily_used = counter.get("count", 0)
-    monthly_used = counter.get("monthly_count", 0)
-    
-    if daily_used >= int(ODDSPAPI_FREE_TIER_DAILY_LIMIT * 0.8):
+    allowed, reason = api_budget_check("ODDSPAPI")
+    if not allowed:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_oddspapi_props",
-            "error": (
-                f"OddsPapi daily limit approached "
-                f"({daily_used}/"
-                f"{ODDSPAPI_FREE_TIER_DAILY_LIMIT})"
-                f" — skipping to protect free tier"
-            )
+            "error": reason
         })
         return []
     
-    if monthly_used >= int(ODDSPAPI_FREE_TIER_MONTHLY_LIMIT * 0.8):
-        return []
+    daily_used = get_api_counter(API_BUDGETS["ODDSPAPI"]["counter_path"]).get("count", 0)
     
     # 90 minute cache — aggressive to save calls
     cache_path = os.path.join(CACHE_DIR, f"oddspapi_{sport}.pkl")
@@ -2366,10 +2719,7 @@ def fetch_oddspapi_props(sport):
             with open(cache_path, "rb") as f:
                 cached = pickle.load(f)
             if cached:
-                st.caption(
-                    f"📦 OddsPapi: using cached "
-                    f"data ({age_mins:.0f}m old)"
-                )
+                st.caption(f"📦 OddsPapi: using cached data ({age_mins:.0f}m old)")
                 return cached
     
     sport_map = {
@@ -2398,20 +2748,14 @@ def fetch_oddspapi_props(sport):
         resp = requests.get(url, headers=HEADERS, timeout=15)
         
         # Count this call regardless of result
-        increment_api_counter(ODDSPAPI_COUNTER_PATH)
+        api_budget_increment("ODDSPAPI")
         
         if resp.status_code == 429:
-            st.warning(
-                "⚠️ OddsPapi rate limit hit — "
-                "will retry after cache expires"
-            )
+            st.warning("⚠️ OddsPapi rate limit hit — will retry after cache expires")
             return []
         
         if resp.status_code == 403:
-            st.warning(
-                "⚠️ OddsPapi monthly limit "
-                "reached — free tier exhausted"
-            )
+            st.warning("⚠️ OddsPapi monthly limit reached — free tier exhausted")
             return []
         
         if resp.status_code != 200:
@@ -2472,12 +2816,7 @@ def fetch_oddspapi_props(sport):
         if props:
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
-            st.caption(
-                f"✅ OddsPapi: {len(props)} props "
-                f"fetched ({daily_used + 1}/"
-                f"{ODDSPAPI_FREE_TIER_DAILY_LIMIT}"
-                f" calls today)"
-            )
+            st.caption(f"✅ OddsPapi: {len(props)} props fetched ({daily_used + 1}/{ODDSPAPI_FREE_TIER_DAILY_LIMIT} calls today)")
         
         return props
         
@@ -2833,34 +3172,53 @@ def load_sport_data(sport):
     st.session_state["line_discrepancies"] = []
     st.session_state["multibook_discrepancies"] = multibook_discrepancies
     
-    # STEP 3: Insert into fallback chain
     if pp_props:
         props = pp_props
     elif ud_props_compare:
         props = ud_props_compare
     elif oddswrap_props:
         props = [p for p in oddswrap_props if p["Side"] == "OVER"]
-        st.info(
-            "Using DraftKings/Bovada props "
-            "as primary source"
-        )
+        st.info("Using DraftKings/Bovada props as primary source")
     else:
-        # Last resort — OddsPapi
-        # Only reaches here if ALL others failed
-        st.info(
-            "All primary sources unavailable — "
-            "trying OddsPapi backup..."
-        )
-        oddspapi_props = fetch_oddspapi_props(sport)
-        if oddspapi_props:
-            props = oddspapi_props
-            st.success(
-                f"✅ OddsPapi backup active — "
-                f"{len(oddspapi_props)} props loaded"
-            )
+        # Fallback 4 — BDL Props (NBA only)
+        # Uses existing BDL key, no new key needed
+        if sport == "NBA" and BDL_API_KEY:
+            st.info("Primary sources unavailable — trying BDL Props backup...")
+            bdl_props = fetch_bdl_props(sport)
+            if bdl_props:
+                props = bdl_props
+                st.success(f"✅ BDL Props backup active — {len(bdl_props)} props loaded")
+            else:
+                # Fallback 5 — ParlayPlay (NBA only)
+                st.info("BDL unavailable — trying ParlayPlay...")
+                parlayplay_props = fetch_parlayplay_props(sport)
+                if parlayplay_props:
+                    props = parlayplay_props
+                    st.success(f"✅ ParlayPlay backup — {len(parlayplay_props)} props")
+                else:
+                    # Fallback 6 — OddsPapi
+                    oddspapi_props = fetch_oddspapi_props(sport)
+                    if oddspapi_props:
+                        props = oddspapi_props
+                        st.success(f"✅ OddsPapi backup — {len(oddspapi_props)} props")
+                    else:
+                        games, _, _, _ = fetch_game_lines(sport)
+                        return [], games, 0, 0, {}, {}
         else:
-            games, _, _, _ = fetch_game_lines(sport)
-            return [], games, 0, 0, {}, {}
+            # Non-NBA or no BDL key
+            # Skip to ParlayPlay then OddsPapi
+            parlayplay_props = fetch_parlayplay_props(sport)
+            if parlayplay_props:
+                props = parlayplay_props
+                st.success(f"✅ ParlayPlay backup — {len(parlayplay_props)} props")
+            else:
+                oddspapi_props = fetch_oddspapi_props(sport)
+                if oddspapi_props:
+                    props = oddspapi_props
+                    st.success(f"✅ OddsPapi backup — {len(oddspapi_props)} props")
+                else:
+                    games, _, _, _ = fetch_game_lines(sport)
+                    return [], games, 0, 0, {}, {}
     
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
     games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
@@ -3353,7 +3711,6 @@ with tabs[0]:
     
     st.markdown("---")
     
-    # IMPROVED TODAY'S GAMES SECTION WITH WHITE TEXT, FORMATTING, AND EXPLANATIONS
     st.markdown("## 🏟️ TODAY'S GAMES")
     st.caption("📊 **Column Guide:** • **Spread** = Run line (MLB) / Point spread • **Total** = Over/Under (combined runs) • **Home ML/Away ML** = Moneyline odds (N/A = not provided by ESPN API)")
     
@@ -3362,18 +3719,14 @@ with tabs[0]:
         display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Date"]
         display_cols = [c for c in display_cols if c in df_games.columns]
         
-        # Create a copy for display
         display_df = df_games[display_cols].copy()
         
-        # Format Total column to show 1 decimal place
         if "Total" in display_df.columns:
             display_df["Total"] = display_df["Total"].apply(lambda x: f"{float(x):.1f}" if x not in ("N/A", "—", None) and str(x).replace('.','',1).isdigit() else "—")
         
-        # Format Spread column to clean up the display
         if "Spread" in display_df.columns:
             display_df["Spread"] = display_df["Spread"].apply(lambda x: str(x).replace("N/A", "—") if x not in ("N/A", None) else "—")
         
-        # Apply custom styling with proper alignment and white text
         styled_df = display_df.style.set_properties(**{
             'color': '#e8f0f8',
             'background-color': '#0d1520',
@@ -3385,8 +3738,6 @@ with tabs[0]:
         ])
         
         st.dataframe(styled_df, width="stretch", use_container_width=True, hide_index=True)
-        
-        # Add a helpful note about the totals
         st.caption("💡 **What does Total mean?** The projected combined runs scored by both teams. Bet OVER if you think more runs will be scored, UNDER if fewer.")
         
     else:
@@ -4037,7 +4388,6 @@ with tabs[3]:
             col1, col2, col3, col4 = st.columns([4,1,1,1])
             col1.write("")
             
-            # FIX 1: WIN button with proper multiplier
             if col2.button("✅ WIN", key=f"win_{i}"):
                 pick_count = st.session_state.get("last_pick_count", 2)
                 multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
@@ -4376,7 +4726,6 @@ with tabs[6]:
         results = []
         test_urls = ["https://partner-api.prizepicks.com/projections?per_page=1000&league_id=5", "https://api.prizepicks.com/projections?league_id=5&per_page=250", "https://api.prizepicks.com/projections?league_id=5&per_page=250&single_stat=true"]
         
-        # FIX 2: Updated test headers
         test_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": "https://app.prizepicks.com/",
@@ -4400,19 +4749,54 @@ with tabs[6]:
         st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
     st.markdown("---")
     st.markdown("### 📊 API Health Dashboard")
-    API_REGISTRY = [
-        {"name": "BallDontLie", "key": "BALLSDONTLIE_API_KEY", "path": BDL_COUNTER_PATH, "daily": None, "monthly": 200},
-        {"name": "Odds API", "key": "ODDS_API_KEY", "path": ODDS_API_COUNTER_PATH, "daily": None, "monthly": 450},
-        {"name": "API-Sports", "key": "API_SPORTS_KEY", "path": API_SPORTS_COUNTER_PATH, "daily": 100, "monthly": None},
-        {"name": "Sportmonks", "key": "SPORTMONKS_API_KEY", "path": SPORTMONKS_COUNTER_PATH, "daily": None, "monthly": 500},
-        {"name": "Unified API", "key": "UNIFIED_API_KEY", "path": UNIFIED_COUNTER_PATH, "daily": None, "monthly": 200},
-        {"name": "OddsPapi", "key": "ODDSPAPI_KEY", "path": ODDSPAPI_COUNTER_PATH, "daily": ODDSPAPI_FREE_TIER_DAILY_LIMIT, "monthly": ODDSPAPI_FREE_TIER_MONTHLY_LIMIT},
-    ]
-    for api in API_REGISTRY:
-        counter = load_json_data(api["path"], {"count":0,"monthly_count":0})
-        has_key = bool(st.secrets.get(api["key"],""))
-        status = f"{'🟢' if has_key else '🔴'} {'✅ Set' if has_key else '❌ Missing'}"
-        st.write(f"**{api['name']}**: {status}")
+    st.caption("🛡️ All APIs protected by unified budget guardian — hard stops at 80% of free tier")
+    
+    for key, budget in API_BUDGETS.items():
+        has_key = True
+        if budget.get("key"):
+            has_key = bool(st.secrets.get(budget["key"], ""))
+        
+        key_status = "🟢 No key needed" if not budget["key"] else ("🟢 Key set" if has_key else "🔴 Key missing")
+        
+        usage_status = api_budget_status(key)
+        
+        allowed, _ = api_budget_check(key)
+        gate_status = "✅ Open" if allowed else "🛑 Blocked — limit approached"
+        
+        with st.expander(f"{key} — {budget['description']}"):
+            col_a, col_b, col_c = st.columns(3)
+            col_a.markdown(f"**Key:** {key_status}")
+            col_b.markdown(f"**Usage:** {usage_status}")
+            col_c.markdown(f"**Gate:** {gate_status}")
+            
+            daily_limit = budget.get("daily_limit")
+            monthly_limit = budget.get("monthly_limit")
+            
+            if daily_limit:
+                st.caption(f"Daily limit: {daily_limit} | Hard stop at: {int(daily_limit * budget['hard_stop_pct'])}")
+            if monthly_limit:
+                st.caption(f"Monthly limit: {monthly_limit} | Hard stop at: {int(monthly_limit * budget['hard_stop_pct'])}")
+            if not daily_limit and not monthly_limit:
+                st.caption("No rate limits — free unlimited access")
+    
+    st.markdown("---")
+    st.markdown("**Reset API Counters**")
+    reset_cols = st.columns(len(API_BUDGETS))
+    for idx, (key, budget) in enumerate(API_BUDGETS.items()):
+        with reset_cols[idx]:
+            if st.button(f"Reset {key}", key=f"reset_{key}"):
+                path = budget["counter_path"]
+                if os.path.exists(path):
+                    os.remove(path)
+                st.success(f"{key} reset")
+    
+    if st.button("Reset ALL API Counters"):
+        for key, budget in API_BUDGETS.items():
+            path = budget["counter_path"]
+            if os.path.exists(path):
+                os.remove(path)
+        st.success("All API counters reset")
+    
     st.markdown("---")
     st.markdown("**💾 Data Persistence Status**")
     if GITHUB_TOKEN and GITHUB_GIST_ID:
@@ -4437,7 +4821,11 @@ with tabs[6]:
             st.success("All rolling caches cleared")
     with cache_cols[2]:
         if st.button("Clear All API Counters"):
-            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH, BDL_COUNTER_PATH, ODDSPAPI_COUNTER_PATH]:
+            for path in [API_SPORTS_COUNTER_PATH, SPORTMONKS_COUNTER_PATH, UNIFIED_COUNTER_PATH, ODDS_API_COUNTER_PATH, BDL_COUNTER_PATH, ODDSPAPI_COUNTER_PATH, PARLAYPLAY_COUNTER_PATH, BDL_PROPS_COUNTER_PATH]:
+                if os.path.exists(path):
+                    os.remove(path)
+            for budget in API_BUDGETS.values():
+                path = budget["counter_path"]
                 if os.path.exists(path):
                     os.remove(path)
             st.success("API counters reset")
