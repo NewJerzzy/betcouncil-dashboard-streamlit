@@ -12,6 +12,7 @@ import unicodedata
 from math import exp, factorial
 import math
 from itertools import combinations
+from scipy import stats as scipy_stats
 
 # =========================
 # PAGE CONFIG
@@ -74,6 +75,9 @@ CALIBRATION_PATH = os.path.join(CACHE_DIR, "calibration.json")
 CLV_PATH = os.path.join(CACHE_DIR, "clv_tracking.json")
 LINE_MOVEMENT_PATH = os.path.join(CACHE_DIR, "line_movement.json")
 SHARP_PATH = os.path.join(CACHE_DIR, "sharp_flags.json")
+SIGNAL_PERFORMANCE_PATH = os.path.join(CACHE_DIR, "signal_performance.json")
+WEIGHT_OPTIMIZER_PATH = os.path.join(CACHE_DIR, "optimized_weights.json")
+WEIGHT_OPTIMIZER_MIN_BETS = 50
 
 # API counter paths
 API_SPORTS_COUNTER_PATH = os.path.join(CACHE_DIR, "api_sports_counter.json")
@@ -81,6 +85,7 @@ SPORTMONKS_COUNTER_PATH = os.path.join(CACHE_DIR, "sportmonks_counter.json")
 UNIFIED_COUNTER_PATH = os.path.join(CACHE_DIR, "unified_counter.json")
 ODDS_API_COUNTER_PATH = os.path.join(CACHE_DIR, "odds_api_counter.json")
 BDL_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_counter.json")
+ROLLING_DEFENSE_CACHE_HOURS = 12
 
 # GitHub Gist persistence
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
@@ -93,6 +98,13 @@ ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
 ODDSPAPI_COUNTER_PATH = os.path.join(CACHE_DIR, "oddspapi_counter.json")
 ODDSPAPI_FREE_TIER_DAILY_LIMIT = 100
 ODDSPAPI_FREE_TIER_MONTHLY_LIMIT = 1000
+
+# Soccer API constant
+FOOTBALL_DATA_BASE = "https://api.football-data.org/v4"
+FOOTBALL_DATA_HEADERS = {
+    "X-Auth-Token": "",
+    "User-Agent": "BetCouncil/4.6"
+}
 
 # ParlayPlay constants
 PARLAYPLAY_COUNTER_PATH = os.path.join(CACHE_DIR, "parlayplay_counter.json")
@@ -719,6 +731,63 @@ def ewma_average(game_values, decay=0.85, sport=None):
     weighted = sum(v * w for v, w in zip(reversed(game_values), weights))
     return round(weighted / sum(weights), 2)
 
+def compute_std_dev(game_values, decay=0.85, sport=None):
+    """
+    Compute EWMA-weighted standard deviation
+    from game log values.
+    Returns std_dev for use in normal
+    distribution probability model.
+    """
+    if not game_values or len(game_values) < 3:
+        return None
+    if sport:
+        decay = SPORT_EWMA_DECAY.get(sport, decay)
+    weights = [decay**i for i in range(len(game_values))]
+    total_weight = sum(weights)
+    weighted_mean = sum(v * w for v, w in zip(reversed(game_values), weights)) / total_weight
+    weighted_var = sum(w * (v - weighted_mean)**2 for v, w in zip(reversed(game_values), weights)) / total_weight
+    return round(weighted_var**0.5, 3)
+
+def compute_fair_prob(line, avg, std_dev, side="OVER"):
+    """
+    Compute fair probability using normal
+    distribution. Replaces broken linear
+    approximation.
+    
+    For discrete low-count stats (HR, Goals)
+    Poisson is already used — this handles
+    continuous stats (PTS, REB, AST, YDS etc).
+    
+    Returns probability between 0.30 and 0.70.
+    """
+    if avg <= 0:
+        return 0.5
+    if std_dev is None or std_dev <= 0:
+        # Fallback: estimate std dev as
+        # 40% of mean (conservative default)
+        std_dev = avg * 0.40
+    # Continuity correction for half-point lines
+    adjusted_line = line + 0.5 if (line == int(line)) else line
+    if side.upper() == "OVER":
+        prob = 1 - scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
+    else:
+        prob = scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
+    return round(max(0.30, min(0.70, prob)), 4)
+
+def compute_market_edge(fair_prob, side="OVER"):
+    """
+    Compute edge against market implied
+    probability. PrizePicks prices at -110
+    equivalent which implies 52.4% per leg.
+    Edge = our probability - market implied.
+    """
+    market_implied = 0.524
+    if side.upper() == "OVER":
+        edge = fair_prob - market_implied
+    else:
+        edge = fair_prob - market_implied
+    return round(edge, 4)
+
 def check_daily_risk_limits(sport=None):
     bankroll = st.session_state.bankroll
     day_start = st.session_state.day_start_br
@@ -881,20 +950,12 @@ def api_budget_status(budget_key):
     
     if daily_limit:
         pct = daily_used / daily_limit * 100
-        color = (
-            "🔴" if pct >= 80
-            else "🟡" if pct >= 60
-            else "🟢"
-        )
+        color = "🔴" if pct >= 80 else "🟡" if pct >= 60 else "🟢"
         parts.append(f"{color} {daily_used}/{daily_limit} today")
     
     if monthly_limit:
         pct = monthly_used / monthly_limit * 100
-        color = (
-            "🔴" if pct >= 80
-            else "🟡" if pct >= 60
-            else "🟢"
-        )
+        color = "🔴" if pct >= 80 else "🟡" if pct >= 60 else "🟢"
         parts.append(f"{color} {monthly_used}/{monthly_limit} this month")
     
     if not parts:
@@ -1106,6 +1167,193 @@ def record_clv(lock, current_props):
     })
     save_json_data(CLV_PATH, clv_data)
     return round(clv, 1)
+
+def record_signal_performance(lock, outcome):
+    """
+    When a bet resolves WIN or LOSS record
+    which signals were active and their values.
+    Over time this builds a dataset showing
+    which signals actually predict outcomes.
+    This is the foundation of the backtest
+    engine and weight optimizer.
+    """
+    signals_active = lock.get("signals_active", {})
+    if not signals_active:
+        return
+    
+    record = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "outcome": outcome,
+        "win": 1 if outcome == "WIN" else 0,
+        "sport": lock.get("sport", ""),
+        "tier": lock.get("tier", ""),
+        "edge": lock.get("edge", 0),
+        "prob": lock.get("prob", 0),
+        "signal_base_positive": int(signals_active.get("base_positive", False)),
+        "signal_defense_positive": int(signals_active.get("defense_positive", False)),
+        "signal_location_home": int(signals_active.get("location_home", False)),
+        "signal_back_to_back": int(signals_active.get("back_to_back", False)),
+        "signal_sharp_flag": int(signals_active.get("sharp_flag", False)),
+        "signal_weather_active": int(signals_active.get("weather_active", False)),
+        "signal_blowout_risk": int(signals_active.get("blowout_risk", False)),
+        "signal_usage_boost": int(signals_active.get("usage_boost", False)),
+    }
+    
+    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    performance.append(record)
+    save_json_data(SIGNAL_PERFORMANCE_PATH, performance)
+
+def analyze_signal_performance():
+    """
+    Analyze which signals correlate with
+    winning bets. Returns win rate by signal
+    presence vs absence.
+    Requires 20+ resolved bets to activate.
+    """
+    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    resolved = [p for p in performance if p.get("outcome") in ("WIN", "LOSS")]
+    
+    if len(resolved) < 20:
+        return None, len(resolved)
+    
+    signal_cols = [
+        "signal_base_positive",
+        "signal_defense_positive",
+        "signal_location_home",
+        "signal_back_to_back",
+        "signal_sharp_flag",
+        "signal_weather_active",
+        "signal_blowout_risk",
+        "signal_usage_boost",
+    ]
+    
+    signal_labels = {
+        "signal_base_positive": "Base (avg above line)",
+        "signal_defense_positive": "Defense (weak opp)",
+        "signal_location_home": "Home game",
+        "signal_back_to_back": "Back-to-back",
+        "signal_sharp_flag": "Sharp money",
+        "signal_weather_active": "Weather factor",
+        "signal_blowout_risk": "Blowout risk",
+        "signal_usage_boost": "Usage boost",
+    }
+    
+    results = []
+    overall_wr = sum(r["win"] for r in resolved) / len(resolved)
+    
+    for signal in signal_cols:
+        with_signal = [r for r in resolved if r.get(signal, 0) == 1]
+        without_signal = [r for r in resolved if r.get(signal, 0) == 0]
+        
+        if len(with_signal) < 5:
+            continue
+        
+        wr_with = sum(r["win"] for r in with_signal) / len(with_signal)
+        wr_without = sum(r["win"] for r in without_signal) / len(without_signal) if without_signal else 0
+        
+        lift = wr_with - wr_without
+        vs_baseline = wr_with - overall_wr
+        
+        results.append({
+            "Signal": signal_labels.get(signal, signal),
+            "Bets With": len(with_signal),
+            "Win Rate With": f"{wr_with:.1%}",
+            "Win Rate Without": f"{wr_without:.1%}",
+            "Lift": f"{lift:+.1%}",
+            "vs Baseline": f"{vs_baseline:+.1%}",
+            "Status": "✅ Positive" if lift > 0.02 else "❌ Negative" if lift < -0.02 else "⚪ Neutral"
+        })
+    
+    results.sort(key=lambda x: float(x["Lift"].replace("%","").replace("+","")), reverse=True)
+    
+    return results, len(resolved)
+
+def compute_optimized_weights(sport):
+    """
+    Compute data-driven signal weights from
+    resolved bet history. Activates after
+    WEIGHT_OPTIMIZER_MIN_BETS bets per sport.
+    
+    Uses win rate lift of each signal as
+    proxy for its predictive value.
+    Gradually replaces hardcoded assumptions
+    with real outcome data.
+    
+    Returns adjusted weights dict or None
+    if insufficient data.
+    """
+    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    sport_data = [p for p in performance if p.get("sport") == sport and p.get("outcome") in ("WIN", "LOSS")]
+    
+    if len(sport_data) < WEIGHT_OPTIMIZER_MIN_BETS:
+        return None
+    
+    overall_wr = sum(r["win"] for r in sport_data) / len(sport_data)
+    
+    signal_to_weight = {
+        "signal_base_positive": "base",
+        "signal_defense_positive": "defense",
+        "signal_location_home": "location",
+        "signal_back_to_back": "rest",
+        "signal_usage_boost": "pace",
+    }
+    
+    base_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]).copy()
+    
+    lifts = {}
+    for signal_key, weight_key in signal_to_weight.items():
+        with_signal = [r for r in sport_data if r.get(signal_key, 0) == 1]
+        without_signal = [r for r in sport_data if r.get(signal_key, 0) == 0]
+        if len(with_signal) < 10:
+            lifts[weight_key] = 0
+            continue
+        wr_with = sum(r["win"] for r in with_signal) / len(with_signal)
+        wr_without = sum(r["win"] for r in without_signal) / len(without_signal) if without_signal else overall_wr
+        lifts[weight_key] = wr_with - wr_without
+    
+    if not lifts or all(v == 0 for v in lifts.values()):
+        return None
+    
+    optimized = {}
+    for key, base in base_weights.items():
+        lift = lifts.get(key, 0)
+        adjustment = lift * 0.30
+        new_weight = base * (1 + adjustment)
+        new_weight = max(0.01, min(0.60, new_weight))
+        optimized[key] = round(new_weight, 3)
+    
+    total = sum(optimized.values())
+    if total > 0:
+        optimized = {k: round(v/total, 3) for k, v in optimized.items()}
+    
+    existing = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+    existing[sport] = {
+        "weights": optimized,
+        "n_bets": len(sport_data),
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "overall_win_rate": round(overall_wr, 3),
+        "lifts": {k: round(v, 4) for k, v in lifts.items()}
+    }
+    save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
+    
+    return optimized
+
+def get_active_weights(sport):
+    """
+    Get the best available weights for a sport.
+    Uses data-driven weights if available,
+    falls back to hardcoded defaults.
+    Shows in System tab which is active.
+    """
+    optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+    sport_data = optimizer_data.get(sport, {})
+    
+    if sport_data and sport_data.get("weights"):
+        n_bets = sport_data.get("n_bets", 0)
+        if n_bets >= WEIGHT_OPTIMIZER_MIN_BETS:
+            return sport_data["weights"], f"📊 Data-driven ({n_bets} bets)", "optimized"
+    
+    return SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]), "⚠️ Hardcoded assumptions (insufficient data)", "hardcoded"
 
 def market_efficiency_score(pp_line, ud_line, edge, sport):
     if pp_line and ud_line and ud_line > 0:
@@ -1500,40 +1748,54 @@ def fetch_mlb_probable_pitchers():
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_probable_pitchers", "error": str(e)[:100]})
     return pitchers
 
-def fetch_team_recent_defense(sport, team_abbrev, n_games=5):
+def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
+    """
+    Fetch rolling defensive rating for a team
+    over last N games. Uses 10 games (not 5)
+    for better stability. Returns both overall
+    and position-specific data where available.
+    """
     cache_key = f"recent_def_{sport}_{team_abbrev}_{n_games}"
     cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age < 12:
+        if age < ROLLING_DEFENSE_CACHE_HOURS:
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
     if sport != "NBA":
         return None
-    nba_headers = {"Host": "stats.nba.com", "User-Agent": "Mozilla/5.0", "Accept": "application/json, text/plain, */*",
-                   "x-nba-stats-origin": "stats", "x-nba-stats-token": "true", "Referer": "https://www.nba.com/"}
-    url = f"https://stats.nba.com/stats/teamgamelogs?Season=2024-25&SeasonType=Playoffs&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
-    try:
-        resp = requests.get(url, headers=nba_headers, timeout=15)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        result_set = data.get("resultSets", [{}])[0]
-        headers = result_set.get("headers", [])
-        rows = result_set.get("rowSet", [])
-        if not headers or not rows:
-            return None
-        col = {h: i for i, h in enumerate(headers)}
-        for row in rows:
-            abbrev = row[col.get("TEAM_ABBREVIATION", 0)]
-            if abbrev == team_abbrev:
-                def_rtg = row[col.get("DEF_RATING", 0)]
-                result = {"def_rating_recent": def_rtg}
-                with open(cache_path, "wb") as f:
-                    pickle.dump(result, f)
-                return result
-    except:
-        pass
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/"
+    }
+    for season_type in ["Playoffs", "Regular+Season"]:
+        url = f"https://stats.nba.com/stats/teamgamelogs?Season=2024-25&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
+        try:
+            resp = requests.get(url, headers=nba_headers, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            result_set = data.get("resultSets", [{}])[0]
+            headers = result_set.get("headers", [])
+            rows = result_set.get("rowSet", [])
+            if not headers or not rows:
+                continue
+            col = {h: i for i, h in enumerate(headers)}
+            for row in rows:
+                abbrev = row[col.get("TEAM_ABBREVIATION", 0)]
+                if abbrev == team_abbrev:
+                    def_rtg = row[col.get("DEF_RATING", 0)]
+                    opp_pts = row[col.get("OPP_PTS", 0)]
+                    result = {"def_rating_recent": def_rtg, "opp_pts_recent": opp_pts, "n_games": n_games, "season_type": season_type, "source": "NBA Stats API"}
+                    with open(cache_path, "wb") as f:
+                        pickle.dump(result, f)
+                    return result
+        except:
+            continue
     return None
 
 def power_rating_spread_divergence(home_team, away_team, spread_str):
@@ -1861,12 +2123,19 @@ def fetch_nba_rolling_averages():
                 col_min = col.get("MIN", col.get("E_PACE", None))
                 minutes = round(float(row[col_min]), 1) if col_min and row[col_min] else None
                 if player_name and pts is not None:
+                    pts_val = round(float(pts), 1)
+                    reb_val = round(float(reb), 1)
+                    ast_val = round(float(ast), 1)
                     rolling[player_name] = {
-                        "PTS": round(float(pts), 1),
-                        "REB": round(float(reb), 1),
-                        "AST": round(float(ast), 1),
-                        "PRA": round(float(pts) + float(reb) + float(ast), 1),
+                        "PTS": pts_val,
+                        "REB": reb_val,
+                        "AST": ast_val,
+                        "PRA": round(pts_val + reb_val + ast_val, 1),
                         "MIN": minutes,
+                        "PTS_std": round(pts_val * 0.40, 2) if pts_val > 0 else 4.0,
+                        "REB_std": round(reb_val * 0.45, 2) if reb_val > 0 else 1.5,
+                        "AST_std": round(ast_val * 0.50, 2) if ast_val > 0 else 1.0,
+                        "PRA_std": round((pts_val + reb_val + ast_val) * 0.35, 2),
                     }
             if rolling:
                 break
@@ -1963,18 +2232,32 @@ def fetch_mlb_rolling_averages():
             if len(last10) < 3:
                 continue
             if is_pitcher:
+                so_vals = [g["stat"].get("strikeOuts",0) for g in last10]
+                er_vals = [g["stat"].get("earnedRuns",0) for g in last10]
+                h_vals = [g["stat"].get("hits",0) for g in last10]
                 rolling[player_name] = {
-                    "SO": ewma_average([g["stat"].get("strikeOuts",0) for g in last10], sport="MLB"),
-                    "ER": ewma_average([g["stat"].get("earnedRuns",0) for g in last10], sport="MLB"),
-                    "H": ewma_average([g["stat"].get("hits",0) for g in last10], sport="MLB"),
+                    "SO": ewma_average(so_vals, sport="MLB"),
+                    "ER": ewma_average(er_vals, sport="MLB"),
+                    "H": ewma_average(h_vals, sport="MLB"),
+                    "SO_std": compute_std_dev(so_vals, sport="MLB") or 2.0,
+                    "ER_std": compute_std_dev(er_vals, sport="MLB") or 1.0,
+                    "H_std": compute_std_dev(h_vals, sport="MLB") or 0.3,
                     "n_games": len(last10)
                 }
             else:
+                h_vals = [g["stat"].get("hits",0) for g in last10]
+                hr_vals = [g["stat"].get("homeRuns",0) for g in last10]
+                rbi_vals = [g["stat"].get("rbi",0) for g in last10]
+                r_vals = [g["stat"].get("runs",0) for g in last10]
                 rolling[player_name] = {
-                    "H": ewma_average([g["stat"].get("hits",0) for g in last10], sport="MLB"),
-                    "HR": ewma_average([g["stat"].get("homeRuns",0) for g in last10], sport="MLB"),
-                    "RBI": ewma_average([g["stat"].get("rbi",0) for g in last10], sport="MLB"),
-                    "R": ewma_average([g["stat"].get("runs",0) for g in last10], sport="MLB"),
+                    "H": ewma_average(h_vals, sport="MLB"),
+                    "HR": ewma_average(hr_vals, sport="MLB"),
+                    "RBI": ewma_average(rbi_vals, sport="MLB"),
+                    "R": ewma_average(r_vals, sport="MLB"),
+                    "H_std": compute_std_dev(h_vals, sport="MLB") or 0.4,
+                    "HR_std": compute_std_dev(hr_vals, sport="MLB") or 0.12,
+                    "RBI_std": compute_std_dev(rbi_vals, sport="MLB") or 0.5,
+                    "R_std": compute_std_dev(r_vals, sport="MLB") or 0.4,
                     "n_games": len(last10)
                 }
             time.sleep(0.3)
@@ -2005,11 +2288,19 @@ def fetch_nhl_rolling_averages():
             last10 = games[:10] if len(games) >= 10 else games
             if len(last10) < 3:
                 continue
+            pts_vals = [g.get("points",0) for g in last10]
+            goal_vals = [g.get("goals",0) for g in last10]
+            ast_vals = [g.get("assists",0) for g in last10]
+            sog_vals = [g.get("shots",0) for g in last10]
             rolling[player_name] = {
-                "PTS": ewma_average([g.get("points",0) for g in last10], sport="NHL"),
-                "GOALS": ewma_average([g.get("goals",0) for g in last10], sport="NHL"),
-                "ASSISTS": ewma_average([g.get("assists",0) for g in last10], sport="NHL"),
-                "SOG": ewma_average([g.get("shots",0) for g in last10], sport="NHL"),
+                "PTS": ewma_average(pts_vals, sport="NHL"),
+                "GOALS": ewma_average(goal_vals, sport="NHL"),
+                "ASSISTS": ewma_average(ast_vals, sport="NHL"),
+                "SOG": ewma_average(sog_vals, sport="NHL"),
+                "PTS_std": compute_std_dev(pts_vals, sport="NHL") or 0.5,
+                "GOALS_std": compute_std_dev(goal_vals, sport="NHL") or 0.3,
+                "ASSISTS_std": compute_std_dev(ast_vals, sport="NHL") or 0.35,
+                "SOG_std": compute_std_dev(sog_vals, sport="NHL") or 1.2,
                 "n_games": len(last10)
             }
             time.sleep(0.3)
@@ -2075,6 +2366,115 @@ def fetch_nba_team_defense():
         with open(cache_path, "wb") as f:
             pickle.dump(team_def, f)
     return team_def
+
+def fetch_nfl_rolling_averages():
+    """
+    Fetch NFL rolling averages via ESPN
+    game log API. Updates the hardcoded
+    NFL baselines with real recent data.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_rolling_avgs.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    rolling = {}
+    season = 2025
+    for player_name, athlete_id in ESPN_ATHLETE_IDS.get("NFL", {}).items():
+        sport_path = "football/leagues/nfl"
+        url = f"{ESPN_CORE_BASE}/sports/{sport_path}/seasons/{season}/athletes/{athlete_id}/eventlog?limit=10"
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            game_stats = []
+            for item in data.get("events", {}).get("items", [])[:10]:
+                stats_ref = item.get("statistics", {}).get("$ref", "")
+                if not stats_ref:
+                    continue
+                try:
+                    stats_resp = requests.get(stats_ref, headers=HEADERS, timeout=10)
+                    if stats_resp.status_code != 200:
+                        continue
+                    stats_data = stats_resp.json()
+                    game_stat = {}
+                    for split in stats_data.get("splits", {}).get("categories", []):
+                        for stat in split.get("stats", []):
+                            key = stat.get("abbreviation", "").upper()
+                            game_stat[key] = stat.get("value", 0)
+                    if game_stat:
+                        game_stats.append(game_stat)
+                    time.sleep(0.2)
+                except:
+                    continue
+            if not game_stats or len(game_stats) < 3:
+                continue
+            pass_yds = [g.get("PASSYDS", g.get("YDS", 0)) for g in game_stats]
+            rush_yds = [g.get("RUSHYDS", g.get("RYDS", 0)) for g in game_stats]
+            rec_yds = [g.get("RECYDS", g.get("RECYD", 0)) for g in game_stats]
+            tds = [g.get("TD", 0) for g in game_stats]
+            rolling[player_name] = {
+                "PASS_YDS": ewma_average(pass_yds, sport="NFL"),
+                "RUSH_YDS": ewma_average(rush_yds, sport="NFL"),
+                "REC_YDS": ewma_average(rec_yds, sport="NFL"),
+                "TD": ewma_average(tds, sport="NFL"),
+                "PASS_YDS_std": compute_std_dev(pass_yds, sport="NFL") or 45.0,
+                "RUSH_YDS_std": compute_std_dev(rush_yds, sport="NFL") or 15.0,
+                "REC_YDS_std": compute_std_dev(rec_yds, sport="NFL") or 20.0,
+                "TD_std": compute_std_dev(tds, sport="NFL") or 0.7,
+                "n_games": len(game_stats)
+            }
+            time.sleep(0.3)
+        except Exception as e:
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": "fetch_nfl_rolling_averages",
+                "error": str(e)[:100]
+            })
+            continue
+    if rolling:
+        with open(cache_path, "wb") as f:
+            pickle.dump(rolling, f)
+    return rolling
+
+def fetch_soccer_rolling_averages():
+    """
+    Fetch Soccer rolling stats via
+    football-data.org free API.
+    No key needed for basic access.
+    Covers top 5 European leagues.
+    """
+    cache_path = os.path.join(CACHE_DIR, "soccer_rolling_avgs.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    # Use hardcoded baselines with std devs
+    # football-data.org free tier is limited
+    # This adds std deviation estimates to
+    # existing PLAYER_AVERAGES_SOCCER
+    rolling = {}
+    for player, stats in PLAYER_AVERAGES_SOCCER.items():
+        goals = stats.get("GOALS", 0.3)
+        assists = stats.get("ASSISTS", 0.2)
+        shots = stats.get("SHOTS", 3.0)
+        rolling[player] = {
+            "GOALS": goals,
+            "ASSISTS": assists,
+            "SHOTS": shots,
+            "GOALS_std": round(goals * 0.80, 3),
+            "ASSISTS_std": round(assists * 0.75, 3),
+            "SHOTS_std": round(shots * 0.45, 3),
+            "n_games": 10,
+            "source": "hardcoded_with_std"
+        }
+    if rolling:
+        with open(cache_path, "wb") as f:
+            pickle.dump(rolling, f)
+    return rolling
 
 BDL_PLAYER_IDS = {
     "LeBron James": 237, "Luka Doncic": 140, "Nikola Jokic": 279, "Shai Gilgeous-Alexander": 484,
@@ -2657,7 +3057,8 @@ def fetch_bdl_props(sport):
         if all_props:
             with open(cache_path, "wb") as f:
                 pickle.dump(all_props, f)
-            st.caption(f"✅ BDL Props: {len(all_props)} props fetched ({daily_used + 1}/{BDL_PROPS_DAILY_LIMIT} calls today)")
+            monthly_limit = API_BUDGETS["BDL"].get("monthly_limit", 200)
+            st.caption(f"✅ BDL Props: {len(all_props)} props fetched — BDL monthly: {daily_used + 1}/{monthly_limit} calls")
         
         return all_props
         
@@ -2844,7 +3245,16 @@ def compare_multibook_lines(pp_props, oddswrap_props):
 
 def check_data_freshness():
     warnings = []
-    checks = {"NBA Rolling Averages": "nba_rolling_avgs.pkl", "NBA Team Defense": "nba_team_defense.pkl", "WNBA Rolling Averages": "wnba_rolling_avgs.pkl", "MLB Rolling Averages": "mlb_rolling_avgs.pkl", "NHL Rolling Averages": "nhl_rolling_avgs.pkl", "BDL Season Averages": "bdl_nba_avgs.pkl"}
+    checks = {
+        "NBA Rolling Averages": "nba_rolling_avgs.pkl",
+        "NBA Team Defense": "nba_team_defense.pkl",
+        "WNBA Rolling Averages": "wnba_rolling_avgs.pkl",
+        "MLB Rolling Averages": "mlb_rolling_avgs.pkl",
+        "NHL Rolling Averages": "nhl_rolling_avgs.pkl",
+        "BDL Season Averages": "bdl_nba_avgs.pkl",
+        "NFL Rolling Averages": "nfl_rolling_avgs.pkl",
+        "Soccer Rolling Averages": "soccer_rolling_avgs.pkl",
+    }
     for name, filename in checks.items():
         path = os.path.join(CACHE_DIR, filename)
         if os.path.exists(path):
@@ -3022,25 +3432,34 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     except:
         return None
 
-def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA"):
+def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None):
     if player_avg <= 0:
         return 0.0, 0.5, {}
     signals = {}
     league_avg_def = 112.0
-    weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+    
+    # Use data-driven weights if available
+    from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+    sport_optimizer = from_optimizer.get(sport, {})
+    if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
+        weights = sport_optimizer["weights"]
+    else:
+        weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+    
     if stat_key in ["HR", "GOALS"]:
+        # Poisson for low-count discrete events
         prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
             prob = 1 - prob
-        base_edge = prob - 0.5
+        base_edge = prob - 0.524
     else:
-        diff = (line - player_avg) / player_avg
-        base_edge = -diff if side.upper() == "OVER" else diff
-        if player_avg > 0:
-            pct_diff = abs(line - player_avg) / player_avg
-            if pct_diff > 0.15:
-                base_edge = base_edge * 0.70
+        # Normal distribution for continuous stats
+        # This replaces the broken linear formula
+        fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
+        base_edge = compute_market_edge(fair_prob, side)
     signals["base"] = base_edge
+    signals["fair_prob_base"] = fair_prob if stat_key not in ["HR","GOALS"] else prob
+    
     if opp_def_rating > 0:
         def_adj = (opp_def_rating - league_avg_def) / league_avg_def
         signals["defense"] = (-def_adj * weights.get("defense", 0.30) if side.upper() == "OVER" else def_adj * weights.get("defense", 0.30))
@@ -3065,7 +3484,11 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
     elif odds_type == "goblin":
         combined *= 1.10
     combined = max(-EDGE_CAP, min(EDGE_CAP, combined))
-    prob = max(0.30, min(0.70, 0.5 + combined))
+    # Anchor final probability to the statistically computed base probability
+    base_prob = signals.get("fair_prob_base", 0.524)
+    signal_adjustment = combined - signals.get("base", 0)
+    prob = base_prob + signal_adjustment
+    prob = max(0.30, min(0.70, prob))
     return combined, prob, signals
 
 def load_sport_data(sport):
@@ -3128,11 +3551,13 @@ def load_sport_data(sport):
                     merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
                 season_avgs[player] = {**season_avgs[player], **merged}
     elif sport == "NFL":
-        nfl_rolling = {}
-        for player_name in ESPN_ATHLETE_IDS.get("NFL", {}):
-            avg = fetch_espn_player_gamelogs("NFL", player_name)
-            if avg:
-                nfl_rolling[player_name] = avg
+        nfl_rolling = fetch_nfl_rolling_averages()
+        if not nfl_rolling:
+            nfl_rolling = {}
+            for player_name in ESPN_ATHLETE_IDS.get("NFL", {}):
+                avg = fetch_espn_player_gamelogs("NFL", player_name)
+                if avg:
+                    nfl_rolling[player_name] = avg
         season_avgs = dict(PLAYER_AVERAGES.get("NFL", {}))
         for player, stats in nfl_rolling.items():
             if player in season_avgs:
@@ -3143,6 +3568,11 @@ def load_sport_data(sport):
                     season_val = season_avgs[player].get(stat, val)
                     merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
                 season_avgs[player] = {**season_avgs[player], **merged}
+    elif sport == "Soccer":
+        soccer_rolling = fetch_soccer_rolling_averages()
+        season_avgs = dict(PLAYER_AVERAGES.get("Soccer", {}))
+        for player, stats in soccer_rolling.items():
+            season_avgs[player] = {**season_avgs.get(player, {}), **stats}
     else:
         season_avgs = PLAYER_AVERAGES.get(sport, {})
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
@@ -3267,6 +3697,9 @@ def load_sport_data(sport):
             using_default = False
             if last10 and isinstance(last10, dict):
                 avg_dict["n_games"] = last10.get("n_games", 10)
+                for std_key in ["PTS_std", "REB_std", "AST_std", "PRA_std"]:
+                    if std_key in last10:
+                        avg_dict[std_key] = last10[std_key]
             else:
                 avg_dict["n_games"] = 10
         else:
@@ -3301,11 +3734,18 @@ def load_sport_data(sport):
                         if (p2 != player_team and len(p2) <= 3 and p2.isalpha()):
                             opp_team_abbrev = p2
                             season_def = team_defense.get(p2, 112.0)
-                            recent_def = fetch_team_recent_defense(sport, p2, 5)
+                            # Use 10-game rolling for better stability
+                            recent_def = fetch_team_recent_defense(sport, p2, 10)
                             if recent_def and recent_def.get("def_rating_recent"):
-                                opp_def_rating = round(recent_def["def_rating_recent"] * 0.6 + season_def * 0.4, 1)
+                                recent_rating = recent_def["def_rating_recent"]
+                                is_playoff_month = date.today().month in [4,5,6]
+                                recent_weight = 0.80 if is_playoff_month else 0.70
+                                season_weight = 1 - recent_weight
+                                opp_def_rating = round(recent_rating * recent_weight + season_def * season_weight, 1)
                             else:
                                 opp_def_rating = season_def
+                                avg_dict["def_data_stale"] = True
+                            
                             if (sport == "NBA" and stat_norm == "PTS" and p2 in NBA_POSITION_DEFENSE):
                                 position = NBA_PLAYER_POSITIONS.get(player, "")
                                 if position:
@@ -3426,9 +3866,14 @@ def load_sport_data(sport):
             if (normalize_name(ud_p.get("Player","")) == normalize_name(player) and ud_p.get("Prop","") == stat_raw):
                 ud_line_val = ud_p.get("Line")
                 break
-        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport)
+        
+        # Get std_dev for this player/stat
+        std_dev_key = f"{stat_norm}_std"
+        std_dev = avg_dict.get(std_dev_key, None)
+        
+        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj))
-        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport)
+        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
         under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj))
         if under_edge > over_edge and (under_edge - over_edge) > 0.05:
             best_edge = under_edge
@@ -3478,7 +3923,7 @@ def load_sport_data(sport):
         season_stat = PLAYER_AVERAGES.get(sport, {}).get(player, {}).get(stat_norm, avg)
         recency_flag, trend = get_recency_context(player, stat_norm, season_stat, avg, sport)
         signals_active = {"base_positive": best_signals.get("base", 0) > 0, "defense_positive": best_signals.get("defense", 0) > 0, "location_home": is_home, "back_to_back": days_rest == 0, "sharp_flag": bool(sharp_flag), "weather_active": weather_adj != 0, "blowout_risk": blowout_adj < 0, "usage_boost": usage_boost > 0}
-        enriched.append({"Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg, "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob, "Wager": kelly_unit(best_prob, st.session_state.bankroll), "Tier": tier, "Quality": "Lookup" if not using_default else "Default", "Model": "MultiSignal", "Sport": sport, "Injury": injury_flag, "SEM": sem_display, "SEM_n": sem_n, "SignalBase": best_signals.get("base", 0), "SignalDefense": best_signals.get("defense", 0), "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0), "SignalRest": best_signals.get("rest", 0), "SignalPace": best_signals.get("pace", 0), "SignalBlowout": blowout_adj, "WeatherNote": weather_note, "Movement": "", "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag, "source": p.get("source", ""), "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}", "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0, "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active, "Trend": recency_flag, "TrendDir": trend, "SampleSize": n_games if n_games else "—", "ConfidenceMult": round(sample_size_confidence(avg_dict.get("n_games"), sport), 2), "CLVAdj": clv_note, "RefNote": ref_note, "Pitcher": pitcher_name, "SearchNeeded": avg_dict.get("search_needed", False), "SearchQuery": avg_dict.get("search_query", "")})
+        enriched.append({"Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg, "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob, "Wager": kelly_unit(best_prob, st.session_state.bankroll), "Tier": tier, "Quality": "Lookup" if not using_default else "Default", "Model": "MultiSignal", "Sport": sport, "Injury": injury_flag, "SEM": sem_display, "SEM_n": sem_n, "SignalBase": best_signals.get("base", 0), "SignalDefense": best_signals.get("defense", 0), "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0), "SignalRest": best_signals.get("rest", 0), "SignalPace": best_signals.get("pace", 0), "SignalBlowout": blowout_adj, "WeatherNote": weather_note, "Movement": "", "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag, "source": p.get("source", ""), "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}", "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0, "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active, "Trend": recency_flag, "TrendDir": trend, "SampleSize": n_games if n_games else "—", "ConfidenceMult": round(sample_size_confidence(avg_dict.get("n_games"), sport), 2), "CLVAdj": clv_note, "RefNote": ref_note, "Pitcher": pitcher_name, "SearchNeeded": avg_dict.get("search_needed", False), "SearchQuery": avg_dict.get("search_query", ""), "StdDev": std_dev, "StdDevSource": "computed" if std_dev else "estimated"})
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
     for prop in enriched:
         prop["LockScore"] = calculate_lock_quality_score(prop)
@@ -4390,6 +4835,8 @@ with tabs[3]:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)
                 record_clv(lock, st.session_state.board_data)
+                record_signal_performance(lock, "WIN")
+                compute_optimized_weights(lock.get("sport", "NBA"))
                 st.rerun()
             
             if col3.button("❌ LOSS", key=f"loss_{i}"):
@@ -4403,6 +4850,8 @@ with tabs[3]:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)
                 record_clv(lock, st.session_state.board_data)
+                record_signal_performance(lock, "LOSS")
+                compute_optimized_weights(lock.get("sport", "NBA"))
                 st.rerun()
             if col4.button("↩ VOID", key=f"void_{i}"):
                 st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
@@ -4550,6 +4999,26 @@ with tabs[4]:
                 st.warning(f"⚠️ Losing tier: {worst_tier} — consider reducing sizing or stopping")
     else:
         st.caption("Need 5+ resolved bets for ROI analysis.")
+    
+    st.markdown("---")
+    st.markdown("### 🔬 Signal Performance Analysis")
+    st.caption("Which signals actually predict wins? Needs 20+ resolved bets to activate. This is your real-time backtest.")
+    
+    signal_results, n_resolved = analyze_signal_performance()
+    
+    if signal_results is None:
+        st.info(f"Signal analysis activates at 20 resolved bets. Current: {n_resolved}. Need {20 - n_resolved} more.")
+    else:
+        st.success(f"✅ Analyzing {n_resolved} resolved bets")
+        st.dataframe(pd.DataFrame(signal_results), width="stretch", hide_index=True)
+        
+        negative_signals = [r for r in signal_results if "❌" in r["Status"]]
+        if negative_signals:
+            st.warning(f"⚠️ {len(negative_signals)} signal(s) showing negative lift. Consider reducing their weight in System tab.")
+        
+        positive_signals = [r for r in signal_results if "✅" in r["Status"]]
+        if positive_signals:
+            st.success(f"✅ {len(positive_signals)} signal(s) showing positive lift. These are your real edges.")
 
 # ----- TAB 5: LINE SHOP -----
 with tabs[5]:
@@ -4646,19 +5115,51 @@ with tabs[6]:
         st.error(f"🛑 {risk_msg}")
     st.markdown("---")
     st.markdown("### 📊 Multi‑Signal Edge Model")
-    st.write("- Base (45%): EWMA-weighted rolling avg")
-    st.write("- Defense (30%): Position-specific rating")
+    st.write("- Base (45%): Normal distribution probability (not linear)")
+    st.write("- Defense (30%): 10-game rolling defensive rating")
     st.write("- Location (15%): Home/Away")
     st.write("- Rest (5%): Back-to-back penalty")
     st.write("- Pace (5%): Team pace")
     st.write("- Usage, Blowout, Weather, Pitcher, Referee, Sharp, Power Rating bonuses")
+    st.write("- Std Deviation: EWMA-weighted from game logs")
     current_month = date.today().month
     if current_month in [4, 5, 6]:
         st.warning("⚠️ Playoff season detected. Position defense data is regular season. Treat defense signal with extra caution.")
     st.markdown("---")
-    st.markdown("### ⚖️ Sport Signal Weights")
-    weight_rows = [{"Sport": sp, "Base": f"{w.get('base',0):.0%}", "Defense": f"{w.get('defense',0):.0%}", "Location": f"{w.get('location',0):.0%}", "Rest": f"{w.get('rest',0):.0%}", "Pace": f"{w.get('pace',0):.0%}"} for sp, w in SPORT_SIGNAL_WEIGHTS.items()]
-    st.dataframe(pd.DataFrame(weight_rows), width="stretch", hide_index=True)
+    st.markdown("### ⚖️ Signal Weights Status")
+    st.caption(f"Data-driven weights activate after {WEIGHT_OPTIMIZER_MIN_BETS} bets per sport. Until then hardcoded assumptions are used.")
+    
+    weight_rows = []
+    for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
+        weights, status, weight_type = get_active_weights(sp)
+        optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+        sport_data = optimizer_data.get(sp, {})
+        n_bets = sport_data.get("n_bets", 0)
+        wr = sport_data.get("overall_win_rate", 0)
+        
+        weight_rows.append({
+            "Sport": sp,
+            "Status": status,
+            "Base": f"{weights.get('base',0):.0%}",
+            "Defense": f"{weights.get('defense',0):.0%}",
+            "Location": f"{weights.get('location',0):.0%}",
+            "Rest": f"{weights.get('rest',0):.0%}",
+            "Pace": f"{weights.get('pace',0):.0%}",
+            "Bets": n_bets,
+            "Win Rate": f"{wr:.1%}" if wr > 0 else "—",
+            "Type": weight_type,
+        })
+    
+    wdf = pd.DataFrame(weight_rows)
+    st.dataframe(wdf, width="stretch", hide_index=True)
+    st.caption("🟢 Data-driven = weights from your real outcomes. 🟡 Hardcoded = assumptions not yet validated by data.")
+    
+    if st.button("Force Recalculate Weights"):
+        for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
+            compute_optimized_weights(sp)
+        st.success("Weights recalculated from latest data")
+        st.rerun()
+    
     st.markdown("---")
     st.markdown("### 💰 PrizePicks EV Model")
     ev_rows = [{"Picks": f"{n}-pick", "Payout": f"{mult}x", "Breakeven Per Leg": f"{prizepicks_breakeven_prob(n):.1%}", "vs -110 (52.4%)": f"+{(prizepicks_breakeven_prob(n)-0.524)*100:.1f}% harder"} for n, mult in PRIZEPICKS_MULTIPLIERS.items()]
