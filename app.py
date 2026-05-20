@@ -88,7 +88,7 @@ GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
 GIST_API = "https://api.github.com/gists"
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
-# STEP 1: Add API key constant
+# OddsPapi constants
 ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
 ODDSPAPI_COUNTER_PATH = os.path.join(CACHE_DIR, "oddspapi_counter.json")
 ODDSPAPI_FREE_TIER_DAILY_LIMIT = 100
@@ -825,13 +825,8 @@ def format_api_usage(counter_path, daily_limit=None, monthly_limit=None, api_nam
 def api_budget_check(budget_key):
     """
     Centralized budget guardian.
-    Call before every external API request.
     Returns (allowed, reason_string)
-    
-    Usage:
-        allowed, reason = api_budget_check("BDL")
-        if not allowed:
-            return []
+    Call before every external API request.
     """
     budget = API_BUDGETS.get(budget_key)
     if not budget:
@@ -842,48 +837,36 @@ def api_budget_check(budget_key):
     monthly_used = counter.get("monthly_count", 0)
     stop_pct = budget.get("hard_stop_pct", 0.80)
     
-    # Check daily limit
     daily_limit = budget.get("daily_limit")
     if daily_limit:
         threshold = int(daily_limit * stop_pct)
         if daily_used >= threshold:
-            reason = (
+            return False, (
                 f"{budget_key} daily limit "
                 f"approached: {daily_used}/"
-                f"{daily_limit} calls used today. "
-                f"Protecting free tier."
+                f"{daily_limit} — protecting free tier"
             )
-            return False, reason
     
-    # Check monthly limit
     monthly_limit = budget.get("monthly_limit")
     if monthly_limit:
         threshold = int(monthly_limit * stop_pct)
         if monthly_used >= threshold:
-            reason = (
+            return False, (
                 f"{budget_key} monthly limit "
                 f"approached: {monthly_used}/"
-                f"{monthly_limit} calls this month. "
-                f"Protecting free tier."
+                f"{monthly_limit} — protecting free tier"
             )
-            return False, reason
     
     return True, ""
 
 def api_budget_increment(budget_key):
-    """
-    Increment unified counter after every API call.
-    Always call this regardless of response status.
-    """
+    """Increment unified counter after every API call."""
     budget = API_BUDGETS.get(budget_key)
     if budget:
         increment_api_counter(budget["counter_path"])
 
 def api_budget_status(budget_key):
-    """
-    Returns current usage as display string.
-    Used in System tab.
-    """
+    """Returns current usage as display string."""
     budget = API_BUDGETS.get(budget_key)
     if not budget:
         return "Unknown"
@@ -3181,7 +3164,6 @@ def load_sport_data(sport):
         st.info("Using DraftKings/Bovada props as primary source")
     else:
         # Fallback 4 — BDL Props (NBA only)
-        # Uses existing BDL key, no new key needed
         if sport == "NBA" and BDL_API_KEY:
             st.info("Primary sources unavailable — trying BDL Props backup...")
             bdl_props = fetch_bdl_props(sport)
@@ -3189,7 +3171,7 @@ def load_sport_data(sport):
                 props = bdl_props
                 st.success(f"✅ BDL Props backup active — {len(bdl_props)} props loaded")
             else:
-                # Fallback 5 — ParlayPlay (NBA only)
+                # Fallback 5 — ParlayPlay
                 st.info("BDL unavailable — trying ParlayPlay...")
                 parlayplay_props = fetch_parlayplay_props(sport)
                 if parlayplay_props:
@@ -3206,7 +3188,6 @@ def load_sport_data(sport):
                         return [], games, 0, 0, {}, {}
         else:
             # Non-NBA or no BDL key
-            # Skip to ParlayPlay then OddsPapi
             parlayplay_props = fetch_parlayplay_props(sport)
             if parlayplay_props:
                 props = parlayplay_props
