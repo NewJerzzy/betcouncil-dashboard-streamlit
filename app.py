@@ -114,6 +114,89 @@ PARLAYPLAY_DAILY_LIMIT = 200
 BDL_PROPS_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_props_counter.json")
 BDL_PROPS_DAILY_LIMIT = 60
 
+# Odds API constants
+ODDS_API_BASE = "https://api.the-odds-api.com/v4"
+# Bookmaker keys for Odds API
+# Bovada = "bovada"
+# MyBookie = "mybookieag"
+# DraftKings = "draftkings"
+# FanDuel = "fanduel"
+ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel"
+ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars"
+
+# The Odds API sport keys
+ODDS_API_SPORT_MAP = {
+    "NBA": "basketball_nba",
+    "MLB": "baseball_mlb",
+    "NFL": "americanfootball_nfl",
+    "NHL": "icehockey_nhl",
+    "WNBA": "basketball_wnba",
+}
+
+# Player prop market keys by sport
+ODDS_API_PROP_MARKETS = {
+    "NBA": [
+        "player_points",
+        "player_rebounds",
+        "player_assists",
+        "player_points_rebounds_assists",
+        "player_steals",
+        "player_blocks",
+        "player_threes",
+        "player_turnovers",
+    ],
+    "MLB": [
+        "batter_hits",
+        "batter_home_runs",
+        "batter_rbis",
+        "batter_runs_scored",
+        "pitcher_strikeouts",
+        "pitcher_outs",
+    ],
+    "NHL": [
+        "player_points",
+        "player_goals",
+        "player_assists",
+        "player_shots_on_goal",
+    ],
+    "NFL": [
+        "player_pass_yds",
+        "player_rush_yds",
+        "player_reception_yds",
+        "player_pass_tds",
+    ],
+    "WNBA": [
+        "player_points",
+        "player_rebounds",
+        "player_assists",
+    ],
+}
+
+# Map Odds API market keys to our stat names
+ODDS_API_STAT_MAP = {
+    "player_points": "Points",
+    "player_rebounds": "Rebounds",
+    "player_assists": "Assists",
+    "player_points_rebounds_assists": "Pts+Reb+Ast",
+    "player_steals": "Steals",
+    "player_blocks": "Blocked Shots",
+    "player_threes": "3-PT Made",
+    "player_turnovers": "Turnovers",
+    "batter_hits": "Hits",
+    "batter_home_runs": "Home Runs",
+    "batter_rbis": "RBIs",
+    "batter_runs_scored": "Runs",
+    "pitcher_strikeouts": "Strikeouts",
+    "pitcher_outs": "Pitcher Outs",
+    "player_goals": "Goals",
+    "player_assists": "Assists",
+    "player_shots_on_goal": "Shots On Goal",
+    "player_pass_yds": "Passing Yards",
+    "player_rush_yds": "Rushing Yards",
+    "player_reception_yds": "Receiving Yards",
+    "player_pass_tds": "Touchdowns",
+}
+
 # Unified API budgets — shared across all functions using the same key
 API_BUDGETS = {
     "BDL": {
@@ -147,6 +230,14 @@ API_BUDGETS = {
         "counter_path": os.path.join(CACHE_DIR, "espn_counter.json"),
         "description": "ESPN (unlimited public API)",
         "hard_stop_pct": 1.0,
+    },
+    "ODDS_API": {
+        "key": "ODDS_API_KEY",
+        "daily_limit": None,
+        "monthly_limit": 500,
+        "counter_path": os.path.join(CACHE_DIR, "odds_api_counter.json"),
+        "description": "The Odds API (Bovada/MyBookie props + game lines)",
+        "hard_stop_pct": 0.80,
     },
 }
 
@@ -654,7 +745,6 @@ except ImportError:
     ODDSWRAP_AVAILABLE = False
 
 ODDSWRAP_SPORT_MAP = {"NBA": "nba", "MLB": "mlb", "NFL": "nfl", "NHL": "nhl"}
-ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 ODDS_SPORTS_MAP = {
     "NBA": "basketball_nba", "MLB": "baseball_mlb",
     "NFL": "americanfootball_nfl", "NHL": "icehockey_nhl",
@@ -1392,6 +1482,12 @@ def calculate_lock_quality_score(prop):
         score += 10
     elif source.startswith("oddswrap"):
         score += 8
+    elif source.startswith("OddsAPI"):
+        score += 12
+    elif source.startswith("BDL"):
+        score += 10
+    elif source.startswith("ParlayPlay"):
+        score += 6
     else:
         score += 5
     if prop.get("Injury"):
@@ -2190,11 +2286,18 @@ def fetch_wnba_rolling_averages():
                 reb = row[col["REB"]]
                 ast = row[col["AST"]]
                 if name and pts is not None:
+                    pts_val = round(float(pts), 1)
+                    reb_val = round(float(reb), 1)
+                    ast_val = round(float(ast), 1)
                     rolling[name] = {
-                        "PTS": round(float(pts), 1),
-                        "REB": round(float(reb), 1),
-                        "AST": round(float(ast), 1),
-                        "PRA": round(float(pts)+float(reb)+float(ast), 1),
+                        "PTS": pts_val,
+                        "REB": reb_val,
+                        "AST": ast_val,
+                        "PRA": round(pts_val + reb_val + ast_val, 1),
+                        "PTS_std": round(pts_val * 0.40, 2) if pts_val > 0 else 4.0,
+                        "REB_std": round(reb_val * 0.45, 2) if reb_val > 0 else 1.5,
+                        "AST_std": round(ast_val * 0.50, 2) if ast_val > 0 else 1.0,
+                        "PRA_std": round((pts_val + reb_val + ast_val) * 0.35, 2),
                         "n_games": 10,
                     }
             if rolling:
@@ -2771,7 +2874,300 @@ def fetch_game_lines(sport):
         if tomorrow_games:
             return tomorrow_games, playoff, home_teams, away_teams
         return today_games, playoff, home_teams, away_teams
+    
+    # Supplement ESPN lines with Bovada/MyBookie actual lines
+    if today_games and ODDS_API_KEY:
+        try:
+            bovada_games, bov_home, bov_away = fetch_odds_api_game_lines(sport)
+            if bovada_games:
+                # Build lookup by matchup
+                bov_lookup = {g["Matchup"]: g for g in bovada_games}
+                for game in today_games:
+                    matchup = game.get("Matchup","")
+                    # Try to find matching Bovada game
+                    for bov_matchup, bov_game in bov_lookup.items():
+                        home1 = home_teams.get(matchup, "")
+                        home2 = bov_home.get(bov_matchup, "")
+                        if home1 and home2 and (home1.upper()[:3] in home2.upper() or home2.upper()[:3] in home1.upper()):
+                            # Add Bovada lines alongside ESPN
+                            game["Bovada ML Home"] = bov_game.get("Home ML", "N/A")
+                            game["Bovada ML Away"] = bov_game.get("Away ML", "N/A")
+                            game["Bovada Spread"] = bov_game.get("Spread", "N/A")
+                            game["Bovada Total"] = bov_game.get("Total", "N/A")
+                            # Use Bovada total for game analysis if ESPN shows N/A
+                            if game.get("Total") in ("N/A", None) and bov_game.get("Total") not in ("N/A", None):
+                                game["Total"] = bov_game["Total"]
+                            break
+        except Exception as e:
+            pass
+    
     return today_games, playoff, home_teams, away_teams
+
+def fetch_odds_api_props(sport):
+    """
+    Fetch player props from The Odds API.
+    Covers Bovada, MyBookie, DraftKings,
+    FanDuel in one call using existing key.
+    
+    Two step process:
+    1. Get today's event IDs
+    2. Fetch props per event
+    
+    Uses unified budget guardian.
+    90 minute cache per sport.
+    Falls back gracefully on any error.
+    """
+    if not ODDS_API_KEY:
+        return []
+    
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return []
+    
+    allowed, reason = api_budget_check("ODDS_API")
+    if not allowed:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_odds_api_props",
+            "error": reason
+        })
+        return []
+    
+    # 90 minute cache
+    cache_path = os.path.join(CACHE_DIR, f"odds_api_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.caption(f"📦 Odds API props: cached ({age_mins:.0f}m old)")
+                return cached
+    
+    # Step 1 — get event IDs for today
+    events_url = f"{ODDS_API_BASE}/sports/{sport_key}/events?apiKey={ODDS_API_KEY}&dateFormat=iso"
+    
+    try:
+        events_resp = requests.get(events_url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API")
+        
+        if events_resp.status_code != 200:
+            return []
+        
+        events = events_resp.json()
+        if not events:
+            return []
+        
+        # Filter to today's events only
+        today_str = date.today().strftime("%Y-%m-%d")
+        today_events = [e for e in events if e.get("commence_time","").startswith(today_str)]
+        
+        if not today_events:
+            # Try tomorrow if no games today
+            tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+            today_events = [e for e in events if e.get("commence_time","").startswith(tomorrow_str)]
+        
+        if not today_events:
+            return []
+        
+        # Step 2 — fetch props per event
+        markets = ODDS_API_PROP_MARKETS.get(sport, [])
+        if not markets:
+            return []
+        
+        markets_str = ",".join(markets)
+        all_props = []
+        seen = set()
+        
+        # Limit to 5 events to save API credits
+        for event in today_events[:5]:
+            event_id = event.get("id", "")
+            if not event_id:
+                continue
+            
+            props_url = f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets={markets_str}&oddsFormat=american&bookmakers={ODDS_API_BOOKS_PROPS}"
+            
+            try:
+                props_resp = requests.get(props_url, headers=HEADERS, timeout=15)
+                api_budget_increment("ODDS_API")
+                
+                if props_resp.status_code != 200:
+                    continue
+                
+                event_data = props_resp.json()
+                
+                for bookmaker in event_data.get("bookmakers", []):
+                    book_key = bookmaker.get("key","")
+                    book_title = bookmaker.get("title", book_key)
+                    
+                    for market in bookmaker.get("markets", []):
+                        market_key = market.get("key", "")
+                        stat_name = ODDS_API_STAT_MAP.get(market_key, market_key.replace("_", " ").title())
+                        
+                        for outcome in market.get("outcomes", []):
+                            player = outcome.get("description", "")
+                            side = outcome.get("name", "").upper()
+                            line = outcome.get("point")
+                            
+                            if not player or line is None:
+                                continue
+                            if side not in ("OVER", "UNDER"):
+                                continue
+                            # Keep OVER only for consistency
+                            if side != "OVER":
+                                continue
+                            
+                            key = (sport, player, stat_name, float(line))
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            
+                            all_props.append({
+                                "Player": player,
+                                "Prop": stat_name,
+                                "Line": float(line),
+                                "Side": "OVER",
+                                "Sport": sport,
+                                "source": f"OddsAPI_{book_title}",
+                                "OddsType": "standard"
+                            })
+                
+                time.sleep(0.2)
+                
+            except Exception as e:
+                st.session_state.setdefault("errors", []).append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "source": "fetch_odds_api_props",
+                    "error": str(e)[:100]
+                })
+                continue
+        
+        if all_props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_props, f)
+            st.caption(f"✅ Odds API: {len(all_props)} props from Bovada/MyBookie/DK/FD")
+        
+        return all_props
+        
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_odds_api_props",
+            "error": str(e)[:100]
+        })
+        return []
+
+def fetch_odds_api_game_lines(sport):
+    """
+    Fetch game lines (ML/spread/total) from
+    Bovada and MyBookie via Odds API.
+    
+    This supplements or replaces ESPN game
+    lines with actual lines from the books
+    you bet on. Much more accurate for
+    CLV tracking and game analysis.
+    """
+    if not ODDS_API_KEY:
+        return [], {}, {}
+    
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return [], {}, {}
+    
+    allowed, reason = api_budget_check("ODDS_API")
+    if not allowed:
+        return [], {}, {}
+    
+    cache_path = os.path.join(CACHE_DIR, f"odds_api_games_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 30:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
+    
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API")
+        
+        if resp.status_code != 200:
+            return [], {}, {}
+        
+        events = resp.json()
+        games = []
+        home_teams = {}
+        away_teams = {}
+        
+        for event in events:
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            matchup = f"{away} @ {home}"
+            
+            # Use Bovada lines preferentially then MyBookie then others
+            spread = "N/A"
+            total = "N/A"
+            home_ml = "N/A"
+            away_ml = "N/A"
+            odds_source = "N/A"
+            
+            priority = ["bovada", "mybookieag", "draftkings", "fanduel", "betmgm", "caesars"]
+            
+            for preferred_book in priority:
+                for bm in event.get("bookmakers", []):
+                    if bm.get("key") != preferred_book:
+                        continue
+                    odds_source = bm.get("title", preferred_book)
+                    for mkt in bm.get("markets", []):
+                        key = mkt.get("key","")
+                        outcomes = mkt.get("outcomes", [])
+                        if key == "h2h":
+                            for o in outcomes:
+                                if o["name"] == home:
+                                    home_ml = o["price"]
+                                elif o["name"] == away:
+                                    away_ml = o["price"]
+                        elif key == "spreads":
+                            for o in outcomes:
+                                if o["name"] == home:
+                                    spread = f"{home} {o['point']:+.1f}"
+                        elif key == "totals":
+                            for o in outcomes:
+                                if o["name"] == "Over":
+                                    total = o.get("point", "N/A")
+                    break
+                if odds_source != "N/A":
+                    break
+            
+            home_teams[matchup] = home
+            away_teams[matchup] = away
+            
+            games.append({
+                "Matchup": matchup,
+                "Status": "Scheduled",
+                "Spread": spread,
+                "Total": total,
+                "Home ML": home_ml,
+                "Away ML": away_ml,
+                "Odds Source": odds_source,
+                "Date": date.today().strftime("%a %b %d"),
+                "Sport": sport,
+            })
+        
+        result = (games, home_teams, away_teams)
+        if games:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        
+        return result
+        
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_odds_api_game_lines",
+            "error": str(e)[:100]
+        })
+        return [], {}, {}
 
 def fetch_oddswrap_props(sport):
     if not ODDSWRAP_AVAILABLE:
@@ -3593,40 +3989,44 @@ def load_sport_data(sport):
         props = [p for p in oddswrap_props if p["Side"] == "OVER"]
         st.info("Using DraftKings/Bovada props as primary source")
     else:
-        # Fallback 4 — BDL Props (NBA only)
-        if sport == "NBA" and BDL_API_KEY:
-            st.info("Primary sources unavailable — trying BDL Props backup...")
+        # Fallback 4 — Odds API props
+        # Bovada + MyBookie + DK + FanDuel
+        # Uses existing ODDS_API_KEY
+        st.info("Primary sources unavailable — trying Bovada/MyBookie props...")
+        odds_api_props = fetch_odds_api_props(sport)
+        if odds_api_props:
+            props = odds_api_props
+            st.success(f"✅ Bovada/MyBookie props — {len(odds_api_props)} loaded")
+        elif sport == "NBA" and BDL_API_KEY:
+            # Fallback 5 — BDL Props
+            st.info("Trying BDL Props backup...")
             bdl_props = fetch_bdl_props(sport)
             if bdl_props:
                 props = bdl_props
-                st.success(f"✅ BDL Props backup active — {len(bdl_props)} props loaded")
+                st.success(f"✅ BDL Props — {len(bdl_props)} loaded")
             else:
-                # Fallback 5 — ParlayPlay
-                st.info("BDL unavailable — trying ParlayPlay...")
                 parlayplay_props = fetch_parlayplay_props(sport)
                 if parlayplay_props:
                     props = parlayplay_props
-                    st.success(f"✅ ParlayPlay backup — {len(parlayplay_props)} props")
+                    st.success(f"✅ ParlayPlay — {len(parlayplay_props)} props")
                 else:
-                    # Fallback 6 — OddsPapi
                     oddspapi_props = fetch_oddspapi_props(sport)
                     if oddspapi_props:
                         props = oddspapi_props
-                        st.success(f"✅ OddsPapi backup — {len(oddspapi_props)} props")
+                        st.success(f"✅ OddsPapi — {len(oddspapi_props)} props")
                     else:
                         games, _, _, _ = fetch_game_lines(sport)
                         return [], games, 0, 0, {}, {}
         else:
-            # Non-NBA or no BDL key
             parlayplay_props = fetch_parlayplay_props(sport)
             if parlayplay_props:
                 props = parlayplay_props
-                st.success(f"✅ ParlayPlay backup — {len(parlayplay_props)} props")
+                st.success(f"✅ ParlayPlay — {len(parlayplay_props)} props")
             else:
                 oddspapi_props = fetch_oddspapi_props(sport)
                 if oddspapi_props:
                     props = oddspapi_props
-                    st.success(f"✅ OddsPapi backup — {len(oddspapi_props)} props")
+                    st.success(f"✅ OddsPapi — {len(oddspapi_props)} props")
                 else:
                     games, _, _, _ = fetch_game_lines(sport)
                     return [], games, 0, 0, {}, {}
@@ -4757,7 +5157,7 @@ with tabs[2]:
     st.markdown(f"## 🏟️ Game Lines — {st.session_state.last_sport}")
     if st.session_state.games:
         games_df = pd.DataFrame(st.session_state.games)
-        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Odds Source", "Date"]
+        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Bovada Spread", "Bovada Total", "Bovada ML Home", "Bovada ML Away", "Odds Source", "Date"]
         display_cols = [c for c in display_cols if c in games_df.columns]
         st.dataframe(games_df[display_cols], width="stretch")
         st.markdown("---")
