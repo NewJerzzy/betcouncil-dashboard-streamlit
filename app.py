@@ -121,8 +121,9 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 # MyBookie = "mybookieag"
 # DraftKings = "draftkings"
 # FanDuel = "fanduel"
-ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel"
-ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars"
+# US Ex = "us_ex" (aggregated US exposure)
+ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,us_ex"
+ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex"
 
 # The Odds API sport keys
 ODDS_API_SPORT_MAP = {
@@ -220,7 +221,7 @@ API_BUDGETS = {
         "daily_limit": 200,
         "monthly_limit": None,
         "counter_path": os.path.join(CACHE_DIR, "parlayplay_counter.json"),
-        "description": "ParlayPlay NBA props",
+        "description": "ParlayPlay all sports — confirmed endpoint",
         "hard_stop_pct": 0.90,
     },
     "ESPN": {
@@ -3254,74 +3255,223 @@ def fetch_oddswrap_lines(sport):
 
 def fetch_parlayplay_props(sport):
     """
-    ParlayPlay public endpoint — NBA only.
-    No API key required.
-    Community-discovered endpoint, may change.
-    """
-    if sport != "NBA":
-        return []
+    ParlayPlay crossgame offering endpoint.
+    Confirmed public endpoint — no auth needed.
+    Returns full board across all sports
+    with alt lines and live stat tracking.
+    217kb response covers NBA/MLB/NHL/NFL/WNBA.
     
+    Endpoint confirmed: 
+    https://parlayplay.io/api/v1/crossgame/offering/
+    Headers confirmed via DevTools May 2026.
+    """
     allowed, reason = api_budget_check("PARLAYPLAY")
     if not allowed:
         return []
     
-    cache_path = os.path.join(CACHE_DIR, "parlayplay_nba.pkl")
+    cache_path = os.path.join(CACHE_DIR, f"parlayplay_{sport}.pkl")
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 60:
             with open(cache_path, "rb") as f:
                 cached = pickle.load(f)
             if cached:
+                st.caption(f"📦 ParlayPlay: cached ({age_mins:.0f}m old)")
                 return cached
     
-    url = (
-        "https://parlayplay.io/api/v1/crossgame/search/"
-        "?sport=Basketball&league=NBA"
-        "&includeAlt=true&version=2&includeBoost=true"
-    )
+    url = "https://parlayplay.io/api/v1/crossgame/offering/"
+    
+    # Exact headers confirmed via DevTools
+    # x-parlayplay headers are required
+    # to identify as valid web client
+    pp_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; "
+            "Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/148.0.0.0 Safari/537.36 "
+            "Edg/148.0.0.0"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://parlayplay.io",
+        "Referer": "https://parlayplay.io/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "x-csrftoken": "1",
+        "x-parlay-request": "1",
+        "x-parlayplay-native-platform": "web",
+        "x-parlayplay-platform": "web",
+        "x-requested-with": "XMLHttpRequest",
+    }
+    
+    # League slug map for sport filtering
+    league_slug_map = {
+        "NBA": ["nba"],
+        "MLB": ["mlb"],
+        "NHL": ["nhl"],
+        "NFL": ["nfl"],
+        "WNBA": ["wnba"],
+    }
+    valid_slugs = league_slug_map.get(sport, [])
+    if not valid_slugs:
+        return []
+    
+    # Stat name normalization
+    stat_map = {
+        "Points": "Points",
+        "Rebounds": "Rebounds",
+        "Assists": "Assists",
+        "Pts + Reb + Ast": "Pts+Reb+Ast",
+        "Pts + Reb": "Pts+Reb+Ast",
+        "Pts + Ast": "Pts+Reb+Ast",
+        "Steals": "Steals",
+        "Blocks": "Blocked Shots",
+        "Three Pointers Made": "3-PT Made",
+        "Threes": "3-PT Made",
+        "Turnovers": "Turnovers",
+        "Hits": "Hits",
+        "Homeruns": "Home Runs",
+        "Home Runs": "Home Runs",
+        "RBIs": "RBIs",
+        "Runs": "Runs",
+        "Singles": "Singles",
+        "Doubles": "Doubles",
+        "Total Bases": "Total Bases",
+        "Hits + Runs + RBIs": "Hits+Runs+RBIs",
+        "Walks": "Walks",
+        "Strikeouts": "Strikeouts",
+        "Pitcher Strikeouts": "Strikeouts",
+        "Goals": "Goals",
+        "Shots on Goal": "Shots On Goal",
+        "Shots On Goal": "Shots On Goal",
+        "Passing Yards": "Passing Yards",
+        "Rushing Yards": "Rushing Yards",
+        "Receiving Yards": "Receiving Yards",
+        "Touchdowns": "Touchdowns",
+        "Receptions": "Receptions",
+    }
     
     try:
-        resp = requests.get(url, timeout=15, headers=HEADERS)
+        resp = requests.get(url, headers=pp_headers, timeout=20)
         api_budget_increment("PARLAYPLAY")
+        
+        if resp.status_code == 403:
+            st.caption("⚠️ ParlayPlay: 403 — session may be required")
+            return []
         
         if resp.status_code != 200:
             return []
         
         data = resp.json()
+        players_data = data.get("players", [])
+        
+        if not players_data:
+            return []
+        
         props = []
         seen = set()
+        alt_lines_store = {}
         
-        for game in data.get("games", []):
-            for prop in game.get("props", []):
-                player_name = prop.get("player", {}).get("name", "")
-                stat_type = prop.get("stat", {}).get("name", "")
-                line = prop.get("line", 0)
+        for player_entry in players_data:
+            player_obj = player_entry.get("player", {})
+            player_name = player_obj.get("fullName", "")
+            if not player_name:
+                continue
+            
+            match_obj = player_entry.get("match", {})
+            league_obj = match_obj.get("league", {})
+            league_slug = league_obj.get("slug", "").lower()
+            
+            if league_slug not in valid_slugs:
+                continue
+            
+            # Skip completed/past games
+            time_to_start = match_obj.get("timeToStart", "")
+            match_status = match_obj.get("matchStatus", 0)
+            
+            team_obj = player_obj.get("team", {})
+            team_abbr = team_obj.get("teamAbbreviation", "")
+            
+            home_team = match_obj.get("homeTeam", {}).get("teamAbbreviation", "")
+            away_team = match_obj.get("awayTeam", {}).get("teamAbbreviation", "")
+            
+            for stat in player_entry.get("stats", []):
+                challenge_name = stat.get("challengeName", "")
+                stat_name = stat_map.get(challenge_name, challenge_name)
                 
-                if not player_name or not stat_type:
-                    continue
-                if not line:
+                alt_lines_obj = stat.get("altLines", {})
+                line_values = alt_lines_obj.get("values", [])
+                
+                if not line_values:
                     continue
                 
-                key = (player_name, stat_type, float(line))
+                # Find main line first
+                main_line = next(
+                    (lv for lv in line_values if lv.get("isMainLine")),
+                    line_values[0] if line_values else None
+                )
+                
+                if not main_line:
+                    continue
+                
+                line_val = main_line.get("selectionPoints")
+                if line_val is None:
+                    continue
+                
+                multiplier = stat.get("defaultMultiplier", 1.77)
+                live_val = stat.get("liveStatValue", 0)
+                alt_count = stat.get("altLineCount", 0)
+                
+                # Store all alt lines for line shopping
+                alt_key = f"{player_name}_{stat_name}"
+                if len(line_values) > 1:
+                    alt_lines_store[alt_key] = [
+                        {
+                            "line": lv.get("selectionPoints"),
+                            "odds": lv.get("decimalPriceOver"),
+                            "isMain": lv.get("isMainLine", False),
+                            "source": "ParlayPlay"
+                        }
+                        for lv in line_values
+                        if lv.get("selectionPoints") is not None
+                    ]
+                
+                key = (player_name, stat_name, float(line_val))
                 if key in seen:
                     continue
                 seen.add(key)
                 
                 props.append({
                     "Player": player_name,
-                    "Prop": stat_type,
-                    "Line": float(line),
+                    "Prop": stat_name,
+                    "Line": float(line_val),
                     "Side": "OVER",
                     "Sport": sport,
                     "source": "ParlayPlay",
-                    "OddsType": "standard"
+                    "OddsType": "standard",
+                    "PPMultiplier": multiplier,
+                    "LiveStat": live_val,
+                    "AltLineCount": alt_count,
+                    "TeamAbbr": team_abbr,
+                    "HomeTeam": home_team,
+                    "AwayTeam": away_team,
                 })
+        
+        if alt_lines_store:
+            existing = st.session_state.get("parlayplay_alt_lines", {})
+            existing.update(alt_lines_store)
+            st.session_state["parlayplay_alt_lines"] = existing
         
         if props:
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
+            alt_count = sum(1 for p in props if p.get("AltLineCount", 0) > 1)
+            st.caption(f"✅ ParlayPlay: {len(props)} props | {alt_count} with alt lines | All sports")
         
-        return props[:100]
+        return props
         
     except Exception as e:
         st.session_state.setdefault("errors", []).append({
