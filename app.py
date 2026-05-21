@@ -846,6 +846,8 @@ def make_display_df(enriched_list):
         "ConsensusProb": "Consensus Prob",
         "ConsensusBooks": "Books",
         "ModelProb": "Model Prob",
+        "FairnessGrade": "Line Fair?",
+        "FairnessNote": "Fairness Note",
     }
     display_df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     if "Fair %" in display_df.columns:
@@ -1121,6 +1123,66 @@ def compute_consensus_probability(
     )
     
     return consensus, books_used
+
+def check_prop_line_fairness(
+    line, consensus_prob, side="OVER"
+):
+    """
+    Compare PrizePicks line to consensus
+    market probability.
+    
+    If consensus implies significantly
+    worse probability than our model
+    the line is "bad" — market disagrees.
+    
+    Bad line = book has priced this prop
+    worse than true probability warrants.
+    Even if model shows edge, a bad line
+    means the market knows something.
+    
+    Returns:
+      "GOOD"   — line within market range
+      "CAUTION" — line slightly off market
+      "BAD"    — market disagrees by 5%+
+                  reduce sizing or skip
+    """
+    if consensus_prob is None:
+        return "UNKNOWN", ""
+    
+    market_implied = 0.524
+    
+    # How much worse is our side vs
+    # what market says is fair
+    if side.upper() == "OVER":
+        gap = market_implied - consensus_prob
+    else:
+        gap = market_implied - (
+            1 - consensus_prob
+        )
+    
+    if gap >= 0.07:
+        return (
+            "BAD",
+            f"⚠️ Market prices this at "
+            f"{consensus_prob:.1%} — "
+            f"line is {gap:.1%} worse "
+            f"than market fair value. "
+            f"Reduce sizing or skip."
+        )
+    elif gap >= 0.04:
+        return (
+            "CAUTION",
+            f"📊 Market prices this at "
+            f"{consensus_prob:.1%} — "
+            f"slightly unfavorable line. "
+            f"Verify before betting."
+        )
+    else:
+        return (
+            "GOOD",
+            f"✅ Line is fair vs market "
+            f"({consensus_prob:.1%} consensus)"
+        )
 
 def check_daily_risk_limits(sport=None):
     bankroll = st.session_state.bankroll
@@ -1743,9 +1805,7 @@ def compute_optimized_weights(sport):
     }
     save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
     
-    return optimized
-
-def get_active_weights(sport):
+    return optimizeddef get_active_weights(sport):
     """
     Get the best available weights for a sport.
     Uses data-driven weights if available,
@@ -1803,8 +1863,10 @@ def calculate_lock_quality_score(prop):
         score += 12
     elif source.startswith("BDL"):
         score += 10
+    elif source.startswith("ParlayPlay_Alt"):
+        score += 14
     elif source.startswith("ParlayPlay"):
-        score += 12  # ← UPDATED from 6 to 12
+        score += 12
     else:
         score += 5
     if prop.get("Injury"):
@@ -2211,6 +2273,139 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
             continue
     return None
 
+def fetch_espn_fpi_ratings(sport="NBA"):
+    """
+    Fetch live ESPN FPI power ratings.
+    Updates NBA_POWER_RATINGS dynamically.
+    
+    Auto-detects playoff month (Apr-Jun)
+    and applies current team strength.
+    
+    Updates every 24 hours via cache.
+    Falls back to hardcoded ratings
+    if ESPN FPI unavailable.
+    """
+    cache_path = os.path.join(
+        CACHE_DIR,
+        f"espn_fpi_{sport}.pkl"
+    )
+    if os.path.exists(cache_path):
+        age_hours = (
+            time.time() -
+            os.path.getmtime(cache_path)
+        ) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    
+    sport_slug_map = {
+        "NBA": "basketball/nba",
+        "NFL": "football/nfl",
+        "MLB": "baseball/mlb",
+        "NHL": "hockey/nhl",
+    }
+    slug = sport_slug_map.get(sport)
+    if not slug:
+        return {}
+    
+    url = (
+        f"https://site.api.espn.com/apis/"
+        f"site/v2/sports/{slug}/teams"
+        f"?limit=50"
+    )
+    
+    try:
+        resp = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=15
+        )
+        if resp.status_code != 200:
+            return {}
+        
+        data = resp.json()
+        teams = data.get(
+            "sports", [{}]
+        )[0].get(
+            "leagues", [{}]
+        )[0].get("teams", [])
+        
+        ratings = {}
+        
+        for team_entry in teams:
+            team = team_entry.get("team", {})
+            abbr = team.get(
+                "abbreviation", ""
+            )
+            if not abbr:
+                continue
+            
+            # Try to get power index
+            # from team statistics
+            stats = team.get(
+                "record", {}
+            ).get("items", [])
+            
+            # ESPN FPI is in team rankings
+            links = team.get("links", [])
+            
+            # Use win percentage as
+            # proxy for power rating
+            # if FPI not directly available
+            records = team.get(
+                "record", {}
+            ).get("items", [])
+            
+            wins = 0
+            losses = 0
+            for record in records:
+                if record.get("type") == "total":
+                    for stat in record.get(
+                        "stats", []
+                    ):
+                        if stat.get(
+                            "name"
+                        ) == "wins":
+                            wins = stat.get(
+                                "value", 0
+                            )
+                        elif stat.get(
+                            "name"
+                        ) == "losses":
+                            losses = stat.get(
+                                "value", 0
+                            )
+            
+            total_games = wins + losses
+            if total_games > 0:
+                win_pct = wins / total_games
+                # Convert win% to power rating
+                # scale (95-115 range)
+                # 50% win pct = 104 (average)
+                power = round(
+                    95 + (win_pct * 20), 1
+                )
+                ratings[abbr] = power
+        
+        if ratings:
+            with open(cache_path, "wb") as f:
+                pickle.dump(ratings, f)
+            return ratings
+        
+        return {}
+        
+    except Exception as e:
+        st.session_state.setdefault(
+            "errors", []
+        ).append({
+            "time": datetime.now().strftime(
+                "%H:%M:%S"
+            ),
+            "source": "fetch_espn_fpi_ratings",
+            "error": str(e)[:100]
+        })
+        return {}
+
 def power_rating_spread_divergence(home_team, away_team, spread_str):
     try:
         if not spread_str or spread_str in ("N/A", "—"):
@@ -2271,6 +2466,38 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     recommendations = []
     best_bet = None
     best_edge = 0
+    
+    # Auto-detect playoff month and
+    # apply dynamic power ratings
+    is_playoff_now = (
+        date.today().month in [4, 5, 6]
+    )
+    
+    # Try to get live FPI ratings
+    # Falls back to hardcoded if unavailable
+    live_ratings = fetch_espn_fpi_ratings(
+        sport
+    )
+    
+    if live_ratings and len(live_ratings) >= 10:
+        # Blend live ratings with hardcoded
+        # 70% live, 30% hardcoded in playoffs
+        # 50% live, 50% hardcoded regular season
+        live_weight = 0.70 if is_playoff_now else 0.50
+        hard_weight = 1 - live_weight
+        
+        blended_ratings = {}
+        for team in set(
+            list(power_ratings.keys()) +
+            list(live_ratings.keys())
+        ):
+            hard = power_ratings.get(team, 104.0)
+            live = live_ratings.get(team, hard)
+            blended_ratings[team] = round(
+                live * live_weight +
+                hard * hard_weight, 1
+            )
+        power_ratings = blended_ratings
     
     # Get public betting data for this game
     public_data = st.session_state.get(
@@ -4922,6 +5149,7 @@ def compare_multibook_lines(pp_props, oddswrap_props):
 def check_data_freshness():
     warnings = []
     checks = {
+        "ESPN FPI Ratings": "espn_fpi_NBA.pkl",
         "NBA Rolling Averages": "nba_rolling_avgs.pkl",
         "NBA Team Defense": "nba_team_defense.pkl",
         "WNBA Rolling Averages": "wnba_rolling_avgs.pkl",
@@ -5363,14 +5591,73 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
-    if sport in ["Golf", "Tennis"]:
+    if sport in ["Golf", "Tennis", "UFC", "Soccer"]:
         props = scrape_prizepicks(sport)
         if not props:
             return [], [], 0, 0, {}, {}
         enriched = []
         for p in props:
-            enriched.append({"Player": p["Player"], "Prop": p["Prop"], "Line": p["Line"], "Side": "OVER", "Edge": 0, "EdgePct": "N/A", "Prob": 0.5, "Wager": 0, "Tier": "N/A", "Model": "N/A", "Sport": sport, "Avg": 0, "Injury": "", "SEM": "—", "SEM_n": 0, "SignalBase": 0, "SignalDefense": 0, "SignalLocation": 0, "SignalUsage": 0, "SignalRest": 0, "SignalPace": 0, "SignalBlowout": 0, "WeatherNote": "", "Movement": "", "Efficiency": "—", "EffScore": 0, "SharpFlag": "", "source": p.get("source",""), "OddsType": "standard"})
-        st.info(f"⚠️ {sport}: Lines displayed only. No statistical baseline available — edge calculation not possible for this sport.")
+            enriched.append({
+                "Player": p["Player"],
+                "Prop": p["Prop"],
+                "Line": p["Line"],
+                "Side": "OVER",
+                "Edge": 0,
+                "EdgePct": "N/A",
+                "Prob": 0.5,
+                "Wager": 0,
+                "Tier": "N/A",
+                "Model": "N/A",
+                "Sport": sport,
+                "Avg": 0,
+                "Injury": "",
+                "SEM": "—",
+                "SEM_n": 0,
+                "SignalBase": 0,
+                "SignalDefense": 0,
+                "SignalLocation": 0,
+                "SignalUsage": 0,
+                "SignalRest": 0,
+                "SignalPace": 0,
+                "SignalBlowout": 0,
+                "WeatherNote": "",
+                "Movement": "",
+                "Efficiency": "—",
+                "EffScore": 0,
+                "SharpFlag": "",
+                "source": p.get("source",""),
+                "OddsType": "standard",
+                "DisplayOnly": True,
+            })
+        
+        sport_warnings = {
+            "UFC": (
+                "⚠️ UFC: Lines displayed only. "
+                "Hardcoded averages from May 2025 — "
+                "statistical analysis unavailable. "
+                "Do not bet based on these lines."
+            ),
+            "Soccer": (
+                "⚠️ Soccer: Lines displayed only. "
+                "Hardcoded averages — no live data "
+                "source connected. "
+                "Statistical analysis unavailable."
+            ),
+            "Golf": (
+                "⚠️ Golf: Lines displayed only. "
+                "No statistical baseline available."
+            ),
+            "Tennis": (
+                "⚠️ Tennis: Lines displayed only. "
+                "No statistical baseline available."
+            ),
+        }
+        st.warning(
+            sport_warnings.get(
+                sport,
+                f"⚠️ {sport}: Lines displayed only."
+            )
+        )
         return enriched, [], 0, 0, {}, {}
     rolling_avgs = {}
     team_defense = {}
@@ -5816,6 +6103,14 @@ def load_sport_data(sport):
             )
         )
         
+        # Check prop line fairness
+        # vs consensus market pricing
+        fairness_grade, fairness_note = (
+            check_prop_line_fairness(
+                line, consensus_prob, side
+            )
+        )
+        
         over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj))
         under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
@@ -5844,6 +6139,16 @@ def load_sport_data(sport):
             )
             over_edge = over_prob - 0.524
             under_edge = under_prob - 0.524
+        
+        # Apply fairness penalty to edge
+        # BAD line = reduce edge 25%
+        # CAUTION = reduce edge 10%
+        if fairness_grade == "BAD":
+            over_edge = over_edge * 0.75
+            under_edge = under_edge * 0.75
+        elif fairness_grade == "CAUTION":
+            over_edge = over_edge * 0.90
+            under_edge = under_edge * 0.90
         
         if under_edge > over_edge and (under_edge - over_edge) > 0.05:
             best_edge = under_edge
@@ -5897,6 +6202,8 @@ def load_sport_data(sport):
         "ConsensusProb": f"{consensus_prob:.1%}" if consensus_prob else "—",
         "ConsensusBooks": ", ".join(consensus_books) if consensus_books else "—",
         "ModelProb": f"{best_prob:.1%}",
+        "FairnessGrade": fairness_grade,
+        "FairnessNote": fairness_note,
     })
     
     # Run arbitrage detector
@@ -6446,6 +6753,7 @@ with tabs[0]:
   <div style="margin-top:8px;font-size:12px;color:#6a7a8a;font-style:italic;">
     📊 {reason}
     {f" | Consensus: {p.get('ConsensusProb','—')} ({p.get('ConsensusBooks','—')})" if p.get('ConsensusProb','—') != '—' else ""}
+    {f" | {p.get('FairnessNote','')}" if p.get('FairnessGrade') in ('BAD','CAUTION') else ""}
     {f" | {p.get('RefNote','')}" if p.get('RefNote') else ""}
     {f" | {p.get('WeatherNote','')}" if p.get('WeatherNote') else ""}
     {f" | Confidence: {p.get('SEM','—')}" if p.get('SEM','—') != '—' else ""}
@@ -6509,6 +6817,20 @@ with tabs[0]:
     quality_board = st.session_state.get("quality_sorted_board", board)
     best = next((p for p in quality_board if p["Tier"] in ["SOVEREIGN","ELITE","APPROVED"]), None)
     if best:
+        if best.get("FairnessGrade") == "BAD":
+            st.error(
+                f"⚠️ BAD LINE DETECTED: "
+                f"{best.get('FairnessNote','')} "
+                f"Consider skipping or "
+                f"reducing to 25% Kelly."
+            )
+        elif best.get("FairnessGrade") == "CAUTION":
+            st.warning(
+                f"📊 CAUTION: "
+                f"{best.get('FairnessNote','')} "
+                f"Reduce to 50% Kelly."
+            )
+        
         tier_color = TIER_COLORS.get(best['Tier'], "#0ea5a0")
         avg_val = best.get('Avg', 0)
         line_val = best.get('Line', 0)
@@ -6631,7 +6953,107 @@ with tabs[0]:
   <div style="font-size:12px;font-weight:700;color:{alt_ev_color};">{alt['ev_pct']}</div>
 </div>""", unsafe_allow_html=True)
             
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(
+                "</div>",
+                unsafe_allow_html=True
+            )
+            
+            # Quick Lock for alt line
+            lock_key = (
+                f"lock_alt_{upg['player']}_"
+                f"{upg['stat']}"
+            ).replace(" ", "_")
+            
+            col_alt1, col_alt2 = st.columns(
+                [3, 1]
+            )
+            with col_alt1:
+                st.caption(
+                    f"📊 Alt line on ParlayPlay — "
+                    f"OVER {upg['best_line']} "
+                    f"@ {upg['best_payout']} | "
+                    f"Fair prob: "
+                    f"{upg['fair_prob']:.1%}"
+                )
+            with col_alt2:
+                if st.button(
+                    "🔒 Lock Alt",
+                    key=lock_key
+                ):
+                    can_bet, risk_reason = (
+                        check_daily_risk_limits(
+                            st.session_state.last_sport
+                        )
+                    )
+                    if not can_bet:
+                        st.error(risk_reason)
+                    else:
+                        # Store alt line details
+                        # not main line
+                        alt_lock = {
+                            "player": upg["player"],
+                            "prop": upg["stat"],
+                            "line": upg["best_line"],
+                            "side": "OVER",
+                            "wager": upg["wager"],
+                            "prob": upg["fair_prob"],
+                            "edge": upg["best_ev"],
+                            "tier": "ALT",
+                            "status": "PENDING",
+                            "timestamp": (
+                                datetime.now()
+                                .strftime(
+                                    "%Y-%m-%d %H:%M"
+                                )
+                            ),
+                            "sport": (
+                                st.session_state
+                                .last_sport
+                            ),
+                            "source": "ParlayPlay_Alt",
+                            "alt_payout": (
+                                upg["best_payout"]
+                            ),
+                            "alt_line": True,
+                            "main_line": (
+                                upg["main_line"]
+                            ),
+                            "ev_improvement": (
+                                upg["ev_improvement"]
+                            ),
+                        }
+                        already = any(
+                            l.get("player") ==
+                            upg["player"] and
+                            l.get("prop") ==
+                            upg["stat"]
+                            for l in
+                            st.session_state.locks
+                        )
+                        if not already:
+                            st.session_state.locks.append(
+                                alt_lock
+                            )
+                            save_json_data(
+                                LOCKS_PATH,
+                                st.session_state.locks
+                            )
+                            save_to_gist(
+                                "locks",
+                                st.session_state.locks
+                            )
+                            st.success(
+                                f"✅ Locked alt line: "
+                                f"{upg['player']} "
+                                f"OVER {upg['best_line']} "
+                                f"@ {upg['best_payout']}"
+                            )
+                            st.rerun()
+                        else:
+                            st.warning(
+                                "Already have a lock "
+                                "on this player."
+                            )
     
     elif st.session_state.get("board_ready"):
         if not st.session_state.get(
@@ -6839,7 +7261,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "ConsensusProb", "Books", "BestAltLine", "BestAltEV", "BestAltPayout"]
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "ConsensusProb", "Books", "BestAltLine", "BestAltEV", "BestAltPayout"]
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("📊 Signal Breakdown"):
@@ -6999,6 +7421,7 @@ with tabs[3]:
       <span style="color:#e8f0f8;font-weight:700;font-size:15px;">{lock['player']}</span>
       <span style="background:{tier_color};color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;margin-left:8px;">{lock.get('tier','—')}</span><br/>
       <span style="color:{tier_color};font-weight:600;">{lock['side']} {lock['line']} {lock['prop']}</span>
+      {f'<span style="background:#0ea5a0;color:#000;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;">ALT @ {lock.get("alt_payout","")}</span>' if lock.get("alt_line") else ""}
       <span style="color:#6a7a8a;font-size:11px;margin-left:10px;">{lock.get('sport','—')} | Locked: {lock.get('timestamp','—')}</span>
     </div>
     <div style="text-align:right;">
@@ -7421,7 +7844,59 @@ with tabs[6]:
     st.write("- Std Deviation: EWMA-weighted from game logs")
     current_month = date.today().month
     if current_month in [4, 5, 6]:
-        st.warning("⚠️ Playoff season detected. Position defense data is regular season. Treat defense signal with extra caution.")
+        st.warning(
+            "⚠️ PLAYOFF MODE ACTIVE: "
+            "Power ratings blended 70% live "
+            "ESPN data + 30% season ratings. "
+            "Position defense still uses "
+            "regular season data — treat "
+            "defense signal with caution."
+        )
+        
+        # Show current live ratings
+        live_fpi = fetch_espn_fpi_ratings("NBA")
+        if live_fpi:
+            st.caption(
+                f"✅ Live ESPN ratings loaded "
+                f"for {len(live_fpi)} teams. "
+                f"Updated every 24 hours."
+            )
+            with st.expander(
+                "View Current Power Ratings"
+            ):
+                fpi_rows = [
+                    {
+                        "Team": team,
+                        "Live Rating": rating,
+                        "Hardcoded": (
+                            NBA_POWER_RATINGS
+                            .get(team, "—")
+                        ),
+                        "Source": "ESPN FPI blend"
+                    }
+                    for team, rating in
+                    sorted(
+                        live_fpi.items(),
+                        key=lambda x: x[1],
+                        reverse=True
+                    )
+                ]
+                st.dataframe(
+                    pd.DataFrame(fpi_rows),
+                    width="stretch",
+                    hide_index=True
+                )
+        else:
+            st.caption(
+                "⚠️ ESPN FPI unavailable — "
+                "using hardcoded ratings."
+            )
+    else:
+        st.info(
+            "📅 Regular season mode. "
+            "Power ratings: hardcoded 2024-25 "
+            "season values."
+        )
     st.markdown("---")
     st.markdown("### ⚖️ Signal Weights Status")
     st.caption(f"Data-driven weights activate after {WEIGHT_OPTIMIZER_MIN_BETS} bets per sport. Until then hardcoded assumptions are used.")
