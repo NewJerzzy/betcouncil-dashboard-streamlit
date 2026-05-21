@@ -1804,7 +1804,7 @@ def calculate_lock_quality_score(prop):
     elif source.startswith("BDL"):
         score += 10
     elif source.startswith("ParlayPlay"):
-        score += 6
+        score += 12  # ← UPDATED from 6 to 12
     else:
         score += 5
     if prop.get("Injury"):
