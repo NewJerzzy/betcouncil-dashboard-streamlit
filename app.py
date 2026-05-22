@@ -5429,9 +5429,8 @@ st.markdown(f"""
 
 def pp_auto_login():
     """
-    Authenticate using remember_user_token cookie (lasts ~30 days).
-    Stored in st.secrets as PP_REMEMBER_TOKEN.
-    No bot protection issues since we use an existing valid token.
+    Authenticate with PrizePicks using remember_user_token.
+    Tries multiple endpoints and cookie formats.
     """
     cached = st.session_state.get("pp_auth_cache", {})
     if cached.get("session") and cached.get("expires_at"):
@@ -5442,50 +5441,62 @@ def pp_auto_login():
     if not remember_token:
         return None, None, "PP_REMEMBER_TOKEN not set in Streamlit secrets."
 
+    from urllib.parse import quote, unquote
+    import re
+
+    base_headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "origin": "https://app.prizepicks.com",
+        "referer": "https://app.prizepicks.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
+        "x-device-id": "19458434-a345-4d1e-85c1-c100d5df600b",
+    }
+
+    # Try sending remember token directly to the entries endpoint
+    # This is the most direct approach — no login step needed
     try:
-        headers = {
-            "accept": "application/json",
-            "content-type": "application/json",
-            "origin": "https://app.prizepicks.com",
-            "referer": "https://app.prizepicks.com/",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-            "x-device-id": "19458434-a345-4d1e-85c1-c100d5df600b",
-            "cookie": f"remember_user_token={remember_token}",
-        }
-        # Hit the current user endpoint to exchange remember token for session
-        r = requests.get("https://api.prizepicks.com/users/current", headers=headers, timeout=15)
+        test_headers = {**base_headers, "cookie": f"remember_user_token={remember_token}"}
+        r = requests.get(
+            "https://api.prizepicks.com/v1/entries?filter=settled&per_page=1",
+            headers=test_headers, timeout=15
+        )
         if r.status_code == 200:
-            session_cookie = r.cookies.get("_prizepicks_session", "")
+            # Extract session from response cookies if available
+            session_cookie = r.cookies.get("_prizepicks_session", remember_token)
             csrf_token = r.cookies.get("CSRF-TOKEN", "")
-            if not session_cookie:
-                import re
-                set_cookie = r.headers.get("set-cookie", "")
-                m = re.search(r"_prizepicks_session=([^;]+)", set_cookie)
-                if m:
-                    session_cookie = m.group(1)
-                m2 = re.search(r"CSRF-TOKEN=([^;]+)", set_cookie)
-                if m2:
-                    csrf_token = m2.group(1)
-            if session_cookie:
-                st.session_state["pp_auth_cache"] = {
-                    "session": session_cookie,
-                    "csrf": csrf_token,
-                    "expires_at": time.time() + 7200
-                }
-                return session_cookie, csrf_token, None
-            # Token still valid but no new session issued — use token directly
             st.session_state["pp_auth_cache"] = {
-                "session": remember_token,
-                "csrf": "",
+                "session": session_cookie,
+                "csrf": csrf_token,
+                "remember_token": remember_token,
                 "expires_at": time.time() + 3600
             }
-            return remember_token, "", None
-        elif r.status_code == 401:
-            return None, None, "Token expired. Update PP_REMEMBER_TOKEN in Streamlit secrets (takes 2 min)."
-        else:
-            return None, None, f"Auth failed: {r.status_code}"
+            return session_cookie, csrf_token, None
     except Exception as e:
-        return None, None, f"Auth error: {str(e)}"
+        pass
+
+    # Try URL-encoding the token
+    try:
+        encoded_token = quote(remember_token, safe="")
+        test_headers = {**base_headers, "cookie": f"remember_user_token={encoded_token}"}
+        r = requests.get(
+            "https://api.prizepicks.com/v1/entries?filter=settled&per_page=1",
+            headers=test_headers, timeout=15
+        )
+        if r.status_code == 200:
+            session_cookie = r.cookies.get("_prizepicks_session", encoded_token)
+            csrf_token = r.cookies.get("CSRF-TOKEN", "")
+            st.session_state["pp_auth_cache"] = {
+                "session": session_cookie,
+                "csrf": csrf_token,
+                "remember_token": encoded_token,
+                "expires_at": time.time() + 3600
+            }
+            return session_cookie, csrf_token, None
+    except Exception as e:
+        pass
+
+    return None, None, "Could not authenticate. Token may be expired — get a fresh one from Chrome DevTools."
 
 
 def fetch_pp_my_entries(filter_type="settled", limit=50):
@@ -5497,6 +5508,12 @@ def fetch_pp_my_entries(filter_type="settled", limit=50):
     if login_error:
         return None, login_error
     pp_device_id = "19458434-a345-4d1e-85c1-c100d5df600b"
+    remember_token = st.secrets.get("PP_REMEMBER_TOKEN", "")
+    cookie_str = f"_prizepicks_session={session_cookie}"
+    if csrf_token:
+        cookie_str += f"; CSRF-TOKEN={csrf_token}"
+    if remember_token:
+        cookie_str += f"; remember_user_token={remember_token}"
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -5504,7 +5521,7 @@ def fetch_pp_my_entries(filter_type="settled", limit=50):
         "referer": "https://app.prizepicks.com/",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
         "x-device-id": pp_device_id,
-        "cookie": f"_prizepicks_session={session_cookie}; CSRF-TOKEN={csrf_token}",
+        "cookie": cookie_str,
     }
     try:
         url = f"https://api.prizepicks.com/v1/entries?filter={filter_type}&per_page={limit}"
