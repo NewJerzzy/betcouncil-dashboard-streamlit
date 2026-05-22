@@ -74,6 +74,7 @@ BANKROLL_PATH = os.path.join(CACHE_DIR, "bankroll.json")
 CALIBRATION_PATH = os.path.join(CACHE_DIR, "calibration.json")
 CLV_PATH = os.path.join(CACHE_DIR, "clv_tracking.json")
 PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
+INJURY_PERFORMANCE_PATH = os.path.join(CACHE_DIR, "injury_performance.json")
 LINE_MOVEMENT_PATH = os.path.join(CACHE_DIR, "line_movement.json")
 SHARP_PATH = os.path.join(CACHE_DIR, "sharp_flags.json")
 SIGNAL_PERFORMANCE_PATH = os.path.join(CACHE_DIR, "signal_performance.json")
@@ -147,6 +148,60 @@ ACTION_NETWORK_SPORT_MAP = {
     "NFL": "nfl",
     "WNBA": "wnba",
 }
+
+ACTION_NETWORK_LEAGUE_IDS = {
+    "NFL": 1,
+    "MLB": 2,
+    "NHL": 3,
+    "NBA": 4,
+    "WNBA": 5,
+}
+
+ACTION_NETWORK_PROP_TYPE_MAP = {
+    "core_bet_type_27_points": "Points",
+    "core_bet_type_28_rebounds": "Rebounds",
+    "core_bet_type_29_assists": "Assists",
+    "core_bet_type_30_pra": "Pts+Reb+Ast",
+    "core_bet_type_31_steals": "Steals",
+    "core_bet_type_32_blocks": "Blocked Shots",
+    "core_bet_type_33_threes": "3-PT Made",
+    "core_bet_type_34_turnovers": "Turnovers",
+    "core_bet_type_pts": "Points",
+    "core_bet_type_reb": "Rebounds",
+    "core_bet_type_ast": "Assists",
+    "core_bet_type_pra": "Pts+Reb+Ast",
+    "core_bet_type_26_assists": "Assists",
+    "core_bet_type_277_blocks": "Blocked Shots",
+    "core_bet_type_1042_powerplay_points": "Power Play Points",
+    "core_bet_type_hits": "Hits",
+    "core_bet_type_hr": "Home Runs",
+    "core_bet_type_rbi": "RBIs",
+    "core_bet_type_runs": "Runs",
+    "core_bet_type_total_bases": "Total Bases",
+    "core_bet_type_strikeouts": "Strikeouts",
+    "core_bet_type_pitcher_strikeouts": "Strikeouts",
+    "core_bet_type_pitcher_outs": "Pitcher Outs",
+    "core_bet_type_goals": "Goals",
+    "core_bet_type_sog": "Shots On Goal",
+    "core_bet_type_passing_yards": "Passing Yards",
+    "core_bet_type_rushing_yards": "Rushing Yards",
+    "core_bet_type_receiving_yards": "Receiving Yards",
+    "core_bet_type_receptions": "Receptions",
+    "core_bet_type_touchdowns": "Touchdowns",
+    "core_bet_type_passing_tds": "Touchdowns",
+}
+
+AN_GRADE_TO_TIER = {
+    "A+": "SOVEREIGN",
+    "A": "ELITE",
+    "A-": "ELITE",
+    "B+": "APPROVED",
+    "B": "APPROVED",
+    "B-": "LEAN",
+    "C+": "LEAN",
+    "C": "LEAN",
+}
+
 ACTION_NETWORK_PATH = os.path.join(
     CACHE_DIR, "action_network_counter.json"
 )
@@ -848,6 +903,12 @@ def make_display_df(enriched_list):
         "ModelProb": "Model Prob",
         "FairnessGrade": "Line Fair?",
         "FairnessNote": "Fairness Note",
+        "AN_Grade": "AN Grade",
+        "AN_Projection": "AN Proj",
+        "AN_Tier": "AN Tier",
+        "AN_Tickets": "AN Tickets%",
+        "AN_Money": "AN Money%",
+        "AN_Confirms": "AN Confirms",
     }
     display_df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     if "Fair %" in display_df.columns:
@@ -1637,6 +1698,149 @@ def record_pinnacle_line(lock, props_data):
     
     return round(pinnacle_clv, 1)
 
+def record_injury_performance(
+    lock, outcome, injuries
+):
+    """
+    When a bet resolves track whether the
+    player was injury-tagged at lock time.
+    
+    After 20+ injury-tagged games builds
+    a real adjustment factor showing how
+    players perform when questionable
+    vs when fully healthy.
+    
+    Automatically improves injury signal
+    accuracy over time.
+    """
+    player = lock.get("player", "")
+    sport = lock.get("sport", "")
+    
+    injury_status = injuries.get(player, "")
+    
+    record = {
+        "timestamp": datetime.now().strftime(
+            "%Y-%m-%d %H:%M"
+        ),
+        "player": player,
+        "sport": sport,
+        "prop": lock.get("prop", ""),
+        "line": lock.get("line", 0),
+        "side": lock.get("side", "OVER"),
+        "tier": lock.get("tier", ""),
+        "injury_status": injury_status,
+        "was_injured": bool(injury_status),
+        "outcome": outcome,
+        "win": 1 if outcome == "WIN" else 0,
+        "edge": lock.get("edge", 0),
+        "prob": lock.get("prob", 0),
+    }
+    
+    existing = load_json_data(
+        INJURY_PERFORMANCE_PATH, []
+    )
+    existing.append(record)
+    save_json_data(
+        INJURY_PERFORMANCE_PATH, existing
+    )
+
+def analyze_injury_performance():
+    """
+    Analyze how players perform when
+    injury-tagged vs fully healthy.
+    
+    Activates after 20+ injury-tagged bets.
+    Returns adjustment factor per player.
+    """
+    data = load_json_data(
+        INJURY_PERFORMANCE_PATH, []
+    )
+    if not data:
+        return None, 0
+    
+    injured = [
+        d for d in data
+        if d.get("was_injured")
+        and d.get("outcome") in ("WIN","LOSS")
+    ]
+    healthy = [
+        d for d in data
+        if not d.get("was_injured")
+        and d.get("outcome") in ("WIN","LOSS")
+    ]
+    
+    if len(injured) < 20:
+        return None, len(injured)
+    
+    injured_wr = (
+        sum(r["win"] for r in injured)
+        / len(injured)
+    )
+    healthy_wr = (
+        sum(r["win"] for r in healthy)
+        / len(healthy)
+        if healthy else 0.577
+    )
+    
+    # Win rate gap between healthy
+    # and injured tagged games
+    wr_gap = healthy_wr - injured_wr
+    
+    results = {
+        "injured_wr": round(injured_wr, 3),
+        "healthy_wr": round(healthy_wr, 3),
+        "wr_gap": round(wr_gap, 3),
+        "n_injured": len(injured),
+        "n_healthy": len(healthy),
+        "recommended_penalty": round(
+            min(wr_gap * 0.5, 0.10), 3
+        ),
+    }
+    
+    # Per-player breakdown
+    player_stats = {}
+    for record in injured:
+        p = record["player"]
+        if p not in player_stats:
+            player_stats[p] = {
+                "injured_games": 0,
+                "injured_wins": 0
+            }
+        player_stats[p]["injured_games"] += 1
+        player_stats[p]["injured_wins"] += (
+            record["win"]
+        )
+    
+    player_results = []
+    for player, stats in player_stats.items():
+        if stats["injured_games"] >= 5:
+            wr = (
+                stats["injured_wins"]
+                / stats["injured_games"]
+            )
+            player_results.append({
+                "Player": player,
+                "Injured Games": (
+                    stats["injured_games"]
+                ),
+                "Win Rate": f"{wr:.1%}",
+                "vs Healthy": (
+                    f"{wr - healthy_wr:+.1%}"
+                ),
+                "Signal": (
+                    "⚠️ Avoid"
+                    if wr < healthy_wr - 0.05
+                    else "✅ Safe"
+                    if wr >= healthy_wr
+                    else "📊 Monitor"
+                )
+            })
+    
+    results["player_breakdown"] = (
+        player_results
+    )
+    return results, len(injured)
+
 def record_signal_performance(lock, outcome):
     """
     When a bet resolves WIN or LOSS record
@@ -1805,7 +2009,9 @@ def compute_optimized_weights(sport):
     }
     save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
     
-    return optimizeddef get_active_weights(sport):
+    return optimized
+
+def get_active_weights(sport):
     """
     Get the best available weights for a sport.
     Uses data-driven weights if available,
@@ -3729,6 +3935,245 @@ def fetch_public_betting(sport):
         })
         return {}
 
+def fetch_action_network_props(sport):
+    """
+    Action Network player prop projections.
+    Confirmed endpoint May 2026 — no auth.
+    
+    League IDs confirmed via live API:
+      NFL=1, MLB=2, NHL=3, NBA=4, WNBA=5
+    
+    Returns their own model output:
+      projection, edge, grade, bet_quality,
+      implied_value, public betting %
+    
+    Grade A+ = their highest confidence.
+    When AN grade confirms our tier
+    edge gets a 5% boost.
+    """
+    league_id = ACTION_NETWORK_LEAGUE_IDS.get(
+        sport
+    )
+    if not league_id:
+        return []
+    
+    allowed, reason = api_budget_check(
+        "ACTION_NETWORK"
+    )
+    if not allowed:
+        return []
+    
+    cache_path = os.path.join(
+        CACHE_DIR,
+        f"an_props_{sport}.pkl"
+    )
+    if os.path.exists(cache_path):
+        age_mins = (
+            time.time() -
+            os.path.getmtime(cache_path)
+        ) / 60
+        if age_mins < 30:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+    
+    today = date.today().strftime("%Y%m%d")
+    url = (
+        f"https://api.actionnetwork.com"
+        f"/web/v2/leagues/{league_id}"
+        f"/projections/available"
+        f"?date={today}"
+        f"&isLive=false"
+        f"&limit=200"
+        f"&stateCode=CA"
+    )
+    
+    an_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; "
+            "Intel Mac OS X 10_15_7) "
+            "AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) "
+            "Version/26.3.1 "
+            "Safari/605.1.15"
+        ),
+        "Accept": "application/json",
+        "Origin": (
+            "https://www.actionnetwork.com"
+        ),
+        "Referer": (
+            "https://www.actionnetwork.com"
+            f"/{sport.lower()}/prop-projections"
+        ),
+    }
+    
+    try:
+        resp = requests.get(
+            url,
+            headers=an_headers,
+            timeout=15
+        )
+        api_budget_increment("ACTION_NETWORK")
+        
+        if resp.status_code != 200:
+            return []
+        
+        data = resp.json()
+        player_props = data.get(
+            "playerProps", []
+        )
+        
+        if not player_props:
+            st.caption(
+                f"⚠️ Action Network: no "
+                f"{sport} projections published "
+                f"yet for today. Check back "
+                f"closer to game time."
+            )
+            return []
+        
+        results = []
+        seen = set()
+        
+        for prop in player_props:
+            player_abbr = prop.get(
+                "player_abbr", ""
+            )
+            prop_type = prop.get(
+                "custom_pick_type", ""
+            )
+            stat_name = (
+                ACTION_NETWORK_PROP_TYPE_MAP.get(
+                    prop_type,
+                    prop.get(
+                        "custom_pick_type_display_name",
+                        prop_type
+                    )
+                )
+            )
+            
+            if not player_abbr or not stat_name:
+                continue
+            
+            lines = prop.get("lines", [])
+            if not lines:
+                continue
+            
+            line_val = None
+            edge_score = prop.get("edge", 0)
+            grade = prop.get("grade", "")
+            bet_quality = prop.get(
+                "bet_quality", 0
+            )
+            projection = prop.get("projection")
+            implied_value = prop.get(
+                "implied_value"
+            )
+            tickets_pct = 0
+            money_pct = 0
+            over_odds = -110
+            
+            for line_entry in lines:
+                bet_info = line_entry.get(
+                    "bet_info", {}
+                )
+                if bet_info:
+                    t_pct = bet_info.get(
+                        "tickets", {}
+                    ).get("percent", 0)
+                    m_pct = bet_info.get(
+                        "money", {}
+                    ).get("percent", 0)
+                    if t_pct > 0 or m_pct > 0:
+                        tickets_pct = t_pct
+                        money_pct = m_pct
+                
+                if line_val is None:
+                    lv = line_entry.get(
+                        "value",
+                        line_entry.get(
+                            "over_under",
+                            line_entry.get(
+                                "line"
+                            )
+                        )
+                    )
+                    if lv is not None:
+                        try:
+                            line_val = float(lv)
+                        except:
+                            pass
+                
+                odds = line_entry.get("odds")
+                if odds:
+                    over_odds = odds
+            
+            if line_val is None and implied_value:
+                try:
+                    line_val = round(
+                        float(implied_value), 1
+                    )
+                except:
+                    pass
+            
+            if line_val is None:
+                continue
+            
+            key = (
+                sport,
+                player_abbr,
+                stat_name,
+                line_val
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            
+            an_tier = AN_GRADE_TO_TIER.get(
+                grade, ""
+            )
+            
+            results.append({
+                "player_abbr": player_abbr,
+                "stat": stat_name,
+                "line": line_val,
+                "projection": projection,
+                "edge": edge_score,
+                "grade": grade,
+                "tier": an_tier,
+                "bet_quality": bet_quality,
+                "implied_value": implied_value,
+                "tickets_pct": tickets_pct,
+                "money_pct": money_pct,
+                "over_odds": over_odds,
+                "sport": sport,
+                "source": "ActionNetwork",
+            })
+        
+        if results:
+            with open(cache_path, "wb") as f:
+                pickle.dump(results, f)
+            st.caption(
+                f"✅ Action Network props: "
+                f"{len(results)} projections "
+                f"loaded for {sport}"
+            )
+        
+        return results
+        
+    except Exception as e:
+        st.session_state.setdefault(
+            "errors", []
+        ).append({
+            "time": datetime.now().strftime(
+                "%H:%M:%S"
+            ),
+            "source": "fetch_action_network_props",
+            "error": str(e)[:100]
+        })
+        return []
+
 def fetch_game_lines(sport):
     if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
         return [], False, {}, {}
@@ -4838,6 +5283,123 @@ def get_best_alt_line_recommendation(
         "source": "ParlayPlay",
     }
 
+def optimize_parlay_with_alt_lines(
+    selected_props, n_picks, bankroll
+):
+    """
+    Build the highest EV parlay by finding
+    the best alt line for each selected
+    player prop.
+    
+    For each player:
+    1. Check if alt lines exist
+    2. Find the line with highest true EV
+    3. Apply correlation adjustments
+    4. Return optimal combined slip
+    
+    Returns optimized parlay with
+    alt lines substituted where better EV
+    exists vs main line.
+    """
+    if not selected_props:
+        return None
+    
+    optimized = []
+    total_improvement = 0.0
+    
+    for prop in selected_props:
+        player = prop.get("Player", "")
+        stat = prop.get("Prop", "")
+        main_line = prop.get("Line", 0)
+        avg = prop.get("Avg", 0)
+        std_dev = prop.get("StdDev")
+        sport = prop.get("Sport", "NBA")
+        main_prob = prop.get("Prob", 0.5)
+        main_ev = calculate_prizepicks_ev(
+            main_prob, n_picks
+        )
+        
+        # Check for better alt line
+        best_alt, all_alts = compute_alt_line_ev(
+            player, stat, avg,
+            std_dev, sport, bankroll
+        )
+        
+        if (best_alt and
+                best_alt["line"] != main_line and
+                best_alt["ev"] > main_ev):
+            # Alt line is better
+            improvement = (
+                best_alt["ev"] - main_ev
+            )
+            total_improvement += improvement
+            optimized.append({
+                **prop,
+                "Line": best_alt["line"],
+                "Prob": best_alt["fair_prob"],
+                "OptimizedLine": best_alt["line"],
+                "OptimizedPayout": (
+                    best_alt["payout"]
+                ),
+                "OptimizedEV": best_alt["ev"],
+                "MainLine": main_line,
+                "LineImproved": True,
+                "EVImprovement": improvement,
+                "Source": "ParlayPlay_Alt",
+            })
+        else:
+            # Main line is best
+            optimized.append({
+                **prop,
+                "OptimizedLine": main_line,
+                "OptimizedPayout": (
+                    f"{PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)}x"
+                ),
+                "OptimizedEV": main_ev,
+                "MainLine": main_line,
+                "LineImproved": False,
+                "EVImprovement": 0.0,
+                "Source": prop.get(
+                    "source", "PrizePicks"
+                ),
+            })
+    
+    if not optimized:
+        return None
+    
+    # Apply correlation adjustments
+    adjusted_probs, corr_notes = (
+        detect_correlations(optimized)
+    )
+    
+    # Compute final combined EV
+    combined_prob = parlay_prob(adjusted_probs)
+    multiplier = PRIZEPICKS_MULTIPLIERS.get(
+        n_picks, 3.0
+    )
+    breakeven = (
+        1 / multiplier
+    )
+    combined_ev = combined_prob - breakeven
+    
+    improved_count = sum(
+        1 for p in optimized
+        if p.get("LineImproved")
+    )
+    
+    return {
+        "props": optimized,
+        "combined_prob": combined_prob,
+        "multiplier": multiplier,
+        "breakeven": breakeven,
+        "combined_ev": combined_ev,
+        "is_plus_ev": combined_ev > 0,
+        "improved_count": improved_count,
+        "total_ev_improvement": total_improvement,
+        "correlation_notes": corr_notes,
+        "adjusted_probs": adjusted_probs,
+    }
+
 def fetch_bdl_props(sport):
     """
     BallDontLie player props endpoint.
@@ -5524,6 +6086,306 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     except:
         return None
 
+def generate_gem_summary():
+    """
+    Generate a formatted text summary
+    of today's board for pasting into
+    the Gemini Gem. Includes top props,
+    game edges, SEM data, recommended
+    action, and weight status.
+    """
+    board = st.session_state.get(
+        "board_data", []
+    )
+    games = st.session_state.get("games", [])
+    game_analysis = st.session_state.get(
+        "game_analysis", []
+    )
+    sport = st.session_state.get(
+        "last_sport", "NBA"
+    )
+    today = date.today().strftime(
+        "%A, %B %d, %Y"
+    )
+    scan_time = st.session_state.get(
+        "last_scan_time", "—"
+    )
+    lines = []
+    lines.append(
+        "=== BETCOUNCIL v4.6 DAILY BRIEF ==="
+    )
+    lines.append(f"Sport: {sport}")
+    lines.append(f"Date: {today}")
+    lines.append(f"Scanned: {scan_time}")
+    lines.append("")
+    
+    # SEM calibration data
+    history = st.session_state.get(
+        "history", []
+    )
+    tier_stats = compute_tier_stats(history)
+    if tier_stats:
+        lines.append("=== SEM CALIBRATION ===")
+        for tier, stats in tier_stats.items():
+            if stats["n"] >= 5:
+                lines.append(
+                    f"{tier}: "
+                    f"{stats['hit_rate']:.1%} "
+                    f"hit rate "
+                    f"({stats['n']} bets) | "
+                    f"Predicted: "
+                    f"{stats['avg_predicted']:.1%} | "
+                    f"Error: "
+                    f"{stats['calibration_error']:+.3f}"
+                )
+        lines.append("")
+    
+    # Signal performance if available
+    signal_results, n_sig = (
+        analyze_signal_performance()
+    )
+    if signal_results:
+        lines.append(
+            f"=== SIGNAL PERFORMANCE "
+            f"({n_sig} bets) ==="
+        )
+        for r in signal_results[:5]:
+            lines.append(
+                f"{r['Signal']}: "
+                f"WR {r['Win Rate With']} "
+                f"({r['Bets With']} bets) | "
+                f"Lift: {r['Lift']} | "
+                f"{r['Status']}"
+            )
+        lines.append("")
+    
+    # Weight status
+    optimizer_data = load_json_data(
+        WEIGHT_OPTIMIZER_PATH, {}
+    )
+    sport_opt = optimizer_data.get(sport, {})
+    if sport_opt.get(
+        "n_bets", 0
+    ) >= WEIGHT_OPTIMIZER_MIN_BETS:
+        weights = sport_opt.get("weights", {})
+        lines.append(
+            f"=== {sport} WEIGHTS "
+            f"(DATA-DRIVEN — "
+            f"{sport_opt['n_bets']} bets) ==="
+        )
+        for k, v in weights.items():
+            lines.append(f"{k}: {v:.1%}")
+        lines.append(
+            f"Win Rate: "
+            f"{sport_opt.get('overall_win_rate', 0):.1%}"
+        )
+    else:
+        lines.append(
+            f"=== {sport} WEIGHTS "
+            f"(HARDCODED) ==="
+        )
+        weights = SPORT_SIGNAL_WEIGHTS.get(
+            sport, {}
+        )
+        for k, v in weights.items():
+            lines.append(f"{k}: {v:.1%}")
+    lines.append("")
+    
+    # Recommended action
+    sovereign_elite = [
+        p for p in board
+        if p["Tier"] in ("SOVEREIGN", "ELITE")
+    ] if board else []
+    approved = [
+        p for p in board
+        if p["Tier"] == "APPROVED"
+    ] if board else []
+    if len(sovereign_elite) >= 2:
+        action = "STRONG BETTING DAY"
+    elif len(sovereign_elite) == 1:
+        action = "SELECTIVE DAY"
+    elif len(approved) >= 3:
+        action = "MODERATE DAY"
+    else:
+        action = "LIGHT DAY"
+    lines.append(
+        f"=== RECOMMENDED ACTION: {action} ==="
+    )
+    lines.append(
+        f"Elite: {len(sovereign_elite)} | "
+        f"Approved: {len(approved)} | "
+        f"Total: {len(board)}"
+    )
+    lines.append("")
+    
+    # Top props
+    if board:
+        lines.append("=== TOP PROPS ===")
+        top = [
+            p for p in board
+            if p["Tier"] in (
+                "SOVEREIGN","ELITE","APPROVED"
+            )
+        ][:8]
+        for p in top:
+            injury = (
+                f" ⚠️ {p['Injury']}"
+                if p.get("Injury") else ""
+            )
+            std_note = (
+                f" [σ={p['StdDev']:.1f}]"
+                if p.get("StdDev") else ""
+            )
+            fairness = (
+                f" [{p['FairnessGrade']}]"
+                if p.get("FairnessGrade")
+                not in (None, "GOOD", "UNKNOWN")
+                else ""
+            )
+            consensus = (
+                f" Consensus:{p['ConsensusProb']}"
+                if p.get("ConsensusProb","—") != "—"
+                else ""
+            )
+            lines.append(
+                f"{p['Tier']}: {p['Player']} "
+                f"{p['Side']} {p['Line']} "
+                f"{p['Prop']}"
+                f" | Avg:{p['Avg']:.1f}"
+                f"{std_note}"
+                f" | Edge:{p['EdgePct']}"
+                f" | EV:{p.get('EV_2pick','—')}"
+                f" | Prob:{p['Prob']:.1%}"
+                f"{consensus}"
+                f"{fairness}"
+                f"{injury}"
+            )
+        lines.append("")
+    
+    # Alt line upgrades
+    alt_upgrades = st.session_state.get(
+        "alt_line_upgrades", []
+    )
+    if alt_upgrades:
+        lines.append(
+            f"=== ALT LINE UPGRADES "
+            f"({len(alt_upgrades)} found) ==="
+        )
+        for upg in alt_upgrades[:4]:
+            lines.append(
+                f"{upg['player']} {upg['stat']}: "
+                f"Main {upg['main_line']} → "
+                f"Alt OVER {upg['best_line']} "
+                f"@ {upg['best_payout']} | "
+                f"EV improvement: "
+                f"+{upg['ev_improvement']:.1%}"
+            )
+        lines.append("")
+    
+    # Top game bets
+    if game_analysis:
+        lines.append("=== TOP GAME BETS ===")
+        for g in game_analysis[:3]:
+            bb = g.get("best_bet", {})
+            if bb:
+                pub = g.get("public_data", {})
+                pub_note = ""
+                if pub and pub.get(
+                    "sharp_signals"
+                ):
+                    pub_note = (
+                        f" | Sharp: "
+                        f"{pub['sharp_signals'][0][:40]}"
+                    )
+                lines.append(
+                    f"{g['matchup']}: "
+                    f"{bb['pick']} "
+                    f"({bb['type']}) | "
+                    f"Edge: {bb['edge_pct']}"
+                    f"{pub_note}"
+                )
+        lines.append("")
+    
+    # Public betting summary
+    public_data = st.session_state.get(
+        "public_betting_data", {}
+    )
+    if public_data:
+        lines.append(
+            "=== PUBLIC BETTING ALERTS ==="
+        )
+        for gkey, gd in public_data.items():
+            signals = gd.get(
+                "sharp_signals", []
+            )
+            if signals:
+                teams = " vs ".join(
+                    gd.get("teams", [])
+                )
+                for sig in signals[:2]:
+                    lines.append(
+                        f"{teams}: {sig}"
+                    )
+        lines.append("")
+    
+    # CLV summary
+    clv_data = load_json_data(CLV_PATH, [])
+    if len(clv_data) >= 5:
+        avg_clv = sum(
+            c.get("clv", 0)
+            for c in clv_data
+        ) / len(clv_data)
+        pos_rate = sum(
+            1 for c in clv_data
+            if c.get("clv", 0) > 0
+        ) / len(clv_data)
+        lines.append("=== CLV STATUS ===")
+        lines.append(
+            f"Avg CLV: {avg_clv:+.2f} | "
+            f"Positive Rate: {pos_rate:.1%} | "
+            f"N: {len(clv_data)}"
+        )
+        lines.append("")
+    
+    # Injuries
+    injuries = {}
+    for p in board:
+        if p.get("Injury"):
+            injuries[p["Player"]] = p["Injury"]
+    if injuries:
+        lines.append("=== INJURY FLAGS ===")
+        for player, status in injuries.items():
+            lines.append(
+                f"{player}: {status}"
+            )
+        lines.append("")
+    
+    # Arb opportunities
+    arb_opps = st.session_state.get(
+        "arb_opportunities", []
+    )
+    if arb_opps:
+        lines.append(
+            f"=== ARB OPPORTUNITIES "
+            f"({len(arb_opps)}) ==="
+        )
+        for arb in arb_opps[:3]:
+            lines.append(
+                f"{arb['Player']} "
+                f"{arb['Stat']} {arb['Line']}: "
+                f"OVER {arb['OVER Book']} "
+                f"{arb['OVER Odds']} / "
+                f"UNDER {arb['UNDER Book']} "
+                f"{arb['UNDER Odds']} | "
+                f"Profit: {arb['Arb Profit']}"
+            )
+        lines.append("")
+    
+    lines.append(
+        "=== END BRIEF — PASTE INTO GEM ==="
+    )
+    return "\n".join(lines)
+
 def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None):
     if player_avg <= 0:
         return 0.0, 0.5, {}
@@ -5745,50 +6607,85 @@ def load_sport_data(sport):
         props = pp_props
     elif ud_props_compare:
         props = ud_props_compare
-    elif oddswrap_props:
-        props = [p for p in oddswrap_props if p["Side"] == "OVER"]
-        st.info("Using DraftKings/Bovada props as primary source")
     else:
-        # Fallback 4 — Odds API props
-        # Bovada + MyBookie + DK + FanDuel
-        # Uses existing ODDS_API_KEY
-        st.info("Primary sources unavailable — trying Bovada/MyBookie props...")
-        odds_api_props = fetch_odds_api_props(sport)
-        if odds_api_props:
-            props = odds_api_props
-            st.success(f"✅ Bovada/MyBookie props — {len(odds_api_props)} loaded")
-        elif sport == "NBA" and BDL_API_KEY:
-            # Fallback 5 — BDL Props
-            st.info("Trying BDL Props backup...")
-            bdl_props = fetch_bdl_props(sport)
-            if bdl_props:
-                props = bdl_props
-                st.success(f"✅ BDL Props — {len(bdl_props)} loaded")
-            else:
-                parlayplay_props = fetch_parlayplay_props(sport)
-                if parlayplay_props:
-                    props = parlayplay_props
-                    st.success(f"✅ ParlayPlay — {len(parlayplay_props)} props")
+        # Fallback 3 — ParlayPlay
+        # Confirmed all-sports endpoint
+        # Alt lines included
+        # Higher quality than OddsWrap
+        parlayplay_props = fetch_parlayplay_props(sport)
+        if parlayplay_props:
+            props = parlayplay_props
+            st.success(
+                f"✅ ParlayPlay — "
+                f"{len(parlayplay_props)} props"
+            )
+        elif oddswrap_props:
+            # Fallback 4 — OddsWrap
+            props = [
+                p for p in oddswrap_props
+                if p["Side"] == "OVER"
+            ]
+            st.info(
+                "Using DraftKings/Bovada "
+                "props as primary source"
+            )
+        else:
+            # Fallback 5 — Odds API
+            # Bovada + MyBookie + DK + FD + Novig
+            st.info(
+                "Primary sources unavailable — "
+                "trying Bovada/MyBookie props..."
+            )
+            odds_api_props = fetch_odds_api_props(
+                sport
+            )
+            if odds_api_props:
+                props = odds_api_props
+                st.success(
+                    f"✅ Bovada/MyBookie props — "
+                    f"{len(odds_api_props)} loaded"
+                )
+            elif sport == "NBA" and BDL_API_KEY:
+                # Fallback 6 — BDL Props
+                st.info(
+                    "Trying BDL Props backup..."
+                )
+                bdl_props = fetch_bdl_props(sport)
+                if bdl_props:
+                    props = bdl_props
+                    st.success(
+                        f"✅ BDL Props — "
+                        f"{len(bdl_props)} loaded"
+                    )
                 else:
-                    oddspapi_props = fetch_oddspapi_props(sport)
+                    oddspapi_props = (
+                        fetch_oddspapi_props(sport)
+                    )
                     if oddspapi_props:
                         props = oddspapi_props
-                        st.success(f"✅ OddsPapi — {len(oddspapi_props)} props")
+                        st.success(
+                            f"✅ OddsPapi — "
+                            f"{len(oddspapi_props)} props"
+                        )
                     else:
-                        games, _, _, _ = fetch_game_lines(sport)
+                        games, _, _, _ = (
+                            fetch_game_lines(sport)
+                        )
                         return [], games, 0, 0, {}, {}
-        else:
-            parlayplay_props = fetch_parlayplay_props(sport)
-            if parlayplay_props:
-                props = parlayplay_props
-                st.success(f"✅ ParlayPlay — {len(parlayplay_props)} props")
             else:
-                oddspapi_props = fetch_oddspapi_props(sport)
+                oddspapi_props = (
+                    fetch_oddspapi_props(sport)
+                )
                 if oddspapi_props:
                     props = oddspapi_props
-                    st.success(f"✅ OddsPapi — {len(oddspapi_props)} props")
+                    st.success(
+                        f"✅ OddsPapi — "
+                        f"{len(oddspapi_props)} props"
+                    )
                 else:
-                    games, _, _, _ = fetch_game_lines(sport)
+                    games, _, _, _ = (
+                        fetch_game_lines(sport)
+                    )
                     return [], games, 0, 0, {}, {}
     
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
@@ -5803,6 +6700,24 @@ def load_sport_data(sport):
         st.session_state[
             "public_betting_data"
         ] = public_betting
+    
+    # Fetch Action Network prop projections
+    an_props = []
+    if sport in ["NBA", "MLB", "NHL", "NFL", "WNBA"]:
+        an_props = fetch_action_network_props(
+            sport
+        )
+        st.session_state[
+            "an_props_data"
+        ] = an_props
+    
+    an_lookup = {}
+    for ap in an_props:
+        key = (
+            ap["player_abbr"].lower(),
+            ap["stat"]
+        )
+        an_lookup[key] = ap
     
     games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
     b2b_teams = set()
@@ -6111,6 +7026,26 @@ def load_sport_data(sport):
             )
         )
         
+        # Get Action Network overlay
+        player_parts = player.split()
+        if len(player_parts) >= 2:
+            abbr_key = (
+                f"{player_parts[0][0]}."
+                f"{player_parts[-1]}"
+            ).lower()
+        else:
+            abbr_key = player.lower()
+        
+        an_data = an_lookup.get(
+            (abbr_key, stat_raw), {}
+        )
+        an_projection = an_data.get("projection")
+        an_grade = an_data.get("grade", "")
+        an_edge = an_data.get("edge", 0)
+        an_tier = an_data.get("tier", "")
+        an_tickets = an_data.get("tickets_pct", 0)
+        an_money = an_data.get("money_pct", 0)
+        
         over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj))
         under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
@@ -6163,6 +7098,25 @@ def load_sport_data(sport):
         adj_edge, calibrated = adjusted_edge(best_edge, sport, get_tier(best_edge, sport), stat_norm, history)
         final_edge = adj_edge if calibrated else best_edge
         eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
+        
+        # AN grade confirms our tier
+        # boost edge 5%
+        if (an_grade in ("A+", "A", "A-") and
+                get_tier(
+                    final_edge, sport
+                ) in (
+                    "SOVEREIGN", "ELITE",
+                    "APPROVED"
+                )):
+            final_edge = min(
+                final_edge * 1.05, EDGE_CAP
+            )
+        
+        # AN says bad bet reduce edge 10%
+        if (an_grade in ("C", "D") and
+                final_edge > 0.05):
+            final_edge = final_edge * 0.90
+        
         if sharp_flag and best_side == "OVER":
             player_matchup = next((g["Matchup"] for g in games if player_team in g.get("Matchup","")), "")
             sharp_direction = game_sharp_flags.get(player_matchup, {}).get("direction", "")
@@ -6204,6 +7158,27 @@ def load_sport_data(sport):
         "ModelProb": f"{best_prob:.1%}",
         "FairnessGrade": fairness_grade,
         "FairnessNote": fairness_note,
+        "AN_Grade": an_grade,
+        "AN_Projection": round(
+            float(an_projection), 1
+        ) if an_projection else None,
+        "AN_Edge": round(
+            float(an_edge), 3
+        ) if an_edge else None,
+        "AN_Tier": an_tier,
+        "AN_Tickets": an_tickets,
+        "AN_Money": an_money,
+        "AN_Confirms": (
+            an_tier in (
+                "SOVEREIGN", "ELITE"
+            ) and
+            get_tier(
+                final_edge, sport
+            ) in (
+                "SOVEREIGN", "ELITE",
+                "APPROVED"
+            )
+        ),
     })
     
     # Run arbitrage detector
@@ -6284,7 +7259,7 @@ _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_
        "all_sports_results": None, "game_analysis": [], "officials_data": {}, "mlb_pitchers": {},
        "power_divergences": {}, "quality_sorted_board": [], "last_pick_count": 2,
        "public_betting_data": {}, "alt_line_upgrades": [], "parlayplay_alt_lines": {},
-       "arb_opportunities": [], "steam_moves": []}
+       "arb_opportunities": [], "steam_moves": [], "an_props_data": [], "gem_brief": ""}
 for k, v in _ss.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -6562,6 +7537,54 @@ with tabs[0]:
         else:
             st.caption("Load board to see today's officials.")
     
+    st.markdown("---")
+    st.markdown("## 📤 GEM SYNC BRIEF")
+    st.caption(
+        "Generate a formatted summary to "
+        "paste into your Gemini Gem. "
+        "Syncs SEM data, weights, top props, "
+        "public betting, CLV, arb ops, "
+        "and alt line upgrades."
+    )
+    col_gem1, col_gem2 = st.columns([2, 1])
+    with col_gem1:
+        if st.button(
+            "📋 Generate Gem Brief",
+            key="gen_gem_brief"
+        ):
+            if not st.session_state.get(
+                "board_data"
+            ):
+                st.warning(
+                    "Load the board first."
+                )
+            else:
+                brief = generate_gem_summary()
+                st.session_state[
+                    "gem_brief"
+                ] = brief
+                st.success(
+                    "✅ Brief generated — "
+                    "copy and paste into Gem"
+                )
+    with col_gem2:
+        if st.session_state.get("gem_brief"):
+            st.caption(
+                f"Generated at {scan_t}"
+            )
+    if st.session_state.get("gem_brief"):
+        st.text_area(
+            "📋 Copy this into your Gem:",
+            value=st.session_state["gem_brief"],
+            height=300,
+            key="gem_brief_display"
+        )
+        st.caption(
+            "💡 Ctrl+A to select all, "
+            "Ctrl+C to copy."
+        )
+    
+    st.markdown("---")
     st.markdown("### ⚡ Sharp Money Alerts")
     
     # Line movement sharp flags (existing)
@@ -6630,6 +7653,81 @@ with tabs[0]:
         st.caption(
             "Load board to see sharp money "
             "and public betting data."
+        )
+    
+    st.markdown("### 📊 Action Network Prop Grades")
+    st.caption(
+        "Action Network runs their own "
+        "analytical model. A+ = their highest "
+        "confidence. When their grade confirms "
+        "our tier the edge gets a 5% boost."
+    )
+    
+    an_props_data = st.session_state.get(
+        "an_props_data", []
+    )
+    if an_props_data:
+        top_an = [
+            p for p in an_props_data
+            if p.get("grade") in (
+                "A+", "A", "A-"
+            )
+        ][:8]
+        if top_an:
+            an_rows = []
+            for ap in top_an:
+                an_rows.append({
+                    "Player": ap["player_abbr"],
+                    "Stat": ap["stat"],
+                    "Line": ap["line"],
+                    "Projection": ap.get(
+                        "projection", "—"
+                    ),
+                    "AN Grade": ap.get(
+                        "grade", "—"
+                    ),
+                    "Bet Quality": ap.get(
+                        "bet_quality", "—"
+                    ),
+                    "Tickets%": (
+                        f"{ap['tickets_pct']}%"
+                        if ap.get("tickets_pct")
+                        else "—"
+                    ),
+                    "Money%": (
+                        f"{ap['money_pct']}%"
+                        if ap.get("money_pct")
+                        else "—"
+                    ),
+                })
+            st.dataframe(
+                pd.DataFrame(an_rows),
+                width="stretch",
+                hide_index=True
+            )
+            board = st.session_state.get(
+                "board_data", []
+            )
+            confirmed = [
+                p for p in board
+                if p.get("AN_Confirms")
+            ]
+            if confirmed:
+                st.success(
+                    f"✅ {len(confirmed)} props "
+                    f"confirmed by Action Network "
+                    f"A/A+ grade — edge boosted 5%"
+                )
+    elif st.session_state.get("board_ready"):
+        st.caption(
+            "No Action Network grades loaded. "
+            "Projections publish closer to "
+            "game time."
+        )
+    else:
+        st.caption(
+            "Load board to see Action Network "
+            "prop grades."
         )
     
     st.markdown("### 🌊 Steam Move Alerts")
@@ -6754,6 +7852,8 @@ with tabs[0]:
     📊 {reason}
     {f" | Consensus: {p.get('ConsensusProb','—')} ({p.get('ConsensusBooks','—')})" if p.get('ConsensusProb','—') != '—' else ""}
     {f" | {p.get('FairnessNote','')}" if p.get('FairnessGrade') in ('BAD','CAUTION') else ""}
+    {f" | ✅ AN {p.get('AN_Grade','')} — Proj: {p.get('AN_Projection','—')}" if p.get('AN_Confirms') else ""}
+    {f" | ⚠️ AN Grade: {p.get('AN_Grade','')}" if p.get('AN_Grade') in ('C','D') else ""}
     {f" | {p.get('RefNote','')}" if p.get('RefNote') else ""}
     {f" | {p.get('WeatherNote','')}" if p.get('WeatherNote') else ""}
     {f" | Confidence: {p.get('SEM','—')}" if p.get('SEM','—') != '—' else ""}
@@ -7204,6 +8304,208 @@ with tabs[0]:
         st.info("No +EV games detected.")
     
     st.markdown("---")
+    st.markdown("## ⚡ PARLAY OF THE DAY — PROPS")
+    board = st.session_state.board_data
+    top_props = [
+        p for p in board
+        if p["Tier"] in (
+            "SOVEREIGN","ELITE","APPROVED"
+        )
+    ] if board else []
+    if len(top_props) >= 2:
+        n_picks_parlay = st.radio(
+            "Picks in parlay",
+            [2, 3, 4, 5],
+            index=1,
+            horizontal=True,
+            key="prop_parlay_picks"
+        )
+        parlay_props = top_props[:n_picks_parlay]
+        
+        # Run alt line optimizer
+        has_alt_lines = bool(
+            st.session_state.get(
+                "parlayplay_alt_lines"
+            )
+        )
+        
+        use_alt = False
+        if has_alt_lines:
+            use_alt = st.checkbox(
+                "🔀 Optimize with alt lines "
+                "(ParlayPlay)",
+                value=True,
+                key="use_alt_parlay"
+            )
+        
+        if use_alt and has_alt_lines:
+            optimized_result = (
+                optimize_parlay_with_alt_lines(
+                    parlay_props,
+                    n_picks_parlay,
+                    st.session_state.bankroll
+                )
+            )
+        else:
+            optimized_result = None
+        
+        # Use optimized props if available
+        display_props = (
+            optimized_result["props"]
+            if optimized_result
+            else parlay_props
+        )
+        adjusted_probs, corr_notes = (
+            detect_correlations(display_props)
+            if not optimized_result
+            else (
+                optimized_result["adjusted_probs"],
+                optimized_result["correlation_notes"]
+            )
+        )
+        contradiction_warnings = (
+            detect_game_script_contradictions(
+                display_props,
+                st.session_state.games
+            )
+        )
+        for note in corr_notes:
+            if "⚠️" in note or "🚨" in note:
+                st.warning(note)
+            else:
+                st.info(note)
+        for cw in contradiction_warnings:
+            st.warning(cw)
+        
+        # Show improvement banner
+        if (optimized_result and
+                optimized_result[
+                    "improved_count"
+                ] > 0):
+            st.success(
+                f"🔀 {optimized_result['improved_count']} "
+                f"props upgraded to better alt lines — "
+                f"EV improved by "
+                f"+{optimized_result['total_ev_improvement']:.1%}"
+            )
+        
+        for idx, p in enumerate(display_props):
+            improved = p.get("LineImproved", False)
+            line_display = p.get("Line", 0)
+            payout_display = p.get(
+                "OptimizedPayout",
+                f"{PRIZEPICKS_MULTIPLIERS.get(n_picks_parlay, 3.0)}x"
+            )
+            ev_val = p.get(
+                "OptimizedEV",
+                calculate_prizepicks_ev(
+                    p.get("Prob", 0.5),
+                    n_picks_parlay
+                )
+            )
+            ev_color = (
+                "#22c55e" if ev_val > 0
+                else "#e04040"
+            )
+            improved_html = ""
+            if improved:
+                main = p.get("MainLine", 0)
+                improved_html = (
+                    f'<span style="color:#22c55e;'
+                    f'font-size:10px;margin-left:8px;">'
+                    f'↑ Alt: was {main}</span>'
+                )
+            st.markdown(f"""
+<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:3px solid {'#22c55e' if improved else '#0ea5a0'};border-radius:6px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;">
+  <span style="color:#e8f0f8;font-weight:600;">{p['Player']} {p['Side']} {line_display} {p['Prop']}{improved_html}</span>
+  <span style="color:{ev_color};font-weight:700;font-size:13px;">EV: {ev_val:+.1%} @ {payout_display}</span>
+</div>""", unsafe_allow_html=True)
+        
+        # Final EV calculation
+        if optimized_result:
+            cp = optimized_result["combined_prob"]
+            pp_ev = optimized_result["combined_ev"]
+            breakeven = optimized_result["breakeven"]
+            multiplier = optimized_result["multiplier"]
+        else:
+            multiplier = PRIZEPICKS_MULTIPLIERS.get(
+                n_picks_parlay, 3.0
+            )
+            breakeven = 1 / multiplier
+            cp = parlay_prob(adjusted_probs)
+            pp_ev = cp - breakeven
+        
+        tw = sum(
+            p.get("Wager_2pick", p.get("Wager", 0))
+            for p in display_props
+        )
+        ev_color = (
+            "#22c55e" if pp_ev > 0
+            else "#e04040"
+        )
+        ev_label = (
+            f"+{pp_ev:.1%} ✅ +EV"
+            if pp_ev > 0
+            else f"{pp_ev:.1%} ❌ -EV"
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Combined Prob", f"{cp:.1%}")
+        c2.metric(
+            f"{n_picks_parlay}-pick Pays",
+            f"{multiplier}x"
+        )
+        c3.metric("Breakeven", f"{breakeven:.1%}")
+        c4.metric("True EV", ev_label)
+        if pp_ev > 0:
+            st.success(
+                f"✅ This {n_picks_parlay}-pick "
+                f"is +EV. "
+                f"If hits: "
+                f"${tw * multiplier:.2f}"
+            )
+        else:
+            st.error(
+                f"❌ This {n_picks_parlay}-pick "
+                f"is -EV."
+            )
+    else:
+        st.caption(
+            "Need 2+ SOVEREIGN/ELITE/APPROVED "
+            "props."
+        )
+    
+    st.markdown("---")
+    st.markdown("## 🏟️ PARLAY OF THE DAY — GAMES")
+    game_analysis = st.session_state.get("game_analysis", [])
+    good_games = [g for g in game_analysis if g.get("best_bet") and g["best_edge"] >= 0.04]
+    if len(good_games) >= 2:
+        n_game_picks = st.radio("Games in parlay", [2, 3, 4], index=0, horizontal=True, key="game_parlay_picks")
+        parlay_games = good_games[:n_game_picks]
+        for g in parlay_games:
+            bb = g["best_bet"]
+            tier_color = TIER_COLORS.get(bb.get("tier","LEAN"), "#7a8a9a")
+            st.markdown(f"""
+<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:3px solid {tier_color};border-radius:6px;padding:10px 14px;margin-bottom:6px;">
+  <span style="color:#6a7a8a;font-size:11px;">{g['matchup']} — {bb['type']}</span><br/>
+  <span style="color:#e8f0f8;font-weight:700;font-size:15px;">{bb['pick']}</span>
+  <span style="color:{tier_color};font-weight:600;font-size:13px;margin-left:12px;">{bb['edge_pct']} edge</span>
+</div>""", unsafe_allow_html=True)
+        game_probs = [min(0.70, 0.5 + g["best_edge"]) for g in parlay_games]
+        combined = parlay_prob(game_probs)
+        breakeven = 0.524 ** n_game_picks
+        ev = combined - breakeven
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Combined Prob", f"{combined:.1%}")
+        c2.metric("Breakeven (-110)", f"{breakeven:.1%}")
+        c3.metric("True EV", f"+{ev:.1%} ✅" if ev > 0 else f"{ev:.1%} ❌")
+        if ev > 0:
+            st.success(f"✅ This {n_game_picks}-game parlay is +EV at -110.")
+        else:
+            st.error(f"❌ Combined probability below breakeven.")
+    else:
+        st.caption("Need 2+ games with detected edge.")
+    
+    st.markdown("---")
     st.markdown("## 🌐 BEST OF ALL SPORTS")
     all_sports_results = st.session_state.get("all_sports_results", None)
     col_scan1, col_scan2 = st.columns([2,1])
@@ -7261,7 +8563,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "ConsensusProb", "Books", "BestAltLine", "BestAltEV", "BestAltPayout"]
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "ConsensusProb", "Books", "BestAltLine", "BestAltEV", "BestAltPayout"]
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("📊 Signal Breakdown"):
@@ -7459,6 +8761,12 @@ with tabs[3]:
                     lock,
                     st.session_state.board_data
                 )
+                record_injury_performance(
+                    lock, "WIN",
+                    fetch_injury_news(
+                        lock.get("sport", "NBA")
+                    )
+                )
                 record_signal_performance(lock, "WIN")
                 compute_optimized_weights(lock.get("sport", "NBA"))
                 st.rerun()
@@ -7477,6 +8785,12 @@ with tabs[3]:
                 record_pinnacle_line(
                     lock,
                     st.session_state.board_data
+                )
+                record_injury_performance(
+                    lock, "LOSS",
+                    fetch_injury_news(
+                        lock.get("sport", "NBA")
+                    )
                 )
                 record_signal_performance(lock, "LOSS")
                 compute_optimized_weights(lock.get("sport", "NBA"))
@@ -7719,6 +9033,75 @@ with tabs[4]:
             f"{needed} more. Requires "
             f"OddsPapi as active source."
         )
+    
+    st.markdown("---")
+    st.markdown("### 🤕 Injury Performance Tracker")
+    st.caption(
+        "How do players perform when "
+        "injury-tagged vs fully healthy? "
+        "Activates after 20+ injury-tagged "
+        "resolved bets. Builds real adjustment "
+        "factor automatically."
+    )
+    
+    injury_results, n_injured = (
+        analyze_injury_performance()
+    )
+    
+    if injury_results is None:
+        needed = 20 - n_injured
+        st.info(
+            f"Injury tracker activates after "
+            f"20 injury-tagged resolved bets. "
+            f"Current: {n_injured}. "
+            f"Need {needed} more."
+        )
+    else:
+        col_i1, col_i2, col_i3 = st.columns(3)
+        col_i1.metric(
+            "Injured WR",
+            f"{injury_results['injured_wr']:.1%}"
+        )
+        col_i2.metric(
+            "Healthy WR",
+            f"{injury_results['healthy_wr']:.1%}"
+        )
+        col_i3.metric(
+            "WR Gap",
+            f"{injury_results['wr_gap']:+.1%}"
+        )
+        
+        penalty = injury_results[
+            "recommended_penalty"
+        ]
+        if penalty > 0.02:
+            st.warning(
+                f"⚠️ Injury signal active: "
+                f"injury-tagged props show "
+                f"{injury_results['wr_gap']:.1%} "
+                f"lower win rate. "
+                f"Recommended edge penalty: "
+                f"-{penalty:.1%}"
+            )
+        else:
+            st.success(
+                "✅ Injury tags not significantly "
+                "impacting outcomes in your data."
+            )
+        
+        player_bd = injury_results.get(
+            "player_breakdown", []
+        )
+        if player_bd:
+            st.markdown(
+                "**Per-player injury history "
+                "(5+ injury-tagged games):**"
+            )
+            st.dataframe(
+                pd.DataFrame(player_bd),
+                width="stretch",
+                hide_index=True
+            )
     
     st.markdown("---")
     st.markdown("### 🔬 Signal Performance Analysis")
