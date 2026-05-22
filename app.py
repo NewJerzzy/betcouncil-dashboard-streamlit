@@ -5421,6 +5421,148 @@ st.markdown(f"""
 # =========================
 # TABS (Full as in original - Summary tab simplified for length)
 # =========================
+
+
+# =========================
+# PRIZEPICKS ACCOUNT INTEGRATION
+# =========================
+
+def fetch_pp_my_entries(filter_type="settled", limit=50):
+    """
+    Fetch user's PrizePicks entries using stored session credentials.
+    filter_type: "pending" | "settled" | "cancelled"
+    Credentials stored in st.secrets as PP_SESSION and PP_CSRF_TOKEN.
+    """
+    pp_session = st.secrets.get("PP_SESSION", "")
+    pp_csrf = st.secrets.get("PP_CSRF_TOKEN", "")
+    pp_device_id = st.secrets.get("PP_DEVICE_ID", "")
+    if not pp_session:
+        return None, "PP_SESSION not configured in Streamlit secrets."
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "origin": "https://app.prizepicks.com",
+        "referer": "https://app.prizepicks.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
+        "x-device-id": pp_device_id or "19458434-a345-4d1e-85c1-c100d5df600b",
+        "cookie": f"_prizepicks_session={pp_session}; CSRF-TOKEN={pp_csrf}",
+    }
+    try:
+        url = f"https://api.prizepicks.com/v1/entries?filter={filter_type}&per_page={limit}"
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code == 401:
+            return None, "Session expired. Update PP_SESSION in Streamlit secrets."
+        if r.status_code == 403:
+            return None, "Access denied. Session may have expired."
+        if r.status_code != 200:
+            return None, f"API error {r.status_code}"
+        data = r.json()
+        entries = data.get("data", [])
+        included = data.get("included", [])
+        # Build lookup for included data (picks, projections, players)
+        included_map = {}
+        for item in included:
+            included_map[item.get("id")] = item
+        parsed = []
+        for entry in entries:
+            attrs = entry.get("attributes", {})
+            rels = entry.get("relationships", {})
+            picks_data = rels.get("picks", {}).get("data", [])
+            picks = []
+            for pick_ref in picks_data:
+                pick_obj = included_map.get(pick_ref.get("id"), {})
+                pick_attrs = pick_obj.get("attributes", {})
+                # Get projection details
+                proj_id = pick_obj.get("relationships", {}).get("new_player_stat_projection", {}).get("data", {}).get("id")
+                proj = included_map.get(proj_id, {}) if proj_id else {}
+                proj_attrs = proj.get("attributes", {})
+                player_id = proj.get("relationships", {}).get("new_player", {}).get("data", {}).get("id")
+                player_obj = included_map.get(player_id, {}) if player_id else {}
+                player_attrs = player_obj.get("attributes", {})
+                picks.append({
+                    "player": player_attrs.get("display_name", pick_attrs.get("name", "Unknown")),
+                    "stat": proj_attrs.get("stat_type", pick_attrs.get("stat_type", "Unknown")),
+                    "line": pick_attrs.get("line_score", proj_attrs.get("line_score", 0)),
+                    "side": "OVER" if pick_attrs.get("over_under") == "more" else "UNDER",
+                    "result": pick_attrs.get("result", "pending"),
+                    "actual": pick_attrs.get("actual_stat_value"),
+                    "sport": proj_attrs.get("league", ""),
+                })
+            parsed.append({
+                "id": entry.get("id"),
+                "status": attrs.get("status", "pending"),
+                "amount": attrs.get("entry_amount", 0),
+                "payout": attrs.get("payout", 0),
+                "picks_count": attrs.get("picks_count", len(picks)),
+                "entry_type": attrs.get("entry_type", ""),
+                "created_at": attrs.get("created_at", ""),
+                "picks": picks,
+            })
+        return parsed, None
+    except Exception as e:
+        return None, str(e)
+
+
+def auto_log_pp_results():
+    """
+    Fetch settled PrizePicks entries and auto-log any not already in history.
+    Returns count of new bets logged.
+    """
+    entries, error = fetch_pp_my_entries(filter_type="settled", limit=100)
+    if error:
+        return 0, error
+    existing_ids = {h.get("pp_entry_id") for h in st.session_state.history if h.get("pp_entry_id")}
+    new_count = 0
+    for entry in entries:
+        if entry["id"] in existing_ids:
+            continue
+        status = entry["status"]
+        if status not in ("won", "lost"):
+            continue
+        outcome = "WIN" if status == "won" else "LOSS"
+        wager = float(entry["amount"] or 0)
+        payout = float(entry["payout"] or 0)
+        pick_count = entry["picks_count"]
+        net = (payout - wager) if outcome == "WIN" else -wager
+        for pick in entry["picks"]:
+            sport = pick.get("sport", "NBA").upper()
+            if sport in ("NBA", "MLB", "NHL", "NFL", "WNBA", "NCAAB", "NCAAF"):
+                pass
+            else:
+                sport = "NBA"
+            hist_entry = {
+                "player": pick["player"],
+                "prop": pick["stat"],
+                "line": pick["line"],
+                "side": pick["side"],
+                "sport": sport,
+                "outcome": outcome,
+                "wager": round(wager / max(pick_count, 1), 2),
+                "net": round(net / max(pick_count, 1), 2),
+                "pick_count": pick_count,
+                "tier": None,
+                "source": "PrizePicks Auto",
+                "manual_entry": True,
+                "pp_entry_id": entry["id"],
+                "timestamp": entry["created_at"][:16].replace("T", " ") if entry["created_at"] else datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "actual_value": pick.get("actual"),
+                "stat_type": pick["stat"],
+                "resolved_date": date.today().strftime("%Y-%m-%d"),
+                "bet_type": "prop",
+            }
+            st.session_state.history.append(hist_entry)
+            new_count += 1
+        if outcome == "WIN":
+            st.session_state.bankroll += net
+        else:
+            st.session_state.bankroll -= wager
+    if new_count > 0:
+        save_json_data(HISTORY_PATH, st.session_state.history)
+        save_to_gist("history", st.session_state.history)
+        save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+        save_to_gist("bankroll", st.session_state.bankroll)
+    return new_count, None
+
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
@@ -6087,6 +6229,53 @@ with tabs[4]:
 # ----- TAB 5: LOG BET -----
 with tabs[5]:
     st.markdown("## \U0001f4dd Log A Bet")
+
+    # ---- AUTO-SYNC FROM PRIZEPICKS ----
+    pp_session_configured = bool(st.secrets.get("PP_SESSION", ""))
+    if pp_session_configured:
+        col_pp1, col_pp2, col_pp3 = st.columns([2, 1, 1])
+        with col_pp1:
+            st.success("\U0001f517 PrizePicks account connected")
+        with col_pp2:
+            if st.button("\U0001f504 Auto-Sync Results", key="pp_auto_sync"):
+                with st.spinner("Fetching your PrizePicks results..."):
+                    n_new, sync_error = auto_log_pp_results()
+                if sync_error:
+                    st.error(f"Sync failed: {sync_error}")
+                elif n_new == 0:
+                    st.info("All caught up \u2014 no new results to log.")
+                else:
+                    st.success(f"\u2705 Logged {n_new} new picks from PrizePicks!")
+                    st.rerun()
+        with col_pp3:
+            if st.button("\U0001f4cb View Pending", key="pp_view_pending"):
+                with st.spinner("Loading pending entries..."):
+                    pending, err = fetch_pp_my_entries("pending", limit=20)
+                if err:
+                    st.error(err)
+                elif pending:
+                    st.session_state["pp_pending_entries"] = pending
+                    st.rerun()
+        pp_pending = st.session_state.get("pp_pending_entries", [])
+        if pp_pending:
+            st.markdown("### \u23f3 Your Active PrizePicks Entries")
+            for entry in pp_pending[:10]:
+                with st.expander(f"{entry['picks_count']}-pick | ${entry['amount']} entry | {entry['entry_type']}"):
+                    for pick in entry["picks"]:
+                        result_icon = "\u2705" if pick["result"] == "correct" else "\u274c" if pick["result"] == "incorrect" else "\u23f3"
+                        actual = f" (actual: {pick['actual']})" if pick.get('actual') else ""
+                        st.write(f"{result_icon} **{pick['player']}** {pick['side']} {pick['line']} {pick['stat']}{actual}")
+        st.markdown("---")
+    else:
+        with st.expander("\U0001f517 Connect PrizePicks Account (auto-log results)"):
+            st.markdown("Add these to your Streamlit Secrets to enable auto-sync:")
+            st.code("""PP_SESSION = "paste_your_session_here"
+PP_CSRF_TOKEN = "paste_your_csrf_token_here"
+PP_DEVICE_ID = "19458434-a345-4d1e-85c1-c100d5df600b"
+""", language="toml")
+            st.caption("Get these from Chrome DevTools \u2192 Network tab \u2192 any api.prizepicks.com request \u2192 Request Headers \u2192 Cookie")
+        st.markdown("---")
+
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
     log_tab1, log_tab2 = st.tabs(["Manual Entry", "Bulk Entry"])
     with log_tab1:
