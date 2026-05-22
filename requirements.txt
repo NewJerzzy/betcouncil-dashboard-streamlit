@@ -6,4 +6,3 @@ numpy
 curl_cffi
 git+https://github.com/sjhouston23/oddswrap.git
 scipy
-tesseract-ocr
