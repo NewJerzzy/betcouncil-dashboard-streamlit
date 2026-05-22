@@ -1991,7 +1991,9 @@ def fetch_mlb_probable_pitchers():
     except Exception as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_probable_pitchers", "error": str(e)[:100]})
     return pitchers
-    def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
+
+
+def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
     cache_key = f"recent_def_{sport}_{team_abbrev}_{n_games}"
     cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
     if os.path.exists(cache_path):
@@ -2034,7 +2036,9 @@ def fetch_mlb_probable_pitchers():
         except:
             continue
     return None
-    def fetch_espn_fpi_ratings(sport="NBA"):
+
+
+def fetch_espn_fpi_ratings(sport="NBA"):
     cache_path = os.path.join(CACHE_DIR, f"espn_fpi_{sport}.pkl")
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
@@ -2582,7 +2586,9 @@ def fetch_mlb_rolling_averages():
         with open(cache_path, "wb") as f:
             pickle.dump(rolling, f)
     return rolling
-    def fetch_nhl_rolling_averages():
+
+
+def fetch_nhl_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nhl_rolling_avgs.pkl")
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
@@ -5513,9 +5519,890 @@ with tabs[0]:
     else:
         st.info("No games loaded.")
     
-    # [The rest of the Summary tab continues with MLB Weather, Officials, GEM Brief, Sharp Money, Action Network, Steam Moves, Top Props, Lock of the Day, EV Props, etc. - see original for full content]
 
-# =========================
-# REMAINING TABS (Full as in original - Full Board, Game Lines, Locks & Ledger, History, Log Bet, Line Shop, System)
-# Due to length, these match the original code exactly.
-# =========================
+    if st.session_state.last_sport == "MLB":
+        st.markdown("### 🌤️ MLB Weather Conditions")
+        weather_data = []
+        shown_cities = set()
+        for prop in st.session_state.board_data[:20]:
+            player = prop.get("Player", "")
+            team = MLB_PLAYER_TEAM_MAP.get(player, "")
+            if team:
+                park = MLB_BALLPARKS.get(team, {})
+                city = park.get("city", "")
+                is_outdoor = park.get("outdoor", True)
+                if city and is_outdoor and city not in shown_cities:
+                    weather = fetch_weather_for_game(city, is_outdoor)
+                    if weather:
+                        shown_cities.add(city)
+                        weather_data.append({"City": city, "Temp": f"{weather['temp_f']}\u00b0F", "Wind": f"{weather['wind_speed_mph']}mph {weather['wind_dir']}", "Humidity": f"{weather['humidity']}%", "Updated": weather["fetched_at"]})
+        if weather_data:
+            st.dataframe(pd.DataFrame(weather_data), width="stretch")
+        else:
+            st.caption("Load MLB board to see weather conditions.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f4e4 GEM SYNC BRIEF")
+    col_gem1, col_gem2 = st.columns([2, 1])
+    with col_gem1:
+        if st.button("\U0001f4cb Generate Gem Brief", key="gen_gem_brief"):
+            if not st.session_state.get("board_data"):
+                st.warning("Load the board first.")
+            else:
+                brief = generate_gem_summary()
+                st.session_state["gem_brief"] = brief
+                st.success("\u2705 Brief generated \u2014 copy and paste into Gem")
+    with col_gem2:
+        if st.session_state.get("gem_brief"):
+            _scan_t = st.session_state.last_scan_time or "\u2014"
+            st.caption(f"Generated at {_scan_t}")
+    if st.session_state.get("gem_brief"):
+        st.text_area("\U0001f4cb Copy this into your Gem:", value=st.session_state["gem_brief"], height=300, key="gem_brief_display")
+
+    st.markdown("---")
+    st.markdown("### \u26a1 Sharp Money Alerts")
+    sharp_flags = st.session_state.get("game_sharp_flags", {})
+    if sharp_flags:
+        for matchup, info in sharp_flags.items():
+            st.warning(f"**{matchup}**: Line moved {info['direction']}{info['magnitude']} \u2014 possible sharp action")
+    public_data = st.session_state.get("public_betting_data", {})
+    if public_data:
+        for game_key, gd in public_data.items():
+            signals = gd.get("sharp_signals", [])
+            teams = gd.get("teams", [])
+            num_bets = gd.get("num_bets", 0)
+            if signals:
+                matchup_label = " vs ".join(teams)
+                for sig in signals:
+                    st.warning(f"**{matchup_label}** ({num_bets:,} bets): {sig}")
+    if not sharp_flags and not public_data:
+        st.caption("Load board to see sharp money and public betting data.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f4ca PLAYER PROPS \u2014 TOP PICKS")
+    board = st.session_state.board_data
+    if board:
+        for p in board[:8]:
+            tier_color = TIER_COLORS.get(p["Tier"], "#7a8a9a")
+            ev_2 = p.get("EV_2pick", "\u2014")
+            ev_color = "#22c55e" if str(ev_2).startswith("+") else "#e04040"
+            avg_val = p.get("Avg", 0)
+            injury_html = f'<span style="background:#e04040;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;">{p["Injury"]}</span>' if p.get("Injury") else ""
+            sharp_html = f'<span style="color:#e8a020;font-size:11px;margin-left:8px;">{p["SharpFlag"]}</span>' if p.get("SharpFlag") else ""
+            ev_2_display = p.get("EV_2pick", "\u2014")
+            wager_display = p.get("Wager_2pick", p.get("Wager", 0))
+            st.markdown(
+                f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};border-radius:8px;padding:14px 18px;margin-bottom:10px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
+                f'<div><span style="font-size:16px;font-weight:700;color:#e8f0f8;">{p["Player"]}</span>{injury_html}{sharp_html}<br/>'
+                f'<span style="font-size:14px;color:{tier_color};font-weight:600;">{p["Side"]} {p["Line"]} {p["Prop"]}</span></div>'
+                f'<div style="text-align:right;"><span style="background:{tier_color};color:#000;font-weight:700;font-size:12px;padding:3px 10px;border-radius:20px;">{p["Tier"]}</span></div>'
+                f'</div>'
+                f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px;">'
+                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">Edge</div><div style="font-size:18px;font-weight:700;color:#0ea5a0;">{p["EdgePct"]}</div></div>'
+                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">2-Pick EV</div><div style="font-size:18px;font-weight:700;color:{ev_color};">{ev_2_display}</div></div>'
+                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">Avg (10g)</div><div style="font-size:18px;font-weight:700;color:#e8f0f8;">{avg_val:.1f}</div></div>'
+                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">Bet Size</div><div style="font-size:18px;font-weight:700;color:#e8a020;">${wager_display:.2f}</div></div>'
+                f'</div></div>',
+                unsafe_allow_html=True
+            )
+    else:
+        st.info("No props loaded.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f3af RECOMMENDED ACTION TODAY")
+    board = st.session_state.board_data
+    game_analysis = st.session_state.get("game_analysis", [])
+    sovereign_elite = [p for p in board if p["Tier"] in ("SOVEREIGN", "ELITE")] if board else []
+    approved = [p for p in board if p["Tier"] == "APPROVED"] if board else []
+    if not board and not game_analysis:
+        st.info("Load the board to see today's recommended action.")
+    else:
+        if len(sovereign_elite) >= 2:
+            action_color, action_text = "#22c55e", "STRONG BETTING DAY"
+            action_detail = f"{len(sovereign_elite)} elite props available."
+        elif len(sovereign_elite) == 1:
+            action_color, action_text = "#0ea5a0", "SELECTIVE DAY"
+            action_detail = f"1 elite prop + {len(approved)} approved plays."
+        elif len(approved) >= 3:
+            action_color, action_text = "#4a90d9", "MODERATE DAY"
+            action_detail = f"{len(approved)} approved plays. No elite props."
+        else:
+            action_color, action_text = "#e8a020", "LIGHT DAY"
+            action_detail = "Limited quality. Consider sitting out or 1 pick max."
+        col_act1, col_act2, col_act3 = st.columns(3)
+        col_act1.metric("Elite Plays", len(sovereign_elite))
+        col_act2.metric("Total Props", len(board) if board else 0)
+        col_act3.metric("Game Edges", len(game_analysis))
+        st.markdown(f"### {action_text}")
+        st.caption(action_detail)
+        if board:
+            best_prop = board[0]
+            st.markdown(f"\U0001f3c0 **Best Prop:** {best_prop['Player']} {best_prop['Side']} {best_prop['Line']} {best_prop['Prop']} \u2014 {best_prop['EdgePct']} edge")
+        if game_analysis and game_analysis[0].get("best_bet"):
+            bb = game_analysis[0]["best_bet"]
+            st.markdown(f"\U0001f3df\ufe0f **Best Game:** {game_analysis[0]['matchup']} \u2192 {bb['pick']} \u2014 {bb['edge_pct']} edge")
+
+    st.markdown("---")
+    st.markdown("## \U0001f512 LOCK OF THE DAY")
+    quality_board = st.session_state.get("quality_sorted_board", board)
+    best = next((p for p in quality_board if p["Tier"] in ["SOVEREIGN","ELITE","APPROVED"]), None)
+    if best:
+        tier_color = TIER_COLORS.get(best['Tier'], "#0ea5a0")
+        lock_score = best.get('LockScore', 0)
+        lock_grade = "\U0001f7e2 PRIME LOCK" if lock_score >= 80 else "\U0001f7e1 SOLID LOCK" if lock_score >= 60 else "\U0001f7e0 SPECULATIVE" if lock_score >= 40 else "\U0001f534 RISKY"
+        st.markdown(f"**{best['Player']} {best['Side']} {best['Line']} {best['Prop']}** | {best['Tier']} | Edge: {best['EdgePct']} | EV: {best.get('EV_2pick','\u2014')} | Lock Score: {lock_score}/100 {lock_grade}")
+        if st.button("\U0001f512 Lock This Pick"):
+            can_bet, risk_reason = check_daily_risk_limits(best["Sport"])
+            if not can_bet:
+                st.error(risk_reason)
+            else:
+                already = any(l.get("player") == best["Player"] and l.get("prop") == best["Prop"] for l in st.session_state.locks)
+                if not already:
+                    st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": best["Side"], "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": best["Sport"]})
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    save_to_gist("locks", st.session_state.locks)
+                    st.rerun()
+                else:
+                    st.warning("Already locked")
+
+    st.markdown("---")
+    st.markdown("## \U0001f500 ALT LINE UPGRADES")
+    alt_upgrades = st.session_state.get("alt_line_upgrades", [])
+    if alt_upgrades:
+        for upg in alt_upgrades[:6]:
+            ev_color = "#22c55e" if upg["best_ev"] > 0 else "#e04040"
+            st.markdown(f"**{upg['player']}** {upg['stat']}: ~~Main: {upg['main_line']}~~ \u2192 Alt OVER **{upg['best_line']} @ {upg['best_payout']}** | EV: {upg['best_ev']:+.1%} (+{upg['ev_improvement']:.1%} improvement)")
+            lock_key = f"lock_alt_{upg['player']}_{upg['stat']}".replace(" ", "_")
+            if st.button("\U0001f512 Lock Alt", key=lock_key):
+                can_bet, risk_reason = check_daily_risk_limits(st.session_state.last_sport)
+                if not can_bet:
+                    st.error(risk_reason)
+                else:
+                    alt_lock = {"player": upg["player"], "prop": upg["stat"], "line": upg["best_line"], "side": "OVER", "wager": upg["wager"], "prob": upg["fair_prob"], "edge": upg["best_ev"], "tier": "ALT", "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": st.session_state.last_sport, "source": "ParlayPlay_Alt", "alt_payout": upg["best_payout"], "alt_line": True, "main_line": upg["main_line"]}
+                    already = any(l.get("player") == upg["player"] and l.get("prop") == upg["stat"] for l in st.session_state.locks)
+                    if not already:
+                        st.session_state.locks.append(alt_lock)
+                        save_json_data(LOCKS_PATH, st.session_state.locks)
+                        save_to_gist("locks", st.session_state.locks)
+                        st.rerun()
+    elif st.session_state.get("board_ready"):
+        st.caption("No alt line upgrades found.")
+    else:
+        st.caption("Load board to check for alt line upgrades.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f4b0 BEST +EV PROPS TODAY")
+    if board:
+        ev_filter = st.radio("Filter by pick count", ["2-pick", "3-pick", "Both"], index=0, horizontal=True, key="ev_filter")
+        plus_ev_props = [p for p in board if (ev_filter == "2-pick" and str(p.get("EV_2pick","\u2014")).startswith("+")) or (ev_filter == "3-pick" and str(p.get("EV_3pick","\u2014")).startswith("+")) or (ev_filter == "Both" and (str(p.get("EV_2pick","\u2014")).startswith("+") or str(p.get("EV_3pick","\u2014")).startswith("+")))]
+        if plus_ev_props:
+            st.write(f"**{len(plus_ev_props)} +EV props found:**")
+            for p in plus_ev_props[:8]:
+                tier_color = TIER_COLORS.get(p["Tier"], "#7a8a9a")
+                ev_show = p.get("EV_2pick","\u2014") if "2" in ev_filter else p.get("EV_3pick","\u2014")
+                st.markdown(f"**{p['Player']}** {p['Side']} {p['Line']} {p['Prop']} | EV: {ev_show} | {p['Tier']}")
+        else:
+            st.info(f"No confirmed +EV props at {ev_filter} breakeven.")
+    else:
+        st.info("Load board to see +EV props.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f48e ARBITRAGE OPPORTUNITIES")
+    arb_opps = st.session_state.get("arb_opportunities", [])
+    if arb_opps:
+        st.success(f"\u2705 {len(arb_opps)} arbitrage opportunities found")
+        for arb in arb_opps[:5]:
+            st.markdown(f"**{arb['Player']}** {arb['Stat']} Line {arb['Line']}: OVER {arb['OVER Book']} {arb['OVER Odds']} / UNDER {arb['UNDER Book']} {arb['UNDER Odds']} | **{arb['Arb Profit']} GUARANTEED**")
+    elif st.session_state.get("board_ready"):
+        st.caption("No arb opportunities right now.")
+    else:
+        st.caption("Load board to scan for arbitrage opportunities.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f4b0 BEST +EV GAMES TODAY")
+    game_analysis_g = st.session_state.get("game_analysis", [])
+    plus_ev_games = [g for g in game_analysis_g if g.get("best_bet") and g["best_edge"] >= 0.05]
+    if plus_ev_games:
+        for g in plus_ev_games[:5]:
+            bb = g["best_bet"]
+            st.markdown(f"**{g['matchup']}**: {bb['pick']} | Edge: {bb['edge_pct']} | {bb['type']}")
+    else:
+        st.info("No +EV games detected.")
+
+    st.markdown("---")
+    st.markdown("## \u26a1 PARLAY OF THE DAY \u2014 PROPS")
+    top_props = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")] if board else []
+    if len(top_props) >= 2:
+        n_picks_parlay = st.radio("Picks in parlay", [2, 3, 4, 5], index=1, horizontal=True, key="prop_parlay_picks")
+        parlay_props = top_props[:n_picks_parlay]
+        has_alt_lines = bool(st.session_state.get("parlayplay_alt_lines"))
+        use_alt = False
+        if has_alt_lines:
+            use_alt = st.checkbox("\U0001f500 Optimize with alt lines (ParlayPlay)", value=True, key="use_alt_parlay")
+        if use_alt and has_alt_lines:
+            optimized_result = optimize_parlay_with_alt_lines(parlay_props, n_picks_parlay, st.session_state.bankroll)
+        else:
+            optimized_result = None
+        display_props = optimized_result["props"] if optimized_result else parlay_props
+        adjusted_probs, corr_notes = (detect_correlations(display_props) if not optimized_result else (optimized_result["adjusted_probs"], optimized_result["correlation_notes"]))
+        for note in corr_notes:
+            if "\u26a0\ufe0f" in note or "\U0001f6a8" in note:
+                st.warning(note)
+            else:
+                st.info(note)
+        if optimized_result and optimized_result["improved_count"] > 0:
+            st.success(f"\U0001f500 {optimized_result['improved_count']} props upgraded to better alt lines \u2014 EV improved by +{optimized_result['total_ev_improvement']:.1%}")
+        for idx, p in enumerate(display_props):
+            improved = p.get("LineImproved", False)
+            ev_val = p.get("OptimizedEV", calculate_prizepicks_ev(p.get("Prob", 0.5), n_picks_parlay))
+            ev_color = "#22c55e" if ev_val > 0 else "#e04040"
+            payout_display = p.get("OptimizedPayout", f"{PRIZEPICKS_MULTIPLIERS.get(n_picks_parlay, 3.0)}x")
+            alt_note = f" [Alt \u2191 was {p.get('MainLine',0)}]" if improved else ""
+            st.markdown(f"**{p['Player']}** {p['Side']} {p['Line']} {p['Prop']}{alt_note} | EV: {ev_val:+.1%} @ {payout_display}")
+        if optimized_result:
+            cp = optimized_result["combined_prob"]
+            pp_ev = optimized_result["combined_ev"]
+            breakeven = optimized_result["breakeven"]
+            multiplier = optimized_result["multiplier"]
+        else:
+            multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks_parlay, 3.0)
+            breakeven = 1 / multiplier
+            cp = parlay_prob(adjusted_probs)
+            pp_ev = cp - breakeven
+        tw = sum(p.get("Wager_2pick", p.get("Wager", 0)) for p in display_props)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Combined Prob", f"{cp:.1%}")
+        c2.metric(f"{n_picks_parlay}-pick Pays", f"{multiplier}x")
+        c3.metric("Breakeven", f"{breakeven:.1%}")
+        c4.metric("True EV", f"+{pp_ev:.1%} \u2705" if pp_ev > 0 else f"{pp_ev:.1%} \u274c")
+        if pp_ev > 0:
+            st.success(f"\u2705 This {n_picks_parlay}-pick is +EV. If hits: ${tw * multiplier:.2f}")
+        else:
+            st.error(f"\u274c This {n_picks_parlay}-pick is -EV.")
+    else:
+        st.caption("Need 2+ SOVEREIGN/ELITE/APPROVED props.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f3df\ufe0f PARLAY OF THE DAY \u2014 GAMES")
+    good_games = [g for g in game_analysis if g.get("best_bet") and g["best_edge"] >= 0.04]
+    if len(good_games) >= 2:
+        n_game_picks = st.radio("Games in parlay", [2, 3, 4], index=0, horizontal=True, key="game_parlay_picks")
+        parlay_games = good_games[:n_game_picks]
+        for g in parlay_games:
+            bb = g["best_bet"]
+            tier_color = TIER_COLORS.get(bb.get("tier","LEAN"), "#7a8a9a")
+            st.markdown(f"**{g['matchup']}**: {bb['pick']} ({bb['type']}) | Edge: {bb['edge_pct']}")
+        game_probs = [min(0.70, 0.5 + g["best_edge"]) for g in parlay_games]
+        combined = parlay_prob(game_probs)
+        breakeven_g = 0.524 ** n_game_picks
+        ev_g = combined - breakeven_g
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Combined Prob", f"{combined:.1%}")
+        c2.metric("Breakeven (-110)", f"{breakeven_g:.1%}")
+        c3.metric("True EV", f"+{ev_g:.1%} \u2705" if ev_g > 0 else f"{ev_g:.1%} \u274c")
+        if ev_g > 0:
+            st.success(f"\u2705 This {n_game_picks}-game parlay is +EV.")
+        else:
+            st.error("\u274c Combined probability below breakeven.")
+    else:
+        st.caption("Need 2+ games with detected edge.")
+
+    st.markdown("---")
+    st.markdown("## \U0001f310 BEST OF ALL SPORTS")
+    all_sports_results = st.session_state.get("all_sports_results", None)
+    col_scan1, col_scan2 = st.columns([2,1])
+    with col_scan1:
+        if st.button("\U0001f50d Find Today's Best Plays Across All Sports", key="scan_all_sports_btn"):
+            with st.spinner("Scanning all sports boards..."):
+                results = scan_all_sports_best_plays()
+                st.session_state["all_sports_results"] = results
+                st.rerun()
+    with col_scan2:
+        if all_sports_results:
+            st.caption(f"Last scanned: {all_sports_results.get('timestamp','\u2014')}")
+    if all_sports_results:
+        best_props_all = all_sports_results.get("best_props", [])
+        best_games_all = all_sports_results.get("best_games", [])
+        if best_props_all:
+            st.markdown(f"### \U0001f3c6 Top Props ({len(best_props_all)} found)")
+            for p in best_props_all[:5]:
+                st.markdown(f"**{p['Sport']}** \u2014 {p['Player']} {p['Side']} {p['Line']} {p['Prop']} | Edge: {p['EdgePct']} | {p['Tier']}")
+        if best_games_all:
+            st.markdown(f"### \U0001f3df\ufe0f Top Game Bets ({len(best_games_all)} found)")
+            for g in best_games_all[:4]:
+                bb = g.get("best_bet",{})
+                st.markdown(f"**{g.get('sport','\u2014')}** \u2014 {g['matchup']}: {bb.get('pick','\u2014')} | Edge: {bb.get('edge_pct','\u2014')}")
+
+# ----- TAB 1: FULL BOARD -----
+with tabs[1]:
+    st.markdown(f"## \U0001f4ca Full Board \u2014 {st.session_state.last_sport}")
+    if st.session_state.board_data:
+        tier_filter = st.multiselect("Filter by Tier", ["SOVEREIGN", "ELITE", "APPROVED", "LEAN"], default=["SOVEREIGN", "ELITE", "APPROVED"])
+        filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
+        if filtered:
+            display_df = make_display_df(filtered)
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
+            show_cols = [c for c in show_cols if c in display_df.columns]
+            st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
+            with st.expander("\U0001f4ca Signal Breakdown"):
+                signal_df_raw = pd.DataFrame(filtered)
+                signal_cols_check = ["Player","SignalBase","SignalDefense","SignalLocation","SignalRest","SignalPace","SignalUsage","SignalBlowout","WeatherNote","SampleSize","ConfidenceMult","EdgePct"]
+                signal_cols_check = [c for c in signal_cols_check if c in signal_df_raw.columns]
+                if signal_cols_check:
+                    signal_df = signal_df_raw[signal_cols_check].copy()
+                    for col in ["SignalBase","SignalDefense","SignalLocation","SignalRest","SignalPace","SignalUsage","SignalBlowout"]:
+                        if col in signal_df.columns:
+                            signal_df[col] = signal_df[col].apply(lambda x: f"{x:.1%}" if isinstance(x,(int,float)) else x)
+                    st.dataframe(signal_df.head(10), width="stretch")
+            options = [f"{r['Player']} \u2014 {r['Side']} {r['Line']} {r['Prop']} (Edge: {r['EdgePct']} | {r['Tier']})" for r in filtered]
+            if options:
+                sel = st.selectbox("Select prop", range(len(options)), format_func=lambda i: options[i])
+                if st.button("\U0001f512 Lock Selected"):
+                    row = filtered[sel]
+                    can_bet, risk_reason = check_daily_risk_limits(row["Sport"])
+                    if not can_bet:
+                        st.error(risk_reason)
+                    else:
+                        already = any(l.get("player") == row["Player"] and l.get("prop") == row["Prop"] for l in st.session_state.locks)
+                        if not already:
+                            st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": row["Side"], "wager": row.get("Wager_2pick", row["Wager"]), "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": row["Sport"]})
+                            save_json_data(LOCKS_PATH, st.session_state.locks)
+                            save_to_gist("locks", st.session_state.locks)
+                            st.rerun()
+                        else:
+                            st.warning("Already locked")
+        else:
+            st.info("No props match selected filter.")
+    else:
+        st.info("Select a sport and click Load Board.")
+
+# ----- TAB 2: GAME LINES -----
+with tabs[2]:
+    st.markdown(f"## \U0001f3df\ufe0f Game Lines \u2014 {st.session_state.last_sport}")
+    if st.session_state.games:
+        games_df = pd.DataFrame(st.session_state.games)
+        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Bovada Spread", "Bovada Total", "Bovada ML Home", "Bovada ML Away", "Odds Source", "Date"]
+        display_cols = [c for c in display_cols if c in games_df.columns]
+        st.dataframe(games_df[display_cols], width="stretch")
+        st.markdown("---")
+        st.markdown("### \u26a1 Line Movement History")
+        movement_data = st.session_state.get("game_line_movement", {})
+        sharp_flags_g = st.session_state.get("game_sharp_flags", {})
+        if movement_data:
+            for matchup, movements in movement_data.items():
+                if not movements:
+                    continue
+                sharp = sharp_flags_g.get(matchup, {})
+                sharp_label = " \u26a1 SHARP" if sharp.get("sharp") else ""
+                with st.expander(f"{matchup}{sharp_label}"):
+                    if len(movements) >= 2:
+                        first, last = movements[-1], movements[0]
+                        st.write(f"**Opening:** Spread {first.get('spread','\u2014')} | Total {first.get('over_under','\u2014')}")
+                        st.write(f"**Current:** Spread {last.get('spread','\u2014')} | Total {last.get('over_under','\u2014')}")
+                    else:
+                        st.caption("Not enough movement data yet")
+        else:
+            st.caption("Load board to see line movement.")
+        st.markdown("---")
+        st.markdown("### \U0001f4ca Public Betting Splits")
+        public_data_g = st.session_state.get("public_betting_data", {})
+        if public_data_g:
+            pb_rows = []
+            for game_key, gd in public_data_g.items():
+                teams = gd.get("teams", [])
+                num_bets = gd.get("num_bets", 0)
+                ml = gd.get("ml", {})
+                total_d = gd.get("total", {})
+                home_ml_pb = ml.get("home", {})
+                away_ml_pb = ml.get("away", {})
+                over_tot = total_d.get("over", {})
+                sharp = gd.get("sharp_signals", [])
+                pb_rows.append({"Matchup": " vs ".join(teams), "Bets": f"{num_bets:,}", "ML Home Tickets": f"{home_ml_pb.get('tickets', 0)}%", "ML Home Money": f"{home_ml_pb.get('money', 0)}%", "Over Tickets": f"{over_tot.get('tickets', 0)}%", "Over Money": f"{over_tot.get('money', 0)}%", "Sharp Signal": "\u26a1 " + sharp[0][:30] if sharp else "\u2014"})
+            st.dataframe(pd.DataFrame(pb_rows), width="stretch", hide_index=True)
+        else:
+            st.caption("Load board to see public betting splits.")
+    else:
+        st.info("No games found.")
+
+# ----- TAB 3: LOCKS & LEDGER -----
+with tabs[3]:
+    st.markdown("## \U0001f512 Active Locks")
+    st.markdown("**Pick count for this result:**")
+    pick_count_sel = st.radio("This bet was part of a:", [2, 3, 4, 5], horizontal=True, key="last_pick_count_radio")
+    st.session_state["last_pick_count"] = pick_count_sel
+    if st.session_state.locks:
+        for i, lock in enumerate(st.session_state.locks.copy()):
+            tier_color = TIER_COLORS.get(lock.get("tier","LEAN"), "#7a8a9a")
+            edge_val = lock.get("edge", 0)
+            prob_val = lock.get("prob", 0)
+            ev_2 = calculate_prizepicks_ev(prob_val, 2)
+            ev_color = "#22c55e" if ev_2 > 0 else "#e04040"
+            alt_badge = f' <span style="background:#0ea5a0;color:#000;font-size:10px;padding:2px 6px;border-radius:10px;">ALT @ {lock.get("alt_payout","")}</span>' if lock.get("alt_line") else ""
+            st.markdown(
+                f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};border-radius:8px;padding:12px 16px;margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">'
+                f'<div><span style="color:#e8f0f8;font-weight:700;font-size:15px;">{lock["player"]}</span>'
+                f'<span style="background:{tier_color};color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;margin-left:8px;">{lock.get("tier","\u2014")}</span>'
+                f'{alt_badge}<br/>'
+                f'<span style="color:{tier_color};font-weight:600;">{lock["side"]} {lock["line"]} {lock["prop"]}</span>'
+                f'<span style="color:#6a7a8a;font-size:11px;margin-left:10px;">{lock.get("sport","\u2014")} | Locked: {lock.get("timestamp","\u2014")}</span></div>'
+                f'<div style="text-align:right;">'
+                f'<div style="font-size:13px;color:#0ea5a0;font-weight:700;">Edge: {edge_val:.1%}</div>'
+                f'<div style="font-size:13px;color:{ev_color};font-weight:600;">2-pick EV: {ev_2:+.1%}</div>'
+                f'<div style="font-size:13px;color:#e8a020;font-weight:700;">Wager: ${lock["wager"]:.2f}</div>'
+                f'</div></div></div>',
+                unsafe_allow_html=True
+            )
+            col1, col2, col3, col4 = st.columns([4,1,1,1])
+            if col2.button("\u2705 WIN", key=f"win_{i}"):
+                pick_count = st.session_state.get("last_pick_count", 2)
+                multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
+                profit = round(lock["wager"] * multiplier, 2)
+                st.session_state.bankroll += profit
+                st.session_state.history.append({**lock, "outcome": "WIN", "profit": profit, "loss": 0, "net": profit, "pick_count": pick_count, "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
+                save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+                save_to_gist("bankroll", st.session_state.bankroll)
+                save_json_data(HISTORY_PATH, st.session_state.history)
+                save_to_gist("history", st.session_state.history)
+                st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                record_clv(lock, st.session_state.board_data)
+                record_pinnacle_line(lock, st.session_state.board_data)
+                record_injury_performance(lock, "WIN", fetch_injury_news(lock.get("sport", "NBA")))
+                record_signal_performance(lock, "WIN")
+                compute_optimized_weights(lock.get("sport", "NBA"))
+                st.rerun()
+            if col3.button("\u274c LOSS", key=f"loss_{i}"):
+                st.session_state.bankroll -= lock["wager"]
+                st.session_state.history.append({**lock, "outcome": "LOSS", "profit": 0, "loss": lock["wager"], "net": -lock["wager"], "pick_count": st.session_state.get("last_pick_count", 2), "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
+                save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+                save_to_gist("bankroll", st.session_state.bankroll)
+                save_json_data(HISTORY_PATH, st.session_state.history)
+                save_to_gist("history", st.session_state.history)
+                st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                record_clv(lock, st.session_state.board_data)
+                record_pinnacle_line(lock, st.session_state.board_data)
+                record_injury_performance(lock, "LOSS", fetch_injury_news(lock.get("sport", "NBA")))
+                record_signal_performance(lock, "LOSS")
+                compute_optimized_weights(lock.get("sport", "NBA"))
+                st.rerun()
+            if col4.button("\u21a9 VOID", key=f"void_{i}"):
+                st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                st.rerun()
+    else:
+        st.info("No active locks.")
+
+# ----- TAB 4: HISTORY -----
+with tabs[4]:
+    st.markdown("## \U0001f4c8 Full Bet History")
+    if st.session_state.history:
+        hist_df = pd.DataFrame(st.session_state.history)
+        hist_df = hist_df.iloc[::-1].reset_index(drop=True)
+        cols = [c for c in ["timestamp", "player", "prop", "line", "side", "tier", "wager", "outcome", "net"] if c in hist_df.columns]
+        st.dataframe(hist_df[cols], width="stretch")
+        if st.button("Clear History"):
+            st.session_state.history = []
+            save_json_data(HISTORY_PATH, [])
+            save_to_gist("history", st.session_state.history)
+            st.rerun()
+        st.markdown("---")
+        if len(st.session_state.history) >= 5:
+            resolved = hist_df[hist_df["outcome"].isin(["WIN","LOSS"])] if "outcome" in hist_df.columns else pd.DataFrame()
+            if not resolved.empty:
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown("**Hit Rate by Tier**")
+                    if "tier" in resolved.columns:
+                        tier_stats_h = resolved.groupby("tier").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
+                        st.dataframe(tier_stats_h, width="stretch")
+                with col_b:
+                    st.markdown("**Hit Rate by Sport**")
+                    if "sport" in resolved.columns:
+                        sport_stats_h = resolved.groupby("sport").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
+                        st.dataframe(sport_stats_h, width="stretch")
+                if "net" in resolved.columns:
+                    rc = resolved.copy()
+                    rc["cumulative"] = DEFAULT_BANKROLL + rc["net"].cumsum()
+                    st.line_chart(rc["cumulative"])
+    st.markdown("---")
+    st.markdown("### \U0001f4b0 ROI by Category")
+    resolved_h = [h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved_h) >= 5:
+        pick_roi = {}
+        for h in resolved_h:
+            pc = h.get("pick_count", 2)
+            if pc not in pick_roi:
+                pick_roi[pc] = {"bets": 0, "wagered": 0, "returned": 0}
+            pick_roi[pc]["bets"] += 1
+            pick_roi[pc]["wagered"] += h.get("wager", 0)
+            if h["outcome"] == "WIN":
+                pick_roi[pc]["returned"] += h.get("wager", 0) * PRIZEPICKS_MULTIPLIERS.get(pc, 3.0)
+        roi_rows = []
+        for pc in sorted(pick_roi.keys()):
+            data = pick_roi[pc]
+            if data["wagered"] > 0:
+                roi = (data["returned"] - data["wagered"]) / data["wagered"] * 100
+                roi_rows.append({"Pick Count": f"{pc}-pick", "Bets": data["bets"], "Wagered": f"${data['wagered']:.2f}", "Returned": f"${data['returned']:.2f}", "ROI": f"{'\U0001f7e2' if roi > 0 else '\U0001f534'} {roi:+.1f}%"})
+        if roi_rows:
+            st.dataframe(pd.DataFrame(roi_rows), width="stretch", hide_index=True)
+    else:
+        st.caption("Need 5+ resolved bets for ROI analysis.")
+    st.markdown("---")
+    st.markdown("### \U0001f921 Injury Performance Tracker")
+    injury_results, n_injured = analyze_injury_performance()
+    if injury_results is None:
+        st.info(f"Injury tracker activates after 20 injury-tagged resolved bets. Current: {n_injured}. Need {20 - n_injured} more.")
+    else:
+        col_i1, col_i2, col_i3 = st.columns(3)
+        col_i1.metric("Injured WR", f"{injury_results['injured_wr']:.1%}")
+        col_i2.metric("Healthy WR", f"{injury_results['healthy_wr']:.1%}")
+        col_i3.metric("WR Gap", f"{injury_results['wr_gap']:+.1%}")
+    st.markdown("---")
+    st.markdown("### \U0001f52c Signal Performance Analysis")
+    signal_results, n_resolved = analyze_signal_performance()
+    if signal_results is None:
+        st.info(f"Signal analysis activates at 20 resolved bets. Current: {n_resolved}. Need {20 - n_resolved} more.")
+    else:
+        st.success(f"\u2705 Analyzing {n_resolved} resolved bets")
+        st.dataframe(pd.DataFrame(signal_results), width="stretch", hide_index=True)
+    st.markdown("---")
+    st.markdown("### \U0001f4cd Pinnacle CLV Tracker")
+    pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
+    if len(pinnacle_data) >= 5:
+        avg_pclv = sum(r.get("pinnacle_clv", 0) for r in pinnacle_data) / len(pinnacle_data)
+        pos_rate = sum(1 for r in pinnacle_data if r.get("positive", False)) / len(pinnacle_data)
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Avg Pinnacle CLV", f"{avg_pclv:+.2f}")
+        p2.metric("Positive Rate", f"{pos_rate:.1%}")
+        p3.metric("Bets Tracked", len(pinnacle_data))
+    else:
+        st.info(f"Pinnacle CLV activates after 5 resolved bets. Need {5 - len(pinnacle_data)} more.")
+
+# ----- TAB 5: LOG BET -----
+with tabs[5]:
+    st.markdown("## \U0001f4dd Log A Bet")
+    st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
+    log_tab1, log_tab2 = st.tabs(["Manual Entry", "Bulk Entry"])
+    with log_tab1:
+        st.markdown("### \U0001f4f8 Upload Screenshot")
+        st.caption("Upload one or more screenshots of your bet slip or result.")
+        uploaded_imgs = st.file_uploader("Upload bet screenshots (select multiple)", type=["jpg", "jpeg", "png", "heic", "webp"], key="bet_screenshot", accept_multiple_files=True)
+        if uploaded_imgs:
+            st.caption(f"{len(uploaded_imgs)} screenshot(s) loaded")
+            if st.button("\U0001f50d Parse All Screenshots", key="parse_screenshot_btn"):
+                all_parsed = []
+                with st.spinner("Reading screenshots..."):
+                    for img_file in uploaded_imgs:
+                        img_bytes = img_file.read()
+                        result = parse_bet_screenshot_ocr(img_bytes)
+                        if result:
+                            all_parsed.extend(result)
+                if all_parsed:
+                    st.session_state["parsed_bets"] = all_parsed
+                    st.success(f"\u2705 Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
+                else:
+                    st.error("Could not read screenshots. Try manual entry below.")
+        parsed_bets = st.session_state.get("parsed_bets", [])
+        if parsed_bets:
+            st.markdown("### \u2705 Confirm Parsed Bets")
+            for idx, bet in enumerate(parsed_bets):
+                if bet.get("outcome") == "PENDING":
+                    st.caption(f"\u23f3 {bet['player']} \u2014 PENDING, skipping")
+                    continue
+                with st.expander(f"{bet.get('player','?')} \u2014 {bet.get('outcome','?')}", expanded=True):
+                    c1, c2, c3 = st.columns(3)
+                    c1.write(f"**Prop:** {bet.get('prop','?')}")
+                    c1.write(f"**Line:** {bet.get('line','?')}")
+                    c2.write(f"**Side:** {bet.get('side','?')}")
+                    c2.write(f"**Sport:** {bet.get('sport','?')}")
+                    c3.write(f"**Outcome:** {bet.get('outcome','?')}")
+                    c3.write(f"**Wager:** ${bet.get('wager',0):.2f}")
+            col_confirm1, col_confirm2 = st.columns(2)
+            parsed_date = col_confirm1.date_input("Date of these bets", value=date.today(), key="parsed_bet_date")
+            if col_confirm1.button("\u2705 Submit All Parsed Bets", key="submit_parsed_bets"):
+                submitted = 0
+                for bet in parsed_bets:
+                    if bet.get("outcome") not in ("WIN","LOSS"):
+                        continue
+                    bet_date_str = datetime.combine(parsed_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                    try:
+                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str)
+                        submitted += 1
+                    except:
+                        continue
+                if submitted > 0:
+                    st.success(f"\u2705 Submitted {submitted} bets \u2014 Bankroll: ${st.session_state.bankroll:.2f}")
+                    st.session_state["parsed_bets"] = []
+                    st.rerun()
+            if col_confirm2.button("\u274c Clear Parsed Bets", key="clear_parsed_bets"):
+                st.session_state["parsed_bets"] = []
+                st.rerun()
+        with st.expander("\U0001f50d OCR Debug \u2014 Raw Text Extracted"):
+            raw_ocr = st.session_state.get("ocr_raw_text", "")
+            if raw_ocr:
+                st.text(raw_ocr)
+            else:
+                st.caption("Upload a screenshot to see extracted text.")
+        st.markdown("---")
+        st.markdown("### Single Bet")
+        bet_type_sel = st.radio("Bet type", ["Player Prop", "Game Line"], horizontal=True, key="log_bet_type")
+        col_l1, col_l2 = st.columns(2)
+        with col_l1:
+            log_sport = st.selectbox("Sport", SPORTS, key="log_sport")
+            log_date = st.date_input("Date of bet", value=date.today(), key="log_date")
+            log_outcome = st.radio("Result", ["WIN", "LOSS"], horizontal=True, key="log_outcome")
+            log_wager = st.number_input("Amount wagered ($)", min_value=0.0, value=float(active_unit()), step=1.0, key="log_wager")
+        with col_l2:
+            if bet_type_sel == "Player Prop":
+                log_player = st.text_input("Player name", key="log_player")
+                log_prop = st.text_input("Stat (e.g. Points, Rebounds)", key="log_prop")
+                log_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="log_line")
+                log_side = st.radio("Side", ["OVER", "UNDER"], horizontal=True, key="log_side")
+                log_pick_count = st.radio("Part of a", [2, 3, 4, 5], horizontal=True, key="log_pick_count")
+                log_source = st.selectbox("Platform", ["PrizePicks", "Underdog", "ParlayPlay", "Other"], key="log_source")
+            else:
+                log_player = st.text_input("Matchup (e.g. CLE @ NYK)", key="log_game_matchup")
+                log_prop = st.selectbox("Bet type", ["Moneyline", "Spread", "Total OVER", "Total UNDER", "Alt Spread", "Alt Total"], key="log_game_bet_type")
+                log_line = st.number_input("Line/Number", min_value=-1000.0, value=0.0, step=0.5, key="log_game_line")
+                log_side = log_prop
+                log_pick_count = 1
+                log_source = st.selectbox("Book", ["Bovada", "MyBookie", "DraftKings", "FanDuel", "BetMGM", "Other"], key="log_game_source")
+        log_notes = st.text_input("Notes (optional)", placeholder="e.g. Jokic questionable, sharp line move", key="log_notes")
+        log_edge = st.number_input("Edge % (optional)", min_value=0.0, max_value=50.0, value=0.0, step=0.1, key="log_edge") / 100.0
+        st.markdown("---")
+        if st.button("\u2705 Submit Bet Result", key="submit_manual_bet"):
+            if not log_player:
+                st.error("Enter player name or matchup.")
+            elif log_wager <= 0:
+                st.error("Enter wager amount.")
+            else:
+                bet_date_str = datetime.combine(log_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                result = log_manual_bet(player=log_player, prop=log_prop, line=log_line, side=log_side, sport=log_sport, outcome=log_outcome, wager=log_wager, pick_count=log_pick_count, bet_type="prop" if bet_type_sel == "Player Prop" else "game", source=log_source, bet_date=bet_date_str, edge=log_edge if log_edge > 0 else None, notes=log_notes)
+                st.success(f"\u2705 Logged: {log_player} \u2014 {log_outcome} | Net: ${result['net']:+.2f}")
+                st.caption(f"Bankroll updated to ${st.session_state.bankroll:.2f} | History: {len(st.session_state.history)} bets")
+                st.rerun()
+    with log_tab2:
+        st.markdown("### Bulk Entry")
+        st.caption("Paste multiple bets at once. One bet per line: Player, Stat, Line, OVER/UNDER, Sport, WIN/LOSS, Wager, PickCount")
+        st.caption("Example: Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2")
+        bulk_text = st.text_area("Paste bets here", height=200, key="bulk_bet_text", placeholder="Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2\nJayson Tatum, Rebounds, 8.5, OVER, NBA, LOSS, 25, 2")
+        bulk_date = st.date_input("Date for all bets", value=date.today(), key="bulk_date")
+        if st.button("\U0001f4e5 Import All Bets", key="import_bulk_bets"):
+            if not bulk_text.strip():
+                st.error("No bets entered.")
+            else:
+                lines_list = [l.strip() for l in bulk_text.strip().split("\n") if l.strip()]
+                success_count = 0
+                error_count = 0
+                for line_text in lines_list:
+                    try:
+                        parts = [p.strip() for p in line_text.split(",")]
+                        if len(parts) < 7:
+                            error_count += 1
+                            continue
+                        player_b, prop_b = parts[0], parts[1]
+                        line_val_b = float(parts[2])
+                        side_b = parts[3].upper()
+                        sport_b = parts[4].upper()
+                        outcome_b = parts[5].upper()
+                        wager_b = float(parts[6])
+                        pick_count_b = int(parts[7]) if len(parts) > 7 else 2
+                        if outcome_b not in ("WIN", "LOSS"):
+                            error_count += 1
+                            continue
+                        bet_date_str_b = datetime.combine(bulk_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                        log_manual_bet(player=player_b, prop=prop_b, line=line_val_b, side=side_b, sport=sport_b, outcome=outcome_b, wager=wager_b, pick_count=pick_count_b, bet_type="prop", source="Manual Import", bet_date=bet_date_str_b)
+                        success_count += 1
+                    except:
+                        error_count += 1
+                        continue
+                if success_count > 0:
+                    st.success(f"\u2705 Imported {success_count} bets | Bankroll: ${st.session_state.bankroll:.2f}")
+                if error_count > 0:
+                    st.warning(f"\u26a0\ufe0f {error_count} lines skipped \u2014 check format")
+                if success_count > 0:
+                    st.rerun()
+    st.markdown("---")
+    st.markdown("### \U0001f4ca Recent Manual Entries")
+    manual_history = [h for h in st.session_state.history if h.get("manual_entry")]
+    if manual_history:
+        st.caption(f"{len(manual_history)} manually logged bets")
+        manual_df = pd.DataFrame(manual_history[-20:])
+        show_cols_m = [c for c in ["timestamp", "player", "prop", "line", "side", "sport", "outcome", "wager", "net", "source"] if c in manual_df.columns]
+        st.dataframe(manual_df[show_cols_m].iloc[::-1], width="stretch", hide_index=True)
+    else:
+        st.caption("No manual entries yet.")
+
+# ----- TAB 6: LINE SHOP -----
+with tabs[6]:
+    st.markdown("## \U0001f6d2 Line Shopping")
+    board_ls = st.session_state.board_data
+    ud_props_ls = st.session_state.get("ud_props_compare", [])
+    ow_props_ls = st.session_state.get("oddswrap_props", [])
+    if not board_ls:
+        st.info("Load the board first.")
+    else:
+        ud_dict_ls = {}
+        for p in ud_props_ls:
+            k = normalize_name(p["Player"])
+            if k not in ud_dict_ls:
+                ud_dict_ls[k] = {}
+            ud_dict_ls[k][p["Prop"]] = p["Line"]
+        rows_ls = []
+        for prop in board_ls[:20]:
+            player_ls, pn_ls, pp_line_ls, side_ls = prop["Player"], prop["Prop"], prop["Line"], prop["Side"]
+            norm_ls = normalize_name(player_ls)
+            ud_line_ls = ud_dict_ls.get(norm_ls, {}).get(pn_ls)
+            all_lines_ls = {"PrizePicks": pp_line_ls}
+            if ud_line_ls:
+                all_lines_ls["Underdog"] = ud_line_ls
+            best_book_ls = (min(all_lines_ls, key=all_lines_ls.get) if side_ls == "OVER" else max(all_lines_ls, key=all_lines_ls.get))
+            best_line_ls = all_lines_ls[best_book_ls]
+            rows_ls.append({"Player": player_ls, "Prop": pn_ls, "Side": side_ls, "PrizePicks": pp_line_ls, "Underdog": ud_line_ls if ud_line_ls else "\u2014", "Best Line": best_line_ls, "Best Book": best_book_ls, "Saves": round(abs(best_line_ls - pp_line_ls), 1) if best_line_ls != pp_line_ls else 0, "Tier": prop.get("Tier", "\u2014")})
+        st.dataframe(pd.DataFrame(rows_ls), width="stretch")
+        best_opps_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Saves"] >= 0.5]
+        if best_opps_ls:
+            st.markdown("### \U0001f525 Better Lines Available")
+            st.dataframe(pd.DataFrame(best_opps_ls)[["Player","Prop","PrizePicks","Best Line","Best Book","Saves","Tier"]], width="stretch")
+    disc_ls = st.session_state.get("multibook_discrepancies", [])
+    if disc_ls:
+        st.markdown("### \U0001f4ca Cross-Book Discrepancies")
+        st.dataframe(pd.DataFrame(disc_ls[:10]), width="stretch")
+
+# ----- TAB 7: SYSTEM -----
+with tabs[7]:
+    st.markdown("## \u2699\ufe0f System Info")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Configuration**")
+        st.write(f"Bankroll: ${st.session_state.bankroll:.2f}")
+        st.write(f"Min Edge: {st.session_state.min_edge*100:.0f}%")
+        st.write(f"Skip unknown players: {st.session_state.skip_defaults}")
+        st.write(f"Kelly fraction: {KELLY_FRACTION}")
+    with c2:
+        st.markdown("**Session Stats**")
+        st.write(f"Active locks: {len(st.session_state.locks)}")
+        st.write(f"History entries: {len(st.session_state.history)}")
+        st.write(f"Props loaded: {len(st.session_state.board_data)}")
+        st.write(f"Session time: {get_session_time()}")
+    st.markdown("---")
+    st.markdown("### \U0001f6e1\ufe0f Daily Risk Controls")
+    st.write(f"Max locks/day: {DAILY_RISK_CONTROLS['max_locks_per_day']}")
+    st.write(f"Stop-loss: -{DAILY_RISK_CONTROLS['max_daily_loss_pct']:.0%}")
+    st.write(f"Stop-win: +{DAILY_RISK_CONTROLS['stop_win_pct']:.0%}")
+    can_bet_s, risk_msg_s = check_daily_risk_limits()
+    if can_bet_s:
+        st.success("\u2705 All risk controls green")
+    else:
+        st.error(f"\U0001f6d1 {risk_msg_s}")
+    st.markdown("---")
+    st.markdown("### \u2696\ufe0f Signal Weights Status")
+    weight_rows = []
+    for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
+        weights_s, status_s, weight_type_s = get_active_weights(sp)
+        optimizer_data_s = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+        sport_data_s = optimizer_data_s.get(sp, {})
+        n_bets_s = sport_data_s.get("n_bets", 0)
+        wr_s = sport_data_s.get("overall_win_rate", 0)
+        weight_rows.append({"Sport": sp, "Status": status_s, "Base": f"{weights_s.get('base',0):.0%}", "Defense": f"{weights_s.get('defense',0):.0%}", "Location": f"{weights_s.get('location',0):.0%}", "Rest": f"{weights_s.get('rest',0):.0%}", "Pace": f"{weights_s.get('pace',0):.0%}", "Bets": n_bets_s, "Win Rate": f"{wr_s:.1%}" if wr_s > 0 else "\u2014", "Type": weight_type_s})
+    st.dataframe(pd.DataFrame(weight_rows), width="stretch", hide_index=True)
+    if st.button("Force Recalculate Weights"):
+        for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
+            compute_optimized_weights(sp)
+        st.success("Weights recalculated")
+        st.rerun()
+    st.markdown("---")
+    st.markdown("### \U0001f4ca SEM Calibration")
+    tier_stats_s = compute_tier_stats(st.session_state.history)
+    if tier_stats_s:
+        sem_df = pd.DataFrame([{"Tier": tier, "Bets": s["n"], "Hit Rate": f"{s['hit_rate']:.1%}", "Predicted": f"{s['avg_predicted']:.1%}", "SEM": f"\u00b1{s['sem']:.3f}" if s['sem'] else "\u2014"} for tier, s in tier_stats_s.items()])
+        st.dataframe(sem_df, width="stretch")
+    else:
+        st.info("No calibration data yet.")
+    st.markdown("---")
+    st.markdown("### \U0001f50d Error Log")
+    errors_s = st.session_state.get("errors", [])
+    if errors_s:
+        for err in errors_s[-5:]:
+            st.error(f"[{err.get('time','')}] {err.get('source','')}: {err.get('error','')}")
+        if st.button("Clear Error Log"):
+            st.session_state["errors"] = []
+            st.rerun()
+    else:
+        st.caption("\u2705 No errors this session.")
+    st.markdown("---")
+    st.markdown("### \U0001f4ca API Health Dashboard")
+    for key_s, budget_s in API_BUDGETS.items():
+        has_key_s = True
+        if budget_s.get("key"):
+            has_key_s = bool(st.secrets.get(budget_s["key"], ""))
+        key_status_s = "\U0001f7e2 No key needed" if not budget_s["key"] else ("\U0001f7e2 Key set" if has_key_s else "\U0001f534 Key missing")
+        usage_status_s = api_budget_status(key_s)
+        allowed_s, _ = api_budget_check(key_s)
+        gate_status_s = "\u2705 Open" if allowed_s else "\U0001f6d1 Blocked"
+        with st.expander(f"{key_s} \u2014 {budget_s['description']}"):
+            col_a, col_b, col_c = st.columns(3)
+            col_a.markdown(f"**Key:** {key_status_s}")
+            col_b.markdown(f"**Usage:** {usage_status_s}")
+            col_c.markdown(f"**Gate:** {gate_status_s}")
+    st.markdown("---")
+    if st.button("Reset ALL API Counters"):
+        for key_s, budget_s in API_BUDGETS.items():
+            path_s = budget_s["counter_path"]
+            if os.path.exists(path_s):
+                os.remove(path_s)
+        st.success("All API counters reset")
+    st.markdown("---")
+    st.markdown("**\U0001f4be Data Persistence Status**")
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        st.success("\u2705 GitHub Gist persistence active")
+    else:
+        st.error("\u26a0\ufe0f No persistence configured")
+    st.markdown("---")
+    st.markdown("**Cache Management**")
+    cache_cols_s = st.columns(3)
+    with cache_cols_s[0]:
+        if st.button("Clear NBA Cache"):
+            for f in ["nba_rolling_avgs.pkl", "nba_team_defense.pkl"]:
+                p = os.path.join(CACHE_DIR, f)
+                if os.path.exists(p):
+                    os.remove(p)
+            st.success("NBA cache cleared")
+    with cache_cols_s[1]:
+        if st.button("Clear All Rolling Caches"):
+            for f in os.listdir(CACHE_DIR):
+                if f.endswith("_rolling_avgs.pkl") or f.endswith("_team_defense.pkl"):
+                    os.remove(os.path.join(CACHE_DIR, f))
+            st.success("All rolling caches cleared")
+    with cache_cols_s[2]:
+        if st.button("Clear All API Counters"):
+            for budget_c in API_BUDGETS.values():
+                path_c = budget_c["counter_path"]
+                if os.path.exists(path_c):
+                    os.remove(path_c)
+            st.success("API counters reset")
+    st.markdown("---")
+    col_s1, col_s2 = st.columns(2)
+    if col_s1.button("\U0001f504 Reset Session State"):
+        keep = ["bankroll","history","locks","persistence_loaded","day_start_br","session_start"]
+        for k in list(st.session_state.keys()):
+            if k not in keep:
+                del st.session_state[k]
+        st.success("Session reset")
+        st.rerun()
+    if col_s2.button("\U0001f9f9 Clean Old Cache Files"):
+        cleaned = 0
+        cutoff = time.time() - (7*24*3600)
+        keep_files = ["history.json","locks.json","bankroll.json","calibration.json","line_movement.json","clv_tracking.json"]
+        for f in os.listdir(CACHE_DIR):
+            fp = os.path.join(CACHE_DIR, f)
+            if os.path.isfile(fp) and f not in keep_files and os.path.getmtime(fp) < cutoff:
+                os.remove(fp)
+                cleaned += 1
+        st.success(f"Cleaned {cleaned} old files")
