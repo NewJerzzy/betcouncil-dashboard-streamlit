@@ -6391,6 +6391,554 @@ def generate_gem_summary():
     )
     return "\n".join(lines)
 
+def log_manual_bet(
+    player, prop, line, side,
+    sport, outcome, wager,
+    pick_count, bet_type,
+    source, bet_date, tier=None,
+    edge=None, prob=None,
+    notes=""
+):
+    """
+    Log a bet that was placed outside
+    of BetCouncil workflow.
+    
+    Feeds into all tracking systems:
+      History tab
+      Signal tracker
+      Weight optimizer
+      CLV database
+      ROI analytics
+      SEM calibration
+      Bankroll
+    
+    Works for both prop bets and
+    game line bets (ML/spread/total).
+    """
+    multiplier = PRIZEPICKS_MULTIPLIERS.get(
+        pick_count, 3.0
+    )
+    
+    if outcome == "WIN":
+        if bet_type == "prop":
+            profit = round(
+                wager * multiplier, 2
+            )
+        else:
+            # Game bet at -110
+            profit = round(wager * 0.909, 2)
+        net = profit
+    else:
+        profit = 0
+        net = -wager
+    
+    # Estimate tier if not provided
+    if tier is None:
+        if edge:
+            tier = get_tier(edge, sport)
+        else:
+            tier = "APPROVED"
+    
+    # Estimate prob if not provided
+    if prob is None:
+        prob = 0.60 if outcome == "WIN" else 0.45
+    
+    record = {
+        "player": player,
+        "prop": prop,
+        "line": line,
+        "side": side,
+        "sport": sport,
+        "outcome": outcome,
+        "wager": wager,
+        "profit": profit,
+        "loss": wager if outcome == "LOSS" else 0,
+        "net": net,
+        "pick_count": pick_count,
+        "bet_type": bet_type,
+        "source": source,
+        "tier": tier,
+        "edge": edge or 0,
+        "prob": prob,
+        "stat_type": prop,
+        "timestamp": bet_date,
+        "resolved_date": bet_date,
+        "manual_entry": True,
+        "notes": notes,
+        "signals_active": {
+            "base_positive": True,
+            "defense_positive": False,
+            "location_home": False,
+            "back_to_back": False,
+            "sharp_flag": False,
+            "weather_active": False,
+            "blowout_risk": False,
+            "usage_boost": False,
+        }
+    }
+    
+    # Add to history
+    st.session_state.history.append(record)
+    save_json_data(
+        HISTORY_PATH,
+        st.session_state.history
+    )
+    save_to_gist(
+        "history",
+        st.session_state.history
+    )
+    
+    # Update bankroll
+    st.session_state.bankroll += net
+    save_json_data(
+        BANKROLL_PATH,
+        st.session_state.bankroll
+    )
+    save_to_gist(
+        "bankroll",
+        st.session_state.bankroll
+    )
+    
+    # Feed signal tracker
+    record_signal_performance(
+        record, outcome
+    )
+    
+    # Try weight optimizer
+    compute_optimized_weights(sport)
+    
+    return record
+
+def parse_bet_screenshot_ocr(
+    image_bytes
+):
+    """
+    Extract bet details from screenshot
+    using free Tesseract OCR.
+    No API key needed. No rate limits.
+    Unlimited use.
+    
+    Supports:
+      PrizePicks result screenshots
+      Bovada bet slip screenshots
+      MyBookie confirmation screenshots
+      Manual text screenshots
+    
+    Returns list of bet dicts or empty list.
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+        import io
+        import re
+        
+        # Load image
+        img = Image.open(
+            io.BytesIO(image_bytes)
+        )
+        
+        # Convert to RGB if needed
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        
+        # Extract all text from image
+        raw_text = pytesseract.image_to_string(
+            img,
+            config="--psm 6"
+        )
+        
+        lines = [
+            l.strip()
+            for l in raw_text.split("\n")
+            if l.strip()
+        ]
+        
+        # Store raw text for debugging
+        st.session_state[
+            "ocr_raw_text"
+        ] = raw_text
+        
+        bets = []
+        
+        # Detect platform
+        text_lower = raw_text.lower()
+        
+        is_prizepicks = (
+            "prizepicks" in text_lower or
+            "more" in text_lower and
+            "less" in text_lower
+        )
+        is_bovada = "bovada" in text_lower
+        is_mybookie = "mybookie" in text_lower
+        is_underdog = "underdog" in text_lower
+        
+        # Common stat keywords
+        stat_keywords = {
+            "points": "Points",
+            "pts": "Points",
+            "rebounds": "Rebounds",
+            "rebs": "Rebounds",
+            "assists": "Assists",
+            "ast": "Assists",
+            "pra": "Pts+Reb+Ast",
+            "pts+reb+ast": "Pts+Reb+Ast",
+            "3-pt": "3-PT Made",
+            "threes": "3-PT Made",
+            "steals": "Steals",
+            "blocks": "Blocked Shots",
+            "blks": "Blocked Shots",
+            "turnovers": "Turnovers",
+            "hits": "Hits",
+            "home runs": "Home Runs",
+            "hr": "Home Runs",
+            "strikeouts": "Strikeouts",
+            "goals": "Goals",
+            "shots on goal": "Shots On Goal",
+            "sog": "Shots On Goal",
+            "passing yards": "Passing Yards",
+            "rushing yards": "Rushing Yards",
+            "receiving yards": "Receiving Yards",
+            "receptions": "Receptions",
+            "touchdowns": "Touchdowns",
+            "moneyline": "Moneyline",
+            "spread": "Spread",
+            "total": "Total",
+        }
+        
+        # Sport detection from text
+        def detect_sport(text):
+            t = text.lower()
+            if any(
+                w in t for w in
+                ["nba", "basketball", "points",
+                 "rebounds", "assists"]
+            ):
+                return "NBA"
+            elif any(
+                w in t for w in
+                ["mlb", "baseball", "hits",
+                 "strikeouts", "home runs"]
+            ):
+                return "MLB"
+            elif any(
+                w in t for w in
+                ["nhl", "hockey", "goals",
+                 "shots on goal"]
+            ):
+                return "NHL"
+            elif any(
+                w in t for w in
+                ["nfl", "football",
+                 "passing yards",
+                 "rushing yards"]
+            ):
+                return "NFL"
+            elif "wnba" in t:
+                return "WNBA"
+            return "NBA"
+        
+        # Outcome detection
+        def detect_outcome(text):
+            t = text.lower()
+            win_words = [
+                "won", "win", "correct",
+                "hit", "✓", "winner",
+                "settled - win",
+                "graded win"
+            ]
+            loss_words = [
+                "lost", "loss", "incorrect",
+                "miss", "✗", "loser",
+                "settled - loss",
+                "graded loss"
+            ]
+            if any(w in t for w in win_words):
+                return "WIN"
+            if any(w in t for w in loss_words):
+                return "LOSS"
+            return None
+        
+        # Line number extraction
+        def extract_numbers(text):
+            return re.findall(
+                r'\d+\.?\d*', text
+            )
+        
+        # Stat name detection
+        def detect_stat(text):
+            t = text.lower()
+            for keyword, stat_name in (
+                stat_keywords.items()
+            ):
+                if keyword in t:
+                    return stat_name
+            return None
+        
+        # Parse PrizePicks format
+        if is_prizepicks:
+            # PrizePicks format:
+            # Player Name
+            # MORE/LESS X.X Stat
+            # WIN/LOSS indicator
+            i = 0
+            while i < len(lines):
+                line_text = lines[i]
+                
+                # Look for MORE or LESS
+                # which indicates a prop line
+                if (
+                    "more" in
+                    line_text.lower() or
+                    "less" in
+                    line_text.lower()
+                ):
+                    # Player name is usually
+                    # the line before
+                    player = (
+                        lines[i-1]
+                        if i > 0 else ""
+                    )
+                    
+                    # Clean player name
+                    player = re.sub(
+                        r'[^a-zA-Z\s\.\']',
+                        '', player
+                    ).strip()
+                    
+                    # Extract side
+                    side = (
+                        "OVER"
+                        if "more" in
+                        line_text.lower()
+                        else "UNDER"
+                    )
+                    
+                    # Extract line number
+                    nums = extract_numbers(
+                        line_text
+                    )
+                    line_val = (
+                        float(nums[0])
+                        if nums else 0.0
+                    )
+                    
+                    # Extract stat
+                    stat = detect_stat(
+                        line_text
+                    )
+                    if not stat:
+                        # Check next line
+                        if i + 1 < len(lines):
+                            stat = detect_stat(
+                                lines[i+1]
+                            )
+                    if not stat:
+                        stat = (
+                            line_text
+                            .replace("MORE","")
+                            .replace("LESS","")
+                            .strip()
+                        )
+                    
+                    # Look for outcome
+                    # in surrounding lines
+                    outcome = None
+                    for j in range(
+                        max(0, i-2),
+                        min(len(lines), i+4)
+                    ):
+                        outcome = detect_outcome(
+                            lines[j]
+                        )
+                        if outcome:
+                            break
+                    
+                    if player and line_val > 0:
+                        bets.append({
+                            "player": player,
+                            "prop": stat or "Points",
+                            "line": line_val,
+                            "side": side,
+                            "sport": detect_sport(
+                                raw_text
+                            ),
+                            "outcome": (
+                                outcome or "WIN"
+                            ),
+                            "wager": 0.0,
+                            "pick_count": 2,
+                            "source": "PrizePicks",
+                            "bet_type": "prop",
+                        })
+                i += 1
+        
+        # Parse Bovada/MyBookie format
+        elif is_bovada or is_mybookie:
+            source = (
+                "Bovada"
+                if is_bovada else "MyBookie"
+            )
+            
+            # Game line format:
+            # Team/Player name
+            # Spread/Total/ML value
+            # Odds
+            # Win/Loss
+            
+            outcome = detect_outcome(raw_text)
+            sport = detect_sport(raw_text)
+            
+            # Find bet description lines
+            for i, line_text in enumerate(lines):
+                stat = detect_stat(line_text)
+                nums = extract_numbers(line_text)
+                
+                if (
+                    stat and nums and
+                    len(nums) > 0
+                ):
+                    # Find player/team name
+                    player = ""
+                    for j in range(
+                        max(0, i-2), i
+                    ):
+                        candidate = lines[j]
+                        if (
+                            len(candidate) > 3
+                            and not
+                            extract_numbers(
+                                candidate
+                            )
+                        ):
+                            player = candidate
+                            break
+                    
+                    line_val = float(nums[0])
+                    side = "OVER"
+                    
+                    if "under" in (
+                        line_text.lower()
+                    ):
+                        side = "UNDER"
+                    elif "over" in (
+                        line_text.lower()
+                    ):
+                        side = "OVER"
+                    
+                    # Extract wager
+                    wager = 0.0
+                    wager_patterns = [
+                        r'\$(\d+\.?\d*)',
+                        r'risk[:\s]+(\d+\.?\d*)',
+                        r'wager[:\s]+(\d+\.?\d*)',
+                    ]
+                    for pattern in (
+                        wager_patterns
+                    ):
+                        match = re.search(
+                            pattern,
+                            raw_text.lower()
+                        )
+                        if match:
+                            wager = float(
+                                match.group(1)
+                            )
+                            break
+                    
+                    if player:
+                        bets.append({
+                            "player": player,
+                            "prop": stat,
+                            "line": line_val,
+                            "side": side,
+                            "sport": sport,
+                            "outcome": (
+                                outcome or "WIN"
+                            ),
+                            "wager": wager,
+                            "pick_count": 1,
+                            "source": source,
+                            "bet_type": "game",
+                        })
+        
+        # Generic fallback parser
+        # Works on any screenshot
+        if not bets:
+            outcome = detect_outcome(raw_text)
+            sport = detect_sport(raw_text)
+            
+            for i, line_text in enumerate(
+                lines
+            ):
+                stat = detect_stat(line_text)
+                nums = extract_numbers(
+                    line_text
+                )
+                
+                if (
+                    stat and nums and
+                    len(line_text) < 60
+                ):
+                    line_val = float(nums[0])
+                    
+                    # Try to get player
+                    # from previous lines
+                    player = ""
+                    for j in range(
+                        max(0, i-3), i
+                    ):
+                        cand = lines[j]
+                        if (
+                            len(cand) > 4
+                            and not any(
+                                c.isdigit()
+                                for c in cand
+                            )
+                            and len(cand) < 40
+                        ):
+                            player = cand
+                    
+                    if line_val > 0:
+                        bets.append({
+                            "player": (
+                                player or
+                                "Unknown Player"
+                            ),
+                            "prop": stat,
+                            "line": line_val,
+                            "side": "OVER",
+                            "sport": sport,
+                            "outcome": (
+                                outcome or "WIN"
+                            ),
+                            "wager": 0.0,
+                            "pick_count": 2,
+                            "source": (
+                                "Screenshot"
+                            ),
+                            "bet_type": "prop",
+                        })
+        
+        return bets
+        
+    except ImportError:
+        st.error(
+            "⚠️ OCR library not installed. "
+            "Use manual entry instead."
+        )
+        return []
+    except Exception as e:
+        st.session_state.setdefault(
+            "errors", []
+        ).append({
+            "time": datetime.now().strftime(
+                "%H:%M:%S"
+            ),
+            "source": "parse_bet_screenshot_ocr",
+            "error": str(e)[:100],
+        })
+        return []
+
 def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None):
     if player_avg <= 0:
         return 0.0, 0.5, {}
@@ -7272,7 +7820,8 @@ _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_
        "all_sports_results": None, "game_analysis": [], "officials_data": {}, "mlb_pitchers": {},
        "power_divergences": {}, "quality_sorted_board": [], "last_pick_count": 2,
        "public_betting_data": {}, "alt_line_upgrades": [], "parlayplay_alt_lines": {},
-       "arb_opportunities": [], "steam_moves": [], "an_props_data": [], "gem_brief": ""}
+       "arb_opportunities": [], "steam_moves": [], "an_props_data": [], "gem_brief": "",
+       "parsed_bets": [], "ocr_raw_text": ""}
 for k, v in _ss.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -7396,7 +7945,7 @@ st.markdown(f"""
 # =========================
 # TABS
 # =========================
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🛒 Line Shop", "⚙️ System"])
+tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY -----
 with tabs[0]:
@@ -9140,8 +9689,625 @@ with tabs[4]:
         if positive_signals:
             st.success(f"✅ {len(positive_signals)} signal(s) showing positive lift. These are your real edges.")
 
-# ----- TAB 5: LINE SHOP -----
+# ----- TAB 5: LOG BET -----
 with tabs[5]:
+    st.markdown("## 📝 Log A Bet")
+    st.caption(
+        "Log any bet placed outside "
+        "of BetCouncil — from PrizePicks "
+        "app, Bovada, MyBookie, or anywhere. "
+        "Feeds into all tracking systems."
+    )
+    
+    log_tab1, log_tab2 = st.tabs([
+        "Manual Entry", "Bulk Entry"
+    ])
+    
+    with log_tab1:
+        st.markdown("### 📸 Upload Screenshot")
+        st.caption(
+            "Upload a screenshot of your "
+            "bet slip or result. The system "
+            "will read it and pre-fill "
+            "the form below automatically."
+        )
+        
+        uploaded_img = st.file_uploader(
+            "Upload bet screenshot",
+            type=["jpg", "jpeg", "png",
+                  "heic", "webp"],
+            key="bet_screenshot"
+        )
+        
+        if uploaded_img is not None:
+            st.image(
+                uploaded_img,
+                caption="Uploaded screenshot",
+                width=300
+            )
+            
+            if st.button(
+                "🔍 Parse Screenshot",
+                key="parse_screenshot_btn"
+            ):
+                with st.spinner(
+                    "Reading screenshot..."
+                ):
+                    img_bytes = (
+                        uploaded_img.read()
+                    )
+                    img_type = (
+                        f"image/"
+                        f"{uploaded_img.type.split('/')[-1]}"
+                        if "/" in uploaded_img.type
+                        else "image/jpeg"
+                    )
+                    
+                    parsed_bets = (
+                        parse_bet_screenshot_ocr(
+                            img_bytes
+                        )
+                    )
+                    
+                    if parsed_bets:
+                        st.session_state[
+                            "parsed_bets"
+                        ] = parsed_bets
+                        st.success(
+                            f"✅ Found "
+                            f"{len(parsed_bets)} "
+                            f"bet(s) in screenshot"
+                        )
+                    else:
+                        st.error(
+                            "Could not read screenshot. "
+                            "Try manual entry below."
+                        )
+        
+        # Show parsed bets for confirmation
+        parsed_bets = st.session_state.get(
+            "parsed_bets", []
+        )
+        
+        if parsed_bets:
+            st.markdown(
+                "### ✅ Confirm Parsed Bets"
+            )
+            st.caption(
+                "Review and correct if needed "
+                "then click Submit All."
+            )
+            
+            for idx, bet in enumerate(
+                parsed_bets
+            ):
+                if bet.get(
+                    "outcome"
+                ) == "PENDING":
+                    st.caption(
+                        f"⏳ {bet['player']} — "
+                        f"PENDING, skipping"
+                    )
+                    continue
+                
+                with st.expander(
+                    f"{bet.get('player','?')} — "
+                    f"{bet.get('outcome','?')}",
+                    expanded=True
+                ):
+                    c1, c2, c3 = st.columns(3)
+                    c1.write(
+                        f"**Prop:** "
+                        f"{bet.get('prop','?')}"
+                    )
+                    c1.write(
+                        f"**Line:** "
+                        f"{bet.get('line','?')}"
+                    )
+                    c2.write(
+                        f"**Side:** "
+                        f"{bet.get('side','?')}"
+                    )
+                    c2.write(
+                        f"**Sport:** "
+                        f"{bet.get('sport','?')}"
+                    )
+                    c3.write(
+                        f"**Outcome:** "
+                        f"{bet.get('outcome','?')}"
+                    )
+                    c3.write(
+                        f"**Wager:** "
+                        f"${bet.get('wager',0):.2f}"
+                    )
+            
+            col_confirm1, col_confirm2 = (
+                st.columns(2)
+            )
+            
+            parsed_date = col_confirm1.date_input(
+                "Date of these bets",
+                value=date.today(),
+                key="parsed_bet_date"
+            )
+            
+            if col_confirm1.button(
+                "✅ Submit All Parsed Bets",
+                key="submit_parsed_bets"
+            ):
+                submitted = 0
+                for bet in parsed_bets:
+                    if bet.get(
+                        "outcome"
+                    ) == "PENDING":
+                        continue
+                    if bet.get(
+                        "outcome"
+                    ) not in ("WIN","LOSS"):
+                        continue
+                    
+                    bet_date_str = (
+                        datetime.combine(
+                            parsed_date,
+                            datetime.min.time()
+                        ).strftime(
+                            "%Y-%m-%d %H:%M"
+                        )
+                    )
+                    
+                    try:
+                        log_manual_bet(
+                            player=bet.get(
+                                "player", ""
+                            ),
+                            prop=bet.get(
+                                "prop", ""
+                            ),
+                            line=float(
+                                bet.get("line", 0)
+                                or 0
+                            ),
+                            side=bet.get(
+                                "side", "OVER"
+                            ),
+                            sport=bet.get(
+                                "sport", "NBA"
+                            ),
+                            outcome=bet.get(
+                                "outcome", "LOSS"
+                            ),
+                            wager=float(
+                                bet.get("wager", 0)
+                                or 0
+                            ),
+                            pick_count=int(
+                                bet.get(
+                                    "pick_count", 2
+                                ) or 2
+                            ),
+                            bet_type=bet.get(
+                                "bet_type", "prop"
+                            ),
+                            source=bet.get(
+                                "source",
+                                "Screenshot Import"
+                            ),
+                            bet_date=bet_date_str,
+                        )
+                        submitted += 1
+                    except:
+                        continue
+                
+                if submitted > 0:
+                    st.success(
+                        f"✅ Submitted "
+                        f"{submitted} bets — "
+                        f"Bankroll: "
+                        f"${st.session_state.bankroll:.2f}"
+                    )
+                    st.session_state[
+                        "parsed_bets"
+                    ] = []
+                    st.rerun()
+            
+            if col_confirm2.button(
+                "❌ Clear Parsed Bets",
+                key="clear_parsed_bets"
+            ):
+                st.session_state[
+                    "parsed_bets"
+                ] = []
+                st.rerun()
+        
+        with st.expander(
+            "🔍 OCR Debug — Raw Text Extracted"
+        ):
+            st.caption(
+                "What the OCR engine read "
+                "from your screenshot. "
+                "Use this to manually correct "
+                "any parsing errors."
+            )
+            raw_ocr = st.session_state.get(
+                "ocr_raw_text", ""
+            )
+            if raw_ocr:
+                st.text(raw_ocr)
+            else:
+                st.caption(
+                    "Upload a screenshot to "
+                    "see extracted text."
+                )
+        
+        st.markdown("---")
+        st.markdown("### Single Bet")
+        
+        bet_type_sel = st.radio(
+            "Bet type",
+            ["Player Prop", "Game Line"],
+            horizontal=True,
+            key="log_bet_type"
+        )
+        
+        col_l1, col_l2 = st.columns(2)
+        
+        with col_l1:
+            log_sport = st.selectbox(
+                "Sport",
+                SPORTS,
+                key="log_sport"
+            )
+            log_date = st.date_input(
+                "Date of bet",
+                value=date.today(),
+                key="log_date"
+            )
+            log_outcome = st.radio(
+                "Result",
+                ["WIN", "LOSS"],
+                horizontal=True,
+                key="log_outcome"
+            )
+            log_wager = st.number_input(
+                "Amount wagered ($)",
+                min_value=0.0,
+                value=float(active_unit()),
+                step=1.0,
+                key="log_wager"
+            )
+        
+        with col_l2:
+            if bet_type_sel == "Player Prop":
+                log_player = st.text_input(
+                    "Player name",
+                    key="log_player"
+                )
+                log_prop = st.text_input(
+                    "Stat (e.g. Points, Rebounds)",
+                    key="log_prop"
+                )
+                log_line = st.number_input(
+                    "Line",
+                    min_value=0.0,
+                    value=0.0,
+                    step=0.5,
+                    key="log_line"
+                )
+                log_side = st.radio(
+                    "Side",
+                    ["OVER", "UNDER"],
+                    horizontal=True,
+                    key="log_side"
+                )
+                log_pick_count = st.radio(
+                    "Part of a",
+                    [2, 3, 4, 5],
+                    horizontal=True,
+                    key="log_pick_count"
+                )
+                log_source = st.selectbox(
+                    "Platform",
+                    [
+                        "PrizePicks",
+                        "Underdog",
+                        "ParlayPlay",
+                        "Other"
+                    ],
+                    key="log_source"
+                )
+            else:
+                log_player = st.text_input(
+                    "Matchup (e.g. CLE @ NYK)",
+                    key="log_game_matchup"
+                )
+                log_prop = st.selectbox(
+                    "Bet type",
+                    [
+                        "Moneyline",
+                        "Spread",
+                        "Total OVER",
+                        "Total UNDER",
+                        "Alt Spread",
+                        "Alt Total"
+                    ],
+                    key="log_game_bet_type"
+                )
+                log_line = st.number_input(
+                    "Line/Number",
+                    min_value=-1000.0,
+                    value=0.0,
+                    step=0.5,
+                    key="log_game_line"
+                )
+                log_side = log_prop
+                log_pick_count = 1
+                log_source = st.selectbox(
+                    "Book",
+                    [
+                        "Bovada",
+                        "MyBookie",
+                        "DraftKings",
+                        "FanDuel",
+                        "BetMGM",
+                        "Other"
+                    ],
+                    key="log_game_source"
+                )
+        
+        log_notes = st.text_input(
+            "Notes (optional)",
+            placeholder="e.g. Jokic questionable, sharp line move",
+            key="log_notes"
+        )
+        
+        log_edge = st.number_input(
+            "Edge % (optional — enter if known)",
+            min_value=0.0,
+            max_value=50.0,
+            value=0.0,
+            step=0.1,
+            key="log_edge"
+        ) / 100.0
+        
+        st.markdown("---")
+        
+        if st.button(
+            "✅ Submit Bet Result",
+            key="submit_manual_bet"
+        ):
+            if not log_player:
+                st.error(
+                    "Enter player name "
+                    "or matchup."
+                )
+            elif log_wager <= 0:
+                st.error(
+                    "Enter wager amount."
+                )
+            else:
+                bet_date_str = (
+                    datetime.combine(
+                        log_date,
+                        datetime.min.time()
+                    ).strftime(
+                        "%Y-%m-%d %H:%M"
+                    )
+                )
+                
+                result = log_manual_bet(
+                    player=log_player,
+                    prop=log_prop,
+                    line=log_line,
+                    side=log_side,
+                    sport=log_sport,
+                    outcome=log_outcome,
+                    wager=log_wager,
+                    pick_count=log_pick_count,
+                    bet_type=(
+                        "prop"
+                        if bet_type_sel
+                        == "Player Prop"
+                        else "game"
+                    ),
+                    source=log_source,
+                    bet_date=bet_date_str,
+                    edge=(
+                        log_edge
+                        if log_edge > 0
+                        else None
+                    ),
+                    notes=log_notes,
+                )
+                
+                net_color = (
+                    "#22c55e"
+                    if result["net"] > 0
+                    else "#e04040"
+                )
+                st.success(
+                    f"✅ Logged: "
+                    f"{log_player} — "
+                    f"{log_outcome} | "
+                    f"Net: "
+                    f"${result['net']:+.2f}"
+                )
+                st.caption(
+                    f"Bankroll updated to "
+                    f"${st.session_state.bankroll:.2f} | "
+                    f"History: "
+                    f"{len(st.session_state.history)} bets"
+                )
+                st.rerun()
+    
+    with log_tab2:
+        st.markdown("### Bulk Entry")
+        st.caption(
+            "Paste multiple bets at once. "
+            "One bet per line in this format: "
+            "Player, Stat, Line, OVER/UNDER, "
+            "Sport, WIN/LOSS, Wager, PickCount"
+        )
+        st.caption(
+            "Example: "
+            "Nikola Jokic, Points, 26.5, "
+            "OVER, NBA, WIN, 25, 2"
+        )
+        
+        bulk_text = st.text_area(
+            "Paste bets here",
+            height=200,
+            key="bulk_bet_text",
+            placeholder=(
+                "Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2\n"
+                "Jayson Tatum, Rebounds, 8.5, OVER, NBA, LOSS, 25, 2\n"
+                "CLE @ NYK, Moneyline, -150, CLE, NBA, WIN, 50, 1"
+            )
+        )
+        
+        bulk_date = st.date_input(
+            "Date for all bets",
+            value=date.today(),
+            key="bulk_date"
+        )
+        
+        if st.button(
+            "📥 Import All Bets",
+            key="import_bulk_bets"
+        ):
+            if not bulk_text.strip():
+                st.error("No bets entered.")
+            else:
+                lines = [
+                    l.strip()
+                    for l in
+                    bulk_text.strip().split("\n")
+                    if l.strip()
+                ]
+                success_count = 0
+                error_count = 0
+                
+                for line_text in lines:
+                    try:
+                        parts = [
+                            p.strip()
+                            for p in
+                            line_text.split(",")
+                        ]
+                        if len(parts) < 7:
+                            error_count += 1
+                            continue
+                        
+                        player = parts[0]
+                        prop = parts[1]
+                        line_val = float(
+                            parts[2]
+                        )
+                        side = parts[3].upper()
+                        sport = parts[4].upper()
+                        outcome = parts[5].upper()
+                        wager = float(parts[6])
+                        pick_count = int(
+                            parts[7]
+                        ) if len(parts) > 7 else 2
+                        
+                        if outcome not in (
+                            "WIN", "LOSS"
+                        ):
+                            error_count += 1
+                            continue
+                        
+                        bet_date_str = (
+                            datetime.combine(
+                                bulk_date,
+                                datetime.min.time()
+                            ).strftime(
+                                "%Y-%m-%d %H:%M"
+                            )
+                        )
+                        
+                        log_manual_bet(
+                            player=player,
+                            prop=prop,
+                            line=line_val,
+                            side=side,
+                            sport=sport,
+                            outcome=outcome,
+                            wager=wager,
+                            pick_count=pick_count,
+                            bet_type=(
+                                "game"
+                                if side in (
+                                    "CLE", "NYK",
+                                    "OVER", "UNDER",
+                                    "Moneyline",
+                                    "Spread"
+                                ) and prop in (
+                                    "Moneyline",
+                                    "Spread",
+                                    "Total OVER",
+                                    "Total UNDER"
+                                )
+                                else "prop"
+                            ),
+                            source="Manual Import",
+                            bet_date=bet_date_str,
+                        )
+                        success_count += 1
+                        
+                    except Exception as e:
+                        error_count += 1
+                        continue
+                
+                if success_count > 0:
+                    st.success(
+                        f"✅ Imported "
+                        f"{success_count} bets | "
+                        f"Bankroll: "
+                        f"${st.session_state.bankroll:.2f}"
+                    )
+                if error_count > 0:
+                    st.warning(
+                        f"⚠️ {error_count} lines "
+                        f"skipped — check format"
+                    )
+                if success_count > 0:
+                    st.rerun()
+    
+    st.markdown("---")
+    st.markdown("### 📊 Recent Manual Entries")
+    manual_history = [
+        h for h in
+        st.session_state.history
+        if h.get("manual_entry")
+    ]
+    if manual_history:
+        st.caption(
+            f"{len(manual_history)} manually "
+            f"logged bets"
+        )
+        manual_df = pd.DataFrame(
+            manual_history[-20:]
+        )
+        show_cols = [
+            c for c in [
+                "timestamp", "player",
+                "prop", "line", "side",
+                "sport", "outcome",
+                "wager", "net", "source"
+            ] if c in manual_df.columns
+        ]
+        st.dataframe(
+            manual_df[show_cols].iloc[::-1],
+            width="stretch",
+            hide_index=True
+        )
+    else:
+        st.caption(
+            "No manual entries yet."
+        )
+
+# ----- TAB 6: LINE SHOP -----
+with tabs[6]:
     st.markdown("## 🛒 Line Shopping")
     board = st.session_state.board_data
     ud_props = st.session_state.get("ud_props_compare", [])
@@ -9207,8 +10373,8 @@ with tabs[5]:
     else:
         st.caption("No significant discrepancies found.")
 
-# ----- TAB 6: SYSTEM -----
-with tabs[6]:
+# ----- TAB 7: SYSTEM -----
+with tabs[7]:
     st.markdown("## ⚙️ System Info")
     c1, c2 = st.columns(2)
     with c1:
