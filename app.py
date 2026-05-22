@@ -915,6 +915,11 @@ def make_display_df(enriched_list):
         display_df["Fair %"] = display_df["Fair %"].apply(lambda x: f"{x:.1%}" if isinstance(x, float) else x)
     if "Avg (10g)" in display_df.columns:
         display_df["Avg (10g)"] = display_df["Avg (10g)"].apply(lambda x: f"{x:.1f}" if isinstance(x, (int, float)) else x)
+    # Remove duplicate column names
+    # caused by rename collisions
+    display_df = display_df.loc[
+        :, ~display_df.columns.duplicated()
+    ]
     return display_df
 
 # =========================
@@ -8575,7 +8580,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "ConsensusProb", "Books", "BestAltLine", "BestAltEV", "BestAltPayout"]
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("📊 Signal Breakdown"):
