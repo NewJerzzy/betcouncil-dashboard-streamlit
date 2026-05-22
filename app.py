@@ -7036,7 +7036,15 @@ def load_sport_data(sport):
         else:
             abbr_key = player.lower()
         
+        # Normalize stat_raw to match
+        # Action Network mapped stat names
+        # e.g. PrizePicks "Pts" → "Points"
+        an_stat_key = ACTION_NETWORK_PROP_TYPE_MAP.get(
+            stat_raw, stat_raw
+        )
         an_data = an_lookup.get(
+            (abbr_key, an_stat_key), {}
+        ) or an_lookup.get(
             (abbr_key, stat_raw), {}
         )
         an_projection = an_data.get("projection")
@@ -7569,8 +7577,12 @@ with tabs[0]:
                 )
     with col_gem2:
         if st.session_state.get("gem_brief"):
+            _scan_t = (
+                st.session_state.last_scan_time
+                or "—"
+            )
             st.caption(
-                f"Generated at {scan_t}"
+                f"Generated at {_scan_t}"
             )
     if st.session_state.get("gem_brief"):
         st.text_area(
