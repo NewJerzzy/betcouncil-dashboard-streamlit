@@ -5453,8 +5453,24 @@ def pp_auto_login():
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
             "x-device-id": "19458434-a345-4d1e-85c1-c100d5df600b",
         }
-        payload = {"email": pp_email, "password": pp_password}
-        r = requests.post("https://api.prizepicks.com/v1/user_sessions", json=payload, headers=headers, timeout=15)
+        # Try multiple known PrizePicks login endpoints
+        login_endpoints = [
+            ("https://api.prizepicks.com/users/sign_in", {"user": {"email": pp_email, "password": pp_password}}),
+            ("https://api.prizepicks.com/v1/users/sign_in", {"user": {"email": pp_email, "password": pp_password}}),
+            ("https://api.prizepicks.com/identities/sign_in", {"email": pp_email, "password": pp_password}),
+        ]
+        r = None
+        for endpoint, payload in login_endpoints:
+            try:
+                r = requests.post(endpoint, json=payload, headers=headers, timeout=15)
+                if r.status_code in (200, 201):
+                    break
+                elif r.status_code == 404:
+                    continue
+            except:
+                continue
+        if r is None:
+            return None, None, "Could not reach PrizePicks login."
         if r.status_code in (200, 201):
             # Extract session cookie and CSRF token from response
             session_cookie = r.cookies.get("_prizepicks_session", "")
@@ -5479,9 +5495,11 @@ def pp_auto_login():
                 return session_cookie, csrf_token, None
             return None, None, "Login succeeded but could not extract session."
         elif r.status_code == 401:
-            return None, None, "Wrong email or password."
+            return None, None, "Wrong email or password. Check PP_EMAIL and PP_PASSWORD in secrets."
+        elif r.status_code == 422:
+            return None, None, "Invalid credentials format."
         else:
-            return None, None, f"Login failed: {r.status_code}"
+            return None, None, f"Login failed: {r.status_code} — PrizePicks may have updated their API."
     except Exception as e:
         return None, None, f"Login error: {str(e)}"
 
