@@ -5429,20 +5429,18 @@ st.markdown(f"""
 
 def pp_auto_login():
     """
-    Log into PrizePicks using stored email/password.
-    Returns (session_cookie, csrf_token) or (None, error).
-    Caches session in st.session_state for the session duration.
+    Authenticate using remember_user_token cookie (lasts ~30 days).
+    Stored in st.secrets as PP_REMEMBER_TOKEN.
+    No bot protection issues since we use an existing valid token.
     """
-    # Return cached session if still valid
     cached = st.session_state.get("pp_auth_cache", {})
     if cached.get("session") and cached.get("expires_at"):
         if time.time() < cached["expires_at"]:
             return cached["session"], cached["csrf"], None
 
-    pp_email = st.secrets.get("PP_EMAIL", "")
-    pp_password = st.secrets.get("PP_PASSWORD", "")
-    if not pp_email or not pp_password:
-        return None, None, "PP_EMAIL and PP_PASSWORD not set in Streamlit secrets."
+    remember_token = st.secrets.get("PP_REMEMBER_TOKEN", "")
+    if not remember_token:
+        return None, None, "PP_REMEMBER_TOKEN not set in Streamlit secrets."
 
     try:
         headers = {
@@ -5452,33 +5450,16 @@ def pp_auto_login():
             "referer": "https://app.prizepicks.com/",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
             "x-device-id": "19458434-a345-4d1e-85c1-c100d5df600b",
+            "cookie": f"remember_user_token={remember_token}",
         }
-        # Try multiple known PrizePicks login endpoints
-        login_endpoints = [
-            ("https://api.prizepicks.com/users/sign_in", {"user": {"email": pp_email, "password": pp_password}}),
-            ("https://api.prizepicks.com/v1/users/sign_in", {"user": {"email": pp_email, "password": pp_password}}),
-            ("https://api.prizepicks.com/identities/sign_in", {"email": pp_email, "password": pp_password}),
-        ]
-        r = None
-        for endpoint, payload in login_endpoints:
-            try:
-                r = requests.post(endpoint, json=payload, headers=headers, timeout=15)
-                if r.status_code in (200, 201):
-                    break
-                elif r.status_code == 404:
-                    continue
-            except:
-                continue
-        if r is None:
-            return None, None, "Could not reach PrizePicks login."
-        if r.status_code in (200, 201):
-            # Extract session cookie and CSRF token from response
+        # Hit the current user endpoint to exchange remember token for session
+        r = requests.get("https://api.prizepicks.com/users/current", headers=headers, timeout=15)
+        if r.status_code == 200:
             session_cookie = r.cookies.get("_prizepicks_session", "")
             csrf_token = r.cookies.get("CSRF-TOKEN", "")
             if not session_cookie:
-                # Try from headers
-                set_cookie = r.headers.get("set-cookie", "")
                 import re
+                set_cookie = r.headers.get("set-cookie", "")
                 m = re.search(r"_prizepicks_session=([^;]+)", set_cookie)
                 if m:
                     session_cookie = m.group(1)
@@ -5486,22 +5467,25 @@ def pp_auto_login():
                 if m2:
                     csrf_token = m2.group(1)
             if session_cookie:
-                # Cache for 2 hours
                 st.session_state["pp_auth_cache"] = {
                     "session": session_cookie,
                     "csrf": csrf_token,
                     "expires_at": time.time() + 7200
                 }
                 return session_cookie, csrf_token, None
-            return None, None, "Login succeeded but could not extract session."
+            # Token still valid but no new session issued — use token directly
+            st.session_state["pp_auth_cache"] = {
+                "session": remember_token,
+                "csrf": "",
+                "expires_at": time.time() + 3600
+            }
+            return remember_token, "", None
         elif r.status_code == 401:
-            return None, None, "Wrong email or password. Check PP_EMAIL and PP_PASSWORD in secrets."
-        elif r.status_code == 422:
-            return None, None, "Invalid credentials format."
+            return None, None, "Token expired. Update PP_REMEMBER_TOKEN in Streamlit secrets (takes 2 min)."
         else:
-            return None, None, f"Login failed: {r.status_code} — PrizePicks may have updated their API."
+            return None, None, f"Auth failed: {r.status_code}"
     except Exception as e:
-        return None, None, f"Login error: {str(e)}"
+        return None, None, f"Auth error: {str(e)}"
 
 
 def fetch_pp_my_entries(filter_type="settled", limit=50):
@@ -6306,7 +6290,7 @@ with tabs[5]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     # ---- AUTO-SYNC FROM PRIZEPICKS ----
-    pp_session_configured = bool(st.secrets.get("PP_EMAIL", ""))
+    pp_session_configured = bool(st.secrets.get("PP_REMEMBER_TOKEN", ""))
     if pp_session_configured:
         col_pp1, col_pp2, col_pp3 = st.columns([2, 1, 1])
         with col_pp1:
@@ -6344,10 +6328,15 @@ with tabs[5]:
     else:
         with st.expander("\U0001f517 Connect PrizePicks Account (auto-log results)"):
             st.markdown("Add these to your Streamlit Secrets to enable auto-sync:")
-            st.code("""PP_EMAIL = "your_prizepicks_email@email.com"
-PP_PASSWORD = "your_prizepicks_password"
-""", language="toml")
-            st.caption("Add these two lines to Streamlit Secrets. The app logs in automatically \u2014 no session refresh ever needed.")
+            st.markdown("**Add this to Streamlit Secrets** (updates every ~30 days):")
+            st.code('PP_REMEMBER_TOKEN = "your_token_here"', language="toml")
+            st.markdown("""
+**How to get your token (2 min, once a month):**
+1. Open PrizePicks in Chrome desktop
+2. Press F12 → Application tab → Cookies → api.prizepicks.com
+3. Find `remember_user_token` — copy the value
+4. Paste into Streamlit Secrets → Save
+""")
         st.markdown("---")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
