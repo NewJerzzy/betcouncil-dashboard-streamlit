@@ -1992,12 +1992,6 @@ def fetch_mlb_probable_pitchers():
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_probable_pitchers", "error": str(e)[:100]})
     return pitchers
     def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
-    """
-    Fetch rolling defensive rating for a team
-    over last N games. Uses 10 games (not 5)
-    for better stability. Returns both overall
-    and position-specific data where available.
-    """
     cache_key = f"recent_def_{sport}_{team_abbrev}_{n_games}"
     cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
     if os.path.exists(cache_path):
@@ -2040,7 +2034,7 @@ def fetch_mlb_probable_pitchers():
         except:
             continue
     return None
-def fetch_espn_fpi_ratings(sport="NBA"):
+    def fetch_espn_fpi_ratings(sport="NBA"):
     cache_path = os.path.join(CACHE_DIR, f"espn_fpi_{sport}.pkl")
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
