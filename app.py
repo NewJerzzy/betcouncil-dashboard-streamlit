@@ -4526,146 +4526,132 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     return record
 
 def parse_bet_screenshot_ocr(image_bytes):
+    """Enhanced OCR for PrizePicks screenshots with preprocessing."""
     try:
         import pytesseract
-        from PIL import Image
-        import io
-        import re
+        from PIL import Image, ImageEnhance, ImageOps
+        import io, re
+
         img = Image.open(io.BytesIO(image_bytes))
-        if img.mode not in ("RGB", "L"):
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        elif img.mode != "RGB":
             img = img.convert("RGB")
-        raw_text = pytesseract.image_to_string(img, config="--psm 6")
-        lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
+
+        def preprocess(image, method):
+            w, h = image.size
+            scale = 3 if max(w, h) < 1200 else 2
+            image = image.resize((w * scale, h * scale), Image.LANCZOS)
+            if method == "contrast":
+                image = image.convert("L")
+                image = ImageEnhance.Contrast(image).enhance(3.0)
+                image = ImageEnhance.Sharpness(image).enhance(2.0)
+                image = image.point(lambda x: 0 if x < 140 else 255, "1").convert("L")
+            elif method == "inverted":
+                image = image.convert("L")
+                image = ImageOps.invert(image)
+                image = ImageEnhance.Contrast(image).enhance(3.0)
+                image = image.point(lambda x: 0 if x < 140 else 255, "1").convert("L")
+            elif method == "gray":
+                image = image.convert("L")
+                image = ImageEnhance.Contrast(image).enhance(2.0)
+            return image
+
+        raw_texts = []
+        for method in ["contrast", "inverted", "gray"]:
+            for psm in [6, 11, 4]:
+                try:
+                    text = pytesseract.image_to_string(preprocess(img.copy(), method), config=f"--psm {psm} --oem 3")
+                    if len(text.strip()) > 20:
+                        raw_texts.append(text)
+                except:
+                    continue
+
+        raw_text = max(raw_texts, key=len) if raw_texts else ""
         st.session_state["ocr_raw_text"] = raw_text
-        bets = []
+        if not raw_text.strip():
+            return []
+
+        lines_text = [l.strip() for l in raw_text.split("\n") if l.strip()]
         text_lower = raw_text.lower()
-        is_prizepicks = ("prizepicks" in text_lower or ("more" in text_lower and "less" in text_lower))
-        is_bovada = "bovada" in text_lower
-        is_mybookie = "mybookie" in text_lower
-        is_underdog = "underdog" in text_lower
-        stat_keywords = {
+
+        sport = "NBA"
+        for sp, kws in {"NBA": ["nba","celtics","lakers","warriors","bucks","heat"], "MLB": ["mlb","baseball","strikeouts","home runs"], "NHL": ["nhl","hockey","goals"], "NFL": ["nfl","passing yards","rushing"], "WNBA": ["wnba"]}.items():
+            if any(k in text_lower for k in kws): sport = sp; break
+
+        stat_map = {
             "points": "Points", "pts": "Points", "rebounds": "Rebounds", "rebs": "Rebounds",
-            "assists": "Assists", "ast": "Assists", "pra": "Pts+Reb+Ast", "pts+reb+ast": "Pts+Reb+Ast",
-            "3-pt": "3-PT Made", "threes": "3-PT Made", "steals": "Steals", "blocks": "Blocked Shots",
-            "blks": "Blocked Shots", "turnovers": "Turnovers", "hits": "Hits", "home runs": "Home Runs",
-            "hr": "Home Runs", "strikeouts": "Strikeouts", "goals": "Goals", "shots on goal": "Shots On Goal",
-            "sog": "Shots On Goal", "passing yards": "Passing Yards", "rushing yards": "Rushing Yards",
-            "receiving yards": "Receiving Yards", "receptions": "Receptions", "touchdowns": "Touchdowns",
-            "moneyline": "Moneyline", "spread": "Spread", "total": "Total",
+            "assists": "Assists", "ast": "Assists", "pts+reb+ast": "Pts+Reb+Ast", "pra": "Pts+Reb+Ast",
+            "3-pt": "3-PT Made", "3pt": "3-PT Made", "threes": "3-PT Made", "steals": "Steals",
+            "blocks": "Blocked Shots", "blks": "Blocked Shots", "turnovers": "Turnovers",
+            "hits": "Hits", "home runs": "Home Runs", "strikeouts": "Strikeouts",
+            "goals": "Goals", "shots on goal": "Shots On Goal", "passing yards": "Passing Yards",
+            "rushing yards": "Rushing Yards", "receiving yards": "Receiving Yards",
+            "receptions": "Receptions", "touchdowns": "Touchdowns", "fantasy score": "Fantasy Score",
         }
-        def detect_sport(text):
-            t = text.lower()
-            if any(w in t for w in ["nba", "basketball", "points", "rebounds", "assists"]):
-                return "NBA"
-            elif any(w in t for w in ["mlb", "baseball", "hits", "strikeouts", "home runs"]):
-                return "MLB"
-            elif any(w in t for w in ["nhl", "hockey", "goals", "shots on goal"]):
-                return "NHL"
-            elif any(w in t for w in ["nfl", "football", "passing yards", "rushing yards"]):
-                return "NFL"
-            elif "wnba" in t:
-                return "WNBA"
-            return "NBA"
-        def detect_outcome(text):
-            t = text.lower()
-            win_words = ["won", "win", "correct", "hit", "✓", "winner", "settled - win", "graded win"]
-            loss_words = ["lost", "loss", "incorrect", "miss", "✗", "loser", "settled - loss", "graded loss"]
-            if any(w in t for w in win_words):
-                return "WIN"
-            if any(w in t for w in loss_words):
-                return "LOSS"
+
+        def get_stat(t):
+            t = t.lower()
+            for k, v in stat_map.items():
+                if k in t: return v
             return None
-        def extract_numbers(text):
-            return re.findall(r'\d+\.?\d*', text)
-        def detect_stat(text):
-            t = text.lower()
-            for keyword, stat_name in stat_keywords.items():
-                if keyword in t:
-                    return stat_name
+
+        def get_line(t):
+            for n in re.findall(r"\b(\d+\.?\d*)\b", t):
+                v = float(n)
+                if 0.5 <= v <= 99.5: return v
             return None
-        if is_prizepicks:
-            i = 0
-            while i < len(lines):
-                line_text = lines[i]
-                if "more" in line_text.lower() or "less" in line_text.lower():
-                    player = lines[i-1] if i > 0 else ""
-                    player = re.sub(r'[^a-zA-Z\s\.\']', '', player).strip()
-                    side = "OVER" if "more" in line_text.lower() else "UNDER"
-                    nums = extract_numbers(line_text)
-                    line_val = float(nums[0]) if nums else 0.0
-                    stat = detect_stat(line_text)
-                    if not stat and i + 1 < len(lines):
-                        stat = detect_stat(lines[i+1])
-                    if not stat:
-                        stat = line_text.replace("MORE","").replace("LESS","").strip()
-                    outcome = None
-                    for j in range(max(0, i-2), min(len(lines), i+4)):
-                        outcome = detect_outcome(lines[j])
-                        if outcome:
-                            break
-                    if player and line_val > 0:
-                        bets.append({
-                            "player": player, "prop": stat or "Points", "line": line_val,
-                            "side": side, "sport": detect_sport(raw_text), "outcome": outcome or "WIN",
-                            "wager": 0.0, "pick_count": 2, "source": "PrizePicks", "bet_type": "prop",
-                        })
-                i += 1
-        elif is_bovada or is_mybookie:
-            source = "Bovada" if is_bovada else "MyBookie"
-            outcome = detect_outcome(raw_text)
-            sport = detect_sport(raw_text)
-            for i, line_text in enumerate(lines):
-                stat = detect_stat(line_text)
-                nums = extract_numbers(line_text)
-                if stat and nums and len(nums) > 0:
-                    player = ""
-                    for j in range(max(0, i-2), i):
-                        candidate = lines[j]
-                        if len(candidate) > 3 and not extract_numbers(candidate):
-                            player = candidate
-                            break
-                    line_val = float(nums[0])
-                    side = "OVER"
-                    if "under" in line_text.lower():
-                        side = "UNDER"
-                    elif "over" in line_text.lower():
-                        side = "OVER"
-                    wager = 0.0
-                    wager_patterns = [r'\$(\d+\.?\d*)', r'risk[:\s]+(\d+\.?\d*)', r'wager[:\s]+(\d+\.?\d*)']
-                    for pattern in wager_patterns:
-                        match = re.search(pattern, raw_text.lower())
-                        if match:
-                            wager = float(match.group(1))
-                            break
-                    if player:
-                        bets.append({
-                            "player": player, "prop": stat, "line": line_val, "side": side,
-                            "sport": sport, "outcome": outcome or "WIN", "wager": wager,
-                            "pick_count": 1, "source": source, "bet_type": "game",
-                        })
-        if not bets:
-            outcome = detect_outcome(raw_text)
-            sport = detect_sport(raw_text)
-            for i, line_text in enumerate(lines):
-                stat = detect_stat(line_text)
-                nums = extract_numbers(line_text)
-                if stat and nums and len(line_text) < 60:
-                    line_val = float(nums[0])
-                    player = ""
-                    for j in range(max(0, i-3), i):
-                        cand = lines[j]
-                        if len(cand) > 4 and not any(c.isdigit() for c in cand) and len(cand) < 40:
-                            player = cand
-                    if line_val > 0:
-                        bets.append({
-                            "player": player or "Unknown Player", "prop": stat, "line": line_val,
-                            "side": "OVER", "sport": sport, "outcome": outcome or "WIN",
-                            "wager": 0.0, "pick_count": 2, "source": "Screenshot", "bet_type": "prop",
-                        })
+
+        def get_side(t):
+            t = t.lower()
+            return "UNDER" if any(w in t for w in ["less", "under", "demon"]) else "OVER"
+
+        def get_outcome(t):
+            t = t.lower()
+            if any(w in t for w in ["pending","live","active","locked","in progress"]): return "PENDING"
+            if any(w in t for w in ["won","win","correct","hit","payout","winner"]): return "WIN"
+            if any(w in t for w in ["lost","loss","incorrect","miss","loser"]): return "LOSS"
+            return None
+
+        entry_outcome = get_outcome(raw_text)
+        bets = []
+
+        for i, line in enumerate(lines_text):
+            stat = get_stat(line)
+            val = get_line(line)
+            if stat and val:
+                player = lines_text[i-1] if i > 0 else "Unknown"
+                player = re.sub(r"[^a-zA-Z .\'-]", "", player).strip()
+                if len(player) < 3 or any(w in player.lower() for w in ["more","less","pick","entry","prize","over","under","goblin","demon"]):
+                    continue
+                context = " ".join(lines_text[max(0,i-2):min(len(lines_text),i+3)])
+                pick_outcome = get_outcome(context) or entry_outcome or "PENDING"
+                next_line = lines_text[i+1] if i+1 < len(lines_text) else ""
+                bets.append({
+                    "player": player, "prop": stat, "line": val,
+                    "side": get_side(line + " " + next_line),
+                    "sport": sport, "outcome": pick_outcome,
+                    "wager": 0, "pick_count": 2,
+                    "source": "PrizePicks" if ("prizepicks" in text_lower or "more" in text_lower) else "Screenshot",
+                    "bet_type": "prop",
+                })
+
+        wager_m = re.search(r"\$([\d,]+\.?\d*)", raw_text)
+        if wager_m and bets:
+            w = float(wager_m.group(1).replace(",",""))
+            if 1 <= w <= 10000:
+                for b in bets: b["wager"] = w
+
+        pc_m = re.search(r"(\d+)[- ]pick|pick[- ](\d+)", raw_text.lower())
+        if pc_m and bets:
+            pc = int(pc_m.group(1) or pc_m.group(2))
+            if 2 <= pc <= 6:
+                for b in bets: b["pick_count"] = pc
+
         return bets
-    except ImportError:
-        st.error("⚠️ OCR library not installed. Use manual entry instead.")
-        return []
+
     except Exception as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "parse_bet_screenshot_ocr", "error": str(e)[:100]})
         return []
@@ -5422,223 +5408,6 @@ st.markdown(f"""
 # TABS (Full as in original - Summary tab simplified for length)
 # =========================
 
-
-# =========================
-# PRIZEPICKS ACCOUNT INTEGRATION
-# =========================
-
-def pp_auto_login():
-    """
-    Authenticate with PrizePicks using remember_user_token.
-    Tries multiple endpoints and cookie formats.
-    """
-    cached = st.session_state.get("pp_auth_cache", {})
-    if cached.get("session") and cached.get("expires_at"):
-        if time.time() < cached["expires_at"]:
-            return cached["session"], cached["csrf"], None
-
-    remember_token = st.secrets.get("PP_REMEMBER_TOKEN", "")
-    if not remember_token:
-        return None, None, "PP_REMEMBER_TOKEN not set in Streamlit secrets."
-
-    from urllib.parse import quote, unquote
-    import re
-
-    base_headers = {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "origin": "https://app.prizepicks.com",
-        "referer": "https://app.prizepicks.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-        "x-device-id": "19458434-a345-4d1e-85c1-c100d5df600b",
-    }
-
-    # Try sending remember token directly to the entries endpoint
-    # This is the most direct approach — no login step needed
-    try:
-        test_headers = {**base_headers, "cookie": f"remember_user_token={remember_token}"}
-        r = requests.get(
-            "https://api.prizepicks.com/v1/entries?filter=settled&per_page=1",
-            headers=test_headers, timeout=15
-        )
-        if r.status_code == 200:
-            # Extract session from response cookies if available
-            session_cookie = r.cookies.get("_prizepicks_session", remember_token)
-            csrf_token = r.cookies.get("CSRF-TOKEN", "")
-            st.session_state["pp_auth_cache"] = {
-                "session": session_cookie,
-                "csrf": csrf_token,
-                "remember_token": remember_token,
-                "expires_at": time.time() + 3600
-            }
-            return session_cookie, csrf_token, None
-    except Exception as e:
-        pass
-
-    # Try URL-encoding the token
-    try:
-        encoded_token = quote(remember_token, safe="")
-        test_headers = {**base_headers, "cookie": f"remember_user_token={encoded_token}"}
-        r = requests.get(
-            "https://api.prizepicks.com/v1/entries?filter=settled&per_page=1",
-            headers=test_headers, timeout=15
-        )
-        if r.status_code == 200:
-            session_cookie = r.cookies.get("_prizepicks_session", encoded_token)
-            csrf_token = r.cookies.get("CSRF-TOKEN", "")
-            st.session_state["pp_auth_cache"] = {
-                "session": session_cookie,
-                "csrf": csrf_token,
-                "remember_token": encoded_token,
-                "expires_at": time.time() + 3600
-            }
-            return session_cookie, csrf_token, None
-    except Exception as e:
-        pass
-
-    return None, None, "Could not authenticate. Token may be expired — get a fresh one from Chrome DevTools."
-
-
-def fetch_pp_my_entries(filter_type="settled", limit=50):
-    """
-    Fetch user's PrizePicks entries. Auto-logs in using PP_EMAIL/PP_PASSWORD.
-    filter_type: "pending" | "settled" | "cancelled"
-    """
-    session_cookie, csrf_token, login_error = pp_auto_login()
-    if login_error:
-        return None, login_error
-    pp_device_id = "19458434-a345-4d1e-85c1-c100d5df600b"
-    remember_token = st.secrets.get("PP_REMEMBER_TOKEN", "")
-    cookie_str = f"_prizepicks_session={session_cookie}"
-    if csrf_token:
-        cookie_str += f"; CSRF-TOKEN={csrf_token}"
-    if remember_token:
-        cookie_str += f"; remember_user_token={remember_token}"
-    headers = {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "origin": "https://app.prizepicks.com",
-        "referer": "https://app.prizepicks.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-        "x-device-id": pp_device_id,
-        "cookie": cookie_str,
-    }
-    try:
-        url = f"https://api.prizepicks.com/v1/entries?filter={filter_type}&per_page={limit}"
-        r = requests.get(url, headers=headers, timeout=15)
-        if r.status_code == 401:
-            return None, "Session expired. Update PP_SESSION in Streamlit secrets."
-        if r.status_code == 403:
-            return None, "Access denied. Session may have expired."
-        if r.status_code != 200:
-            return None, f"API error {r.status_code}"
-        data = r.json()
-        entries = data.get("data", [])
-        included = data.get("included", [])
-        # Build lookup for included data (picks, projections, players)
-        included_map = {}
-        for item in included:
-            included_map[item.get("id")] = item
-        parsed = []
-        for entry in entries:
-            attrs = entry.get("attributes", {})
-            rels = entry.get("relationships", {})
-            picks_data = rels.get("picks", {}).get("data", [])
-            picks = []
-            for pick_ref in picks_data:
-                pick_obj = included_map.get(pick_ref.get("id"), {})
-                pick_attrs = pick_obj.get("attributes", {})
-                # Get projection details
-                proj_id = pick_obj.get("relationships", {}).get("new_player_stat_projection", {}).get("data", {}).get("id")
-                proj = included_map.get(proj_id, {}) if proj_id else {}
-                proj_attrs = proj.get("attributes", {})
-                player_id = proj.get("relationships", {}).get("new_player", {}).get("data", {}).get("id")
-                player_obj = included_map.get(player_id, {}) if player_id else {}
-                player_attrs = player_obj.get("attributes", {})
-                picks.append({
-                    "player": player_attrs.get("display_name", pick_attrs.get("name", "Unknown")),
-                    "stat": proj_attrs.get("stat_type", pick_attrs.get("stat_type", "Unknown")),
-                    "line": pick_attrs.get("line_score", proj_attrs.get("line_score", 0)),
-                    "side": "OVER" if pick_attrs.get("over_under") == "more" else "UNDER",
-                    "result": pick_attrs.get("result", "pending"),
-                    "actual": pick_attrs.get("actual_stat_value"),
-                    "sport": proj_attrs.get("league", ""),
-                })
-            parsed.append({
-                "id": entry.get("id"),
-                "status": attrs.get("status", "pending"),
-                "amount": attrs.get("entry_amount", 0),
-                "payout": attrs.get("payout", 0),
-                "picks_count": attrs.get("picks_count", len(picks)),
-                "entry_type": attrs.get("entry_type", ""),
-                "created_at": attrs.get("created_at", ""),
-                "picks": picks,
-            })
-        return parsed, None
-    except Exception as e:
-        return None, str(e)
-
-
-def auto_log_pp_results():
-    """
-    Fetch settled PrizePicks entries and auto-log any not already in history.
-    Returns count of new bets logged.
-    """
-    entries, error = fetch_pp_my_entries(filter_type="settled", limit=100)
-    if error:
-        return 0, error
-    existing_ids = {h.get("pp_entry_id") for h in st.session_state.history if h.get("pp_entry_id")}
-    new_count = 0
-    for entry in entries:
-        if entry["id"] in existing_ids:
-            continue
-        status = entry["status"]
-        if status not in ("won", "lost"):
-            continue
-        outcome = "WIN" if status == "won" else "LOSS"
-        wager = float(entry["amount"] or 0)
-        payout = float(entry["payout"] or 0)
-        pick_count = entry["picks_count"]
-        net = (payout - wager) if outcome == "WIN" else -wager
-        for pick in entry["picks"]:
-            sport = pick.get("sport", "NBA").upper()
-            if sport in ("NBA", "MLB", "NHL", "NFL", "WNBA", "NCAAB", "NCAAF"):
-                pass
-            else:
-                sport = "NBA"
-            hist_entry = {
-                "player": pick["player"],
-                "prop": pick["stat"],
-                "line": pick["line"],
-                "side": pick["side"],
-                "sport": sport,
-                "outcome": outcome,
-                "wager": round(wager / max(pick_count, 1), 2),
-                "net": round(net / max(pick_count, 1), 2),
-                "pick_count": pick_count,
-                "tier": None,
-                "source": "PrizePicks Auto",
-                "manual_entry": True,
-                "pp_entry_id": entry["id"],
-                "timestamp": entry["created_at"][:16].replace("T", " ") if entry["created_at"] else datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "actual_value": pick.get("actual"),
-                "stat_type": pick["stat"],
-                "resolved_date": date.today().strftime("%Y-%m-%d"),
-                "bet_type": "prop",
-            }
-            st.session_state.history.append(hist_entry)
-            new_count += 1
-        if outcome == "WIN":
-            st.session_state.bankroll += net
-        else:
-            st.session_state.bankroll -= wager
-    if new_count > 0:
-        save_json_data(HISTORY_PATH, st.session_state.history)
-        save_to_gist("history", st.session_state.history)
-        save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-        save_to_gist("bankroll", st.session_state.bankroll)
-    return new_count, None
-
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
@@ -6305,56 +6074,6 @@ with tabs[4]:
 # ----- TAB 5: LOG BET -----
 with tabs[5]:
     st.markdown("## \U0001f4dd Log A Bet")
-
-    # ---- AUTO-SYNC FROM PRIZEPICKS ----
-    pp_session_configured = bool(st.secrets.get("PP_REMEMBER_TOKEN", ""))
-    if pp_session_configured:
-        col_pp1, col_pp2, col_pp3 = st.columns([2, 1, 1])
-        with col_pp1:
-            st.success("\U0001f517 PrizePicks account connected")
-        with col_pp2:
-            if st.button("\U0001f504 Auto-Sync Results", key="pp_auto_sync"):
-                with st.spinner("Fetching your PrizePicks results..."):
-                    n_new, sync_error = auto_log_pp_results()
-                if sync_error:
-                    st.error(f"Sync failed: {sync_error}")
-                elif n_new == 0:
-                    st.info("All caught up \u2014 no new results to log.")
-                else:
-                    st.success(f"\u2705 Logged {n_new} new picks from PrizePicks!")
-                    st.rerun()
-        with col_pp3:
-            if st.button("\U0001f4cb View Pending", key="pp_view_pending"):
-                with st.spinner("Loading pending entries..."):
-                    pending, err = fetch_pp_my_entries("pending", limit=20)
-                if err:
-                    st.error(err)
-                elif pending:
-                    st.session_state["pp_pending_entries"] = pending
-                    st.rerun()
-        pp_pending = st.session_state.get("pp_pending_entries", [])
-        if pp_pending:
-            st.markdown("### \u23f3 Your Active PrizePicks Entries")
-            for entry in pp_pending[:10]:
-                with st.expander(f"{entry['picks_count']}-pick | ${entry['amount']} entry | {entry['entry_type']}"):
-                    for pick in entry["picks"]:
-                        result_icon = "\u2705" if pick["result"] == "correct" else "\u274c" if pick["result"] == "incorrect" else "\u23f3"
-                        actual = f" (actual: {pick['actual']})" if pick.get('actual') else ""
-                        st.write(f"{result_icon} **{pick['player']}** {pick['side']} {pick['line']} {pick['stat']}{actual}")
-        st.markdown("---")
-    else:
-        with st.expander("\U0001f517 Connect PrizePicks Account (auto-log results)"):
-            st.markdown("Add these to your Streamlit Secrets to enable auto-sync:")
-            st.markdown("**Add this to Streamlit Secrets** (updates every ~30 days):")
-            st.code('PP_REMEMBER_TOKEN = "your_token_here"', language="toml")
-            st.markdown("""
-**How to get your token (2 min, once a month):**
-1. Open PrizePicks in Chrome desktop
-2. Press F12 → Application tab → Cookies → api.prizepicks.com
-3. Find `remember_user_token` — copy the value
-4. Paste into Streamlit Secrets → Save
-""")
-        st.markdown("---")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
     log_tab1, log_tab2 = st.tabs(["Manual Entry", "Bulk Entry"])
