@@ -5427,25 +5427,82 @@ st.markdown(f"""
 # PRIZEPICKS ACCOUNT INTEGRATION
 # =========================
 
+def pp_auto_login():
+    """
+    Log into PrizePicks using stored email/password.
+    Returns (session_cookie, csrf_token) or (None, error).
+    Caches session in st.session_state for the session duration.
+    """
+    # Return cached session if still valid
+    cached = st.session_state.get("pp_auth_cache", {})
+    if cached.get("session") and cached.get("expires_at"):
+        if time.time() < cached["expires_at"]:
+            return cached["session"], cached["csrf"], None
+
+    pp_email = st.secrets.get("PP_EMAIL", "")
+    pp_password = st.secrets.get("PP_PASSWORD", "")
+    if not pp_email or not pp_password:
+        return None, None, "PP_EMAIL and PP_PASSWORD not set in Streamlit secrets."
+
+    try:
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "origin": "https://app.prizepicks.com",
+            "referer": "https://app.prizepicks.com/",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
+            "x-device-id": "19458434-a345-4d1e-85c1-c100d5df600b",
+        }
+        payload = {"email": pp_email, "password": pp_password}
+        r = requests.post("https://api.prizepicks.com/v1/user_sessions", json=payload, headers=headers, timeout=15)
+        if r.status_code in (200, 201):
+            # Extract session cookie and CSRF token from response
+            session_cookie = r.cookies.get("_prizepicks_session", "")
+            csrf_token = r.cookies.get("CSRF-TOKEN", "")
+            if not session_cookie:
+                # Try from headers
+                set_cookie = r.headers.get("set-cookie", "")
+                import re
+                m = re.search(r"_prizepicks_session=([^;]+)", set_cookie)
+                if m:
+                    session_cookie = m.group(1)
+                m2 = re.search(r"CSRF-TOKEN=([^;]+)", set_cookie)
+                if m2:
+                    csrf_token = m2.group(1)
+            if session_cookie:
+                # Cache for 2 hours
+                st.session_state["pp_auth_cache"] = {
+                    "session": session_cookie,
+                    "csrf": csrf_token,
+                    "expires_at": time.time() + 7200
+                }
+                return session_cookie, csrf_token, None
+            return None, None, "Login succeeded but could not extract session."
+        elif r.status_code == 401:
+            return None, None, "Wrong email or password."
+        else:
+            return None, None, f"Login failed: {r.status_code}"
+    except Exception as e:
+        return None, None, f"Login error: {str(e)}"
+
+
 def fetch_pp_my_entries(filter_type="settled", limit=50):
     """
-    Fetch user's PrizePicks entries using stored session credentials.
+    Fetch user's PrizePicks entries. Auto-logs in using PP_EMAIL/PP_PASSWORD.
     filter_type: "pending" | "settled" | "cancelled"
-    Credentials stored in st.secrets as PP_SESSION and PP_CSRF_TOKEN.
     """
-    pp_session = st.secrets.get("PP_SESSION", "")
-    pp_csrf = st.secrets.get("PP_CSRF_TOKEN", "")
-    pp_device_id = st.secrets.get("PP_DEVICE_ID", "")
-    if not pp_session:
-        return None, "PP_SESSION not configured in Streamlit secrets."
+    session_cookie, csrf_token, login_error = pp_auto_login()
+    if login_error:
+        return None, login_error
+    pp_device_id = "19458434-a345-4d1e-85c1-c100d5df600b"
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
         "origin": "https://app.prizepicks.com",
         "referer": "https://app.prizepicks.com/",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-        "x-device-id": pp_device_id or "19458434-a345-4d1e-85c1-c100d5df600b",
-        "cookie": f"_prizepicks_session={pp_session}; CSRF-TOKEN={pp_csrf}",
+        "x-device-id": pp_device_id,
+        "cookie": f"_prizepicks_session={session_cookie}; CSRF-TOKEN={csrf_token}",
     }
     try:
         url = f"https://api.prizepicks.com/v1/entries?filter={filter_type}&per_page={limit}"
@@ -6231,7 +6288,7 @@ with tabs[5]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     # ---- AUTO-SYNC FROM PRIZEPICKS ----
-    pp_session_configured = bool(st.secrets.get("PP_SESSION", ""))
+    pp_session_configured = bool(st.secrets.get("PP_EMAIL", ""))
     if pp_session_configured:
         col_pp1, col_pp2, col_pp3 = st.columns([2, 1, 1])
         with col_pp1:
@@ -6269,11 +6326,10 @@ with tabs[5]:
     else:
         with st.expander("\U0001f517 Connect PrizePicks Account (auto-log results)"):
             st.markdown("Add these to your Streamlit Secrets to enable auto-sync:")
-            st.code("""PP_SESSION = "paste_your_session_here"
-PP_CSRF_TOKEN = "paste_your_csrf_token_here"
-PP_DEVICE_ID = "19458434-a345-4d1e-85c1-c100d5df600b"
+            st.code("""PP_EMAIL = "your_prizepicks_email@email.com"
+PP_PASSWORD = "your_prizepicks_password"
 """, language="toml")
-            st.caption("Get these from Chrome DevTools \u2192 Network tab \u2192 any api.prizepicks.com request \u2192 Request Headers \u2192 Cookie")
+            st.caption("Add these two lines to Streamlit Secrets. The app logs in automatically \u2014 no session refresh ever needed.")
         st.markdown("---")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
@@ -6595,3 +6651,4 @@ with tabs[7]:
                 os.remove(fp)
                 cleaned += 1
         st.success(f"Cleaned {cleaned} old files")
+
