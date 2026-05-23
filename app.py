@@ -6623,67 +6623,210 @@ with tabs[7]:
         st.caption("\u2705 No errors this session.")
     st.markdown("---")
     st.markdown("---")
-    st.markdown("### 🏆 PrizePicks API Status")
-    st.caption("Tests all PrizePicks endpoints directly and shows which ones are responding.")
-    pp_sport_test = st.selectbox("Sport to test", ["NBA","MLB","NHL","NFL","WNBA"], key="pp_api_test_sport")
-    if st.button("🔍 Test PrizePicks API", key="test_pp_api_btn"):
-        league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8}
-        league = league_ids.get(pp_sport_test, 4)
-        urls_to_test = [
-            f"https://partner-api.prizepicks.com/projections?per_page=1000&league_id={league}",
-            f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
-            f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true",
-        ]
-        pp_headers_test = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Referer": "https://app.prizepicks.com/",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://app.prizepicks.com",
-        }
-        any_success = False
-        for test_url in urls_to_test:
-            try:
-                r = requests.get(test_url, headers=pp_headers_test, timeout=10)
-                if r.status_code == 200:
-                    d = r.json()
-                    n_props = len(d.get("data", []))
-                    if n_props > 0:
-                        st.success(f"✅ {test_url.split('?')[0].split('/')[-2]}  —  {r.status_code} OK  —  **{n_props} props returned**")
-                        any_success = True
-                    else:
-                        st.warning(f"⚠️ {r.status_code} OK but 0 props returned — {test_url.split('?')[0]}")
-                elif r.status_code == 429:
-                    st.error(f"🚫 429 Rate limited — {test_url.split('?')[0]}")
-                elif r.status_code == 403:
-                    st.error(f"🔒 403 Forbidden — {test_url.split('?')[0]}")
-                else:
-                    st.error(f"❌ {r.status_code} — {test_url.split('?')[0]}")
-            except Exception as ex:
-                st.error(f"❌ Connection error — {str(ex)[:80]}")
-        if not any_success:
-            st.warning("No PrizePicks endpoints returned props. Board will fall back to Underdog/ParlayPlay.")
-    st.markdown("---")
-    st.markdown("### 📊 API Health Dashboard")
-    for key_s, budget_s in API_BUDGETS.items():
-        has_key_s = True
-        if budget_s.get("key"):
-            has_key_s = bool(st.secrets.get(budget_s["key"], ""))
-        key_status_s = "\U0001f7e2 No key needed" if not budget_s["key"] else ("\U0001f7e2 Key set" if has_key_s else "\U0001f534 Key missing")
-        usage_status_s = api_budget_status(key_s)
-        allowed_s, _ = api_budget_check(key_s)
-        gate_status_s = "\u2705 Open" if allowed_s else "\U0001f6d1 Blocked"
-        with st.expander(f"{key_s} \u2014 {budget_s['description']}"):
-            col_a, col_b, col_c = st.columns(3)
-            col_a.markdown(f"**Key:** {key_status_s}")
-            col_b.markdown(f"**Usage:** {usage_status_s}")
-            col_c.markdown(f"**Gate:** {gate_status_s}")
-    st.markdown("---")
-    if st.button("Reset ALL API Counters"):
+    st.markdown("### 📡 API Control Panel")
+    st.caption("Live status of every data source. Hit Refresh to ping all APIs.")
+
+    # --- Ping definitions ---
+    _PP_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://app.prizepicks.com/",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://app.prizepicks.com",
+    }
+    _PING_SOURCES = [
+        {
+            "name": "PrizePicks",
+            "description": "Primary prop source",
+            "url": "https://partner-api.prizepicks.com/projections?per_page=50&league_id=4",
+            "headers": _PP_HEADERS,
+            "budget_key": None,
+            "count_key": None,
+            "is_prop_source": True,
+        },
+        {
+            "name": "Underdog Fantasy",
+            "description": "Prop fallback #1",
+            "url": "https://api.underdogfantasy.com/v2/over_under_lines?sport_id=NBA",
+            "headers": {},
+            "budget_key": None,
+            "count_key": None,
+            "is_prop_source": True,
+        },
+        {
+            "name": "ParlayPlay",
+            "description": "Prop fallback #2 — all sports",
+            "url": "https://parlayplay.io/api/v1/projections/?league=NBA&format=json",
+            "headers": {},
+            "budget_key": "PARLAYPLAY",
+            "count_key": None,
+            "is_prop_source": True,
+        },
+        {
+            "name": "Action Network",
+            "description": "Public betting % + projections",
+            "url": "https://api.actionnetwork.com/web/v2/leagues/4/projections/available?limit=10",
+            "headers": {"Origin": "https://www.actionnetwork.com", "Referer": "https://www.actionnetwork.com/"},
+            "budget_key": "ACTION_NETWORK",
+            "count_key": None,
+            "is_prop_source": False,
+        },
+        {
+            "name": "BallsDontLie",
+            "description": "Player averages + stats",
+            "url": "https://api.balldontlie.io/v1/players?per_page=1",
+            "headers": {"Authorization": st.secrets.get("BALLSDONTLIE_API_KEY", "")},
+            "budget_key": "BDL",
+            "count_key": "BALLSDONTLIE_API_KEY",
+            "is_prop_source": False,
+        },
+        {
+            "name": "OddsPAPI",
+            "description": "Props fallback odds",
+            "url": "https://api.the-odds-api.com/v4/sports?apiKey=" + st.secrets.get("ODDSPAPI_KEY", "demo"),
+            "headers": {},
+            "budget_key": "ODDSPAPI",
+            "count_key": "ODDSPAPI_KEY",
+            "is_prop_source": False,
+        },
+        {
+            "name": "ESPN",
+            "description": "Game schedules + scores",
+            "url": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+            "headers": {},
+            "budget_key": "ESPN",
+            "count_key": None,
+            "is_prop_source": False,
+        },
+        {
+            "name": "OddsAPI",
+            "description": "Closing lines + CLV",
+            "url": "https://api.the-odds-api.com/v4/sports?apiKey=" + st.secrets.get("ODDS_API_KEY", "demo"),
+            "headers": {},
+            "budget_key": "ODDS_API",
+            "count_key": "ODDS_API_KEY",
+            "is_prop_source": False,
+        },
+    ]
+
+    def _ping_url(url, headers, timeout=8):
+        """Returns (status_code, detail_str, color) — color: green/yellow/red."""
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            code = r.status_code
+            if code == 200:
+                return code, "✅ 200 OK — Responding normally", "green"
+            elif code == 403:
+                return code, "🔒 403 Forbidden — Blocked. Board will use fallback sources.", "red"
+            elif code == 429:
+                return code, "🚫 429 Rate Limited — Too many requests. Wait 15–30 min.", "yellow"
+            elif code == 401:
+                return code, "🔑 401 Unauthorized — API key missing or invalid.", "red"
+            elif code == 404:
+                return code, "❓ 404 Not Found — Endpoint may have changed.", "yellow"
+            elif code >= 500:
+                return code, f"💥 {code} Server Error — API is down on their end.", "red"
+            else:
+                return code, f"⚠️ {code} — Unexpected response.", "yellow"
+        except requests.exceptions.Timeout:
+            return None, "⏱️ Timeout — No response within 8s. API may be down.", "red"
+        except requests.exceptions.ConnectionError:
+            return None, "❌ Connection Error — Unreachable. Check if site is down.", "red"
+        except Exception as ex:
+            return None, f"❌ Error — {str(ex)[:60]}", "red"
+
+    _COLOR_CSS = {
+        "green":  "border-left: 4px solid #00c87a; background: rgba(0,200,122,0.07);",
+        "yellow": "border-left: 4px solid #f0a500; background: rgba(240,165,0,0.07);",
+        "red":    "border-left: 4px solid #e04040; background: rgba(224,64,64,0.07);",
+    }
+    _DOT = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+
+    # Store ping results in session state so they persist until refresh
+    if "api_panel_results" not in st.session_state:
+        st.session_state["api_panel_results"] = {}
+
+    col_refresh, col_reset = st.columns([2, 2])
+    do_refresh = col_refresh.button("🔄 Refresh All", key="api_panel_refresh")
+    do_reset   = col_reset.button("🗑️ Reset API Counters", key="api_panel_reset_counters")
+
+    if do_reset:
         for key_s, budget_s in API_BUDGETS.items():
             path_s = budget_s["counter_path"]
             if os.path.exists(path_s):
                 os.remove(path_s)
-        st.success("All API counters reset")
+        st.success("✅ All API counters reset")
+
+    if do_refresh or not st.session_state["api_panel_results"]:
+        with st.spinner("Pinging all sources..."):
+            results = {}
+            for src in _PING_SOURCES:
+                code, detail, color = _ping_url(src["url"], src["headers"])
+                # For prop sources returning JSON, try to count items
+                extra = ""
+                if color == "green" and src.get("is_prop_source"):
+                    try:
+                        r2 = requests.get(src["url"], headers=src["headers"], timeout=8)
+                        d2 = r2.json()
+                        n = len(d2.get("data", d2.get("over_under_lines", d2.get("projections", []))))
+                        if n > 0:
+                            extra = f" — {n} props returned"
+                            detail = f"✅ 200 OK — Responding normally{extra}"
+                        elif n == 0:
+                            detail = "⚠️ 200 OK — Connected but 0 props. No slate posted yet."
+                            color = "yellow"
+                    except Exception:
+                        pass
+                results[src["name"]] = (code, detail, color)
+            st.session_state["api_panel_results"] = results
+
+    results = st.session_state.get("api_panel_results", {})
+
+    if results:
+        for src in _PING_SOURCES:
+            name = src["name"]
+            desc = src["description"]
+            code, detail, color = results.get(name, (None, "Not checked yet", "yellow"))
+
+            # Key status
+            key_label = src.get("count_key")
+            if key_label:
+                has_key = bool(st.secrets.get(key_label, ""))
+                key_str = "🟢 Key set" if has_key else "🔴 Key missing"
+            else:
+                key_str = "🟢 No key needed"
+
+            # Usage + gate
+            bkey = src.get("budget_key")
+            if bkey and bkey in API_BUDGETS:
+                usage_str = api_budget_status(bkey)
+                allowed_b, _ = api_budget_check(bkey)
+                gate_str = "✅ Open" if allowed_b else "🛑 Blocked"
+            else:
+                usage_str = "—"
+                gate_str  = "✅ Open"
+
+            dot = _DOT.get(color, "🟡")
+            css = _COLOR_CSS.get(color, "")
+
+            st.markdown(f"""
+<div style="padding:12px 16px; margin-bottom:10px; border-radius:8px; {css}">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div>
+      <span style="font-size:15px; font-weight:700; color:#e8f0f8;">{dot} {name}</span>
+      <span style="font-size:12px; color:#8899aa; margin-left:10px;">{desc}</span>
+    </div>
+    <span style="font-size:12px; color:#aabbcc;">Code: {code if code else "—"}</span>
+  </div>
+  <div style="margin-top:6px; font-size:13px; color:#ccd8e8;">{detail}</div>
+  <div style="margin-top:8px; display:flex; gap:24px; font-size:12px; color:#8899aa;">
+    <span><b>Key:</b> {key_str}</span>
+    <span><b>Usage:</b> {usage_str}</span>
+    <span><b>Gate:</b> {gate_str}</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+    else:
+        st.info("Hit **🔄 Refresh All** to check all API sources.")
     st.markdown("---")
     st.markdown("**\U0001f4be Data Persistence Status**")
     if GITHUB_TOKEN and GITHUB_GIST_ID:
