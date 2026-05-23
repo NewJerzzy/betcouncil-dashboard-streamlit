@@ -6622,7 +6622,48 @@ with tabs[7]:
     else:
         st.caption("\u2705 No errors this session.")
     st.markdown("---")
-    st.markdown("### \U0001f4ca API Health Dashboard")
+    st.markdown("---")
+    st.markdown("### 🏆 PrizePicks API Status")
+    st.caption("Tests all PrizePicks endpoints directly and shows which ones are responding.")
+    pp_sport_test = st.selectbox("Sport to test", ["NBA","MLB","NHL","NFL","WNBA"], key="pp_api_test_sport")
+    if st.button("🔍 Test PrizePicks API", key="test_pp_api_btn"):
+        league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8}
+        league = league_ids.get(pp_sport_test, 4)
+        urls_to_test = [
+            f"https://partner-api.prizepicks.com/projections?per_page=1000&league_id={league}",
+            f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
+            f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true",
+        ]
+        pp_headers_test = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://app.prizepicks.com/",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://app.prizepicks.com",
+        }
+        any_success = False
+        for test_url in urls_to_test:
+            try:
+                r = requests.get(test_url, headers=pp_headers_test, timeout=10)
+                if r.status_code == 200:
+                    d = r.json()
+                    n_props = len(d.get("data", []))
+                    if n_props > 0:
+                        st.success(f"✅ {test_url.split('?')[0].split('/')[-2]}  —  {r.status_code} OK  —  **{n_props} props returned**")
+                        any_success = True
+                    else:
+                        st.warning(f"⚠️ {r.status_code} OK but 0 props returned — {test_url.split('?')[0]}")
+                elif r.status_code == 429:
+                    st.error(f"🚫 429 Rate limited — {test_url.split('?')[0]}")
+                elif r.status_code == 403:
+                    st.error(f"🔒 403 Forbidden — {test_url.split('?')[0]}")
+                else:
+                    st.error(f"❌ {r.status_code} — {test_url.split('?')[0]}")
+            except Exception as ex:
+                st.error(f"❌ Connection error — {str(ex)[:80]}")
+        if not any_success:
+            st.warning("No PrizePicks endpoints returned props. Board will fall back to Underdog/ParlayPlay.")
+    st.markdown("---")
+    st.markdown("### 📊 API Health Dashboard")
     for key_s, budget_s in API_BUDGETS.items():
         has_key_s = True
         if budget_s.get("key"):
