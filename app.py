@@ -4630,15 +4630,35 @@ def parse_bet_screenshot_ocr(image_bytes):
             return None
 
         def get_line(t):
-            for n in re.findall(r"\b(\d{1,2}\.5|\d{1,2}\.0|\d{1,2})\b", t):
+            # Pass 1 — well-formed decimal (e.g. 21.5, 7.5)
+            for n in re.findall(r"\b(\d{1,2}\.\d)\b", t):
                 v = float(n)
                 if 0.5 <= v <= 99.5:
                     return v
+            # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 14, 8)
+            for n in re.findall(r"\b(\d{1,2})\b", t):
+                v = float(n)
+                if 1.0 <= v <= 60.0:
+                    return v
+            # Pass 3 — OCR dropped decimal point: "215"→21.5, "75"→7.5, "235"→23.5
+            # Only applies when the number ends in 5 (PrizePicks uses half-point lines)
+            for n in re.findall(r"\b(\d{2,3})\b", t):
+                iv = int(n)
+                if str(iv).endswith("5"):
+                    v = iv / 10.0
+                    if 0.5 <= v <= 60.0:
+                        return v
             return None
 
         def get_side(t):
             tl = t.lower()
-            return "UNDER" if any(w in tl for w in ["less","under","demon","↓"]) else "OVER"
+            # Tesseract commonly misreads ↓ as: vv, vy, v (standalone)
+            # and ↑ as: t, wt, tt, 1 (standalone before a number)
+            under_tokens = ["less","under","demon","↓","vv","vy"]
+            # Check for isolated "v" before a digit (OCR for ↓)
+            if re.search(r'\bv[vy]?\b', tl) or any(w in tl for w in under_tokens):
+                return "UNDER"
+            return "OVER"
 
         def get_outcome(t):
             tl = t.lower()
@@ -4649,57 +4669,73 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         entry_outcome = get_outcome(raw_text)
 
-        NAME_RE = re.compile(r"^[A-Z][a-záéíóúñüàèìòùâêîôûäëïöü]+([ \'-][A-Z][a-záéíóúñüàèìòùâêîôûäëïöü]+)+$")
-        SKIP_WORDS = {"NBA","MLB","NHL","NFL","WNBA","More","Less","Over","Under",
-                      "Pick","Entry","Flex","Goblin","Demon","Final","Pending","Live"}
+        # Tokenise by BOTH newlines AND 2+ consecutive spaces so we handle
+        # PrizePicks screenshots where Tesseract collapses everything onto one long line
+        tokens = re.split(r"\n+|\s{2,}", raw_text)
+        lines = [t.strip() for t in tokens if t.strip()]
 
+        # Position codes that can trail a player name and must be ignored
+        POSITION_CODES = {
+            "G","F","C","P","SP","RP","IF","OF",
+            "PG","SG","SF","PF","C-F","G-F","F-C","F/C","G/F",
+        }
+        SKIP_WORDS = {
+            "NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF",
+            "More","Less","Over","Under","Pick","Entry","Flex",
+            "Goblin","Demon","Final","Pending","Live","Show",
+            "Details","Leaderboard","Vs","At","Play","Win",
+        }
+
+        def is_player_name(tok):
+            """Return cleaned player name if token looks like one, else None."""
+            # Strip trailing position code
+            cleaned = re.sub(
+                r'\s+[A-Za-z]{1,3}(?:-[A-Za-z]{1,2})?$', '', tok
+            ).strip()
+            cleaned = re.sub(r"[^A-Za-z .\'-]", "", cleaned).strip()
+            words = [w for w in cleaned.split() if w]
+            if len(words) < 2 or len(cleaned) < 5:
+                return None
+            if any(w.upper() in SKIP_WORDS for w in words):
+                return None
+            # All substantial words must start with uppercase
+            if not all(w[0].isupper() for w in words if len(w) > 1):
+                return None
+            # Must have at least 2 words of 3+ chars (filters out junk like "Vv Vy")
+            if sum(1 for w in words if len(w) >= 3) < 2:
+                return None
+            return cleaned
+
+        # --- Step 1: Find all player name positions in the token list ---
+        player_positions = []   # list of (token_index, cleaned_name)
+        for i, tok in enumerate(lines):
+            name = is_player_name(tok)
+            if name:
+                player_positions.append((i, name))
+
+        # --- Step 2: For each player extract stat + line from the segment after them ---
         bets = []
-        used_lines = set()
+        for pi, (name_idx, player) in enumerate(player_positions):
+            end_idx = (player_positions[pi + 1][0]
+                       if pi + 1 < len(player_positions)
+                       else len(lines))
+            segment_toks = lines[name_idx + 1 : end_idx]
+            segment_text = " ".join(segment_toks)
 
-        for i in range(len(lines)):
-            if i in used_lines:
-                continue
-
-            # Build a search window: this line + next 3
-            window_idx = list(range(i, min(len(lines), i + 4)))
-            window_text = " ".join(lines[j] for j in window_idx)
-
-            stat = None
+            stat     = get_stat(segment_text)
             line_val = None
-            side = "OVER"
+            side     = "OVER"
 
-            # Scan window for stat and line value (they can be on separate lines)
-            for j in window_idx:
-                wl = lines[j]
-                if stat is None:
-                    stat = get_stat(wl)
+            for tok in segment_toks:
                 if line_val is None:
-                    line_val = get_line(wl)
+                    line_val = get_line(tok)
                     if line_val is not None:
-                        side = get_side(wl)
-
-            # Also check one line beyond the window for stat (sometimes it trails)
-            if stat is None and i + 4 < len(lines):
-                stat = get_stat(lines[i + 4])
+                        side = get_side(tok)
 
             if stat is None or line_val is None:
                 continue
 
-            # Find player name by scanning backwards from current position
-            player = None
-            for k in range(i - 1, max(-1, i - 6), -1):
-                candidate = re.sub(r"[^A-Za-z .\'-]", "", lines[k]).strip()
-                words = [w for w in candidate.split() if w]
-                if (len(words) >= 2 and len(candidate) >= 5 and
-                        NAME_RE.match(candidate) and
-                        not any(w in SKIP_WORDS for w in words)):
-                    player = candidate
-                    break
-
-            if not player:
-                continue
-
-            pick_outcome = get_outcome(window_text) or entry_outcome or "PENDING"
+            pick_outcome = get_outcome(segment_text) or entry_outcome or "PENDING"
 
             bets.append({
                 "player":     player,
@@ -4713,8 +4749,6 @@ def parse_bet_screenshot_ocr(image_bytes):
                 "source":     "PrizePicks",
                 "bet_type":   "prop",
             })
-            for k in window_idx:
-                used_lines.add(k)
 
         # Pull wager and pick count from slip header
         wager_m = re.search(r"\$(\d[\d,]*\.?\d*)", raw_text)
