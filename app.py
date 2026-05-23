@@ -4526,135 +4526,199 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     return record
 
 def parse_bet_screenshot_ocr(image_bytes):
-    """Enhanced OCR for PrizePicks screenshots with preprocessing."""
+    """Use Claude Vision API to parse PrizePicks/prop screenshots — replaces unreliable pytesseract."""
+    import base64, json, re, requests
+
     try:
-        import pytesseract
-        from PIL import Image, ImageEnhance, ImageOps
-        import io, re
-
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode == "RGBA":
-            bg = Image.new("RGB", img.size, (255, 255, 255))
-            bg.paste(img, mask=img.split()[3])
-            img = bg
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
-
-        def preprocess(image, method):
-            w, h = image.size
-            scale = 3 if max(w, h) < 1200 else 2
-            image = image.resize((w * scale, h * scale), Image.LANCZOS)
-            if method == "contrast":
-                image = image.convert("L")
-                image = ImageEnhance.Contrast(image).enhance(3.0)
-                image = ImageEnhance.Sharpness(image).enhance(2.0)
-                image = image.point(lambda x: 0 if x < 140 else 255, "1").convert("L")
-            elif method == "inverted":
-                image = image.convert("L")
-                image = ImageOps.invert(image)
-                image = ImageEnhance.Contrast(image).enhance(3.0)
-                image = image.point(lambda x: 0 if x < 140 else 255, "1").convert("L")
-            elif method == "gray":
-                image = image.convert("L")
-                image = ImageEnhance.Contrast(image).enhance(2.0)
-            return image
-
-        raw_texts = []
-        for method in ["contrast", "inverted", "gray"]:
-            for psm in [6, 11, 4]:
-                try:
-                    text = pytesseract.image_to_string(preprocess(img.copy(), method), config=f"--psm {psm} --oem 3")
-                    if len(text.strip()) > 20:
-                        raw_texts.append(text)
-                except:
-                    continue
-
-        raw_text = max(raw_texts, key=len) if raw_texts else ""
-        st.session_state["ocr_raw_text"] = raw_text
-        if not raw_text.strip():
+        ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if not ANTHROPIC_API_KEY:
+            st.error("⚠️ ANTHROPIC_API_KEY not set in Streamlit secrets. Cannot parse screenshots via Vision API.")
             return []
 
-        lines_text = [l.strip() for l in raw_text.split("\n") if l.strip()]
-        text_lower = raw_text.lower()
+        # Detect image media type from magic bytes
+        if image_bytes[:4] == b'\x89PNG':
+            media_type = "image/png"
+        elif image_bytes[:3] == b'GIF':
+            media_type = "image/gif"
+        elif image_bytes[:4] == b'RIFF':
+            media_type = "image/webp"
+        else:
+            media_type = "image/jpeg"
 
-        sport = "NBA"
-        for sp, kws in {"NBA": ["nba","celtics","lakers","warriors","bucks","heat"], "MLB": ["mlb","baseball","strikeouts","home runs"], "NHL": ["nhl","hockey","goals"], "NFL": ["nfl","passing yards","rushing"], "WNBA": ["wnba"]}.items():
-            if any(k in text_lower for k in kws): sport = sp; break
+        img_b64 = base64.b64encode(image_bytes).decode()
 
-        stat_map = {
-            "points": "Points", "pts": "Points", "rebounds": "Rebounds", "rebs": "Rebounds",
-            "assists": "Assists", "ast": "Assists", "pts+reb+ast": "Pts+Reb+Ast", "pra": "Pts+Reb+Ast",
-            "3-pt": "3-PT Made", "3pt": "3-PT Made", "threes": "3-PT Made", "steals": "Steals",
-            "blocks": "Blocked Shots", "blks": "Blocked Shots", "turnovers": "Turnovers",
-            "hits": "Hits", "home runs": "Home Runs", "strikeouts": "Strikeouts",
-            "goals": "Goals", "shots on goal": "Shots On Goal", "passing yards": "Passing Yards",
-            "rushing yards": "Rushing Yards", "receiving yards": "Receiving Yards",
-            "receptions": "Receptions", "touchdowns": "Touchdowns", "fantasy score": "Fantasy Score",
-        }
+        prompt = (
+            "You are analyzing a sports prop betting slip screenshot (PrizePicks, ParlayPlay, etc). "
+            "Extract every player prop visible.\n\n"
+            "For EACH player return a JSON object with these exact keys:\n"
+            "  player   — full player name (string)\n"
+            "  prop     — stat type exactly as shown (e.g. \'Pts+Reb+Ast\', \'FG Attempted\', \'Points\', \'Hits+Runs+RBIs\')\n"
+            "  line     — the numeric threshold (float)\n"
+            "  side     — \'OVER\' or \'UNDER\' (↑ goblin = OVER, ↓ demon = UNDER; default OVER if unclear)\n"
+            "  outcome  — \'WIN\', \'LOSS\', or \'PENDING\'\n"
+            "  result   — actual stat value achieved (float) or null if not shown\n"
+            "  sport    — \'NBA\', \'MLB\', \'NHL\', \'NFL\', \'WNBA\' etc.\n\n"
+            "Return ONLY a raw JSON array. No markdown, no backticks, no explanation."
+        )
 
-        def get_stat(t):
-            t = t.lower()
-            for k, v in stat_map.items():
-                if k in t: return v
-            return None
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5",
+                "max_tokens": 1500,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_b64}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+            },
+            timeout=45,
+        )
 
-        def get_line(t):
-            for n in re.findall(r"\b(\d+\.?\d*)\b", t):
-                v = float(n)
-                if 0.5 <= v <= 99.5: return v
-            return None
+        data = resp.json()
+        raw_text = data.get("content", [{}])[0].get("text", "").strip()
+        st.session_state["ocr_raw_text"] = raw_text
 
-        def get_side(t):
-            t = t.lower()
-            return "UNDER" if any(w in t for w in ["less", "under", "demon"]) else "OVER"
+        # Strip any accidental markdown fences
+        raw_text = re.sub(r"^```[a-z]*\n?", "", raw_text).rstrip("`").strip()
+        if not raw_text:
+            return []
 
-        def get_outcome(t):
-            t = t.lower()
-            if any(w in t for w in ["pending","live","active","locked","in progress"]): return "PENDING"
-            if any(w in t for w in ["won","win","correct","hit","payout","winner"]): return "WIN"
-            if any(w in t for w in ["lost","loss","incorrect","miss","loser"]): return "LOSS"
-            return None
+        parsed = json.loads(raw_text)
 
-        entry_outcome = get_outcome(raw_text)
         bets = []
-
-        for i, line in enumerate(lines_text):
-            stat = get_stat(line)
-            val = get_line(line)
-            if stat and val:
-                player = lines_text[i-1] if i > 0 else "Unknown"
-                player = re.sub(r"[^a-zA-Z .\'-]", "", player).strip()
-                if len(player) < 3 or any(w in player.lower() for w in ["more","less","pick","entry","prize","over","under","goblin","demon"]):
-                    continue
-                context = " ".join(lines_text[max(0,i-2):min(len(lines_text),i+3)])
-                pick_outcome = get_outcome(context) or entry_outcome or "PENDING"
-                next_line = lines_text[i+1] if i+1 < len(lines_text) else ""
+        for p in parsed:
+            try:
                 bets.append({
-                    "player": player, "prop": stat, "line": val,
-                    "side": get_side(line + " " + next_line),
-                    "sport": sport, "outcome": pick_outcome,
-                    "wager": 0, "pick_count": 2,
-                    "source": "PrizePicks" if ("prizepicks" in text_lower or "more" in text_lower) else "Screenshot",
-                    "bet_type": "prop",
+                    "player":     str(p.get("player", "")).strip(),
+                    "prop":       str(p.get("prop", "")).strip(),
+                    "line":       float(p.get("line", 0) or 0),
+                    "side":       str(p.get("side", "OVER")).upper(),
+                    "sport":      str(p.get("sport", "NBA")).upper(),
+                    "outcome":    str(p.get("outcome", "PENDING")).upper(),
+                    "wager":      0,
+                    "pick_count": 2,
+                    "source":     "PrizePicks",
+                    "bet_type":   "prop",
                 })
+            except Exception:
+                continue
 
-        wager_m = re.search(r"\$([\d,]+\.?\d*)", raw_text)
+        # Try to pull wager from the overall slip text if visible
+        wager_m = re.search(r"\$(\d+[\d,]*\.?\d*)", raw_text)
         if wager_m and bets:
-            w = float(wager_m.group(1).replace(",",""))
-            if 1 <= w <= 10000:
-                for b in bets: b["wager"] = w
+            try:
+                w = float(wager_m.group(1).replace(",", ""))
+                if 1 <= w <= 10000:
+                    for b in bets:
+                        b["wager"] = w
+            except Exception:
+                pass
 
         pc_m = re.search(r"(\d+)[- ]pick|pick[- ](\d+)", raw_text.lower())
         if pc_m and bets:
-            pc = int(pc_m.group(1) or pc_m.group(2))
-            if 2 <= pc <= 6:
-                for b in bets: b["pick_count"] = pc
+            try:
+                pc = int(pc_m.group(1) or pc_m.group(2))
+                if 2 <= pc <= 6:
+                    for b in bets:
+                        b["pick_count"] = pc
+            except Exception:
+                pass
 
         return bets
 
     except Exception as e:
-        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "parse_bet_screenshot_ocr", "error": str(e)[:100]})
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "parse_bet_screenshot_ocr",
+            "error": str(e)[:150],
+        })
         return []
+
+
+def parse_prizepicks_text(raw_text):
+    """Parse the copy-paste text block format from PrizePicks results.
+
+    Expected repeating block (12 lines per player):
+      Player Name
+      Position (G / IF / OF / C-F / etc.)
+      Sport (NBA / MLB / NHL / etc.)
+      Team abbreviation
+      Team score
+      vs  (or @)
+      Opp team
+      Opp score
+      Final  (or Live / Pending)
+      Line  (e.g. 1.5)
+      Stat type  (e.g. Hits+Runs+RBIs)
+      Actual result  (numeric)
+    """
+    import re
+
+    POSITIONS = {"G", "F", "C", "IF", "OF", "P", "SP", "RP", "C-F", "G-F", "F-C", "PG", "SG", "SF", "PF"}
+    SPORTS    = {"NBA", "MLB", "NHL", "NFL", "WNBA", "NCAAB", "NCAAF", "MLS", "EPL", "PGA"}
+
+    rows = [l.strip() for l in raw_text.strip().split("\n") if l.strip()]
+    bets = []
+    i = 0
+
+    while i < len(rows):
+        # Need at least 12 lines ahead to form a full block
+        if i + 11 >= len(rows):
+            i += 1
+            continue
+
+        player   = rows[i]
+        pos      = rows[i + 1].upper()
+        sport    = rows[i + 2].upper()
+
+        if pos not in POSITIONS or sport not in SPORTS:
+            i += 1
+            continue
+
+        # Slots i+3 … i+11
+        team_score_raw = rows[i + 4]   # team score (may be int)
+        status         = rows[i + 8]   # "Final", "Live", etc.
+        line_raw       = rows[i + 9]
+        stat_type      = rows[i + 10]
+        result_raw     = rows[i + 11]
+
+        try:
+            line_val   = float(line_raw)
+            result_val = float(result_raw)
+        except ValueError:
+            i += 1
+            continue
+
+        # Determine outcome assuming OVER pick (most common on PrizePicks)
+        outcome = "WIN" if result_val > line_val else "LOSS"
+        status_upper = status.upper()
+        if any(w in status_upper for w in ("LIVE", "PENDING", "PROGRESS", "SCHEDULED")):
+            outcome = "PENDING"
+
+        bets.append({
+            "player":     player,
+            "prop":       stat_type,
+            "line":       line_val,
+            "side":       "OVER",   # default; user can override in confirm UI
+            "sport":      sport,
+            "outcome":    outcome,
+            "result":     result_val,
+            "wager":      0,
+            "pick_count": 2,
+            "source":     "PrizePicks",
+            "bet_type":   "prop",
+        })
+        i += 12
+
+    return bets
 
 def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None):
     if player_avg <= 0:
@@ -5283,7 +5347,7 @@ _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_
        "power_divergences": {}, "quality_sorted_board": [], "last_pick_count": 2,
        "public_betting_data": {}, "alt_line_upgrades": [], "parlayplay_alt_lines": {},
        "arb_opportunities": [], "steam_moves": [], "an_props_data": [], "gem_brief": "",
-       "parsed_bets": [], "ocr_raw_text": ""}
+       "parsed_bets": [], "ocr_raw_text": "", "pp_parsed_bets": []}
 for k, v in _ss.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -6176,7 +6240,96 @@ with tabs[5]:
                 st.caption(f"Bankroll updated to ${st.session_state.bankroll:.2f} | History: {len(st.session_state.history)} bets")
                 st.rerun()
     with log_tab2:
-        st.markdown("### Bulk Entry")
+        st.markdown("### 📋 Paste PrizePicks Results")
+        st.caption(
+            "Copy your PrizePicks result screen text and paste it here. "
+            "The parser reads the standard block format automatically. "
+            "**All picks are assumed OVER** — flip any UNDER picks in the confirm step."
+        )
+        pp_text_input = st.text_area(
+            "Paste PrizePicks result text",
+            height=260,
+            key="pp_text_paste",
+            placeholder=(
+                "José Ramírez\nIF\nMLB\nCLE\n1\nvs\nPHI\n0\nFinal\n1.5\nHits+Runs+RBIs\n1\n"
+                "Junior Caminero\nIF\nMLB\nTB\n4\nvs\nNYY\n2\nFinal\n1.5\nHits+Runs+RBIs\n2"
+            ),
+        )
+
+        pp_wager_col, pp_picks_col, pp_parse_col = st.columns([2, 2, 2])
+        pp_wager  = pp_wager_col.number_input("Wager ($)", min_value=0.0, value=1.0, step=0.5, key="pp_wager")
+        pp_picks  = pp_picks_col.number_input("# Picks", min_value=2, max_value=6, value=4, key="pp_picks")
+        pp_date   = st.date_input("Date of entry", value=date.today(), key="pp_paste_date")
+
+        if st.button("🔍 Parse PrizePicks Text", key="parse_pp_text_btn"):
+            if not pp_text_input.strip():
+                st.error("Nothing to parse — paste your result text above.")
+            else:
+                parsed_pp = parse_prizepicks_text(pp_text_input)
+                if parsed_pp:
+                    for b in parsed_pp:
+                        b["wager"]      = pp_wager
+                        b["pick_count"] = pp_picks
+                    st.session_state["pp_parsed_bets"] = parsed_pp
+                    st.success(f"✅ Found {len(parsed_pp)} prop(s) — review below, then submit.")
+                else:
+                    st.error("Could not parse any bets. Check that each block has 12 lines (name → position → sport … → stat → result).")
+
+        pp_parsed = st.session_state.get("pp_parsed_bets", [])
+        if pp_parsed:
+            st.markdown("#### Confirm Parsed Props")
+            st.caption("Flip any UNDER picks using the toggle. Edit outcomes if needed.")
+            for idx, bet in enumerate(pp_parsed):
+                with st.expander(f"{bet['player']}  —  {bet['prop']}  {bet['line']}  →  result: {bet.get('result', '?')}", expanded=True):
+                    ec1, ec2, ec3 = st.columns(3)
+                    outcome_choice = ec1.selectbox(
+                        "Outcome", ["WIN", "LOSS", "PENDING"],
+                        index=["WIN", "LOSS", "PENDING"].index(bet["outcome"]) if bet["outcome"] in ("WIN","LOSS","PENDING") else 2,
+                        key=f"pp_outcome_{idx}"
+                    )
+                    side_choice = ec2.selectbox(
+                        "Side", ["OVER", "UNDER"],
+                        index=0 if bet["side"] == "OVER" else 1,
+                        key=f"pp_side_{idx}"
+                    )
+                    sport_choice = ec3.selectbox(
+                        "Sport", ["NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF"],
+                        index=["NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF"].index(bet["sport"]) if bet["sport"] in ["NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF"] else 1,
+                        key=f"pp_sport_{idx}"
+                    )
+                    pp_parsed[idx]["outcome"] = outcome_choice
+                    pp_parsed[idx]["side"]    = side_choice
+                    pp_parsed[idx]["sport"]   = sport_choice
+
+            sub_col, clr_col = st.columns(2)
+            if sub_col.button("✅ Submit All", key="submit_pp_parsed"):
+                submitted_pp = 0
+                for bet in pp_parsed:
+                    if bet.get("outcome") not in ("WIN", "LOSS"):
+                        continue
+                    try:
+                        bd_str = datetime.combine(pp_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                        log_manual_bet(
+                            player=bet["player"], prop=bet["prop"],
+                            line=float(bet["line"]), side=bet["side"],
+                            sport=bet["sport"], outcome=bet["outcome"],
+                            wager=float(bet["wager"]), pick_count=int(bet["pick_count"]),
+                            bet_type="prop", source="PrizePicks Text Import",
+                            bet_date=bd_str,
+                        )
+                        submitted_pp += 1
+                    except Exception:
+                        continue
+                if submitted_pp > 0:
+                    st.success(f"✅ Submitted {submitted_pp} bets — Bankroll: ${st.session_state.bankroll:.2f}")
+                    st.session_state["pp_parsed_bets"] = []
+                    st.rerun()
+            if clr_col.button("❌ Clear", key="clear_pp_parsed"):
+                st.session_state["pp_parsed_bets"] = []
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("### CSV Bulk Entry")
         st.caption("Paste multiple bets at once. One bet per line: Player, Stat, Line, OVER/UNDER, Sport, WIN/LOSS, Wager, PickCount")
         st.caption("Example: Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2")
         bulk_text = st.text_area("Paste bets here", height=200, key="bulk_bet_text", placeholder="Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2\nJayson Tatum, Rebounds, 8.5, OVER, NBA, LOSS, 25, 2")
@@ -6394,4 +6547,5 @@ with tabs[7]:
                 os.remove(fp)
                 cleaned += 1
         st.success(f"Cleaned {cleaned} old files")
+
 
