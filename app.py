@@ -1188,6 +1188,8 @@ def compute_sem_for_tier(tier_stats, tier):
     if n < 5:
         return "—", n
     sem = stats["sem"]
+    if sem is None:
+        return "—", n
     return f"±{sem:.3f}", n
 
 def adjusted_edge(raw_edge, sport, tier, stat_norm, history):
