@@ -4916,6 +4916,45 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
     prob = max(0.30, min(0.70, prob))
     return combined, prob, signals
 
+def make_display_df(props):
+    """Convert raw enriched prop dicts into a clean display DataFrame with friendly column names."""
+    rows = []
+    for p in props:
+        rows.append({
+            "Player":         p.get("Player", ""),
+            "Stat":           p.get("Prop", ""),
+            "Line":           p.get("Line", ""),
+            "Play":           f"{p.get('Side','OVER')} {p.get('Line','')}",
+            "Avg (10g)":      round(p.get("Avg", 0), 1) if p.get("Avg") else "—",
+            "Fair %":         p.get("ModelProb", "—"),
+            "Edge":           p.get("EdgePct", "—"),
+            "2-Pick EV":      p.get("EV_2pick", "—"),
+            "Bet Size":       f"${p.get('Wager_2pick', p.get('Wager', 0)):.2f}",
+            "Tier":           p.get("Tier", "—"),
+            "AN Grade":       p.get("AN_Grade", "—"),
+            "AN Proj":        p.get("AN_Projection", "—"),
+            "AN Tier":        p.get("AN_Tier", "—"),
+            "AN Confirms":    "✅" if p.get("AN_Confirms") else "—",
+            "Line Fair?":     p.get("FairnessGrade", "—"),
+            "Sharp $":        p.get("SharpFlag", "—"),
+            "Market":         p.get("Efficiency", "—"),
+            "Confidence":     p.get("ConfidenceMult", "—"),
+            "Injury":         p.get("Injury", ""),
+            "Line Move":      p.get("Movement", "—"),
+            "Trend":          p.get("Trend", "—"),
+            "Source":         p.get("source", "—"),
+            "Consensus Prob": p.get("ConsensusProb", "—"),
+            "Books":          p.get("ConsensusBooks", "—"),
+            "Best Alt Line":  p.get("BestAltLine", "—"),
+            "Alt EV":         p.get("BestAltEV", "—"),
+            "Alt Payout":     p.get("BestAltPayout", "—"),
+            "SEM":            p.get("SEM", "—"),
+            "CLV Adj":        p.get("CLVAdj", "—"),
+            "Side":           p.get("Side", "OVER"),
+            "Prop":           p.get("Prop", ""),
+        })
+    return pd.DataFrame(rows)
+
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
