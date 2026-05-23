@@ -6301,7 +6301,12 @@ with tabs[5]:
                     st.error("Could not read screenshots. Try manual entry below.")
         parsed_bets = st.session_state.get("parsed_bets", [])
         if parsed_bets:
-            st.markdown("### \u2705 Confirm Parsed Bets")
+            top_c1, top_c2 = st.columns([3, 1])
+            top_c1.markdown("### \u2705 Confirm Parsed Bets")
+            if top_c2.button("\u274c Clear All", key="clear_parsed_bets_top"):
+                st.session_state["parsed_bets"] = []
+                st.session_state["ocr_raw_text"] = ""
+                st.rerun()
             for idx, bet in enumerate(parsed_bets):
                 if bet.get("outcome") == "PENDING":
                     st.caption(f"\u23f3 {bet['player']} \u2014 PENDING, skipping")
