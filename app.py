@@ -4526,99 +4526,198 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     return record
 
 def parse_bet_screenshot_ocr(image_bytes):
-    """Use Claude Vision API to parse PrizePicks/prop screenshots — replaces unreliable pytesseract."""
-    import base64, json, re, requests
-
+    """Parse PrizePicks/prop screenshots using pytesseract.
+    Optimised for dark-themed screenshots (white text on dark background).
+    No external API needed — uses locally installed Tesseract.
+    """
     try:
-        ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
-        if not ANTHROPIC_API_KEY:
-            st.error("⚠️ ANTHROPIC_API_KEY not set in Streamlit secrets. Cannot parse screenshots via Vision API.")
+        import pytesseract
+        from PIL import Image, ImageEnhance, ImageOps
+        import io, re
+
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        def preprocess(image, invert=False):
+            w, h = image.size
+            scale = 3 if max(w, h) < 1200 else 2
+            image = image.resize((w * scale, h * scale), Image.LANCZOS)
+            image = image.convert("L")
+            if invert:
+                image = ImageOps.invert(image)
+            image = ImageEnhance.Contrast(image).enhance(3.0)
+            image = ImageEnhance.Sharpness(image).enhance(2.0)
+            image = image.point(lambda x: 0 if x < 128 else 255, "1").convert("L")
+            return image
+
+        raw_texts = []
+        for inv in [True, False]:
+            for psm in [6, 11, 4, 3]:
+                try:
+                    text = pytesseract.image_to_string(
+                        preprocess(img.copy(), invert=inv),
+                        config=f"--psm {psm} --oem 3"
+                    )
+                    if len(text.strip()) > 20:
+                        raw_texts.append(text)
+                except Exception:
+                    continue
+
+        if not raw_texts:
             return []
 
-        # Detect image media type from magic bytes
-        if image_bytes[:4] == b'\x89PNG':
-            media_type = "image/png"
-        elif image_bytes[:3] == b'GIF':
-            media_type = "image/gif"
-        elif image_bytes[:4] == b'RIFF':
-            media_type = "image/webp"
-        else:
-            media_type = "image/jpeg"
-
-        img_b64 = base64.b64encode(image_bytes).decode()
-
-        prompt = (
-            "You are analyzing a sports prop betting slip screenshot (PrizePicks, ParlayPlay, etc). "
-            "Extract every player prop visible.\n\n"
-            "For EACH player return a JSON object with these exact keys:\n"
-            "  player   — full player name (string)\n"
-            "  prop     — stat type exactly as shown (e.g. \'Pts+Reb+Ast\', \'FG Attempted\', \'Points\', \'Hits+Runs+RBIs\')\n"
-            "  line     — the numeric threshold (float)\n"
-            "  side     — \'OVER\' or \'UNDER\' (↑ goblin = OVER, ↓ demon = UNDER; default OVER if unclear)\n"
-            "  outcome  — \'WIN\', \'LOSS\', or \'PENDING\'\n"
-            "  result   — actual stat value achieved (float) or null if not shown\n"
-            "  sport    — \'NBA\', \'MLB\', \'NHL\', \'NFL\', \'WNBA\' etc.\n\n"
-            "Return ONLY a raw JSON array. No markdown, no backticks, no explanation."
-        )
-
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-3-5-haiku-20241022",
-                "max_tokens": 1500,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_b64}},
-                        {"type": "text", "text": prompt},
-                    ],
-                }],
-            },
-            timeout=45,
-        )
-
-        data = resp.json()
-        # Expose any API-level error so it shows in OCR Debug
-        if "error" in data:
-            err_msg = data["error"].get("message", str(data["error"]))
-            st.session_state["ocr_raw_text"] = f"API ERROR: {err_msg}"
-            st.error(f"Vision API error: {err_msg}")
-            return []
-        raw_text = data.get("content", [{}])[0].get("text", "").strip()
+        raw_text = max(raw_texts, key=len)
         st.session_state["ocr_raw_text"] = raw_text
+        lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
+        text_lower = raw_text.lower()
 
-        # Strip any accidental markdown fences
-        raw_text = re.sub(r"^```[a-z]*\n?", "", raw_text).rstrip("`").strip()
-        if not raw_text:
-            return []
+        # Detect sport
+        sport = "NBA"
+        for sp, kws in {
+            "NBA": ["nba","okc","spurs","thunder","celtics","lakers","warriors","bucks","heat","nets","knicks","suns","sixers"],
+            "MLB": ["mlb","baseball","strikeouts","rbis","innings","pitcher"],
+            "NHL": ["nhl","hockey","saves","goalie"],
+            "NFL": ["nfl","passing yards","rushing yards","touchdowns"],
+            "WNBA": ["wnba"],
+        }.items():
+            if any(k in text_lower for k in kws):
+                sport = sp
+                break
 
-        parsed = json.loads(raw_text)
+        STAT_MAP = {
+            "hits+runs+rbis": "Hits+Runs+RBIs",
+            "pts+reb+ast":    "Pts+Reb+Ast",
+            "fg attempted":   "FG Attempted",
+            "fg made":        "FG Made",
+            "hitter fs":      "Hitter FS",
+            "fantasy score":  "Fantasy Score",
+            "shots on goal":  "Shots On Goal",
+            "passing yards":  "Passing Yards",
+            "rushing yards":  "Rushing Yards",
+            "receiving yards":"Receiving Yards",
+            "home runs":      "Home Runs",
+            "pra":            "Pts+Reb+Ast",
+            "fga":            "FG Attempted",
+            "fgm":            "FG Made",
+            "points":         "Points",
+            "rebounds":       "Rebounds",
+            "assists":        "Assists",
+            "steals":         "Steals",
+            "blocks":         "Blocked Shots",
+            "turnovers":      "Turnovers",
+            "strikeouts":     "Strikeouts",
+            "receptions":     "Receptions",
+            "touchdowns":     "Touchdowns",
+            "goals":          "Goals",
+            "saves":          "Saves",
+            "hits":           "Hits",
+            "runs":           "Runs",
+            "3pt":            "3-PT Made",
+            "3-pt":           "3-PT Made",
+            "threes":         "3-PT Made",
+        }
+
+        def get_stat(t):
+            tl = t.lower()
+            for k in sorted(STAT_MAP, key=len, reverse=True):
+                if k in tl:
+                    return STAT_MAP[k]
+            return None
+
+        def get_line(t):
+            for n in re.findall(r"\b(\d{1,2}\.5|\d{1,2}\.0|\d{1,2})\b", t):
+                v = float(n)
+                if 0.5 <= v <= 99.5:
+                    return v
+            return None
+
+        def get_side(t):
+            tl = t.lower()
+            return "UNDER" if any(w in tl for w in ["less","under","demon","↓"]) else "OVER"
+
+        def get_outcome(t):
+            tl = t.lower()
+            if any(w in tl for w in ["pending","live","locked","in progress"]): return "PENDING"
+            if any(w in tl for w in ["won","win","correct","payout","winner"]):  return "WIN"
+            if any(w in tl for w in ["lost","loss","incorrect","miss","loser"]): return "LOSS"
+            return None
+
+        entry_outcome = get_outcome(raw_text)
+
+        NAME_RE = re.compile(r"^[A-Z][a-záéíóúñüàèìòùâêîôûäëïöü]+([ \'-][A-Z][a-záéíóúñüàèìòùâêîôûäëïöü]+)+$")
+        SKIP_WORDS = {"NBA","MLB","NHL","NFL","WNBA","More","Less","Over","Under",
+                      "Pick","Entry","Flex","Goblin","Demon","Final","Pending","Live"}
 
         bets = []
-        for p in parsed:
-            try:
-                bets.append({
-                    "player":     str(p.get("player", "")).strip(),
-                    "prop":       str(p.get("prop", "")).strip(),
-                    "line":       float(p.get("line", 0) or 0),
-                    "side":       str(p.get("side", "OVER")).upper(),
-                    "sport":      str(p.get("sport", "NBA")).upper(),
-                    "outcome":    str(p.get("outcome", "PENDING")).upper(),
-                    "wager":      0,
-                    "pick_count": 2,
-                    "source":     "PrizePicks",
-                    "bet_type":   "prop",
-                })
-            except Exception:
+        used_lines = set()
+
+        for i in range(len(lines)):
+            if i in used_lines:
                 continue
 
-        # Try to pull wager from the overall slip text if visible
-        wager_m = re.search(r"\$(\d+[\d,]*\.?\d*)", raw_text)
+            # Build a search window: this line + next 3
+            window_idx = list(range(i, min(len(lines), i + 4)))
+            window_text = " ".join(lines[j] for j in window_idx)
+
+            stat = None
+            line_val = None
+            side = "OVER"
+
+            # Scan window for stat and line value (they can be on separate lines)
+            for j in window_idx:
+                wl = lines[j]
+                if stat is None:
+                    stat = get_stat(wl)
+                if line_val is None:
+                    line_val = get_line(wl)
+                    if line_val is not None:
+                        side = get_side(wl)
+
+            # Also check one line beyond the window for stat (sometimes it trails)
+            if stat is None and i + 4 < len(lines):
+                stat = get_stat(lines[i + 4])
+
+            if stat is None or line_val is None:
+                continue
+
+            # Find player name by scanning backwards from current position
+            player = None
+            for k in range(i - 1, max(-1, i - 6), -1):
+                candidate = re.sub(r"[^A-Za-z .\'-]", "", lines[k]).strip()
+                words = [w for w in candidate.split() if w]
+                if (len(words) >= 2 and len(candidate) >= 5 and
+                        NAME_RE.match(candidate) and
+                        not any(w in SKIP_WORDS for w in words)):
+                    player = candidate
+                    break
+
+            if not player:
+                continue
+
+            pick_outcome = get_outcome(window_text) or entry_outcome or "PENDING"
+
+            bets.append({
+                "player":     player,
+                "prop":       stat,
+                "line":       line_val,
+                "side":       side,
+                "sport":      sport,
+                "outcome":    pick_outcome,
+                "wager":      0,
+                "pick_count": 2,
+                "source":     "PrizePicks",
+                "bet_type":   "prop",
+            })
+            for k in window_idx:
+                used_lines.add(k)
+
+        # Pull wager and pick count from slip header
+        wager_m = re.search(r"\$(\d[\d,]*\.?\d*)", raw_text)
         if wager_m and bets:
             try:
                 w = float(wager_m.group(1).replace(",", ""))
@@ -4642,9 +4741,9 @@ def parse_bet_screenshot_ocr(image_bytes):
 
     except Exception as e:
         st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
+            "time":   datetime.now().strftime("%H:%M:%S"),
             "source": "parse_bet_screenshot_ocr",
-            "error": str(e)[:150],
+            "error":  str(e)[:150],
         })
         return []
 
