@@ -4569,7 +4569,7 @@ def parse_bet_screenshot_ocr(image_bytes):
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-haiku-4-5",
+                "model": "claude-3-5-haiku-20241022",
                 "max_tokens": 1500,
                 "messages": [{
                     "role": "user",
@@ -4583,6 +4583,12 @@ def parse_bet_screenshot_ocr(image_bytes):
         )
 
         data = resp.json()
+        # Expose any API-level error so it shows in OCR Debug
+        if "error" in data:
+            err_msg = data["error"].get("message", str(data["error"]))
+            st.session_state["ocr_raw_text"] = f"API ERROR: {err_msg}"
+            st.error(f"Vision API error: {err_msg}")
+            return []
         raw_text = data.get("content", [{}])[0].get("text", "").strip()
         st.session_state["ocr_raw_text"] = raw_text
 
