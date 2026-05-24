@@ -6322,12 +6322,28 @@ with tabs[5]:
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
     log_tab1, log_tab2 = st.tabs(["Manual Entry", "Bulk Entry"])
     with log_tab1:
-        st.markdown("### \U0001f4f8 Upload Screenshot")
+        st.markdown("### 📸 Upload Screenshot")
         st.caption("Upload one or more screenshots of your bet slip or result.")
-        uploaded_imgs = st.file_uploader("Upload bet screenshots (select multiple)", type=["jpg", "jpeg", "png", "heic", "webp"], key="bet_screenshot", accept_multiple_files=True)
+
+        # Use a counter key so we can reset the uploader after submitting
+        if "uploader_key" not in st.session_state:
+            st.session_state["uploader_key"] = 0
+
+        uploaded_imgs = st.file_uploader(
+            "Upload bet screenshots (select multiple)",
+            type=["jpg", "jpeg", "png", "heic", "webp"],
+            key=f"bet_screenshot_{st.session_state['uploader_key']}",
+            accept_multiple_files=True,
+        )
         if uploaded_imgs:
-            st.caption(f"{len(uploaded_imgs)} screenshot(s) loaded")
-            if st.button("\U0001f50d Parse All Screenshots", key="parse_screenshot_btn"):
+            up_col1, up_col2 = st.columns([3, 1])
+            up_col1.caption(f"{len(uploaded_imgs)} screenshot(s) loaded")
+            if up_col2.button("🗑️ Clear", key="clear_uploader_btn"):
+                st.session_state["uploader_key"] += 1
+                st.session_state["parsed_bets"] = []
+                st.session_state["ocr_raw_text"] = ""
+                st.rerun()
+            if st.button("🔍 Parse All Screenshots", key="parse_screenshot_btn"):
                 all_parsed = []
                 with st.spinner("Reading screenshots..."):
                     for img_file in uploaded_imgs:
@@ -6337,7 +6353,7 @@ with tabs[5]:
                             all_parsed.extend(result)
                 if all_parsed:
                     st.session_state["parsed_bets"] = all_parsed
-                    st.success(f"\u2705 Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
+                    st.success(f"✅ Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
                 else:
                     st.error("Could not read screenshots. Try manual entry below.")
         parsed_bets = st.session_state.get("parsed_bets", [])
@@ -6376,9 +6392,13 @@ with tabs[5]:
                 if submitted > 0:
                     st.success(f"\u2705 Submitted {submitted} bets \u2014 Bankroll: ${st.session_state.bankroll:.2f}")
                     st.session_state["parsed_bets"] = []
+                    st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
+                    st.session_state["ocr_raw_text"] = ""
                     st.rerun()
-            if col_confirm2.button("\u274c Clear Parsed Bets", key="clear_parsed_bets"):
+            if col_confirm2.button("❌ Clear Parsed Bets", key="clear_parsed_bets"):
                 st.session_state["parsed_bets"] = []
+                st.session_state["ocr_raw_text"] = ""
+                st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                 st.rerun()
         with st.expander("\U0001f50d OCR Debug \u2014 Raw Text Extracted"):
             raw_ocr = st.session_state.get("ocr_raw_text", "")
