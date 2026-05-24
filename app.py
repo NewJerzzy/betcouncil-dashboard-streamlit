@@ -3861,7 +3861,13 @@ def fetch_parlayplay_props(sport):
                 return cached
     url = "https://parlayplay.io/api/v1/crossgame/offering/"
     pp_session = st.secrets.get("PARLAYPLAY_SESSION", "")
-    pp_cookie = f"sessionid={pp_session}" if pp_session else ""
+    pp_cookie_full = st.secrets.get("PARLAYPLAY_COOKIES", "")
+    if pp_cookie_full:
+        pp_cookie = pp_cookie_full
+    elif pp_session:
+        pp_cookie = f"sessionid={pp_session}"
+    else:
+        pp_cookie = ""
     pp_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
         "Accept": "application/json, text/plain, */*",
@@ -3872,6 +3878,9 @@ def fetch_parlayplay_props(sport):
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-origin",
+        "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
         "x-csrftoken": "1",
         "x-parlay-request": "1",
         "x-parlayplay-native-platform": "web",
