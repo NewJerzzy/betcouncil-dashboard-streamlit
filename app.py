@@ -5970,22 +5970,24 @@ with tabs[0]:
             st.caption("Load MLB board to see weather conditions.")
 
     st.markdown("---")
-    st.markdown("## \U0001f4e4 GEM SYNC BRIEF")
+    st.markdown("## \U0001f916 AI ASSISTANT SYNC")
+    st.caption("Generate a formatted daily summary to paste into your AI betting assistant (Gemini Gem). It gives the AI full context on today\'s board, picks, and game data so you can ask it questions.")
     col_gem1, col_gem2 = st.columns([2, 1])
     with col_gem1:
-        if st.button("\U0001f4cb Generate Gem Brief", key="gen_gem_brief"):
+        if st.button("\U0001f4cb Generate Daily Summary", key="gen_gem_brief"):
             if not st.session_state.get("board_data"):
                 st.warning("Load the board first.")
             else:
                 brief = generate_gem_summary()
                 st.session_state["gem_brief"] = brief
-                st.success("\u2705 Brief generated \u2014 copy and paste into Gem")
+                st.success("\u2705 Summary generated \u2014 copy it and paste into your Gemini Gem")
     with col_gem2:
         if st.session_state.get("gem_brief"):
             _scan_t = st.session_state.last_scan_time or "\u2014"
             st.caption(f"Generated at {_scan_t}")
     if st.session_state.get("gem_brief"):
-        st.text_area("\U0001f4cb Copy this into your Gem:", value=st.session_state["gem_brief"], height=300, key="gem_brief_display")
+        st.caption("\U0001f4cc How to use: Copy everything below \u2192 open your Gemini Gem \u2192 paste it in. Your Gem will now know everything about today\'s board and you can ask it questions.")
+        st.text_area("Copy this and paste into your Gemini Gem:", value=st.session_state["gem_brief"], height=300, key="gem_brief_display")
 
     st.markdown("---")
     st.markdown("### \u26a1 Sharp Money Alerts")
