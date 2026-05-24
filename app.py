@@ -3894,10 +3894,15 @@ def fetch_parlayplay_props(sport):
         "Touchdowns": "Touchdowns", "Receptions": "Receptions",
     }
     try:
-        resp = requests.get(url, headers=pp_headers, timeout=20)
+        # Use curl_cffi to bypass TLS fingerprinting / bot protection
+        try:
+            from curl_cffi import requests as cf_requests
+            resp = cf_requests.get(url, headers=pp_headers, impersonate="chrome120", timeout=20)
+        except Exception:
+            resp = requests.get(url, headers=pp_headers, timeout=20)
         api_budget_increment("PARLAYPLAY")
         if resp.status_code == 403:
-            st.caption("⚠️ ParlayPlay: 403 — session may be required")
+            st.caption("⚠️ ParlayPlay: 403 — blocked by bot protection")
             return []
         if resp.status_code != 200:
             return []
@@ -7041,7 +7046,26 @@ with tabs[7]:
         with st.spinner("Pinging all sources..."):
             results = {}
             for src in _PING_SOURCES:
-                code, detail, color = _ping_url(src["url"], src["headers"])
+                # Use curl_cffi for ParlayPlay to bypass bot protection
+                if src["name"] == "ParlayPlay":
+                    try:
+                        from curl_cffi import requests as cf_requests
+                        _pp_r = cf_requests.get(src["url"], headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Accept": "application/json",
+                            "Origin": "https://parlayplay.io",
+                            "Referer": "https://parlayplay.io/",
+                        }, impersonate="chrome120", timeout=10)
+                        if _pp_r.status_code == 200:
+                            code, detail, color = 200, "✅ 200 OK — Responding normally", "green"
+                        elif _pp_r.status_code == 403:
+                            code, detail, color = 403, "🔒 403 Forbidden — Blocked by bot protection", "red"
+                        else:
+                            code, detail, color = _pp_r.status_code, f"⚠️ {_pp_r.status_code} — Unexpected response.", "yellow"
+                    except Exception as _e:
+                        code, detail, color = None, f"❌ Error — {str(_e)[:60]}", "red"
+                else:
+                    code, detail, color = _ping_url(src["url"], src["headers"])
                 # For prop sources returning JSON, try to count items
                 extra = ""
                 if color == "green" and src.get("is_prop_source"):
