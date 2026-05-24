@@ -100,6 +100,8 @@ GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
 # OddsPapi constants
 ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
+PARLAY_API_KEY = st.secrets.get("PARLAY_API_KEY", "")
+PARLAY_API_BASE = "https://parlay-api.com/v1"
 ODDSPAPI_COUNTER_PATH = os.path.join(CACHE_DIR, "oddspapi_counter.json")
 ODDSPAPI_FREE_TIER_DAILY_LIMIT = 100
 ODDSPAPI_FREE_TIER_MONTHLY_LIMIT = 1000
@@ -3846,6 +3848,155 @@ def fetch_oddswrap_lines(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddswrap_lines", "error": str(e)[:100]})
     return lines_data
 
+
+def fetch_parlayapi_props(sport):
+    """
+    Fetch ParlayPlay props via parlay-api.com aggregator.
+    Costs 3 credits per call. Returns ParlayPlay lines cleanly.
+    Also pulls PrizePicks and Underdog for line comparison.
+    """
+    if not PARLAY_API_KEY:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"parlayapi_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+    sport_map = {
+        "NBA": "basketball_nba", "WNBA": "basketball_wnba",
+        "MLB": "baseball_mlb", "NHL": "icehockey_nhl", "NFL": "americanfootball_nfl"
+    }
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+    stat_map = {
+        "player_points": "Points", "player_rebounds": "Rebounds",
+        "player_assists": "Assists", "player_threes": "3-PT Made",
+        "player_steals": "Steals", "player_blocks": "Blocked Shots",
+        "player_turnovers": "Turnovers", "player_pra": "Pts+Reb+Ast",
+        "player_pts_rebs": "Pts+Reb", "player_pts_asts": "Pts+Ast",
+        "player_rebs_asts": "Reb+Ast", "player_double_double": "Double-Double",
+        "player_hits": "Hits", "player_home_runs": "Home Runs",
+        "player_total_bases": "Total Bases", "player_rbis": "RBIs",
+        "player_strikeouts": "Strikeouts", "player_hits_runs_rbis": "Hits+Runs+RBIs",
+        "player_goals": "Goals", "player_shots_on_goal": "Shots On Goal",
+        "player_pass_yds": "Passing Yards", "player_rush_yds": "Rushing Yards",
+        "player_rec_yds": "Receiving Yards", "player_receptions": "Receptions",
+    }
+    try:
+        resp = requests.get(
+            f"{PARLAY_API_BASE}/sports/{sport_key}/props",
+            headers={"X-API-Key": PARLAY_API_KEY},
+            params={"bookmakers": "parlayplay,prizepicks,underdog", "dfsOdds": "midpoint"},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": "fetch_parlayapi_props",
+                "error": f"Status {resp.status_code}"
+            })
+            return []
+        data = resp.json()
+        props = []
+        seen = set()
+        for row in data:
+            bookmaker = row.get("bookmaker", "")
+            if bookmaker not in ("parlayplay", "prizepicks", "underdog"):
+                continue
+            player = row.get("player", "")
+            market_key = row.get("market_key", "")
+            stat = stat_map.get(market_key, market_key.replace("player_","").replace("_"," ").title())
+            line = row.get("line")
+            over_price = row.get("over_price")
+            if not player or not stat or line is None:
+                continue
+            key = (bookmaker, player, stat, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            # Detect Demon/Goblin from price (DFS midpoint pricing)
+            odds_type = "standard"
+            if bookmaker == "parlayplay":
+                if over_price and over_price > 110:
+                    odds_type = "goblin"
+                elif over_price and over_price < -110:
+                    odds_type = "demon"
+            props.append({
+                "Player": player,
+                "Prop": stat,
+                "Line": float(line),
+                "Side": "OVER",
+                "Sport": sport,
+                "source": bookmaker.title(),
+                "odds_type": odds_type,
+                "over_price": over_price,
+                "under_price": row.get("under_price"),
+            })
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+        return props
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_parlayapi_props",
+            "error": str(e)[:100]
+        })
+        return []
+
+
+def fetch_parlayapi_arbitrage(sport):
+    """Fetch arbitrage opportunities via parlay-api.com"""
+    if not PARLAY_API_KEY:
+        return []
+    sport_map = {
+        "NBA": "basketball_nba", "WNBA": "basketball_wnba",
+        "MLB": "baseball_mlb", "NHL": "icehockey_nhl", "NFL": "americanfootball_nfl"
+    }
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+    try:
+        resp = requests.get(
+            f"{PARLAY_API_BASE}/sports/{sport_key}/arbitrage",
+            headers={"X-API-Key": PARLAY_API_KEY},
+            params={"limit": 20},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            return []
+        return resp.json()
+    except:
+        return []
+
+
+def fetch_parlayapi_ev(sport):
+    """Fetch +EV picks vs Pinnacle baseline via parlay-api.com"""
+    if not PARLAY_API_KEY:
+        return []
+    sport_map = {
+        "NBA": "basketball_nba", "WNBA": "basketball_wnba",
+        "MLB": "baseball_mlb", "NHL": "icehockey_nhl", "NFL": "americanfootball_nfl"
+    }
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+    try:
+        resp = requests.get(
+            f"{PARLAY_API_BASE}/sports/{sport_key}/ev",
+            headers={"X-API-Key": PARLAY_API_KEY},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            return []
+        return resp.json()
+    except:
+        return []
+
 def fetch_parlayplay_props(sport):
     allowed, reason = api_budget_check("PARLAYPLAY")
     if not allowed:
@@ -5295,7 +5446,16 @@ def load_sport_data(sport):
     elif ud_props_compare:
         props = ud_props_compare
     else:
-        parlayplay_props = fetch_parlayplay_props(sport)
+        # Try parlay-api.com first (clean aggregator, no bot protection)
+        parlayapi_props = fetch_parlayapi_props(sport)
+        if parlayapi_props:
+            parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
+            # Also use Underdog and PrizePicks from parlay-api for line comparison
+            pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() == "underdog"]
+            if pa_underdog:
+                st.session_state["ud_props_compare"] = pa_underdog
+        else:
+            parlayplay_props = fetch_parlayplay_props(sport)
         if parlayplay_props:
             props = parlayplay_props
             st.success(f"✅ ParlayPlay — {len(parlayplay_props)} props")
@@ -6975,6 +7135,15 @@ with tabs[7]:
             "headers": {"Authorization": st.secrets.get("BALLSDONTLIE_API_KEY", "")},
             "budget_key": "BDL",
             "count_key": "BALLSDONTLIE_API_KEY",
+            "is_prop_source": False,
+        },
+        {
+            "name": "ParlayAPI",
+            "description": "ParlayPlay + Underdog + arb scanner",
+            "url": "https://parlay-api.com/v1/sports",
+            "headers": {"X-API-Key": st.secrets.get("PARLAY_API_KEY", "")},
+            "budget_key": None,
+            "count_key": "PARLAY_API_KEY",
             "is_prop_source": False,
         },
         {
