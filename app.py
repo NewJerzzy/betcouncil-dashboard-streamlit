@@ -6148,6 +6148,36 @@ def load_sport_data(sport):
             "AN_Tickets": an_tickets, "AN_Money": an_money,
             "AN_Confirms": (an_tier in ("SOVEREIGN", "ELITE") and get_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")),
         })
+    # Add H2H signal to each prop (uses cached game logs if available)
+    for prop in enriched:
+        player = prop.get("Player","")
+        opponent = prop.get("Opponent","")
+        stat = prop.get("Prop","")
+        line = prop.get("Line",0)
+        if player and opponent and line > 0:
+            cache_key = f"bdl_logs_{normalize_name(player)}_2025"
+            cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as cf:
+                        logs = pickle.load(cf)
+                    h2h_rate, h2h_n, h2h_str = compute_h2h_hit_rate(logs, opponent, stat, line)
+                    if h2h_rate is not None and h2h_n >= 3:
+                        prop["H2HRate"] = f"{h2h_rate:.0%} ({h2h_str})"
+                        # Boost edge if strong H2H hit rate
+                        if h2h_rate >= 0.70:
+                            prop["Edge"] = round(prop.get("Edge",0) + 0.02, 4)
+                        elif h2h_rate <= 0.30:
+                            prop["Edge"] = round(prop.get("Edge",0) - 0.02, 4)
+                    else:
+                        prop["H2HRate"] = "—"
+                except:
+                    prop["H2HRate"] = "—"
+            else:
+                prop["H2HRate"] = "—"
+        else:
+            prop["H2HRate"] = "—"
+
     # Add Pinnacle fair value signal to each prop
     for prop in enriched:
         pinn_prob, pinn_confirms, pinn_note = pinnacle_fair_value(
@@ -6762,7 +6792,163 @@ def get_pinnacle_edge(model_prob, pinnacle_prob, side="OVER"):
     # If positive, we think this is MORE likely than Pinnacle does
     return round(model_prob - pinnacle_prob, 4)
 
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
+
+# =============================================================
+# PLAYER LOOKUP ENGINE — H2H, Game Logs, Splits
+# Powers the Player Lookup tab and H2H signal
+# =============================================================
+
+def fetch_player_id_bdl(player_name):
+    """Search BallsDontLie for player ID by name."""
+    if not BDL_API_KEY:
+        return None
+    cache_path = os.path.join(CACHE_DIR, f"bdl_pid_{normalize_name(player_name)}.pkl")
+    if os.path.exists(cache_path):
+        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
+        if age_days < 7:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    try:
+        r = requests.get(
+            f"https://api.balldontlie.io/v1/players",
+            headers={"Authorization": BDL_API_KEY},
+            params={"search": player_name, "per_page": 5},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            if data:
+                pid = data[0]["id"]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(pid, f)
+                return pid
+    except:
+        pass
+    return None
+
+
+def fetch_player_game_logs(player_name, season=2025, last_n=15):
+    """
+    Fetch last N game logs for a player.
+    Returns list of game dicts with pts, reb, ast, min, opponent, date, home/away.
+    """
+    if not BDL_API_KEY:
+        return []
+    cache_key = f"bdl_logs_{normalize_name(player_name)}_{season}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 4:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    pid = fetch_player_id_bdl(player_name)
+    if not pid:
+        return []
+
+    try:
+        r = requests.get(
+            f"https://api.balldontlie.io/v1/stats",
+            headers={"Authorization": BDL_API_KEY},
+            params={
+                "player_ids[]": pid,
+                "seasons[]": season,
+                "per_page": last_n,
+                "sort_by": "date",
+                "order": "desc"
+            },
+            timeout=15
+        )
+        if r.status_code != 200:
+            return []
+
+        games = r.json().get("data", [])
+        logs = []
+        for g in games:
+            game = g.get("game", {})
+            team = g.get("team", {})
+            home_team_id = game.get("home_team_id")
+            is_home = team.get("id") == home_team_id
+            opp_id = game.get("visitor_team_id") if is_home else game.get("home_team_id")
+
+            logs.append({
+                "date": game.get("date", "")[:10],
+                "home": is_home,
+                "opponent_id": opp_id,
+                "pts": g.get("pts", 0),
+                "reb": g.get("reb", 0),
+                "ast": g.get("ast", 0),
+                "stl": g.get("stl", 0),
+                "blk": g.get("blk", 0),
+                "turnover": g.get("turnover", 0),
+                "fg3m": g.get("fg3m", 0),
+                "min": g.get("min", "0"),
+                "pra": (g.get("pts",0) or 0) + (g.get("reb",0) or 0) + (g.get("ast",0) or 0),
+            })
+
+        if logs:
+            with open(cache_path, "wb") as f:
+                pickle.dump(logs, f)
+        return logs
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_player_game_logs",
+            "error": str(e)[:100]
+        })
+        return []
+
+
+def compute_h2h_hit_rate(game_logs, opponent_abbr, stat, line):
+    """
+    Compute H2H hit rate vs a specific opponent.
+    Returns (hit_rate, games_played, sample_str)
+    """
+    stat_map = {
+        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
+        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
+        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
+    }
+    stat_key = stat_map.get(stat, stat.lower()[:3])
+    opp_games = [g for g in game_logs if str(g.get("opponent_id","")).lower() in opponent_abbr.lower()
+                 or opponent_abbr.lower() in str(g.get("opponent_id","")).lower()]
+
+    if not opp_games:
+        return None, 0, "No H2H data"
+
+    hits = sum(1 for g in opp_games if (g.get(stat_key) or 0) > line)
+    rate = hits / len(opp_games)
+    return rate, len(opp_games), f"{hits}/{len(opp_games)} vs this opponent"
+
+
+def compute_home_away_splits(game_logs, stat, line):
+    """Compute home vs away hit rates for a stat."""
+    stat_map = {
+        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
+        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
+        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
+    }
+    stat_key = stat_map.get(stat, "pts")
+
+    home_games = [g for g in game_logs if g.get("home")]
+    away_games = [g for g in game_logs if not g.get("home")]
+
+    home_avg = sum(g.get(stat_key,0) or 0 for g in home_games) / len(home_games) if home_games else 0
+    away_avg = sum(g.get(stat_key,0) or 0 for g in away_games) / len(away_games) if away_games else 0
+    home_hit = sum(1 for g in home_games if (g.get(stat_key,0) or 0) > line) / len(home_games) if home_games else 0
+    away_hit = sum(1 for g in away_games if (g.get(stat_key,0) or 0) > line) / len(away_games) if away_games else 0
+
+    return {
+        "home_avg": round(home_avg, 1),
+        "away_avg": round(away_avg, 1),
+        "home_hit_rate": home_hit,
+        "away_hit_rate": away_hit,
+        "home_games": len(home_games),
+        "away_games": len(away_games),
+    }
+
+tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
 with tabs[0]:
@@ -7889,7 +8075,160 @@ with tabs[5]:
         )
         st.caption("💡 Ctrl+A to select all, Ctrl+C to copy.")
 
+
+# ----- TAB 6: PLAYER LOOKUP -----
 with tabs[6]:
+    st.markdown("## 🔎 Player Lookup")
+    st.caption("Deep dive on any player — game log, hit rates, H2H vs tonight's opponent, home/away splits. Powered by BallsDontLie.")
+
+    if not BDL_API_KEY:
+        st.warning("BallsDontLie API key required. Add BALLSDONTLIE_API_KEY to Streamlit Secrets.")
+    else:
+        col_pl1, col_pl2, col_pl3 = st.columns(3)
+        with col_pl1:
+            pl_name = st.text_input("Player name", placeholder="Shai Gilgeous-Alexander", key="pl_name")
+        with col_pl2:
+            pl_stat = st.selectbox("Stat", [
+                "Points", "Rebounds", "Assists", "3-PT Made",
+                "Steals", "Blocked Shots", "Turnovers", "Pts+Reb+Ast"
+            ], key="pl_stat")
+        with col_pl3:
+            pl_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="pl_line")
+
+        col_pl4, col_pl5 = st.columns(2)
+        with col_pl4:
+            pl_opp = st.text_input("Opponent (abbr)", placeholder="SAS", key="pl_opp")
+        with col_pl5:
+            pl_games = st.slider("Last N games", 5, 30, 15, key="pl_games")
+
+        if st.button("🔍 Look Up Player", key="pl_lookup_btn", type="primary"):
+            if pl_name:
+                with st.spinner(f"Loading {pl_name} data..."):
+                    logs = fetch_player_game_logs(pl_name, last_n=pl_games)
+                    st.session_state["pl_logs"] = logs
+                    st.session_state["pl_name_display"] = pl_name
+            else:
+                st.error("Enter a player name.")
+
+        if st.session_state.get("pl_logs"):
+            logs = st.session_state["pl_logs"]
+            pl_name_d = st.session_state.get("pl_name_display", pl_name)
+
+            stat_key_map = {
+                "Points": "pts", "Rebounds": "reb", "Assists": "ast",
+                "3-PT Made": "fg3m", "Steals": "stl",
+                "Blocked Shots": "blk", "Turnovers": "turnover",
+                "Pts+Reb+Ast": "pra"
+            }
+            sk = stat_key_map.get(pl_stat, "pts")
+            vals = [g.get(sk, 0) or 0 for g in logs]
+            avg = sum(vals) / len(vals) if vals else 0
+
+            # Hit rates
+            hits_l5 = sum(1 for v in vals[:5] if v > pl_line) if pl_line > 0 and len(vals) >= 5 else None
+            hits_l10 = sum(1 for v in vals[:10] if v > pl_line) if pl_line > 0 and len(vals) >= 10 else None
+            hits_l15 = sum(1 for v in vals[:15] if v > pl_line) if pl_line > 0 and len(vals) >= 15 else None
+
+            # H2H
+            h2h_rate, h2h_n, h2h_str = compute_h2h_hit_rate(logs, pl_opp, pl_stat, pl_line) if pl_opp else (None, 0, "")
+
+            # Home/Away splits
+            splits = compute_home_away_splits(logs, pl_stat, pl_line) if pl_line > 0 else None
+
+            # Header stats
+            st.markdown(f"### {pl_name_d} — {pl_stat}")
+            metric_cols = st.columns(5)
+            metric_cols[0].metric("Season Avg", f"{avg:.1f}")
+            if pl_line > 0:
+                diff = avg - pl_line
+                metric_cols[1].metric("vs Line", f"{diff:+.1f}", delta_color="normal")
+            if hits_l5 is not None:
+                metric_cols[2].metric("L5 Hit Rate", f"{hits_l5}/5 ({hits_l5/5:.0%})")
+            if hits_l10 is not None:
+                metric_cols[3].metric("L10 Hit Rate", f"{hits_l10}/10 ({hits_l10/10:.0%})")
+            if h2h_rate is not None:
+                h2h_color = "normal"
+                metric_cols[4].metric(f"H2H vs {pl_opp}", f"{h2h_str} ({h2h_rate:.0%})")
+
+            # Home/Away splits
+            if splits:
+                st.markdown("#### 🏠 Home / Away Splits")
+                split_cols = st.columns(4)
+                split_cols[0].metric("Home Avg", f"{splits['home_avg']}")
+                split_cols[1].metric("Away Avg", f"{splits['away_avg']}")
+                if pl_line > 0:
+                    split_cols[2].metric("Home Hit %", f"{splits['home_hit_rate']:.0%} ({splits['home_games']}g)")
+                    split_cols[3].metric("Away Hit %", f"{splits['away_hit_rate']:.0%} ({splits['away_games']}g)")
+
+            # Game log chart
+            st.markdown("#### 📊 Last Games")
+            if vals:
+                # Visual bar chart using HTML
+                max_val = max(vals) if vals else 1
+                bars_html = '<div style="display:flex;gap:4px;align-items:flex-end;height:120px;padding:8px;background:#0d1520;border-radius:8px;">'
+                for i, v in enumerate(vals):
+                    height_pct = int((v / max_val) * 100) if max_val > 0 else 0
+                    over = v > pl_line if pl_line > 0 else True
+                    color = "#22c55e" if over else "#e04040"
+                    log = logs[i]
+                    tip = f"{log['date']} {'HOME' if log['home'] else 'AWAY'}: {v}"
+                    bars_html += f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">'
+                    bars_html += f'<div style="font-size:8px;color:#9aa8b8">{int(v)}</div>'
+                    bars_html += f'<div style="width:100%;height:{height_pct}%;background:{color};border-radius:3px 3px 0 0;min-height:4px;" title="{tip}"></div>'
+                    bars_html += f'<div style="font-size:7px;color:#6a7a8a;transform:rotate(-45deg);margin-top:2px">{log["date"][5:]}</div>'
+                    bars_html += '</div>'
+                if pl_line > 0:
+                    bars_html += f'</div>'
+                    st.markdown(bars_html, unsafe_allow_html=True)
+                    st.caption(f"🟢 = OVER {pl_line} | 🔴 = UNDER {pl_line}")
+                else:
+                    bars_html += '</div>'
+                    st.markdown(bars_html, unsafe_allow_html=True)
+
+            # Game log table
+            st.markdown("#### 📋 Game Log")
+            log_data = []
+            for g in logs:
+                log_data.append({
+                    "Date": g["date"],
+                    "H/A": "HOME" if g["home"] else "AWAY",
+                    "PTS": g.get("pts",0),
+                    "REB": g.get("reb",0),
+                    "AST": g.get("ast",0),
+                    "STL": g.get("stl",0),
+                    "BLK": g.get("blk",0),
+                    "3PM": g.get("fg3m",0),
+                    "PRA": g.get("pra",0),
+                    "MIN": g.get("min","—"),
+                    f"vs {pl_line}": "✅" if (g.get(sk,0) or 0) > pl_line else "❌" if pl_line > 0 else "—"
+                })
+            if log_data:
+                import pandas as pd
+                log_df = pd.DataFrame(log_data)
+                st.dataframe(log_df, hide_index=True, use_container_width=True)
+
+            # Find this player on today's board
+            board = st.session_state.board_data
+            if board:
+                norm_pl = normalize_name(pl_name_d)
+                board_props = [p for p in board if normalize_name(p.get("Player","")) == norm_pl]
+                if board_props:
+                    st.markdown("#### 🔒 On Today's Board")
+                    for bp in board_props:
+                        tier_color = TIER_COLORS.get(bp.get("Tier",""), "#7a8a9a")
+                        st.markdown(
+                            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};'
+                            f'border-radius:8px;padding:10px 14px;margin:4px 0;">'
+                            f'<span style="background:{tier_color};color:#000;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;margin-right:8px">{bp.get("Tier","")}</span>'
+                            f'<span style="color:#e8f0f8;font-weight:600">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span>'
+                            f'<span style="color:#e8a020;margin-left:12px">Edge: {bp.get("EdgePct","")}</span>'
+                            f'{"<span style=\"color:#22c55e;margin-left:12px\">📌 Pinnacle confirms</span>" if bp.get("PinnacleConfirms") else ""}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+
+with tabs[7]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
@@ -8159,7 +8498,7 @@ with tabs[6]:
         st.caption("No manual entries yet.")
 
 # ----- TAB 6: LINE SHOP -----
-with tabs[7]:
+with tabs[8]:
     st.markdown("## \U0001f6d2 Line Shopping")
     board_ls = st.session_state.board_data
     ud_props_ls = st.session_state.get("ud_props_compare", [])
@@ -8195,7 +8534,7 @@ with tabs[7]:
         st.dataframe(pd.DataFrame(disc_ls[:10]), width="stretch")
 
 # ----- TAB 7: SYSTEM -----
-with tabs[8]:
+with tabs[9]:
     st.markdown("## \u2699\ufe0f System Info")
     c1, c2 = st.columns(2)
     with c1:
