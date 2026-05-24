@@ -3090,12 +3090,12 @@ def scrape_prizepicks(sport):
         return []
     state_code = st.secrets.get("PP_STATE_CODE", "CA")
     urls = [
-        # Primary: exact URL confirmed working May 2026 (returns 200 without auth)
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}&game_mode=prizepools",
-        # Fallback 1: without game_mode
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}",
-        # Fallback 2: partner API (most reliable, no bot protection)
+        # Primary: partner API — no bot protection, most reliable
         f"https://partner-api.prizepicks.com/projections?per_page=1000&league_id={league}",
+        # Fallback 1: confirmed working URL May 2026
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}&game_mode=prizepools",
+        # Fallback 2: without game_mode
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}",
         # Fallback 3: basic API
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
     ]
