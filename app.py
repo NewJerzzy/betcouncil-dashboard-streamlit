@@ -7105,6 +7105,51 @@ with tabs[5]:
     if "analyzer_picks" not in st.session_state:
         st.session_state["analyzer_picks"] = []
 
+    # Screenshot upload section
+    with st.expander("📸 Upload a screenshot of your slip (auto-parse)", expanded=False):
+        slip_imgs = st.file_uploader(
+            "Upload screenshot of your PrizePicks, ParlayPlay, or Underdog slip",
+            type=["jpg", "jpeg", "png", "heic", "webp"],
+            key="slip_screenshot",
+            accept_multiple_files=True
+        )
+        if slip_imgs:
+            if st.button("🔍 Parse Screenshot", key="parse_slip_screenshot"):
+                all_parsed = []
+                with st.spinner("Reading screenshot..."):
+                    for img_file in slip_imgs:
+                        img_bytes = img_file.read()
+                        result = parse_bet_screenshot_ocr(img_bytes)
+                        if result:
+                            all_parsed.extend(result)
+                if all_parsed:
+                    # Convert OCR results to analyzer format
+                    analyzer_picks = []
+                    for bet in all_parsed:
+                        if bet.get("outcome") in ("WIN", "LOSS"):
+                            continue  # Skip settled bets
+                        analyzer_picks.append({
+                            "player": bet.get("player", ""),
+                            "stat": bet.get("prop", ""),
+                            "line": float(bet.get("line", 0) or 0),
+                            "side": bet.get("side", "OVER"),
+                            "sport": bet.get("sport", "NBA"),
+                        })
+                    if analyzer_picks:
+                        st.session_state["analyzer_picks"] = analyzer_picks
+                        st.success(f"✅ Found {len(analyzer_picks)} picks from screenshot")
+                        st.rerun()
+                    else:
+                        st.warning("Screenshot parsed but no pending picks found. Try the paste option below.")
+                else:
+                    st.error("Could not read screenshot. Try the OCR Debug in Log Bet tab, or paste the slip manually below.")
+        with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
+            raw = st.session_state.get("ocr_raw_text", "")
+            if raw:
+                st.text(raw[:500])
+            else:
+                st.caption("Upload a screenshot to see extracted text.")
+
     # Quick paste section
     with st.expander("📋 Paste a slip (auto-parse)", expanded=False):
         paste_text = st.text_area(
