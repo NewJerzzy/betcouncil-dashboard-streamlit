@@ -1122,6 +1122,22 @@ def devig_odds(american_odds):
         return None
 
 def compute_consensus_probability(sport, player_name, stat_name, line_val, side="OVER"):
+    """
+    Compute true probability using no-vig devig.
+    Priority: 1) Pinnacle (sharpest) 2) Consensus across books
+    This is the OddsJam/Outlier methodology.
+    """
+    # PRIORITY 1: Use Pinnacle no-vig as true probability (Gap 2 fix)
+    pinn_data = st.session_state.get(f"pinnacle_{sport}", {})
+    if pinn_data:
+        pinn_prob, confirms, note = pinnacle_fair_value(
+            player_name, stat_name, line_val, side, sport
+        )
+        if pinn_prob is not None:
+            # Pinnacle devig IS the gold standard — return it directly
+            return round(pinn_prob, 4), ["Pinnacle (no-vig)"]
+
+    # PRIORITY 2: Consensus across soft books (fallback)
     if not ODDS_API_KEY:
         return None, []
     sport_key = ODDS_API_SPORT_MAP.get(sport)
@@ -1536,6 +1552,75 @@ def blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, 
     elif team_spread > threshold:
         return -0.03
     return 0.0
+
+def compute_clv_grade(clv_value, pinnacle_edge=None):
+    """
+    Grade the CLV performance.
+    Elite bettors consistently beat closing line.
+    +EV if consistently positive CLV vs Pinnacle.
+    """
+    if clv_value is None:
+        return "—", "#6a7a8a"
+    if clv_value >= 1.5:
+        return "ELITE CLV", "#22c55e"
+    elif clv_value >= 0.5:
+        return "GOOD CLV", "#0ea5a0"
+    elif clv_value >= 0:
+        return "NEUTRAL", "#e8a020"
+    elif clv_value >= -0.5:
+        return "POOR CLV", "#e07020"
+    else:
+        return "BAD CLV", "#e04040"
+
+
+def get_clv_summary():
+    """
+    Summarize CLV performance vs Pinnacle.
+    The gold standard metric for long-term +EV betting.
+    """
+    clv_data = load_json_data(CLV_PATH, [])
+    if not clv_data:
+        return None
+
+    total = len(clv_data)
+    positive_clv = sum(1 for c in clv_data if c.get("clv", 0) > 0)
+    avg_clv = sum(c.get("clv", 0) for c in clv_data) / total if total else 0
+
+    # Pinnacle-specific CLV
+    pinn_clv_entries = [c for c in clv_data if c.get("pinnacle_prob_at_lock")]
+    pinn_avg_edge = 0
+    if pinn_clv_entries:
+        edges = []
+        for c in pinn_clv_entries:
+            try:
+                pinn_prob = float(str(c.get("pinnacle_prob_at_lock","0")).replace("%","")) / 100
+                model_prob = c.get("prob", 0.5)
+                if pinn_prob > 0:
+                    edges.append(model_prob - pinn_prob)
+            except:
+                pass
+        pinn_avg_edge = sum(edges) / len(edges) if edges else 0
+
+    # Recent form (last 20)
+    recent = clv_data[-20:] if len(clv_data) >= 20 else clv_data
+    recent_avg = sum(c.get("clv", 0) for c in recent) / len(recent) if recent else 0
+    recent_positive = sum(1 for c in recent if c.get("clv", 0) > 0)
+
+    return {
+        "total_tracked": total,
+        "positive_clv_pct": positive_clv / total if total else 0,
+        "avg_clv": avg_clv,
+        "recent_avg_clv": recent_avg,
+        "recent_positive_pct": recent_positive / len(recent) if recent else 0,
+        "pinnacle_avg_edge": pinn_avg_edge,
+        "verdict": (
+            "ELITE — Consistently beating sharp lines" if avg_clv >= 1.0 and positive_clv/total >= 0.55
+            else "GOOD — Positive CLV trend" if avg_clv >= 0.3
+            else "NEUTRAL — Break even vs closing line" if avg_clv >= 0
+            else "NEEDS WORK — Losing CLV consistently"
+        )
+    }
+
 
 def record_clv(lock, current_props):
     player = lock.get("player", "")
@@ -7253,6 +7338,52 @@ with tabs[3]:
 # ----- TAB 4: HISTORY -----
 with tabs[4]:
     st.markdown("## \U0001f4c8 Full Bet History")
+
+    # CLV Performance Dashboard — Gap 3 complete
+    clv_summary = get_clv_summary()
+    if clv_summary:
+        st.markdown("### 📊 Closing Line Value (CLV) Performance")
+        st.caption("CLV measures whether you consistently get better prices than the closing line. Positive CLV = long-term +EV bettor. Pinnacle edge = how well you beat the sharpest book in the world.")
+        clv_cols = st.columns(4)
+        clv_grade, clv_color = compute_clv_grade(clv_summary["avg_clv"])
+        clv_cols[0].markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Avg CLV</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{clv_color}">{clv_summary["avg_clv"]:+.2f}</div>'
+            f'<div style="font-size:10px;color:{clv_color}">{clv_grade}</div></div>',
+            unsafe_allow_html=True
+        )
+        clv_cols[1].markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Positive CLV %</div>'
+            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">{clv_summary["positive_clv_pct"]:.1%}</div>'
+            f'<div style="font-size:10px;color:#6a7a8a">{clv_summary["total_tracked"]} bets tracked</div></div>',
+            unsafe_allow_html=True
+        )
+        clv_cols[2].markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Recent CLV (L20)</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{"#22c55e" if clv_summary["recent_avg_clv"] > 0 else "#e04040"}">{clv_summary["recent_avg_clv"]:+.2f}</div>'
+            f'<div style="font-size:10px;color:#6a7a8a">{clv_summary["recent_positive_pct"]:.0%} positive</div></div>',
+            unsafe_allow_html=True
+        )
+        pinn_edge_color = "#22c55e" if clv_summary["pinnacle_avg_edge"] > 0 else "#e04040"
+        clv_cols[3].markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Avg Edge vs Pinnacle</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{pinn_edge_color}">{clv_summary["pinnacle_avg_edge"]:+.1%}</div>'
+            f'<div style="font-size:10px;color:#6a7a8a">Gold standard metric</div></div>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px 16px;margin:8px 0;">'
+            f'<span style="font-size:13px;color:#e8f0f8;font-weight:600">Verdict: </span>'
+            f'<span style="font-size:13px;color:{clv_color}">{clv_summary["verdict"]}</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        st.markdown("---")
+
     if st.session_state.history:
         hist_df = pd.DataFrame(st.session_state.history)
         hist_df = hist_df.iloc[::-1].reset_index(drop=True)
