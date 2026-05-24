@@ -7086,6 +7086,53 @@ with tabs[7]:
 
     results = st.session_state.get("api_panel_results", {})
 
+    # Auto-diagnosis summary
+    if results:
+        red_sources = [n for n, (c, d, col) in results.items() if col == "red"]
+        yellow_sources = [n for n, (c, d, col) in results.items() if col == "yellow"]
+        green_sources = [n for n, (c, d, col) in results.items() if col == "green"]
+
+        if red_sources or yellow_sources:
+            with st.expander("🔧 Auto-Diagnosis — What these errors mean and what to do", expanded=True):
+                fixes = {
+                    "ParlayPlay": {
+                        "403": "ParlayPlay blocks server requests from cloud providers. This is normal — PrizePicks is your primary source. ParlayPlay data will not load but your board will still work fine using PrizePicks.",
+                        "fix": "No action needed. PrizePicks covers all the same props."
+                    },
+                    "Underdog Fantasy": {
+                        "400": "Underdog changed their API format. This is a fallback source only — your board works fine without it.",
+                        "fix": "No action needed. Used only for line comparison in Line Shop."
+                    },
+                    "OddsPAPI": {
+                        "400": "Tournament ID lookup returned unexpected format. Try clearing cache and refreshing.",
+                        "401": "API key is invalid or expired. Go to oddspapi.io/dashboard, regenerate your key, and update Streamlit Secrets.",
+                        "fix": "Update ODDSPAPI_KEY in Streamlit Secrets."
+                    },
+                    "BallsDontLie": {
+                        "401": "API key missing or expired. Go to balldontlie.io, check your key, update BALLSDONTLIE_API_KEY in Streamlit Secrets.",
+                        "fix": "Update BALLSDONTLIE_API_KEY in Streamlit Secrets."
+                    },
+                    "PrizePicks": {
+                        "403": "PrizePicks is temporarily blocking requests. Wait 10 minutes and reload the board.",
+                        "fix": "Wait and retry. If persistent, clear the PrizePicks cache in System tab."
+                    },
+                }
+                if green_sources:
+                    st.success(f"✅ {len(green_sources)} sources working: {', '.join(green_sources)}")
+                for name_err in red_sources + yellow_sources:
+                    src_fix = fixes.get(name_err, {})
+                    result_code, result_detail, result_color = results.get(name_err, (None, "", "yellow"))
+                    code_str = str(result_code) if result_code else ""
+                    explanation = src_fix.get(code_str, f"{name_err} is not responding correctly.")
+                    fix_action = src_fix.get("fix", "Check the source's website and verify your API key.")
+                    icon = "🔴" if result_color == "red" else "🟡"
+                    st.markdown(f"""
+<div style="background:#0d1520;border:1px solid {'#e04040' if result_color == 'red' else '#e8a020'};border-radius:8px;padding:12px 16px;margin-bottom:8px;">
+  <div style="font-size:13px;font-weight:500;color:#e8f0f8;margin-bottom:4px;">{icon} {name_err} — Code {result_code}</div>
+  <div style="font-size:12px;color:#9aa8b8;margin-bottom:6px;">{explanation}</div>
+  <div style="font-size:11px;color:#0ea5a0;">→ {fix_action}</div>
+</div>""", unsafe_allow_html=True)
+
     if results:
         for src in _PING_SOURCES:
             name = src["name"]
