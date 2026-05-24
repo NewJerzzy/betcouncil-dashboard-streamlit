@@ -123,7 +123,7 @@ BDL_PROPS_DAILY_LIMIT = 60
 
 # Odds API constants
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,us_ex"
+ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex"
 ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex"
 
 # Action Network public betting API
@@ -5657,14 +5657,39 @@ def load_sport_data(sport):
     st.session_state[f"pinnacle_{sport}"] = pinnacle_data
 
     # Build cross-platform line lookup for better line detection
+    # Includes DFS platforms + sportsbooks for maximum line shopping
     better_lines = {}
     all_alt_sources = []
+
+    # DFS platforms
     if ud_props_compare:
         all_alt_sources.extend([(p, "Underdog") for p in ud_props_compare])
     parlayapi_props = st.session_state.get("parlayapi_props_cache", [])
     if parlayapi_props:
         pp_lines = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
         all_alt_sources.extend([(p, "ParlayPlay") for p in pp_lines])
+
+    # Sportsbook lines from The Odds API (FanDuel, DraftKings, BetMGM)
+    # Load from cache if available — already fetched during board load
+    odds_cache_path = os.path.join(CACHE_DIR, f"odds_api_props_{sport}.pkl")
+    if os.path.exists(odds_cache_path):
+        try:
+            with open(odds_cache_path, "rb") as f:
+                odds_props = pickle.load(f)
+            # Group by book
+            for op in odds_props:
+                book = op.get("Book","").lower()
+                if book in ("fanduel","draftkings","betmgm","caesars","bovada"):
+                    book_display = {
+                        "fanduel": "FanDuel",
+                        "draftkings": "DraftKings",
+                        "betmgm": "BetMGM",
+                        "caesars": "Caesars",
+                        "bovada": "Bovada"
+                    }.get(book, book.title())
+                    all_alt_sources.append((op, book_display))
+        except:
+            pass
     for alt_prop, source in all_alt_sources:
         key = (normalize_name(alt_prop.get("Player","")), alt_prop.get("Prop",""))
         if key not in better_lines:
