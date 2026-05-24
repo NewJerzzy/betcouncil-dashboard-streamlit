@@ -5473,6 +5473,26 @@ def load_sport_data(sport):
     ud_props_compare = fetch_underdog_props(sport)
     dk_salaries = fetch_dk_salaries(sport)
     st.session_state["dk_salaries"] = dk_salaries
+
+    # Build cross-platform line lookup for better line detection
+    better_lines = {}
+    all_alt_sources = []
+    if ud_props_compare:
+        all_alt_sources.extend([(p, "Underdog") for p in ud_props_compare])
+    parlayapi_props = st.session_state.get("parlayapi_props_cache", [])
+    if parlayapi_props:
+        pp_lines = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
+        all_alt_sources.extend([(p, "ParlayPlay") for p in pp_lines])
+    for alt_prop, source in all_alt_sources:
+        key = (normalize_name(alt_prop.get("Player","")), alt_prop.get("Prop",""))
+        if key not in better_lines:
+            better_lines[key] = []
+        better_lines[key].append({
+            "source": source,
+            "line": alt_prop.get("Line", 0),
+            "side": alt_prop.get("Side", "OVER")
+        })
+    st.session_state["better_lines_lookup"] = better_lines
     oddswrap_props = fetch_oddswrap_props(sport)
     st.session_state["oddswrap_props"] = oddswrap_props
     st.session_state["ud_props_compare"] = ud_props_compare
@@ -5921,6 +5941,31 @@ def load_sport_data(sport):
             "AN_Tickets": an_tickets, "AN_Money": an_money,
             "AN_Confirms": (an_tier in ("SOVEREIGN", "ELITE") and get_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")),
         })
+    # Add better line detection to each prop
+    better_lines_lookup = st.session_state.get("better_lines_lookup", {})
+    for prop in enriched:
+        player_norm = normalize_name(prop.get("Player",""))
+        prop_key = (player_norm, prop.get("Prop",""))
+        prop_line = prop.get("Line", 0)
+        prop_side = prop.get("Side", "OVER")
+        best_line_note = ""
+        best_line_source = ""
+        best_line_val = None
+        for alt in better_lines_lookup.get(prop_key, []):
+            alt_line = alt.get("line", 0)
+            alt_source = alt.get("source","")
+            if alt_line and alt_source:
+                is_better = (prop_side == "OVER" and float(alt_line) < float(prop_line)) or                             (prop_side == "UNDER" and float(alt_line) > float(prop_line))
+                if is_better:
+                    savings = round(abs(float(alt_line) - float(prop_line)), 1)
+                    if best_line_val is None or savings > abs(float(best_line_val) - float(prop_line)):
+                        best_line_val = alt_line
+                        best_line_source = alt_source
+                        best_line_note = f"Better on {alt_source}: {prop_side} {alt_line} (saves {savings})"
+        prop["BetterLineNote"] = best_line_note
+        prop["BetterLineSource"] = best_line_source
+        prop["BetterLineVal"] = best_line_val
+
     arb_opps = detect_arbitrage_opportunities(sport)
     st.session_state["arb_opportunities"] = arb_opps
     alt_line_upgrades = []
@@ -6443,12 +6488,13 @@ with tabs[0]:
             avg_val = p.get("Avg", 0)
             injury_html = f'<span style="background:#e04040;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;">{p["Injury"]}</span>' if p.get("Injury") else ""
             sharp_html = f'<span style="color:#e8a020;font-size:11px;margin-left:8px;">{p["SharpFlag"]}</span>' if p.get("SharpFlag") else ""
+            better_line_html = f'<span style="background:#22c55e;color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">⚡ Better on {p["BetterLineSource"]}: {p["Side"]} {p["BetterLineVal"]}</span>' if p.get("BetterLineSource") else ""
             ev_2_display = p.get("EV_2pick", "\u2014")
             wager_display = p.get("Wager_2pick", p.get("Wager", 0))
             st.markdown(
                 f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};border-radius:8px;padding:14px 18px;margin-bottom:10px;">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-                f'<div><span style="font-size:16px;font-weight:700;color:#e8f0f8;">{p["Player"]}</span>{injury_html}{sharp_html}<br/>'
+                f'<div><span style="font-size:16px;font-weight:700;color:#e8f0f8;">{p["Player"]}</span>{injury_html}{sharp_html}{better_line_html}<br/>'
                 f'<span style="font-size:14px;color:{tier_color};font-weight:600;">{p["Side"]} {p["Line"]} {p["Prop"]}</span></div>'
                 f'<div style="text-align:right;"><span style="background:{tier_color};color:#000;font-weight:700;font-size:12px;padding:3px 10px;border-radius:20px;">{p["Tier"]}</span></div>'
                 f'</div>'
@@ -6703,7 +6749,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "DK Salary", "DK Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "DK Salary", "DK Tier", "Better Line", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("\U0001f4ca Signal Breakdown — Module Delta Chart"):
