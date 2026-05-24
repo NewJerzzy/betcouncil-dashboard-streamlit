@@ -7112,11 +7112,11 @@ with tabs[7]:
         },
         {
             "name": "ParlayPlay",
-            "description": "Prop fallback #2 — all sports",
-            "url": "https://parlayplay.io/api/v1/crossgame/offering/",
-            "headers": {"Cookie": f"sessionid={st.secrets.get('PARLAYPLAY_SESSION','')}", "Origin": "https://parlayplay.io", "Referer": "https://parlayplay.io/", "x-parlayplay-platform": "web"},
+            "description": "Via ParlayAPI aggregator (bot-free)",
+            "url": f"https://parlay-api.com/v1/sports/basketball_nba/props?bookmakers=parlayplay&dfsOdds=midpoint",
+            "headers": {"X-API-Key": st.secrets.get("PARLAY_API_KEY", "")},
             "budget_key": "PARLAYPLAY",
-            "count_key": None,
+            "count_key": "PARLAY_API_KEY",
             "is_prop_source": True,
         },
         {
@@ -7228,44 +7228,7 @@ with tabs[7]:
             results = {}
             for src in _PING_SOURCES:
                 # Use curl_cffi for ParlayPlay to bypass bot protection
-                if src["name"] == "ParlayPlay":
-                    try:
-                        from curl_cffi import requests as cf_requests
-                        _pp_cookies = st.secrets.get("PARLAYPLAY_COOKIES", "") or f"sessionid={st.secrets.get('PARLAYPLAY_SESSION','')}"
-                        _pp_r = cf_requests.get(
-                            "https://parlayplay.io/api/v1/crossgame/offering/",
-                            headers={
-                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-                                "Accept": "application/json, text/plain, */*",
-                                "Accept-Language": "en-US,en;q=0.9",
-                                "Origin": "https://parlayplay.io",
-                                "Referer": "https://parlayplay.io/",
-                                "Cookie": _pp_cookies,
-                                "x-csrftoken": "1",
-                                "x-parlay-request": "1",
-                                "x-parlayplay-native-platform": "web",
-                                "x-parlayplay-platform": "web",
-                                "x-requested-with": "XMLHttpRequest",
-                                "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
-                                "sec-ch-ua-mobile": "?0",
-                                "sec-ch-ua-platform": '"Windows"',
-                                "sec-fetch-dest": "empty",
-                                "sec-fetch-mode": "cors",
-                                "sec-fetch-site": "same-origin",
-                            },
-                            impersonate="edge101",
-                            timeout=15
-                        )
-                        if _pp_r.status_code == 200:
-                            code, detail, color = 200, "✅ 200 OK — Responding normally", "green"
-                        elif _pp_r.status_code == 403:
-                            code, detail, color = 403, "🔒 403 Forbidden — Blocked by bot protection", "red"
-                        else:
-                            code, detail, color = _pp_r.status_code, f"⚠️ {_pp_r.status_code} — Unexpected response.", "yellow"
-                    except Exception as _e:
-                        code, detail, color = None, f"❌ Error — {str(_e)[:60]}", "red"
-                else:
-                    code, detail, color = _ping_url(src["url"], src["headers"])
+                code, detail, color = _ping_url(src["url"], src["headers"])
                 # For prop sources returning JSON, try to count items
                 extra = ""
                 if color == "green" and src.get("is_prop_source"):
