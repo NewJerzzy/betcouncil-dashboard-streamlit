@@ -4215,14 +4215,14 @@ def fetch_oddspapi_props(sport):
             if cached:
                 st.caption(f"📦 OddsPapi: using cached data ({age_mins:.0f}m old)")
                 return cached
-    sport_map = {
-        "NBA": "basketball_nba", "MLB": "baseball_mlb", "NHL": "icehockey_nhl",
-        "NFL": "americanfootball_nfl", "WNBA": "basketball_wnba",
+    # v4 API uses numeric sportId: basketball=4, baseball=3, hockey=6, american football=1
+    sport_id_map = {
+        "NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1,
     }
-    sport_key = sport_map.get(sport)
-    if not sport_key:
+    sport_id = sport_id_map.get(sport)
+    if not sport_id:
         return []
-    url = (f"https://api.oddspapi.io/v1/odds?apikey={ODDSPAPI_KEY}&sport={sport_key}&markets=player_props&bookmakers=draftkings,fanduel,betmgm,bovada,caesars,pinnacle")
+    url = (f"https://api.oddspapi.io/v4/odds?apiKey={ODDSPAPI_KEY}&sportId={sport_id}&bookmakers=draftkings,fanduel,betmgm,pinnacle&markets=player_props")
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDSPAPI")
