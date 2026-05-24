@@ -6963,7 +6963,7 @@ with tabs[7]:
         {
             "name": "OddsPAPI",
             "description": "Props fallback odds",
-            "url": "https://api.oddspapi.io/v4/tournaments?sportId=4&apiKey=" + st.secrets.get("ODDSPAPI_KEY", ""),
+            "url": "https://api.oddspapi.io/v4/sports?apiKey=" + st.secrets.get("ODDSPAPI_KEY", ""),
             "headers": {},
             "budget_key": "ODDSPAPI",
             "count_key": "ODDSPAPI_KEY",
