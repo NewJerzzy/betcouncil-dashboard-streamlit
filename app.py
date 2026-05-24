@@ -5471,6 +5471,8 @@ def load_sport_data(sport):
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     pp_props = scrape_prizepicks(sport)
     ud_props_compare = fetch_underdog_props(sport)
+    dk_salaries = fetch_dk_salaries(sport)
+    st.session_state["dk_salaries"] = dk_salaries
     oddswrap_props = fetch_oddswrap_props(sport)
     st.session_state["oddswrap_props"] = oddswrap_props
     st.session_state["ud_props_compare"] = ud_props_compare
@@ -6092,6 +6094,185 @@ st.markdown(f"""
 # TABS (Full as in original - Summary tab simplified for length)
 # =========================
 
+
+# =========================
+# DRAFTKINGS DFS SALARY SIGNAL
+# =========================
+
+def fetch_dk_nba_draftgroup_id():
+    """Find today's NBA classic draftGroupId from DraftKings."""
+    cache_path = os.path.join(CACHE_DIR, "dk_draftgroup_nba.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 120:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    try:
+        r = requests.get(
+            "https://www.draftkings.com/lobby/getcontests?sport=NBA",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if r.status_code != 200:
+            return None
+        contests = r.json().get("Contests", [])
+        # Find Classic contest (contestTypeId=21 or name contains Classic)
+        for c in contests:
+            name = c.get("n", "").lower()
+            if "classic" in name and c.get("dg"):
+                dgid = c["dg"]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(dgid, f)
+                return dgid
+        # Fallback: first contest with a draftGroupId
+        for c in contests:
+            if c.get("dg"):
+                dgid = c["dg"]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(dgid, f)
+                return dgid
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_dk_nba_draftgroup_id",
+            "error": str(e)[:100]
+        })
+    return None
+
+
+def fetch_dk_salaries(sport="NBA"):
+    """
+    Fetch DraftKings DFS salary data for today's slate.
+    Returns dict: {player_name: {salary, avg_points, value_score}}
+    High salary = DK model projects big game
+    Value score = projected points per $1000 salary
+    """
+    cache_path = os.path.join(CACHE_DIR, f"dk_salaries_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    sport_map = {
+        "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
+        "NFL": "NFL", "WNBA": "WNBA"
+    }
+    dk_sport = sport_map.get(sport)
+    if not dk_sport:
+        return {}
+
+    try:
+        # Step 1: get draftGroupId
+        contests_r = requests.get(
+            f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if contests_r.status_code != 200:
+            return {}
+
+        contests = contests_r.json().get("Contests", [])
+        draft_group_id = None
+        for c in contests:
+            name = c.get("n", "").lower()
+            if ("classic" in name or "showdown" not in name) and c.get("dg"):
+                draft_group_id = c["dg"]
+                break
+
+        if not draft_group_id:
+            return {}
+
+        # Step 2: get draftable players with salaries
+        players_r = requests.get(
+            f"https://api.draftkings.com/draftgroups/v1/{draft_group_id}/draftables",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if players_r.status_code != 200:
+            return {}
+
+        data = players_r.json()
+        draftables = data.get("draftables", [])
+
+        salaries = {}
+        for player in draftables:
+            name = player.get("displayName", "")
+            salary = player.get("salary", 0)
+            avg_pts = player.get("draftStatAttributes", [{}])
+            # Extract average FPPG
+            fppg = 0.0
+            for attr in player.get("draftStatAttributes", []):
+                if attr.get("id") == 90:  # FPPG stat id
+                    try:
+                        fppg = float(attr.get("value", 0))
+                    except:
+                        pass
+
+            if name and salary:
+                value_score = round((fppg / (salary / 1000)), 2) if salary > 0 else 0
+                salaries[normalize_name(name)] = {
+                    "name": name,
+                    "salary": salary,
+                    "fppg": fppg,
+                    "value": value_score,
+                    "salary_tier": (
+                        "ELITE" if salary >= 9000 else
+                        "HIGH" if salary >= 7500 else
+                        "MID" if salary >= 6000 else
+                        "VALUE"
+                    )
+                }
+
+        if salaries:
+            with open(cache_path, "wb") as f:
+                pickle.dump(salaries, f)
+            st.session_state["dk_salaries"] = salaries
+            st.caption(f"✅ DraftKings: {len(salaries)} player salaries loaded")
+
+        return salaries
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_dk_salaries",
+            "error": str(e)[:100]
+        })
+        return {}
+
+
+def apply_dk_salary_signal(prop, dk_salaries):
+    """
+    Apply DraftKings salary as a signal modifier.
+    High salary = market confidence signal
+    Returns signal adjustment (-0.05 to +0.05)
+    """
+    if not dk_salaries:
+        return 0.0, ""
+
+    norm = normalize_name(prop.get("Player", ""))
+    dk_data = dk_salaries.get(norm)
+    if not dk_data:
+        return 0.0, ""
+
+    salary = dk_data["salary"]
+    tier = dk_data["salary_tier"]
+    value = dk_data["value"]
+    fppg = dk_data["fppg"]
+
+    # High salary + high value = positive signal
+    # High salary + low value = cautious (might be overpriced)
+    if tier == "ELITE" and value >= 5.0:
+        return 0.02, f"DK Elite ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x value"
+    elif tier == "ELITE":
+        return 0.01, f"DK Elite ${salary:,} | {fppg:.1f} FPPG"
+    elif tier == "HIGH" and value >= 5.5:
+        return 0.015, f"DK High ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x value"
+    elif tier == "VALUE" and value >= 6.0:
+        return 0.02, f"DK Value ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x VALUE PLAY"
+    else:
+        return 0.0, f"DK ${salary:,} | {tier}"
+
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
@@ -6522,7 +6703,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "DK Salary", "DK Tier", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("\U0001f4ca Signal Breakdown — Module Delta Chart"):
@@ -7178,6 +7359,15 @@ with tabs[7]:
             "url": "https://api.actionnetwork.com/web/v2/leagues/4/projections/available?limit=10",
             "headers": {"Origin": "https://www.actionnetwork.com", "Referer": "https://www.actionnetwork.com/"},
             "budget_key": "ACTION_NETWORK",
+            "count_key": None,
+            "is_prop_source": False,
+        },
+        {
+            "name": "DraftKings DFS",
+            "description": "Player salaries + value scores",
+            "url": "https://www.draftkings.com/lobby/getcontests?sport=NBA",
+            "headers": {"Referer": "https://www.draftkings.com/"},
+            "budget_key": None,
             "count_key": None,
             "is_prop_source": False,
         },
