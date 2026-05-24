@@ -3088,26 +3088,33 @@ def scrape_prizepicks(sport):
     league = league_ids.get(sport.upper())
     if not league:
         return []
+    state_code = st.secrets.get("PP_STATE_CODE", "CA")
     urls = [
+        # Primary: exact URL confirmed working May 2026 (returns 200 without auth)
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}&game_mode=prizepools",
+        # Fallback 1: without game_mode
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}",
+        # Fallback 2: partner API (most reliable, no bot protection)
         f"https://partner-api.prizepicks.com/projections?per_page=1000&league_id={league}",
+        # Fallback 3: basic API
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true",
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true",
-        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&state_code=CA",
     ]
     pp_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
         "Referer": "https://app.prizepicks.com/",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
         "Origin": "https://app.prizepicks.com",
         "Connection": "keep-alive",
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-site",
-        "X-Device-ID": "betcouncil-app-v4",
+        "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
         "Cache-Control": "no-cache",
+        "x-device-id": "betcouncil-v46",
     }
     all_props = []
     seen = set()
@@ -3126,12 +3133,25 @@ def scrape_prizepicks(sport):
             try:
                 resp = requests.get(url, headers=pp_headers, timeout=15)
                 if resp.status_code == 200:
+                    # Check for captcha response (returns HTML not JSON)
+                    content_type = resp.headers.get("content-type", "")
+                    if "html" in content_type or resp.text.strip().startswith("<"):
+                        # Got captcha page — skip to next URL
+                        st.session_state.setdefault("errors", []).append({
+                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "source": "scrape_prizepicks",
+                            "error": f"Captcha detected on {url[:60]} — trying next source"
+                        })
+                        continue
                     data = resp.json()
                     if data and data.get("data"):
                         with open(cache_path, "wb") as f:
                             pickle.dump(data, f)
                 elif resp.status_code == 429:
                     time.sleep(2)
+                    continue
+                elif resp.status_code == 403:
+                    # Bot protection — try next URL
                     continue
             except:
                 continue
@@ -7128,7 +7148,7 @@ with tabs[7]:
         {
             "name": "PrizePicks",
             "description": "Primary prop source",
-            "url": "https://partner-api.prizepicks.com/projections?per_page=50&league_id=4",
+            "url": "https://api.prizepicks.com/projections?league_id=7&per_page=10&single_stat=true&in_game=true&state_code=CA&game_mode=prizepools",
             "headers": _PP_HEADERS,
             "budget_key": None,
             "count_key": None,
