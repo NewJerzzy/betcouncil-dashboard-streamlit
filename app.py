@@ -6318,7 +6318,7 @@ def apply_dk_salary_signal(prop, dk_salaries):
     else:
         return 0.0, f"DK ${salary:,} | {tier}"
 
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
+tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
 with tabs[0]:
@@ -6993,7 +6993,345 @@ with tabs[4]:
         st.info(f"Pinnacle CLV activates after 5 resolved bets. Need {5 - len(pinnacle_data)} more.")
 
 # ----- TAB 5: LOG BET -----
+
+# ----- TAB 5: SLIP ANALYZER -----
 with tabs[5]:
+    st.markdown("## 🔍 Slip Analyzer")
+    st.caption("Enter any prop slip — from PrizePicks, ParlayPlay, Underdog, or anywhere. The model analyzes each pick and scores the full parlay.")
+
+    board = st.session_state.board_data
+    board_loaded = bool(board)
+
+    if not board_loaded:
+        st.info("💡 Load the board first for full signal analysis. Or enter picks manually below — we'll analyze using historical averages.")
+
+    st.markdown("### Enter Your Slip")
+    st.caption("Add 2–6 picks. The model will analyze each one individually and score the combined parlay.")
+
+    # Initialize slip state
+    if "analyzer_picks" not in st.session_state:
+        st.session_state["analyzer_picks"] = []
+
+    # Quick paste section
+    with st.expander("📋 Paste a slip (auto-parse)", expanded=False):
+        paste_text = st.text_area(
+            "Paste your slip here (one pick per line)",
+            placeholder="Nikola Jokic OVER 27.5 Points\nJayson Tatum OVER 8.5 Rebounds\nLuka Doncic OVER 7.5 Assists",
+            height=120,
+            key="slip_paste_input"
+        )
+        if st.button("📥 Parse Slip", key="parse_slip_btn"):
+            if paste_text.strip():
+                import re
+                parsed_picks = []
+                for line in paste_text.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Pattern: Player Name OVER/UNDER line Stat
+                    # or: Player Name MORE/LESS line Stat
+                    m = re.match(
+                        r"([A-Za-z][A-Za-z\s\.'-]+?)\s+(OVER|UNDER|MORE|LESS)\s+([\d\.]+)\s+(.+)",
+                        line, re.IGNORECASE
+                    )
+                    if m:
+                        player = m.group(1).strip()
+                        side = "OVER" if m.group(2).upper() in ("OVER","MORE") else "UNDER"
+                        try:
+                            line_val = float(m.group(3))
+                        except:
+                            continue
+                        stat = m.group(4).strip()
+                        parsed_picks.append({
+                            "player": player, "stat": stat,
+                            "line": line_val, "side": side,
+                            "sport": "NBA"
+                        })
+                if parsed_picks:
+                    st.session_state["analyzer_picks"] = parsed_picks
+                    st.success(f"✅ Parsed {len(parsed_picks)} picks")
+                    st.rerun()
+                else:
+                    st.error("Could not parse. Format: Player Name OVER/UNDER Line Stat")
+
+    st.markdown("---")
+    st.markdown("### Manual Entry")
+
+    col_sa1, col_sa2 = st.columns(2)
+    with col_sa1:
+        sa_player = st.text_input("Player Name", placeholder="Nikola Jokic", key="sa_player")
+        sa_stat = st.selectbox("Stat", [
+            "Points", "Rebounds", "Assists", "3-PT Made", "Steals",
+            "Blocked Shots", "Turnovers", "Pts+Reb+Ast", "Pts+Reb",
+            "Pts+Ast", "Reb+Ast", "Fantasy Score", "Double-Double",
+            "Hits", "Home Runs", "Strikeouts", "Total Bases",
+            "Goals", "Shots On Goal", "Passing Yards", "Rushing Yards",
+            "Receiving Yards", "Receptions", "Touchdowns"
+        ], key="sa_stat")
+    with col_sa2:
+        sa_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="sa_line")
+        sa_side = st.radio("Side", ["OVER", "UNDER"], horizontal=True, key="sa_side")
+        sa_sport = st.selectbox("Sport", SPORTS, key="sa_sport")
+
+    if st.button("➕ Add to Slip", key="sa_add_pick"):
+        if sa_player and sa_line > 0:
+            st.session_state["analyzer_picks"].append({
+                "player": sa_player, "stat": sa_stat,
+                "line": sa_line, "side": sa_side, "sport": sa_sport
+            })
+            st.rerun()
+        else:
+            st.error("Enter player name and line.")
+
+    # Show current slip
+    if st.session_state["analyzer_picks"]:
+        st.markdown("---")
+        st.markdown(f"### Your Slip ({len(st.session_state['analyzer_picks'])} picks)")
+
+        for i, pick in enumerate(st.session_state["analyzer_picks"]):
+            col_p1, col_p2 = st.columns([5, 1])
+            with col_p1:
+                st.markdown(f"**{pick['player']}** {pick['side']} {pick['line']} {pick['stat']} ({pick.get('sport','NBA')})")
+            with col_p2:
+                if st.button("❌", key=f"remove_pick_{i}"):
+                    st.session_state["analyzer_picks"].pop(i)
+                    st.rerun()
+
+        if st.button("🗑️ Clear Slip", key="clear_slip"):
+            st.session_state["analyzer_picks"] = []
+            st.rerun()
+
+        st.markdown("---")
+
+        if st.button("🔍 Analyze This Slip", key="analyze_slip_btn", type="primary"):
+            picks = st.session_state["analyzer_picks"]
+            results = []
+
+            for pick in picks:
+                player = pick["player"]
+                stat = pick["stat"]
+                line = pick["line"]
+                side = pick["side"]
+                sport = pick.get("sport", "NBA")
+
+                # Try to find this prop in the loaded board first
+                board_match = None
+                if board:
+                    norm_player = normalize_name(player)
+                    for b in board:
+                        if normalize_name(b.get("Player","")) == norm_player and                            b.get("Prop","").lower() == stat.lower():
+                            board_match = b
+                            break
+
+                if board_match:
+                    # Use full model data
+                    edge = board_match.get("Edge", 0)
+                    prob = board_match.get("Prob", 0.5)
+                    avg = board_match.get("Avg", 0)
+                    tier = board_match.get("Tier", "LEAN")
+                    ev_2 = board_match.get("EV_2pick", "—")
+                    better_line = board_match.get("BetterLineNote", "")
+                    dk_note = board_match.get("DKSalaryNote", "")
+                    sharp_flag = board_match.get("SharpFlag", "")
+                    signal_base = board_match.get("SignalBase", 0)
+                    signal_def = board_match.get("SignalDefense", 0)
+                    confidence = board_match.get("SEM", "—")
+                    data_source = "📊 Full model"
+
+                    # Check if the line matches
+                    board_line = board_match.get("Line", line)
+                    line_diff = round(float(line) - float(board_line), 1)
+                    line_note = ""
+                    if line_diff != 0:
+                        direction = "higher" if line_diff > 0 else "lower"
+                        line_note = f"⚠️ Your line ({line}) is {abs(line_diff)} {direction} than board ({board_line})"
+                        # Adjust edge for line difference
+                        if side == "OVER" and line_diff > 0:
+                            edge = max(0, edge - 0.03 * abs(line_diff))
+                        elif side == "OVER" and line_diff < 0:
+                            edge = min(0.30, edge + 0.03 * abs(line_diff))
+                else:
+                    # No board match — use historical averages
+                    season_avgs = PLAYER_AVERAGES.get(sport, {})
+                    player_data = season_avgs.get(player, {})
+                    stat_key = stat.upper().replace(" ","_").replace("+","_").replace("-","_")
+                    avg = player_data.get(stat_key, player_data.get(stat[:3].upper(), 0))
+
+                    if avg > 0:
+                        diff = avg - line if side == "OVER" else line - avg
+                        std = compute_std_dev(None, sport) or 4.0
+                        z = diff / std if std > 0 else 0
+                        from scipy import stats as sp_stats
+                        prob = float(sp_stats.norm.cdf(z))
+                        edge = max(-0.15, min(0.25, prob - 0.577))
+                    else:
+                        prob = 0.5
+                        edge = 0.0
+                        avg = None
+
+                    tier = get_tier(edge, sport)
+                    ev_2 = f"{calculate_prizepicks_ev(prob, 2):+.1%}"
+                    better_line = ""
+                    dk_note = ""
+                    sharp_flag = ""
+                    line_note = ""
+                    confidence = "Historical avg only"
+                    data_source = "📚 Historical averages"
+
+                # Determine recommendation
+                if edge >= 0.08:
+                    rec = "✅ STRONG PLAY"
+                    rec_color = "#22c55e"
+                elif edge >= 0.04:
+                    rec = "✅ PLAY"
+                    rec_color = "#0ea5a0"
+                elif edge >= 0.0:
+                    rec = "⚠️ LEAN"
+                    rec_color = "#e8a020"
+                elif edge >= -0.05:
+                    rec = "⚠️ WEAK"
+                    rec_color = "#e07020"
+                else:
+                    rec = "❌ FADE"
+                    rec_color = "#e04040"
+
+                results.append({
+                    "player": player, "stat": stat, "line": line,
+                    "side": side, "sport": sport,
+                    "edge": edge, "prob": prob, "avg": avg,
+                    "tier": tier, "ev_2": ev_2,
+                    "rec": rec, "rec_color": rec_color,
+                    "better_line": better_line,
+                    "dk_note": dk_note,
+                    "sharp_flag": sharp_flag,
+                    "line_note": line_note,
+                    "confidence": confidence,
+                    "data_source": data_source,
+                })
+
+            st.session_state["analyzer_results"] = results
+
+    # Display results
+    if st.session_state.get("analyzer_results"):
+        results = st.session_state["analyzer_results"]
+        st.markdown("## 📊 Analysis Results")
+
+        all_probs = [r["prob"] for r in results]
+        combined_prob = parlay_prob(all_probs)
+        n_picks = len(results)
+        multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
+        breakeven = prizepicks_breakeven_prob(n_picks)
+        parlay_ev = combined_prob - breakeven
+        ev_color = "#22c55e" if parlay_ev > 0 else "#e04040"
+
+        # Overall verdict
+        strong_plays = sum(1 for r in results if r["edge"] >= 0.08)
+        fades = sum(1 for r in results if r["edge"] < -0.05)
+
+        if fades > 0:
+            overall = f"❌ AVOID — {fades} pick(s) model says FADE"
+            overall_color = "#e04040"
+        elif strong_plays == n_picks:
+            overall = "✅ STRONG SLIP — All picks have solid edge"
+            overall_color = "#22c55e"
+        elif strong_plays >= n_picks // 2:
+            overall = "✅ GOOD SLIP — Most picks have edge"
+            overall_color = "#0ea5a0"
+        elif parlay_ev > 0:
+            overall = "⚠️ MARGINAL — Positive EV but weak individual picks"
+            overall_color = "#e8a020"
+        else:
+            overall = "❌ SKIP — Combined EV is negative"
+            overall_color = "#e04040"
+
+        st.markdown(
+            f'<div style="background:#0d1520;border:2px solid {overall_color};border-radius:10px;'
+            f'padding:16px 20px;margin-bottom:14px;">'
+            f'<div style="font-size:18px;font-weight:700;color:{overall_color};margin-bottom:8px;">{overall}</div>'
+            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">'
+            f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Combined Prob</div>'
+            f'<div style="font-size:20px;font-weight:700;color:#e8f0f8">{combined_prob:.1%}</div></div>'
+            f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">{n_picks}-pick Payout</div>'
+            f'<div style="font-size:20px;font-weight:700;color:#e8f0f8">{multiplier}x</div></div>'
+            f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Breakeven</div>'
+            f'<div style="font-size:20px;font-weight:700;color:#e8f0f8">{breakeven:.1%}</div></div>'
+            f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;">'
+            f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">True EV</div>'
+            f'<div style="font-size:20px;font-weight:700;color:{ev_color}">{parlay_ev:+.1%}</div></div>'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+
+        # Individual pick results
+        st.markdown("### Pick-by-Pick Breakdown")
+        for r in results:
+            tier_color = TIER_COLORS.get(r["tier"], "#7a8a9a")
+            avg_display = f"{r['avg']:.1f}" if r["avg"] else "No data"
+            st.markdown(
+                f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {r["rec_color"]};'
+                f'border-radius:8px;padding:12px 16px;margin-bottom:10px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-bottom:8px;">'
+                f'<div><span style="font-size:15px;font-weight:700;color:#e8f0f8">{r["player"]}</span>'
+                f'<span style="color:{tier_color};margin-left:8px;font-size:13px">{r["side"]} {r["line"]} {r["stat"]}</span>'
+                f'<span style="background:{tier_color};color:#000;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;margin-left:8px">{r["tier"]}</span></div>'
+                f'<div style="background:{r["rec_color"]}22;border:1px solid {r["rec_color"]}44;border-radius:8px;'
+                f'padding:5px 12px;font-size:13px;font-weight:700;color:{r["rec_color"]}">{r["rec"]}</div>'
+                f'</div>'
+                f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px;">'
+                f'<div style="background:#060c14;border-radius:5px;padding:6px;text-align:center;">'
+                f'<div style="font-size:8px;color:#6a7a8a;text-transform:uppercase">Edge</div>'
+                f'<div style="font-size:15px;font-weight:600;color:{r["rec_color"]}">{r["edge"]:+.1%}</div></div>'
+                f'<div style="background:#060c14;border-radius:5px;padding:6px;text-align:center;">'
+                f'<div style="font-size:8px;color:#6a7a8a;text-transform:uppercase">Hit Prob</div>'
+                f'<div style="font-size:15px;font-weight:600;color:#e8f0f8">{r["prob"]:.1%}</div></div>'
+                f'<div style="background:#060c14;border-radius:5px;padding:6px;text-align:center;">'
+                f'<div style="font-size:8px;color:#6a7a8a;text-transform:uppercase">Avg vs Line</div>'
+                f'<div style="font-size:15px;font-weight:600;color:#e8f0f8">{avg_display}</div></div>'
+                f'<div style="background:#060c14;border-radius:5px;padding:6px;text-align:center;">'
+                f'<div style="font-size:8px;color:#6a7a8a;text-transform:uppercase">2-pick EV</div>'
+                f'<div style="font-size:15px;font-weight:600;color:#22c55e">{r["ev_2"]}</div></div>'
+                f'</div>'
+                f'<div style="font-size:11px;color:#6a7a8a">📡 {r["data_source"]} | Confidence: {r["confidence"]}'
+                f'{" | " + r["sharp_flag"] if r["sharp_flag"] else ""}'
+                f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
+                f'{"<div style=\"font-size:11px;color:#22c55e;margin-top:4px\">⚡ " + r["better_line"] + "</div>" if r["better_line"] else ""}'
+                f'{"<div style=\"font-size:11px;color:#e8a020;margin-top:4px\">⚠️ " + r["line_note"] + "</div>" if r["line_note"] else ""}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+        # Lock all good picks button
+        good_picks = [r for r in results if r["edge"] >= 0.04]
+        if good_picks and board:
+            st.markdown("---")
+            if st.button(f"🔒 Lock all {len(good_picks)} good picks from this slip", key="lock_slip_picks"):
+                locked = 0
+                for r in good_picks:
+                    norm = normalize_name(r["player"])
+                    board_match = next((b for b in board if normalize_name(b.get("Player","")) == norm and b.get("Prop","").lower() == r["stat"].lower()), None)
+                    if board_match:
+                        already = any(l.get("player") == r["player"] and l.get("prop") == r["stat"] for l in st.session_state.locks)
+                        if not already:
+                            st.session_state.locks.append({
+                                "player": r["player"], "prop": r["stat"],
+                                "line": r["line"], "side": r["side"],
+                                "wager": active_unit(), "prob": r["prob"],
+                                "edge": r["edge"], "tier": r["tier"],
+                                "status": "PENDING",
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "sport": r["sport"]
+                            })
+                            locked += 1
+                if locked:
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    save_to_gist("locks", st.session_state.locks)
+                    st.success(f"✅ Locked {locked} picks")
+                    st.rerun()
+
+with tabs[6]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
@@ -7263,7 +7601,7 @@ with tabs[5]:
         st.caption("No manual entries yet.")
 
 # ----- TAB 6: LINE SHOP -----
-with tabs[6]:
+with tabs[7]:
     st.markdown("## \U0001f6d2 Line Shopping")
     board_ls = st.session_state.board_data
     ud_props_ls = st.session_state.get("ud_props_compare", [])
@@ -7299,7 +7637,7 @@ with tabs[6]:
         st.dataframe(pd.DataFrame(disc_ls[:10]), width="stretch")
 
 # ----- TAB 7: SYSTEM -----
-with tabs[7]:
+with tabs[8]:
     st.markdown("## \u2699\ufe0f System Info")
     c1, c2 = st.columns(2)
     with c1:
