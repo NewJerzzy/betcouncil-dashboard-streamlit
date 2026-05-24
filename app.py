@@ -7104,11 +7104,11 @@ with tabs[7]:
         {
             "name": "Underdog Fantasy",
             "description": "Via ParlayAPI aggregator",
-            "url": "https://parlay-api.com/v1/sports/basketball_nba/props?bookmakers=underdog&dfsOdds=midpoint",
+            "url": "https://parlay-api.com/v1/sports",
             "headers": {"X-API-Key": st.secrets.get("PARLAY_API_KEY", "")},
             "budget_key": None,
             "count_key": "PARLAY_API_KEY",
-            "is_prop_source": True,
+            "is_prop_source": False,
         },
         {
             "name": "ParlayPlay",
