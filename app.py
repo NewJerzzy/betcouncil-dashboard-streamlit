@@ -5567,6 +5567,10 @@ def load_sport_data(sport):
     dk_salaries = fetch_dk_salaries(sport)
     st.session_state["dk_salaries"] = dk_salaries
 
+    # Fetch Pinnacle fair value lines — 1 call per board load, cached 60 min
+    pinnacle_data = fetch_pinnacle_lines(sport)
+    st.session_state[f"pinnacle_{sport}"] = pinnacle_data
+
     # Build cross-platform line lookup for better line detection
     better_lines = {}
     all_alt_sources = []
@@ -6034,6 +6038,28 @@ def load_sport_data(sport):
             "AN_Tickets": an_tickets, "AN_Money": an_money,
             "AN_Confirms": (an_tier in ("SOVEREIGN", "ELITE") and get_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")),
         })
+    # Add Pinnacle fair value signal to each prop
+    for prop in enriched:
+        pinn_prob, pinn_confirms, pinn_note = pinnacle_fair_value(
+            prop.get("Player",""), prop.get("Prop",""),
+            prop.get("Line",0), prop.get("Side","OVER"), sport
+        )
+        prop["PinnacleProb"] = f"{pinn_prob:.1%}" if pinn_prob else "—"
+        prop["PinnacleConfirms"] = pinn_confirms
+        prop["PinnacleNote"] = pinn_note
+        prop["PinnacleEdge"] = get_pinnacle_edge(prop.get("Prob",0.5), pinn_prob, prop.get("Side","OVER"))
+        if pinn_note:
+            prop["PinnacleNote"] = pinn_note
+        # Boost tier if Pinnacle confirms AND our model says edge
+        if pinn_confirms and prop.get("Tier") == "APPROVED":
+            prop["Tier"] = "ELITE"
+            prop["TierBoost"] = "Pinnacle-confirmed"
+        # Downgrade if Pinnacle strongly fades
+        if pinn_prob and pinn_prob < 0.44 and prop.get("Side","OVER") == "OVER":
+            if prop.get("Tier") in ("SOVEREIGN","ELITE"):
+                prop["Tier"] = "APPROVED"
+                prop["TierNote"] = "Downgraded: Pinnacle fades"
+
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
     for prop in enriched:
@@ -6411,6 +6437,221 @@ def apply_dk_salary_signal(prop, dk_salaries):
     else:
         return 0.0, f"DK ${salary:,} | {tier}"
 
+
+# =============================================================
+# PINNACLE FAIR VALUE ENGINE
+# The gold standard: use Pinnacle no-vig odds as true probability
+# Elite models (OddsJam, Outlier, Sharp) all anchor to Pinnacle
+# =============================================================
+
+PINNACLE_PROP_CACHE = {}  # in-memory: {(player_norm, stat, line): {"over_prob": x, "under_prob": x}}
+PINNACLE_GAME_CACHE = {}  # in-memory: {(home, away, market): {"prob": x, "line": x}}
+
+def fetch_pinnacle_lines(sport):
+    """
+    Fetch Pinnacle lines via OddsPAPI (already in our stack).
+    Cache in session state — only 1 API call per board load per sport.
+    Respects free tier: 100 calls/day, 1000/month.
+    """
+    cache_key = f"pinnacle_{sport}"
+    if st.session_state.get(cache_key):
+        return st.session_state[cache_key]
+
+    # Check disk cache first — 60 min TTL for Pinnacle lines
+    cache_path = os.path.join(CACHE_DIR, f"pinnacle_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.session_state[cache_key] = cached
+                return cached
+
+    if not ODDSPAPI_KEY:
+        return {}
+
+    allowed, reason = api_budget_check("ODDSPAPI")
+    if not allowed:
+        return {}
+
+    sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
+    sport_id = sport_id_map.get(sport)
+    if not sport_id:
+        return {}
+
+    pinnacle_data = {"props": {}, "games": {}}
+
+    try:
+        # Get tournaments
+        t_resp = requests.get(
+            f"https://api.oddspapi.io/v4/tournaments?sportId={sport_id}&apiKey={ODDSPAPI_KEY}",
+            timeout=10
+        )
+        if t_resp.status_code != 200:
+            return {}
+
+        tournaments = t_resp.json()
+        top_ids = [str(t["tournamentId"]) for t in tournaments
+                   if t.get("upcomingFixtures", 0) > 0][:3]
+        if not top_ids:
+            top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
+        if not top_ids:
+            return {}
+
+        tournament_ids = ",".join(top_ids)
+
+        # Fetch Pinnacle ONLY — saves API credits vs fetching all books
+        resp = requests.get(
+            f"https://api.oddspapi.io/v4/odds-by-tournaments"
+            f"?bookmaker=pinnacle&tournamentIds={tournament_ids}"
+            f"&apiKey={ODDSPAPI_KEY}&oddsFormat=american",
+            headers=HEADERS,
+            timeout=15
+        )
+        api_budget_increment("ODDSPAPI")
+
+        if resp.status_code != 200:
+            return {}
+
+        data = resp.json()
+
+        for event in data.get("events", []):
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            for bookmaker in event.get("bookmakers", []):
+                if bookmaker.get("key", "").lower() != "pinnacle":
+                    continue
+                for market in bookmaker.get("markets", []):
+                    mkey = market.get("key", "")
+                    outcomes = market.get("outcomes", [])
+
+                    # Player props
+                    if "player" in mkey.lower():
+                        over_out = next((o for o in outcomes if o.get("name","").upper() == "OVER"), None)
+                        under_out = next((o for o in outcomes if o.get("name","").upper() == "UNDER"), None)
+                        if over_out and under_out:
+                            over_imp = devig_odds(over_out.get("price"))
+                            under_imp = devig_odds(under_out.get("price"))
+                            if over_imp and under_imp:
+                                total = over_imp + under_imp
+                                over_nv = round(over_imp / total, 4)
+                                under_nv = round(under_imp / total, 4)
+                                player = over_out.get("description", "")
+                                line = over_out.get("point")
+                                stat = mkey.replace("player_","").replace("_"," ").title()
+                                if player and line is not None:
+                                    pkey = (normalize_name(player), stat.lower(), float(line))
+                                    pinnacle_data["props"][pkey] = {
+                                        "over_prob": over_nv,
+                                        "under_prob": under_nv,
+                                        "over_odds": over_out.get("price"),
+                                        "under_odds": under_out.get("price"),
+                                        "player": player, "stat": stat, "line": float(line)
+                                    }
+
+                    # Game lines
+                    elif mkey in ("h2h", "spreads", "totals"):
+                        if len(outcomes) >= 2:
+                            imp_a = devig_odds(outcomes[0].get("price"))
+                            imp_b = devig_odds(outcomes[1].get("price"))
+                            if imp_a and imp_b:
+                                total = imp_a + imp_b
+                                prob_a = round(imp_a / total, 4)
+                                game_key = (normalize_name(home), normalize_name(away), mkey)
+                                pinnacle_data["games"][game_key] = {
+                                    "prob_home": prob_a,
+                                    "prob_away": round(imp_b / total, 4),
+                                    "line_home": outcomes[0].get("point"),
+                                    "line_away": outcomes[1].get("point"),
+                                    "odds_home": outcomes[0].get("price"),
+                                    "odds_away": outcomes[1].get("price"),
+                                }
+
+        # Cache to disk and session
+        with open(cache_path, "wb") as f:
+            pickle.dump(pinnacle_data, f)
+        st.session_state[cache_key] = pinnacle_data
+        n_props = len(pinnacle_data["props"])
+        n_games = len(pinnacle_data["games"])
+        if n_props or n_games:
+            st.caption(f"✅ Pinnacle: {n_props} player props + {n_games} game lines loaded as fair value baseline")
+        return pinnacle_data
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_pinnacle_lines",
+            "error": str(e)[:100]
+        })
+        return {}
+
+
+def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
+    """
+    Get Pinnacle no-vig true probability for a prop.
+    Returns (prob, confirms_model, note) or (None, False, "")
+    """
+    cache_key = f"pinnacle_{sport}"
+    pinn_data = st.session_state.get(cache_key, {})
+    if not pinn_data:
+        return None, False, ""
+
+    props = pinn_data.get("props", {})
+    norm_player = normalize_name(player)
+    norm_stat = stat.lower().replace(" ","_").replace("+","_")
+
+    # Try exact match first
+    pkey = (norm_player, stat.lower(), float(line))
+    entry = props.get(pkey)
+
+    # Try fuzzy stat match
+    if not entry:
+        for k, v in props.items():
+            if k[0] == norm_player and abs(k[2] - float(line)) <= 0.5:
+                stat_match = (
+                    stat.lower()[:4] in k[1].lower() or
+                    k[1].lower()[:4] in stat.lower()
+                )
+                if stat_match:
+                    entry = v
+                    break
+
+    if not entry:
+        return None, False, ""
+
+    prob = entry["over_prob"] if side == "OVER" else entry["under_prob"]
+    over_odds = entry.get("over_odds")
+    under_odds = entry.get("under_odds")
+    odds = over_odds if side == "OVER" else under_odds
+
+    # Does Pinnacle confirm our direction?
+    # If Pinnacle shows >52% for our side = confirms edge
+    confirms = prob > 0.52
+    fade_signal = prob < 0.46  # Pinnacle disagrees strongly
+
+    if confirms:
+        note = f"📌 Pinnacle confirms {side}: {prob:.1%} true prob (fair odds: {odds:+.0f})"
+    elif fade_signal:
+        note = f"⚠️ Pinnacle FADES {side}: {prob:.1%} true prob — sharp money disagrees"
+    else:
+        note = f"📌 Pinnacle neutral: {prob:.1%} true prob"
+
+    return prob, confirms, note
+
+
+def get_pinnacle_edge(model_prob, pinnacle_prob, side="OVER"):
+    """
+    Calculate edge vs Pinnacle as the benchmark.
+    This is the OddsJam/Outlier methodology.
+    positive = we have edge over Pinnacle's true line
+    """
+    if pinnacle_prob is None or model_prob is None:
+        return None
+    # Edge = our model prob - Pinnacle true prob
+    # If positive, we think this is MORE likely than Pinnacle does
+    return round(model_prob - pinnacle_prob, 4)
+
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
@@ -6582,12 +6823,14 @@ with tabs[0]:
             injury_html = f'<span style="background:#e04040;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;">{p["Injury"]}</span>' if p.get("Injury") else ""
             sharp_html = f'<span style="color:#e8a020;font-size:11px;margin-left:8px;">{p["SharpFlag"]}</span>' if p.get("SharpFlag") else ""
             better_line_html = f'<span style="background:#22c55e;color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">⚡ Better on {p["BetterLineSource"]}: {p["Side"]} {p["BetterLineVal"]}</span>' if p.get("BetterLineSource") else ""
+            pinnacle_html = f'<span style="background:#9b59b6;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">📌 Pinnacle {p["PinnacleProb"]}</span>' if p.get("PinnacleConfirms") else ""
+            pinnacle_fade_html = f'<span style="background:#e04040;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">⚠️ Pinnacle Fades</span>' if p.get("PinnacleProb","—") != "—" and not p.get("PinnacleConfirms") and float(p.get("PinnacleProb","50%").replace("%",""))/100 < 0.46 else ""
             ev_2_display = p.get("EV_2pick", "\u2014")
             wager_display = p.get("Wager_2pick", p.get("Wager", 0))
             st.markdown(
                 f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};border-radius:8px;padding:14px 18px;margin-bottom:10px;">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-                f'<div><span style="font-size:16px;font-weight:700;color:#e8f0f8;">{p["Player"]}</span>{injury_html}{sharp_html}{better_line_html}<br/>'
+                f'<div><span style="font-size:16px;font-weight:700;color:#e8f0f8;">{p["Player"]}</span>{injury_html}{sharp_html}{better_line_html}{pinnacle_html}{pinnacle_fade_html}<br/>'
                 f'<span style="font-size:14px;color:{tier_color};font-weight:600;">{p["Side"]} {p["Line"]} {p["Prop"]}</span></div>'
                 f'<div style="text-align:right;"><span style="background:{tier_color};color:#000;font-weight:700;font-size:12px;padding:3px 10px;border-radius:20px;">{p["Tier"]}</span></div>'
                 f'</div>'
@@ -6842,7 +7085,7 @@ with tabs[1]:
         filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
         if filtered:
             display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "DK Salary", "DK Tier", "Better Line", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
+            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "Pinnacle Prob", "Pinnacle Edge", "DK Salary", "DK Tier", "Better Line", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("\U0001f4ca Signal Breakdown — Module Delta Chart"):
@@ -6971,6 +7214,14 @@ with tabs[3]:
                 save_to_gist("locks", st.session_state.locks)
                 record_clv(lock, st.session_state.board_data)
                 record_pinnacle_line(lock, st.session_state.board_data)
+                # Store Pinnacle fair value at lock time for CLV tracking
+                board_match = next((p for p in st.session_state.board_data
+                    if normalize_name(p.get("Player","")) == normalize_name(lock.get("player",""))
+                    and p.get("Prop","").lower() == lock.get("prop","").lower()), None)
+                if board_match:
+                    lock["pinnacle_prob_at_lock"] = board_match.get("PinnacleProb","—")
+                    lock["pinnacle_edge_at_lock"] = board_match.get("PinnacleEdge")
+                    lock["pinnacle_confirms"] = board_match.get("PinnacleConfirms", False)
                 record_injury_performance(lock, "WIN", fetch_injury_news(lock.get("sport", "NBA")))
                 record_signal_performance(lock, "WIN")
                 compute_optimized_weights(lock.get("sport", "NBA"))
