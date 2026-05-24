@@ -5460,17 +5460,33 @@ def load_sport_data(sport):
     
     if pp_props:
         props = pp_props
+        st.caption(f"✅ PrizePicks: {len(pp_props)} props loaded")
     elif ud_props_compare:
         props = ud_props_compare
+        st.caption(f"✅ Underdog Fantasy: {len(ud_props_compare)} props loaded (PrizePicks unavailable)")
     else:
-        # Try parlay-api.com first (clean aggregator, no bot protection)
+        # Try parlay-api.com — clean aggregator with ParlayPlay + Underdog
+        st.caption("⚠️ PrizePicks + Underdog unavailable — trying ParlayAPI aggregator...")
         parlayapi_props = fetch_parlayapi_props(sport)
         if parlayapi_props:
             parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
-            # Also use Underdog and PrizePicks from parlay-api for line comparison
             pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() == "underdog"]
+            pa_pp = [p for p in parlayapi_props if p.get("source","").lower() == "prizepicks"]
             if pa_underdog:
                 st.session_state["ud_props_compare"] = pa_underdog
+            # Use whichever source has the most props
+            if parlayplay_props:
+                props = parlayplay_props
+                st.caption(f"✅ ParlayPlay via ParlayAPI: {len(props)} props")
+            elif pa_underdog:
+                props = pa_underdog
+                st.caption(f"✅ Underdog via ParlayAPI: {len(props)} props")
+            elif pa_pp:
+                props = pa_pp
+                st.caption(f"✅ PrizePicks via ParlayAPI: {len(props)} props")
+            else:
+                props = parlayapi_props
+                st.caption(f"✅ ParlayAPI: {len(props)} props")
         else:
             parlayplay_props = fetch_parlayplay_props(sport)
         if parlayplay_props:
