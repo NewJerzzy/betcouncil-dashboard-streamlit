@@ -7293,8 +7293,10 @@ with tabs[7]:
                         "fix": "Update BALLSDONTLIE_API_KEY in Streamlit Secrets."
                     },
                     "PrizePicks": {
+                        "200": "PrizePicks is responding but props may be cached from an earlier empty response. Click 'Clear PrizePicks Cache' below, then load the board again.",
                         "403": "PrizePicks is temporarily blocking requests. Wait 10 minutes and reload the board.",
-                        "fix": "Wait and retry. If persistent, clear the PrizePicks cache in System tab."
+                        "429": "PrizePicks rate limited — too many requests. Wait 15-30 minutes then try again.",
+                        "fix": "Clear PrizePicks cache in System tab, then reload the board."
                     },
                 }
                 if green_sources:
@@ -7375,6 +7377,25 @@ with tabs[7]:
                 if os.path.exists(p):
                     os.remove(p)
             st.success("NBA cache cleared")
+
+    st.markdown("---")
+    st.markdown("**PrizePicks Cache**")
+    col_pp1, col_pp2 = st.columns(2)
+    with col_pp1:
+        if st.button("🧹 Clear PrizePicks Cache", key="clear_pp_cache"):
+            cleared = 0
+            for f in os.listdir(CACHE_DIR):
+                if f.endswith("_pp.pkl"):
+                    os.remove(os.path.join(CACHE_DIR, f))
+                    cleared += 1
+            st.success(f"✅ Cleared {cleared} PrizePicks cache files — reload the board now")
+    with col_pp2:
+        pp_cache_files = [f for f in os.listdir(CACHE_DIR) if f.endswith("_pp.pkl")]
+        pp_cache_age = 0
+        if pp_cache_files:
+            oldest = min(os.path.getmtime(os.path.join(CACHE_DIR, f)) for f in pp_cache_files)
+            pp_cache_age = int((time.time() - oldest) / 60)
+        st.caption(f"Cache files: {len(pp_cache_files)} | Oldest: {pp_cache_age}m ago")
     with cache_cols_s[1]:
         if st.button("Clear All Rolling Caches"):
             for f in os.listdir(CACHE_DIR):
