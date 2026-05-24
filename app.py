@@ -396,9 +396,8 @@ def classify_regime(signals, edge, line_moved):
 
 def render_signal_chart(prop, sport="NBA"):
     """
-    Render an Ice-Cold-Picks-style signal breakdown chart
-    using Streamlit native components.
-    Returns HTML string for st.markdown.
+    Render a plain-language signal breakdown chart.
+    Shows bettors WHY a pick is rated the way it is.
     """
     signals = {
         "base": prop.get("SignalBase", 0),
@@ -426,61 +425,125 @@ def render_signal_chart(prop, sport="NBA"):
     if max_val == 0:
         max_val = 0.01
 
+    # Plain English labels
+    plain_labels = {
+        "base": "Recent Performance vs Line",
+        "defense": "Opponent Defense Strength",
+        "location": "Home / Away Factor",
+        "rest": "Rest & Schedule",
+        "pace": "Game Pace",
+        "usage": "Teammate Out Boost",
+        "blowout": "Blowout Risk",
+        "weather": "Weather Conditions",
+    }
+
+    # Plain English explanations shown on hover/below
+    plain_desc = {
+        "base": "How this player has been performing vs this exact line recently",
+        "defense": "How good/bad the opponent is at stopping this stat",
+        "location": "Players typically perform differently at home vs away",
+        "rest": "Days of rest — more rest generally helps performance",
+        "pace": "Faster-paced games create more opportunities for counting stats",
+        "usage": "When a teammate is out, this player typically gets more opportunities",
+        "blowout": "Blowout games reduce stats for starters who get pulled early",
+        "weather": "Wind and temperature affect outdoor games like MLB",
+    }
+
+    # Strength label
+    def strength_label(val):
+        a = abs(val)
+        if a >= 0.08: return "Strong"
+        if a >= 0.04: return "Moderate"
+        if a >= 0.01: return "Slight"
+        return "Minimal"
+
     rows_html = ""
     for key, val in signals.items():
         if abs(val) < 0.0001:
             continue
-        label = SIGNAL_LABELS.get(key, key.title())
+        label = plain_labels.get(key, key.title())
+        desc = plain_desc.get(key, "")
         reliability = SIGNAL_RELIABILITY.get(key, 0.5)
         bar_pct = min(100, int(abs(val) / max_val * 100))
         bar_color = "#22c55e" if val > 0 else "#e04040"
-        val_color = "#22c55e" if val > 0 else "#e04040"
-        val_str = f"+{val:.4f}" if val > 0 else f"{val:.4f}"
-        rel_color = "#22c55e" if reliability >= 0.75 else "#e8a020" if reliability >= 0.60 else "#e04040"
+        direction_word = "Favors OVER" if val > 0 else "Favors UNDER"
+        strength = strength_label(val)
+        rel_color = "#22c55e" if reliability >= 0.75 else "#e8a020" if reliability >= 0.60 else "#6a7a8a"
+        rel_label = "High accuracy" if reliability >= 0.75 else "Moderate accuracy" if reliability >= 0.60 else "Lower accuracy"
+
         rows_html += f"""
-<div style="display:grid;grid-template-columns:140px 1fr 70px 45px;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid #1a2a3a;">
-  <div style="font-size:11px;color:#9aa8b8">{label}</div>
-  <div style="background:#0a1628;border-radius:3px;height:14px;overflow:hidden;">
-    <div style="width:{bar_pct}%;height:100%;background:{bar_color};margin-left:{'0' if val > 0 else f'calc(100% - {bar_pct}%)'}"></div>
+<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #1a2a3a;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+    <div>
+      <span style="font-size:12px;font-weight:500;color:#e8f0f8">{label}</span>
+      <span style="font-size:10px;color:{bar_color};margin-left:8px;background:{bar_color}22;padding:1px 7px;border-radius:8px">{strength} {direction_word}</span>
+    </div>
+    <span style="font-size:10px;color:{rel_color}">{rel_label} ({int(reliability*100)}%)</span>
   </div>
-  <div style="font-size:12px;font-weight:500;color:{val_color};text-align:right">{val_str}</div>
-  <div style="font-size:11px;color:{rel_color};text-align:right">{int(reliability*100)}%</div>
+  <div style="background:#0a1628;border-radius:4px;height:10px;overflow:hidden;margin-bottom:3px;">
+    <div style="width:{bar_pct}%;height:100%;background:{bar_color};border-radius:4px;"></div>
+  </div>
+  <div style="font-size:10px;color:#6a7a8a">{desc}</div>
 </div>"""
 
-    zero_impact = [SIGNAL_LABELS.get(k, k) for k, v in signals.items() if abs(v) <= 0.0001]
+    zero_signals = [plain_labels.get(k, k) for k, v in signals.items() if abs(v) <= 0.0001]
     zero_html = ""
-    if zero_impact:
-        zero_html = f'<div style="font-size:10px;color:#4a5a6a;margin-top:6px">Zero impact: {", ".join(zero_impact)}</div>'
+    if zero_signals:
+        zero_html = f'<div style="font-size:10px;color:#4a5a6a;margin-top:4px">No impact: {", ".join(zero_signals)}</div>'
+
+    # Overall verdict in plain English
+    strong_count = sum(1 for v in signals.values() if abs(v) >= 0.06)
+    moderate_count = sum(1 for v in signals.values() if 0.02 <= abs(v) < 0.06)
+
+    if firing == 0:
+        verdict = "No signals firing — not enough data to analyze this pick."
+    elif strong_count >= 2:
+        verdict = f"{strong_count} strong signals all pointing {direction}. High conviction play."
+    elif strong_count == 1 and moderate_count >= 1:
+        verdict = f"1 strong signal + {moderate_count} supporting signals pointing {direction}."
+    elif firing >= 3:
+        verdict = f"{firing} signals pointing {direction}. Moderate conviction."
+    else:
+        verdict = f"Mixed signals — use caution. Only {firing} signal(s) firing."
+
+    # Regime plain English
+    regime_plain = {
+        "CONFIRM OVER": "All signals agree — strong OVER edge",
+        "CONFIRM UNDER": "All signals agree — strong UNDER edge",
+        "REPRICE": "Line moved but model still sees value",
+        "SHARP FADE": "Sharp money moving against the model",
+        "NEUTRAL": "No strong directional bias detected",
+    }.get(regime_label, "")
 
     html = f"""
-<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:10px;padding:14px;margin:8px 0;">
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #1a2a3a;">
-    <div style="text-align:center;">
-      <div style="font-size:9px;color:#6a7a8a;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Net Delta</div>
-      <div style="font-size:28px;font-weight:700;color:{delta_color}">{net_delta:+.4f}</div>
-      <div style="font-size:11px;font-weight:600;color:{delta_color}">{direction}</div>
-    </div>
-    <div style="text-align:center;">
-      <div style="font-size:9px;color:#6a7a8a;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Modules</div>
-      <div style="font-size:22px;font-weight:700;color:#e8f0f8">{firing}/{total}</div>
-      <div style="font-size:10px;color:#6a7a8a">firing</div>
-    </div>
-    <div style="text-align:center;">
-      <div style="font-size:9px;color:#6a7a8a;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Avg Reliability</div>
-      <div style="font-size:22px;font-weight:700;color:#e8a020">{avg_reliability:.1%}</div>
-      <div style="font-size:10px;padding:2px 8px;border-radius:8px;display:inline-block;background:{regime_color}22;color:{regime_color};border:1px solid {regime_color}44">{regime_label}</div>
+<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:10px;padding:16px;margin:6px 0;">
+
+  <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1a2a3a;">
+    <div style="font-size:10px;color:#6a7a8a;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Why this pick is rated the way it is</div>
+    <div style="font-size:14px;font-weight:500;color:{delta_color}">{verdict}</div>
+    <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;">
+      <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+        <div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Signals firing</div>
+        <div style="font-size:18px;font-weight:500;color:#e8f0f8">{firing}<span style="font-size:12px;color:#6a7a8a"> / {total}</span></div>
+      </div>
+      <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+        <div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Avg signal accuracy</div>
+        <div style="font-size:18px;font-weight:500;color:#e8a020">{avg_reliability:.0%}</div>
+      </div>
+      <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+        <div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Market regime</div>
+        <div style="font-size:13px;font-weight:500;color:{regime_color}">{regime_label}</div>
+        <div style="font-size:9px;color:#6a7a8a">{regime_plain}</div>
+      </div>
     </div>
   </div>
-  <div style="display:grid;grid-template-columns:140px 1fr 70px 45px;gap:8px;padding:3px 0 5px;">
-    <div style="font-size:9px;color:#4a5a6a;text-transform:uppercase">Signal</div>
-    <div style="font-size:9px;color:#4a5a6a;text-transform:uppercase">Impact (OVER ← → UNDER)</div>
-    <div style="font-size:9px;color:#4a5a6a;text-transform:uppercase;text-align:right">Delta</div>
-    <div style="font-size:9px;color:#4a5a6a;text-transform:uppercase;text-align:right">Rel%</div>
-  </div>
+
+  <div style="font-size:10px;color:#6a7a8a;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Signal breakdown — what is pushing this pick</div>
   {rows_html}
   {zero_html}
 </div>"""
     return html
+
 
 
 # Sport-specific EWMA decay
@@ -5971,7 +6034,7 @@ with tabs[0]:
                 f'</div></div>',
                 unsafe_allow_html=True
             )
-            with st.expander(f"\U0001f4ca Signal chart \u2014 {p['Player']}", expanded=False):
+            with st.expander(f"\U0001f4ca Why this pick is rated {p['Tier']} \u2014 see the signals", expanded=False):
                 chart_html = render_signal_chart(p, p.get("Sport", "NBA"))
                 st.markdown(chart_html, unsafe_allow_html=True)
     else:
@@ -6033,7 +6096,7 @@ with tabs[0]:
                     st.rerun()
                 else:
                     st.warning("Already locked")
-        with st.expander("\U0001f4ca Lock signal breakdown", expanded=False):
+        with st.expander("\U0001f4ca Why this is the Lock of the Day \u2014 see all signals", expanded=False):
             if best:
                 chart_html = render_signal_chart(best, best.get("Sport", "NBA"))
                 st.markdown(chart_html, unsafe_allow_html=True)
@@ -6218,7 +6281,7 @@ with tabs[1]:
             show_cols = [c for c in show_cols if c in display_df.columns]
             st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
             with st.expander("\U0001f4ca Signal Breakdown — Module Delta Chart"):
-                st.caption("Each signal shows its directional push (green = OVER, red = UNDER) and historical reliability %")
+                st.caption("Each bar shows how strongly a signal pushes the pick toward OVER or UNDER, and how accurate that signal has historically been.")
                 for prop in filtered[:10]:
                     tier_color = TIER_COLORS.get(prop["Tier"], "#7a8a9a")
                     st.markdown(f"""<div style="font-size:13px;font-weight:600;color:#e8f0f8;margin-top:10px;">
