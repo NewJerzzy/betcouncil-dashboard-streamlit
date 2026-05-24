@@ -3860,6 +3860,8 @@ def fetch_parlayplay_props(sport):
                 st.caption(f"📦 ParlayPlay: cached ({age_mins:.0f}m old)")
                 return cached
     url = "https://parlayplay.io/api/v1/crossgame/offering/"
+    pp_session = st.secrets.get("PARLAYPLAY_SESSION", "")
+    pp_cookie = f"sessionid={pp_session}" if pp_session else ""
     pp_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
         "Accept": "application/json, text/plain, */*",
@@ -3875,6 +3877,7 @@ def fetch_parlayplay_props(sport):
         "x-parlayplay-native-platform": "web",
         "x-parlayplay-platform": "web",
         "x-requested-with": "XMLHttpRequest",
+        "Cookie": pp_cookie,
     }
     league_slug_map = {"NBA": ["nba"], "MLB": ["mlb"], "NHL": ["nhl"], "NFL": ["nfl"], "WNBA": ["wnba"]}
     valid_slugs = league_slug_map.get(sport, [])
@@ -6941,8 +6944,8 @@ with tabs[7]:
         {
             "name": "ParlayPlay",
             "description": "Prop fallback #2 — all sports",
-            "url": "https://parlayplay.io/api/v1/projections/?league=NBA&format=json",
-            "headers": {},
+            "url": "https://parlayplay.io/api/v1/crossgame/offering/",
+            "headers": {"Cookie": f"sessionid={st.secrets.get('PARLAYPLAY_SESSION','')}", "Origin": "https://parlayplay.io", "Referer": "https://parlayplay.io/", "x-parlayplay-platform": "web"},
             "budget_key": "PARLAYPLAY",
             "count_key": None,
             "is_prop_source": True,
@@ -7050,11 +7053,14 @@ with tabs[7]:
                 if src["name"] == "ParlayPlay":
                     try:
                         from curl_cffi import requests as cf_requests
+                        _pp_session = st.secrets.get("PARLAYPLAY_SESSION", "")
                         _pp_r = cf_requests.get(src["url"], headers={
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                             "Accept": "application/json",
                             "Origin": "https://parlayplay.io",
                             "Referer": "https://parlayplay.io/",
+                            "Cookie": f"sessionid={_pp_session}",
+                            "x-parlayplay-platform": "web",
                         }, impersonate="chrome120", timeout=10)
                         if _pp_r.status_code == 200:
                             code, detail, color = 200, "✅ 200 OK — Responding normally", "green"
@@ -7096,8 +7102,8 @@ with tabs[7]:
             with st.expander("🔧 Auto-Diagnosis — What these errors mean and what to do", expanded=True):
                 fixes = {
                     "ParlayPlay": {
-                        "403": "ParlayPlay blocks server requests from cloud providers. This is normal — PrizePicks is your primary source. ParlayPlay data will not load but your board will still work fine using PrizePicks.",
-                        "fix": "No action needed. PrizePicks covers all the same props."
+                        "403": "ParlayPlay session cookie is missing or expired. Add PARLAYPLAY_SESSION to Streamlit Secrets. Get it from Chrome DevTools → parlayplay.io → Application → Cookies → sessionid value. Expires every ~2 weeks.",
+                        "fix": "Add or refresh PARLAYPLAY_SESSION in Streamlit Secrets."
                     },
                     "Underdog Fantasy": {
                         "400": "Underdog changed their API format. This is a fallback source only — your board works fine without it.",
