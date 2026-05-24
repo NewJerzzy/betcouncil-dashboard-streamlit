@@ -4215,14 +4215,28 @@ def fetch_oddspapi_props(sport):
             if cached:
                 st.caption(f"📦 OddsPapi: using cached data ({age_mins:.0f}m old)")
                 return cached
-    # v4 API uses numeric sportId: basketball=4, baseball=3, hockey=6, american football=1
-    sport_id_map = {
-        "NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1,
-    }
+    # v4 API: first get tournaments for sport, then get odds by tournament
+    sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
     sport_id = sport_id_map.get(sport)
     if not sport_id:
         return []
-    url = (f"https://api.oddspapi.io/v4/odds?apiKey={ODDSPAPI_KEY}&sportId={sport_id}&bookmakers=draftkings,fanduel,betmgm,pinnacle&markets=player_props")
+    try:
+        # Step 1: get tournament IDs for this sport
+        t_resp = requests.get(
+            f"https://api.oddspapi.io/v4/tournaments?sportId={sport_id}&apiKey={ODDSPAPI_KEY}",
+            timeout=10
+        )
+        if t_resp.status_code != 200:
+            return []
+        tournaments = t_resp.json()
+        # Get top tournaments with upcoming fixtures
+        top_ids = [str(t["tournamentId"]) for t in tournaments if t.get("upcomingFixtures", 0) > 0 or t.get("futureFixtures", 0) > 0][:3]
+        if not top_ids:
+            top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
+        if not top_ids:
+            return []
+        tournament_ids = ",".join(top_ids)
+        url = (f"https://api.oddspapi.io/v4/odds-by-tournaments?bookmaker=draftkings,fanduel,betmgm,pinnacle&tournamentIds={tournament_ids}&apiKey={ODDSPAPI_KEY}&oddsFormat=american")
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDSPAPI")
@@ -6950,7 +6964,7 @@ with tabs[7]:
         {
             "name": "OddsPAPI",
             "description": "Props fallback odds",
-            "url": "https://api.the-odds-api.com/v4/sports?apiKey=" + st.secrets.get("ODDSPAPI_KEY", "demo"),
+            "url": "https://api.oddspapi.io/v4/tournaments?sportId=4&apiKey=" + st.secrets.get("ODDSPAPI_KEY", ""),
             "headers": {},
             "budget_key": "ODDSPAPI",
             "count_key": "ODDSPAPI_KEY",
