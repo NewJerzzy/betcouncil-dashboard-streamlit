@@ -7062,15 +7062,31 @@ with tabs[7]:
                 if src["name"] == "ParlayPlay":
                     try:
                         from curl_cffi import requests as cf_requests
-                        _pp_session = st.secrets.get("PARLAYPLAY_SESSION", "")
-                        _pp_r = cf_requests.get(src["url"], headers={
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Accept": "application/json",
-                            "Origin": "https://parlayplay.io",
-                            "Referer": "https://parlayplay.io/",
-                            "Cookie": f"sessionid={_pp_session}",
-                            "x-parlayplay-platform": "web",
-                        }, impersonate="chrome120", timeout=10)
+                        _pp_cookies = st.secrets.get("PARLAYPLAY_COOKIES", "") or f"sessionid={st.secrets.get('PARLAYPLAY_SESSION','')}"
+                        _pp_r = cf_requests.get(
+                            "https://parlayplay.io/api/v1/crossgame/offering/",
+                            headers={
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
+                                "Accept": "application/json, text/plain, */*",
+                                "Accept-Language": "en-US,en;q=0.9",
+                                "Origin": "https://parlayplay.io",
+                                "Referer": "https://parlayplay.io/",
+                                "Cookie": _pp_cookies,
+                                "x-csrftoken": "1",
+                                "x-parlay-request": "1",
+                                "x-parlayplay-native-platform": "web",
+                                "x-parlayplay-platform": "web",
+                                "x-requested-with": "XMLHttpRequest",
+                                "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+                                "sec-ch-ua-mobile": "?0",
+                                "sec-ch-ua-platform": '"Windows"',
+                                "sec-fetch-dest": "empty",
+                                "sec-fetch-mode": "cors",
+                                "sec-fetch-site": "same-origin",
+                            },
+                            impersonate="edge101",
+                            timeout=15
+                        )
                         if _pp_r.status_code == 200:
                             code, detail, color = 200, "✅ 200 OK — Responding normally", "green"
                         elif _pp_r.status_code == 403:
