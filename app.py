@@ -3036,9 +3036,26 @@ def fetch_underdog_props(sport):
     sport_id = sport_map.get(sport)
     if not sport_id:
         return []
-    url = f"https://api.underdogfantasy.com/v2/over_under_lines?sport_id={sport_id}"
+    # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
+    product_exp_id = "018e1234-5678-9abc-def0-123456789006"
+    state_config_id = "725014ef-3570-4e93-871d-d69674ab3521"
+    url_v1 = (
+        f"https://api.underdogfantasy.com/v1/lobbies/content/lines"
+        f"?include_live=true&product=fantasy"
+        f"&product_experience_id={product_exp_id}"
+        f"&show_mass_option_markets=false"
+        f"&sport_id={sport_id}"
+        f"&state_config_id={state_config_id}"
+    )
+    url_v2 = f"https://api.underdogfantasy.com/v2/over_under_lines?sport_id={sport_id}"
+    url = url_v1
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        ud_headers = {**HEADERS, "Origin": "https://underdogfantasy.com", "Referer": "https://underdogfantasy.com/pick-em"}
+        resp = requests.get(url, headers=ud_headers, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 400 or resp.status_code == 403:
+            # Fall back to v2
+            resp = requests.get(url_v2, headers=ud_headers, timeout=REQUEST_TIMEOUT)
+            url = url_v2
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -7104,11 +7121,11 @@ with tabs[7]:
         {
             "name": "Underdog Fantasy",
             "description": "Via ParlayAPI aggregator",
-            "url": "https://parlay-api.com/v1/sports",
-            "headers": {"X-API-Key": st.secrets.get("PARLAY_API_KEY", "")},
+            "url": f"https://api.underdogfantasy.com/v1/lobbies/content/lines?include_live=true&product=fantasy&product_experience_id=018e1234-5678-9abc-def0-123456789006&show_mass_option_markets=false&sport_id=NBA&state_config_id=725014ef-3570-4e93-871d-d69674ab3521",
+            "headers": {"Origin": "https://underdogfantasy.com", "Referer": "https://underdogfantasy.com/pick-em", "User-Agent": "Mozilla/5.0"},
             "budget_key": None,
-            "count_key": "PARLAY_API_KEY",
-            "is_prop_source": False,
+            "count_key": None,
+            "is_prop_source": True,
         },
         {
             "name": "ParlayPlay",
@@ -7140,7 +7157,7 @@ with tabs[7]:
         {
             "name": "ParlayAPI",
             "description": "ParlayPlay + Underdog + arb scanner",
-            "url": "https://parlay-api.com/v1/sports",
+            "url": f"https://api.underdogfantasy.com/v1/lobbies/content/lines?include_live=true&product=fantasy&product_experience_id=018e1234-5678-9abc-def0-123456789006&show_mass_option_markets=false&sport_id=NBA&state_config_id=725014ef-3570-4e93-871d-d69674ab3521",
             "headers": {"X-API-Key": st.secrets.get("PARLAY_API_KEY", "")},
             "budget_key": None,
             "count_key": "PARLAY_API_KEY",
