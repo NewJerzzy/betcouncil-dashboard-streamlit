@@ -7103,11 +7103,11 @@ with tabs[7]:
         },
         {
             "name": "Underdog Fantasy",
-            "description": "Prop fallback #1",
-            "url": "https://api.underdogfantasy.com/v2/over_under_lines?sport_id=NBA",
-            "headers": {},
+            "description": "Via ParlayAPI aggregator",
+            "url": "https://parlay-api.com/v1/sports/basketball_nba/props?bookmakers=underdog&dfsOdds=midpoint",
+            "headers": {"X-API-Key": st.secrets.get("PARLAY_API_KEY", "")},
             "budget_key": None,
-            "count_key": None,
+            "count_key": "PARLAY_API_KEY",
             "is_prop_source": True,
         },
         {
