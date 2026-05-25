@@ -7218,6 +7218,7 @@ with tabs[0]:
             for p in parlay_props:
                 dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
                 legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:0.88rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:#6a7a8a;font-size:0.88rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
+            play_label = "▶ PLAY" if ev > 0 else "✖ PASS"
             st.markdown(f"""
             <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
@@ -7227,7 +7228,7 @@ with tabs[0]:
                 <div style="display:flex;gap:1.5rem;font-size:0.92rem;margin-bottom:0.7rem;">
                     <span style="color:#b8c6d6;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
                     <span style="color:#8a9ab0;">Breakeven: {be:.1%}</span>
-                    <span style="color:{ev_color};">{"▶ PLAY" if ev > 0 else "✖ PASS"}</span>
+                    <span style="color:{ev_color};">{play_label}</span>
                 </div>
                 {legs_html}
             </div>
@@ -7245,7 +7246,7 @@ with tabs[0]:
             g_legs = ""
             for g in top_games:
                 bb = g.get("best_bet",{})
-                g_legs += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;"><span style="color:#378add;font-size:0.88rem;">{bb.get("type","")}</span> <span style="color:#e8f0f8;font-size:0.88rem;">{g.get("matchup","")} — {bb.get("pick","")}</span> <span style="color:#6a7a8a;font-size:0.88rem;">({bb.get("edge_pct",""):})</span></div>'
+                g_legs += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;"><span style="color:#378add;font-size:0.88rem;">{bb.get("type","")}</span> <span style="color:#e8f0f8;font-size:0.88rem;">{g.get("matchup","")} — {bb.get("pick","")}</span> <span style="color:#6a7a8a;font-size:0.88rem;">({bb.get("edge_pct","")})</span></div>'
             st.markdown(f"""
             <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
