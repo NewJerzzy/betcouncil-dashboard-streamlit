@@ -3077,6 +3077,63 @@ BDL_PLAYER_IDS = {
     "De'Aaron Fox": 170, "Pascal Siakam": 400, "Kawhi Leonard": 232, "Luguentz Dort": 601,
 }
 
+def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
+    """
+    Fetch season averages for a specific player by name search.
+    Used when player isn't in BDL_PLAYER_IDS (e.g. playoff callups).
+    """
+    if not BDL_API_KEY:
+        return None
+    cache_key = f"bdl_avg_{normalize_name(player_name)}_{season}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    try:
+        r = requests.get(
+            "https://api.balldontlie.io/v1/players",
+            headers={"Authorization": BDL_API_KEY},
+            params={"search": player_name, "per_page": 3},
+            timeout=8
+        )
+        if r.status_code != 200:
+            return None
+        players = r.json().get("data", [])
+        if not players:
+            return None
+        pid = players[0]["id"]
+        r2 = requests.get(
+            "https://api.balldontlie.io/v1/season_averages",
+            headers={"Authorization": BDL_API_KEY},
+            params={"season": season, "player_ids[]": pid},
+            timeout=8
+        )
+        if r2.status_code != 200:
+            return None
+        avgs_data = r2.json().get("data", [])
+        if not avgs_data:
+            return None
+        a = avgs_data[0]
+        pts = round(float(a.get("pts", 0)), 1)
+        reb = round(float(a.get("reb", 0)), 1)
+        ast = round(float(a.get("ast", 0)), 1)
+        result = {
+            "PTS": pts, "REB": reb, "AST": ast,
+            "PRA": round(pts + reb + ast, 1),
+            "3PM": round(float(a.get("fg3m", 0)), 1),
+            "STL": round(float(a.get("stl", 0)), 1),
+            "BLK": round(float(a.get("blk", 0)), 1),
+            "TO": round(float(a.get("turnover", 0)), 1),
+        }
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+        return result
+    except:
+        return None
+
+
 def fetch_nba_averages_bdl():
     cache_path = os.path.join(CACHE_DIR, "bdl_nba_avgs.pkl")
     if os.path.exists(cache_path):
@@ -6193,6 +6250,80 @@ def fetch_dk_nba_draftgroup_id():
 
 
 
+def fetch_sleeper_props(sport):
+    """
+    Fetch player props from Sleeper DFS - free public API.
+    Available in California. Returns props in standard format.
+    """
+    sport_map = {"NBA": "nba", "MLB": "mlb", "NFL": "nfl", "NHL": "nhl"}
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"sleeper_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    try:
+        # Sleeper projections endpoint
+        url = f"https://api.sleeper.app/projections/{sport_key}/2025/1?season_type=regular&position[]=FLEX&position[]=QB&position[]=RB&position[]=WR&position[]=TE&position[]=K"
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+        props = []
+        seen = set()
+
+        # Sleeper returns projections, not explicit lines
+        # We use projected stats as our own lines for comparison
+        stat_map = {
+            "pts_std": "Points", "rec_yd": "Receiving Yards",
+            "rush_yd": "Rushing Yards", "pass_yd": "Passing Yards",
+            "rec": "Receptions", "pts_half_ppr": "Fantasy Points",
+        }
+        for player_proj in data:
+            if not isinstance(player_proj, dict):
+                continue
+            player_id = player_proj.get("player_id","")
+            stats = player_proj.get("stats", {})
+            player_info = player_proj.get("player", {})
+            if not player_info:
+                continue
+            name = f"{player_info.get('first_name','')} {player_info.get('last_name','')}".strip()
+            if not name:
+                continue
+            for stat_key, stat_name in stat_map.items():
+                val = stats.get(stat_key)
+                if val and float(val) > 0:
+                    line = round(float(val) - 0.5, 1)
+                    key = (sport, name, stat_name)
+                    if key not in seen:
+                        seen.add(key)
+                        props.append({
+                            "Player": name, "Prop": stat_name,
+                            "Line": line, "Side": "OVER",
+                            "Sport": sport, "source": "Sleeper",
+                            "SleeperProjection": float(val)
+                        })
+
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+        return props
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_sleeper_props",
+            "error": str(e)[:100]
+        })
+        return []
+
+
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -6400,13 +6531,18 @@ def load_sport_data(sport):
                             games, _, _, _ = fetch_game_lines(sport)
                             return [], games, 0, 0, {}, {}
                     else:
-                        # Last resort: use cached props from previous load
-                        cached_props = st.session_state.get("last_good_props", {}).get(sport, [])
-                        if cached_props:
-                            props = cached_props
+                        # Try Sleeper DFS projections
+                        sleeper_props = fetch_sleeper_props(sport)
+                        if sleeper_props:
+                            props = sleeper_props
                         else:
-                            games, _, _, _ = fetch_game_lines(sport)
-                            return [], games, 0, 0, {}, {}
+                            # Last resort: cached props from previous load
+                            cached_props = st.session_state.get("last_good_props", {}).get(sport, [])
+                            if cached_props:
+                                props = cached_props
+                            else:
+                                games, _, _, _ = fetch_game_lines(sport)
+                                return [], games, 0, 0, {}, {}
     
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
     public_betting = {}
@@ -6503,9 +6639,16 @@ def load_sport_data(sport):
             player_stats, using_default = find_player_avg(player, season_avgs)
             if using_default:
                 skipped_def += 1
-                if skip_def and len(props) >= 30:
-                    continue
-                avg_dict = {stat_norm: defaults.get(stat_norm, line)}
+                # Try live BDL lookup before using static defaults
+                if BDL_API_KEY and sport == "NBA":
+                    live_avg = fetch_player_season_avg_bdl(player, sport)
+                    if live_avg:
+                        avg_dict = live_avg
+                        using_default = False
+                if using_default:
+                    if skip_def and len(props) >= 30:
+                        continue
+                    avg_dict = {stat_norm: defaults.get(stat_norm, line)}
                 avg_dict["search_needed"] = True
                 avg_dict["search_query"] = f"{player} stats last 10 games 2026"
             else:
@@ -7403,6 +7546,37 @@ with tabs[0]:
         else:
             st.markdown('<div style="color:#8a9ab0;font-size:0.85rem;padding:0.3rem 0;">Load boards across sports to see the best plays of the day.</div>', unsafe_allow_html=True)
 
+        # ── TRENDING PICKS ─────────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Trending Picks (Last 7 Days)</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        all_history = st.session_state.get("history", [])
+        if all_history:
+            from datetime import timedelta
+            cutoff = datetime.now() - timedelta(days=7)
+            recent_picks = [h for h in all_history if h.get("timestamp","") >= cutoff.strftime("%Y-%m-%d")]
+            if recent_picks:
+                # Count frequency and win rate per prop
+                prop_stats = {}
+                for h in recent_picks:
+                    key = f"{h.get('player','')} {h.get('side','')} {h.get('line','')} {h.get('prop','')}"
+                    if key not in prop_stats:
+                        prop_stats[key] = {"count": 0, "wins": 0, "tier": h.get("tier",""), "player": h.get("player",""), "prop": h.get("prop",""), "line": h.get("line",""), "side": h.get("side","")}
+                    prop_stats[key]["count"] += 1
+                    if h.get("outcome") == "WIN":
+                        prop_stats[key]["wins"] += 1
+                # Sort by frequency
+                trending = sorted(prop_stats.values(), key=lambda x: x["count"], reverse=True)[:5]
+                trend_html = ""
+                for t in trending:
+                    hit_rate = t["wins"] / t["count"] if t["count"] > 0 else 0
+                    hit_color = "#22c55e" if hit_rate >= 0.6 else "#e8a020" if hit_rate >= 0.4 else "#e04040"
+                    tier_c = TIER_COLORS.get(t["tier"], "#6a7a8a")
+                    trend_html += f'<div style="background:#0a0e14;border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;justify-content:space-between;"><div><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{t["player"]}</span> <span style="color:#b8c6d6;font-size:0.82rem;">{t["side"]} {t["line"]} {t["prop"]}</span></div><div style="text-align:right;"><span style="color:{hit_color};font-weight:600;font-size:0.82rem;">{hit_rate:.0%} ({t["wins"]}/{t["count"]})</span> <span style="color:#6a7a8a;font-size:0.75rem;margin-left:6px;">{t["count"]}x locked</span></div></div>'
+                st.markdown(trend_html, unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="color:#6a7a8a;font-size:0.85rem;">No picks in the last 7 days. Start locking picks to see trends.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#6a7a8a;font-size:0.85rem;">Lock picks to start tracking trends.</div>', unsafe_allow_html=True)
+
         # ── AI ASSISTANT SYNC ──────────────────────────────
         ai_col1, ai_col2 = st.columns([3, 1])
         with ai_col1:
@@ -7679,8 +7853,68 @@ with tabs[4]:
     if st.session_state.history:
         hist_df = pd.DataFrame(st.session_state.history)
         hist_df = hist_df.iloc[::-1].reset_index(drop=True)
-        cols = [c for c in ["timestamp", "player", "prop", "line", "side", "tier", "wager", "outcome", "net"] if c in hist_df.columns]
-        st.dataframe(hist_df[cols], width="stretch")
+
+        # Filters
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        with filter_col1:
+            tier_filter_h = st.multiselect(
+                "Filter by Tier",
+                ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS","N/A"],
+                default=["SOVEREIGN","ELITE","APPROVED","LEAN","PASS","N/A"],
+                key="hist_tier_filter"
+            )
+        with filter_col2:
+            outcome_filter = st.multiselect(
+                "Filter by Result",
+                ["WIN","LOSS","PENDING"],
+                default=["WIN","LOSS","PENDING"],
+                key="hist_outcome_filter"
+            )
+        with filter_col3:
+            sport_filter_h = st.multiselect(
+                "Filter by Sport",
+                list(set(h.get("sport","") for h in st.session_state.history if h.get("sport"))),
+                default=list(set(h.get("sport","") for h in st.session_state.history if h.get("sport"))),
+                key="hist_sport_filter"
+            )
+
+        # Apply filters
+        filtered_hist = hist_df.copy()
+        if "tier" in filtered_hist.columns:
+            filtered_hist = filtered_hist[filtered_hist["tier"].fillna("N/A").isin(tier_filter_h)]
+        if "outcome" in filtered_hist.columns:
+            filtered_hist = filtered_hist[filtered_hist["outcome"].fillna("PENDING").isin(outcome_filter)]
+        if "sport" in filtered_hist.columns:
+            filtered_hist = filtered_hist[filtered_hist["sport"].fillna("").isin(sport_filter_h + [""])]
+
+        # Friendly column names
+        display_cols = {
+            "timestamp": "Date", "player": "Player", "prop": "Stat",
+            "line": "Line", "side": "Side", "tier": "Tier",
+            "wager": "Wager ($)", "outcome": "Result", "net": "Net ($)",
+            "sport": "Sport", "source": "Platform"
+        }
+        show_cols = [c for c in display_cols.keys() if c in filtered_hist.columns]
+        filtered_hist_display = filtered_hist[show_cols].rename(columns=display_cols)
+        st.dataframe(filtered_hist_display, use_container_width=True, hide_index=True)
+        st.caption(f"Showing {len(filtered_hist)} of {len(hist_df)} bets")
+
+        # Legend
+        with st.expander("📖 How to read this tab"):
+            st.markdown("""
+**Tier guide:**
+- 🟢 **SOVEREIGN** — Highest conviction, edge ≥15%
+- 🔵 **ELITE** — Strong edge, 10-15%
+- 🟠 **APPROVED** — Solid edge, 5-10%
+- ⚪ **LEAN** — Small edge, 2-5%
+- ⬛ **PASS** — No edge, avoid
+
+**Result:** WIN = hit the line, LOSS = missed, PENDING = not yet resolved
+
+**Net ($):** Profit or loss after wager. Green = profit, Red = loss.
+
+**CLV:** Closing Line Value — positive CLV means you got a better price than the market closed at.
+            """)
         if st.button("Clear History"):
             st.session_state.history = []
             save_json_data(HISTORY_PATH, [])
@@ -7868,7 +8102,8 @@ with tabs[5]:
                     st.error("Could not parse. Format: Player Name OVER/UNDER Line Stat")
 
     st.markdown("---")
-    st.markdown("### Manual Entry")
+    st.markdown("### Add Pick Manually")
+    st.caption("Use this to add picks that weren't on the screenshot or to build a custom slip.")
 
     col_sa1, col_sa2 = st.columns(2)
     with col_sa1:
@@ -8402,6 +8637,7 @@ with tabs[7]:
                 st.caption("Upload a screenshot to see extracted text.")
         st.markdown("---")
         st.markdown("### Single Bet")
+        st.caption("Can't upload a screenshot? Log a single bet manually here.")
         bet_type_sel = st.radio("Bet type", ["Player Prop", "Game Line"], horizontal=True, key="log_bet_type")
         col_l1, col_l2 = st.columns(2)
         with col_l1:
@@ -8427,7 +8663,8 @@ with tabs[7]:
         log_notes = st.text_input("Notes (optional)", placeholder="e.g. Jokic questionable, sharp line move", key="log_notes")
         log_edge = st.number_input("Edge % (optional)", min_value=0.0, max_value=50.0, value=0.0, step=0.1, key="log_edge") / 100.0
         st.markdown("---")
-        if st.button("\u2705 Submit Bet Result", key="submit_manual_bet"):
+        st.caption("ℹ️ Use this to log bets from any book. Results auto-update your bankroll and history.")
+    if st.button("\u2705 Submit Bet Result", key="submit_manual_bet"):
             if not log_player:
                 st.error("Enter player name or matchup.")
             elif log_wager <= 0:
