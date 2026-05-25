@@ -6280,12 +6280,10 @@ def load_sport_data(sport):
                 st.caption(f"✅ ParlayAPI: {len(props)} props")
         else:
             parlayplay_props = fetch_parlayplay_props(sport)
-        if parlayplay_props:
-            props = parlayplay_props
-            st.success(f"✅ ParlayPlay — {len(parlayplay_props)} props")
-        elif oddswrap_props:
-            props = [p for p in oddswrap_props if p["Side"] == "OVER"]
-            st.info("Using DraftKings/Bovada props as primary source")
+            if parlayplay_props:
+                props = parlayplay_props
+            elif oddswrap_props:
+                props = [p for p in oddswrap_props if p["Side"] == "OVER"]
         else:
             st.info("Primary sources unavailable — trying Bovada/MyBookie props...")
             odds_api_props = fetch_odds_api_props(sport)
