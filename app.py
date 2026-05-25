@@ -639,7 +639,8 @@ PLAYER_AVERAGES.update({
 })
 
 DEFAULT_AVERAGES = {
-    "NBA": {"PTS": 10.0, "REB": 4.0, "AST": 2.5, "PRA": 16.5},
+    "NBA": {"PTS": 18.0, "REB": 5.5, "AST": 4.0, "PRA": 27.5,
+            "3PM": 1.8, "STL": 1.0, "BLK": 0.8, "TO": 2.0},
     "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
     "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
     "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
@@ -7272,6 +7273,15 @@ with tabs[0]:
         else:
             st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
 
+        # ── GAMES TO AVOID ─────────────────────────────────
+        avoid_games = [g for g in game_analysis if g.get("best_edge",0) < -0.05][:3]
+        if avoid_games:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            for ag in avoid_games:
+                bb = ag.get("best_bet",{})
+                reason = bb.get("note","Model projects significant line value against public consensus")
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:0.82rem;">AVOID {ag.get("best_edge",0):+.1%}</span></div><div style="font-size:0.75rem;color:#8a9ab0;margin-top:2px;">{reason[:80]}</div></div>', unsafe_allow_html=True)
+
         # ── CONFIDENCE MATRIX ──────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Master Slip Confidence Matrix</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         if parlay_props:
@@ -7311,6 +7321,14 @@ with tabs[0]:
             st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;">Load the board to see +EV props.</div>', unsafe_allow_html=True)
 
         # ── FULL PROP BOARD ─────────────────────────────────
+        # Players to Avoid
+        avoid_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < 0][:5]
+        if avoid_props:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            for ap in avoid_props:
+                reason = ap.get("PinnacleNote","") or f"Model fades — avg {ap.get('Avg',0):.1f} vs line {ap.get('Line',0)}"
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{ap.get("Player","")} {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:0.82rem;">FADE {ap.get("EdgePct","")}</span></div><div style="font-size:0.75rem;color:#8a9ab0;margin-top:2px;">{reason[:80]}</div></div>', unsafe_allow_html=True)
+
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Full Prop Board</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"]
         tier_border = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#5f5e5a","PASS":"#2a3a4a"}
