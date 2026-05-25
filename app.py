@@ -5548,6 +5548,147 @@ def make_display_df(props):
         })
     return pd.DataFrame(rows)
 
+def fetch_dk_salaries(sport="NBA"):
+    """
+    Fetch DraftKings DFS salary data for today's slate.
+    Returns dict: {player_name: {salary, avg_points, value_score}}
+    High salary = DK model projects big game
+    Value score = projected points per $1000 salary
+    """
+    cache_path = os.path.join(CACHE_DIR, f"dk_salaries_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    sport_map = {
+        "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
+        "NFL": "NFL", "WNBA": "WNBA"
+    }
+    dk_sport = sport_map.get(sport)
+    if not dk_sport:
+        return {}
+
+    try:
+        # Step 1: get draftGroupId
+        contests_r = requests.get(
+            f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if contests_r.status_code != 200:
+            return {}
+
+        contests = contests_r.json().get("Contests", [])
+        draft_group_id = None
+        for c in contests:
+            name = c.get("n", "").lower()
+            if ("classic" in name or "showdown" not in name) and c.get("dg"):
+                draft_group_id = c["dg"]
+                break
+
+        if not draft_group_id:
+            return {}
+
+        # Step 2: get draftable players with salaries
+        players_r = requests.get(
+            f"https://api.draftkings.com/draftgroups/v1/{draft_group_id}/draftables",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if players_r.status_code != 200:
+            return {}
+
+        data = players_r.json()
+        draftables = data.get("draftables", [])
+
+        salaries = {}
+        for player in draftables:
+            name = player.get("displayName", "")
+            salary = player.get("salary", 0)
+            avg_pts = player.get("draftStatAttributes", [{}])
+            # Extract average FPPG
+            fppg = 0.0
+            for attr in player.get("draftStatAttributes", []):
+                if attr.get("id") == 90:  # FPPG stat id
+                    try:
+                        fppg = float(attr.get("value", 0))
+                    except:
+                        pass
+
+            if name and salary:
+                value_score = round((fppg / (salary / 1000)), 2) if salary > 0 else 0
+                salaries[normalize_name(name)] = {
+                    "name": name,
+                    "salary": salary,
+                    "fppg": fppg,
+                    "value": value_score,
+                    "salary_tier": (
+                        "ELITE" if salary >= 9000 else
+                        "HIGH" if salary >= 7500 else
+                        "MID" if salary >= 6000 else
+                        "VALUE"
+                    )
+                }
+
+        if salaries:
+            with open(cache_path, "wb") as f:
+                pickle.dump(salaries, f)
+            st.session_state["dk_salaries"] = salaries
+
+        return salaries
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_dk_salaries",
+            "error": str(e)[:100]
+        })
+        return {}
+
+
+def apply_dk_salary_signal(prop, dk_salaries):
+    """
+    Apply DraftKings salary as a signal modifier.
+    High salary = market confidence signal
+    Returns signal adjustment (-0.05 to +0.05)
+    """
+    if not dk_salaries:
+        return 0.0, ""
+
+    norm = normalize_name(prop.get("Player", ""))
+    dk_data = dk_salaries.get(norm)
+    if not dk_data:
+        return 0.0, ""
+
+    salary = dk_data["salary"]
+    tier = dk_data["salary_tier"]
+    value = dk_data["value"]
+    fppg = dk_data["fppg"]
+
+    # High salary + high value = positive signal
+    # High salary + low value = cautious (might be overpriced)
+    if tier == "ELITE" and value >= 5.0:
+        return 0.02, f"DK Elite ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x value"
+    elif tier == "ELITE":
+        return 0.01, f"DK Elite ${salary:,} | {fppg:.1f} FPPG"
+    elif tier == "HIGH" and value >= 5.5:
+        return 0.015, f"DK High ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x value"
+    elif tier == "VALUE" and value >= 6.0:
+        return 0.02, f"DK Value ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x VALUE PLAY"
+    else:
+        return 0.0, f"DK ${salary:,} | {tier}"
+
+
+# =============================================================
+# PINNACLE FAIR VALUE ENGINE
+# The gold standard: use Pinnacle no-vig odds as true probability
+# Elite models (OddsJam, Outlier, Sharp) all anchor to Pinnacle
+# =============================================================
+
+PINNACLE_PROP_CACHE = {}  # in-memory: {(player_norm, stat, line): {"over_prob": x, "under_prob": x}}
+PINNACLE_GAME_CACHE = {}  # in-memory: {(home, away, market): {"prob": x, "line": x}}
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -6444,147 +6585,6 @@ def fetch_dk_nba_draftgroup_id():
     return None
 
 
-def fetch_dk_salaries(sport="NBA"):
-    """
-    Fetch DraftKings DFS salary data for today's slate.
-    Returns dict: {player_name: {salary, avg_points, value_score}}
-    High salary = DK model projects big game
-    Value score = projected points per $1000 salary
-    """
-    cache_path = os.path.join(CACHE_DIR, f"dk_salaries_{sport}.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
-
-    sport_map = {
-        "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
-        "NFL": "NFL", "WNBA": "WNBA"
-    }
-    dk_sport = sport_map.get(sport)
-    if not dk_sport:
-        return {}
-
-    try:
-        # Step 1: get draftGroupId
-        contests_r = requests.get(
-            f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
-            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
-            timeout=10
-        )
-        if contests_r.status_code != 200:
-            return {}
-
-        contests = contests_r.json().get("Contests", [])
-        draft_group_id = None
-        for c in contests:
-            name = c.get("n", "").lower()
-            if ("classic" in name or "showdown" not in name) and c.get("dg"):
-                draft_group_id = c["dg"]
-                break
-
-        if not draft_group_id:
-            return {}
-
-        # Step 2: get draftable players with salaries
-        players_r = requests.get(
-            f"https://api.draftkings.com/draftgroups/v1/{draft_group_id}/draftables",
-            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
-            timeout=10
-        )
-        if players_r.status_code != 200:
-            return {}
-
-        data = players_r.json()
-        draftables = data.get("draftables", [])
-
-        salaries = {}
-        for player in draftables:
-            name = player.get("displayName", "")
-            salary = player.get("salary", 0)
-            avg_pts = player.get("draftStatAttributes", [{}])
-            # Extract average FPPG
-            fppg = 0.0
-            for attr in player.get("draftStatAttributes", []):
-                if attr.get("id") == 90:  # FPPG stat id
-                    try:
-                        fppg = float(attr.get("value", 0))
-                    except:
-                        pass
-
-            if name and salary:
-                value_score = round((fppg / (salary / 1000)), 2) if salary > 0 else 0
-                salaries[normalize_name(name)] = {
-                    "name": name,
-                    "salary": salary,
-                    "fppg": fppg,
-                    "value": value_score,
-                    "salary_tier": (
-                        "ELITE" if salary >= 9000 else
-                        "HIGH" if salary >= 7500 else
-                        "MID" if salary >= 6000 else
-                        "VALUE"
-                    )
-                }
-
-        if salaries:
-            with open(cache_path, "wb") as f:
-                pickle.dump(salaries, f)
-            st.session_state["dk_salaries"] = salaries
-
-        return salaries
-
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_dk_salaries",
-            "error": str(e)[:100]
-        })
-        return {}
-
-
-def apply_dk_salary_signal(prop, dk_salaries):
-    """
-    Apply DraftKings salary as a signal modifier.
-    High salary = market confidence signal
-    Returns signal adjustment (-0.05 to +0.05)
-    """
-    if not dk_salaries:
-        return 0.0, ""
-
-    norm = normalize_name(prop.get("Player", ""))
-    dk_data = dk_salaries.get(norm)
-    if not dk_data:
-        return 0.0, ""
-
-    salary = dk_data["salary"]
-    tier = dk_data["salary_tier"]
-    value = dk_data["value"]
-    fppg = dk_data["fppg"]
-
-    # High salary + high value = positive signal
-    # High salary + low value = cautious (might be overpriced)
-    if tier == "ELITE" and value >= 5.0:
-        return 0.02, f"DK Elite ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x value"
-    elif tier == "ELITE":
-        return 0.01, f"DK Elite ${salary:,} | {fppg:.1f} FPPG"
-    elif tier == "HIGH" and value >= 5.5:
-        return 0.015, f"DK High ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x value"
-    elif tier == "VALUE" and value >= 6.0:
-        return 0.02, f"DK Value ${salary:,} | {fppg:.1f} FPPG | {value:.1f}x VALUE PLAY"
-    else:
-        return 0.0, f"DK ${salary:,} | {tier}"
-
-
-# =============================================================
-# PINNACLE FAIR VALUE ENGINE
-# The gold standard: use Pinnacle no-vig odds as true probability
-# Elite models (OddsJam, Outlier, Sharp) all anchor to Pinnacle
-# =============================================================
-
-PINNACLE_PROP_CACHE = {}  # in-memory: {(player_norm, stat, line): {"over_prob": x, "under_prob": x}}
-PINNACLE_GAME_CACHE = {}  # in-memory: {(home, away, market): {"prob": x, "line": x}}
 
 def fetch_pinnacle_lines(sport):
     """
