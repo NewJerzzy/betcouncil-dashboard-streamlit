@@ -6251,13 +6251,10 @@ def load_sport_data(sport):
     
     if pp_props:
         props = pp_props
-        st.caption(f"✅ PrizePicks: {len(pp_props)} props loaded")
     elif ud_props_compare:
         props = ud_props_compare
-        st.caption(f"✅ Underdog Fantasy: {len(ud_props_compare)} props loaded (PrizePicks unavailable)")
     else:
-        # Try parlay-api.com — clean aggregator with ParlayPlay + Underdog
-        st.caption("⚠️ PrizePicks + Underdog unavailable — trying ParlayAPI aggregator...")
+        # Fallback chain: ParlayAPI → ParlayPlay → OddsAPI → OddsPAPI
         parlayapi_props = fetch_parlayapi_props(sport)
         if parlayapi_props:
             parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
@@ -6265,53 +6262,38 @@ def load_sport_data(sport):
             pa_pp = [p for p in parlayapi_props if p.get("source","").lower() == "prizepicks"]
             if pa_underdog:
                 st.session_state["ud_props_compare"] = pa_underdog
-            # Use whichever source has the most props
             if parlayplay_props:
                 props = parlayplay_props
-                st.caption(f"✅ ParlayPlay via ParlayAPI: {len(props)} props")
             elif pa_underdog:
                 props = pa_underdog
-                st.caption(f"✅ Underdog via ParlayAPI: {len(props)} props")
             elif pa_pp:
                 props = pa_pp
-                st.caption(f"✅ PrizePicks via ParlayAPI: {len(props)} props")
             else:
                 props = parlayapi_props
-                st.caption(f"✅ ParlayAPI: {len(props)} props")
         else:
             parlayplay_props = fetch_parlayplay_props(sport)
             if parlayplay_props:
                 props = parlayplay_props
             elif oddswrap_props:
-                props = [p for p in oddswrap_props if p["Side"] == "OVER"]
-        else:
-            st.info("Primary sources unavailable — trying Bovada/MyBookie props...")
-            odds_api_props = fetch_odds_api_props(sport)
-            if odds_api_props:
-                props = odds_api_props
-                st.success(f"✅ Bovada/MyBookie props — {len(odds_api_props)} loaded")
-            elif sport == "NBA" and BDL_API_KEY:
-                st.info("Trying BDL Props backup...")
-                bdl_props = fetch_bdl_props(sport)
-                if bdl_props:
-                    props = bdl_props
-                    st.success(f"✅ BDL Props — {len(bdl_props)} loaded")
+                props = [p for p in oddswrap_props if p.get("Side") == "OVER"]
+            else:
+                odds_api_props = fetch_odds_api_props(sport)
+                if odds_api_props:
+                    props = odds_api_props
                 else:
                     oddspapi_props = fetch_oddspapi_props(sport)
                     if oddspapi_props:
                         props = oddspapi_props
-                        st.success(f"✅ OddsPapi — {len(oddspapi_props)} props")
+                    elif sport == "NBA" and BDL_API_KEY:
+                        bdl_props = fetch_bdl_props(sport)
+                        if bdl_props:
+                            props = bdl_props
+                        else:
+                            games, _, _, _ = fetch_game_lines(sport)
+                            return [], games, 0, 0, {}, {}
                     else:
                         games, _, _, _ = fetch_game_lines(sport)
                         return [], games, 0, 0, {}, {}
-            else:
-                oddspapi_props = fetch_oddspapi_props(sport)
-                if oddspapi_props:
-                    props = oddspapi_props
-                    st.success(f"✅ OddsPapi — {len(oddspapi_props)} props")
-                else:
-                    games, _, _, _ = fetch_game_lines(sport)
-                    return [], games, 0, 0, {}, {}
     
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
     public_betting = {}
