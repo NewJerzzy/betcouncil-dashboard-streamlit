@@ -3175,13 +3175,15 @@ def scrape_prizepicks(sport):
         return []
     state_code = st.secrets.get("PP_STATE_CODE", "CA")
     urls = [
-        # Primary: partner API — no bot protection, most reliable
+        # Primary: CDN endpoint — CloudFront, no Akamai protection
+        "https://static.prizepicks.com/projections.json",
+        # Fallback 1: partner API
         f"https://partner-api.prizepicks.com/projections?per_page=1000&league_id={league}",
-        # Fallback 1: confirmed working URL May 2026
+        # Fallback 2: confirmed working URL May 2026
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}&game_mode=prizepools",
-        # Fallback 2: without game_mode
+        # Fallback 3: without game_mode
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}",
-        # Fallback 3: basic API
+        # Fallback 4: basic API
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
     ]
     pp_headers = {
@@ -3245,6 +3247,11 @@ def scrape_prizepicks(sport):
         for proj in data["data"]:
             if proj["type"] != "projection":
                 continue
+            # CDN endpoint returns all sports — filter by league_id
+            if proj.get("relationships",{}).get("league",{}).get("data",{}).get("id") not in (str(league), league, None):
+                attrs_check = proj.get("attributes",{})
+                if attrs_check.get("league_id") and str(attrs_check.get("league_id")) != str(league):
+                    continue
             attrs = proj["attributes"]
             pid = proj["relationships"]["new_player"]["data"]["id"]
             name = attrs.get("display_name", "") or attrs.get("name", "")
