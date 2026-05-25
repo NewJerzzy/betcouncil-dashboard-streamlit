@@ -5689,6 +5689,366 @@ def apply_dk_salary_signal(prop, dk_salaries):
 
 PINNACLE_PROP_CACHE = {}  # in-memory: {(player_norm, stat, line): {"over_prob": x, "under_prob": x}}
 PINNACLE_GAME_CACHE = {}  # in-memory: {(home, away, market): {"prob": x, "line": x}}
+def fetch_pinnacle_lines(sport):
+    """
+    Fetch Pinnacle lines via OddsPAPI (already in our stack).
+    Cache in session state — only 1 API call per board load per sport.
+    Respects free tier: 100 calls/day, 1000/month.
+    """
+    cache_key = f"pinnacle_{sport}"
+    if st.session_state.get(cache_key):
+        return st.session_state[cache_key]
+
+    # Check disk cache first — 60 min TTL for Pinnacle lines
+    cache_path = os.path.join(CACHE_DIR, f"pinnacle_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.session_state[cache_key] = cached
+                return cached
+
+    if not ODDSPAPI_KEY:
+        return {}
+
+    allowed, reason = api_budget_check("ODDSPAPI")
+    if not allowed:
+        return {}
+
+    sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
+    sport_id = sport_id_map.get(sport)
+    if not sport_id:
+        return {}
+
+    pinnacle_data = {"props": {}, "games": {}}
+
+    try:
+        # Get tournaments
+        t_resp = requests.get(
+            f"https://api.oddspapi.io/v4/tournaments?sportId={sport_id}&apiKey={ODDSPAPI_KEY}",
+            timeout=10
+        )
+        if t_resp.status_code != 200:
+            return {}
+
+        tournaments = t_resp.json()
+        top_ids = [str(t["tournamentId"]) for t in tournaments
+                   if t.get("upcomingFixtures", 0) > 0][:3]
+        if not top_ids:
+            top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
+        if not top_ids:
+            return {}
+
+        tournament_ids = ",".join(top_ids)
+
+        # Fetch Pinnacle ONLY — saves API credits vs fetching all books
+        resp = requests.get(
+            f"https://api.oddspapi.io/v4/odds-by-tournaments"
+            f"?bookmaker=pinnacle&tournamentIds={tournament_ids}"
+            f"&apiKey={ODDSPAPI_KEY}&oddsFormat=american",
+            headers=HEADERS,
+            timeout=15
+        )
+        api_budget_increment("ODDSPAPI")
+
+        if resp.status_code != 200:
+            return {}
+
+        data = resp.json()
+
+        for event in data.get("events", []):
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            for bookmaker in event.get("bookmakers", []):
+                if bookmaker.get("key", "").lower() != "pinnacle":
+                    continue
+                for market in bookmaker.get("markets", []):
+                    mkey = market.get("key", "")
+                    outcomes = market.get("outcomes", [])
+
+                    # Player props
+                    if "player" in mkey.lower():
+                        over_out = next((o for o in outcomes if o.get("name","").upper() == "OVER"), None)
+                        under_out = next((o for o in outcomes if o.get("name","").upper() == "UNDER"), None)
+                        if over_out and under_out:
+                            over_imp = devig_odds(over_out.get("price"))
+                            under_imp = devig_odds(under_out.get("price"))
+                            if over_imp and under_imp:
+                                total = over_imp + under_imp
+                                over_nv = round(over_imp / total, 4)
+                                under_nv = round(under_imp / total, 4)
+                                player = over_out.get("description", "")
+                                line = over_out.get("point")
+                                stat = mkey.replace("player_","").replace("_"," ").title()
+                                if player and line is not None:
+                                    pkey = (normalize_name(player), stat.lower(), float(line))
+                                    pinnacle_data["props"][pkey] = {
+                                        "over_prob": over_nv,
+                                        "under_prob": under_nv,
+                                        "over_odds": over_out.get("price"),
+                                        "under_odds": under_out.get("price"),
+                                        "player": player, "stat": stat, "line": float(line)
+                                    }
+
+                    # Game lines
+                    elif mkey in ("h2h", "spreads", "totals"):
+                        if len(outcomes) >= 2:
+                            imp_a = devig_odds(outcomes[0].get("price"))
+                            imp_b = devig_odds(outcomes[1].get("price"))
+                            if imp_a and imp_b:
+                                total = imp_a + imp_b
+                                prob_a = round(imp_a / total, 4)
+                                game_key = (normalize_name(home), normalize_name(away), mkey)
+                                pinnacle_data["games"][game_key] = {
+                                    "prob_home": prob_a,
+                                    "prob_away": round(imp_b / total, 4),
+                                    "line_home": outcomes[0].get("point"),
+                                    "line_away": outcomes[1].get("point"),
+                                    "odds_home": outcomes[0].get("price"),
+                                    "odds_away": outcomes[1].get("price"),
+                                }
+
+        # Cache to disk and session
+        with open(cache_path, "wb") as f:
+            pickle.dump(pinnacle_data, f)
+        st.session_state[cache_key] = pinnacle_data
+        n_props = len(pinnacle_data["props"])
+        n_games = len(pinnacle_data["games"])
+        if n_props or n_games:
+            st.caption(f"✅ Pinnacle: {n_props} player props + {n_games} game lines loaded as fair value baseline")
+        return pinnacle_data
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_pinnacle_lines",
+            "error": str(e)[:100]
+        })
+        return {}
+
+
+def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
+    """
+    Get Pinnacle no-vig true probability for a prop.
+    Returns (prob, confirms_model, note) or (None, False, "")
+    """
+    cache_key = f"pinnacle_{sport}"
+    pinn_data = st.session_state.get(cache_key, {})
+    if not pinn_data:
+        return None, False, ""
+
+    props = pinn_data.get("props", {})
+    norm_player = normalize_name(player)
+    norm_stat = stat.lower().replace(" ","_").replace("+","_")
+
+    # Try exact match first
+    pkey = (norm_player, stat.lower(), float(line))
+    entry = props.get(pkey)
+
+    # Try fuzzy stat match
+    if not entry:
+        for k, v in props.items():
+            if k[0] == norm_player and abs(k[2] - float(line)) <= 0.5:
+                stat_match = (
+                    stat.lower()[:4] in k[1].lower() or
+                    k[1].lower()[:4] in stat.lower()
+                )
+                if stat_match:
+                    entry = v
+                    break
+
+    if not entry:
+        return None, False, ""
+
+    prob = entry["over_prob"] if side == "OVER" else entry["under_prob"]
+    over_odds = entry.get("over_odds")
+    under_odds = entry.get("under_odds")
+    odds = over_odds if side == "OVER" else under_odds
+
+    # Does Pinnacle confirm our direction?
+    # If Pinnacle shows >52% for our side = confirms edge
+    confirms = prob > 0.52
+    fade_signal = prob < 0.46  # Pinnacle disagrees strongly
+
+    if confirms:
+        note = f"📌 Pinnacle confirms {side}: {prob:.1%} true prob (fair odds: {odds:+.0f})"
+    elif fade_signal:
+        note = f"⚠️ Pinnacle FADES {side}: {prob:.1%} true prob — sharp money disagrees"
+    else:
+        note = f"📌 Pinnacle neutral: {prob:.1%} true prob"
+
+    return prob, confirms, note
+
+
+def get_pinnacle_edge(model_prob, pinnacle_prob, side="OVER"):
+    """
+    Calculate edge vs Pinnacle as the benchmark.
+    This is the OddsJam/Outlier methodology.
+    positive = we have edge over Pinnacle's true line
+    """
+    if pinnacle_prob is None or model_prob is None:
+        return None
+    # Edge = our model prob - Pinnacle true prob
+    # If positive, we think this is MORE likely than Pinnacle does
+    return round(model_prob - pinnacle_prob, 4)
+
+
+# =============================================================
+# PLAYER LOOKUP ENGINE — H2H, Game Logs, Splits
+# Powers the Player Lookup tab and H2H signal
+# =============================================================
+
+def fetch_player_id_bdl(player_name):
+    """Search BallsDontLie for player ID by name."""
+    if not BDL_API_KEY:
+        return None
+    cache_path = os.path.join(CACHE_DIR, f"bdl_pid_{normalize_name(player_name)}.pkl")
+    if os.path.exists(cache_path):
+        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
+        if age_days < 7:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    try:
+        r = requests.get(
+            f"https://api.balldontlie.io/v1/players",
+            headers={"Authorization": BDL_API_KEY},
+            params={"search": player_name, "per_page": 5},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            if data:
+                pid = data[0]["id"]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(pid, f)
+                return pid
+    except:
+        pass
+    return None
+
+
+def fetch_player_game_logs(player_name, season=2025, last_n=15):
+    """
+    Fetch last N game logs for a player.
+    Returns list of game dicts with pts, reb, ast, min, opponent, date, home/away.
+    """
+    if not BDL_API_KEY:
+        return []
+    cache_key = f"bdl_logs_{normalize_name(player_name)}_{season}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 4:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    pid = fetch_player_id_bdl(player_name)
+    if not pid:
+        return []
+
+    try:
+        r = requests.get(
+            f"https://api.balldontlie.io/v1/stats",
+            headers={"Authorization": BDL_API_KEY},
+            params={
+                "player_ids[]": pid,
+                "seasons[]": season,
+                "per_page": last_n,
+                "sort_by": "date",
+                "order": "desc"
+            },
+            timeout=15
+        )
+        if r.status_code != 200:
+            return []
+
+        games = r.json().get("data", [])
+        logs = []
+        for g in games:
+            game = g.get("game", {})
+            team = g.get("team", {})
+            home_team_id = game.get("home_team_id")
+            is_home = team.get("id") == home_team_id
+            opp_id = game.get("visitor_team_id") if is_home else game.get("home_team_id")
+
+            logs.append({
+                "date": game.get("date", "")[:10],
+                "home": is_home,
+                "opponent_id": opp_id,
+                "pts": g.get("pts", 0),
+                "reb": g.get("reb", 0),
+                "ast": g.get("ast", 0),
+                "stl": g.get("stl", 0),
+                "blk": g.get("blk", 0),
+                "turnover": g.get("turnover", 0),
+                "fg3m": g.get("fg3m", 0),
+                "min": g.get("min", "0"),
+                "pra": (g.get("pts",0) or 0) + (g.get("reb",0) or 0) + (g.get("ast",0) or 0),
+            })
+
+        if logs:
+            with open(cache_path, "wb") as f:
+                pickle.dump(logs, f)
+        return logs
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_player_game_logs",
+            "error": str(e)[:100]
+        })
+        return []
+
+
+def compute_h2h_hit_rate(game_logs, opponent_abbr, stat, line):
+    """
+    Compute H2H hit rate vs a specific opponent.
+    Returns (hit_rate, games_played, sample_str)
+    """
+    stat_map = {
+        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
+        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
+        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
+    }
+    stat_key = stat_map.get(stat, stat.lower()[:3])
+    opp_games = [g for g in game_logs if str(g.get("opponent_id","")).lower() in opponent_abbr.lower()
+                 or opponent_abbr.lower() in str(g.get("opponent_id","")).lower()]
+
+    if not opp_games:
+        return None, 0, "No H2H data"
+
+    hits = sum(1 for g in opp_games if (g.get(stat_key) or 0) > line)
+    rate = hits / len(opp_games)
+    return rate, len(opp_games), f"{hits}/{len(opp_games)} vs this opponent"
+
+
+def compute_home_away_splits(game_logs, stat, line):
+    """Compute home vs away hit rates for a stat."""
+    stat_map = {
+        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
+        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
+        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
+    }
+    stat_key = stat_map.get(stat, "pts")
+
+    home_games = [g for g in game_logs if g.get("home")]
+    away_games = [g for g in game_logs if not g.get("home")]
+
+    home_avg = sum(g.get(stat_key,0) or 0 for g in home_games) / len(home_games) if home_games else 0
+    away_avg = sum(g.get(stat_key,0) or 0 for g in away_games) / len(away_games) if away_games else 0
+    home_hit = sum(1 for g in home_games if (g.get(stat_key,0) or 0) > line) / len(home_games) if home_games else 0
+    away_hit = sum(1 for g in away_games if (g.get(stat_key,0) or 0) > line) / len(away_games) if away_games else 0
+
+    return {
+        "home_avg": round(home_avg, 1),
+        "away_avg": round(away_avg, 1),
+        "home_hit_rate": home_hit,
+        "away_hit_rate": away_hit,
+        "home_games": len(home_games),
+        "away_games": len(away_games),
+    }
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -6586,366 +6946,6 @@ def fetch_dk_nba_draftgroup_id():
 
 
 
-def fetch_pinnacle_lines(sport):
-    """
-    Fetch Pinnacle lines via OddsPAPI (already in our stack).
-    Cache in session state — only 1 API call per board load per sport.
-    Respects free tier: 100 calls/day, 1000/month.
-    """
-    cache_key = f"pinnacle_{sport}"
-    if st.session_state.get(cache_key):
-        return st.session_state[cache_key]
-
-    # Check disk cache first — 60 min TTL for Pinnacle lines
-    cache_path = os.path.join(CACHE_DIR, f"pinnacle_lines_{sport}.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 60:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
-            if cached:
-                st.session_state[cache_key] = cached
-                return cached
-
-    if not ODDSPAPI_KEY:
-        return {}
-
-    allowed, reason = api_budget_check("ODDSPAPI")
-    if not allowed:
-        return {}
-
-    sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
-    sport_id = sport_id_map.get(sport)
-    if not sport_id:
-        return {}
-
-    pinnacle_data = {"props": {}, "games": {}}
-
-    try:
-        # Get tournaments
-        t_resp = requests.get(
-            f"https://api.oddspapi.io/v4/tournaments?sportId={sport_id}&apiKey={ODDSPAPI_KEY}",
-            timeout=10
-        )
-        if t_resp.status_code != 200:
-            return {}
-
-        tournaments = t_resp.json()
-        top_ids = [str(t["tournamentId"]) for t in tournaments
-                   if t.get("upcomingFixtures", 0) > 0][:3]
-        if not top_ids:
-            top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
-        if not top_ids:
-            return {}
-
-        tournament_ids = ",".join(top_ids)
-
-        # Fetch Pinnacle ONLY — saves API credits vs fetching all books
-        resp = requests.get(
-            f"https://api.oddspapi.io/v4/odds-by-tournaments"
-            f"?bookmaker=pinnacle&tournamentIds={tournament_ids}"
-            f"&apiKey={ODDSPAPI_KEY}&oddsFormat=american",
-            headers=HEADERS,
-            timeout=15
-        )
-        api_budget_increment("ODDSPAPI")
-
-        if resp.status_code != 200:
-            return {}
-
-        data = resp.json()
-
-        for event in data.get("events", []):
-            home = event.get("home_team", "")
-            away = event.get("away_team", "")
-            for bookmaker in event.get("bookmakers", []):
-                if bookmaker.get("key", "").lower() != "pinnacle":
-                    continue
-                for market in bookmaker.get("markets", []):
-                    mkey = market.get("key", "")
-                    outcomes = market.get("outcomes", [])
-
-                    # Player props
-                    if "player" in mkey.lower():
-                        over_out = next((o for o in outcomes if o.get("name","").upper() == "OVER"), None)
-                        under_out = next((o for o in outcomes if o.get("name","").upper() == "UNDER"), None)
-                        if over_out and under_out:
-                            over_imp = devig_odds(over_out.get("price"))
-                            under_imp = devig_odds(under_out.get("price"))
-                            if over_imp and under_imp:
-                                total = over_imp + under_imp
-                                over_nv = round(over_imp / total, 4)
-                                under_nv = round(under_imp / total, 4)
-                                player = over_out.get("description", "")
-                                line = over_out.get("point")
-                                stat = mkey.replace("player_","").replace("_"," ").title()
-                                if player and line is not None:
-                                    pkey = (normalize_name(player), stat.lower(), float(line))
-                                    pinnacle_data["props"][pkey] = {
-                                        "over_prob": over_nv,
-                                        "under_prob": under_nv,
-                                        "over_odds": over_out.get("price"),
-                                        "under_odds": under_out.get("price"),
-                                        "player": player, "stat": stat, "line": float(line)
-                                    }
-
-                    # Game lines
-                    elif mkey in ("h2h", "spreads", "totals"):
-                        if len(outcomes) >= 2:
-                            imp_a = devig_odds(outcomes[0].get("price"))
-                            imp_b = devig_odds(outcomes[1].get("price"))
-                            if imp_a and imp_b:
-                                total = imp_a + imp_b
-                                prob_a = round(imp_a / total, 4)
-                                game_key = (normalize_name(home), normalize_name(away), mkey)
-                                pinnacle_data["games"][game_key] = {
-                                    "prob_home": prob_a,
-                                    "prob_away": round(imp_b / total, 4),
-                                    "line_home": outcomes[0].get("point"),
-                                    "line_away": outcomes[1].get("point"),
-                                    "odds_home": outcomes[0].get("price"),
-                                    "odds_away": outcomes[1].get("price"),
-                                }
-
-        # Cache to disk and session
-        with open(cache_path, "wb") as f:
-            pickle.dump(pinnacle_data, f)
-        st.session_state[cache_key] = pinnacle_data
-        n_props = len(pinnacle_data["props"])
-        n_games = len(pinnacle_data["games"])
-        if n_props or n_games:
-            st.caption(f"✅ Pinnacle: {n_props} player props + {n_games} game lines loaded as fair value baseline")
-        return pinnacle_data
-
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_pinnacle_lines",
-            "error": str(e)[:100]
-        })
-        return {}
-
-
-def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
-    """
-    Get Pinnacle no-vig true probability for a prop.
-    Returns (prob, confirms_model, note) or (None, False, "")
-    """
-    cache_key = f"pinnacle_{sport}"
-    pinn_data = st.session_state.get(cache_key, {})
-    if not pinn_data:
-        return None, False, ""
-
-    props = pinn_data.get("props", {})
-    norm_player = normalize_name(player)
-    norm_stat = stat.lower().replace(" ","_").replace("+","_")
-
-    # Try exact match first
-    pkey = (norm_player, stat.lower(), float(line))
-    entry = props.get(pkey)
-
-    # Try fuzzy stat match
-    if not entry:
-        for k, v in props.items():
-            if k[0] == norm_player and abs(k[2] - float(line)) <= 0.5:
-                stat_match = (
-                    stat.lower()[:4] in k[1].lower() or
-                    k[1].lower()[:4] in stat.lower()
-                )
-                if stat_match:
-                    entry = v
-                    break
-
-    if not entry:
-        return None, False, ""
-
-    prob = entry["over_prob"] if side == "OVER" else entry["under_prob"]
-    over_odds = entry.get("over_odds")
-    under_odds = entry.get("under_odds")
-    odds = over_odds if side == "OVER" else under_odds
-
-    # Does Pinnacle confirm our direction?
-    # If Pinnacle shows >52% for our side = confirms edge
-    confirms = prob > 0.52
-    fade_signal = prob < 0.46  # Pinnacle disagrees strongly
-
-    if confirms:
-        note = f"📌 Pinnacle confirms {side}: {prob:.1%} true prob (fair odds: {odds:+.0f})"
-    elif fade_signal:
-        note = f"⚠️ Pinnacle FADES {side}: {prob:.1%} true prob — sharp money disagrees"
-    else:
-        note = f"📌 Pinnacle neutral: {prob:.1%} true prob"
-
-    return prob, confirms, note
-
-
-def get_pinnacle_edge(model_prob, pinnacle_prob, side="OVER"):
-    """
-    Calculate edge vs Pinnacle as the benchmark.
-    This is the OddsJam/Outlier methodology.
-    positive = we have edge over Pinnacle's true line
-    """
-    if pinnacle_prob is None or model_prob is None:
-        return None
-    # Edge = our model prob - Pinnacle true prob
-    # If positive, we think this is MORE likely than Pinnacle does
-    return round(model_prob - pinnacle_prob, 4)
-
-
-# =============================================================
-# PLAYER LOOKUP ENGINE — H2H, Game Logs, Splits
-# Powers the Player Lookup tab and H2H signal
-# =============================================================
-
-def fetch_player_id_bdl(player_name):
-    """Search BallsDontLie for player ID by name."""
-    if not BDL_API_KEY:
-        return None
-    cache_path = os.path.join(CACHE_DIR, f"bdl_pid_{normalize_name(player_name)}.pkl")
-    if os.path.exists(cache_path):
-        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
-        if age_days < 7:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
-    try:
-        r = requests.get(
-            f"https://api.balldontlie.io/v1/players",
-            headers={"Authorization": BDL_API_KEY},
-            params={"search": player_name, "per_page": 5},
-            timeout=10
-        )
-        if r.status_code == 200:
-            data = r.json().get("data", [])
-            if data:
-                pid = data[0]["id"]
-                with open(cache_path, "wb") as f:
-                    pickle.dump(pid, f)
-                return pid
-    except:
-        pass
-    return None
-
-
-def fetch_player_game_logs(player_name, season=2025, last_n=15):
-    """
-    Fetch last N game logs for a player.
-    Returns list of game dicts with pts, reb, ast, min, opponent, date, home/away.
-    """
-    if not BDL_API_KEY:
-        return []
-    cache_key = f"bdl_logs_{normalize_name(player_name)}_{season}"
-    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 4:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
-
-    pid = fetch_player_id_bdl(player_name)
-    if not pid:
-        return []
-
-    try:
-        r = requests.get(
-            f"https://api.balldontlie.io/v1/stats",
-            headers={"Authorization": BDL_API_KEY},
-            params={
-                "player_ids[]": pid,
-                "seasons[]": season,
-                "per_page": last_n,
-                "sort_by": "date",
-                "order": "desc"
-            },
-            timeout=15
-        )
-        if r.status_code != 200:
-            return []
-
-        games = r.json().get("data", [])
-        logs = []
-        for g in games:
-            game = g.get("game", {})
-            team = g.get("team", {})
-            home_team_id = game.get("home_team_id")
-            is_home = team.get("id") == home_team_id
-            opp_id = game.get("visitor_team_id") if is_home else game.get("home_team_id")
-
-            logs.append({
-                "date": game.get("date", "")[:10],
-                "home": is_home,
-                "opponent_id": opp_id,
-                "pts": g.get("pts", 0),
-                "reb": g.get("reb", 0),
-                "ast": g.get("ast", 0),
-                "stl": g.get("stl", 0),
-                "blk": g.get("blk", 0),
-                "turnover": g.get("turnover", 0),
-                "fg3m": g.get("fg3m", 0),
-                "min": g.get("min", "0"),
-                "pra": (g.get("pts",0) or 0) + (g.get("reb",0) or 0) + (g.get("ast",0) or 0),
-            })
-
-        if logs:
-            with open(cache_path, "wb") as f:
-                pickle.dump(logs, f)
-        return logs
-
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_player_game_logs",
-            "error": str(e)[:100]
-        })
-        return []
-
-
-def compute_h2h_hit_rate(game_logs, opponent_abbr, stat, line):
-    """
-    Compute H2H hit rate vs a specific opponent.
-    Returns (hit_rate, games_played, sample_str)
-    """
-    stat_map = {
-        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
-        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
-        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
-    }
-    stat_key = stat_map.get(stat, stat.lower()[:3])
-    opp_games = [g for g in game_logs if str(g.get("opponent_id","")).lower() in opponent_abbr.lower()
-                 or opponent_abbr.lower() in str(g.get("opponent_id","")).lower()]
-
-    if not opp_games:
-        return None, 0, "No H2H data"
-
-    hits = sum(1 for g in opp_games if (g.get(stat_key) or 0) > line)
-    rate = hits / len(opp_games)
-    return rate, len(opp_games), f"{hits}/{len(opp_games)} vs this opponent"
-
-
-def compute_home_away_splits(game_logs, stat, line):
-    """Compute home vs away hit rates for a stat."""
-    stat_map = {
-        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
-        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
-        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
-    }
-    stat_key = stat_map.get(stat, "pts")
-
-    home_games = [g for g in game_logs if g.get("home")]
-    away_games = [g for g in game_logs if not g.get("home")]
-
-    home_avg = sum(g.get(stat_key,0) or 0 for g in home_games) / len(home_games) if home_games else 0
-    away_avg = sum(g.get(stat_key,0) or 0 for g in away_games) / len(away_games) if away_games else 0
-    home_hit = sum(1 for g in home_games if (g.get(stat_key,0) or 0) > line) / len(home_games) if home_games else 0
-    away_hit = sum(1 for g in away_games if (g.get(stat_key,0) or 0) > line) / len(away_games) if away_games else 0
-
-    return {
-        "home_avg": round(home_avg, 1),
-        "away_avg": round(away_avg, 1),
-        "home_hit_rate": home_hit,
-        "away_hit_rate": away_hit,
-        "home_games": len(home_games),
-        "away_games": len(away_games),
-    }
 
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
