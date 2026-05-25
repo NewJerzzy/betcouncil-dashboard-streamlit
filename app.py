@@ -6532,7 +6532,6 @@ def fetch_dk_salaries(sport="NBA"):
             with open(cache_path, "wb") as f:
                 pickle.dump(salaries, f)
             st.session_state["dk_salaries"] = salaries
-            st.caption(f"✅ DraftKings: {len(salaries)} player salaries loaded")
 
         return salaries
 
@@ -7249,6 +7248,39 @@ with tabs[0]:
             slip_html += '<div style="display:flex;justify-content:space-between;margin-top:0.8rem;"><span style="color:#9aa8b8;font-size:0.8rem;">Entry: <span style="color:#e8f0f8;">${:.0f}</span></span><span style="color:#22c55e;font-weight:700;">Payout: ${:.0f}</span></div>'.format(unit, payout)
             slip_html += '</div>'
             st.markdown(slip_html, unsafe_allow_html=True)
+
+        # ── ALT LINE UPGRADES ──────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Alt Line Upgrades</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        alt_upgrades = st.session_state.get("alt_line_upgrades", [])
+        if alt_upgrades:
+            alt_html = ""
+            for au in alt_upgrades[:5]:
+                alt_html += f'<div style="background:#0a0e14;border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:0.8rem;">{au.get("Player","")}</span> <span style="color:#9aa8b8;font-size:0.75rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:0.75rem;margin-left:0.5rem;">Alt EV: {au.get("AltEV","—")}</span></div>'
+            st.markdown(alt_html, unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.8rem;padding:0.3rem 0;">Load board to check for alt line upgrades.</div>', unsafe_allow_html=True)
+
+        # ── ARBITRAGE OPPORTUNITIES ────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Arbitrage Opportunities</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        arb_opps = st.session_state.get("arb_opportunities", [])
+        if arb_opps:
+            arb_html = ""
+            for arb in arb_opps[:5]:
+                arb_html += f'<div style="background:#0a0e14;border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:0.8rem;">{arb.get("Player","")}</span> <span style="color:#9aa8b8;font-size:0.75rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:0.75rem;margin-left:0.5rem;">ROI: {arb.get("ROI","—")}</span></div>'
+            st.markdown(arb_html, unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.8rem;padding:0.3rem 0;">Load board to scan for arbitrage opportunities.</div>', unsafe_allow_html=True)
+
+        # ── BEST OF ALL SPORTS ─────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        all_sports_best = st.session_state.get("all_sports_best", [])
+        if all_sports_best:
+            for ap in all_sports_best[:5]:
+                sport_tag = ap.get("Sport","")
+                tier_c = TIER_COLORS.get(ap.get("Tier",""), "#6a7a8a")
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:{tier_c};font-size:0.7rem;font-weight:700;">{sport_tag}</span> <span style="color:#e8f0f8;font-weight:600;font-size:0.8rem;margin-left:0.5rem;">{ap.get("Player","")}</span> <span style="color:#9aa8b8;font-size:0.75rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span> <span style="color:{tier_c};font-size:0.75rem;margin-left:auto;">{ap.get("EdgePct","—")}</span></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.8rem;padding:0.3rem 0;">Load boards across sports to see the best plays of the day.</div>', unsafe_allow_html=True)
 
         # ── AI ASSISTANT SYNC ──────────────────────────────
         ai_col1, ai_col2 = st.columns([3, 1])
