@@ -7360,7 +7360,11 @@ with tabs[0]:
 
         # ── PARLAY OF THE DAY — PROPS ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-        parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True) if p.get("Tier","") in ["SOVEREIGN","ELITE"]][:4]
+        # Filter to current sport only, SOVEREIGN/ELITE tier
+        _cur_sport = st.session_state.get("last_sport", "NBA")
+        parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
+                        if p.get("Tier","") in ["SOVEREIGN","ELITE"]
+                        and p.get("Sport","") == _cur_sport][:4]
         n_parlay = st.session_state.get("parlay_size", 3)
         parlay_props = parlay_props[:n_parlay]
         if len(parlay_props) >= 2:
@@ -7368,27 +7372,46 @@ with tabs[0]:
             combined = parlay_prob(parlay_probs)
             be = prizepicks_breakeven_prob(len(parlay_props))
             ev = calculate_prizepicks_ev(combined, len(parlay_props))
-            ev_color = "#22c55e" if ev > 0 else "#e04040"
-            tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
-            legs_html = ""
-            for p in parlay_props:
-                dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
-                legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:0.88rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:#6a7a8a;font-size:0.88rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
-            play_label = "▶ PLAY" if ev > 0 else "✖ PASS"
-            st.markdown(f"""
-            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-                    <span style="color:#e8f0f8;font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
-                    <span style="color:{ev_color};font-weight:700;font-size:1rem;">{ev:+.1%} EV</span>
+            # Only show if positive EV — otherwise show warning
+            if ev > 0:
+                ev_color = "#22c55e"
+                tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
+                legs_html = ""
+                for p in parlay_props:
+                    dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
+                    legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:0.88rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:#6a7a8a;font-size:0.88rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
+                st.markdown(f"""
+                <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                        <span style="color:#e8f0f8;font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
+                        <span style="color:#22c55e;font-weight:700;font-size:1rem;">{ev:+.1%} EV ▶ PLAY</span>
+                    </div>
+                    <div style="display:flex;gap:1.5rem;font-size:0.88rem;margin-bottom:0.7rem;">
+                        <span style="color:#b8c6d6;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
+                        <span style="color:#8a9ab0;">Breakeven: {be:.1%}</span>
+                    </div>
+                    {legs_html}
                 </div>
-                <div style="display:flex;gap:1.5rem;font-size:0.92rem;margin-bottom:0.7rem;">
-                    <span style="color:#b8c6d6;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
-                    <span style="color:#8a9ab0;">Breakeven: {be:.1%}</span>
-                    <span style="color:{ev_color};">{play_label}</span>
-                </div>
-                {legs_html}
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;color:#9aa8b8;font-size:0.88rem;">⚠️ No +EV prop parlay available today. Combined probability ({combined:.1%}) is below the {be:.1%} breakeven. Sit out or go single picks only.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;padding:0.3rem 0;">Need 2+ SOVEREIGN/ELITE props to build a parlay.</div>', unsafe_allow_html=True)
+
+        # ── PLAYERS TO AVOID (always visible) ──────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        avoid_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0))
+                       if p.get("Edge",0) < 0
+                       and p.get("Sport","") == _cur_sport][:5]
+        if avoid_props:
+            for ap in avoid_props:
+                _ap_avg = ap.get("Avg", 0) or 0
+                _ap_line = ap.get("Line", 0) or 0
+                _ap_edge = ap.get("EdgePct","—")
+                _ap_reason = ap.get("PinnacleNote","") or f"Model projects avg {_ap_avg:.1f} vs line {_ap_line} — line is too high"
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:0.82rem;">FADE {_ap_edge}</span></div><div style="font-size:0.75rem;color:#8a9ab0;margin-top:3px;">{_ap_reason[:90]}</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:#6a7a8a;font-size:0.85rem;">✅ No strong fades today — all props show positive or neutral edge.</div>', unsafe_allow_html=True)
 
         # ── PARLAY OF THE DAY — GAMES ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -7416,14 +7439,17 @@ with tabs[0]:
         else:
             st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
 
-        # ── GAMES TO AVOID ─────────────────────────────────
+        # ── GAMES TO AVOID (always visible) ────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         avoid_games = [g for g in game_analysis if g.get("best_edge",0) < -0.05][:3]
         if avoid_games:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
             for ag in avoid_games:
                 bb = ag.get("best_bet",{})
-                reason = bb.get("note","Model projects significant line value against public consensus")
-                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:0.82rem;">AVOID {ag.get("best_edge",0):+.1%}</span></div><div style="font-size:0.75rem;color:#8a9ab0;margin-top:2px;">{reason[:80]}</div></div>', unsafe_allow_html=True)
+                _ag_reason = bb.get("note","") or "Model finds negative value — public is overloading this side"
+                _ag_edge = ag.get("best_edge",0)
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:0.82rem;">AVOID {_ag_edge:+.1%}</span></div><div style="font-size:0.75rem;color:#8a9ab0;margin-top:3px;">{_ag_reason[:90]}</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:#6a7a8a;font-size:0.85rem;">✅ No strong game fades today — all detected edges are positive.</div>', unsafe_allow_html=True)
 
         # ── CONFIDENCE MATRIX ──────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Master Slip Confidence Matrix</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -7464,14 +7490,6 @@ with tabs[0]:
             st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;">Load the board to see +EV props.</div>', unsafe_allow_html=True)
 
         # ── FULL PROP BOARD ─────────────────────────────────
-        # Players to Avoid
-        avoid_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < 0][:5]
-        if avoid_props:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-            for ap in avoid_props:
-                reason = ap.get("PinnacleNote","") or f"Model fades — avg {ap.get('Avg',0):.1f} vs line {ap.get('Line',0)}"
-                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{ap.get("Player","")} {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:0.82rem;">FADE {ap.get("EdgePct","")}</span></div><div style="font-size:0.75rem;color:#8a9ab0;margin-top:2px;">{reason[:80]}</div></div>', unsafe_allow_html=True)
-
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Full Prop Board</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"]
         tier_border = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#5f5e5a","PASS":"#2a3a4a"}
