@@ -6301,11 +6301,15 @@ def load_sport_data(sport):
         parlayapi_props = fetch_parlayapi_props(sport)
         st.sidebar.info(f"ParlayAPI returned: {len(parlayapi_props)} props")
         if parlayapi_props:
-            parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
-            pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() == "underdog"]
-            pa_pp = [p for p in parlayapi_props if p.get("source","").lower() == "prizepicks"]
+            # Debug: show what sources are present
+            sources = set(p.get("source","").lower() for p in parlayapi_props[:50])
+            st.sidebar.info(f"Sources in ParlayAPI: {sources}")
+            parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() in ("parlayplay","parlay play")]
+            pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() in ("underdog","underdog fantasy")]
+            pa_pp = [p for p in parlayapi_props if p.get("source","").lower() in ("prizepicks","prize picks")]
             if pa_underdog:
                 st.session_state["ud_props_compare"] = pa_underdog
+            # Use best available source, fall back to all props if none match
             if parlayplay_props:
                 props = parlayplay_props
             elif pa_underdog:
@@ -6313,7 +6317,9 @@ def load_sport_data(sport):
             elif pa_pp:
                 props = pa_pp
             else:
+                # Use all props regardless of source
                 props = parlayapi_props
+                st.sidebar.info(f"Using all {len(props)} ParlayAPI props (source: mixed)")
         else:
             parlayplay_props = fetch_parlayplay_props(sport)
             if parlayplay_props:
