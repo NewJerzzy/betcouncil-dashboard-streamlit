@@ -3147,53 +3147,108 @@ def fetch_underdog_props(sport):
         props = []
         seen = set()
 
-        # v1 lobbies endpoint structure
-        if "appearance_lines" in data or "over_under_lines" not in data:
-            # v1 structure: players, appearances, appearance_lines or similar
-            players_v1 = {}
-            for p in data.get("players", []):
-                pid = p.get("id","")
-                fname = p.get("first_name","").strip()
-                lname = p.get("last_name","").strip()
-                players_v1[pid] = f"{fname} {lname}".strip()
+        # v1 /lobbies/content/lines structure — suggested_picks wrapper
+        sp = data.get("suggested_picks", data)
 
-            # Try appearance_lines first (v1)
-            appearances_v1 = {a.get("id",""): a.get("player_id","") for a in data.get("appearances", [])}
-            stat_types_v1 = {s.get("id",""): s.get("display_name", s.get("name","")) for s in data.get("stat_types", [])}
-
-            for line in data.get("appearance_lines", data.get("over_under_lines", [])):
-                app_id = line.get("appearance_id","")
-                player_id = appearances_v1.get(app_id,"")
-                name = players_v1.get(player_id,"")
-                line_val = line.get("stat_value", line.get("line_score"))
-                stat_id = line.get("stat_type_id","")
-                stat_name = stat_types_v1.get(stat_id,"")
-                if not name or not stat_name or line_val is None:
-                    continue
-                key = (sport, name, stat_name, line_val)
-                if key in seen:
-                    continue
-                seen.add(key)
-                props.append({"Player": name, "Prop": stat_name, "Line": float(line_val), "Side": "OVER", "Sport": sport, "source": "Underdog"})
+        # Players dict: {id: full_name}
+        players_dict = sp.get("players", {})
+        if isinstance(players_dict, dict):
+            players_map = {pid: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+                          for pid, p in players_dict.items()}
         else:
-            # v2 structure
-            players_v2 = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip() for p in data.get("players", [])}
-            stats_map = {s["id"]: s.get("display_name", s.get("name", "")) for s in data.get("stat_types", [])}
-            appearances = {a["id"]: a.get("player_id") for a in data.get("appearances", [])}
-            for line in data.get("over_under_lines", []):
-                appearance_id = line.get("appearance_id")
-                player_id = appearances.get(appearance_id)
-                name = players_v2.get(player_id, "")
+            players_map = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+                          for p in players_dict}
+
+        # Appearances dict: {appearance_id: player_id}
+        appearances_dict = sp.get("appearances", {})
+        if isinstance(appearances_dict, dict):
+            appearances_map = {aid: a.get("player_id","") for aid, a in appearances_dict.items()}
+        else:
+            appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict}
+
+        # over_under_lines dict: {line_id: line_data}
+        oul = sp.get("over_under_lines", {})
+        if isinstance(oul, dict):
+            lines_list = list(oul.values())
+        else:
+            lines_list = oul
+
+        # Filter by sport
+        sport_id = sport.upper()
+        teams_dict = sp.get("teams", {})
+        games_dict = sp.get("games", {})
+
+        for line in lines_list:
+            if line.get("status","") == "closed":
+                continue
+
+            line_val = line.get("stat_value")
+            if line_val is None:
+                continue
+
+            # Get player name from options[0].selection_header (most reliable)
+            options = line.get("options", [])
+            if options:
+                opt = options[0]
+                name = opt.get("selection_header","").strip()
+                stat_name = opt.get("stat_display","").strip()
+                if not stat_name:
+                    stat_name = opt.get("selection_subheader","").split(" ", 2)[-1] if opt.get("selection_subheader") else ""
+            else:
+                # Fallback: use over_under.appearance_stat
+                ou = line.get("over_under", {})
+                app_stat = ou.get("appearance_stat", {})
+                app_id = app_stat.get("appearance_id","")
+                player_id = appearances_map.get(app_id,"")
+                name = players_map.get(player_id,"")
+                stat_name = app_stat.get("display_stat","")
+
+            if not name or not stat_name:
+                continue
+
+            # Sport filter: check player sport via appearances/games
+            ou = line.get("over_under", {})
+            app_stat = ou.get("appearance_stat", {})
+            app_id = app_stat.get("appearance_id","")
+            app_data = appearances_dict.get(app_id, {}) if isinstance(appearances_dict, dict) else {}
+            match_id = str(app_data.get("match_id",""))
+            game = games_dict.get(match_id, {}) if isinstance(games_dict, dict) else {}
+            game_sport = game.get("sport_id","")
+
+            if game_sport and game_sport.upper() != sport_id:
+                continue
+
+            key = (sport, name, stat_name, line_val)
+            if key in seen:
+                continue
+            seen.add(key)
+            props.append({
+                "Player": name,
+                "Prop": stat_name,
+                "Line": float(line_val),
+                "Side": "OVER",
+                "Sport": sport,
+                "source": "Underdog"
+            })
+
+        if not props and lines_list:
+            # If sport filter removed everything, return without filter
+            for line in lines_list[:50]:
+                if line.get("status","") == "closed":
+                    continue
                 line_val = line.get("stat_value")
-                stat_type_id = line.get("stat_type_id")
-                stat_name = stats_map.get(stat_type_id, "")
-                if not name or not stat_name or line_val is None:
-                    continue
-                key = (sport, name, stat_name, line_val)
-                if key in seen:
-                    continue
-                seen.add(key)
-                props.append({"Player": name, "Prop": stat_name, "Line": float(line_val), "Side": "OVER", "Sport": sport, "source": "Underdog"})
+                options = line.get("options", [])
+                if options and line_val:
+                    opt = options[0]
+                    name = opt.get("selection_header","").strip()
+                    stat_name = opt.get("stat_display","").strip()
+                    if name and stat_name:
+                        key = (sport, name, stat_name, line_val)
+                        if key not in seen:
+                            seen.add(key)
+                            props.append({"Player": name, "Prop": stat_name,
+                                        "Line": float(line_val), "Side": "OVER",
+                                        "Sport": sport, "source": "Underdog"})
         return props
     except Exception as e:
         print(f"Underdog props error: {e}")
