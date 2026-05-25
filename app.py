@@ -6048,6 +6048,48 @@ def compute_home_away_splits(game_logs, stat, line):
         "home_games": len(home_games),
         "away_games": len(away_games),
     }
+def fetch_dk_nba_draftgroup_id():
+    """Find today's NBA classic draftGroupId from DraftKings."""
+    cache_path = os.path.join(CACHE_DIR, "dk_draftgroup_nba.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 120:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    try:
+        r = requests.get(
+            "https://www.draftkings.com/lobby/getcontests?sport=NBA",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if r.status_code != 200:
+            return None
+        contests = r.json().get("Contests", [])
+        # Find Classic contest (contestTypeId=21 or name contains Classic)
+        for c in contests:
+            name = c.get("n", "").lower()
+            if "classic" in name and c.get("dg"):
+                dgid = c["dg"]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(dgid, f)
+                return dgid
+        # Fallback: first contest with a draftGroupId
+        for c in contests:
+            if c.get("dg"):
+                dgid = c["dg"]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(dgid, f)
+                return dgid
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_dk_nba_draftgroup_id",
+            "error": str(e)[:100]
+        })
+    return None
+
+
+
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -6902,46 +6944,6 @@ st.markdown(f"""
 # =========================
 # DRAFTKINGS DFS SALARY SIGNAL
 # =========================
-
-def fetch_dk_nba_draftgroup_id():
-    """Find today's NBA classic draftGroupId from DraftKings."""
-    cache_path = os.path.join(CACHE_DIR, "dk_draftgroup_nba.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 120:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
-    try:
-        r = requests.get(
-            "https://www.draftkings.com/lobby/getcontests?sport=NBA",
-            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
-            timeout=10
-        )
-        if r.status_code != 200:
-            return None
-        contests = r.json().get("Contests", [])
-        # Find Classic contest (contestTypeId=21 or name contains Classic)
-        for c in contests:
-            name = c.get("n", "").lower()
-            if "classic" in name and c.get("dg"):
-                dgid = c["dg"]
-                with open(cache_path, "wb") as f:
-                    pickle.dump(dgid, f)
-                return dgid
-        # Fallback: first contest with a draftGroupId
-        for c in contests:
-            if c.get("dg"):
-                dgid = c["dg"]
-                with open(cache_path, "wb") as f:
-                    pickle.dump(dgid, f)
-                return dgid
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_dk_nba_draftgroup_id",
-            "error": str(e)[:100]
-        })
-    return None
 
 
 
