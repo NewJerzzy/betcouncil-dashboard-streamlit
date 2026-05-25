@@ -6249,6 +6249,7 @@ def load_sport_data(sport):
     st.session_state["line_discrepancies"] = []
     st.session_state["multibook_discrepancies"] = multibook_discrepancies
     
+    props = []  # Initialize — will be set by fallback chain below
     if pp_props:
         props = pp_props
     elif ud_props_compare:
