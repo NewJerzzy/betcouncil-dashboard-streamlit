@@ -6285,9 +6285,7 @@ def load_sport_data(sport):
     pp_props = scrape_prizepicks(sport)
     ud_props_compare = fetch_underdog_props(sport)
     if ud_props_compare:
-        st.sidebar.success(f"✅ Underdog: {len(ud_props_compare)} props loaded")
     else:
-        st.sidebar.warning("⚠️ Underdog returned 0 props — trying ParlayAPI...")
     dk_salaries = fetch_dk_salaries(sport)
     st.session_state["dk_salaries"] = dk_salaries
 
@@ -6351,15 +6349,12 @@ def load_sport_data(sport):
         props = pp_props
     elif ud_props_compare:
         props = ud_props_compare
-        st.sidebar.success(f"✅ Using Underdog props: {len(props)} raw props")
     else:
         # All primary DFS sources failed - try aggregator immediately
         parlayapi_props = fetch_parlayapi_props(sport)
-        st.sidebar.info(f"ParlayAPI returned: {len(parlayapi_props)} props")
         if parlayapi_props:
             # Debug: show what sources are present
             sources = set(p.get("source","").lower() for p in parlayapi_props[:50])
-            st.sidebar.info(f"Sources in ParlayAPI: {sources}")
             parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() in ("parlayplay","parlay play")]
             pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() in ("underdog","underdog fantasy")]
             pa_pp = [p for p in parlayapi_props if p.get("source","").lower() in ("prizepicks","prize picks")]
@@ -6375,7 +6370,6 @@ def load_sport_data(sport):
             else:
                 # Use all props regardless of source
                 props = parlayapi_props
-                st.sidebar.info(f"Using all {len(props)} ParlayAPI props (source: mixed)")
         else:
             parlayplay_props = fetch_parlayplay_props(sport)
             if parlayplay_props:
@@ -6960,7 +6954,6 @@ with st.sidebar:
             pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
-            st.sidebar.info(f"Board enrichment result: {len(board)} props")
             st.session_state.board_data = board
             st.session_state.games = games
             # Cache last good props per sport for fallback
