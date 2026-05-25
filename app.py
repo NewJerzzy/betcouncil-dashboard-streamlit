@@ -5417,9 +5417,12 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def get_outcome(t):
             tl = t.lower()
-            if any(w in tl for w in ["pending","live","locked","in progress"]): return "PENDING"
-            if any(w in tl for w in ["won","win","correct","payout","winner"]):  return "WIN"
-            if any(w in tl for w in ["lost","loss","incorrect","miss","loser"]): return "LOSS"
+            if any(w in tl for w in ["pending","live","locked","in progress","scheduled"]): return "PENDING"
+            if any(w in tl for w in ["won","win","correct","payout","winner","you won","entry won","congrats"]): return "WIN"
+            if any(w in tl for w in ["lost","loss","incorrect","miss","loser","you lost","entry lost","better luck","no payout"]): return "LOSS"
+            # PrizePicks specific: green checkmark text vs red X
+            if "✓" in t or "✅" in t: return "WIN"
+            if "✗" in t or "❌" in t or "×" in t: return "LOSS"
             return None
 
         entry_outcome = get_outcome(raw_text)
@@ -5490,7 +5493,12 @@ def parse_bet_screenshot_ocr(image_bytes):
             if stat is None or line_val is None:
                 continue
 
-            pick_outcome = get_outcome(segment_text) or entry_outcome or "PENDING"
+            # Use per-pick outcome first, then fall back to entry-level outcome
+            pick_outcome = get_outcome(segment_text)
+            if pick_outcome is None and entry_outcome in ("WIN","LOSS"):
+                pick_outcome = entry_outcome
+            if pick_outcome is None:
+                pick_outcome = "PENDING"
 
             bets.append({
                 "player":     player,
@@ -5591,11 +5599,16 @@ def parse_prizepicks_text(raw_text):
             i += 1
             continue
 
-        # Determine outcome assuming OVER pick (most common on PrizePicks)
-        outcome = "WIN" if result_val > line_val else "LOSS"
+        # Determine outcome based on side
         status_upper = status.upper()
         if any(w in status_upper for w in ("LIVE", "PENDING", "PROGRESS", "SCHEDULED")):
             outcome = "PENDING"
+        else:
+            # For UNDER picks, winning means result < line
+            if side == "UNDER":
+                outcome = "WIN" if result_val < line_val else "LOSS"
+            else:
+                outcome = "WIN" if result_val > line_val else "LOSS"
 
         bets.append({
             "player":     player,
