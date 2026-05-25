@@ -7216,7 +7216,7 @@ with tabs[0]:
             action_label, action_color = "Light Betting Day", "#e8a020"
             action_desc = "Limited quality. Consider 1 pick max or sitting out."
         else:
-            action_label, action_color = "Sit Out Today", "#e04040"
+            action_label, action_color = "No Strong Plays Today", "#e04040"
             action_desc = "No high-conviction plays. Best move is to wait for a better slate."
 
         st.markdown(f"""
@@ -7494,22 +7494,54 @@ with tabs[0]:
         tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"]
         tier_border = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#5f5e5a","PASS":"#2a3a4a"}
         tier_labels = {"SOVEREIGN":"🟢 SOVEREIGN","ELITE":"🔵 ELITE","APPROVED":"🟠 APPROVED","LEAN":"⚪ LEAN","PASS":"⬛ PASS"}
-        board_html = ""
-        for t in tier_order:
-            tier_props = [p for p in board if p.get("Tier","") == t]
-            if tier_props:
+        if board:
+            for t in tier_order:
+                tier_props = [p for p in board if p.get("Tier","") == t]
+                if not tier_props:
+                    continue
                 border_c = tier_border.get(t,"#6a7a8a")
-                board_html += f'<div style="color:{border_c};font-weight:700;font-size:0.82rem;text-transform:uppercase;margin:0.8rem 0 0.4rem;">{tier_labels.get(t,t)}</div>'
-                for tp in tier_props:
-                    better = f" · <span style='color:#22c55e;'>⚡ {tp.get('BetterLineNote','')[:40]}</span>" if tp.get("BetterLineSource") else ""
-                    pinn = " · <span style='color:#7f77dd;'>📌 Pinnacle</span>" if tp.get("PinnacleConfirms") else ""
-                    board_html += f'<div style="background:#0a0e14;border-left:3px solid {border_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.3rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><div><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{tp.get("Player","")}</span> <span style="color:#b8c6d6;font-size:0.92rem;">{tp.get("Side","")} {tp.get("Line","")} {tp.get("Prop","")}</span>{pinn}</div><span style="color:{border_c};font-weight:700;font-size:0.88rem;">{tp.get("EdgePct","—")}</span></div><div style="font-size:0.68rem;color:#6a7a8a;margin-top:0.2rem;">{tp.get("EV_2pick","—")} EV · {tp.get("PinnacleProb","—")} Pinnacle{better}</div></div>'
-        if board_html:
-            st.markdown(board_html, unsafe_allow_html=True)
+                st.markdown(f'<div style="color:{border_c};font-weight:700;font-size:0.82rem;text-transform:uppercase;margin:0.8rem 0 0.3rem;">{tier_labels.get(t,t)}</div>', unsafe_allow_html=True)
+                for idx_p, tp in enumerate(tier_props):
+                    better_note = tp.get("BetterLineNote","")
+                    pinn_txt = " · 📌 Pinnacle" if tp.get("PinnacleConfirms") else ""
+                    better_txt = f" · ⚡ {better_note[:35]}" if better_note else ""
+                    col_info, col_btn = st.columns([5, 1])
+                    with col_info:
+                        st.markdown(
+                            f'<div style="background:#0a0e14;border-left:3px solid {border_c};border-radius:4px;padding:0.5rem 0.8rem;">' +
+                            f'<div style="display:flex;align-items:center;gap:0.5rem;">' +
+                            f'<span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{tp.get("Player","")}</span>' +
+                            f'<span style="color:#b8c6d6;font-size:0.85rem;">{tp.get("Side","")} {tp.get("Line","")} {tp.get("Prop","")}</span>' +
+                            f'<span style="color:{border_c};font-weight:700;font-size:0.88rem;margin-left:auto;">{tp.get("EdgePct","—")}</span></div>' +
+                            f'<div style="font-size:0.72rem;color:#6a7a8a;margin-top:2px;">{tp.get("EV_2pick","—")} EV · {tp.get("PinnacleProb","—")} Pinnacle{pinn_txt}{better_txt}</div></div>',
+                            unsafe_allow_html=True
+                        )
+                    with col_btn:
+                        _lock_key = f"sum_lock_{t}_{idx_p}"
+                        _already = any(
+                            normalize_name(lk.get("player","")) == normalize_name(tp.get("Player","")) and
+                            str(lk.get("line","")) == str(tp.get("Line",""))
+                            for lk in st.session_state.locks
+                        )
+                        if _already:
+                            st.markdown('<div style="color:#22c55e;font-size:0.75rem;text-align:center;padding-top:0.5rem;">✅</div>', unsafe_allow_html=True)
+                        elif st.button("🔒", key=_lock_key, use_container_width=True, help=f"Lock {tp.get('Player','')} {tp.get('Side','')} {tp.get('Line','')} {tp.get('Prop','')}"):
+                            _new_lock = {
+                                "player": tp.get("Player",""), "prop": tp.get("Prop",""),
+                                "line": tp.get("Line",0), "side": tp.get("Side","OVER"),
+                                "tier": tp.get("Tier",""), "edge": tp.get("Edge",0),
+                                "sport": _cur_sport, "source": "Summary Board",
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "prob": tp.get("Prob",0.5), "ev_2pick": tp.get("EV_2pick","—"),
+                            }
+                            st.session_state.locks.append(_new_lock)
+                            save_json_data(LOCKS_PATH, st.session_state.locks)
+                            save_to_gist("locks", st.session_state.locks)
+                            st.rerun()
         else:
             st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;">Load the board to see props.</div>', unsafe_allow_html=True)
 
-        # ── DAILY RISK STATUS ──────────────────────────────
+
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Daily Risk Status</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         same_team_count = 0
         players = [p.get("Player","") for p in parlay_props]
@@ -7889,10 +7921,11 @@ with tabs[4]:
                 key="hist_outcome_filter"
             )
         with filter_col3:
+            all_sports = ["NBA","MLB","NFL","NHL","WNBA","UFC","Soccer","Golf","Tennis"]
             sport_filter_h = st.multiselect(
                 "Filter by Sport",
-                list(set(h.get("sport","") for h in st.session_state.history if h.get("sport"))),
-                default=list(set(h.get("sport","") for h in st.session_state.history if h.get("sport"))),
+                all_sports,
+                default=all_sports,
                 key="hist_sport_filter"
             )
 
@@ -7903,7 +7936,7 @@ with tabs[4]:
         if "outcome" in filtered_hist.columns:
             filtered_hist = filtered_hist[filtered_hist["outcome"].fillna("PENDING").isin(outcome_filter)]
         if "sport" in filtered_hist.columns:
-            filtered_hist = filtered_hist[filtered_hist["sport"].fillna("").isin(sport_filter_h + [""])]
+            filtered_hist = filtered_hist[filtered_hist["sport"].fillna("NBA").isin(sport_filter_h)]
 
         # Friendly column names
         display_cols = {
@@ -8567,7 +8600,7 @@ with tabs[7]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
-    log_tab1, log_tab2 = st.tabs(["Manual Entry", "Bulk Entry"])
+    log_tab1, log_tab2 = st.tabs(["Screenshot / Text", "Bulk Entry"])
     with log_tab1:
         st.markdown("### 📸 Upload Screenshot")
         st.caption("Upload one or more screenshots of your bet slip or result.")
@@ -8654,8 +8687,8 @@ with tabs[7]:
             else:
                 st.caption("Upload a screenshot to see extracted text.")
         st.markdown("---")
-        st.markdown("### Single Bet")
-        st.caption("Can't upload a screenshot? Log a single bet manually here.")
+        st.markdown("### Log Single Bet (Manual Fallback)")
+        st.caption("Only use if you can't upload a screenshot. Screenshot entry above is preferred.")
         bet_type_sel = st.radio("Bet type", ["Player Prop", "Game Line"], horizontal=True, key="log_bet_type")
         col_l1, col_l2 = st.columns(2)
         with col_l1:
@@ -8825,7 +8858,7 @@ with tabs[7]:
                     st.rerun()
     st.markdown("---")
     st.markdown("### \U0001f4ca Recent Manual Entries")
-    manual_history = [h for h in st.session_state.history if h.get("manual_entry")]
+    manual_history = [h for h in st.session_state.history if h.get("manual_entry") or h.get("source") in ("Screenshot Import","Manual")]
     if manual_history:
         st.caption(f"{len(manual_history)} manually logged bets")
         manual_df = pd.DataFrame(manual_history[-20:])
