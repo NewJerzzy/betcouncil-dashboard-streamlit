@@ -6351,6 +6351,7 @@ def load_sport_data(sport):
         props = pp_props
     elif ud_props_compare:
         props = ud_props_compare
+        st.sidebar.success(f"✅ Using Underdog props: {len(props)} raw props")
     else:
         # All primary DFS sources failed - try aggregator immediately
         parlayapi_props = fetch_parlayapi_props(sport)
@@ -6957,6 +6958,7 @@ with st.sidebar:
             pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
+            st.sidebar.info(f"Board enrichment result: {len(board)} props")
             st.session_state.board_data = board
             st.session_state.games = games
             # Cache last good props per sport for fallback
