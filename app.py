@@ -6284,8 +6284,6 @@ def load_sport_data(sport):
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     pp_props = scrape_prizepicks(sport)
     ud_props_compare = fetch_underdog_props(sport)
-    if ud_props_compare:
-    else:
     dk_salaries = fetch_dk_salaries(sport)
     st.session_state["dk_salaries"] = dk_salaries
 
