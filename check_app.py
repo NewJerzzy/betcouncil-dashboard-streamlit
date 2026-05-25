@@ -92,6 +92,22 @@ for key in unset_reads:
     if key in tab0_code and key not in ("gem_brief","analyzer_picks","analyzer_results","pl_logs","pl_name_display"):
         warnings.append(f"POSSIBLY UNSET KEY in tabs[0]: st.session_state['{key}']")
 
+
+# ─── 7. F-STRING SAFETY IN TABS[0] ────────────────────────
+tab0_start = code.find("with tabs[0]:")
+tab0_end = code.find("# ----- TAB 1: FULL BOARD -----")
+if tab0_start > 0 and tab0_end > 0:
+    tab0 = code[tab0_start:tab0_end]
+    # Check for embedded conditionals with quotes in f-strings
+    embedded = re.findall(r'\{["'].+?["'] if .+? else ["'].+?["']\}', tab0)
+    for e in embedded:
+        errors.append(f"EMBEDDED CONDITIONAL IN F-STRING (will break HTML): {e[:60]}")
+    # Check for empty format specs
+    empty_fmt = re.findall(r'\{[^}]+:\}', tab0)
+    for e in empty_fmt:
+        errors.append(f"EMPTY FORMAT SPEC (TypeError): {e[:60]}")
+    if not embedded and not empty_fmt:
+        print("✅ No f-string issues in tabs[0]")
 # ─── REPORT ────────────────────────────────────────────────
 print()
 if errors:
