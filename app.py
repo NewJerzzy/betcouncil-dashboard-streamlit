@@ -3144,25 +3144,56 @@ def fetch_underdog_props(sport):
         if resp.status_code != 200:
             return []
         data = resp.json()
-        players = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip() for p in data.get("players", [])}
-        stats_map = {s["id"]: s.get("display_name", s.get("name", "")) for s in data.get("stat_types", [])}
-        appearances = {a["id"]: a.get("player_id") for a in data.get("appearances", [])}
         props = []
         seen = set()
-        for line in data.get("over_under_lines", []):
-            appearance_id = line.get("appearance_id")
-            player_id = appearances.get(appearance_id)
-            name = players.get(player_id, "")
-            line_val = line.get("stat_value")
-            stat_type_id = line.get("stat_type_id")
-            stat_name = stats_map.get(stat_type_id, "")
-            if not name or not stat_name or line_val is None:
-                continue
-            key = (sport, name, stat_name, line_val)
-            if key in seen:
-                continue
-            seen.add(key)
-            props.append({"Player": name, "Prop": stat_name, "Line": float(line_val), "Side": "OVER", "Sport": sport, "source": "Underdog"})
+
+        # v1 lobbies endpoint structure
+        if "appearance_lines" in data or "over_under_lines" not in data:
+            # v1 structure: players, appearances, appearance_lines or similar
+            players_v1 = {}
+            for p in data.get("players", []):
+                pid = p.get("id","")
+                fname = p.get("first_name","").strip()
+                lname = p.get("last_name","").strip()
+                players_v1[pid] = f"{fname} {lname}".strip()
+
+            # Try appearance_lines first (v1)
+            appearances_v1 = {a.get("id",""): a.get("player_id","") for a in data.get("appearances", [])}
+            stat_types_v1 = {s.get("id",""): s.get("display_name", s.get("name","")) for s in data.get("stat_types", [])}
+
+            for line in data.get("appearance_lines", data.get("over_under_lines", [])):
+                app_id = line.get("appearance_id","")
+                player_id = appearances_v1.get(app_id,"")
+                name = players_v1.get(player_id,"")
+                line_val = line.get("stat_value", line.get("line_score"))
+                stat_id = line.get("stat_type_id","")
+                stat_name = stat_types_v1.get(stat_id,"")
+                if not name or not stat_name or line_val is None:
+                    continue
+                key = (sport, name, stat_name, line_val)
+                if key in seen:
+                    continue
+                seen.add(key)
+                props.append({"Player": name, "Prop": stat_name, "Line": float(line_val), "Side": "OVER", "Sport": sport, "source": "Underdog"})
+        else:
+            # v2 structure
+            players_v2 = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip() for p in data.get("players", [])}
+            stats_map = {s["id"]: s.get("display_name", s.get("name", "")) for s in data.get("stat_types", [])}
+            appearances = {a["id"]: a.get("player_id") for a in data.get("appearances", [])}
+            for line in data.get("over_under_lines", []):
+                appearance_id = line.get("appearance_id")
+                player_id = appearances.get(appearance_id)
+                name = players_v2.get(player_id, "")
+                line_val = line.get("stat_value")
+                stat_type_id = line.get("stat_type_id")
+                stat_name = stats_map.get(stat_type_id, "")
+                if not name or not stat_name or line_val is None:
+                    continue
+                key = (sport, name, stat_name, line_val)
+                if key in seen:
+                    continue
+                seen.add(key)
+                props.append({"Player": name, "Prop": stat_name, "Line": float(line_val), "Side": "OVER", "Sport": sport, "source": "Underdog"})
         return props
     except Exception as e:
         print(f"Underdog props error: {e}")
