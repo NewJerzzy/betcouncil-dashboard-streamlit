@@ -6255,7 +6255,7 @@ def load_sport_data(sport):
     elif ud_props_compare:
         props = ud_props_compare
     else:
-        # Fallback chain: ParlayAPI → ParlayPlay → OddsAPI → OddsPAPI
+        # All primary DFS sources failed - try aggregator immediately
         parlayapi_props = fetch_parlayapi_props(sport)
         if parlayapi_props:
             parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
@@ -6293,8 +6293,13 @@ def load_sport_data(sport):
                             games, _, _, _ = fetch_game_lines(sport)
                             return [], games, 0, 0, {}, {}
                     else:
-                        games, _, _, _ = fetch_game_lines(sport)
-                        return [], games, 0, 0, {}, {}
+                        # Last resort: use cached props from previous load
+                        cached_props = st.session_state.get("last_good_props", {}).get(sport, [])
+                        if cached_props:
+                            props = cached_props
+                        else:
+                            games, _, _, _ = fetch_game_lines(sport)
+                            return [], games, 0, 0, {}, {}
     
     injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
     public_betting = {}
@@ -6850,6 +6855,11 @@ with st.sidebar:
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
             st.session_state.board_data = board
             st.session_state.games = games
+            # Cache last good props per sport for fallback
+            if board:
+                if "last_good_props" not in st.session_state:
+                    st.session_state["last_good_props"] = {}
+                st.session_state["last_good_props"][sport_sel] = board
             st.session_state.last_sport = sport_sel
             st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
             st.session_state.board_ready = True
