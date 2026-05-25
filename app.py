@@ -6501,7 +6501,9 @@ def load_sport_data(sport):
             player_stats, using_default = find_player_avg(player, season_avgs)
             if using_default:
                 skipped_def += 1
-                if skip_def:
+                # Only skip if we have NO data at all AND skip_def is on
+                # For playoff players not in season DB, use line as baseline
+                if skip_def and len(props) > 20:
                     continue
                 avg_dict = {stat_norm: defaults.get(stat_norm, line)}
                 avg_dict["search_needed"] = True
