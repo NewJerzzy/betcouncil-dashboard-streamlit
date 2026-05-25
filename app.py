@@ -7030,38 +7030,43 @@ with tabs[0]:
             avg = lock_prop.get("Avg", 0)
             lock_score = min(100, int(abs(edge)*300 + (prob - 0.5)*200 + (50 if pinnacle_confirms else 0)))
             l10_rate = lock_prop.get("L10Rate","—")
-            st.markdown(f"""
+            # Pre-compute conditionals to avoid f-string quote conflicts
+            _pinn_badge = '<span style="color:#7f77dd;font-size:0.88rem;">&#128302; PINNACLE CONFIRMED</span>' if pinnacle_confirms else ""
+            _better_html = f'<div style="color:#22c55e;font-size:0.92rem;margin-bottom:0.5rem;">&#9889; {better_line}</div>' if better_line else ""
+            _risk_note = lock_prop.get("PinnacleNote","monitor lineup")[:50]
+            _player_line = f'{lock_prop.get("Player","")} &mdash; {lock_prop.get("Side","")} {lock_prop.get("Line","")} {lock_prop.get("Prop","")}'
+            _lock_html = f"""
             <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #22c55e;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
                     <span style="background:{tier_color}22;color:{tier_color};padding:0.2rem 0.7rem;border-radius:20px;font-size:0.88rem;font-weight:700;">{tier}</span>
-                    {"<span style='color:#7f77dd;font-size:0.88rem;'>📌 PINNACLE CONFIRMED</span>" if pinnacle_confirms else ""}
+                    {_pinn_badge}
                 </div>
-                <div style="font-size:1.1rem;font-weight:700;color:#e8f0f8;margin-bottom:0.8rem;">{lock_prop.get("Player","")} — {lock_prop.get("Side","")} {lock_prop.get("Line","")} {lock_prop.get("Prop","")}</div>
+                <div style="font-size:1.1rem;font-weight:700;color:#e8f0f8;margin-bottom:0.8rem;">{_player_line}</div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem;margin-bottom:0.8rem;">
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:0.62rem;text-transform:uppercase;">Season Avg</div>
+                        <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">Season Avg</div>
                         <div style="color:#e8f0f8;font-weight:700;">{avg:.1f}</div>
                     </div>
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:0.62rem;text-transform:uppercase;">Hit Prob</div>
+                        <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">Hit Prob</div>
                         <div style="color:#22c55e;font-weight:700;">{prob:.1%}</div>
                     </div>
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:0.62rem;text-transform:uppercase;">Pinnacle</div>
+                        <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">Pinnacle</div>
                         <div style="color:#7f77dd;font-weight:700;">{pinnacle_prob}</div>
                     </div>
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:0.62rem;text-transform:uppercase;">2-Pick EV</div>
+                        <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">2-Pick EV</div>
                         <div style="color:#22c55e;font-weight:700;">{ev_2}</div>
                     </div>
                 </div>
-                {"<div style=\"color:#22c55e;font-size:0.92rem;margin-bottom:0.5rem;\">⚡ " + better_line + "</div>" if better_line else ""}
+                {_better_html}
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:#22c55e;font-weight:700;font-size:0.88rem;">🔒 Lock Quality: {lock_score}/100</span>
-                    <span style="color:#e04040;font-size:0.82rem;">Risk: {lock_prop.get("PinnacleNote","monitor lineup")[:50]}</span>
+                    <span style="color:#22c55e;font-weight:700;font-size:0.88rem;">&#128274; Lock Quality: {lock_score}/100</span>
+                    <span style="color:#e04040;font-size:0.82rem;">Risk: {_risk_note}</span>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+            </div>"""
+            st.markdown(_lock_html, unsafe_allow_html=True)
             with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
                 chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
                 st.markdown(chart_html, unsafe_allow_html=True)
