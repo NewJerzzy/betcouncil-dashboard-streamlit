@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, date, timedelta, timezone
 import re
@@ -7176,10 +7177,17 @@ with tabs[0]:
                     <span style="color:#e04040;font-size:0.82rem;">Risk: {_risk_note}</span>
                 </div>
             </div>"""
-            st.markdown(_lock_html, unsafe_allow_html=True)
+            try:
+                st.markdown(_lock_html, unsafe_allow_html=True)
+            except Exception as _e:
+                st.error(f"Lock card render error: {_e}")
+                st.write(f"**{lock_prop.get('Player','')}** {lock_prop.get('Side','')} {lock_prop.get('Line','')} {lock_prop.get('Prop','')} | Edge: {lock_prop.get('EdgePct','—')} | Tier: {tier}")
             with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
-                chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
-                st.markdown(chart_html, unsafe_allow_html=True)
+                try:
+                    chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
+                    st.markdown(chart_html, unsafe_allow_html=True)
+                except:
+                    st.write("Signal chart unavailable")
 
         # ── LOCK OF THE DAY — GAME ─────────────────────────
         if game_analysis:
