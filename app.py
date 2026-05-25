@@ -6952,426 +6952,353 @@ tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 L
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
 with tabs[0]:
-    st.markdown("# 🧠 THE BOARD — BETCOUNCIL v4.6")
-    today_str = date.today().strftime("%A, %B %d, %Y")
-    st.markdown(f"**{st.session_state.last_sport} Slate — {today_str}** | **Scanned:** {scan_t} | **Edge Model:** Multi‑Signal (5 signals + bonuses)")
-    
-    staleness_label, staleness_color = get_edge_staleness(st.session_state.last_scan_time)
-    col_fresh1, col_fresh2, col_fresh3 = st.columns(3)
-    with col_fresh1:
-        st.markdown(f"**Edge Data:** {staleness_label}")
-    with col_fresh2:
-        if staleness_color in ("orange", "red"):
-            if st.button("🔄 Refresh Board"):
-                with st.spinner("Refreshing..."):
-                    board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(st.session_state.last_sport)
-                    st.session_state.board_data = board
-                    st.session_state.games = games
-                    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
-                    if games and home_teams and away_teams:
-                        game_analysis = analyze_all_games(games, st.session_state.last_sport, home_teams, away_teams)
-                        st.session_state["game_analysis"] = game_analysis
-                    else:
-                        st.session_state["game_analysis"] = []
-                st.rerun()
-    with col_fresh3:
-        if staleness_color == "red":
-            st.warning("⚠️ Edges over 60 minutes old. Lines may have moved.")
-    
-    fw = check_data_freshness()
-    if fw:
-        with st.expander(f"⚠️ {len(fw)} Data Freshness Warning(s)"):
-            for w in fw:
-                st.warning(w)
-    
-    st.markdown("🔒 **Sources:** PrizePicks (Partner API) · Underdog · ESPN Odds · OddsWrap")
-    
-    st.markdown("""
-<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px 0;">
-  <span style="color:#e8a020;font-weight:600;font-size:13px;">🥇 SOVEREIGN 15%+</span>
-  <span style="color:#0ea5a0;font-weight:600;font-size:13px;">🥈 ELITE 10%+</span>
-  <span style="color:#4a90d9;font-weight:600;font-size:13px;">🥉 APPROVED 5%+</span>
-  <span style="color:#7a8a9a;font-weight:600;font-size:13px;">📋 LEAN 2%+</span>
-  <span style="color:#6a7a8a;font-size:13px;">· 2-pick needs 57.7% to be +EV</span>
-  <span style="color:#6a7a8a;font-size:13px;">· 3-pick needs 58.5%</span>
-</div>
-""", unsafe_allow_html=True)
-    
-    can_bet, risk_reason = check_daily_risk_limits()
-    if not can_bet:
-        st.error(f"🛑 **Risk Control Active:** {risk_reason}")
-    else:
-        today = date.today().strftime("%Y-%m-%d")
-        today_count = len([l for l in st.session_state.locks if l.get("timestamp","").startswith(today)]) + len([h for h in st.session_state.history if h.get("timestamp","").startswith(today)])
-        remaining = DAILY_RISK_CONTROLS["max_locks_per_day"] - today_count
-        st.caption(f"✅ Risk controls OK — {remaining} locks remaining today | Stop-loss: -{DAILY_RISK_CONTROLS['max_daily_loss_pct']:.0%} | Stop-win: +{DAILY_RISK_CONTROLS['stop_win_pct']:.0%}")
-    
-    if st.session_state.get("board_ready"):
-        games = st.session_state.games
-        is_playoff = any(g.get("Status","").lower() in ("scheduled","in progress") for g in games) and date.today().month in [4, 5, 6]
-        if is_playoff and st.session_state.last_sport == "NBA":
-            st.warning(PLAYOFF_DEFENSE_WARNING)
-    
-    st.markdown("---")
-    
-    st.markdown("## 🏟️ TODAY'S GAMES")
-    st.caption("📊 **Column Guide:** • **Spread** = Run line (MLB) / Point spread • **Total** = Over/Under (combined runs) • **Home ML/Away ML** = Moneyline odds (N/A = not provided by ESPN API)")
-    
-    if st.session_state.games:
-        df_games = pd.DataFrame(st.session_state.games)
-        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Date"]
-        display_cols = [c for c in display_cols if c in df_games.columns]
-        
-        display_df = df_games[display_cols].copy()
-        
-        if "Total" in display_df.columns:
-            display_df["Total"] = display_df["Total"].apply(lambda x: f"{float(x):.1f}" if x not in ("N/A", "—", None) and str(x).replace('.','',1).isdigit() else "—")
-        
-        if "Spread" in display_df.columns:
-            display_df["Spread"] = display_df["Spread"].apply(lambda x: str(x).replace("N/A", "—") if x not in ("N/A", None) else "—")
-        
-        styled_df = display_df.style.set_properties(**{
-            'color': '#e8f0f8',
-            'background-color': '#0d1520',
-            'border-color': '#1a2a3a',
-            'text-align': 'left'
-        }).set_table_styles([
-            {'selector': 'th', 'props': [('text-align', 'left'), ('color', '#0ea5a0'), ('font-weight', '600')]},
-            {'selector': 'td', 'props': [('text-align', 'left')]},
-        ])
-        
-        st.dataframe(styled_df, width="stretch", use_container_width=True, hide_index=True)
-        st.caption("💡 **What does Total mean?** The projected combined runs scored by both teams. Bet OVER if you think more runs will be scored, UNDER if fewer.")
-        
-    else:
-        st.info("No games loaded.")
-    
+    # ═══════════════════════════════════════════════════════
+    # SUMMARY TAB — DARK UI OVERHAUL
+    # ═══════════════════════════════════════════════════════
+    col_left, col_right = st.columns([4, 1.2])
 
-    if st.session_state.last_sport == "MLB":
-        st.markdown("### 🌤️ MLB Weather Conditions")
-        weather_data = []
-        shown_cities = set()
-        for prop in st.session_state.board_data[:20]:
-            player = prop.get("Player", "")
-            team = MLB_PLAYER_TEAM_MAP.get(player, "")
-            if team:
-                park = MLB_BALLPARKS.get(team, {})
-                city = park.get("city", "")
-                is_outdoor = park.get("outdoor", True)
-                if city and is_outdoor and city not in shown_cities:
-                    weather = fetch_weather_for_game(city, is_outdoor)
-                    if weather:
-                        shown_cities.add(city)
-                        weather_data.append({"City": city, "Temp": f"{weather['temp_f']}\u00b0F", "Wind": f"{weather['wind_speed_mph']}mph {weather['wind_dir']}", "Humidity": f"{weather['humidity']}%", "Updated": weather["fetched_at"]})
-        if weather_data:
-            st.dataframe(pd.DataFrame(weather_data), width="stretch")
+    with col_left:
+
+        # ── 1. RECOMMENDED ACTION ──────────────────────────
+        board = st.session_state.board_data or []
+        game_analysis = st.session_state.get("game_analysis", [])
+        elite_count = sum(1 for p in board if p.get("Tier","") in ["SOVEREIGN","ELITE"])
+        game_edge_count = sum(1 for g in game_analysis if g.get("best_edge",0) >= 0.05)
+
+        # Day verdict
+        if elite_count >= 4:
+            action_label, action_color = "Strong Betting Day", "#22c55e"
+            action_desc = "Multiple high-conviction plays confirmed by Pinnacle. Favor props over games today."
+        elif elite_count >= 2:
+            action_label, action_color = "Selective Betting Day", "#e8a020"
+            action_desc = "A few strong plays available. Be selective — stick to Sovereign and Elite tier only."
+        elif elite_count >= 1:
+            action_label, action_color = "Light Betting Day", "#e8a020"
+            action_desc = "Limited quality. Consider 1 pick max or sitting out."
         else:
-            st.caption("Load MLB board to see weather conditions.")
+            action_label, action_color = "Sit Out Today", "#e04040"
+            action_desc = "No high-conviction plays. Best move is to wait for a better slate."
 
-    st.markdown("---")
-    st.markdown("## \U0001f916 AI ASSISTANT SYNC")
-    st.caption("Generate a formatted daily summary to paste into your AI betting assistant (Gemini Gem). It gives the AI full context on today\'s board, picks, and game data so you can ask it questions.")
-    col_gem1, col_gem2 = st.columns([2, 1])
-    with col_gem1:
-        if st.button("\U0001f4cb Generate Daily Summary", key="gen_gem_brief"):
-            if not st.session_state.get("board_data"):
-                st.warning("Load the board first.")
-            else:
-                brief = generate_gem_summary()
-                st.session_state["gem_brief"] = brief
-                st.success("\u2705 Summary generated \u2014 copy it and paste into your Gemini Gem")
-    with col_gem2:
-        if st.session_state.get("gem_brief"):
-            _scan_t = st.session_state.last_scan_time or "\u2014"
-            st.caption(f"Generated at {_scan_t}")
-    if st.session_state.get("gem_brief"):
-        st.caption("\U0001f4cc How to use: Copy everything below \u2192 open your Gemini Gem \u2192 paste it in. Your Gem will now know everything about today\'s board and you can ask it questions.")
-        st.text_area("Copy this and paste into your Gemini Gem:", value=st.session_state["gem_brief"], height=300, key="gem_brief_display")
+        st.markdown(f"""
+        <div style="background:{action_color}11;border:1px solid {action_color}33;border-radius:8px;padding:1.2rem;margin-bottom:1.5rem;">
+            <div style="color:{action_color};font-size:1.1rem;font-weight:700;margin-bottom:0.4rem;">⚡ {action_label.upper()}</div>
+            <p style="color:#9aa8b8;font-size:0.85rem;margin-bottom:1rem;">{action_desc}</p>
+            <div style="display:flex;gap:0.8rem;">
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
+                    <div style="color:#6a7a8a;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;">Elite+ Plays</div>
+                    <div style="color:#22c55e;font-size:1.4rem;font-weight:700;">{elite_count}</div>
+                </div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
+                    <div style="color:#6a7a8a;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;">Props</div>
+                    <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{len(board)}</div>
+                </div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
+                    <div style="color:#6a7a8a;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;">Game Edges</div>
+                    <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{game_edge_count}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("### \u26a1 Sharp Money Alerts")
-    sharp_flags = st.session_state.get("game_sharp_flags", {})
-    if sharp_flags:
-        for matchup, info in sharp_flags.items():
-            st.warning(f"**{matchup}**: Line moved {info['direction']}{info['magnitude']} \u2014 possible sharp action")
-    public_data = st.session_state.get("public_betting_data", {})
-    if public_data:
-        for game_key, gd in public_data.items():
-            signals = gd.get("sharp_signals", [])
-            teams = gd.get("teams", [])
-            num_bets = gd.get("num_bets", 0)
-            if signals:
-                matchup_label = " vs ".join(teams)
-                for sig in signals:
-                    st.warning(f"**{matchup_label}** ({num_bets:,} bets): {sig}")
-    if not sharp_flags and not public_data:
-        st.caption("Load board to see sharp money and public betting data.")
+        # ── MATCHUPS ────────────────────────────────────────
+        games_list = st.session_state.games or []
+        if games_list:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Today's Matchups</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            games_html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:0.5rem;">'
+            for g in games_list[:6]:
+                matchup = g.get("Matchup", g.get("matchup",""))
+                total = g.get("Total", g.get("total",""))
+                date_str = g.get("Date","")
+                games_html += f"""
+                <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;">
+                    <div style="color:#e8f0f8;font-weight:600;font-size:0.85rem;">{matchup}</div>
+                    <div style="display:flex;justify-content:space-between;margin-top:0.3rem;">
+                        <span style="color:#6a7a8a;font-size:0.7rem;">{date_str}</span>
+                        <span style="color:#9aa8b8;font-size:0.7rem;">O/U {total}</span>
+                    </div>
+                </div>"""
+            games_html += '</div>'
+            st.markdown(games_html, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("## \U0001f4ca PLAYER PROPS \u2014 TOP PICKS")
-    board = st.session_state.board_data
-    if board:
-        for p in board[:8]:
-            tier_color = TIER_COLORS.get(p["Tier"], "#7a8a9a")
-            ev_2 = p.get("EV_2pick", "\u2014")
-            ev_color = "#22c55e" if str(ev_2).startswith("+") else "#e04040"
-            avg_val = p.get("Avg", 0)
-            injury_html = f'<span style="background:#e04040;color:white;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;">{p["Injury"]}</span>' if p.get("Injury") else ""
-            sharp_html = f'<span style="color:#e8a020;font-size:11px;margin-left:8px;">{p["SharpFlag"]}</span>' if p.get("SharpFlag") else ""
-            better_line_html = f'<span style="background:#22c55e;color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">⚡ Better on {p["BetterLineSource"]}: {p["Side"]} {p["BetterLineVal"]}</span>' if p.get("BetterLineSource") else ""
-            pinnacle_html = f'<span style="background:#9b59b6;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">📌 Pinnacle {p["PinnacleProb"]}</span>' if p.get("PinnacleConfirms") else ""
-            pinnacle_fade_html = f'<span style="background:#e04040;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;">⚠️ Pinnacle Fades</span>' if p.get("PinnacleProb","—") != "—" and not p.get("PinnacleConfirms") and float(p.get("PinnacleProb","50%").replace("%",""))/100 < 0.46 else ""
-            ev_2_display = p.get("EV_2pick", "\u2014")
-            wager_display = p.get("Wager_2pick", p.get("Wager", 0))
-            st.markdown(
-                f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};border-radius:8px;padding:14px 18px;margin-bottom:10px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-                f'<div><span style="font-size:16px;font-weight:700;color:#e8f0f8;">{p["Player"]}</span>{injury_html}{sharp_html}{better_line_html}{pinnacle_html}{pinnacle_fade_html}<br/>'
-                f'<span style="font-size:14px;color:{tier_color};font-weight:600;">{p["Side"]} {p["Line"]} {p["Prop"]}</span></div>'
-                f'<div style="text-align:right;"><span style="background:{tier_color};color:#000;font-weight:700;font-size:12px;padding:3px 10px;border-radius:20px;">{p["Tier"]}</span></div>'
-                f'</div>'
-                f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px;">'
-                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">Edge</div><div style="font-size:18px;font-weight:700;color:#0ea5a0;">{p["EdgePct"]}</div></div>'
-                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">2-Pick EV</div><div style="font-size:18px;font-weight:700;color:{ev_color};">{ev_2_display}</div></div>'
-                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">Avg (10g)</div><div style="font-size:18px;font-weight:700;color:#e8f0f8;">{avg_val:.1f}</div></div>'
-                f'<div style="background:#060c14;border-radius:6px;padding:8px;text-align:center;"><div style="font-size:10px;color:#6a7a8a;">Bet Size</div><div style="font-size:18px;font-weight:700;color:#e8a020;">${wager_display:.2f}</div></div>'
-                f'</div></div>',
-                unsafe_allow_html=True
-            )
-            with st.expander(f"\U0001f4ca Why this pick is rated {p['Tier']} \u2014 see the signals", expanded=False):
-                chart_html = render_signal_chart(p, p.get("Sport", "NBA"))
-                st.markdown(chart_html, unsafe_allow_html=True)
-    else:
-        st.info("No props loaded.")
+        # ── INJURY ALERTS ───────────────────────────────────
+        injury_props = [p for p in board if p.get("Injury")]
+        if injury_props:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Injury Alerts</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            inj_html = '<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">'
+            seen_inj = set()
+            for ip in injury_props[:4]:
+                player = ip.get("Player","")
+                if player not in seen_inj:
+                    seen_inj.add(player)
+                    inj_html += f'<div style="margin-bottom:0.5rem;"><span style="color:#e04040;font-weight:700;">{player}</span> <span style="color:#9aa8b8;font-size:0.8rem;">— {ip.get("Injury","Questionable")}: Monitor usage impact</span></div>'
+            inj_html += '</div>'
+            st.markdown(inj_html, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("## \U0001f3af RECOMMENDED ACTION TODAY")
-    board = st.session_state.board_data
-    game_analysis = st.session_state.get("game_analysis", [])
-    sovereign_elite = [p for p in board if p["Tier"] in ("SOVEREIGN", "ELITE")] if board else []
-    approved = [p for p in board if p["Tier"] == "APPROVED"] if board else []
-    if not board and not game_analysis:
-        st.info("Load the board to see today's recommended action.")
-    else:
-        if len(sovereign_elite) >= 2:
-            action_color, action_text = "#22c55e", "STRONG BETTING DAY"
-            action_detail = f"{len(sovereign_elite)} elite props available."
-        elif len(sovereign_elite) == 1:
-            action_color, action_text = "#0ea5a0", "SELECTIVE DAY"
-            action_detail = f"1 elite prop + {len(approved)} approved plays."
-        elif len(approved) >= 3:
-            action_color, action_text = "#4a90d9", "MODERATE DAY"
-            action_detail = f"{len(approved)} approved plays. No elite props."
-        else:
-            action_color, action_text = "#e8a020", "LIGHT DAY"
-            action_detail = "Limited quality. Consider sitting out or 1 pick max."
-        col_act1, col_act2, col_act3 = st.columns(3)
-        col_act1.metric("Elite Plays", len(sovereign_elite))
-        col_act2.metric("Total Props", len(board) if board else 0)
-        col_act3.metric("Game Edges", len(game_analysis))
-        st.markdown(f"### {action_text}")
-        st.caption(action_detail)
+        # ── LOCK OF THE DAY — PROP ─────────────────────────
         if board:
-            best_prop = board[0]
-            st.markdown(f"\U0001f3c0 **Best Prop:** {best_prop['Player']} {best_prop['Side']} {best_prop['Line']} {best_prop['Prop']} \u2014 {best_prop['EdgePct']} edge")
-        if game_analysis and game_analysis[0].get("best_bet"):
-            bb = game_analysis[0]["best_bet"]
-            st.markdown(f"\U0001f3df\ufe0f **Best Game:** {game_analysis[0]['matchup']} \u2192 {bb['pick']} \u2014 {bb['edge_pct']} edge")
-
-    st.markdown("---")
-    st.markdown("## \U0001f512 LOCK OF THE DAY")
-    quality_board = st.session_state.get("quality_sorted_board", board)
-    best = next((p for p in quality_board if p["Tier"] in ["SOVEREIGN","ELITE","APPROVED"]), None)
-    if best:
-        tier_color = TIER_COLORS.get(best['Tier'], "#0ea5a0")
-        lock_score = best.get('LockScore', 0)
-        lock_grade = "\U0001f7e2 PRIME LOCK" if lock_score >= 80 else "\U0001f7e1 SOLID LOCK" if lock_score >= 60 else "\U0001f7e0 SPECULATIVE" if lock_score >= 40 else "\U0001f534 RISKY"
-        st.markdown(f"**{best['Player']} {best['Side']} {best['Line']} {best['Prop']}** | {best['Tier']} | Edge: {best['EdgePct']} | EV: {best.get('EV_2pick','\u2014')} | Lock Score: {lock_score}/100 {lock_grade}")
-        if st.button("\U0001f512 Lock This Pick"):
-            can_bet, risk_reason = check_daily_risk_limits(best["Sport"])
-            if not can_bet:
-                st.error(risk_reason)
-            else:
-                already = any(l.get("player") == best["Player"] and l.get("prop") == best["Prop"] for l in st.session_state.locks)
-                if not already:
-                    st.session_state.locks.append({"player": best["Player"], "prop": best["Prop"], "line": best["Line"], "side": best["Side"], "wager": best["Wager"], "prob": best["Prob"], "edge": best["Edge"], "tier": best["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": best["Sport"]})
-                    save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)
-                    st.rerun()
-                else:
-                    st.warning("Already locked")
-        with st.expander("\U0001f4ca Why this is the Lock of the Day \u2014 see all signals", expanded=False):
-            if best:
-                chart_html = render_signal_chart(best, best.get("Sport", "NBA"))
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Prop</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            sorted_board = sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
+            lock_prop = sorted_board[0]
+            tier = lock_prop.get("Tier","LEAN")
+            tier_color = TIER_COLORS.get(tier, "#6a7a8a")
+            prob = lock_prop.get("Prob", 0.5)
+            ev_2 = lock_prop.get("EV_2pick","—")
+            pinnacle_prob = lock_prop.get("PinnacleProb","—")
+            pinnacle_confirms = lock_prop.get("PinnacleConfirms", False)
+            better_line = lock_prop.get("BetterLineNote","")
+            better_line_src = lock_prop.get("BetterLineSource","")
+            edge = lock_prop.get("Edge", 0)
+            avg = lock_prop.get("Avg", 0)
+            lock_score = min(100, int(abs(edge)*300 + (prob - 0.5)*200 + (50 if pinnacle_confirms else 0)))
+            l10_rate = lock_prop.get("L10Rate","—")
+            st.markdown(f"""
+            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #22c55e;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
+                    <span style="background:{tier_color}22;color:{tier_color};padding:0.2rem 0.7rem;border-radius:20px;font-size:0.7rem;font-weight:700;">{tier}</span>
+                    {"<span style='color:#7f77dd;font-size:0.7rem;'>📌 PINNACLE CONFIRMED</span>" if pinnacle_confirms else ""}
+                </div>
+                <div style="font-size:1.1rem;font-weight:700;color:#e8f0f8;margin-bottom:0.8rem;">{lock_prop.get("Player","")} — {lock_prop.get("Side","")} {lock_prop.get("Line","")} {lock_prop.get("Prop","")}</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem;margin-bottom:0.8rem;">
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#6a7a8a;font-size:0.62rem;text-transform:uppercase;">Season Avg</div>
+                        <div style="color:#e8f0f8;font-weight:700;">{avg:.1f}</div>
+                    </div>
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#6a7a8a;font-size:0.62rem;text-transform:uppercase;">Hit Prob</div>
+                        <div style="color:#22c55e;font-weight:700;">{prob:.1%}</div>
+                    </div>
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#6a7a8a;font-size:0.62rem;text-transform:uppercase;">Pinnacle</div>
+                        <div style="color:#7f77dd;font-weight:700;">{pinnacle_prob}</div>
+                    </div>
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#6a7a8a;font-size:0.62rem;text-transform:uppercase;">2-Pick EV</div>
+                        <div style="color:#22c55e;font-weight:700;">{ev_2}</div>
+                    </div>
+                </div>
+                {"<div style=\"color:#22c55e;font-size:0.75rem;margin-bottom:0.5rem;\">⚡ " + better_line + "</div>" if better_line else ""}
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:#22c55e;font-weight:700;font-size:0.8rem;">🔒 Lock Quality: {lock_score}/100</span>
+                    <span style="color:#e04040;font-size:0.72rem;">Risk: {lock_prop.get("PinnacleNote","monitor lineup")[:50]}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
+                chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
                 st.markdown(chart_html, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("## \U0001f500 ALT LINE UPGRADES")
-    alt_upgrades = st.session_state.get("alt_line_upgrades", [])
-    if alt_upgrades:
-        for upg in alt_upgrades[:6]:
-            ev_color = "#22c55e" if upg["best_ev"] > 0 else "#e04040"
-            st.markdown(f"**{upg['player']}** {upg['stat']}: ~~Main: {upg['main_line']}~~ \u2192 Alt OVER **{upg['best_line']} @ {upg['best_payout']}** | EV: {upg['best_ev']:+.1%} (+{upg['ev_improvement']:.1%} improvement)")
-            lock_key = f"lock_alt_{upg['player']}_{upg['stat']}".replace(" ", "_")
-            if st.button("\U0001f512 Lock Alt", key=lock_key):
-                can_bet, risk_reason = check_daily_risk_limits(st.session_state.last_sport)
-                if not can_bet:
-                    st.error(risk_reason)
-                else:
-                    alt_lock = {"player": upg["player"], "prop": upg["stat"], "line": upg["best_line"], "side": "OVER", "wager": upg["wager"], "prob": upg["fair_prob"], "edge": upg["best_ev"], "tier": "ALT", "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": st.session_state.last_sport, "source": "ParlayPlay_Alt", "alt_payout": upg["best_payout"], "alt_line": True, "main_line": upg["main_line"]}
-                    already = any(l.get("player") == upg["player"] and l.get("prop") == upg["stat"] for l in st.session_state.locks)
-                    if not already:
-                        st.session_state.locks.append(alt_lock)
-                        save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)
-                        st.rerun()
-    elif st.session_state.get("board_ready"):
-        st.caption("No alt line upgrades found.")
-    else:
-        st.caption("Load board to check for alt line upgrades.")
+        # ── LOCK OF THE DAY — GAME ─────────────────────────
+        if game_analysis:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Game</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            best_game = max(game_analysis, key=lambda x: x.get("best_edge",0))
+            bb = best_game.get("best_bet",{})
+            if bb:
+                st.markdown(f"""
+                <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #378add;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                    <div style="font-size:0.72rem;color:#378add;text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
+                    <div style="font-size:1.05rem;font-weight:700;color:#e8f0f8;margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
+                    <div style="display:flex;gap:1.5rem;margin-bottom:0.5rem;">
+                        <span style="color:#378add;font-weight:700;">Edge: {bb.get("edge",0):+.1%}</span>
+                        <span style="color:#7f77dd;font-size:0.8rem;">{bb.get("note","")[:80]}</span>
+                    </div>
+                    <div style="display:flex;gap:0.8rem;font-size:0.72rem;color:#6a7a8a;">
+                        <span>Spread: {best_game.get("games",{}).get("Spread","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
+                        <span>Total: {best_game.get("games",{}).get("Total","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("## \U0001f4b0 BEST +EV PROPS TODAY")
-    if board:
-        ev_filter = st.radio("Filter by pick count", ["2-pick", "3-pick", "Both"], index=0, horizontal=True, key="ev_filter")
-        plus_ev_props = [p for p in board if (ev_filter == "2-pick" and str(p.get("EV_2pick","\u2014")).startswith("+")) or (ev_filter == "3-pick" and str(p.get("EV_3pick","\u2014")).startswith("+")) or (ev_filter == "Both" and (str(p.get("EV_2pick","\u2014")).startswith("+") or str(p.get("EV_3pick","\u2014")).startswith("+")))]
-        if plus_ev_props:
-            st.write(f"**{len(plus_ev_props)} +EV props found:**")
-            for p in plus_ev_props[:8]:
-                tier_color = TIER_COLORS.get(p["Tier"], "#7a8a9a")
-                ev_show = p.get("EV_2pick","\u2014") if "2" in ev_filter else p.get("EV_3pick","\u2014")
-                st.markdown(f"**{p['Player']}** {p['Side']} {p['Line']} {p['Prop']} | EV: {ev_show} | {p['Tier']}")
-        else:
-            st.info(f"No confirmed +EV props at {ev_filter} breakeven.")
-    else:
-        st.info("Load board to see +EV props.")
+        # ── PARLAY OF THE DAY — PROPS ──────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True) if p.get("Tier","") in ["SOVEREIGN","ELITE"]][:4]
+        n_parlay = st.session_state.get("parlay_size", 3)
+        parlay_props = parlay_props[:n_parlay]
+        if len(parlay_props) >= 2:
+            parlay_probs = [p.get("Prob", 0.55) for p in parlay_props]
+            combined = parlay_prob(parlay_probs)
+            be = prizepicks_breakeven_prob(len(parlay_props))
+            ev = calculate_prizepicks_ev(combined, len(parlay_props))
+            ev_color = "#22c55e" if ev > 0 else "#e04040"
+            tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
+            legs_html = ""
+            for p in parlay_props:
+                dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
+                legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:0.8rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:#4a5a6a;font-size:0.7rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
+            st.markdown(f"""
+            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                    <span style="color:#e8f0f8;font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
+                    <span style="color:{ev_color};font-weight:700;font-size:1rem;">{ev:+.1%} EV</span>
+                </div>
+                <div style="display:flex;gap:1.5rem;font-size:0.75rem;margin-bottom:0.7rem;">
+                    <span style="color:#9aa8b8;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
+                    <span style="color:#6a7a8a;">Breakeven: {be:.1%}</span>
+                    <span style="color:{ev_color};">{"▶ PLAY" if ev > 0 else "✖ PASS"}</span>
+                </div>
+                {legs_html}
+            </div>
+            """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("## \U0001f48e ARBITRAGE OPPORTUNITIES")
-    arb_opps = st.session_state.get("arb_opportunities", [])
-    if arb_opps:
-        st.success(f"\u2705 {len(arb_opps)} arbitrage opportunities found")
-        for arb in arb_opps[:5]:
-            st.markdown(f"**{arb['Player']}** {arb['Stat']} Line {arb['Line']}: OVER {arb['OVER Book']} {arb['OVER Odds']} / UNDER {arb['UNDER Book']} {arb['UNDER Odds']} | **{arb['Arb Profit']} GUARANTEED**")
-    elif st.session_state.get("board_ready"):
-        st.caption("No arb opportunities right now.")
-    else:
-        st.caption("Load board to scan for arbitrage opportunities.")
-
-    st.markdown("---")
-    st.markdown("## \U0001f4b0 BEST +EV GAMES TODAY")
-    game_analysis_g = st.session_state.get("game_analysis", [])
-    plus_ev_games = [g for g in game_analysis_g if g.get("best_bet") and g["best_edge"] >= 0.05]
-    if plus_ev_games:
-        for g in plus_ev_games[:5]:
-            bb = g["best_bet"]
-            st.markdown(f"**{g['matchup']}**: {bb['pick']} | Edge: {bb['edge_pct']} | {bb['type']}")
-    else:
-        st.info("No +EV games detected.")
-
-    st.markdown("---")
-    st.markdown("## \u26a1 PARLAY OF THE DAY \u2014 PROPS")
-    top_props = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")] if board else []
-    if len(top_props) >= 2:
-        n_picks_parlay = st.radio("Picks in parlay", [2, 3, 4, 5], index=1, horizontal=True, key="prop_parlay_picks")
-        parlay_props = top_props[:n_picks_parlay]
-        has_alt_lines = bool(st.session_state.get("parlayplay_alt_lines"))
-        use_alt = False
-        if has_alt_lines:
-            use_alt = st.checkbox("\U0001f500 Optimize with alt lines (ParlayPlay)", value=True, key="use_alt_parlay")
-        if use_alt and has_alt_lines:
-            optimized_result = optimize_parlay_with_alt_lines(parlay_props, n_picks_parlay, st.session_state.bankroll)
-        else:
-            optimized_result = None
-        display_props = optimized_result["props"] if optimized_result else parlay_props
-        adjusted_probs, corr_notes = (detect_correlations(display_props) if not optimized_result else (optimized_result["adjusted_probs"], optimized_result["correlation_notes"]))
-        for note in corr_notes:
-            if "\u26a0\ufe0f" in note or "\U0001f6a8" in note:
-                st.warning(note)
-            else:
-                st.info(note)
-        if optimized_result and optimized_result["improved_count"] > 0:
-            st.success(f"\U0001f500 {optimized_result['improved_count']} props upgraded to better alt lines \u2014 EV improved by +{optimized_result['total_ev_improvement']:.1%}")
-        for idx, p in enumerate(display_props):
-            improved = p.get("LineImproved", False)
-            ev_val = p.get("OptimizedEV", calculate_prizepicks_ev(p.get("Prob", 0.5), n_picks_parlay))
-            ev_color = "#22c55e" if ev_val > 0 else "#e04040"
-            payout_display = p.get("OptimizedPayout", f"{PRIZEPICKS_MULTIPLIERS.get(n_picks_parlay, 3.0)}x")
-            alt_note = f" [Alt \u2191 was {p.get('MainLine',0)}]" if improved else ""
-            st.markdown(f"**{p['Player']}** {p['Side']} {p['Line']} {p['Prop']}{alt_note} | EV: {ev_val:+.1%} @ {payout_display}")
-        if optimized_result:
-            cp = optimized_result["combined_prob"]
-            pp_ev = optimized_result["combined_ev"]
-            breakeven = optimized_result["breakeven"]
-            multiplier = optimized_result["multiplier"]
-        else:
-            multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks_parlay, 3.0)
-            breakeven = 1 / multiplier
-            cp = parlay_prob(adjusted_probs)
-            pp_ev = cp - breakeven
-        tw = sum(p.get("Wager_2pick", p.get("Wager", 0)) for p in display_props)
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Combined Prob", f"{cp:.1%}")
-        c2.metric(f"{n_picks_parlay}-pick Pays", f"{multiplier}x")
-        c3.metric("Breakeven", f"{breakeven:.1%}")
-        c4.metric("True EV", f"+{pp_ev:.1%} \u2705" if pp_ev > 0 else f"{pp_ev:.1%} \u274c")
-        if pp_ev > 0:
-            st.success(f"\u2705 This {n_picks_parlay}-pick is +EV. If hits: ${tw * multiplier:.2f}")
-        else:
-            st.error(f"\u274c This {n_picks_parlay}-pick is -EV.")
-    else:
-        st.caption("Need 2+ SOVEREIGN/ELITE/APPROVED props.")
-
-    st.markdown("---")
-    st.markdown("## \U0001f3df\ufe0f PARLAY OF THE DAY \u2014 GAMES")
-    good_games = [g for g in game_analysis if g.get("best_bet") and g["best_edge"] >= 0.04]
-    if len(good_games) >= 2:
-        n_game_picks = st.radio("Games in parlay", [2, 3, 4], index=0, horizontal=True, key="game_parlay_picks")
-        parlay_games = good_games[:n_game_picks]
-        for g in parlay_games:
-            bb = g["best_bet"]
-            tier_color = TIER_COLORS.get(bb.get("tier","LEAN"), "#7a8a9a")
-            st.markdown(f"**{g['matchup']}**: {bb['pick']} ({bb['type']}) | Edge: {bb['edge_pct']}")
-        game_probs = [min(0.70, 0.5 + g["best_edge"]) for g in parlay_games]
-        combined = parlay_prob(game_probs)
-        breakeven_g = 0.524 ** n_game_picks
-        ev_g = combined - breakeven_g
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Combined Prob", f"{combined:.1%}")
-        c2.metric("Breakeven (-110)", f"{breakeven_g:.1%}")
-        c3.metric("True EV", f"+{ev_g:.1%} \u2705" if ev_g > 0 else f"{ev_g:.1%} \u274c")
-        if ev_g > 0:
-            st.success(f"\u2705 This {n_game_picks}-game parlay is +EV.")
-        else:
-            st.error("\u274c Combined probability below breakeven.")
-    else:
-        st.caption("Need 2+ games with detected edge.")
-
-    st.markdown("---")
-    st.markdown("## \U0001f310 BEST OF ALL SPORTS")
-    all_sports_results = st.session_state.get("all_sports_results", None)
-    col_scan1, col_scan2 = st.columns([2,1])
-    with col_scan1:
-        if st.button("\U0001f50d Find Today's Best Plays Across All Sports", key="scan_all_sports_btn"):
-            with st.spinner("Scanning all sports boards..."):
-                results = scan_all_sports_best_plays()
-                st.session_state["all_sports_results"] = results
-                st.rerun()
-    with col_scan2:
-        if all_sports_results:
-            st.caption(f"Last scanned: {all_sports_results.get('timestamp','\u2014')}")
-    if all_sports_results:
-        best_props_all = all_sports_results.get("best_props", [])
-        best_games_all = all_sports_results.get("best_games", [])
-        if best_props_all:
-            st.markdown(f"### \U0001f3c6 Top Props ({len(best_props_all)} found)")
-            for p in best_props_all[:5]:
-                st.markdown(f"**{p['Sport']}** \u2014 {p['Player']} {p['Side']} {p['Line']} {p['Prop']} | Edge: {p['EdgePct']} | {p['Tier']}")
-        if best_games_all:
-            st.markdown(f"### \U0001f3df\ufe0f Top Game Bets ({len(best_games_all)} found)")
-            for g in best_games_all[:4]:
+        # ── PARLAY OF THE DAY — GAMES ──────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        top_games = sorted([g for g in game_analysis if g.get("best_bet") and g.get("best_edge",0)>=0.05], key=lambda x: x.get("best_edge",0), reverse=True)[:3]
+        if len(top_games) >= 2:
+            g_probs = [min(0.65, 0.5 + g.get("best_edge",0.05)) for g in top_games]
+            g_combined = parlay_prob(g_probs)
+            g_be = prizepicks_breakeven_prob(len(top_games))
+            g_ev = calculate_prizepicks_ev(g_combined, len(top_games))
+            g_ev_color = "#378add" if g_ev > 0 else "#e04040"
+            g_legs = ""
+            for g in top_games:
                 bb = g.get("best_bet",{})
-                st.markdown(f"**{g.get('sport','\u2014')}** \u2014 {g['matchup']}: {bb.get('pick','\u2014')} | Edge: {bb.get('edge_pct','\u2014')}")
+                g_legs += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;"><span style="color:#378add;font-size:0.7rem;">{bb.get("type","")}</span> <span style="color:#e8f0f8;font-size:0.8rem;">{g.get("matchup","")} — {bb.get("pick","")}</span> <span style="color:#4a5a6a;font-size:0.7rem;">({bb.get("edge_pct",""):})</span></div>'
+            st.markdown(f"""
+            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                    <span style="color:#e8f0f8;font-weight:700;">{len(top_games)}-Game Parlay</span>
+                    <span style="color:{g_ev_color};font-weight:700;">{g_ev:+.1%} EV</span>
+                </div>
+                <div style="font-size:0.75rem;color:#6a7a8a;margin-bottom:0.7rem;">Combined: <span style="color:#e8f0f8;">{g_combined:.1%}</span> · Breakeven: {g_be:.1%}</div>
+                {g_legs}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.8rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
+
+        # ── CONFIDENCE MATRIX ──────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Master Slip Confidence Matrix</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        if parlay_props:
+            avg_edge = sum(p.get("Edge",0) for p in parlay_props)/len(parlay_props) if parlay_props else 0
+            math_score = min(30, int(avg_edge * 200))
+            corr_score = min(30, 25 - sum(1 for i in range(len(parlay_props)-1) for j in range(i+1,len(parlay_props)) if PLAYER_TEAM_MAP.get(parlay_props[i].get("Player","")) == PLAYER_TEAM_MAP.get(parlay_props[j].get("Player","")))*5)
+            pinn_confirmed = sum(1 for p in parlay_props if p.get("PinnacleConfirms"))
+            market_score = min(20, 14 + pinn_confirmed*2)
+            vol_score = min(20, 15 + sum(1 for p in parlay_props if p.get("SEM","") not in ["Low","Very Low"])*(-2))
+            total_score = math_score + corr_score + market_score + vol_score
+            score_color = "#22c55e" if total_score >= 75 else "#e8a020" if total_score >= 55 else "#e04040"
+            st.markdown(f"""
+            <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.5rem;margin-bottom:1rem;text-align:center;">
+                <div style="font-size:2.8rem;font-weight:800;color:{score_color};">{total_score}<span style="font-size:1rem;color:#9aa8b8;">/100</span></div>
+                <div style="color:#6a7a8a;font-size:0.72rem;margin-bottom:1rem;">MASTER SLIP CONFIDENCE</div>
+                <div style="display:flex;flex-direction:column;gap:0.5rem;text-align:left;">
+                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#9aa8b8;font-size:0.75rem;">Math Matrix <span style="color:#4a5a6a;">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{math_score}/30</span></div>
+                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#9aa8b8;font-size:0.75rem;">Correlation <span style="color:#4a5a6a;">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{corr_score}/30</span></div>
+                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#9aa8b8;font-size:0.75rem;">Market Drift <span style="color:#4a5a6a;">(20%)</span></span><span style="color:#{"22c55e" if market_score >= 17 else "e8a020"};font-weight:700;">{market_score}/20</span></div>
+                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#9aa8b8;font-size:0.75rem;">Volatility Risk <span style="color:#4a5a6a;">(20%)</span></span><span style="color:#{"22c55e" if vol_score >= 17 else "e8a020"};font-weight:700;">{vol_score}/20</span></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── BEST +EV PROPS ─────────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Best +EV Props (2-pick, need 57.7%)</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        plus_ev = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True) if p.get("Edge",0) > 0][:6]
+        avoid = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < -0.05][:3]
+        ev_html = ""
+        for bp in plus_ev:
+            ev_html += f'<div style="background:#0a0e14;border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:0.8rem;">{bp.get("Player","")}</span><span style="color:#9aa8b8;font-size:0.75rem;">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span><span style="color:#7f77dd;font-size:0.7rem;">{bp.get("Tier","")}</span><span style="color:#22c55e;font-weight:700;font-size:0.75rem;margin-left:auto;">{bp.get("EdgePct","—")} · EV {bp.get("EV_2pick","—")}</span></div>'
+        for ap in avoid:
+            ev_html += f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:0.8rem;">{ap.get("Player","")}</span><span style="color:#9aa8b8;font-size:0.75rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:700;font-size:0.7rem;">⚠ AVOID</span><span style="color:#e04040;font-size:0.75rem;margin-left:auto;">{ap.get("EdgePct","—")}</span></div>'
+        if ev_html:
+            st.markdown(ev_html, unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.8rem;">Load the board to see +EV props.</div>', unsafe_allow_html=True)
+
+        # ── FULL PROP BOARD ─────────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Full Prop Board</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"]
+        tier_border = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#5f5e5a","PASS":"#2a3a4a"}
+        tier_labels = {"SOVEREIGN":"🟢 SOVEREIGN","ELITE":"🔵 ELITE","APPROVED":"🟠 APPROVED","LEAN":"⚪ LEAN","PASS":"⬛ PASS"}
+        board_html = ""
+        for t in tier_order:
+            tier_props = [p for p in board if p.get("Tier","") == t]
+            if tier_props:
+                border_c = tier_border.get(t,"#6a7a8a")
+                board_html += f'<div style="color:{border_c};font-weight:700;font-size:0.72rem;text-transform:uppercase;margin:0.8rem 0 0.4rem;">{tier_labels.get(t,t)}</div>'
+                for tp in tier_props:
+                    better = f" · <span style='color:#22c55e;'>⚡ {tp.get('BetterLineNote','')[:40]}</span>" if tp.get("BetterLineSource") else ""
+                    pinn = " · <span style='color:#7f77dd;'>📌 Pinnacle</span>" if tp.get("PinnacleConfirms") else ""
+                    board_html += f'<div style="background:#0a0e14;border-left:3px solid {border_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.3rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><div><span style="color:#e8f0f8;font-weight:600;font-size:0.8rem;">{tp.get("Player","")}</span> <span style="color:#9aa8b8;font-size:0.75rem;">{tp.get("Side","")} {tp.get("Line","")} {tp.get("Prop","")}</span>{pinn}</div><span style="color:{border_c};font-weight:700;font-size:0.8rem;">{tp.get("EdgePct","—")}</span></div><div style="font-size:0.68rem;color:#4a5a6a;margin-top:0.2rem;">{tp.get("EV_2pick","—")} EV · {tp.get("PinnacleProb","—")} Pinnacle{better}</div></div>'
+        if board_html:
+            st.markdown(board_html, unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.8rem;">Load the board to see props.</div>', unsafe_allow_html=True)
+
+        # ── DAILY RISK STATUS ──────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Daily Risk Status</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        same_team_count = 0
+        players = [p.get("Player","") for p in parlay_props]
+        for i in range(len(players)):
+            for j in range(i+1, len(players)):
+                if PLAYER_TEAM_MAP.get(players[i]) and PLAYER_TEAM_MAP.get(players[i]) == PLAYER_TEAM_MAP.get(players[j]):
+                    same_team_count += 1
+        risk_color = "#e04040" if same_team_count >= 2 else "#e8a020" if same_team_count == 1 else "#22c55e"
+        risk_label = "HIGH RISK" if same_team_count >= 2 else "MODERATE RISK" if same_team_count == 1 else "LOW RISK"
+        risk_note = f"{same_team_count} same-team leg(s) detected — blowout risk elevated." if same_team_count else "No same-team concentration. Standard Kelly sizing recommended."
+        st.markdown(f'<div style="background:{risk_color}11;border:1px solid {risk_color}33;border-radius:8px;padding:1rem;margin-bottom:0.5rem;"><div style="color:{risk_color};font-weight:700;font-size:0.85rem;margin-bottom:0.4rem;">⚠ {risk_label}</div><p style="color:#9aa8b8;font-size:0.8rem;margin:0;">{risk_note}</p></div>', unsafe_allow_html=True)
+
+        # ── MASTER DAILY SLIP ──────────────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#4a5a6a;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;">Master Daily Slip</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        slip_picks = parlay_props if parlay_props else sorted(board, key=lambda x: x.get("Edge",0), reverse=True)[:3]
+        if slip_picks:
+            unit = active_unit()
+            payout = unit * PRIZEPICKS_MULTIPLIERS.get(len(slip_picks), 3)
+            slip_html = '<div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">'
+            slip_html += f'<div style="color:#6a7a8a;font-size:0.72rem;margin-bottom:0.7rem;">Props (PrizePicks) — {len(slip_picks)}-pick Flex · ${unit:.0f} entry to pay ${payout:.0f}</div>'
+            for i, sp in enumerate(slip_picks):
+                slip_html += f'<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid #1e2d3d;"><span style="color:#22c55e;font-weight:700;min-width:16px;">{i+1}.</span><span style="color:#e8f0f8;font-size:0.8rem;">{sp.get("Player","")} {sp.get("Side","")} {sp.get("Line","")} {sp.get("Prop","")}</span><span style="color:#4a5a6a;font-size:0.7rem;margin-left:auto;">{sp.get("Tier","")}</span></div>'
+            slip_html += '<div style="display:flex;justify-content:space-between;margin-top:0.8rem;"><span style="color:#9aa8b8;font-size:0.8rem;">Entry: <span style="color:#e8f0f8;">${:.0f}</span></span><span style="color:#22c55e;font-weight:700;">Payout: ${:.0f}</span></div>'.format(unit, payout)
+            slip_html += '</div>'
+            st.markdown(slip_html, unsafe_allow_html=True)
+
+        # ── AI ASSISTANT SYNC ──────────────────────────────
+        ai_col1, ai_col2 = st.columns([3, 1])
+        with ai_col1:
+            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1rem;"><div style="color:#e8f0f8;font-weight:600;font-size:0.85rem;margin-bottom:0.2rem;">\U0001f916 AI Assistant Sync</div><div style="color:#6a7a8a;font-size:0.75rem;">Generate today&#39;s brief to paste into your Gem.</div></div>', unsafe_allow_html=True)
+        with ai_col2:
+            if st.button("Generate Summary", key="gen_gem_brief_new"):
+                if not board:
+                    st.warning("Load the board first.")
+                else:
+                    brief = generate_gem_summary()
+                    st.session_state["gem_brief"] = brief
+                    st.success("✅ Copied — paste into Gem")
+        if st.session_state.get("gem_brief"):
+            st.text_area("Copy this into your Gemini Gem:", value=st.session_state["gem_brief"], height=300, key="gem_brief_display_new")
+
+    # ═══════════════════════════════════════════════════════
+    # RIGHT COLUMN — SHARP ALERTS SIDEBAR
+    # ═══════════════════════════════════════════════════════
+    with col_right:
+        st.markdown('<div style="color:#4a5a6a;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.8rem;font-weight:700;">Sharp Money Alerts</div>', unsafe_allow_html=True)
+        sharp_data = st.session_state.get("sharp_alerts", [])
+        steam_moves = st.session_state.get("steam_moves", [])
+        game_sharp_flags = st.session_state.get("game_sharp_flags", {})
+        displayed = 0
+        # Sharp prop alerts
+        for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)[:20]:
+            if p.get("SharpFlag") and displayed < 5:
+                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#22c55e;font-weight:700;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.25rem;">Line Update</div><div style="color:#9aa8b8;font-size:0.72rem;line-height:1.4;">{p.get("Player","")} {p.get("Prop","")} — {p.get("SharpFlag","")}</div></div>', unsafe_allow_html=True)
+                displayed += 1
+        # Steam moves
+        for sm in steam_moves[:3]:
+            if displayed < 7:
+                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e04040;font-weight:700;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.25rem;">Steam Move</div><div style="color:#9aa8b8;font-size:0.72rem;line-height:1.4;">{sm.get("matchup","")} {sm.get("market","")} {sm.get("signal","")}</div></div>', unsafe_allow_html=True)
+                displayed += 1
+        # Game sharp flags
+        for matchup, flag in list(game_sharp_flags.items())[:3]:
+            if displayed < 8:
+                label = "Line Move" if flag.get("sharp") else "Public vs Sharp"
+                color = "#e8a020" if flag.get("sharp") else "#378add"
+                direction = flag.get("direction","")
+                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:{color};font-weight:700;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.25rem;">{label}</div><div style="color:#9aa8b8;font-size:0.72rem;line-height:1.4;">{matchup} — {direction}</div></div>', unsafe_allow_html=True)
+                displayed += 1
+        # Injury alerts in sidebar
+        for ip in injury_props[:3]:
+            if displayed < 10:
+                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e8a020;font-weight:700;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.25rem;">Injury Alert</div><div style="color:#9aa8b8;font-size:0.72rem;line-height:1.4;">{ip.get("Player","")} — {ip.get("Injury","Questionable")}</div></div>', unsafe_allow_html=True)
+                displayed += 1
+        if displayed == 0:
+            st.markdown('<div style="color:#4a5a6a;font-size:0.75rem;padding:0.5rem;">No alerts — load board to scan for sharp activity.</div>', unsafe_allow_html=True)
 
 # ----- TAB 1: FULL BOARD -----
 with tabs[1]:
