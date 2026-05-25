@@ -7177,11 +7177,7 @@ with tabs[0]:
                     <span style="color:#e04040;font-size:0.82rem;">Risk: {_risk_note}</span>
                 </div>
             </div>"""
-            try:
-                st.markdown(_lock_html, unsafe_allow_html=True)
-            except Exception as _e:
-                st.error(f"Lock card render error: {_e}")
-                st.write(f"**{lock_prop.get('Player','')}** {lock_prop.get('Side','')} {lock_prop.get('Line','')} {lock_prop.get('Prop','')} | Edge: {lock_prop.get('EdgePct','—')} | Tier: {tier}")
+            components.html(_lock_html, height=220, scrolling=False)
             with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
                 try:
                     chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
