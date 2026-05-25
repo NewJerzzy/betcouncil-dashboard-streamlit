@@ -3148,31 +3148,39 @@ def fetch_underdog_props(sport):
         props = []
         seen = set()
 
-        # v1 /lobbies/content/lines structure — suggested_picks wrapper
-        sp = data.get("suggested_picks", data)
+        # Detect v1 vs v2 response
+        # v1 has "suggested_picks" wrapper, v2 has flat "over_under_lines" list
+        is_v1 = "suggested_picks" in data
+        sp = data["suggested_picks"] if is_v1 else data
 
-        # Players dict: {id: full_name}
+        # Players: dict (v1) or list (v2)
         players_dict = sp.get("players", {})
         if isinstance(players_dict, dict):
             players_map = {pid: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
                           for pid, p in players_dict.items()}
-        else:
+        elif isinstance(players_dict, list):
             players_map = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
-                          for p in players_dict}
+                          for p in players_dict if isinstance(p, dict) and "id" in p}
+        else:
+            players_map = {}
 
-        # Appearances dict: {appearance_id: player_id}
+        # Appearances: dict (v1) or list (v2)
         appearances_dict = sp.get("appearances", {})
         if isinstance(appearances_dict, dict):
             appearances_map = {aid: a.get("player_id","") for aid, a in appearances_dict.items()}
+        elif isinstance(appearances_dict, list):
+            appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict if isinstance(a, dict)}
         else:
-            appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict}
+            appearances_map = {}
 
-        # over_under_lines dict: {line_id: line_data}
+        # over_under_lines: dict (v1) or list (v2)
         oul = sp.get("over_under_lines", {})
         if isinstance(oul, dict):
             lines_list = list(oul.values())
-        else:
+        elif isinstance(oul, list):
             lines_list = oul
+        else:
+            lines_list = []
 
         # Filter by sport
         sport_id = sport.upper()
