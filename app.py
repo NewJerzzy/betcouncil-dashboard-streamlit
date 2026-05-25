@@ -6493,9 +6493,7 @@ def load_sport_data(sport):
             player_stats, using_default = find_player_avg(player, season_avgs)
             if using_default:
                 skipped_def += 1
-                # Only skip if we have NO data at all AND skip_def is on
-                # For playoff players not in season DB, use line as baseline
-                if skip_def and len(props) > 20:
+                if skip_def and len(props) >= 30:
                     continue
                 avg_dict = {stat_norm: defaults.get(stat_norm, line)}
                 avg_dict["search_needed"] = True
@@ -7130,16 +7128,18 @@ with tabs[0]:
             lock_prop = sorted_board[0]
             tier = lock_prop.get("Tier","LEAN")
             tier_color = TIER_COLORS.get(tier, "#6a7a8a")
-            prob = lock_prop.get("Prob", 0.5)
-            ev_2 = lock_prop.get("EV_2pick","—")
-            pinnacle_prob = lock_prop.get("PinnacleProb","—")
+            prob = float(lock_prop.get("Prob") or 0.5)
+            ev_2 = lock_prop.get("EV_2pick","—") or "—"
+            pinnacle_prob = lock_prop.get("PinnacleProb","—") or "—"
             pinnacle_confirms = lock_prop.get("PinnacleConfirms", False)
-            better_line = lock_prop.get("BetterLineNote","")
-            better_line_src = lock_prop.get("BetterLineSource","")
-            edge = lock_prop.get("Edge", 0)
-            avg = lock_prop.get("Avg", 0)
+            better_line = lock_prop.get("BetterLineNote","") or ""
+            edge = float(lock_prop.get("Edge") or 0)
+            avg = float(lock_prop.get("Avg") or lock_prop.get("Line") or 0)
             lock_score = min(100, int(abs(edge)*300 + (prob - 0.5)*200 + (50 if pinnacle_confirms else 0)))
-            l10_rate = lock_prop.get("L10Rate","—")
+            _avg_display = f"{avg:.1f}" if avg else "—"
+            _prob_display = f"{prob:.1%}"
+            _ev2_display = str(ev_2)
+            _pinn_display = str(pinnacle_prob)
             # Pre-compute conditionals to avoid f-string quote conflicts
             _pinn_badge = '<span style="color:#7f77dd;font-size:0.88rem;">&#128302; PINNACLE CONFIRMED</span>' if pinnacle_confirms else ""
             _better_html = f'<div style="color:#22c55e;font-size:0.92rem;margin-bottom:0.5rem;">&#9889; {better_line}</div>' if better_line else ""
@@ -7155,19 +7155,19 @@ with tabs[0]:
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem;margin-bottom:0.8rem;">
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
                         <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">Season Avg</div>
-                        <div style="color:#e8f0f8;font-weight:700;">{avg:.1f}</div>
+                        <div style="color:#e8f0f8;font-weight:700;">{_avg_display}</div>
                     </div>
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
                         <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">Hit Prob</div>
-                        <div style="color:#22c55e;font-weight:700;">{prob:.1%}</div>
+                        <div style="color:#22c55e;font-weight:700;">{_prob_display}</div>
                     </div>
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
                         <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">Pinnacle</div>
-                        <div style="color:#7f77dd;font-weight:700;">{pinnacle_prob}</div>
+                        <div style="color:#7f77dd;font-weight:700;">{_pinn_display}</div>
                     </div>
                     <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
                         <div style="color:#8a9ab0;font-size:0.75rem;text-transform:uppercase;">2-Pick EV</div>
-                        <div style="color:#22c55e;font-weight:700;">{ev_2}</div>
+                        <div style="color:#22c55e;font-weight:700;">{_ev2_display}</div>
                     </div>
                 </div>
                 {_better_html}
@@ -7794,7 +7794,8 @@ with tabs[5]:
                 st.caption("Upload a screenshot to see extracted text.")
 
     # Quick paste section
-    with st.expander("📋 Paste a slip (auto-parse)", expanded=False):
+    # Manual entry in slip analyzer kept minimal - screenshot/text only
+    with st.expander("📋 Paste slip text or screenshot", expanded=False):
         paste_text = st.text_area(
             "Paste your slip here (one pick per line)",
             placeholder="Nikola Jokic OVER 27.5 Points\nJayson Tatum OVER 8.5 Rebounds\nLuka Doncic OVER 7.5 Assists",
