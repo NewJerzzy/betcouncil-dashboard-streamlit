@@ -6229,6 +6229,10 @@ def load_sport_data(sport):
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
     pp_props = scrape_prizepicks(sport)
     ud_props_compare = fetch_underdog_props(sport)
+    if ud_props_compare:
+        st.sidebar.success(f"✅ Underdog: {len(ud_props_compare)} props loaded")
+    else:
+        st.sidebar.warning("⚠️ Underdog returned 0 props — trying ParlayAPI...")
     dk_salaries = fetch_dk_salaries(sport)
     st.session_state["dk_salaries"] = dk_salaries
 
@@ -6295,6 +6299,7 @@ def load_sport_data(sport):
     else:
         # All primary DFS sources failed - try aggregator immediately
         parlayapi_props = fetch_parlayapi_props(sport)
+        st.sidebar.info(f"ParlayAPI returned: {len(parlayapi_props)} props")
         if parlayapi_props:
             parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
             pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() == "underdog"]
