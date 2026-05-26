@@ -5417,24 +5417,23 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def get_outcome(t):
             tl = t.lower()
-            # PrizePicks slip patterns from actual screenshots
-            # WINNING: has "Win" badge, "to win $X" in header
-            # LOSING: no Win badge, "to pay $X" but no resolution
-            # PENDING: "to pay $X" with no final result yet
+            # PENDING: game not finished
             if any(w in tl for w in ["pending","live","locked","in progress","scheduled"]): return "PENDING"
-            # Win detection - PrizePicks shows "Win" badge on resolved winners
-            if any(w in tl for w in ["won","win","correct","payout","winner","you won","entry won","congrats"]): return "WIN"
-            # Loss detection - PrizePicks shows no badge on losses, just grey bars
-            if any(w in tl for w in ["lost","loss","incorrect","miss","loser","you lost","entry lost","better luck","no payout"]): return "LOSS"
-            # PrizePicks: "to win $X" = ENTRY WON
-            # "to pay $X" = still active or lost (need Final + no Win badge)
-            if "to win" in tl and "$" in tl: return "WIN"
-            # Only mark as LOSS if all games are Final AND no Win badge seen
-            if "to pay" in tl and "$" in tl and "final" in tl and "win" not in tl: return "LOSS"
-            # Checkmarks
+            # PRIZEPICKS FORMAT from real screenshots:
+            # WIN slip header:  "$X.XX to win $Y.YY"  (payout shown in green)
+            # LOSS slip header: "$X.XX to pay $Y.YY"  (all games Final, no win badge)
+            if "to win $" in tl: return "WIN"
+            if "to pay $" in tl and "final" in tl: return "LOSS"
+            # Entry list page shows "LOST" label on losing entries
+            if "lost" in tl: return "LOSS"
+            # Other patterns
+            if any(w in tl for w in ["won","winner","you won","entry won","congrats","payout"]): return "WIN"
+            if any(w in tl for w in ["loss","incorrect","loser","you lost","entry lost","no payout"]): return "LOSS"
+            if tl.strip() in ("win","win!"): return "WIN"
             if "✓" in t or "✅" in t: return "WIN"
-            if "✗" in t or "❌" in t or "×" in t: return "LOSS"
+            if "✗" in t or "❌" in t: return "LOSS"
             return None
+
 
         entry_outcome = get_outcome(raw_text)
 
