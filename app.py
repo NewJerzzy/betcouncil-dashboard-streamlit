@@ -7529,57 +7529,15 @@ with tabs[0]:
         else:
             st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;">Load the board to see +EV props.</div>', unsafe_allow_html=True)
 
-        # ── FULL PROP BOARD ─────────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Full Prop Board</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-        tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"]
-        tier_border = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#5f5e5a","PASS":"#2a3a4a"}
-        tier_labels = {"SOVEREIGN":"🟢 SOVEREIGN","ELITE":"🔵 ELITE","APPROVED":"🟠 APPROVED","LEAN":"⚪ LEAN","PASS":"⬛ PASS"}
-        if board:
-            for t in tier_order:
-                tier_props = [p for p in board if p.get("Tier","") == t]
-                if not tier_props:
-                    continue
-                border_c = tier_border.get(t,"#6a7a8a")
-                st.markdown(f'<div style="color:{border_c};font-weight:700;font-size:0.82rem;text-transform:uppercase;margin:0.8rem 0 0.3rem;">{tier_labels.get(t,t)}</div>', unsafe_allow_html=True)
-                for idx_p, tp in enumerate(tier_props):
-                    better_note = tp.get("BetterLineNote","")
-                    pinn_txt = " · 📌 Pinnacle" if tp.get("PinnacleConfirms") else ""
-                    better_txt = f" · ⚡ {better_note[:35]}" if better_note else ""
-                    col_info, col_btn = st.columns([5, 1])
-                    with col_info:
-                        st.markdown(
-                            f'<div style="background:#0a0e14;border-left:3px solid {border_c};border-radius:4px;padding:0.5rem 0.8rem;">' +
-                            f'<div style="display:flex;align-items:center;gap:0.5rem;">' +
-                            f'<span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{tp.get("Player","")}</span>' +
-                            f'<span style="color:#b8c6d6;font-size:0.85rem;">{tp.get("Side","")} {tp.get("Line","")} {tp.get("Prop","")}</span>' +
-                            f'<span style="color:{border_c};font-weight:700;font-size:0.88rem;margin-left:auto;">{tp.get("EdgePct","—")}</span></div>' +
-                            f'<div style="font-size:0.72rem;color:#6a7a8a;margin-top:2px;">{tp.get("EV_2pick","—")} EV · {tp.get("PinnacleProb","—")} Pinnacle{pinn_txt}{better_txt}</div></div>',
-                            unsafe_allow_html=True
-                        )
-                    with col_btn:
-                        _lock_key = f"sum_lock_{t}_{idx_p}"
-                        _already = any(
-                            normalize_name(lk.get("player","")) == normalize_name(tp.get("Player","")) and
-                            str(lk.get("line","")) == str(tp.get("Line",""))
-                            for lk in st.session_state.locks
-                        )
-                        if _already:
-                            st.markdown('<div style="color:#22c55e;font-size:0.75rem;text-align:center;padding-top:0.5rem;">✅</div>', unsafe_allow_html=True)
-                        elif st.button("🔒", key=_lock_key, use_container_width=True, help=f"Lock {tp.get('Player','')} {tp.get('Side','')} {tp.get('Line','')} {tp.get('Prop','')}"):
-                            _new_lock = {
-                                "player": tp.get("Player",""), "prop": tp.get("Prop",""),
-                                "line": tp.get("Line",0), "side": tp.get("Side","OVER"),
-                                "tier": tp.get("Tier",""), "edge": tp.get("Edge",0),
-                                "sport": _cur_sport, "source": "Summary Board",
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                "prob": tp.get("Prob",0.5), "ev_2pick": tp.get("EV_2pick","—"),
-                            }
-                            st.session_state.locks.append(_new_lock)
-                            save_json_data(LOCKS_PATH, st.session_state.locks)
-                            save_to_gist("locks", st.session_state.locks)
-                            st.rerun()
-        else:
-            st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;">Load the board to see props.</div>', unsafe_allow_html=True)
+        # Full Prop Board moved to Tab 1 (Full Board tab)
+        st.markdown(
+            '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.8rem 1rem;text-align:center;">' +
+            '<span style="color:#6a7a8a;font-size:0.85rem;">Full prop board is in the </span>' +
+            '<span style="color:#378add;font-weight:600;font-size:0.85rem;">📊 Full Board</span>' +
+            '<span style="color:#6a7a8a;font-size:0.85rem;"> tab → Click a 🔒 to lock picks</span>' +
+            '</div>',
+            unsafe_allow_html=True
+        )
 
 
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Daily Risk Status</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
