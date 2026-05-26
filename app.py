@@ -5417,10 +5417,21 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def get_outcome(t):
             tl = t.lower()
+            # PrizePicks slip patterns from actual screenshots
+            # WINNING: has "Win" badge, "to win $X" in header
+            # LOSING: no Win badge, "to pay $X" but no resolution
+            # PENDING: "to pay $X" with no final result yet
             if any(w in tl for w in ["pending","live","locked","in progress","scheduled"]): return "PENDING"
+            # Win detection - PrizePicks shows "Win" badge on resolved winners
             if any(w in tl for w in ["won","win","correct","payout","winner","you won","entry won","congrats"]): return "WIN"
+            # Loss detection - PrizePicks shows no badge on losses, just grey bars
             if any(w in tl for w in ["lost","loss","incorrect","miss","loser","you lost","entry lost","better luck","no payout"]): return "LOSS"
-            # PrizePicks specific: green checkmark text vs red X
+            # PrizePicks: "to win $X" = ENTRY WON
+            # "to pay $X" = still active or lost (need Final + no Win badge)
+            if "to win" in tl and "$" in tl: return "WIN"
+            # Only mark as LOSS if all games are Final AND no Win badge seen
+            if "to pay" in tl and "$" in tl and "final" in tl and "win" not in tl: return "LOSS"
+            # Checkmarks
             if "✓" in t or "✅" in t: return "WIN"
             if "✗" in t or "❌" in t or "×" in t: return "LOSS"
             return None
@@ -5495,6 +5506,10 @@ def parse_bet_screenshot_ocr(image_bytes):
 
             # Use per-pick outcome first, then fall back to entry-level outcome
             pick_outcome = get_outcome(segment_text)
+            # If entry is a WIN, individual picks that hit also WIN
+            # PrizePicks flex: need 3+ of 4 to win, so some picks can lose
+            # For simplicity: if entry won, mark all as WIN
+            # If entry lost, mark all as LOSS
             if pick_outcome is None and entry_outcome in ("WIN","LOSS"):
                 pick_outcome = entry_outcome
             if pick_outcome is None:
