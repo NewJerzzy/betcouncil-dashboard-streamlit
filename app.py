@@ -9391,22 +9391,46 @@ with tabs[9]:
     if _confirm_reset:
         _reset_col1, _reset_col2 = st.columns(2)
         with _reset_col1:
-            if st.button("🗑️ Clear All Bet History", key="clear_history_btn", type="primary"):
+            if st.button("🗑️ Clear History Only", key="clear_history_btn", type="primary"):
                 st.session_state.history = []
                 save_json_data(HISTORY_PATH, [])
                 save_to_gist("history", [])
                 st.success("✅ Bet history cleared. Ready for fresh data.")
                 st.rerun()
         with _reset_col2:
-            if st.button("🗑️ Clear History + Reset Bankroll", key="clear_history_br_btn"):
+            if st.button("🗑️ Full Reset (History + Calibration + Bankroll)", key="clear_history_br_btn"):
+                # Clear history
                 st.session_state.history = []
+                save_json_data(HISTORY_PATH, [])
+                save_to_gist("history", [])
+                # Reset bankroll
                 st.session_state.bankroll = 1000.0
                 st.session_state.day_start_br = 1000.0
-                save_json_data(HISTORY_PATH, [])
                 save_json_data(BANKROLL_PATH, {"bankroll": 1000.0})
-                save_to_gist("history", [])
                 save_to_gist("bankroll", {"bankroll": 1000.0})
-                st.success("✅ History cleared + bankroll reset to $1,000.")
+                # Reset SEM calibration
+                sem_path = os.path.join(CACHE_DIR, "sem_calibration.pkl")
+                if os.path.exists(sem_path): os.remove(sem_path)
+                st.session_state.pop("sem_calibration", None)
+                # Reset signal performance tracker
+                sig_path = os.path.join(CACHE_DIR, "signal_performance.pkl")
+                if os.path.exists(sig_path): os.remove(sig_path)
+                st.session_state.pop("signal_performance", None)
+                # Reset weight optimizer
+                wt_path = os.path.join(CACHE_DIR, "weight_optimizer.json")
+                if os.path.exists(wt_path): os.remove(wt_path)
+                st.session_state.pop("optimized_weights", None)
+                # Reset CLV tracking
+                clv_path = os.path.join(CACHE_DIR, "clv_tracking.json")
+                if os.path.exists(clv_path): os.remove(clv_path)
+                save_to_gist("clv_tracking", [])
+                # Reset ROI tracking
+                roi_path = os.path.join(CACHE_DIR, "roi_tracking.json")
+                if os.path.exists(roi_path): os.remove(roi_path)
+                # Clear trending picks
+                st.session_state.pop("all_sports_best", None)
+                st.session_state.pop("trending_picks", None)
+                st.success("✅ Full reset complete — history, calibration, SEM, CLV, weights, bankroll all cleared.")
                 st.rerun()
 
 
