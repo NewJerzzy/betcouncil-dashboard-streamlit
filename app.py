@@ -7043,6 +7043,17 @@ def load_sport_data(sport):
         prop["LockScore"] = calculate_lock_quality_score(prop)
     quality_sorted = sorted(enriched, key=lambda x: x.get("LockScore", 0), reverse=True)
     st.session_state["quality_sorted_board"] = quality_sorted
+
+    # Update all_sports_best across loaded sports
+    existing_best = st.session_state.get("all_sports_best", [])
+    # Remove old entries for this sport
+    existing_best = [p for p in existing_best if p.get("Sport","") != sport]
+    # Add top 3 from this sport
+    top_sport = [p for p in enriched if p.get("Tier","") in ("SOVEREIGN","ELITE","APPROVED")][:3]
+    existing_best.extend(top_sport)
+    # Sort by edge across all sports
+    existing_best.sort(key=lambda x: x.get("Edge",0), reverse=True)
+    st.session_state["all_sports_best"] = existing_best[:10]
     line_movement = track_line_movement(enriched)
     st.session_state["line_movement"] = line_movement
     for prop in enriched:
@@ -7640,24 +7651,6 @@ with tabs[0]:
         else:
             st.markdown('<div style="color:#6a7a8a;font-size:0.85rem;">Lock picks to start tracking trends.</div>', unsafe_allow_html=True)
 
-        # ── AI ASSISTANT SYNC ──────────────────────────────
-        ai_col1, ai_col2 = st.columns([3, 1])
-        with ai_col1:
-            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1rem;"><div style="color:#e8f0f8;font-weight:600;font-size:0.92rem;margin-bottom:0.2rem;">\U0001f916 AI Assistant Sync</div><div style="color:#8a9ab0;font-size:0.92rem;">Generate today&#39;s brief to paste into your Gem.</div></div>', unsafe_allow_html=True)
-        with ai_col2:
-            if st.button("Generate Summary", key="gen_gem_brief_new"):
-                if not board:
-                    st.warning("Load the board first.")
-                else:
-                    brief = generate_gem_summary()
-                    st.session_state["gem_brief"] = brief
-                    st.success("✅ Copied — paste into Gem")
-        if st.session_state.get("gem_brief"):
-            st.text_area("Copy this into your Gemini Gem:", value=st.session_state["gem_brief"], height=300, key="gem_brief_display_new")
-
-    # ═══════════════════════════════════════════════════════
-    # RIGHT COLUMN — SHARP ALERTS SIDEBAR
-    # ═══════════════════════════════════════════════════════
     with col_right:
         st.markdown('<div style="color:#6a7a8a;font-size:0.92rem;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.8rem;font-weight:700;">Sharp Money Alerts</div>', unsafe_allow_html=True)
         sharp_data = st.session_state.get("sharp_alerts", [])
@@ -7916,6 +7909,25 @@ with tabs[4]:
     if st.session_state.history:
         hist_df = pd.DataFrame(st.session_state.history)
         hist_df = hist_df.iloc[::-1].reset_index(drop=True)
+
+        # Quick stats row at top
+        total_bets = len(st.session_state.history)
+        wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
+        losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
+        pending = sum(1 for h in st.session_state.history if h.get("outcome") == "PENDING")
+        total_net = sum(h.get("net", 0) for h in st.session_state.history)
+        win_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
+        net_color = "#22c55e" if total_net >= 0 else "#e04040"
+        st.markdown(
+            f'<div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">' +
+            f'<div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:0.72rem;text-transform:uppercase;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.1rem;">{wins}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:0.72rem;text-transform:uppercase;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.1rem;">{losses}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #e8a02033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:0.72rem;text-transform:uppercase;">Pending</div><div style="color:#e8a020;font-weight:700;font-size:1.1rem;">{pending}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:0.72rem;text-transform:uppercase;">Hit Rate</div><div style="color:#e8f0f8;font-weight:700;font-size:1.1rem;">{win_rate:.1%}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:0.72rem;text-transform:uppercase;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.1rem;">${total_net:+.2f}</div></div>' +
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
         # Filters
         filter_col1, filter_col2, filter_col3 = st.columns(3)
