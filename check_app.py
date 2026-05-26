@@ -99,7 +99,7 @@ tab0_end = code.find("# ----- TAB 1: FULL BOARD -----")
 if tab0_start > 0 and tab0_end > 0:
     tab0 = code[tab0_start:tab0_end]
     # Check for embedded conditionals with quotes in f-strings
-    embedded = re.findall(r'\{["'].+?["'] if .+? else ["'].+?["']\}', tab0)
+    embedded = re.findall(r'{["\'].+?["\'] if .+? else ["\'].+?["\']}', tab0)
     for e in embedded:
         errors.append(f"EMBEDDED CONDITIONAL IN F-STRING (will break HTML): {e[:60]}")
     # Check for empty format specs

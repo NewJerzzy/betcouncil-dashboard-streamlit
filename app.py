@@ -7486,6 +7486,8 @@ with tabs[0]:
             vol_score = min(20, 15 + sum(1 for p in parlay_props if p.get("SEM","") not in ["Low","Very Low"])*(-2))
             total_score = math_score + corr_score + market_score + vol_score
             score_color = "#22c55e" if total_score >= 75 else "#e8a020" if total_score >= 55 else "#e04040"
+            _mc = "#22c55e" if market_score >= 17 else "#e8a020"
+            _vc = "#22c55e" if vol_score >= 17 else "#e8a020"
             st.markdown(f"""
             <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.5rem;margin-bottom:1rem;text-align:center;">
                 <div style="font-size:2.8rem;font-weight:800;color:{score_color};">{total_score}<span style="font-size:1rem;color:#b8c6d6;">/100</span></div>
@@ -7493,8 +7495,8 @@ with tabs[0]:
                 <div style="display:flex;flex-direction:column;gap:0.5rem;text-align:left;">
                     <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:0.92rem;">Math Matrix <span style="color:#6a7a8a;">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{math_score}/30</span></div>
                     <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:0.92rem;">Correlation <span style="color:#6a7a8a;">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{corr_score}/30</span></div>
-                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:0.92rem;">Market Drift <span style="color:#6a7a8a;">(20%)</span></span><span style="color:#{"22c55e" if market_score >= 17 else "e8a020"};font-weight:700;">{market_score}/20</span></div>
-                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:0.92rem;">Volatility Risk <span style="color:#6a7a8a;">(20%)</span></span><span style="color:#{"22c55e" if vol_score >= 17 else "e8a020"};font-weight:700;">{vol_score}/20</span></div>
+                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:0.92rem;">Market Drift <span style="color:#6a7a8a;">(20%)</span></span><span style="color:{_mc};font-weight:700;">{market_score}/20</span></div>
+                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:0.92rem;">Volatility Risk <span style="color:#6a7a8a;">(20%)</span></span><span style="color:{_vc};font-weight:700;">{vol_score}/20</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
