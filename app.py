@@ -7702,95 +7702,174 @@ with tabs[0]:
 
 # ----- TAB 1: FULL BOARD -----
 with tabs[1]:
-    st.markdown(f"## \U0001f4ca Full Board \u2014 {st.session_state.last_sport}")
-    if st.session_state.board_data:
-        tier_filter = st.multiselect("Filter by Tier", ["SOVEREIGN", "ELITE", "APPROVED", "LEAN"], default=["SOVEREIGN", "ELITE", "APPROVED"])
-        filtered = [p for p in st.session_state.board_data if p["Tier"] in tier_filter]
-        if filtered:
-            display_df = make_display_df(filtered)
-            show_cols = ["Player", "Stat", "Line", "Play", "Avg (10g)", "Fair %", "Edge", "2-Pick EV", "Bet Size", "Tier", "Pinnacle Prob", "Pinnacle Edge", "DK Salary", "DK Tier", "Better Line", "AN Grade", "AN Proj", "AN Tier", "AN Confirms", "Line Fair?", "Sharp $", "Market", "Confidence", "Injury", "Line Move", "Trend", "Source", "Consensus Prob", "Books", "Best Alt Line", "Alt EV", "Alt Payout"]
-            show_cols = [c for c in show_cols if c in display_df.columns]
-            st.dataframe(display_df[show_cols], width="stretch", hide_index=True)
-            with st.expander("\U0001f4ca Signal Breakdown — Module Delta Chart"):
-                st.caption("Each bar shows how strongly a signal pushes the pick toward OVER or UNDER, and how accurate that signal has historically been.")
-                for prop in filtered[:10]:
-                    tier_color = TIER_COLORS.get(prop["Tier"], "#7a8a9a")
-                    st.markdown(f"""<div style="font-size:13px;font-weight:600;color:#e8f0f8;margin-top:10px;">
-                        <span style="background:{tier_color};color:#000;font-size:10px;padding:2px 8px;border-radius:8px;margin-right:8px">{prop["Tier"]}</span>
-                        {prop["Player"]} — {prop["Side"]} {prop["Line"]} {prop["Prop"]}
-                        <span style="font-size:11px;color:#6a7a8a;margin-left:8px">Edge: {prop["EdgePct"]}</span>
-                    </div>""", unsafe_allow_html=True)
-                    chart_html = render_signal_chart(prop, prop.get("Sport", "NBA"))
-                    st.markdown(chart_html, unsafe_allow_html=True)
-            options = [f"{r['Player']} \u2014 {r['Side']} {r['Line']} {r['Prop']} (Edge: {r['EdgePct']} | {r['Tier']})" for r in filtered]
-            if options:
-                sel = st.selectbox("Select prop", range(len(options)), format_func=lambda i: options[i])
-                if st.button("\U0001f512 Lock Selected"):
-                    row = filtered[sel]
-                    can_bet, risk_reason = check_daily_risk_limits(row["Sport"])
-                    if not can_bet:
-                        st.error(risk_reason)
-                    else:
-                        already = any(l.get("player") == row["Player"] and l.get("prop") == row["Prop"] for l in st.session_state.locks)
-                        if not already:
-                            st.session_state.locks.append({"player": row["Player"], "prop": row["Prop"], "line": row["Line"], "side": row["Side"], "wager": row.get("Wager_2pick", row["Wager"]), "prob": row["Prob"], "edge": row["Edge"], "tier": row["Tier"], "status": "PENDING", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "sport": row["Sport"]})
+    _board = st.session_state.board_data or []
+    _sport = st.session_state.last_sport or "NBA"
+    st.markdown(f"## 📊 Full Board — {_sport}")
+    if _board:
+        _tc = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+        # Filters
+        _fcol1, _fcol2, _fcol3 = st.columns([3,2,1])
+        with _fcol1:
+            _tf = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"], default=["SOVEREIGN","ELITE","APPROVED","LEAN"], key="fb_tier")
+        with _fcol2:
+            _all_sports = list(set(p.get("Sport","") for p in _board if p.get("Sport","")))
+            _sf = st.multiselect("Sport", _all_sports, default=_all_sports, key="fb_sport")
+        with _fcol3:
+            if st.button("🔒 Lock All SOVEREIGN/ELITE", key="fb_lock_all"):
+                for _p in _board:
+                    if _p.get("Tier") in ("SOVEREIGN","ELITE"):
+                        _already = any(normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and str(l.get("line",""))==str(_p.get("Line","")) for l in st.session_state.locks)
+                        if not _already:
+                            st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                st.rerun()
+
+        _filtered = [p for p in _board if p.get("Tier","") in (_tf or ["SOVEREIGN","ELITE","APPROVED","LEAN"]) and p.get("Sport","") in (_sf or _all_sports)]
+
+        if _filtered:
+            # Group by sport+game
+            _groups = {}
+            for _p in _filtered:
+                _gkey = f"{_p.get('Sport','')}|{_p.get('GameID',_p.get('Game',_sport))}"
+                if _gkey not in _groups:
+                    _groups[_gkey] = {"sport":_p.get("Sport",_sport),"game":_p.get("Game",_sport),"players":[]}
+                _groups[_gkey]["players"].append(_p)
+
+            for _gk, _grp in _groups.items():
+                _bc = "#378add"
+                # Sport header
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;margin-top:12px;">'
+                    f'<span style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_grp["sport"]}</span>'
+                    f'<span style="font-size:13px;font-weight:500;color:#e8f0f8;">{_grp["game"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                # Column header
+                st.markdown(
+                    '<div style="display:grid;grid-template-columns:2fr 50px 90px 80px 60px 70px 70px 60px;gap:0;padding:5px 12px;background:#08111a;border:0.5px solid #1e2d3d;border-top:none;border-bottom:0.5px solid #1e2d3d;">'
+                    + "".join(f'<span style="font-size:10px;font-weight:500;color:#4a6a8a;letter-spacing:0.6px;">{h}</span>' for h in ["PLAYER","POS","MATCHUP","STAT","PROJ","LINE","EDGE","TIER"])
+                    + '</div>',
+                    unsafe_allow_html=True
+                )
+
+                for _pi, _p in enumerate(_grp["players"]):
+                    _c = _tc.get(_p.get("Tier",""),"#6a7a8a")
+                    _arrow = "↑" if _p.get("Side","OVER")=="OVER" else "↓"
+                    _arrow_color = "#22c55e" if _p.get("Side","OVER")=="OVER" else "#378add"
+                    _pinn = "📌" if _p.get("PinnacleConfirms") else ""
+                    _avg = float(_p.get("Avg",0) or 0)
+                    _ev2 = _p.get("EV_2pick","—") or "—"
+                    _edge_pct = _p.get("EdgePct","—") or "—"
+                    _already_locked = any(normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and str(l.get("line",""))==str(_p.get("Line","")) for l in st.session_state.locks)
+                    _row_bg = "#0a0e14" if _pi % 2 == 0 else "#080c12"
+                    _col_main, _col_lock = st.columns([9,1])
+                    with _col_main:
+                        st.markdown(
+                            f'<div style="display:grid;grid-template-columns:2fr 50px 90px 80px 60px 70px 70px 60px;gap:0;padding:9px 12px;align-items:center;background:{_row_bg};border-left:3px solid {_c};border:0.5px solid #1e2d3d;border-left:3px solid {_c};border-top:none;">'
+                            f'<div><span style="font-size:13px;font-weight:500;color:#e8f0f8;">{_p.get("Player","")}</span>'
+                            f'{"<br><span style=\"font-size:10px;color:#7f77dd;\">"+_pinn+" Pinnacle</span>" if _pinn else ""}</div>'
+                            f'<span style="font-size:12px;color:#6a7a8a;">{_p.get("Pos","—")}</span>'
+                            f'<span style="font-size:11px;color:#8a9ab0;">{_p.get("Opponent","—")}</span>'
+                            f'<span style="font-size:12px;color:#b8c6d6;">{_p.get("Prop","")}</span>'
+                            f'<span style="font-size:13px;font-weight:500;color:#e8f0f8;">{_avg:.1f}</span>'
+                            f'<div style="display:flex;align-items:center;gap:3px;"><span style="color:{_arrow_color};font-size:14px;">{_arrow}</span><span style="font-size:13px;font-weight:500;color:#e8f0f8;">{_p.get("Line","")}</span></div>'
+                            f'<span style="font-size:13px;font-weight:500;color:{_c};">{_edge_pct}</span>'
+                            f'<span style="font-size:10px;font-weight:500;padding:2px 6px;border-radius:3px;background:{_c}22;color:{_c};border:0.5px solid {_c}44;">{_p.get("Tier","")}</span>'
+                            f'</div>'
+                            f'<div style="display:flex;gap:16px;padding:3px 12px 7px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
+                            f'<span style="font-size:11px;color:#4a6a8a;">PPG <span style="color:#9aa8b8;font-weight:500;">{_avg:.1f}</span></span>'
+                            f'<span style="font-size:11px;color:#4a6a8a;">2-pick EV <span style="color:#9aa8b8;font-weight:500;">{_ev2}</span></span>'
+                            f'<span style="font-size:11px;color:#4a6a8a;">Pinnacle <span style="color:#9aa8b8;font-weight:500;">{_p.get("PinnacleProb","—")}</span></span>'
+                            f'{"<span style=\"font-size:11px;color:#22c55e;\">⚡ " + str(_p.get("BetterLineNote",""))[:35] + "</span>" if _p.get("BetterLineNote") else ""}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                    with _col_lock:
+                        _lk = f"fblk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
+                        if _already_locked:
+                            st.markdown('<div style="text-align:center;padding-top:8px;color:#22c55e;font-size:13px;">✅</div>', unsafe_allow_html=True)
+                        elif st.button("🔒", key=_lk, use_container_width=True):
+                            st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
                             save_json_data(LOCKS_PATH, st.session_state.locks)
                             save_to_gist("locks", st.session_state.locks)
                             st.rerun()
-                        else:
-                            st.warning("Already locked")
         else:
-            st.info("No props match selected filter.")
+            st.info("No props match the selected filters.")
     else:
         st.info("Select a sport and click Load Board.")
 
 # ----- TAB 2: GAME LINES -----
 with tabs[2]:
-    st.markdown(f"## \U0001f3df\ufe0f Game Lines \u2014 {st.session_state.last_sport}")
-    if st.session_state.games:
-        games_df = pd.DataFrame(st.session_state.games)
-        display_cols = ["Matchup", "Status", "Spread", "Total", "Home ML", "Away ML", "Bovada Spread", "Bovada Total", "Bovada ML Home", "Bovada ML Away", "Odds Source", "Date"]
-        display_cols = [c for c in display_cols if c in games_df.columns]
-        st.dataframe(games_df[display_cols], width="stretch")
+    _games = st.session_state.games or []
+    _sport2 = st.session_state.last_sport or "NBA"
+    st.markdown(f"## 🏟️ Game Lines — {_sport2}")
+    if _games:
+        _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
+        _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
+        _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
+        _tc2 = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+
+        for _g in _fgames:
+            _matchup = _g.get("Matchup","—")
+            _gtime = _g.get("Time","—")
+            _gsport = _g.get("Sport",_sport2)
+            _injury = _g.get("Injury","")
+            _picks = [
+                {"label":"SPREAD","pick":_g.get("SpreadPick",_g.get("Spread","—")),"line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","LEAN")},
+                {"label":"TOTAL","pick":_g.get("TotalPick","O/U"),"line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
+                {"label":"ML","pick":_g.get("MLPick",_g.get("FavoriteTeam","—")),"line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
+            ]
+            # Game card header
+            st.markdown(
+                f'<div style="background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
+                f'<span style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_gsport}</span>'
+                f'<span style="font-size:14px;font-weight:500;color:#e8f0f8;">{_matchup}</span>'
+                f'<span style="font-size:12px;color:#6a7a8a;margin-left:auto;">{_gtime}</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            # 3-column picks
+            _pc1, _pc2, _pc3 = st.columns(3)
+            for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3], _picks)):
+                with _pc:
+                    _pc_color = _tc2.get(_pk["tier"],"#6a7a8a")
+                    _is_pos = _pk["edge"] > 0
+                    _edge_color = _pc_color if _is_pos else "#e04040"
+                    st.markdown(
+                        f'<div style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:12px 14px;background:#0a0e14;{"border-radius:0 0 0 6px;" if _idx==0 else ("border-radius:0 0 6px 0;" if _idx==2 else "")}">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+                        f'<span style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#4a6a8a;">{_pk["label"]}</span>'
+                        f'<span style="font-size:10px;font-weight:500;padding:1px 6px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
+                        f'</div>'
+                        f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">'
+                        f'<span style="font-size:16px;font-weight:500;color:#e8f0f8;">{_pk["pick"]}</span>'
+                        f'<span style="font-size:12px;color:#8a9ab0;">{_pk["line"]}</span>'
+                        f'</div>'
+                        f'<span style="font-size:13px;font-weight:500;color:{_edge_color};">{"+"+str(round(_pk["edge"],1)) if _is_pos else str(round(_pk["edge"],1))}% edge</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            if _injury:
+                st.markdown(f'<div style="padding:5px 14px;font-size:11px;color:#6a7a8a;border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;background:#0d1520;">ℹ️ {_injury}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;height:4px;background:#08111a;"></div>', unsafe_allow_html=True)
+
+        # Keep line movement and public betting data below
         st.markdown("---")
-        st.markdown("### \u26a1 Line Movement History")
         movement_data = st.session_state.get("game_line_movement", {})
-        sharp_flags_g = st.session_state.get("game_sharp_flags", {})
         if movement_data:
+            st.markdown("### ⚡ Line Movement")
             for matchup, movements in movement_data.items():
-                if not movements:
-                    continue
-                sharp = sharp_flags_g.get(matchup, {})
-                sharp_label = " \u26a1 SHARP" if sharp.get("sharp") else ""
-                with st.expander(f"{matchup}{sharp_label}"):
+                if not movements: continue
+                with st.expander(matchup):
                     if len(movements) >= 2:
                         first, last = movements[-1], movements[0]
-                        st.write(f"**Opening:** Spread {first.get('spread','\u2014')} | Total {first.get('over_under','\u2014')}")
-                        st.write(f"**Current:** Spread {last.get('spread','\u2014')} | Total {last.get('over_under','\u2014')}")
-                    else:
-                        st.caption("Not enough movement data yet")
-        else:
-            st.caption("Load board to see line movement.")
-        st.markdown("---")
-        st.markdown("### \U0001f4ca Public Betting Splits")
-        public_data_g = st.session_state.get("public_betting_data", {})
-        if public_data_g:
-            pb_rows = []
-            for game_key, gd in public_data_g.items():
-                teams = gd.get("teams", [])
-                num_bets = gd.get("num_bets", 0)
-                ml = gd.get("ml", {})
-                total_d = gd.get("total", {})
-                home_ml_pb = ml.get("home", {})
-                away_ml_pb = ml.get("away", {})
-                over_tot = total_d.get("over", {})
-                sharp = gd.get("sharp_signals", [])
-                pb_rows.append({"Matchup": " vs ".join(teams), "Bets": f"{num_bets:,}", "ML Home Tickets": f"{home_ml_pb.get('tickets', 0)}%", "ML Home Money": f"{home_ml_pb.get('money', 0)}%", "Over Tickets": f"{over_tot.get('tickets', 0)}%", "Over Money": f"{over_tot.get('money', 0)}%", "Sharp Signal": "\u26a1 " + sharp[0][:30] if sharp else "\u2014"})
-            st.dataframe(pd.DataFrame(pb_rows), width="stretch", hide_index=True)
-        else:
-            st.caption("Load board to see public betting splits.")
+                        st.write(f"Opening: Spread {first.get('spread','—')} | Total {first.get('over_under','—')}")
+                        st.write(f"Current: Spread {last.get('spread','—')} | Total {last.get('over_under','—')}")
     else:
-        st.info("No games found.")
+        st.info("No games found. Load the board first.")
 
 # ----- TAB 3: LOCKS & LEDGER -----
 with tabs[3]:
