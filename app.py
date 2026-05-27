@@ -7716,6 +7716,12 @@ with tabs[0]:
                 st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{au.get("Player","")}</span> <span style="color:#b8c6d6;font-size:0.82rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:0.82rem;">Alt EV: {au.get("AltEV","—")}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:#8a9ab0;font-size:0.85rem;padding:0.3rem 0;">Load board to check for alt line upgrades.</div>', unsafe_allow_html=True)
+        _alt_ups = st.session_state.get("alt_line_upgrades", [])
+        if _alt_ups:
+            for _au in _alt_ups[:5]:
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_au.get("player","")}</span><span style="color:#22c55e;">⚡ {_au.get("edge_gain","")}</span></div><div style="font-size:0.78rem;color:#8a9ab0;">{_au.get("current_line","")} → {_au.get("better_line","")} on {_au.get("source","")}</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#6a7a8a;font-size:0.82rem;">✅ All lines optimal — no upgrades today.</div>', unsafe_allow_html=True)
 
         # ── ARBITRAGE OPPORTUNITIES ────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Arbitrage Opportunities</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -7725,6 +7731,13 @@ with tabs[0]:
                 st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{arb.get("Player","")}</span> <span style="color:#b8c6d6;font-size:0.82rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:0.82rem;">ROI: {arb.get("ROI","—")}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:#8a9ab0;font-size:0.85rem;padding:0.3rem 0;">Load board to scan for arbitrage opportunities.</div>', unsafe_allow_html=True)
+        _arb_opps = st.session_state.get("arb_opportunities", [])
+        if _arb_opps:
+            for _arb in _arb_opps[:5]:
+                _profit = float(_arb.get("Arb Pct", 0) or 0)
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_arb.get("Player","")}</span><span style="color:#22c55e;font-weight:700;">+{_profit:.1f}%</span></div><div style="font-size:0.78rem;color:#8a9ab0;">{_arb.get("Book1","")} {_arb.get("Line1","")} vs {_arb.get("Book2","")} {_arb.get("Line2","")}</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#6a7a8a;font-size:0.82rem;">No arbitrage opportunities found today.</div>', unsafe_allow_html=True)
 
         # ── BEST OF ALL SPORTS ─────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -8345,6 +8358,51 @@ with tabs[3]:
                         save_json_data(LOCKS_PATH, st.session_state.locks)
                         save_to_gist("locks", st.session_state.locks)
                         resolved += bdl_resolved
+
+            # Also resolve game line locks
+            game_locks = [l for l in st.session_state.locks.copy() if l.get("bet_type") == "game"]
+            if game_locks and resolved == 0:
+                # Try ESPN scoreboard for final scores
+                for sport_key in ["NBA","MLB","NFL","NHL"]:
+                    espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl")}
+                    if sport_key not in espn_sm: continue
+                    es, el = espn_sm[sport_key]
+                    try:
+                        sb = requests.get(f"https://site.web.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard", headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
+                        if sb.status_code != 200: continue
+                        for event in sb.json().get("events",[]):
+                            if not event.get("status",{}).get("type",{}).get("completed"): continue
+                            comps = event.get("competitions",[{}])[0]
+                            teams = comps.get("competitors",[])
+                            if len(teams) < 2: continue
+                            home = teams[0]; away = teams[1]
+                            home_name = home.get("team",{}).get("displayName","")
+                            away_name = away.get("team",{}).get("displayName","")
+                            home_score = float(home.get("score",0) or 0)
+                            away_score = float(away.get("score",0) or 0)
+                            total = home_score + away_score
+                            for lock in game_locks:
+                                matchup = lock.get("player","")
+                                if home_name not in matchup and away_name not in matchup: continue
+                                pick = lock.get("side","")
+                                line = float(lock.get("line",0) or 0)
+                                prop_type = lock.get("prop","").upper()
+                                outcome = None
+                                if "SPREAD" in prop_type:
+                                    pick_team_score = home_score if pick in home_name else away_score
+                                    opp_score = away_score if pick in home_name else home_score
+                                    outcome = "WIN" if (pick_team_score - opp_score + line) > 0 else "LOSS"
+                                elif "TOTAL" in prop_type:
+                                    outcome = "WIN" if (pick=="OVER" and total>line) or (pick=="UNDER" and total<line) else "LOSS"
+                                elif "ML" in prop_type:
+                                    win_team = home_name if home_score > away_score else away_name
+                                    outcome = "WIN" if pick in win_team else "LOSS"
+                                if outcome:
+                                    log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10])
+                                    if lock in st.session_state.locks: st.session_state.locks.remove(lock)
+                                    resolved += 1
+                                    st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
+                    except: continue
 
             if resolved == 0:
                 st.info("No completed games found yet. Try after games finish.")
@@ -9259,6 +9317,7 @@ with tabs[7]:
         log_edge = st.number_input("Edge % (optional)", min_value=0.0, max_value=50.0, value=0.0, step=0.1, key="log_edge") / 100.0
         st.markdown("---")
         st.caption("ℹ️ Use this to log bets from any book. Results auto-update your bankroll and history.")
+    st.caption("ℹ️ Manually record a bet outcome. Updates win/loss record, bankroll, CLV tracking, and signal calibration.")
     if st.button("\u2705 Submit Bet Result", key="submit_manual_bet"):
             if not log_player:
                 st.error("Enter player name or matchup.")
