@@ -8055,112 +8055,168 @@ with tabs[3]:
 
     # ── CHECK RESULTS BUTTON ───────────────────────────
     st.markdown("---")
-    if st.button("🔍 Check Results via BDL", key="check_results_bdl", use_container_width=True):
+    if st.button("🔍 Check Results via ESPN", key="check_results_espn", use_container_width=True):
         if not st.session_state.locks:
             st.info("No active locks to check.")
-        elif not BDL_API_KEY:
-            st.warning("BDL API key not configured.")
         else:
             resolved = 0
-            errors = []
-            with st.spinner("Checking box scores..."):
-                # Get unique players from active locks
-                for lock in st.session_state.locks.copy():
-                    player = lock.get("player","")
-                    prop = lock.get("prop","").lower()
-                    line = float(lock.get("line",0) or 0)
-                    side = lock.get("side","OVER")
-                    sport = lock.get("sport","NBA")
+            skipped = []
+            espn_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            sport_map = {
+                "NBA": "basketball/nba",
+                "MLB": "baseball/mlb",
+                "NHL": "hockey/nhl",
+                "NFL": "football/nfl",
+                "WNBA": "basketball/wnba",
+            }
+            prop_stat_map = {
+                "points": "PTS", "pts": "PTS",
+                "rebounds": "REB", "reb": "REB",
+                "assists": "AST", "ast": "AST",
+                "pra": "PRA", "pts+reb+ast": "PRA",
+                "3-pt made": "3PM", "3pm": "3PM", "threes": "3PM",
+                "steals": "STL", "blocks": "BLK",
+                "strikeouts": "SO", "hits": "H",
+                "home runs": "HR", "pitches thrown": "PC",
+            }
 
-                    if sport != "NBA":
-                        continue  # BDL is NBA only
+            with st.spinner("Fetching ESPN box scores..."):
+                # Group locks by sport
+                sport_locks = {}
+                for lock in st.session_state.locks:
+                    s = lock.get("sport","NBA")
+                    sport_locks.setdefault(s, []).append(lock)
 
+                for sport, locks in sport_locks.items():
+                    espn_sport = sport_map.get(sport)
+                    if not espn_sport:
+                        skipped.extend([f"{l.get('player','')} ({sport} not supported)" for l in locks])
+                        continue
+
+                    # Get today's scoreboard
                     try:
-                        # Search player
-                        r = requests.get(
-                            "https://api.balldontlie.io/v1/players",
-                            headers={"Authorization": BDL_API_KEY},
-                            params={"search": player, "per_page": 1},
-                            timeout=8
+                        sb = requests.get(
+                            f"https://site.web.api.espn.com/apis/site/v2/sports/{espn_sport}/scoreboard",
+                            headers=espn_headers, timeout=10
                         )
-                        if r.status_code != 200:
-                            continue
-                        players_data = r.json().get("data", [])
-                        if not players_data:
-                            continue
-                        player_id = players_data[0]["id"]
-
-                        # Get most recent game stats
-                        r2 = requests.get(
-                            "https://api.balldontlie.io/v1/stats",
-                            headers={"Authorization": BDL_API_KEY},
-                            params={"player_ids[]": player_id, "per_page": 1},
-                            timeout=8
-                        )
-                        if r2.status_code != 200:
-                            continue
-                        stats_data = r2.json().get("data", [])
-                        if not stats_data:
+                        if sb.status_code != 200:
+                            skipped.extend([f"{l.get('player','')} (scoreboard failed)" for l in locks])
                             continue
 
-                        stat = stats_data[0]
-                        # Map prop to BDL stat field
-                        stat_map = {
-                            "points": "pts", "pts": "pts",
-                            "rebounds": "reb", "reb": "reb",
-                            "assists": "ast", "ast": "ast",
-                            "pts+reb+ast": None, "pra": None,
-                            "3-pt made": "fg3m", "3pm": "fg3m",
-                            "steals": "stl", "blocks": "blk",
-                            "turnovers": "turnover"
-                        }
-                        prop_key = None
-                        for k, v in stat_map.items():
-                            if k in prop:
-                                prop_key = v
-                                break
+                        events = sb.json().get("events", [])
+                        final_events = [e for e in events if e.get("status",{}).get("type",{}).get("completed", False)]
 
-                        if prop_key is None and ("pts" in prop or "reb" in prop or "ast" in prop):
-                            # PRA
-                            actual = float(stat.get("pts",0) or 0) + float(stat.get("reb",0) or 0) + float(stat.get("ast",0) or 0)
-                        elif prop_key:
-                            actual = float(stat.get(prop_key, 0) or 0)
-                        else:
+                        if not final_events:
+                            st.info(f"No completed {sport} games found today.")
                             continue
 
-                        # Determine outcome
-                        if side == "OVER":
-                            outcome = "WIN" if actual > line else "LOSS"
-                        else:
-                            outcome = "WIN" if actual < line else "LOSS"
+                        # For each completed game get box score
+                        player_stats = {}  # name -> {stat: value}
+                        for event in final_events:
+                            game_id = event.get("id","")
+                            try:
+                                bs = requests.get(
+                                    f"https://site.web.api.espn.com/apis/site/v2/sports/{espn_sport}/summary?event={game_id}&region=us&lang=en&contentorigin=espn",
+                                    headers=espn_headers, timeout=10
+                                )
+                                if bs.status_code != 200:
+                                    continue
+                                bdata = bs.json()
+                                boxscore = bdata.get("boxscore", {})
 
-                        # Log and remove
-                        log_manual_bet(
-                            player, lock.get("prop",""), line, side, sport, outcome,
-                            float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
-                            lock.get("timestamp","")[:10],
-                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
-                        )
-                        if lock in st.session_state.locks:
-                            st.session_state.locks.remove(lock)
-                        resolved += 1
-                        result_icon = "✅" if outcome == "WIN" else "❌"
-                        st.markdown(f"{result_icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
+                                # ESPN summary endpoint - players array has per-player stats
+                                # Each entry: {team, statistics: [{keys, labels, athletes: [{athlete, stats}]}]}
+                                player_sources = boxscore.get("players", boxscore.get("teams", []))
+                                for team in player_sources:
+                                    for stat_group in team.get("statistics", []):
+                                        stat_keys = stat_group.get("keys", stat_group.get("labels", []))
+                                        for athlete in stat_group.get("athletes", []):
+                                            aname = athlete.get("athlete",{}).get("displayName","")
+                                            stats_vals = athlete.get("stats", [])
+                                            if not aname or not stats_vals:
+                                                continue
+                                            aname_norm = normalize_name(aname)
+                                            if aname_norm not in player_stats:
+                                                player_stats[aname_norm] = {}
+                                            for i, key in enumerate(stat_keys):
+                                                if i < len(stats_vals):
+                                                    try:
+                                                        player_stats[aname_norm][key.upper()] = float(stats_vals[i])
+                                                    except:
+                                                        pass
+                                            # Also try label-based parsing
+                                            for label in ["PTS","REB","AST","STL","BLK","TO","3PM","MIN"]:
+                                                for i, key in enumerate(stat_keys):
+                                                    if label in key.upper() and i < len(stats_vals):
+                                                        try:
+                                                            player_stats[aname_norm][label] = float(stats_vals[i])
+                                                        except:
+                                                            pass
+                            except:
+                                continue
+
+                        # Now resolve locks
+                        for lock in locks:
+                            player = lock.get("player","")
+                            prop = lock.get("prop","").lower()
+                            line = float(lock.get("line",0) or 0)
+                            side = lock.get("side","OVER")
+                            p_norm = normalize_name(player)
+
+                            if p_norm not in player_stats:
+                                skipped.append(f"{player} (not found in box score)")
+                                continue
+
+                            # Find stat key
+                            stat_key = None
+                            for k, v in prop_stat_map.items():
+                                if k in prop:
+                                    stat_key = v
+                                    break
+
+                            pstats = player_stats[p_norm]
+
+                            if stat_key == "PRA":
+                                actual = pstats.get("PTS",0) + pstats.get("REB",0) + pstats.get("AST",0)
+                            elif stat_key and stat_key in pstats:
+                                actual = pstats[stat_key]
+                            else:
+                                # Try fuzzy match
+                                actual = None
+                                for k, v in pstats.items():
+                                    if stat_key and stat_key[:2] in k:
+                                        actual = v
+                                        break
+                                if actual is None:
+                                    skipped.append(f"{player} (stat '{prop}' not found)")
+                                    continue
+
+                            outcome = "WIN" if (side=="OVER" and actual > line) or (side=="UNDER" and actual < line) else "LOSS"
+                            icon = "✅" if outcome == "WIN" else "❌"
+                            st.markdown(f"{icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
+
+                            log_manual_bet(
+                                player, lock.get("prop",""), line, side, sport, outcome,
+                                float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
+                                lock.get("timestamp","")[:10],
+                                tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                            )
+                            if lock in st.session_state.locks:
+                                st.session_state.locks.remove(lock)
+                            resolved += 1
 
                     except Exception as e:
-                        errors.append(f"{player}: {str(e)[:50]}")
+                        skipped.extend([f"{l.get('player','')} (error: {str(e)[:40]})" for l in locks])
 
             if resolved > 0:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)
-                st.success(f"✅ Resolved {resolved} picks via BDL box scores")
+                st.success(f"✅ Auto-resolved {resolved} picks via ESPN box scores")
                 st.rerun()
-            else:
-                st.warning("No NBA picks could be resolved. Games may still be in progress or BDL data not yet available.")
-            if errors:
-                with st.expander("Errors"):
-                    for e in errors:
-                        st.caption(e)
+            if skipped:
+                with st.expander(f"⚠️ {len(skipped)} picks need manual resolution"):
+                    for s in skipped:
+                        st.caption(s)
 
     # Ledger section
     st.markdown("## 📊 Ledger")
