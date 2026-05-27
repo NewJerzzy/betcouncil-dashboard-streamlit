@@ -8213,6 +8213,73 @@ with tabs[3]:
                 save_to_gist("locks", st.session_state.locks)
                 st.success(f"✅ Auto-resolved {resolved} picks via ESPN box scores")
                 st.rerun()
+
+            # BDL fallback for any NBA picks ESPN missed
+            if skipped and BDL_API_KEY:
+                nba_skipped = [s for s in skipped if "nba" in s.lower() or any(
+                    normalize_name(l.get("player","")) in s.lower()
+                    for l in st.session_state.locks if l.get("sport","") == "NBA"
+                )]
+                if nba_skipped:
+                    st.caption(f"Trying BDL for {len(nba_skipped)} missed NBA picks...")
+                    bdl_resolved = 0
+                    for lock in st.session_state.locks.copy():
+                        if lock.get("sport","") != "NBA":
+                            continue
+                        try:
+                            rp = requests.get(
+                                "https://api.balldontlie.io/v1/players",
+                                headers={"Authorization": BDL_API_KEY},
+                                params={"search": lock.get("player",""), "per_page": 1},
+                                timeout=8
+                            )
+                            if rp.status_code != 200:
+                                continue
+                            players_data = rp.json().get("data", [])
+                            if not players_data:
+                                continue
+                            pid = players_data[0]["id"]
+                            rs = requests.get(
+                                "https://api.balldontlie.io/v1/stats",
+                                headers={"Authorization": BDL_API_KEY},
+                                params={"player_ids[]": pid, "per_page": 1},
+                                timeout=8
+                            )
+                            if rs.status_code != 200:
+                                continue
+                            stats_data = rs.json().get("data", [])
+                            if not stats_data:
+                                continue
+                            stat = stats_data[0]
+                            prop = lock.get("prop","").lower()
+                            line = float(lock.get("line",0) or 0)
+                            side = lock.get("side","OVER")
+                            bdl_map = {"points":"pts","rebounds":"reb","assists":"ast","steals":"stl","blocks":"blk","turnovers":"turnover","3-pt made":"fg3m","3pm":"fg3m"}
+                            pra = "pra" in prop or "pts+reb+ast" in prop
+                            if pra:
+                                actual = float(stat.get("pts",0) or 0) + float(stat.get("reb",0) or 0) + float(stat.get("ast",0) or 0)
+                            else:
+                                stat_key = next((v for k,v in bdl_map.items() if k in prop), None)
+                                if not stat_key:
+                                    continue
+                                actual = float(stat.get(stat_key,0) or 0)
+                            outcome = ("WIN" if actual > line else "LOSS") if side == "OVER" else ("WIN" if actual < line else "LOSS")
+                            log_manual_bet(lock.get("player",""), lock.get("prop",""), line, side, "NBA", outcome, float(lock.get("wager") or 0), 2, "prop", "PrizePicks", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"))
+                            if lock in st.session_state.locks:
+                                st.session_state.locks.remove(lock)
+                            bdl_resolved += 1
+                            icon = "✅" if outcome == "WIN" else "❌"
+                            st.markdown(f"{icon} **{lock.get('player','')}** (BDL) — actual: **{actual}** → **{outcome}**")
+                        except:
+                            continue
+                    if bdl_resolved > 0:
+                        save_json_data(LOCKS_PATH, st.session_state.locks)
+                        save_to_gist("locks", st.session_state.locks)
+                        resolved += bdl_resolved
+
+            if resolved == 0:
+                st.info("No completed games found yet. Try after games finish.")
+
             if skipped:
                 with st.expander(f"⚠️ {len(skipped)} picks need manual resolution"):
                     for s in skipped:
