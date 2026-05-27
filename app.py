@@ -7967,10 +7967,14 @@ with tabs[2]:
             _gtime = _g.get("Time","—")
             _gsport = _g.get("Sport",_sport2)
             _injury = _g.get("Injury","")
+            _alt_line = _g.get("AltLine","")
+            _alt_edge = float(_g.get("AltEdge",0) or 0)
+            _alt_tier = _g.get("AltTier","LEAN")
             _picks = [
                 {"label":"SPREAD","pick":_g.get("SpreadPick",_g.get("Spread","—")),"line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","LEAN")},
                 {"label":"TOTAL","pick":_g.get("TotalPick","O/U"),"line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
                 {"label":"ML","pick":_g.get("MLPick",_g.get("FavoriteTeam","—")),"line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
+                {"label":"ALT LINE","pick":_alt_line or "—","line":_alt_line or "—","edge":_alt_edge,"tier":_alt_tier},
             ]
             # Game card header
             st.markdown(
@@ -7982,8 +7986,8 @@ with tabs[2]:
                 unsafe_allow_html=True
             )
             # 3-column picks
-            _pc1, _pc2, _pc3 = st.columns(3)
-            for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3], _picks)):
+            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+            for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3,_pc4], _picks)):
                 with _pc:
                     _pc_color = _tc2.get(_pk["tier"],"#6a7a8a")
                     _is_pos = _pk["edge"] > 0
@@ -8008,7 +8012,7 @@ with tabs[2]:
                 st.markdown('<div style="border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;height:4px;background:#08111a;"></div>', unsafe_allow_html=True)
 
             # Lock buttons for each bet type
-            _lk_cols = st.columns(3)
+            _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
                 with _lk_col:
                     _glk_key = f"glk_{_matchup.replace(' ','_')[:15]}_{_pk['label']}"
