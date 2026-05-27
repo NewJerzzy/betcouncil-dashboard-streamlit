@@ -7978,7 +7978,7 @@ with tabs[3]:
                 f'<div style="text-align:right;">'
                 f'<div style="font-size:13px;color:#0ea5a0;font-weight:700;">Edge: {edge_val:.1%}</div>'
                 f'<div style="font-size:13px;color:{ev_color};font-weight:600;">2-pick EV: {ev_2:+.1%}</div>'
-                f'<div style="font-size:13px;color:#e8a020;font-weight:700;">Wager: ${lock["wager"]:.2f}</div>'
+                f'<div style="font-size:13px;color:#e8a020;font-weight:700;">Wager: ${float(lock.get("wager") or 0):.2f}</div>'
                 f'</div></div></div>',
                 unsafe_allow_html=True
             )
@@ -7986,7 +7986,7 @@ with tabs[3]:
             if col2.button("\u2705 WIN", key=f"win_{i}"):
                 pick_count = st.session_state.get("last_pick_count", 2)
                 multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
-                profit = round(lock["wager"] * multiplier, 2)
+                profit = round(float(lock.get("wager") or 0) * multiplier, 2)
                 st.session_state.bankroll += profit
                 st.session_state.history.append({**lock, "outcome": "WIN", "profit": profit, "loss": 0, "net": profit, "pick_count": pick_count, "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
                 save_json_data(BANKROLL_PATH, st.session_state.bankroll)
@@ -8011,8 +8011,8 @@ with tabs[3]:
                 compute_optimized_weights(lock.get("sport", "NBA"))
                 st.rerun()
             if col3.button("\u274c LOSS", key=f"loss_{i}"):
-                st.session_state.bankroll -= lock["wager"]
-                st.session_state.history.append({**lock, "outcome": "LOSS", "profit": 0, "loss": lock["wager"], "net": -lock["wager"], "pick_count": st.session_state.get("last_pick_count", 2), "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
+                st.session_state.bankroll -= float(lock.get("wager") or 0)
+                st.session_state.history.append({**lock, "outcome": "LOSS", "profit": 0, "loss": float(lock.get("wager") or 0), "net": -float(lock.get("wager") or 0), "pick_count": st.session_state.get("last_pick_count", 2), "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
                 save_json_data(BANKROLL_PATH, st.session_state.bankroll)
                 save_to_gist("bankroll", st.session_state.bankroll)
                 save_json_data(HISTORY_PATH, st.session_state.history)
