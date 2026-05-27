@@ -4935,15 +4935,33 @@ def fetch_espn_line_movement(sport, event_id):
     sport_path = ESPN_CORE_SPORT_MAP.get(sport, "")
     if not sport_path:
         return []
-    url = f"{ESPN_CORE_BASE}/sports/{sport_path}/events/{event_id}/competitions/{event_id}/odds/{ESPN_BET_PROVIDER_ID}/history/0/movement?limit=100"
+    # Use site.web.api.espn.com (confirmed working on Streamlit Cloud)
+    espn_sport_map = {"NBA": ("basketball","nba"), "MLB": ("baseball","mlb"), "NHL": ("hockey","nhl"), "NFL": ("football","nfl"), "WNBA": ("basketball","wnba")}
+    if sport not in espn_sport_map:
+        return []
+    espn_sport, espn_league = espn_sport_map[sport]
+    # Get game summary which includes odds/lines history
+    url = f"https://site.web.api.espn.com/apis/site/v2/sports/{espn_sport}/{espn_league}/summary?event={event_id}&region=us&lang=en&contentorigin=espn"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
         if resp.status_code != 200:
             return []
         data = resp.json()
+        # Extract odds info from header
+        header = data.get("header", {})
+        competitions = header.get("competitions", [{}])
+        comp = competitions[0] if competitions else {}
+        odds_list = comp.get("odds", [])
         movements = []
-        for item in data.get("items", []):
-            movements.append({"spread": item.get("spread"), "over_under": item.get("overUnder"), "home_ml": item.get("homeTeamOdds", {}).get("moneyLine"), "away_ml": item.get("awayTeamOdds", {}).get("moneyLine"), "time": item.get("recordedAt", "")})
+        for odd in odds_list:
+            movements.append({
+                "spread": odd.get("spread","—"),
+                "over_under": odd.get("overUnder","—"),
+                "home_ml": odd.get("homeTeamOdds",{}).get("moneyLine","—"),
+                "away_ml": odd.get("awayTeamOdds",{}).get("moneyLine","—"),
+                "provider": odd.get("provider",{}).get("name",""),
+                "time": ""
+            })
         if movements:
             with open(cache_path, "wb") as f:
                 pickle.dump(movements, f)
@@ -7938,6 +7956,40 @@ with tabs[2]:
             else:
                 st.markdown('<div style="border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;height:4px;background:#08111a;"></div>', unsafe_allow_html=True)
 
+            # Lock buttons for each bet type
+            _lk_cols = st.columns(3)
+            for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
+                with _lk_col:
+                    if _pk["edge"] <= 0:
+                        st.markdown('<div style="text-align:center;color:#4a6a8a;font-size:11px;padding:4px;">—PASS—</div>', unsafe_allow_html=True)
+                        continue
+                    _glk_key = f"glk_{_matchup.replace(' ','_')[:15]}_{_pk['label']}"
+                    _already_glk = any(
+                        l.get("player","") == _matchup and l.get("prop","") == _pk["label"]
+                        for l in st.session_state.locks
+                    )
+                    if _already_glk:
+                        st.markdown('<div style="text-align:center;color:#22c55e;font-size:12px;padding:4px;">✅ Locked</div>', unsafe_allow_html=True)
+                    elif st.button(f"🔒 Lock {_pk['label']}", key=_glk_key, use_container_width=True):
+                        _new_game_lock = {
+                            "player": _matchup,
+                            "prop": _pk["label"],
+                            "line": str(_pk["line"]),
+                            "side": _pk["pick"],
+                            "tier": _pk["tier"],
+                            "edge": _pk["edge"],
+                            "sport": _gsport,
+                            "source": "Bovada/MyBookie",
+                            "bet_type": "game",
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "prob": 0.5 + _pk["edge"] / 2,
+                            "wager": 0,
+                        }
+                        st.session_state.locks.append(_new_game_lock)
+                        save_json_data(LOCKS_PATH, st.session_state.locks)
+                        save_to_gist("locks", st.session_state.locks)
+                        st.rerun()
+
         # Keep line movement and public betting data below
         st.markdown("---")
         movement_data = st.session_state.get("game_line_movement", {})
@@ -7977,10 +8029,12 @@ with tabs[3]:
             wager = float(slip_locks[0].get("wager") or 0)
             potential = round(wager * multiplier, 2) if wager > 0 else 0
 
-            # Slip header
-            tc = "#378add"
+            # Determine if this is a game bet or prop bet
+            _is_game_slip = any(l.get("bet_type") == "game" for l in slip_locks)
+            _slip_type_label = "🏟️ Game Bet" if _is_game_slip else f"{n}-Pick Prop Slip"
+            tc = "#e8a020" if _is_game_slip else "#378add"
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
+                f'<div style="background:#0a0e14;border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
                 f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
                 f'<div><span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{n}-Pick Slip</span> ' +
                 f'<span style="color:#378add;font-size:0.82rem;margin-left:8px;">{sport}</span> ' +
