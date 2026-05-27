@@ -7633,7 +7633,7 @@ with tabs[0]:
 
         # ── PARLAY OF THE DAY — GAMES ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-        top_games = sorted([g for g in game_analysis if g.get("best_bet") and g.get("best_edge",0)>=0.05], key=lambda x: x.get("best_edge",0), reverse=True)[:3]
+        top_games = sorted([g for g in game_analysis if g.get("best_bet") and g.get("best_edge",0)>=0.02], key=lambda x: x.get("best_edge",0), reverse=True)[:3]
         if len(top_games) >= 2:
             g_probs = [min(0.65, 0.5 + g.get("best_edge",0.05)) for g in top_games]
             g_combined = parlay_prob(g_probs)
@@ -7655,7 +7655,11 @@ with tabs[0]:
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
+            _game_analysis_count = len(game_analysis) if game_analysis else 0
+            if _game_analysis_count > 0:
+                st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem 1rem;color:#6a7a8a;font-size:0.85rem;">⚠️ No game edges meet the 2% minimum today. All detected lines appear fairly priced.</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="color:#6a7a8a;font-size:0.88rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
 
         # ── GAMES TO AVOID (always visible) ────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
