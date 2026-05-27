@@ -8053,6 +8053,115 @@ with tabs[3]:
     else:
         st.info("No active locks.")
 
+    # ── CHECK RESULTS BUTTON ───────────────────────────
+    st.markdown("---")
+    if st.button("🔍 Check Results via BDL", key="check_results_bdl", use_container_width=True):
+        if not st.session_state.locks:
+            st.info("No active locks to check.")
+        elif not BDL_API_KEY:
+            st.warning("BDL API key not configured.")
+        else:
+            resolved = 0
+            errors = []
+            with st.spinner("Checking box scores..."):
+                # Get unique players from active locks
+                for lock in st.session_state.locks.copy():
+                    player = lock.get("player","")
+                    prop = lock.get("prop","").lower()
+                    line = float(lock.get("line",0) or 0)
+                    side = lock.get("side","OVER")
+                    sport = lock.get("sport","NBA")
+
+                    if sport != "NBA":
+                        continue  # BDL is NBA only
+
+                    try:
+                        # Search player
+                        r = requests.get(
+                            "https://api.balldontlie.io/v1/players",
+                            headers={"Authorization": BDL_API_KEY},
+                            params={"search": player, "per_page": 1},
+                            timeout=8
+                        )
+                        if r.status_code != 200:
+                            continue
+                        players_data = r.json().get("data", [])
+                        if not players_data:
+                            continue
+                        player_id = players_data[0]["id"]
+
+                        # Get most recent game stats
+                        r2 = requests.get(
+                            "https://api.balldontlie.io/v1/stats",
+                            headers={"Authorization": BDL_API_KEY},
+                            params={"player_ids[]": player_id, "per_page": 1},
+                            timeout=8
+                        )
+                        if r2.status_code != 200:
+                            continue
+                        stats_data = r2.json().get("data", [])
+                        if not stats_data:
+                            continue
+
+                        stat = stats_data[0]
+                        # Map prop to BDL stat field
+                        stat_map = {
+                            "points": "pts", "pts": "pts",
+                            "rebounds": "reb", "reb": "reb",
+                            "assists": "ast", "ast": "ast",
+                            "pts+reb+ast": None, "pra": None,
+                            "3-pt made": "fg3m", "3pm": "fg3m",
+                            "steals": "stl", "blocks": "blk",
+                            "turnovers": "turnover"
+                        }
+                        prop_key = None
+                        for k, v in stat_map.items():
+                            if k in prop:
+                                prop_key = v
+                                break
+
+                        if prop_key is None and ("pts" in prop or "reb" in prop or "ast" in prop):
+                            # PRA
+                            actual = float(stat.get("pts",0) or 0) + float(stat.get("reb",0) or 0) + float(stat.get("ast",0) or 0)
+                        elif prop_key:
+                            actual = float(stat.get(prop_key, 0) or 0)
+                        else:
+                            continue
+
+                        # Determine outcome
+                        if side == "OVER":
+                            outcome = "WIN" if actual > line else "LOSS"
+                        else:
+                            outcome = "WIN" if actual < line else "LOSS"
+
+                        # Log and remove
+                        log_manual_bet(
+                            player, lock.get("prop",""), line, side, sport, outcome,
+                            float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
+                            lock.get("timestamp","")[:10],
+                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                        )
+                        if lock in st.session_state.locks:
+                            st.session_state.locks.remove(lock)
+                        resolved += 1
+                        result_icon = "✅" if outcome == "WIN" else "❌"
+                        st.markdown(f"{result_icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
+
+                    except Exception as e:
+                        errors.append(f"{player}: {str(e)[:50]}")
+
+            if resolved > 0:
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                st.success(f"✅ Resolved {resolved} picks via BDL box scores")
+                st.rerun()
+            else:
+                st.warning("No NBA picks could be resolved. Games may still be in progress or BDL data not yet available.")
+            if errors:
+                with st.expander("Errors"):
+                    for e in errors:
+                        st.caption(e)
+
     # Ledger section
     st.markdown("## 📊 Ledger")
     if st.session_state.history:
