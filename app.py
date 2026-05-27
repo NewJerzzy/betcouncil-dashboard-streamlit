@@ -7994,14 +7994,29 @@ with tabs[2]:
         st.markdown("---")
         movement_data = st.session_state.get("game_line_movement", {})
         if movement_data:
-            st.markdown("### ⚡ Line Movement")
+            st.markdown("### ⚡ Line Movement & Multi-Book Comparison")
             for matchup, movements in movement_data.items():
                 if not movements: continue
                 with st.expander(matchup):
                     if len(movements) >= 2:
                         first, last = movements[-1], movements[0]
-                        st.write(f"Opening: Spread {first.get('spread','—')} | Total {first.get('over_under','—')}")
-                        st.write(f"Current: Spread {last.get('spread','—')} | Total {last.get('over_under','—')}")
+                        spread_moved = first.get("spread","") != last.get("spread","")
+                        total_moved = first.get("over_under","") != last.get("over_under","")
+                        st.markdown(f"**Spread:** {first.get('spread','—')} → {last.get('spread','—')} {'🔴 MOVED' if spread_moved else '✅ stable'}")
+                        st.markdown(f"**Total:** {first.get('over_under','—')} → {last.get('over_under','—')} {'🔴 MOVED' if total_moved else '✅ stable'}")
+                        # Show all providers
+                        if len(movements) > 1:
+                            st.caption("Books:")
+                            for m in movements:
+                                provider = m.get("provider","")
+                                if provider:
+                                    st.caption(f"  {provider}: Spread {m.get('spread','—')} | Total {m.get('over_under','—')} | ML {m.get('home_ml','—')}/{m.get('away_ml','—')}")
+                    elif movements:
+                        m = movements[0]
+                        st.markdown(f"**Current:** Spread {m.get('spread','—')} | Total {m.get('over_under','—')} | ML {m.get('home_ml','—')}/{m.get('away_ml','—')}")
+                        st.caption(f"Source: {m.get('provider','ESPN')}")
+        else:
+            st.caption("Line movement loads with the board. If empty, ESPN odds data wasn't available for this game.")
     else:
         st.info("No games found. Load the board first.")
 
