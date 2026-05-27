@@ -9659,6 +9659,24 @@ with tabs[9]:
         st.success(f"Cleaned {cleaned} old files")
 
     st.markdown("---")
+    st.markdown("#### 🧪 Test Box Score APIs")
+    if st.button("Test ESPN + NBA APIs", key="test_boxscore_apis"):
+        test_urls = [
+            ("ESPN web", "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=401584793&region=us&lang=en&contentorigin=espn"),
+            ("NBA CDN", "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"),
+            ("NBA Stats", "https://stats.nba.com/stats/scoreboardv2?DayOffset=0&LeagueID=00&gameDate=05%2F27%2F2026"),
+        ]
+        for name, url in test_urls:
+            try:
+                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.espn.com/", "x-nba-stats-origin": "stats", "x-nba-stats-token": "true"}, timeout=8)
+                if r.status_code == 200:
+                    st.success(f"✅ {name}: 200 OK — {len(r.text)} bytes")
+                else:
+                    st.error(f"❌ {name}: {r.status_code}")
+            except Exception as e:
+                st.error(f"❌ {name}: {str(e)[:50]}")
+
+    st.markdown("---")
     st.markdown("#### 🗑️ Reset Bet History")
     st.warning("⚠️ This permanently deletes all logged bets and resets your P&L to zero. Use this to start fresh with corrected data.")
     _confirm_reset = st.checkbox("I understand this cannot be undone", key="confirm_history_reset")
