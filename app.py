@@ -7955,84 +7955,125 @@ with tabs[2]:
 
 # ----- TAB 3: LOCKS & LEDGER -----
 with tabs[3]:
-    st.markdown("## \U0001f512 Active Locks")
-    st.markdown("**Pick count for this result:**")
-    pick_count_sel = st.radio("This bet was part of a:", [2, 3, 4, 5], horizontal=True, key="last_pick_count_radio")
-    st.session_state["last_pick_count"] = pick_count_sel
+    st.markdown("## 🔒 Active Locks")
+
     if st.session_state.locks:
-        for i, lock in enumerate(st.session_state.locks.copy()):
-            tier_color = TIER_COLORS.get(lock.get("tier","LEAN"), "#7a8a9a")
-            edge_val = lock.get("edge", 0)
-            prob_val = lock.get("prob", 0)
-            ev_2 = calculate_prizepicks_ev(prob_val, 2)
-            ev_color = "#22c55e" if ev_2 > 0 else "#e04040"
-            alt_badge = f' <span style="background:#0ea5a0;color:#000;font-size:10px;padding:2px 6px;border-radius:10px;">ALT @ {lock.get("alt_payout","")}</span>' if lock.get("alt_line") else ""
+        # Group locks by timestamp (same minute = same slip)
+        from collections import defaultdict
+        slips = defaultdict(list)
+        for lock in st.session_state.locks:
+            ts = lock.get("timestamp","")[:16]  # group by YYYY-MM-DD HH:MM
+            slip_key = f"{ts}_{lock.get('sport','')}"
+            slips[slip_key].append(lock)
+
+        # Sort slips by timestamp descending
+        sorted_slips = sorted(slips.items(), key=lambda x: x[0], reverse=True)
+
+        for slip_key, slip_locks in sorted_slips:
+            ts = slip_locks[0].get("timestamp","")
+            sport = slip_locks[0].get("sport","")
+            n = len(slip_locks)
+            multiplier = {2:3, 3:5, 4:10, 5:20}.get(n, 3)
+            wager = float(slip_locks[0].get("wager") or 0)
+            potential = round(wager * multiplier, 2) if wager > 0 else 0
+
+            # Slip header
+            tc = "#378add"
             st.markdown(
-                f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};border-radius:8px;padding:12px 16px;margin-bottom:8px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">'
-                f'<div><span style="color:#e8f0f8;font-weight:700;font-size:15px;">{lock["player"]}</span>'
-                f'<span style="background:{tier_color};color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;margin-left:8px;">{lock.get("tier","\u2014")}</span>'
-                f'{alt_badge}<br/>'
-                f'<span style="color:{tier_color};font-weight:600;">{lock["side"]} {lock["line"]} {lock["prop"]}</span>'
-                f'<span style="color:#6a7a8a;font-size:11px;margin-left:10px;">{lock.get("sport","\u2014")} | Locked: {lock.get("timestamp","\u2014")}</span></div>'
-                f'<div style="text-align:right;">'
-                f'<div style="font-size:13px;color:#0ea5a0;font-weight:700;">Edge: {edge_val:.1%}</div>'
-                f'<div style="font-size:13px;color:{ev_color};font-weight:600;">2-pick EV: {ev_2:+.1%}</div>'
-                f'<div style="font-size:13px;color:#e8a020;font-weight:700;">Wager: ${float(lock.get("wager") or 0):.2f}</div>'
-                f'</div></div></div>',
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
+                f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
+                f'<div><span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{n}-Pick Slip</span> ' +
+                f'<span style="color:#378add;font-size:0.82rem;margin-left:8px;">{sport}</span> ' +
+                f'<span style="color:#6a7a8a;font-size:0.78rem;margin-left:8px;">{ts}</span></div>' +
+                f'{"<div style=\"color:#e8a020;font-size:0.88rem;\">Wager: $"+str(wager)+" → Potential: $"+str(potential)+"</div>" if wager > 0 else ""}' +
+                f'</div>',
                 unsafe_allow_html=True
             )
-            col1, col2, col3, col4 = st.columns([4,1,1,1])
-            if col2.button("\u2705 WIN", key=f"win_{i}"):
-                pick_count = st.session_state.get("last_pick_count", 2)
-                multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
-                profit = round(float(lock.get("wager") or 0) * multiplier, 2)
-                st.session_state.bankroll += profit
-                st.session_state.history.append({**lock, "outcome": "WIN", "profit": profit, "loss": 0, "net": profit, "pick_count": pick_count, "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
-                save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-                save_to_gist("bankroll", st.session_state.bankroll)
-                save_json_data(HISTORY_PATH, st.session_state.history)
-                save_to_gist("history", st.session_state.history)
-                st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
-                record_clv(lock, st.session_state.board_data)
-                record_pinnacle_line(lock, st.session_state.board_data)
-                # Store Pinnacle fair value at lock time for CLV tracking
-                board_match = next((p for p in st.session_state.board_data
-                    if normalize_name(p.get("Player","")) == normalize_name(lock.get("player",""))
-                    and p.get("Prop","").lower() == lock.get("prop","").lower()), None)
-                if board_match:
-                    lock["pinnacle_prob_at_lock"] = board_match.get("PinnacleProb","—")
-                    lock["pinnacle_edge_at_lock"] = board_match.get("PinnacleEdge")
-                    lock["pinnacle_confirms"] = board_match.get("PinnacleConfirms", False)
-                record_injury_performance(lock, "WIN", fetch_injury_news(lock.get("sport", "NBA")))
-                record_signal_performance(lock, "WIN")
-                compute_optimized_weights(lock.get("sport", "NBA"))
-                st.rerun()
-            if col3.button("\u274c LOSS", key=f"loss_{i}"):
-                st.session_state.bankroll -= float(lock.get("wager") or 0)
-                st.session_state.history.append({**lock, "outcome": "LOSS", "profit": 0, "loss": float(lock.get("wager") or 0), "net": -float(lock.get("wager") or 0), "pick_count": st.session_state.get("last_pick_count", 2), "stat_type": lock.get("prop", ""), "resolved_date": date.today().strftime("%Y-%m-%d")})
-                save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-                save_to_gist("bankroll", st.session_state.bankroll)
-                save_json_data(HISTORY_PATH, st.session_state.history)
-                save_to_gist("history", st.session_state.history)
-                st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
-                record_clv(lock, st.session_state.board_data)
-                record_pinnacle_line(lock, st.session_state.board_data)
-                record_injury_performance(lock, "LOSS", fetch_injury_news(lock.get("sport", "NBA")))
-                record_signal_performance(lock, "LOSS")
-                compute_optimized_weights(lock.get("sport", "NBA"))
-                st.rerun()
-            if col4.button("\u21a9 VOID", key=f"void_{i}"):
-                st.session_state.locks = [l for j, l in enumerate(st.session_state.locks) if j != i]
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
-                st.rerun()
+
+            # Individual picks in the slip
+            for lock in slip_locks:
+                tier_color = TIER_COLORS.get(lock.get("tier","LEAN"), "#7a8a9a")
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-left:3px solid {tier_color};margin-bottom:0.3rem;background:#0d1520;border-radius:0 4px 4px 0;">' +
+                    f'<div><span style="color:#e8f0f8;font-weight:600;font-size:0.88rem;">{lock.get("player","")}</span> ' +
+                    f'<span style="color:{tier_color};font-size:0.82rem;">{lock.get("side","OVER")} {lock.get("line","")} {lock.get("prop","")}</span></div>' +
+                    f'<span style="color:{tier_color};font-size:0.82rem;font-weight:600;">{lock.get("tier","")} | +{lock.get("edge",0)*100:.1f}%</span></div>',
+                    unsafe_allow_html=True
+                )
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Slip-level WIN/LOSS/VOID buttons
+            btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([2,1,1,1])
+            with btn_col1:
+                n_pick = st.radio("Pick count:", [2,3,4,5], index=n-2, horizontal=True, key=f"pc_{slip_key}")
+            with btn_col2:
+                if st.button("✅ WIN SLIP", key=f"win_{slip_key}", use_container_width=True):
+                    for lock in slip_locks:
+                        log_manual_bet(
+                            lock.get("player",""), lock.get("prop",""), lock.get("line",0),
+                            lock.get("side","OVER"), lock.get("sport",""), "WIN",
+                            float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
+                            lock.get("timestamp","")[:10],
+                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                        )
+                    # Remove these locks
+                    for lock in slip_locks:
+                        if lock in st.session_state.locks:
+                            st.session_state.locks.remove(lock)
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    save_to_gist("locks", st.session_state.locks)
+                    st.rerun()
+            with btn_col3:
+                if st.button("❌ LOSS SLIP", key=f"loss_{slip_key}", use_container_width=True):
+                    for lock in slip_locks:
+                        log_manual_bet(
+                            lock.get("player",""), lock.get("prop",""), lock.get("line",0),
+                            lock.get("side","OVER"), lock.get("sport",""), "LOSS",
+                            float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
+                            lock.get("timestamp","")[:10],
+                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                        )
+                    for lock in slip_locks:
+                        if lock in st.session_state.locks:
+                            st.session_state.locks.remove(lock)
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    save_to_gist("locks", st.session_state.locks)
+                    st.rerun()
+            with btn_col4:
+                if st.button("↩ VOID", key=f"void_{slip_key}", use_container_width=True):
+                    for lock in slip_locks:
+                        if lock in st.session_state.locks:
+                            st.session_state.locks.remove(lock)
+                    save_json_data(LOCKS_PATH, st.session_state.locks)
+                    save_to_gist("locks", st.session_state.locks)
+                    st.rerun()
+
+            st.markdown("---")
     else:
         st.info("No active locks.")
+
+    # Ledger section
+    st.markdown("## 📊 Ledger")
+    if st.session_state.history:
+        total_bets = len(st.session_state.history)
+        wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
+        losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
+        net = sum(h.get("net", 0) for h in st.session_state.history)
+        hit_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
+        net_color = "#22c55e" if net >= 0 else "#e04040"
+        st.markdown(
+            f'<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">' +
+            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#6a7a8a;font-size:0.72rem;">Total Bets</div><div style="color:#e8f0f8;font-weight:700;font-size:1.1rem;">{total_bets}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#6a7a8a;font-size:0.72rem;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.1rem;">{wins}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#6a7a8a;font-size:0.72rem;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.1rem;">{losses}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#6a7a8a;font-size:0.72rem;">Hit Rate</div><div style="color:#e8f0f8;font-weight:700;font-size:1.1rem;">{hit_rate:.1%}</div></div>' +
+            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#6a7a8a;font-size:0.72rem;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.1rem;">${net:+.2f}</div></div>' +
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.info("No bet history yet.")
 
 # ----- TAB 4: HISTORY -----
 with tabs[4]:
