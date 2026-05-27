@@ -221,6 +221,12 @@ ODDS_API_PROP_MARKETS = {
         "player_blocks",
         "player_threes",
         "player_turnovers",
+        # Alternate lines — FanDuel/DraftKings ladder odds
+        "player_points_alternate",
+        "player_rebounds_alternate",
+        "player_assists_alternate",
+        "player_points_rebounds_assists_alternate",
+        "player_threes_alternate",
     ],
     "MLB": [
         "batter_hits",
@@ -229,25 +235,37 @@ ODDS_API_PROP_MARKETS = {
         "batter_runs_scored",
         "pitcher_strikeouts",
         "pitcher_outs",
+        # Alternate lines
+        "batter_hits_alternate",
+        "batter_home_runs_alternate",
+        "pitcher_strikeouts_alternate",
     ],
     "NHL": [
         "player_points",
         "player_goals",
         "player_assists",
         "player_shots_on_goal",
+        "player_points_alternate",
     ],
     "NFL": [
         "player_pass_yds",
         "player_rush_yds",
         "player_reception_yds",
         "player_pass_tds",
+        "player_pass_yds_alternate",
+        "player_rush_yds_alternate",
+        "player_reception_yds_alternate",
     ],
     "WNBA": [
         "player_points",
         "player_rebounds",
         "player_assists",
+        "player_points_alternate",
     ],
 }
+
+# Books that have best alternate line coverage
+ODDS_API_BOOKS_ALT_LINES = "fanduel,draftkings,betmgm,caesars"
 
 # Map Odds API market keys to our stat names
 ODDS_API_STAT_MAP = {
@@ -264,6 +282,18 @@ ODDS_API_STAT_MAP = {
     "batter_rbis": "RBIs",
     "batter_runs_scored": "Runs",
     "pitcher_strikeouts": "Strikeouts",
+    # Alternate line market keys
+    "player_points_alternate": "Points",
+    "player_rebounds_alternate": "Rebounds",
+    "player_assists_alternate": "Assists",
+    "player_points_rebounds_assists_alternate": "Pts+Reb+Ast",
+    "player_threes_alternate": "3-PT Made",
+    "batter_hits_alternate": "Hits",
+    "batter_home_runs_alternate": "Home Runs",
+    "pitcher_strikeouts_alternate": "Strikeouts",
+    "player_pass_yds_alternate": "Pass Yards",
+    "player_rush_yds_alternate": "Rush Yards",
+    "player_reception_yds_alternate": "Receiving Yards",
     "pitcher_outs": "Pitcher Outs",
     "player_goals": "Goals",
     "player_assists": "Assists",
@@ -3800,6 +3830,68 @@ def fetch_game_lines(sport):
             pass
     return today_games, playoff, home_teams, away_teams
 
+def american_to_prob(american_odds):
+    """Convert American odds to implied probability."""
+    try:
+        o = int(american_odds)
+        if o > 0:
+            return 100 / (o + 100)
+        else:
+            return abs(o) / (abs(o) + 100)
+    except:
+        return 0.5
+
+def no_vig_prob(over_american, under_american):
+    """Calculate no-vig true probability from both sides."""
+    try:
+        over_imp = american_to_prob(over_american)
+        under_imp = american_to_prob(under_american)
+        total = over_imp + under_imp
+        if total == 0:
+            return 0.5
+        return round(over_imp / total, 4)
+    except:
+        return 0.5
+
+def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
+    """
+    Find FanDuel/DraftKings no-vig probability for a specific player+stat+line.
+    Uses alternate lines ladder to find the closest match.
+    Returns: {implied_prob, source, over_odds, under_odds, line_found}
+    """
+    if not alt_lines_data:
+        return None
+    norm_player = normalize_name(player)
+    stat_lower = stat.lower().replace(" ","").replace("+","")
+    best_match = None
+    best_line_diff = 999
+    for entry in alt_lines_data:
+        if normalize_name(entry.get("player","")) != norm_player:
+            continue
+        entry_stat = entry.get("stat","").lower().replace(" ","").replace("+","")
+        if entry_stat not in stat_lower and stat_lower not in entry_stat:
+            continue
+        entry_line = float(entry.get("line", 0) or 0)
+        diff = abs(entry_line - float(line))
+        if diff < best_line_diff:
+            best_line_diff = diff
+            best_match = entry
+    if best_match and best_line_diff <= 1.0:
+        over_odds = best_match.get("over_odds")
+        under_odds = best_match.get("under_odds")
+        if over_odds and under_odds:
+            prob = no_vig_prob(over_odds, under_odds)
+            return {
+                "implied_prob": prob,
+                "source": best_match.get("source","FD/DK"),
+                "over_odds": over_odds,
+                "under_odds": under_odds,
+                "line_found": best_match.get("line"),
+                "confirms": prob > 0.55,
+                "fades": prob < 0.45,
+            }
+    return None
+
 def fetch_odds_api_props(sport):
     if not ODDS_API_KEY:
         return []
@@ -7004,6 +7096,38 @@ def load_sport_data(sport):
             if prop.get("Tier") in ("SOVEREIGN","ELITE"):
                 prop["Tier"] = "APPROVED"
                 prop["TierNote"] = "Downgraded: Pinnacle fades"
+
+    # FanDuel/DraftKings no-vig validation using alt lines
+    fd_dk_alts = st.session_state.get("fd_dk_alt_lines", [])
+    if fd_dk_alts:
+        fd_result = get_fanduel_dk_validation(player, stat_norm, line, sport, fd_dk_alts)
+        if fd_result:
+            prop["FDDKProb"] = fd_result["implied_prob"]
+            prop["FDDKConfirms"] = fd_result["confirms"]
+            prop["FDDKFades"] = fd_result["fades"]
+            prop["FDDKSource"] = fd_result["source"]
+            prop["FDDKOverOdds"] = fd_result.get("over_odds","—")
+            prop["FDDKUnderOdds"] = fd_result.get("under_odds","—")
+            # Tier boost: FD/DK AND Pinnacle both confirm → SOVEREIGN
+            if fd_result["confirms"] and prop.get("PinnacleConfirms") and prop.get("Tier") in ("APPROVED","ELITE"):
+                prop["Tier"] = "SOVEREIGN"
+                prop["TierBoost"] = "FD/DK + Pinnacle confirmed"
+            # Tier boost: FD/DK confirms alone → APPROVED → ELITE
+            elif fd_result["confirms"] and prop.get("Tier") == "APPROVED":
+                prop["Tier"] = "ELITE"
+                prop["TierBoost"] = "FD/DK confirmed"
+            # Tier fade: FD/DK fades → downgrade
+            elif fd_result["fades"] and prop.get("Tier") in ("SOVEREIGN","ELITE"):
+                prop["Tier"] = "APPROVED"
+                prop["TierNote"] = "Downgraded: FD/DK fades"
+        else:
+            prop["FDDKProb"] = None
+            prop["FDDKConfirms"] = False
+            prop["FDDKFades"] = False
+    else:
+        prop["FDDKProb"] = None
+        prop["FDDKConfirms"] = False
+        prop["FDDKFades"] = False
 
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
