@@ -2652,7 +2652,45 @@ def fetch_alternate_lines(sport, matchup):
 
 def analyze_all_games(games, sport, home_teams, away_teams):
     all_game_analysis = []
-    power_map = {"NBA": NBA_POWER_RATINGS}
+    # Power ratings for all sports
+    WNBA_POWER_RATINGS = {
+        "New York Liberty": 112.0, "Las Vegas Aces": 111.0,
+        "Connecticut Sun": 109.0, "Minnesota Lynx": 108.5,
+        "Seattle Storm": 107.0, "Dallas Wings": 106.0,
+        "Chicago Sky": 105.0, "Phoenix Mercury": 104.5,
+        "Atlanta Dream": 104.0, "Indiana Fever": 103.5,
+        "Washington Mystics": 102.0, "Los Angeles Sparks": 101.0,
+        "Toronto Tempo": 103.0, "Golden State Valkyries": 102.5,
+    }
+    MLB_POWER_RATINGS = {
+        "Los Angeles Dodgers": 112.0, "New York Yankees": 110.5,
+        "Atlanta Braves": 109.0, "Philadelphia Phillies": 108.5,
+        "Houston Astros": 108.0, "San Diego Padres": 107.5,
+        "Cleveland Guardians": 107.0, "Baltimore Orioles": 106.5,
+        "Minnesota Twins": 106.0, "Arizona Diamondbacks": 105.5,
+        "San Francisco Giants": 104.5, "Seattle Mariners": 104.0,
+        "Boston Red Sox": 103.5, "Tampa Bay Rays": 103.0,
+        "Texas Rangers": 102.5, "Miami Marlins": 100.0,
+        "Colorado Rockies": 97.0, "Chicago White Sox": 98.0,
+        "Oakland Athletics": 97.5, "Kansas City Royals": 101.0,
+        "Toronto Blue Jays": 102.0, "Chicago Cubs": 103.0,
+        "St. Louis Cardinals": 102.5, "Milwaukee Brewers": 104.0,
+        "Pittsburgh Pirates": 99.0, "Cincinnati Reds": 100.5,
+        "Detroit Tigers": 101.5, "New York Mets": 103.5,
+        "Washington Nationals": 99.5, "Los Angeles Angels": 100.0,
+    }
+    NHL_POWER_RATINGS = {
+        "Florida Panthers": 110.0, "Vancouver Canucks": 109.0,
+        "Colorado Avalanche": 108.5, "Boston Bruins": 108.0,
+        "Dallas Stars": 107.5, "Carolina Hurricanes": 107.0,
+        "Edmonton Oilers": 106.5, "New York Rangers": 106.0,
+        "Tampa Bay Lightning": 105.5, "Vegas Golden Knights": 105.0,
+        "Toronto Maple Leafs": 104.5, "New Jersey Devils": 104.0,
+        "Minnesota Wild": 103.5, "Winnipeg Jets": 103.0,
+        "Pittsburgh Penguins": 101.0, "Montreal Canadiens": 100.0,
+        "Buffalo Sabres": 99.5, "Chicago Blackhawks": 98.0,
+    }
+    power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     power_ratings = power_map.get(sport, {})
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings)
@@ -7973,9 +8011,6 @@ with tabs[2]:
             _lk_cols = st.columns(3)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
                 with _lk_col:
-                    if _pk["edge"] <= 0:
-                        st.markdown('<div style="text-align:center;color:#4a6a8a;font-size:11px;padding:4px;">—PASS—</div>', unsafe_allow_html=True)
-                        continue
                     _glk_key = f"glk_{_matchup.replace(' ','_')[:15]}_{_pk['label']}"
                     _already_glk = any(
                         l.get("player","") == _matchup and l.get("prop","") == _pk["label"]
@@ -7983,7 +8018,7 @@ with tabs[2]:
                     )
                     if _already_glk:
                         st.markdown('<div style="text-align:center;color:#22c55e;font-size:12px;padding:4px;">✅ Locked</div>', unsafe_allow_html=True)
-                    elif st.button(f"🔒 Lock {_pk['label']}", key=_glk_key, use_container_width=True):
+                    elif st.button(f"🔒 {_pk['label']}", key=_glk_key, use_container_width=True):
                         _new_game_lock = {
                             "player": _matchup,
                             "prop": _pk["label"],
