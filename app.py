@@ -2434,7 +2434,7 @@ def fetch_todays_referees(sport):
     officials = {}
     try:
         today_str = date.today().strftime("%Y%m%d")
-        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
+        url = f"https://site.web.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
         resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
@@ -4907,7 +4907,7 @@ def fetch_espn_game_ids(sport):
     game_ids = {}
     try:
         today_str = date.today().strftime("%Y%m%d")
-        url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
+        url = f"https://site.web.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
         resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
