@@ -9165,7 +9165,7 @@ with tabs[6]:
                 "Steals", "Blocked Shots", "Turnovers", "Pts+Reb+Ast"
             ], key="pl_stat")
         with col_pl3:
-            pl_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="pl_line")
+            pl_line = st.number_input("Line (optional — leave 0 to skip)", min_value=0.0, value=0.0, step=0.5, key="pl_line")
 
         col_pl4, col_pl5 = st.columns(2)
         with col_pl4:
@@ -9197,9 +9197,13 @@ with tabs[6]:
             avg = sum(vals) / len(vals) if vals else 0
 
             # Hit rates
-            hits_l5 = sum(1 for v in vals[:5] if v > pl_line) if pl_line > 0 and len(vals) >= 5 else None
-            hits_l10 = sum(1 for v in vals[:10] if v > pl_line) if pl_line > 0 and len(vals) >= 10 else None
-            hits_l15 = sum(1 for v in vals[:15] if v > pl_line) if pl_line > 0 and len(vals) >= 15 else None
+            # Auto-suggest line as avg if none entered
+            _effective_line = pl_line if pl_line > 0 else round(avg * 2) / 2
+            hits_l5 = sum(1 for v in vals[:5] if v > _effective_line) if len(vals) >= 5 else None
+            hits_l10 = sum(1 for v in vals[:10] if v > _effective_line) if len(vals) >= 10 else None
+            hits_l15 = sum(1 for v in vals[:15] if v > _effective_line) if len(vals) >= 15 else None
+            if pl_line == 0 and avg > 0:
+                st.info(f"💡 No line entered — using avg {_effective_line:.1f} as reference line. Enter a line above for exact hit rates.")
 
             # H2H
             h2h_rate, h2h_n, h2h_str = compute_h2h_hit_rate(logs, pl_opp, pl_stat, pl_line) if pl_opp else (None, 0, "")
@@ -9221,6 +9225,40 @@ with tabs[6]:
             if h2h_rate is not None:
                 h2h_color = "normal"
                 metric_cols[4].metric(f"H2H vs {pl_opp}", f"{h2h_str} ({h2h_rate:.0%})")
+
+            # Always show last N game log
+            st.markdown(f"#### 📋 Last {pl_games} Games")
+            if logs:
+                log_html = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.82rem;">'
+                log_html += '<tr style="background:#0d1520;color:#6a7a8a;">'
+                log_html += '<th style="padding:4px 8px;text-align:left;">Date</th><th style="padding:4px 8px;">Opp</th><th style="padding:4px 8px;">H/A</th>'
+                log_html += f'<th style="padding:4px 8px;">{pl_stat}</th>'
+                if pl_line > 0:
+                    log_html += '<th style="padding:4px 8px;">Result</th>'
+                log_html += '</tr>'
+                for i, g in enumerate(logs[:pl_games]):
+                    v = g.get(sk, 0) or 0
+                    if sk == "pra":
+                        v = float(g.get("pts",0) or 0) + float(g.get("reb",0) or 0) + float(g.get("ast",0) or 0)
+                    hit = v > _effective_line
+                    row_bg = "#0a0e14" if i % 2 == 0 else "#080c12"
+                    val_color = "#22c55e" if hit else "#e04040"
+                    date_str = g.get("game",{}).get("date","")[:10] if isinstance(g.get("game"),dict) else ""
+                    home_team = g.get("game",{}).get("home_team",{}).get("abbreviation","") if isinstance(g.get("game"),dict) else ""
+                    visitor_team = g.get("game",{}).get("visitor_team",{}).get("abbreviation","") if isinstance(g.get("game"),dict) else ""
+                    team = g.get("team",{}).get("abbreviation","") if isinstance(g.get("team"),dict) else ""
+                    opp = home_team if team == visitor_team else visitor_team
+                    ha = "H" if team == home_team else "A"
+                    log_html += f'<tr style="background:{row_bg};">'
+                    log_html += f'<td style="padding:3px 8px;color:#8a9ab0;">{date_str}</td>'
+                    log_html += f'<td style="padding:3px 8px;color:#8a9ab0;text-align:center;">{opp}</td>'
+                    log_html += f'<td style="padding:3px 8px;color:#6a7a8a;text-align:center;">{ha}</td>'
+                    log_html += f'<td style="padding:3px 8px;color:{val_color};font-weight:600;text-align:center;">{v}</td>'
+                    if pl_line > 0:
+                        log_html += f'<td style="padding:3px 8px;color:{val_color};text-align:center;">{"✅ O" if hit else "❌ U"} {_effective_line}</td>'
+                    log_html += '</tr>'
+                log_html += '</table></div>'
+                st.markdown(log_html, unsafe_allow_html=True)
 
             # Home/Away splits
             if splits:
