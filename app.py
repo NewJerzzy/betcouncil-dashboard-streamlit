@@ -8201,8 +8201,14 @@ with tabs[3]:
                 "pra": "PRA", "pts+reb+ast": "PRA",
                 "3-pt made": "3PM", "3pm": "3PM", "threes": "3PM",
                 "steals": "STL", "blocks": "BLK",
-                "strikeouts": "SO", "hits": "H",
-                "home runs": "HR", "pitches thrown": "PC",
+                "strikeouts": "SO", "strikeout": "SO",
+                "hits": "H", "home runs": "HR", "home run": "HR",
+                "pitches thrown": "PC", "pitches": "PC",
+                "innings pitched": "IP", "walks": "BB",
+                "goals": "G", "shots on goal": "SOG", "saves": "SV",
+                "receptions": "REC", "pass yards": "PYDS",
+                "rush yards": "RYDS", "receiving yards": "RECYDS",
+                "hits+runs+rbis": "HRR",
             }
 
             with st.spinner("Fetching ESPN box scores..."):
@@ -8269,10 +8275,21 @@ with tabs[3]:
                                                         player_stats[aname_norm][key.upper()] = float(stats_vals[i])
                                                     except:
                                                         pass
-                                            # Also try label-based parsing
-                                            for label in ["PTS","REB","AST","STL","BLK","TO","3PM","MIN"]:
+                                            # Map common stat label variants
+                                            for label, variants in [
+                                                ("PTS",["PTS","points"]),("REB",["REB","rebounds"]),
+                                                ("AST",["AST","assists"]),("STL",["STL"]),("BLK",["BLK"]),
+                                                ("TO",["TO","TOV"]),("3PM",["3PM","FG3M"]),
+                                                ("SO",["SO","K","Ks","STRIKEOUTS","strikeouts"]),
+                                                ("H",["H","HITS","hits"]),("HR",["HR","home runs"]),
+                                                ("R",["R","RUNS","runs"]),("RBI",["RBI","rbis"]),
+                                                ("PC",["PC","NP","pitches","PITCHES"]),
+                                                ("IP",["IP","innings"]),("BB",["BB","walks"]),
+                                                ("G",["G","goals"]),("SOG",["SOG","shots"]),
+                                                ("SV",["SV","saves"]),
+                                            ]:
                                                 for i, key in enumerate(stat_keys):
-                                                    if label in key.upper() and i < len(stats_vals):
+                                                    if any(v.upper() == key.upper() for v in variants) and i < len(stats_vals):
                                                         try:
                                                             player_stats[aname_norm][label] = float(stats_vals[i])
                                                         except:
