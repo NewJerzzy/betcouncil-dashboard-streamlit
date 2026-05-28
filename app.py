@@ -7596,12 +7596,12 @@ with tabs[0]:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-        if lock_game:
-            _game_edge = float(lock_game.get("best_edge",0) or 0)
+        if game_analysis:
+            _best_g = max(game_analysis, key=lambda x: x.get("best_edge",0))
+            _game_edge = float(_best_g.get("best_edge",0) or 0)
             _game_score = min(100, int(
-                min(30, _game_edge * 150) +  # edge
-                20 +  # base market score
-                (5 if lock_game.get("PinnacleConfirms") else 0) +
+                min(30, _game_edge * 150) +
+                20 +
                 (10 if _game_edge >= 0.10 else 5 if _game_edge >= 0.05 else 0)
             ))
             _gscore_icon = "🟢" if _game_score >= 80 else "🟡" if _game_score >= 60 else "🟠" if _game_score >= 40 else "🔴"
