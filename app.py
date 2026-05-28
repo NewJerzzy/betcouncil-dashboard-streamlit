@@ -7284,9 +7284,12 @@ if "persistence_loaded" not in st.session_state:
     gist_history = load_from_gist("history", None)
     gist_locks = load_from_gist("locks", None)
     gist_bankroll = load_from_gist("bankroll", None)
-    _raw_history = gist_history if gist_history is not None else load_json_data(HISTORY_PATH, [])
-    # Filter out bad data: entries with outcome=WIN but net=0 (old unlogged data)
-    _clean_history = [h for h in _raw_history if not (h.get("outcome")=="WIN" and float(h.get("net",0) or 0)==0 and not h.get("player",""))]
+    # Use local cache - filter out known bad patterns (garbled player names, impossible lines)
+    _raw_history = load_json_data(HISTORY_PATH, [])
+    _clean_history = [h for h in _raw_history
+                      if h.get("player","") and len(h.get("player","")) < 40
+                      and float(h.get("line",0) or 0) < 100
+                      and h.get("outcome","") in ("WIN","LOSS","PENDING","PUSH")]
     st.session_state.history = _clean_history
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
