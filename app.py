@@ -6947,18 +6947,39 @@ def load_sport_data(sport):
                                     ref_note = f"⚾ {ref}: tight zone"
                     break
         pace_adj = 0.0
-        if sport == "NBA" and player_team:
+        opp_abbr = ""
+        if player_team:
             for game in games:
                 if player_team in game.get("Matchup", ""):
                     parts = game["Matchup"].replace("@", "vs").split()
                     for p2 in parts:
                         if p2 != player_team and len(p2) <= 3 and p2.isalpha():
-                            player_pace = NBA_TEAM_PACE.get(player_team, 99.5)
-                            opp_pace = NBA_TEAM_PACE.get(p2, 99.5)
-                            combined_pace = (player_pace + opp_pace) / 2
-                            pace_adj = (combined_pace - 99.5) / 99.5
+                            opp_abbr = p2
+                            if sport == "NBA":
+                                player_pace = NBA_TEAM_PACE.get(player_team, 99.5)
+                                opp_pace = NBA_TEAM_PACE.get(p2, 99.5)
+                                combined_pace = (player_pace + opp_pace) / 2
+                                pace_adj = (combined_pace - 99.5) / 99.5
                             break
                     break
+
+        # S7 H2H Signal — hit rate vs this specific opponent
+        h2h_adj = 0.0
+        h2h_note = ""
+        if opp_abbr:
+            try:
+                game_logs = get_player_game_logs(player, sport, 20)
+                if game_logs:
+                    h2h_rate, h2h_games, _ = h2h_hit_rate(game_logs, opp_abbr, stat_norm, line)
+                    if h2h_games >= 3:
+                        if h2h_rate >= 0.70:
+                            h2h_adj = 0.02
+                            h2h_note = f"H2H {h2h_rate:.0%} vs {opp_abbr} ({h2h_games}g)"
+                        elif h2h_rate <= 0.30:
+                            h2h_adj = -0.02
+                            h2h_note = f"H2H {h2h_rate:.0%} vs {opp_abbr} ({h2h_games}g)"
+            except:
+                pass
         game_total_adj = 0.0
         if sport == "NBA" and player_team:
             for game in games:
@@ -7018,9 +7039,9 @@ def load_sport_data(sport):
         an_tickets = an_data.get("tickets_pct", 0)
         an_money = an_data.get("money_pct", 0)
         over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
-        over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj))
+        over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
         under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
-        under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj))
+        under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj - h2h_adj))
         if consensus_prob is not None:
             blended_over_prob = round(consensus_prob * 0.60 + over_prob * 0.40, 4)
             blended_under_prob = round((1 - consensus_prob) * 0.60 + under_prob * 0.40, 4)
@@ -7085,7 +7106,7 @@ def load_sport_data(sport):
         wager_3pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 3)
         season_stat = PLAYER_AVERAGES.get(sport, {}).get(player, {}).get(stat_norm, avg)
         recency_flag, trend = get_recency_context(player, stat_norm, season_stat, avg, sport)
-        signals_active = {"base_positive": best_signals.get("base", 0) > 0, "defense_positive": best_signals.get("defense", 0) > 0, "location_home": is_home, "back_to_back": days_rest == 0, "sharp_flag": bool(sharp_flag), "weather_active": weather_adj != 0, "blowout_risk": blowout_adj < 0, "usage_boost": usage_boost > 0}
+        signals_active = {"base_positive": best_signals.get("base", 0) > 0, "defense_positive": best_signals.get("defense", 0) > 0, "location_home": is_home, "back_to_back": days_rest == 0, "sharp_flag": bool(sharp_flag), "weather_active": weather_adj != 0, "blowout_risk": blowout_adj < 0, "usage_boost": usage_boost > 0, "h2h_positive": h2h_adj > 0, "h2h_negative": h2h_adj < 0}
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
@@ -7095,7 +7116,8 @@ def load_sport_data(sport):
             "SignalBase": best_signals.get("base", 0), "SignalDefense": best_signals.get("defense", 0),
             "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0),
             "SignalRest": best_signals.get("rest", 0), "SignalPace": best_signals.get("pace", 0),
-            "SignalBlowout": blowout_adj, "WeatherNote": weather_note, "Movement": "",
+            "SignalBlowout": blowout_adj, "SignalH2H": h2h_adj, "H2HNote": h2h_note,
+            "WeatherNote": weather_note, "Movement": "",
             "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag,
             "source": p.get("source", ""), "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
@@ -8542,6 +8564,44 @@ with tabs[3]:
         )
     else:
         st.info("No bet history yet.")
+
+    # ROI by Tier + Sport
+    if st.session_state.history:
+        st.markdown("---")
+        st.markdown("#### 📊 ROI by Tier & Sport")
+        roi_col1, roi_col2 = st.columns(2)
+        with roi_col1:
+            st.markdown("**By Tier**")
+            tier_stats_roi = {}
+            for h in st.session_state.history:
+                t = h.get("tier","Unknown")
+                if t not in tier_stats_roi:
+                    tier_stats_roi[t] = {"w":0,"l":0,"net":0}
+                if h.get("outcome")=="WIN": tier_stats_roi[t]["w"]+=1
+                elif h.get("outcome")=="LOSS": tier_stats_roi[t]["l"]+=1
+                tier_stats_roi[t]["net"]+=float(h.get("net",0) or 0)
+            for t in ["SOVEREIGN","ELITE","APPROVED","LEAN"]:
+                if t in tier_stats_roi:
+                    d = tier_stats_roi[t]
+                    total = d["w"]+d["l"]
+                    hr = d["w"]/total if total>0 else 0
+                    nc = "#22c55e" if d["net"]>=0 else "#e04040"
+                    st.markdown(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{t}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>', unsafe_allow_html=True)
+        with roi_col2:
+            st.markdown("**By Sport**")
+            sport_stats_roi = {}
+            for h in st.session_state.history:
+                s = h.get("sport","Unknown")
+                if s not in sport_stats_roi:
+                    sport_stats_roi[s] = {"w":0,"l":0,"net":0}
+                if h.get("outcome")=="WIN": sport_stats_roi[s]["w"]+=1
+                elif h.get("outcome")=="LOSS": sport_stats_roi[s]["l"]+=1
+                sport_stats_roi[s]["net"]+=float(h.get("net",0) or 0)
+            for s, d in sorted(sport_stats_roi.items(), key=lambda x: x[1]["net"], reverse=True):
+                total = d["w"]+d["l"]
+                hr = d["w"]/total if total>0 else 0
+                nc = "#22c55e" if d["net"]>=0 else "#e04040"
+                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{s}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>', unsafe_allow_html=True)
 
 # ----- TAB 4: HISTORY -----
 with tabs[4]:
