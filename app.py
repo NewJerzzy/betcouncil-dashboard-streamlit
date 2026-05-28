@@ -5567,14 +5567,20 @@ def parse_bet_screenshot_ocr(image_bytes):
             tl = t.lower()
             # PENDING: game not finished
             if any(w in tl for w in ["pending","live","locked","in progress","scheduled"]): return "PENDING"
-            # PRIZEPICKS FORMAT from real screenshots:
-            # WIN slip header:  "$X.XX to win $Y.YY"  (payout shown in green)
-            # LOSS slip header: "$X.XX to pay $Y.YY"  (all games Final, no win badge)
+            # BOVADA FORMAT: "3 Team Parlay" + "Win" or "Loss"
+            if any(f"{n} team parlay" in tl for n in ["2","3","4","5","two","three","four","five"]):
+                if "win" in tl and "winnings" not in tl: return "WIN"
+                if "loss" in tl or "lose" in tl: return "LOSS"
+            # MYBOOKIE FORMAT: "- WIN(Baseball)" or "- LOSE(Baseball)"
+            if "- win(" in tl or ") - win" in tl: return "WIN"
+            if "- lose(" in tl or "- loss(" in tl or ") - lose" in tl or ") - loss" in tl: return "LOSS"
+            # Bovada winnings field: "Winnings\n+ $X.XX" = WIN, "Winnings\n$ 0.00" = LOSS
+            if "winnings" in tl and "+ $" in tl: return "WIN"
+            if "winnings" in tl and "$ 0.00" in tl: return "LOSS"
+            # PRIZEPICKS FORMAT
             if "to win $" in tl: return "WIN"
             if "to pay $" in tl and "final" in tl: return "LOSS"
-            # Entry list page shows "LOST" label on losing entries
             if "lost" in tl: return "LOSS"
-            # Other patterns
             if any(w in tl for w in ["won","winner","you won","entry won","congrats","payout"]): return "WIN"
             if any(w in tl for w in ["loss","incorrect","loser","you lost","entry lost","no payout"]): return "LOSS"
             if tl.strip() in ("win","win!"): return "WIN"
@@ -7278,7 +7284,10 @@ if "persistence_loaded" not in st.session_state:
     gist_history = load_from_gist("history", None)
     gist_locks = load_from_gist("locks", None)
     gist_bankroll = load_from_gist("bankroll", None)
-    st.session_state.history = (gist_history if gist_history is not None else load_json_data(HISTORY_PATH, []))
+    _raw_history = gist_history if gist_history is not None else load_json_data(HISTORY_PATH, [])
+    # Filter out bad data: entries with outcome=WIN but net=0 (old unlogged data)
+    _clean_history = [h for h in _raw_history if not (h.get("outcome")=="WIN" and float(h.get("net",0) or 0)==0 and not h.get("player",""))]
+    st.session_state.history = _clean_history
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
     st.session_state.day_start_br = st.session_state.bankroll
@@ -7492,6 +7501,18 @@ with tabs[0]:
             inj_html += '</div>'
             st.markdown(inj_html, unsafe_allow_html=True)
 
+        # ── SHARP MONEY ALERTS ──────────────────────────────
+        sharp_alerts_s = st.session_state.get("sharp_alerts", [])
+        steam_moves_s = st.session_state.get("steam_moves", [])
+        all_sharp = sharp_alerts_s + steam_moves_s
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.5rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e8a020;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">⚡ Sharp Money</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        if all_sharp:
+            for _sa in all_sharp[:4]:
+                _sa_c = {"line_move":"#e8a020","steam":"#e04040","public_vs_sharp":"#378add"}.get(_sa.get("type",""),"#6a7a8a")
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:0.85rem;color:#e8f0f8;">{_sa.get("message","")}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#6a7a8a;font-size:0.82rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
+
         # ── LOCK OF THE DAY — PROP ─────────────────────────
         if board:
             st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Prop</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -7575,6 +7596,16 @@ with tabs[0]:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+        if lock_game:
+            _game_edge = float(lock_game.get("best_edge",0) or 0)
+            _game_score = min(100, int(
+                min(30, _game_edge * 150) +  # edge
+                20 +  # base market score
+                (5 if lock_game.get("PinnacleConfirms") else 0) +
+                (10 if _game_edge >= 0.10 else 5 if _game_edge >= 0.05 else 0)
+            ))
+            _gscore_icon = "🟢" if _game_score >= 80 else "🟡" if _game_score >= 60 else "🟠" if _game_score >= 40 else "🔴"
+            st.markdown(f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 1rem;margin-top:0.3rem;"><span style="color:#6a7a8a;font-size:0.78rem;">LOCK QUALITY SCORE: </span><span style="color:#e8f0f8;font-weight:700;">{_game_score}/100 {_gscore_icon}</span></div>', unsafe_allow_html=True)
 
         # ── PARLAY OF THE DAY — PROPS ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -7783,7 +7814,10 @@ with tabs[0]:
 
         # ── BEST OF ALL SPORTS ─────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-        all_sports_best = st.session_state.get("all_sports_best", [])
+        all_sports_best = [p for p in st.session_state.get("all_sports_best", [])
+                           if p.get("Player","") not in ("","Unknown Player")
+                           and float(p.get("Line",0) or 0) < 100
+                           and float(p.get("Avg",0) or 0) > 0]
         if all_sports_best:
             for ap in all_sports_best[:5]:
                 tier_c = TIER_COLORS.get(ap.get("Tier",""), "#6a7a8a")
@@ -7802,7 +7836,11 @@ with tabs[0]:
                 # Count frequency and win rate per prop
                 prop_stats = {}
                 for h in recent_picks:
-                    key = f"{h.get('player','')} {h.get('side','')} {h.get('line','')} {h.get('prop','')}"
+                    _pl = h.get('player','')
+                    _li = float(h.get('line',0) or 0)
+                    if not _pl or _pl == "Unknown Player" or _li > 100:
+                        continue
+                    key = f"{_pl} {h.get('side','')} {_li} {h.get('prop','')}"
                     if key not in prop_stats:
                         prop_stats[key] = {"count": 0, "wins": 0, "tier": h.get("tier",""), "player": h.get("player",""), "prop": h.get("prop",""), "line": h.get("line",""), "side": h.get("side","")}
                     prop_stats[key]["count"] += 1
@@ -7923,7 +7961,7 @@ with tabs[1]:
                     with _col_main:
                         st.markdown(
                             f'<div style="display:grid;grid-template-columns:2fr 50px 90px 80px 60px 70px 70px 60px;gap:0;padding:9px 12px;align-items:center;background:{_row_bg};border-left:3px solid {_c};border:0.5px solid #1e2d3d;border-left:3px solid {_c};border-top:none;">'
-                            f'<div><span style="font-size:13px;font-weight:500;color:#e8f0f8;">{_p.get("Player","")}</span>'
+                            f'<div><span style="font-size:15px;font-weight:600;color:#e8f0f8;">{_p.get("Player","")}</span>'
                             f'{"<br><span style=\"font-size:10px;color:#7f77dd;\">"+_pinn+" Pinnacle</span>" if _pinn else ""}</div>'
                             f'<span style="font-size:12px;color:#6a7a8a;">{_p.get("Pos","—")}</span>'
                             f'<span style="font-size:11px;color:#8a9ab0;">{_p.get("Opponent","—")}</span>'
