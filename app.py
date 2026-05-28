@@ -8131,7 +8131,8 @@ with tabs[3]:
             # Slip-level WIN/LOSS/VOID buttons
             btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([2,1,1,1])
             with btn_col1:
-                n_pick = st.radio("Pick count:", [2,3,4,5], index=n-2, horizontal=True, key=f"pc_{slip_key}")
+                _radio_idx = max(0, min(n-2, 3))
+            n_pick = st.radio("Pick count:", [2,3,4,5], index=_radio_idx, horizontal=True, key=f"pc_{slip_key}")
             with btn_col2:
                 if st.button("✅ WIN SLIP", key=f"win_{slip_key}", use_container_width=True):
                     for lock in slip_locks:
