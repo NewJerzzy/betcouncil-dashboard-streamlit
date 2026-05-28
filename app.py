@@ -22,24 +22,16 @@ st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️
 
 st.markdown("""
 <style>
-/* Global font size boost for readability */
-.stApp, .stApp p, .stApp div, .stApp span, .stApp label {
-    font-size: 1.05rem !important;
-}
-.stMarkdown p { font-size: 1.05rem !important; }
-.stSelectbox label, .stMultiSelect label, .stTextInput label,
-.stNumberInput label, .stSlider label, .stRadio label {
-    font-size: 1.05rem !important; font-weight: 500 !important;
-}
-.stButton button { font-size: 1.0rem !important; }
-.stMetric label { font-size: 1.0rem !important; }
-.stMetric [data-testid="metric-container"] { font-size: 1.2rem !important; }
-.stCaption { font-size: 0.92rem !important; }
-st.markdown("""
-<style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-body, .stApp, .main { background-color: #060c14; color: #e8f0f8; font-family: 'Inter', sans-serif; font-size: 15px; }
-h1 { font-size: 28px; font-weight: 700; color: #ffffff; }
+body, .stApp, .main { background-color: #060c14; color: #e8f0f8; font-family: 'Inter', sans-serif; font-size: 16px; }
+h1 { font-size: 30px; font-weight: 700; color: #ffffff; }
+/* Global readability boost */
+.stMarkdown, .stMarkdown p, .stMarkdown div { font-size: 1.05rem !important; }
+.stSelectbox label, .stMultiSelect label, .stTextInput label,
+.stNumberInput label, .stRadio label, .stSlider label { font-size: 1.0rem !important; font-weight: 500 !important; }
+.stButton > button { font-size: 1.0rem !important; padding: 0.5rem 1.2rem !important; }
+.stMetric [data-testid="metric-container"] div { font-size: 1.1rem !important; }
+div[data-testid="stCaption"] { font-size: 0.95rem !important; }
 h2 { font-size: 20px; font-weight: 600; color: #e0e8f0; }
 h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 .stButton > button { background-color: #0ea5a0; color: #ffffff; border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; }
