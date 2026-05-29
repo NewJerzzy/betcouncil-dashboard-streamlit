@@ -3530,10 +3530,17 @@ def scrape_prizepicks(sport):
             if proj["type"] != "projection":
                 continue
             # CDN endpoint returns all sports — filter by league_id
-            if proj.get("relationships",{}).get("league",{}).get("data",{}).get("id") not in (str(league), league, None):
-                attrs_check = proj.get("attributes",{})
-                if attrs_check.get("league_id") and str(attrs_check.get("league_id")) != str(league):
-                    continue
+            # Check multiple possible locations for league ID
+            _proj_league = None
+            _rel_league = proj.get("relationships",{}).get("league",{}).get("data",{})
+            if _rel_league:
+                _proj_league = str(_rel_league.get("id",""))
+            _attrs_check = proj.get("attributes",{})
+            if not _proj_league:
+                _proj_league = str(_attrs_check.get("league_id",""))
+            # Only filter if we found a league ID AND it doesn't match
+            if _proj_league and _proj_league not in (str(league), "", "None"):
+                continue
             attrs = proj["attributes"]
             pid = proj["relationships"]["new_player"]["data"]["id"]
             name = attrs.get("display_name", "") or attrs.get("name", "")
