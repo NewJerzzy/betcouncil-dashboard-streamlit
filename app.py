@@ -3530,8 +3530,9 @@ def scrape_prizepicks(sport):
             odds_type = attrs.get("odds_type", "standard")
             all_props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks", "OddsType": odds_type})
     if all_props:
+        st.session_state["pp_status"] = "ok"
         return all_props
-    st.info("PrizePicks unavailable — trying Underdog Fantasy...")
+    st.session_state["pp_status"] = "unavailable"
     return fetch_underdog_props(sport)
 
 def fetch_underdog_injuries(sport):
@@ -7566,12 +7567,21 @@ with st.sidebar:
             else:
                 st.session_state["game_analysis"] = []
         if board:
-            st.success(f"{len(board)} props loaded")
+            # Show which source the props came from
+            sources = list(set(p.get("source","Unknown") for p in board if p.get("source")))
+            source_str = " + ".join(sources) if sources else "Unknown"
+            st.success(f"✅ {len(board)} props loaded from **{source_str}**")
             if n_def:
-                st.info(f"{n_def} unknown players skipped")
+                st.info(f"{n_def} unknown players skipped (using defaults)")
         else:
             st.warning("No props yet. Check back closer to game time.")
     st.markdown("---")
+    # Show data source status
+    _pp_status = st.session_state.get("pp_status", "unknown")
+    if _pp_status == "unavailable":
+        st.warning("⚠️ PrizePicks direct unavailable — using fallback sources (Underdog/ParlayAPI)")
+    elif _pp_status == "ok":
+        st.success("✅ PrizePicks connected")
     _wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
     _losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
     if _wins + _losses > 0:
