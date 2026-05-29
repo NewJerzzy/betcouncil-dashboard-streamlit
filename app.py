@@ -610,6 +610,7 @@ BDL_API_KEY = st.secrets.get("BALLSDONTLIE_API_KEY", "")
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
 SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
+APIFY_TOKEN = st.secrets.get("APIFY_TOKEN", "")
 SPORTMONKS_API_KEY = st.secrets.get("SPORTMONKS_API_KEY", "")
 UNIFIED_API_KEY = st.secrets.get("UNIFIED_API_KEY", "")
 RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
@@ -4106,6 +4107,93 @@ def parse_mybookie_slip_text(text: str) -> list:
     return bets
 
 
+def fetch_dk_pick6_props(sport="NBA") -> list:
+    """Fetch DraftKings Pick6 player props via Apify actor."""
+    if not APIFY_TOKEN:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"dk_pick6_{sport}.pkl")
+    try:
+        if os.path.exists(cache_path):
+            age = (time.time() - os.path.getmtime(cache_path)) / 60
+            if age < 30:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+    except Exception:
+        pass
+
+    # League mapping for DK Pick6
+    league_map = {
+        "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
+        "NFL": "NFL", "WNBA": "WNBA", "PGA": "PGA",
+        "UFC": "UFC", "Soccer": "SOCCER"
+    }
+    dk_league = league_map.get(sport, sport)
+
+    try:
+        # Run Apify actor synchronously
+        resp = requests.post(
+            "https://api.apify.com/v2/acts/zen-studio~draftkings-pick6-player-props/run-sync-get-dataset-items",
+            params={"token": APIFY_TOKEN, "timeout": 30, "memory": 256},
+            json={"league": dk_league, "maxItems": 200},
+            timeout=45
+        )
+        if resp.status_code != 200:
+            return []
+
+        items = resp.json()
+        props = []
+        for item in items:
+            player = item.get("playerName","") or item.get("player","")
+            stat = item.get("statType","") or item.get("stat","")
+            line = float(item.get("statLine", item.get("line", 0)) or 0)
+            over_mult = float(item.get("overMultiplier", item.get("overPayout", 0)) or 0)
+            under_mult = float(item.get("underMultiplier", item.get("underPayout", 0)) or 0)
+            if not player or not stat or line <= 0:
+                continue
+            # Convert multiplier to implied prob: 1.85x = 54.1%, 2.00x = 50%
+            # Formula: prob = 1 / multiplier (approximate no-vig)
+            over_prob = round(1 / over_mult, 4) if over_mult > 1 else 0.5
+            under_prob = round(1 / under_mult, 4) if under_mult > 1 else 0.5
+            props.append({
+                "player": player, "stat": stat, "line": line,
+                "over_prob": over_prob, "under_prob": under_prob,
+                "over_mult": over_mult, "under_mult": under_mult,
+                "sport": sport, "source": "DK Pick6"
+            })
+
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+        return props
+    except Exception:
+        return []
+
+
+def get_dk_pick6_validation(player, stat, line, sport, pick6_data) -> dict:
+    """Match a prop against DK Pick6 data for validation."""
+    if not pick6_data:
+        return {}
+    norm = normalize_name(player)
+    stat_l = stat.lower().strip()
+    for item in pick6_data:
+        if normalize_name(item.get("player","")) != norm:
+            continue
+        item_stat = item.get("stat","").lower()
+        if stat_l not in item_stat and item_stat not in stat_l:
+            continue
+        if abs(float(item.get("line",0)) - float(line)) > 0.6:
+            continue
+        return {
+            "over_prob": item.get("over_prob", 0.5),
+            "under_prob": item.get("under_prob", 0.5),
+            "over_mult": item.get("over_mult", 1.85),
+            "under_mult": item.get("under_mult", 1.85),
+            "confirms_over": item.get("over_prob", 0.5) > 0.55,
+            "confirms_under": item.get("under_prob", 0.5) > 0.55,
+        }
+    return {}
+
+
 def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
     """
     Find FanDuel/DraftKings no-vig probability for a specific player+stat+line.
@@ -7014,6 +7102,10 @@ def load_sport_data(sport):
     enriched = []
     skipped_def = skipped_edge = 0
 
+    # Load DK Pick6 data once before enrichment loop
+    if APIFY_TOKEN and not st.session_state.get("dk_pick6_data"):
+        st.session_state["dk_pick6_data"] = fetch_dk_pick6_props(sport)
+
     # Pre-load signal weights once — avoids disk read on every prop iteration
     _optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
     _sport_optimizer = _optimizer_data.get(sport, {})
@@ -7438,6 +7530,26 @@ def load_sport_data(sport):
         prop["FDDKProb"] = None
         prop["FDDKConfirms"] = False
         prop["FDDKFades"] = False
+
+    # DK Pick6 validation via Apify
+    dk6_data = st.session_state.get("dk_pick6_data", [])
+    if dk6_data:
+        dk6_result = get_dk_pick6_validation(player, stat_norm, line, sport, dk6_data)
+        if dk6_result:
+            side_prob = dk6_result.get("over_prob",0.5) if side=="OVER" else dk6_result.get("under_prob",0.5)
+            prop["DKPick6Prob"] = side_prob
+            prop["DKPick6Confirms"] = side_prob > 0.55
+            prop["DKPick6Mult"] = dk6_result.get("over_mult",1.85) if side=="OVER" else dk6_result.get("under_mult",1.85)
+            # Tier boost: Pick6 confirms + Pinnacle confirms = SOVEREIGN
+            if prop.get("DKPick6Confirms") and prop.get("PinnacleConfirms") and prop.get("Tier") in ("APPROVED","ELITE"):
+                prop["Tier"] = "SOVEREIGN"
+                prop["TierBoost"] = "DK Pick6 + Pinnacle confirmed"
+        else:
+            prop["DKPick6Prob"] = None
+            prop["DKPick6Confirms"] = False
+    else:
+        prop["DKPick6Prob"] = None
+        prop["DKPick6Confirms"] = False
 
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
