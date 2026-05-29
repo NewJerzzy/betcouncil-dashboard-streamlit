@@ -3416,13 +3416,31 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
     """Route through ScrapeOps residential proxy if key available, else direct."""
     if SCRAPEOPS_KEY:
         try:
-            return requests.get(
+            resp = requests.get(
                 "https://proxy.scrapeops.io/v1/",
-                params={"api_key": SCRAPEOPS_KEY, "url": url, "residential": "true", "country": "us"},
+                params={
+                    "api_key": SCRAPEOPS_KEY,
+                    "url": url,
+                    "residential": "true",
+                    "country": "us",
+                    "render_js": "false",
+                    "premium_proxy": "true",
+                },
                 timeout=timeout
             )
-        except Exception:
-            pass
+            # Log result for debugging
+            ct = resp.headers.get("content-type","")
+            is_html = "html" in ct or resp.text.strip().startswith("<")
+            st.session_state.setdefault("scrapeops_log", []).append({
+                "url": url[:60], "status": resp.status_code,
+                "size": len(resp.text), "html": is_html,
+                "ct": ct[:40]
+            })
+            if resp.status_code == 200 and not is_html:
+                return resp
+            # Got HTML/captcha - fall through to direct
+        except Exception as _e:
+            st.session_state.setdefault("scrapeops_log", []).append({"url": url[:60], "error": str(_e)[:60]})
     return requests.get(url, headers=headers or {}, timeout=timeout)
 
 
