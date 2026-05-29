@@ -4008,16 +4008,10 @@ def parse_mybookie_slip_text(text: str) -> list:
     if risk_match:
         wager = float(risk_match.group(1))
 
-    # Parse each leg - MyBookie format:
-    # "Team Name ( Pitcher1 / Pitcher2 )-ODDS
-Winner...
-MLB | Baseball Team1 vs Team2
-Game Date: ..."
+    # Parse each leg - MyBookie format: Team (Pitcher)-ODDS / Winner... / MLB | Baseball / Game Date:
     leg_pattern = re.compile(
-        r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*
-'
-        r'(.+?)
-'
+        r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*\n'
+        r'(.+?)\n'
         r'(?:MLB|NBA|NFL|NHL|WNBA|Soccer)[^
 ]*
 '
