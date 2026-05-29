@@ -4008,32 +4008,42 @@ def parse_mybookie_slip_text(text: str) -> list:
     if risk_match:
         wager = float(risk_match.group(1))
 
-    # Parse each leg - MyBookie format: Team (Pitcher)-ODDS / Winner... / MLB | Baseball / Game Date:
-    leg_pattern = re.compile(
-        r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*\n'
-        r'(.+?)\n'
-        r'(?:MLB|NBA|NFL|NHL|WNBA|Soccer)[^
-]*
-'
-        r'(?:Game Date:\s*([^
-]+))?',
-        re.MULTILINE | re.IGNORECASE
-    )
+    # Parse each leg using line-by-line approach
+    # MyBookie format: "Team Name ( Pitcher1 / Pitcher2 )-ODDS"
+    lines = text.splitlines()
     date_str = ""
-    for match in leg_pattern.finditer(text):
-        team = match.group(1).strip()
-        odds = match.group(2).strip()
-        bet_type = match.group(3).strip()
-        game_date = (match.group(4) or "").strip()
-        if not date_str and game_date:
-            date_str = game_date[:10]
+    team_odds_pattern = re.compile(r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*$')
+    legs = []
+    for i, line in enumerate(lines):
+        m = team_odds_pattern.match(line.strip())
+        if m:
+            team = m.group(1).strip()
+            odds = m.group(2).strip()
+            # Look for game date nearby
+            for j in range(i, min(i+5, len(lines))):
+                date_m = re.search(r'Game Date:\s*(.+)', lines[j])
+                if date_m and not date_str:
+                    date_str = date_m.group(1).strip()[:10]
+            legs.append({"team": team, "odds": odds})
+
+    n_picks = max(1, len(legs))
+    for leg in legs:
         bets.append({
-            "player": team, "prop": bet_type or "Moneyline",
-            "line": 0, "side": team, "sport": "MLB",
-            "outcome": outcome, "wager": wager / max(1, max(1, len(list(leg_pattern.finditer(text))))),
-            "pick_count": 1, "bet_type": "game",
-            "source": "MyBookie", "date": date_str,
-            "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5
+            "player": leg["team"],
+            "prop": "Moneyline",
+            "line": 0,
+            "side": leg["team"],
+            "sport": "MLB",
+            "outcome": outcome,
+            "wager": round(wager / n_picks, 2),
+            "pick_count": n_picks,
+            "bet_type": "game",
+            "source": "MyBookie",
+            "date": date_str,
+            "odds": leg["odds"],
+            "tier": "LEAN",
+            "edge": 0,
+            "prob": 0.5
         })
 
     if not bets and outcome != "PENDING":
