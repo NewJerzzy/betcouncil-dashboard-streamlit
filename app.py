@@ -10188,16 +10188,15 @@ with tabs[9]:
                 _use_scrapeops = SCRAPEOPS_KEY and src.get("use_scrapeops", False)
                 if _use_scrapeops:
                     try:
-                        _pr = requests.get(
-                            "https://proxy.scrapeops.io/v1/",
-                            params={"api_key": SCRAPEOPS_KEY, "url": src["url"], "residential": "true", "country": "us"},
-                            timeout=20
-                        )
+                        _pr = scrapeops_get(src["url"], timeout=20)
                         code = _pr.status_code
                         color = "green" if code == 200 else "red"
-                        detail = f"✅ 200 OK via ScrapeOps proxy" if code == 200 else f"❌ {code}"
+                        detail = f"✅ 200 OK via ScrapeOps" if code == 200 else f"❌ {code}"
                     except Exception as _pe:
-                        code, color, detail = 0, "red", f"❌ Error: {str(_pe)[:50]}"
+                        # Fall back to direct ping
+                        code, detail, color = _ping_url(src["url"], src["headers"])
+                        if color != "green":
+                            detail = f"⚠️ ScrapeOps unavailable — direct: {detail}"
                 else:
                     code, detail, color = _ping_url(src["url"], src["headers"])
                 # For prop sources returning JSON, try to count items
@@ -10205,7 +10204,7 @@ with tabs[9]:
                 if color == "green" and src.get("is_prop_source"):
                     try:
                         if _use_scrapeops:
-                            r2 = requests.get("https://proxy.scrapeops.io/v1/", params={"api_key": SCRAPEOPS_KEY, "url": src["url"], "residential": "true"}, timeout=20)
+                            r2 = scrapeops_get(src["url"], timeout=20)
                         else:
                             r2 = requests.get(src["url"], headers=src["headers"], timeout=8)
                         d2 = r2.json()
