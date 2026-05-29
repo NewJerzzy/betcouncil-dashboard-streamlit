@@ -3487,10 +3487,17 @@ def scrape_prizepicks(sport):
         if os.path.exists(cache_path):
             age = (time.time() - os.path.getmtime(cache_path)) / 60
             if age < 20:
-                with open(cache_path, "rb") as f:
-                    cached = pickle.load(f)
-                if cached and cached.get("data"):
-                    data = cached
+                try:
+                    with open(cache_path, "rb") as f:
+                        cached = pickle.load(f)
+                    # Only use cache if it has real data (not a 403 error cache)
+                    if cached and cached.get("data") and len(cached.get("data", [])) > 0:
+                        data = cached
+                    else:
+                        os.remove(cache_path)  # Clear bad cache
+                except Exception:
+                    try: os.remove(cache_path)
+                    except: pass
         if data is None:
             try:
                 resp = scrapeops_get(url, headers=pp_headers, timeout=20)
@@ -10365,7 +10372,7 @@ with tabs[9]:
     st.markdown("**PrizePicks Cache**")
     col_pp1, col_pp2 = st.columns(2)
     with col_pp1:
-        if st.button("🧹 Clear PrizePicks Cache", key="clear_pp_cache"):
+        if st.button("🧹 Clear All Prop Cache", key="clear_pp_cache"):
             cleared = 0
             for f in os.listdir(CACHE_DIR):
                 if f.endswith("_pp.pkl"):
