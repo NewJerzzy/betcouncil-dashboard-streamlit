@@ -2588,7 +2588,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 elif sport == "NFL":
                     total_edge_pct = total_edge / 30.0
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
-                if abs(total_edge_pct) >= 0.04:
+                if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_tier(abs(total_edge_pct), sport)
                     recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
@@ -2619,7 +2619,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 h_ml_edge = h_fair - h_implied
                 a_ml_edge = a_fair - a_implied
                 best_ml_edge = max(h_ml_edge, a_ml_edge)
-                if best_ml_edge >= 0.04:
+                if best_ml_edge >= 0.02:
                     if h_ml_edge > a_ml_edge:
                         ml_pick = f"{home_team} ML ({home_ml})"
                         ml_edge = h_ml_edge
@@ -7701,7 +7701,7 @@ with tabs[0]:
         board = st.session_state.board_data or []
         game_analysis = st.session_state.get("game_analysis", [])
         elite_count = sum(1 for p in board if p.get("Tier","") in ["SOVEREIGN","ELITE"])
-        game_edge_count = sum(1 for g in game_analysis if g.get("best_edge",0) >= 0.05)
+        game_edge_count = sum(1 for g in game_analysis if g.get("best_edge",0) >= 0.02)
 
         # Day verdict
         if elite_count >= 4:
