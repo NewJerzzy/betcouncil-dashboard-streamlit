@@ -7468,6 +7468,7 @@ _ss = {"bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL, "session_
        "locks": [], "history": [], "min_edge": MIN_EDGE_DEFAULT, "skip_defaults": True, "last_sport": "NBA",
        "board_data": [], "games": [], "last_scan_time": None, "board_ready": False, "n_skipped_def": 0, "n_skipped_edge": 0,
        "errors": [], "game_line_movement": {}, "game_sharp_flags": {}, "oddswrap_props": [],
+       "current_slip_id": None,
        "ud_props_compare": [], "multibook_discrepancies": [], "nba_api_status": "Not yet fetched",
        "line_discrepancies": [], "override_correlation_warning": False, "clv_adjustments": {},
        "all_sports_results": None, "game_analysis": [], "officials_data": {}, "mlb_pitchers": {},
@@ -8200,6 +8201,26 @@ with tabs[2]:
     _games = st.session_state.games or []
     _sport2 = st.session_state.last_sport or "NBA"
     st.markdown(f"## 🏟️ Game Lines — {_sport2}")
+
+    # Slip grouping controls
+    _slip_ctrl1, _slip_ctrl2, _slip_ctrl3 = st.columns([2,2,3])
+    with _slip_ctrl1:
+        if st.button("🎯 Start New Slip", key="start_new_slip", use_container_width=True):
+            import uuid
+            st.session_state["current_slip_id"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            st.success(f"New slip started — lock your picks")
+    with _slip_ctrl2:
+        if st.button("✅ End Slip", key="end_slip", use_container_width=True):
+            st.session_state["current_slip_id"] = None
+            st.success("Slip closed — next lock starts a new slip")
+    with _slip_ctrl3:
+        _cur_slip = st.session_state.get("current_slip_id")
+        if _cur_slip:
+            _slip_locks_count = sum(1 for l in st.session_state.locks if l.get("timestamp","") == _cur_slip)
+            st.markdown(f'<div style="background:#0a0e14;border:1px solid #22c55e44;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:#22c55e;">📎 Active slip: {_slip_locks_count} picks locked</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:#6a7a8a;">No active slip — tap Start New Slip to group picks</div>', unsafe_allow_html=True)
+
     if _games:
         _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
         _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
@@ -8277,7 +8298,7 @@ with tabs[2]:
                             "sport": _gsport,
                             "source": "Bovada/MyBookie",
                             "bet_type": "game",
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "timestamp": st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "prob": 0.5 + _pk["edge"] / 2,
                             "wager": 0,
                         }
