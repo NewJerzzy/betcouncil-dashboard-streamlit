@@ -1159,7 +1159,7 @@ def devig_odds(american_odds):
         else:
             implied = abs(odds) / (abs(odds) + 100)
         return round(implied, 4)
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
 def compute_consensus_probability(sport, player_name, stat_name, line_val, side="OVER"):
@@ -1190,7 +1190,7 @@ def compute_consensus_probability(sport, player_name, stat_name, line_val, side=
     try:
         with open(cache_path, "rb") as f:
             cached_props = pickle.load(f)
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError):
         return None, []
     if not cached_props:
         return None, []
@@ -1322,7 +1322,7 @@ def load_json_data(path, default):
         try:
             with open(path, "r") as f:
                 return json.load(f)
-        except:
+        except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
             return default
     return default
 
@@ -1344,7 +1344,7 @@ def get_api_counter(counter_path):
                 counter["month"] = current_month
                 counter["monthly_count"] = 0 if "monthly_count" in counter else 0
             return counter
-        except:
+        except Exception:
             pass
     return {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
 
@@ -1472,12 +1472,14 @@ def adjusted_edge(raw_edge, sport, tier, stat_norm, history):
 def normalize_name(s: str) -> str:
     if not s:
         return ""
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    s = re.sub(r"\s+(jr|sr|ii|iii)\.?$", "", s.lower().strip())
-    s = s.replace("-", " ").replace(".", "").replace("'", "")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    try:
+        s = unicodedata.normalize("NFD", str(s))
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        s = re.sub(r"\s+(jr|sr|ii|iii)\.?$", "", s.lower().strip())
+        s = s.replace("-", " ").replace(".", "").replace("'", "")
+        return re.sub(r"\s+", " ", s).strip()
+    except (TypeError, AttributeError):
+        return ""
 
 def find_player_avg(player_name, avgs_dict):
     if player_name in avgs_dict:
@@ -1507,7 +1509,7 @@ def cached_fetch(url, ttl_minutes=25):
                     pickle.dump(data, f)
             return data
         return None
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
 def poisson_prob_over(line, avg):
@@ -1515,9 +1517,9 @@ def poisson_prob_over(line, avg):
         return 0.5
     k = int(line)
     try:
-        p_under = sum((avg**i * exp(-avg)) / factorial(i) for i in range(k + 1))
+        p_under = sum((avg**i * exp(-avg)) / factorial(int(i)) for i in range(int(k) + 1))
         return round(1 - p_under, 4)
-    except:
+    except (ValueError, OverflowError, ZeroDivisionError, TypeError):
         return 0.5
 
 def prizepicks_breakeven_prob(n_picks=2):
@@ -1589,7 +1591,7 @@ def blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, 
         return 0.0
     try:
         spread_val = float(str(spread).replace("+", "").strip())
-    except:
+    except (ValueError, AttributeError):
         return 0.0
     threshold = BLOWOUT_THRESHOLDS.get(sport, 12)
     if abs(spread_val) < threshold:
@@ -1652,7 +1654,7 @@ def get_clv_summary():
                 model_prob = c.get("prob", 0.5)
                 if pinn_prob > 0:
                     edges.append(model_prob - pinn_prob)
-            except:
+            except Exception:
                 pass
         pinn_avg_edge = sum(edges) / len(edges) if edges else 0
 
@@ -2042,7 +2044,7 @@ def detect_game_script_contradictions(parlay_props, games):
         if total and total != "N/A":
             try:
                 game_total_map[matchup] = float(total)
-            except:
+            except Exception:
                 pass
     for i, j in combinations(range(len(parlay_props)), 2):
         p1 = parlay_props[i]
@@ -2084,7 +2086,7 @@ def detect_game_script_contradictions(parlay_props, games):
                             fav_team = str(spread).split()[0]
                             if team1 == fav_team:
                                 warnings.append(f"⚠️ Blowout risk: {p1['Player']} on {team1} favored by {spread_val}pts. May sit late if big lead develops.")
-                    except:
+                    except Exception:
                         pass
     return warnings
 
@@ -2110,7 +2112,7 @@ def track_line_movement(props):
     for key, move in movement.items():
         player_name = move.get("player", "")
         prop_name = move.get("prop", "")
-        for lock in st.session_state.get("locks", []):
+        for lock in _locks_snapshot:
             if (lock.get("status") == "PENDING" and normalize_name(lock.get("player","")) == normalize_name(player_name) and lock.get("prop","") == prop_name):
                 locked_line = lock.get("line", 0)
                 current_line = move.get("curr_line", 0)
@@ -2154,7 +2156,7 @@ def fetch_weather_for_game(city, is_outdoor=True):
         with open(cache_path, "wb") as f:
             pickle.dump(weather, f)
         return weather
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
 def weather_edge_adjustment(weather, stat_norm, side="OVER"):
@@ -2249,7 +2251,7 @@ def get_edge_staleness(last_scan_time):
             return f"🟠 Stale ({elapsed_minutes}m ago)", "orange"
         else:
             return f"🔴 Very stale ({elapsed_minutes}m ago)", "red"
-    except:
+    except Exception:
         return "⚫ Unknown", "black"
 
 def check_portfolio_correlation(new_prop, existing_locks, player_team_map, positive_correlations, negative_correlations):
@@ -2374,7 +2376,7 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
                     with open(cache_path, "wb") as f:
                         pickle.dump(result, f)
                     return result
-        except:
+        except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
             continue
     return None
 
@@ -2440,7 +2442,7 @@ def power_rating_spread_divergence(home_team, away_team, spread_str):
         if divergence >= 6:
             return min(10, divergence), f"⚡ Market diverges from power ratings by {divergence:.1f} pts"
         return 0, ""
-    except:
+    except (ValueError, TypeError, AttributeError):
         return 0, ""
 
 def fetch_todays_referees(sport):
@@ -2470,7 +2472,7 @@ def fetch_todays_referees(sport):
         if officials:
             with open(cache_path, "wb") as f:
                 pickle.dump(officials, f)
-    except:
+    except Exception:
         pass
     return officials
 
@@ -2533,7 +2535,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
-    except:
+    except Exception:
         pass
     
     try:
@@ -2552,7 +2554,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 fair_total = base_total + pace_adj + off_adj
             elif sport == "MLB":
                 base_total = 8.5
-                mlb_pitchers = st.session_state.get("mlb_pitchers", {})
+                mlb_pitchers = _mlb_pitchers
                 h_data = mlb_pitchers.get(home_team, {})
                 a_data = mlb_pitchers.get(away_team, {})
                 h_pitcher = h_data.get("pitcher","")
@@ -2595,7 +2597,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
-    except:
+    except Exception:
         pass
     
     try:
@@ -2634,7 +2636,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
-    except:
+    except Exception:
         pass
     
     return {"matchup": matchup, "home": home_team, "away": away_team, "recommendations": recommendations, "best_bet": best_bet, "best_edge": best_edge, "sport": sport, "public_signals": public_sharp_signals, "public_data": game_public}
@@ -2896,7 +2898,7 @@ def fetch_wnba_rolling_averages():
                     }
             if rolling:
                 break
-        except:
+        except Exception:
             continue
     if rolling:
         with open(cache_path, "wb") as f:
@@ -3100,7 +3102,7 @@ def fetch_nfl_rolling_averages():
                     if game_stat:
                         game_stats.append(game_stat)
                     time.sleep(0.2)
-                except:
+                except Exception:
                     continue
             if not game_stats or len(game_stats) < 3:
                 continue
@@ -3221,7 +3223,7 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
         with open(cache_path, "wb") as f:
             pickle.dump(result, f)
         return result
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
 
@@ -3263,7 +3265,7 @@ def fetch_nba_averages_bdl():
                 pickle.dump(avgs, f)
         api_budget_increment("BDL")
         return avgs
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
         return {}
 
 def fetch_underdog_props(sport):
@@ -3517,7 +3519,7 @@ def scrape_prizepicks(sport):
                 elif resp.status_code == 403:
                     # Bot protection — try next URL
                     continue
-            except:
+            except Exception:
                 continue
         if not data or not data.get("data"):
             continue
@@ -3547,7 +3549,7 @@ def scrape_prizepicks(sport):
                 continue
             try:
                 line = float(line)
-            except:
+            except (ValueError, TypeError):
                 continue
             key = (sport, pid, stat, line)
             if key in seen:
@@ -3564,7 +3566,7 @@ def scrape_prizepicks(sport):
         import glob
         for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
             os.remove(f)
-    except:
+    except Exception:
         pass
     return fetch_underdog_props(sport)
 
@@ -3592,7 +3594,7 @@ def fetch_underdog_injuries(sport):
                     age_hours = (datetime.now(timezone.utc) - item_dt).total_seconds() / 3600
                     if age_hours > 48:
                         continue
-                except:
+                except Exception:
                     pass
             if "out" in content and "ruled out" in content:
                 injuries[name] = "Out"
@@ -3626,7 +3628,7 @@ def fetch_injury_news(sport):
                                 injuries[p] = "Out"
                             elif "questionable" in headline.lower() or "day-to-day" in headline.lower():
                                 injuries[p] = "Questionable"
-        except:
+        except Exception:
             injuries = {}
     underdog_injuries = fetch_underdog_injuries(sport)
     injuries.update(underdog_injuries)
@@ -3820,7 +3822,7 @@ def fetch_action_network_props(sport):
                     if lv is not None:
                         try:
                             line_val = float(lv)
-                        except:
+                        except Exception:
                             pass
                 odds = line_entry.get("odds")
                 if odds:
@@ -3828,7 +3830,7 @@ def fetch_action_network_props(sport):
             if line_val is None and implied_value:
                 try:
                     line_val = round(float(implied_value), 1)
-                except:
+                except Exception:
                     pass
             if line_val is None:
                 continue
@@ -3938,6 +3940,14 @@ def fetch_game_lines(sport):
         except Exception as e:
             pass
     return today_games, playoff, home_teams, away_teams
+
+def safe_float(val, default: float = 0.0) -> float:
+    """Type-safe float conversion with fallback."""
+    try:
+        return float(val) if val is not None else default
+    except (TypeError, ValueError):
+        return default
+
 
 def american_to_prob(american_odds) -> float:
     """Convert American odds to implied probability."""
@@ -4331,7 +4341,7 @@ def detect_arbitrage_opportunities(sport):
     try:
         with open(cache_path, "rb") as f:
             props = pickle.load(f)
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
         return []
     if not props:
         return []
@@ -4423,9 +4433,9 @@ def fetch_oddswrap_props(sport):
                                 continue
                             seen.add(key)
                             all_props.append({"Player": prop.player, "Prop": prop.market, "Line": float(prop.line), "Side": "OVER", "OverOdds": prop.over_odds, "UnderOdds": prop.under_odds, "Book": prop.book, "Sport": sport, "source": f"oddswrap_{prop.book}"})
-                    except:
+                    except (ValueError, TypeError):
                         continue
-            except:
+            except (ValueError, TypeError):
                 continue
         if all_props:
             with open(cache_path, "wb") as f:
@@ -4598,7 +4608,7 @@ def fetch_parlayapi_arbitrage(sport):
         if resp.status_code != 200:
             return []
         return resp.json()
-    except:
+    except (json.JSONDecodeError, KeyError, TypeError):
         return []
 
 
@@ -4622,7 +4632,7 @@ def fetch_parlayapi_ev(sport):
         if resp.status_code != 200:
             return []
         return resp.json()
-    except:
+    except (json.JSONDecodeError, KeyError, TypeError):
         return []
 
 def fetch_parlayplay_props(sport):
@@ -4966,7 +4976,7 @@ def fetch_bdl_props(sport):
                     stat_name = stat_map.get(prop_type, prop_type.replace("_", " ").title())
                     try:
                         line_val = float(line)
-                    except:
+                    except (ValueError, TypeError):
                         continue
                     key = (player_name, stat_name, line_val)
                     if key in seen:
@@ -4982,7 +4992,7 @@ def fetch_bdl_props(sport):
                         "OddsType": "standard"
                     })
                 time.sleep(0.3)
-            except:
+            except Exception:
                 continue
         if all_props:
             with open(cache_path, "wb") as f:
@@ -5143,7 +5153,7 @@ def check_data_freshness():
         days_old = (datetime.now() - last_updated).days
         if days_old > 14:
             warnings.append(f"Hardcoded averages (NFL/Soccer/UFC): {days_old} days old")
-    except:
+    except Exception:
         pass
     return warnings
 
@@ -5173,7 +5183,7 @@ def fetch_espn_game_ids(sport):
         if game_ids:
             with open(cache_path, "wb") as f:
                 pickle.dump(game_ids, f)
-    except:
+    except Exception:
         pass
     return game_ids
 
@@ -5220,7 +5230,7 @@ def fetch_espn_line_movement(sport, event_id):
             with open(cache_path, "wb") as f:
                 pickle.dump(movements, f)
         return movements
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
         return []
 
 def detect_sharp_movement(movements):
@@ -5241,7 +5251,7 @@ def detect_sharp_movement(movements):
         if ou_move >= 2.0:
             direction = "↑" if last_ou > first_ou else "↓"
             return True, direction, round(ou_move, 1)
-    except:
+    except Exception:
         pass
     return False, "", 0
 
@@ -5305,7 +5315,7 @@ def detect_steam_moves(sport):
                                 "age_mins": round(baseline_age, 0),
                                 "signal": f"🔥 STEAM {direction}: Total moved {direction}{abs(espn_move)} on ESPN + Bovada in {baseline_age:.0f}m",
                             })
-                    except:
+                    except Exception:
                         pass
         save_json_data(baseline_path, current_lines)
         return steam_moves
@@ -5337,7 +5347,7 @@ def fetch_espn_predictor(sport, event_id):
         with open(cache_path, "wb") as f:
             pickle.dump(predictor, f)
         return predictor
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
         return {}
 
 def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
@@ -5377,7 +5387,7 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
                 if game_stat:
                     game_stats.append(game_stat)
                 time.sleep(0.2)
-            except:
+            except Exception:
                 continue
         if not game_stats:
             return None
@@ -5392,7 +5402,7 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
         with open(cache_path, "wb") as f:
             pickle.dump(avg, f)
         return avg
-    except:
+    except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
 def generate_gem_summary():
@@ -6172,7 +6182,7 @@ def fetch_dk_salaries(sport="NBA"):
                 if attr.get("id") == 90:  # FPPG stat id
                     try:
                         fppg = float(attr.get("value", 0))
-                    except:
+                    except Exception:
                         pass
 
             if name and salary:
@@ -6481,7 +6491,7 @@ def fetch_player_id_bdl(player_name):
                 with open(cache_path, "wb") as f:
                     pickle.dump(pid, f)
                 return pid
-    except:
+    except Exception:
         pass
     return None
 
@@ -6862,7 +6872,7 @@ def load_sport_data(sport):
                         "bovada": "Bovada"
                     }.get(book, book.title())
                     all_alt_sources.append((op, book_display))
-        except:
+        except Exception:
             pass
     for alt_prop, source in all_alt_sources:
         key = (normalize_name(alt_prop.get("Player","")), alt_prop.get("Prop",""))
@@ -6972,7 +6982,7 @@ def load_sport_data(sport):
                             team = competitor.get("team", {}).get("abbreviation", "")
                             if team:
                                 b2b_teams.add(team)
-    except:
+    except Exception:
         pass
     game_ids = fetch_espn_game_ids(sport)
     if sport in ["NBA", "MLB"]:
@@ -7014,6 +7024,13 @@ def load_sport_data(sport):
     tier_stats = compute_tier_stats(history)
     enriched = []
     skipped_def = skipped_edge = 0
+
+    # Hoist session_state reads — avoids repeated dict lookups per prop
+    _locks_snapshot  = list(st.session_state.get("locks", []))
+    _public_data     = st.session_state.get("public_betting_data", {})
+    _mlb_pitchers    = st.session_state.get("mlb_pitchers", {})
+    _parlayplay_alts = st.session_state.get("parlayplay_alt_lines", {})
+    _fd_dk_alts      = st.session_state.get("fd_dk_alt_lines", [])
 
     # Pre-load signal weights once — avoids disk read on every prop iteration
     _optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
@@ -7198,7 +7215,7 @@ def load_sport_data(sport):
                         elif h2h_rate <= 0.30:
                             h2h_adj = -0.02
                             h2h_note = f"H2H {h2h_rate:.0%} vs {opp_abbr} ({h2h_games}g)"
-            except:
+            except Exception:
                 pass
         game_total_adj = 0.0
         if sport == "NBA" and player_team:
@@ -7208,7 +7225,7 @@ def load_sport_data(sport):
                     if total and total != "N/A":
                         try:
                             game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
-                        except:
+                        except Exception:
                             pass
                     break
         weather_adj = 0.0
@@ -7379,7 +7396,7 @@ def load_sport_data(sport):
                             prop["Edge"] = round(prop.get("Edge",0) - 0.02, 4)
                     else:
                         prop["H2HRate"] = "—"
-                except:
+                except Exception:
                     prop["H2HRate"] = "—"
             else:
                 prop["H2HRate"] = "—"
@@ -7409,7 +7426,7 @@ def load_sport_data(sport):
                 prop["TierNote"] = "Downgraded: Pinnacle fades"
 
     # FanDuel/DraftKings no-vig validation using alt lines
-    fd_dk_alts = st.session_state.get("fd_dk_alt_lines", [])
+    fd_dk_alts = _fd_dk_alts
     if fd_dk_alts:
         fd_result = get_fanduel_dk_validation(player, stat_norm, line, sport, fd_dk_alts)
         if fd_result:
@@ -7579,9 +7596,9 @@ with st.sidebar:
                                 cached = pickle.load(pf)
                             if not cached or not cached.get("data"):
                                 os.remove(fp)
-                        except:
+                        except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
                             os.remove(fp)
-        except:
+        except Exception:
             pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
@@ -7844,7 +7861,7 @@ with tabs[0]:
                 try:
                     chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
                     st.markdown(chart_html, unsafe_allow_html=True)
-                except:
+                except Exception:
                     st.write("Signal chart unavailable")
 
         # ── LOCK OF THE DAY — GAME ─────────────────────────
@@ -8606,7 +8623,7 @@ with tabs[3]:
                                                 if i < len(stats_vals):
                                                     try:
                                                         player_stats[aname_norm][key.upper()] = float(stats_vals[i])
-                                                    except:
+                                                    except Exception:
                                                         pass
                                             # Map common stat label variants
                                             for label, variants in [
@@ -8625,9 +8642,9 @@ with tabs[3]:
                                                     if any(v.upper() == key.upper() for v in variants) and i < len(stats_vals):
                                                         try:
                                                             player_stats[aname_norm][label] = float(stats_vals[i])
-                                                        except:
+                                                        except Exception:
                                                             pass
-                            except:
+                            except (ValueError, TypeError):
                                 continue
 
                         # Now resolve locks
@@ -8745,7 +8762,7 @@ with tabs[3]:
                             bdl_resolved += 1
                             icon = "✅" if outcome == "WIN" else "❌"
                             st.markdown(f"{icon} **{lock.get('player','')}** (BDL) — actual: **{actual}** → **{outcome}**")
-                        except:
+                        except Exception:
                             continue
                     if bdl_resolved > 0:
                         save_json_data(LOCKS_PATH, st.session_state.locks)
@@ -9170,7 +9187,7 @@ with tabs[5]:
                         side = "OVER" if m.group(2).upper() in ("OVER","MORE") else "UNDER"
                         try:
                             line_val = float(m.group(3))
-                        except:
+                        except (ValueError, TypeError):
                             continue
                         stat = m.group(4).strip()
                         parsed_picks.append({
@@ -9738,7 +9755,7 @@ with tabs[7]:
                     try:
                         log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str)
                         submitted += 1
-                    except:
+                    except (ValueError, TypeError):
                         continue
                 if submitted > 0:
                     st.success(f"\u2705 Submitted {submitted} bets \u2014 Bankroll: ${st.session_state.bankroll:.2f}")
@@ -9965,7 +9982,7 @@ with tabs[7]:
                         bet_date_str_b = datetime.combine(bulk_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
                         log_manual_bet(player=player_b, prop=prop_b, line=line_val_b, side=side_b, sport=sport_b, outcome=outcome_b, wager=wager_b, pick_count=pick_count_b, bet_type="prop", source="Manual Import", bet_date=bet_date_str_b)
                         success_count += 1
-                    except:
+                    except Exception:
                         error_count += 1
                         continue
                 if success_count > 0:
