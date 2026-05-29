@@ -10,6 +10,7 @@ import pickle
 import os
 import json
 import unicodedata
+import functools
 from math import exp, factorial
 import math
 from itertools import combinations
@@ -1288,24 +1289,31 @@ def save_to_gist(data_type, data):
         payload = {"files": {f"betcouncil_{data_type}.json": {"content": json.dumps(data, indent=2)}}}
         resp = requests.patch(f"{GIST_API}/{GITHUB_GIST_ID}", headers=headers, json=payload, timeout=10)
         return resp.status_code == 200
-    except:
+    except (requests.RequestException, json.JSONDecodeError, OSError):
         return False
 
-def load_from_gist(data_type, default):
+def load_from_gist(data_type: str, default):
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return None
     try:
-        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        resp = requests.get(f"{GIST_API}/{GITHUB_GIST_ID}", headers=headers, timeout=10)
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        resp = requests.get(
+            f"{GIST_API}/{GITHUB_GIST_ID}",
+            headers=headers,
+            timeout=10
+        )
         if resp.status_code != 200:
             return None
         files = resp.json().get("files", {})
         file_data = files.get(f"betcouncil_{data_type}.json", {})
-        content = file_data.get("content", "")
-        if content:
-            return json.loads(content)
-        return None
-    except:
+        content = (file_data.get("content") or "").strip()
+        if not content:
+            return None
+        return json.loads(content)
+    except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError):
         return None
 
 def load_json_data(path, default):
@@ -1459,7 +1467,10 @@ def adjusted_edge(raw_edge, sport, tier, stat_norm, history):
     adjustment = calibration_error * min(1.0, n / 100)
     return raw_edge + adjustment, True
 
-def normalize_name(s):
+@functools.lru_cache(maxsize=512)
+def normalize_name(s: str) -> str:
+    if not s:
+        return ""
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = re.sub(r"\s+(jr|sr|ii|iii)\.?$", "", s.lower().strip())
@@ -1531,11 +1542,15 @@ def kelly_unit_prizepicks(prob, bankroll, n_picks=2):
 def kelly_unit(prob, bankroll, n_picks=2):
     return kelly_unit_prizepicks(prob, bankroll, n_picks)
 
-def get_tier(edge, sport="NBA"):
+def get_tier(edge, sport="NBA") -> str:
+    try:
+        edge = float(edge or 0)
+    except (TypeError, ValueError):
+        edge = 0.0
     thresholds = TIER_THRESHOLDS.get(sport, TIER_THRESHOLDS["NBA"])
     if edge >= thresholds["SOVEREIGN"]: return "SOVEREIGN"
-    if edge >= thresholds["ELITE"]: return "ELITE"
-    if edge >= thresholds["APPROVED"]: return "APPROVED"
+    if edge >= thresholds["ELITE"]:     return "ELITE"
+    if edge >= thresholds["APPROVED"]:  return "APPROVED"
     if edge >= thresholds["LEAN"]: return "LEAN"
     return "PASS"
 
@@ -3875,27 +3890,28 @@ def fetch_game_lines(sport):
             pass
     return today_games, playoff, home_teams, away_teams
 
-def american_to_prob(american_odds):
+def american_to_prob(american_odds) -> float:
     """Convert American odds to implied probability."""
     try:
-        o = int(american_odds)
+        o = float(american_odds)
+        if o == 0:
+            return 0.5
         if o > 0:
-            return 100 / (o + 100)
-        else:
-            return abs(o) / (abs(o) + 100)
-    except:
+            return 100.0 / (o + 100.0)
+        return abs(o) / (abs(o) + 100.0)
+    except (TypeError, ValueError, ZeroDivisionError):
         return 0.5
 
-def no_vig_prob(over_american, under_american):
+def no_vig_prob(over_american, under_american) -> float:
     """Calculate no-vig true probability from both sides."""
     try:
         over_imp = american_to_prob(over_american)
         under_imp = american_to_prob(under_american)
         total = over_imp + under_imp
-        if total == 0:
+        if total <= 0:
             return 0.5
         return round(over_imp / total, 4)
-    except:
+    except (TypeError, ValueError):
         return 0.5
 
 def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
@@ -5802,17 +5818,18 @@ def parse_prizepicks_text(raw_text):
 
     return bets
 
-def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None):
+def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None):
     if player_avg <= 0:
         return 0.0, 0.5, {}
     signals = {}
     league_avg_def = 112.0
-    from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
-    sport_optimizer = from_optimizer.get(sport, {})
-    if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
-        weights = sport_optimizer["weights"]
-    else:
-        weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+    if weights is None:
+        from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+        sport_optimizer = from_optimizer.get(sport, {})
+        if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
+            weights = sport_optimizer["weights"]
+        else:
+            weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
     if stat_key in ["HR", "GOALS"]:
         prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
@@ -6804,6 +6821,16 @@ def load_sport_data(sport):
     tier_stats = compute_tier_stats(history)
     enriched = []
     skipped_def = skipped_edge = 0
+
+    # Pre-load signal weights once — avoids disk read on every prop iteration
+    _optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+    _sport_optimizer = _optimizer_data.get(sport, {})
+    if (_sport_optimizer.get("weights") and
+            _sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
+        _preloaded_weights = _sport_optimizer["weights"]
+    else:
+        _preloaded_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+
     for p in props:
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
@@ -7038,9 +7065,9 @@ def load_sport_data(sport):
         an_tier = an_data.get("tier", "")
         an_tickets = an_data.get("tickets_pct", 0)
         an_money = an_data.get("money_pct", 0)
-        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
+        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
-        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev)
+        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
         under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj - h2h_adj))
         if consensus_prob is not None:
             blended_over_prob = round(consensus_prob * 0.60 + over_prob * 0.40, 4)
