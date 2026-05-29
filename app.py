@@ -3559,6 +3559,13 @@ def scrape_prizepicks(sport):
         st.session_state["pp_status"] = "ok"
         return all_props
     st.session_state["pp_status"] = "unavailable"
+    # Clear cache so next load retries PrizePicks
+    try:
+        import glob
+        for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
+            os.remove(f)
+    except:
+        pass
     return fetch_underdog_props(sport)
 
 def fetch_underdog_injuries(sport):
