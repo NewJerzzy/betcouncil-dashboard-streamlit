@@ -2525,7 +2525,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / 10.0
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
-                if abs(spread_edge_pct) >= 0.05:
+                if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_tier(abs(spread_edge_pct), sport)
@@ -7606,6 +7606,11 @@ with st.sidebar:
             # Show which source the props came from
             sources = list(set(p.get("source","Unknown") for p in board if p.get("source")))
             source_str = " + ".join(sources) if sources else "Unknown"
+            # Update PrizePicks status based on actual source
+            if any("prizepicks" in s.lower() for s in sources):
+                st.session_state["pp_status"] = "ok"
+            elif sources:
+                st.session_state["pp_status"] = "fallback"
             st.success(f"✅ {len(board)} props loaded from **{source_str}**")
             if n_def:
                 st.info(f"{n_def} unknown players skipped (using defaults)")
@@ -7614,10 +7619,12 @@ with st.sidebar:
     st.markdown("---")
     # Show data source status
     _pp_status = st.session_state.get("pp_status", "unknown")
-    if _pp_status == "unavailable":
-        st.warning("⚠️ PrizePicks direct unavailable — using fallback sources (Underdog/ParlayAPI)")
-    elif _pp_status == "ok":
-        st.success("✅ PrizePicks connected")
+    if _pp_status == "ok":
+        st.success("✅ PrizePicks connected via ScrapeOps")
+    elif _pp_status == "fallback":
+        st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
+    elif _pp_status == "unavailable":
+        st.warning("⚠️ PrizePicks unavailable — using fallback sources")
     _wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
     _losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
     if _wins + _losses > 0:
