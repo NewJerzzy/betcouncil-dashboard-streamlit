@@ -10369,6 +10369,47 @@ with tabs[9]:
 
     st.markdown("---")
     st.markdown("#### 🧪 Test Box Score APIs")
+    if st.button("🔍 Test ScrapeOps Proxy", key="test_scrapeops"):
+        if not SCRAPEOPS_KEY:
+            st.error("SCRAPEOPS_KEY not in Secrets")
+        else:
+            with st.spinner("Testing ScrapeOps..."):
+                try:
+                    # Test 1: Basic connectivity
+                    r1 = requests.get(
+                        "https://proxy.scrapeops.io/v1/",
+                        params={"api_key": SCRAPEOPS_KEY, "url": "https://httpbin.org/ip"},
+                        timeout=15
+                    )
+                    if r1.status_code == 200:
+                        ip = r1.json().get("origin","?")
+                        st.success(f"✅ ScrapeOps working — routing through IP: {ip}")
+                    else:
+                        st.error(f"❌ ScrapeOps: {r1.status_code} — {r1.text[:100]}")
+
+                    # Test 2: PrizePicks through ScrapeOps
+                    r2 = requests.get(
+                        "https://proxy.scrapeops.io/v1/",
+                        params={"api_key": SCRAPEOPS_KEY, "url": "https://api.prizepicks.com/projections?league_id=4&per_page=10", "residential": "true", "country": "us"},
+                        timeout=20
+                    )
+                    st.write(f"PrizePicks via ScrapeOps: {r2.status_code} — {len(r2.text)} bytes")
+
+                    # Test 3: Kalshi through ScrapeOps
+                    r3 = requests.get(
+                        "https://proxy.scrapeops.io/v1/",
+                        params={"api_key": SCRAPEOPS_KEY, "url": "https://api.elections.kalshi.com/v1/events/?series_tickers=KXNBA-26&page_size=5"},
+                        timeout=20
+                    )
+                    if r3.status_code == 200:
+                        data = r3.json()
+                        events = data.get("events", [])
+                        st.success(f"✅ Kalshi via ScrapeOps: {len(events)} events")
+                    else:
+                        st.write(f"Kalshi via ScrapeOps: {r3.status_code}")
+                except Exception as e:
+                    st.error(f"Error: {str(e)[:100]}")
+
     if st.button("Test ESPN + NBA APIs", key="test_boxscore_apis"):
         test_urls = [
             ("ESPN web", "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=401584793&region=us&lang=en&contentorigin=espn"),
