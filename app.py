@@ -3411,6 +3411,20 @@ def fetch_underdog_props(sport):
         print(f"Underdog props error: {e}")
         return []
 
+def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
+    """Route through ScrapeOps residential proxy if key available, else direct."""
+    if SCRAPEOPS_KEY:
+        try:
+            return requests.get(
+                "https://proxy.scrapeops.io/v1/",
+                params={"api_key": SCRAPEOPS_KEY, "url": url, "residential": "true", "country": "us"},
+                timeout=timeout
+            )
+        except Exception:
+            pass
+    return requests.get(url, headers=headers or {}, timeout=timeout)
+
+
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
     league = league_ids.get(sport.upper())
@@ -3461,7 +3475,7 @@ def scrape_prizepicks(sport):
                     data = cached
         if data is None:
             try:
-                resp = requests.get(url, headers=pp_headers, timeout=15)
+                resp = scrapeops_get(url, headers=pp_headers, timeout=20)
                 if resp.status_code == 200:
                     # Check for captcha response (returns HTML not JSON)
                     content_type = resp.headers.get("content-type", "")
