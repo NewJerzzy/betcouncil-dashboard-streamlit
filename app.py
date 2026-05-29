@@ -10041,12 +10041,13 @@ with tabs[9]:
     _PING_SOURCES = [
         {
             "name": "PrizePicks",
-            "description": "Primary prop source",
+            "description": "Primary prop source (via ScrapeOps proxy)",
             "url": "https://api.prizepicks.com/projections?league_id=7&per_page=10&single_stat=true&in_game=true&state_code=CA&game_mode=prizepools",
             "headers": _PP_HEADERS,
             "budget_key": None,
             "count_key": None,
             "is_prop_source": True,
+            "use_scrapeops": True,
         },
         {
             "name": "Underdog Fantasy",
@@ -10183,13 +10184,30 @@ with tabs[9]:
         with st.spinner("Pinging all sources..."):
             results = {}
             for src in _PING_SOURCES:
-                # Use curl_cffi for ParlayPlay to bypass bot protection
-                code, detail, color = _ping_url(src["url"], src["headers"])
+                # Use ScrapeOps proxy for blocked sources (PrizePicks, Kalshi etc)
+                _use_scrapeops = SCRAPEOPS_KEY and src.get("use_scrapeops", False)
+                if _use_scrapeops:
+                    try:
+                        _pr = requests.get(
+                            "https://proxy.scrapeops.io/v1/",
+                            params={"api_key": SCRAPEOPS_KEY, "url": src["url"], "residential": "true", "country": "us"},
+                            timeout=20
+                        )
+                        code = _pr.status_code
+                        color = "green" if code == 200 else "red"
+                        detail = f"✅ 200 OK via ScrapeOps proxy" if code == 200 else f"❌ {code}"
+                    except Exception as _pe:
+                        code, color, detail = 0, "red", f"❌ Error: {str(_pe)[:50]}"
+                else:
+                    code, detail, color = _ping_url(src["url"], src["headers"])
                 # For prop sources returning JSON, try to count items
                 extra = ""
                 if color == "green" and src.get("is_prop_source"):
                     try:
-                        r2 = requests.get(src["url"], headers=src["headers"], timeout=8)
+                        if _use_scrapeops:
+                            r2 = requests.get("https://proxy.scrapeops.io/v1/", params={"api_key": SCRAPEOPS_KEY, "url": src["url"], "residential": "true"}, timeout=20)
+                        else:
+                            r2 = requests.get(src["url"], headers=src["headers"], timeout=8)
                         d2 = r2.json()
                         n = len(d2.get("data", d2.get("over_under_lines", d2.get("projections", []))))
                         if n > 0:
