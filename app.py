@@ -10415,6 +10415,17 @@ with tabs[9]:
 
     st.markdown("---")
     st.markdown("#### 🧪 Test Box Score APIs")
+    # Show ScrapeOps debug log
+    scrapeops_log = st.session_state.get("scrapeops_log", [])
+    if scrapeops_log:
+        with st.expander(f"🔍 ScrapeOps Debug Log ({len(scrapeops_log)} calls)"):
+            for entry in scrapeops_log[-10:]:
+                if "error" in entry:
+                    st.caption(f"❌ {entry['url']} — {entry['error']}")
+                else:
+                    icon = "✅" if entry['status']==200 and not entry['html'] else "⚠️"
+                    st.caption(f"{icon} {entry['url']} — {entry['status']} {entry['size']}b HTML:{entry['html']} CT:{entry['ct']}")
+
     if st.button("🔍 Test ScrapeOps Proxy", key="test_scrapeops"):
         if not SCRAPEOPS_KEY:
             st.error("SCRAPEOPS_KEY not in Secrets")
