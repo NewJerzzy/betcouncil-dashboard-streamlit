@@ -3914,6 +3914,153 @@ def no_vig_prob(over_american, under_american) -> float:
     except (TypeError, ValueError):
         return 0.5
 
+def parse_bovada_slip_text(text: str) -> list:
+    """Parse Bovada text slip into bet records."""
+    import re
+    bets = []
+    if not text or not any(x in text.lower() for x in ['parlay', 'straight bet', 'ref.']):
+        return bets
+    lines = [l.strip() for l in text.strip().split('
+') if l.strip()]
+    tl = text.lower()
+
+    # Outcome
+    outcome = "PENDING"
+    if "winnings" in tl:
+        win_match = re.search(r'winnings\s*\$?\s*([\d.]+)', tl)
+        if win_match:
+            winnings = float(win_match.group(1))
+            outcome = "WIN" if winnings > 0 else "LOSS"
+    elif "
+loss
+" in tl or tl.strip().endswith("loss"):
+        outcome = "LOSS"
+    elif "
+win
+" in tl or tl.strip().endswith("win"):
+        outcome = "WIN"
+
+    # Wager
+    wager = 0.0
+    risk_match = re.search(r'risk\s*\$?\s*([\d.]+)', tl)
+    if risk_match:
+        wager = float(risk_match.group(1))
+
+    # Bet type
+    parlay_match = re.search(r'(\d+)\s+team\s+parlay', tl)
+    is_parlay = bool(parlay_match)
+    n_picks = int(parlay_match.group(1)) if parlay_match else 1
+
+    # Parse each leg - Bovada format: "* Team1 @ Team2
+WinningTeam (odds)(type) Market"
+    legs = re.findall(r'\*\s+(.+?)\s*
+(.+?)(?:
+|$)', text, re.MULTILINE)
+    date_str = ""
+    date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
+    if date_match:
+        date_str = date_match.group(1)
+
+    for matchup, pick_line in legs:
+        matchup = matchup.strip()
+        pick_line = pick_line.strip()
+        # Extract team and odds from pick line: "Detroit Tigers (-310)(Live Game) Moneyline"
+        pick_match = re.match(r'^(.+?)\s*\(([+-]?\d+)\)', pick_line)
+        if pick_match:
+            team_pick = pick_match.group(1).strip()
+            odds = pick_match.group(2)
+            market = "Moneyline" if "moneyline" in pick_line.lower() else pick_line.split(")")[-1].strip()
+            bets.append({
+                "player": matchup, "prop": market, "line": 0,
+                "side": team_pick, "sport": "MLB",
+                "outcome": outcome, "wager": wager / max(1, n_picks),
+                "pick_count": n_picks, "bet_type": "game",
+                "source": "Bovada", "date": date_str,
+                "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5
+            })
+
+    # If no legs parsed but we have outcome, create a single record
+    if not bets and outcome != "PENDING":
+        bets.append({
+            "player": "Bovada Parlay", "prop": f"{n_picks}-Team Parlay",
+            "line": 0, "side": "WIN", "sport": "MLB",
+            "outcome": outcome, "wager": wager, "pick_count": n_picks,
+            "bet_type": "game", "source": "Bovada", "date": date_str,
+            "tier": "LEAN", "edge": 0, "prob": 0.5
+        })
+    return bets
+
+
+def parse_mybookie_slip_text(text: str) -> list:
+    """Parse MyBookie text slip into bet records."""
+    import re
+    bets = []
+    if not text:
+        return bets
+    tl = text.lower()
+
+    # Outcome
+    outcome = "PENDING"
+    if "straight bet - win" in tl or tl.rstrip().endswith("win"):
+        outcome = "WIN"
+    elif "straight bet - loss" in tl or tl.rstrip().endswith("loss"):
+        outcome = "LOSS"
+    elif re.search(r'win:\s*0\.00', tl):
+        outcome = "LOSS"
+    elif re.search(r'win:\s*[1-9]', tl):
+        outcome = "WIN"
+
+    # Wager
+    wager = 0.0
+    risk_match = re.search(r'risk:\s*([\d.]+)', tl)
+    if risk_match:
+        wager = float(risk_match.group(1))
+
+    # Parse each leg - MyBookie format:
+    # "Team Name ( Pitcher1 / Pitcher2 )-ODDS
+Winner...
+MLB | Baseball Team1 vs Team2
+Game Date: ..."
+    leg_pattern = re.compile(
+        r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*
+'
+        r'(.+?)
+'
+        r'(?:MLB|NBA|NFL|NHL|WNBA|Soccer)[^
+]*
+'
+        r'(?:Game Date:\s*([^
+]+))?',
+        re.MULTILINE | re.IGNORECASE
+    )
+    date_str = ""
+    for match in leg_pattern.finditer(text):
+        team = match.group(1).strip()
+        odds = match.group(2).strip()
+        bet_type = match.group(3).strip()
+        game_date = (match.group(4) or "").strip()
+        if not date_str and game_date:
+            date_str = game_date[:10]
+        bets.append({
+            "player": team, "prop": bet_type or "Moneyline",
+            "line": 0, "side": team, "sport": "MLB",
+            "outcome": outcome, "wager": wager / max(1, max(1, len(list(leg_pattern.finditer(text))))),
+            "pick_count": 1, "bet_type": "game",
+            "source": "MyBookie", "date": date_str,
+            "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5
+        })
+
+    if not bets and outcome != "PENDING":
+        bets.append({
+            "player": "MyBookie Bet", "prop": "Moneyline",
+            "line": 0, "side": "WIN", "sport": "MLB",
+            "outcome": outcome, "wager": wager, "pick_count": 1,
+            "bet_type": "game", "source": "MyBookie", "date": date_str,
+            "tier": "LEAN", "edge": 0, "prob": 0.5
+        })
+    return bets
+
+
 def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
     """
     Find FanDuel/DraftKings no-vig probability for a specific player+stat+line.
@@ -9522,6 +9669,52 @@ with tabs[7]:
                 st.text(raw_ocr)
             else:
                 st.caption("Upload a screenshot to see extracted text.")
+        # ── PASTE TEXT SLIP ─────────────────────────────
+        st.markdown("---")
+        st.markdown("### 📋 Paste Bet Slip Text")
+        st.caption("Paste Bovada or MyBookie text slips here — copy the text from the app or confirmation email.")
+        pasted_slip = st.text_area(
+            "Paste slip text (Bovada or MyBookie)",
+            height=180,
+            placeholder="Paste your Bovada or MyBookie slip text here...",
+            key="pasted_slip_text"
+        )
+        _slip_src = st.radio("Slip source:", ["Bovada", "MyBookie"], horizontal=True, key="slip_source_radio")
+        if st.button("🔍 Parse Text Slip", key="parse_text_slip_btn"):
+            if pasted_slip and pasted_slip.strip():
+                if _slip_src == "Bovada":
+                    _parsed = parse_bovada_slip_text(pasted_slip)
+                else:
+                    _parsed = parse_mybookie_slip_text(pasted_slip)
+                if _parsed:
+                    # Auto-log all parsed bets
+                    _logged = 0
+                    for _bet in _parsed:
+                        try:
+                            log_manual_bet(
+                                _bet.get("player",""),
+                                _bet.get("prop","Moneyline"),
+                                _bet.get("line",0),
+                                _bet.get("side",""),
+                                _bet.get("sport","MLB"),
+                                _bet.get("outcome","PENDING"),
+                                _bet.get("wager",0),
+                                _bet.get("pick_count",1),
+                                _bet.get("bet_type","game"),
+                                _bet.get("source","Bovada"),
+                                _bet.get("date",""),
+                            )
+                            _logged += 1
+                        except Exception as _e:
+                            st.caption(f"⚠️ Could not log: {_bet.get('player','')} — {str(_e)[:50]}")
+                    if _logged > 0:
+                        st.success(f"✅ Logged {_logged} bet(s) from {_slip_src} slip — Outcome: {_parsed[0].get('outcome','?')}")
+                        st.rerun()
+                else:
+                    st.warning(f"Could not parse {_slip_src} slip. Check format and try again.")
+            else:
+                st.warning("Please paste your slip text first.")
+
         st.markdown("---")
         st.markdown("### Log Single Bet (Manual Fallback)")
         st.caption("Only use if you can't upload a screenshot. Screenshot entry above is preferred.")
