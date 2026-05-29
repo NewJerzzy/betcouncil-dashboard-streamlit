@@ -609,6 +609,7 @@ PRIZEPICKS_MULTIPLIERS = {
 BDL_API_KEY = st.secrets.get("BALLSDONTLIE_API_KEY", "")
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
+SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
 SPORTMONKS_API_KEY = st.secrets.get("SPORTMONKS_API_KEY", "")
 UNIFIED_API_KEY = st.secrets.get("UNIFIED_API_KEY", "")
 RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
