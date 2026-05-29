@@ -3424,11 +3424,10 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                     "residential": "true",
                     "country": "us",
                     "render_js": "false",
-                    "premium_proxy": "true",
                 },
                 timeout=timeout
             )
-            # Log result for debugging
+            # Always return ScrapeOps response - let caller handle HTML/captcha check
             ct = resp.headers.get("content-type","")
             is_html = "html" in ct or resp.text.strip().startswith("<")
             st.session_state.setdefault("scrapeops_log", []).append({
@@ -3436,9 +3435,9 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 "size": len(resp.text), "html": is_html,
                 "ct": ct[:40]
             })
-            if resp.status_code == 200 and not is_html:
+            # Return if we got actual data
+            if resp.status_code == 200:
                 return resp
-            # Got HTML/captcha - fall through to direct
         except Exception as _e:
             st.session_state.setdefault("scrapeops_log", []).append({"url": url[:60], "error": str(_e)[:60]})
     return requests.get(url, headers=headers or {}, timeout=timeout)
