@@ -3920,8 +3920,7 @@ def parse_bovada_slip_text(text: str) -> list:
     bets = []
     if not text or not any(x in text.lower() for x in ['parlay', 'straight bet', 'ref.']):
         return bets
-    lines = [l.strip() for l in text.strip().split('
-') if l.strip()]
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
     tl = text.lower()
 
     # Outcome
@@ -3931,13 +3930,9 @@ def parse_bovada_slip_text(text: str) -> list:
         if win_match:
             winnings = float(win_match.group(1))
             outcome = "WIN" if winnings > 0 else "LOSS"
-    elif "
-loss
-" in tl or tl.strip().endswith("loss"):
+    elif "\nloss\n" in tl or tl.strip().endswith("loss"):
         outcome = "LOSS"
-    elif "
-win
-" in tl or tl.strip().endswith("win"):
+    elif "\nwin\n" in tl or tl.strip().endswith("win"):
         outcome = "WIN"
 
     # Wager
