@@ -8232,11 +8232,14 @@ with tabs[1]:
                             f'<span style="font-size:18px;font-weight:700;color:{_c};">{_edge_pct}</span>'
                             f'<span style="font-size:18px;font-weight:700;padding:2px 6px;border-radius:3px;background:{_c}22;color:{_c};border:0.5px solid {_c}44;">{_p.get("Tier","")}</span>'
                             f'</div>'
-                            f'<div style="display:flex;gap:16px;padding:3px 12px 7px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
-                            f'<span style="font-size:14px;color:#4a6a8a;">PPG <span style="color:#9aa8b8;font-weight:500;">{_avg:.1f}</span></span>'
+                            f'<div style="display:flex;gap:16px;padding:3px 12px 5px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
+                            f'<span style="font-size:14px;color:#4a6a8a;">Avg <span style="color:#9aa8b8;font-weight:500;">{_avg:.1f}</span></span>'
                             f'<span style="font-size:14px;color:#4a6a8a;">2-pick EV <span style="color:#9aa8b8;font-weight:500;">{_ev2}</span></span>'
                             f'<span style="font-size:14px;color:#4a6a8a;">Pinnacle <span style="color:#9aa8b8;font-weight:500;">{_p.get("PinnacleProb","—")}</span></span>'
                             f'{"<span style=\"font-size:14px;color:#22c55e;\">⚡ " + str(_p.get("BetterLineNote",""))[:35] + "</span>" if _p.get("BetterLineNote") else ""}'
+                            f'</div>'
+                            f'<div style="padding:2px 12px 6px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
+                            f'<span style="font-size:13px;color:#5a6a7a;font-style:italic;">→ Season avg {_avg:.1f} vs line {_p.get("Line","")} {"· "+_p.get("H2HNote","") if _p.get("H2HNote") else ""}{" · 📌 Pinnacle" if _p.get("PinnacleConfirms") else ""}{" · ⚠️ Blowout" if float(_p.get("SignalBlowout",0) or 0)<0 else ""}</span>'
                             f'</div>',
                             unsafe_allow_html=True
                         )
