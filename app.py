@@ -3416,15 +3416,10 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
     """Route through ScrapeOps residential proxy if key available, else direct."""
     if SCRAPEOPS_KEY:
         try:
+            from urllib.parse import quote
+            encoded_url = quote(url, safe='')
             resp = requests.get(
-                "https://proxy.scrapeops.io/v1/",
-                params={
-                    "api_key": SCRAPEOPS_KEY,
-                    "url": url,
-                    "residential": "true",
-                    "country": "us",
-                    "render_js": "false",
-                },
+                f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded_url}&residential=true&country=us&render_js=false",
                 timeout=timeout
             )
             # Always return ScrapeOps response - let caller handle HTML/captcha check
