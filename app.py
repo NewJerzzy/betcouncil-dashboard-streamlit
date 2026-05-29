@@ -3946,11 +3946,8 @@ def parse_bovada_slip_text(text: str) -> list:
     is_parlay = bool(parlay_match)
     n_picks = int(parlay_match.group(1)) if parlay_match else 1
 
-    # Parse each leg - Bovada format: "* Team1 @ Team2
-WinningTeam (odds)(type) Market"
-    legs = re.findall(r'\*\s+(.+?)\s*
-(.+?)(?:
-|$)', text, re.MULTILINE)
+    # Parse each leg - Bovada format: "* Team1 @ Team2 / WinningTeam (odds)(type) Market"
+    legs = re.findall(r'\*\s+(.+?)\s*\n(.+?)(?:\n|$)', text, re.MULTILINE)
     date_str = ""
     date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
     if date_match:
