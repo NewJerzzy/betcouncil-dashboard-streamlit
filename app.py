@@ -6732,6 +6732,21 @@ def fetch_sleeper_props(sport):
         return []
 
 
+def _fetch_parallel(fns: list) -> list:
+    """Run multiple fetch functions in parallel threads, return results in order."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results = [None] * len(fns)
+    with ThreadPoolExecutor(max_workers=min(len(fns), 6)) as ex:
+        futures = {ex.submit(fn): i for i, fn in enumerate(fns)}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                results[idx] = fut.result()
+            except Exception:
+                results[idx] = None
+    return results
+
+
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -7031,6 +7046,18 @@ def load_sport_data(sport):
     _mlb_pitchers    = st.session_state.get("mlb_pitchers", {})
     _parlayplay_alts = st.session_state.get("parlayplay_alt_lines", {})
     _fd_dk_alts      = st.session_state.get("fd_dk_alt_lines", [])
+
+    # Cache static data once per session (never changes mid-day)
+    _sport_key = f"_cached_{sport}"
+    if _sport_key not in st.session_state:
+        st.session_state[_sport_key] = {
+            "power": power_map.get(sport, {}),
+            "pace": NBA_TEAM_PACE if sport == "NBA" else {},
+            "def_ratings": {},  # populated lazily below
+        }
+    _static = st.session_state[_sport_key]
+    _power_ratings = _static["power"]
+    _pace_ratings  = _static["pace"]
 
     # Pre-load signal weights once — avoids disk read on every prop iteration
     _optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
@@ -9820,189 +9847,8 @@ with tabs[7]:
             else:
                 st.warning("Please paste your slip text first.")
 
-        st.markdown("---")
-        st.markdown("### Log Single Bet (Manual Fallback)")
-        st.caption("Only use if you can't upload a screenshot. Screenshot entry above is preferred.")
-        bet_type_sel = st.radio("Bet type", ["Player Prop", "Game Line"], horizontal=True, key="log_bet_type")
-        col_l1, col_l2 = st.columns(2)
-        with col_l1:
-            log_sport = st.selectbox("Sport", SPORTS, key="log_sport")
-            log_date = st.date_input("Date of bet", value=date.today(), key="log_date")
-            log_outcome = st.radio("Result", ["WIN", "LOSS"], horizontal=True, key="log_outcome")
-            log_wager = st.number_input("Amount wagered ($)", min_value=0.0, value=float(active_unit()), step=1.0, key="log_wager")
-        with col_l2:
-            if bet_type_sel == "Player Prop":
-                log_player = st.text_input("Player name", key="log_player")
-                log_prop = st.text_input("Stat (e.g. Points, Rebounds)", key="log_prop")
-                log_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="log_line")
-                log_side = st.radio("Side", ["OVER", "UNDER"], horizontal=True, key="log_side")
-                log_pick_count = st.radio("Part of a", [2, 3, 4, 5], horizontal=True, key="log_pick_count")
-                log_source = st.selectbox("Platform", ["PrizePicks", "Underdog", "ParlayPlay", "Other"], key="log_source")
-            else:
-                log_player = st.text_input("Matchup (e.g. CLE @ NYK)", key="log_game_matchup")
-                log_prop = st.selectbox("Bet type", ["Moneyline", "Spread", "Total OVER", "Total UNDER", "Alt Spread", "Alt Total"], key="log_game_bet_type")
-                log_line = st.number_input("Line/Number", min_value=-1000.0, value=0.0, step=0.5, key="log_game_line")
-                log_side = log_prop
-                log_pick_count = 1
-                log_source = st.selectbox("Book", ["Bovada", "MyBookie", "DraftKings", "FanDuel", "BetMGM", "Other"], key="log_game_source")
-        log_notes = st.text_input("Notes (optional)", placeholder="e.g. Jokic questionable, sharp line move", key="log_notes")
-        log_edge = st.number_input("Edge % (optional)", min_value=0.0, max_value=50.0, value=0.0, step=0.1, key="log_edge") / 100.0
-        st.markdown("---")
-        st.caption("ℹ️ Use this to log bets from any book. Results auto-update your bankroll and history.")
-    st.caption("ℹ️ Manually record a bet outcome. Updates win/loss record, bankroll, CLV tracking, and signal calibration.")
-    if st.button("\u2705 Submit Bet Result", key="submit_manual_bet"):
-            if not log_player:
-                st.error("Enter player name or matchup.")
-            elif log_wager <= 0:
-                st.error("Enter wager amount.")
-            else:
-                bet_date_str = datetime.combine(log_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
-                result = log_manual_bet(player=log_player, prop=log_prop, line=log_line, side=log_side, sport=log_sport, outcome=log_outcome, wager=log_wager, pick_count=log_pick_count, bet_type="prop" if bet_type_sel == "Player Prop" else "game", source=log_source, bet_date=bet_date_str, edge=log_edge if log_edge > 0 else None, notes=log_notes)
-                st.success(f"\u2705 Logged: {log_player} \u2014 {log_outcome} | Net: ${result['net']:+.2f}")
-                st.caption(f"Bankroll updated to ${st.session_state.bankroll:.2f} | History: {len(st.session_state.history)} bets")
-                st.rerun()
-    with log_tab2:
-        st.markdown("### 📋 Paste PrizePicks Results")
-        st.caption(
-            "Copy your PrizePicks result screen text and paste it here. "
-            "The parser reads the standard block format automatically. "
-            "**All picks are assumed OVER** — flip any UNDER picks in the confirm step."
-        )
-        pp_text_input = st.text_area(
-            "Paste PrizePicks result text",
-            height=260,
-            key="pp_text_paste",
-            placeholder=(
-                "José Ramírez\nIF\nMLB\nCLE\n1\nvs\nPHI\n0\nFinal\n1.5\nHits+Runs+RBIs\n1\n"
-                "Junior Caminero\nIF\nMLB\nTB\n4\nvs\nNYY\n2\nFinal\n1.5\nHits+Runs+RBIs\n2"
-            ),
-        )
 
-        pp_wager_col, pp_picks_col, pp_parse_col = st.columns([2, 2, 2])
-        pp_wager  = pp_wager_col.number_input("Wager ($)", min_value=0.0, value=1.0, step=0.5, key="pp_wager")
-        pp_picks  = pp_picks_col.number_input("# Picks", min_value=2, max_value=6, value=4, key="pp_picks")
-        pp_date   = st.date_input("Date of entry", value=date.today(), key="pp_paste_date")
 
-        if st.button("🔍 Parse PrizePicks Text", key="parse_pp_text_btn"):
-            if not pp_text_input.strip():
-                st.error("Nothing to parse — paste your result text above.")
-            else:
-                parsed_pp = parse_prizepicks_text(pp_text_input)
-                if parsed_pp:
-                    for b in parsed_pp:
-                        b["wager"]      = pp_wager
-                        b["pick_count"] = pp_picks
-                    st.session_state["pp_parsed_bets"] = parsed_pp
-                    st.success(f"✅ Found {len(parsed_pp)} prop(s) — review below, then submit.")
-                else:
-                    st.error("Could not parse any bets. Check that each block has 12 lines (name → position → sport … → stat → result).")
-
-        pp_parsed = st.session_state.get("pp_parsed_bets", [])
-        if pp_parsed:
-            st.markdown("#### Confirm Parsed Props")
-            st.caption("Flip any UNDER picks using the toggle. Edit outcomes if needed.")
-            for idx, bet in enumerate(pp_parsed):
-                with st.expander(f"{bet['player']}  —  {bet['prop']}  {bet['line']}  →  result: {bet.get('result', '?')}", expanded=True):
-                    ec1, ec2, ec3 = st.columns(3)
-                    outcome_choice = ec1.selectbox(
-                        "Outcome", ["WIN", "LOSS", "PENDING"],
-                        index=["WIN", "LOSS", "PENDING"].index(bet["outcome"]) if bet["outcome"] in ("WIN","LOSS","PENDING") else 2,
-                        key=f"pp_outcome_{idx}"
-                    )
-                    side_choice = ec2.selectbox(
-                        "Side", ["OVER", "UNDER"],
-                        index=0 if bet["side"] == "OVER" else 1,
-                        key=f"pp_side_{idx}"
-                    )
-                    sport_choice = ec3.selectbox(
-                        "Sport", ["NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF"],
-                        index=["NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF"].index(bet["sport"]) if bet["sport"] in ["NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF"] else 1,
-                        key=f"pp_sport_{idx}"
-                    )
-                    pp_parsed[idx]["outcome"] = outcome_choice
-                    pp_parsed[idx]["side"]    = side_choice
-                    pp_parsed[idx]["sport"]   = sport_choice
-
-            sub_col, clr_col = st.columns(2)
-            if sub_col.button("✅ Submit All", key="submit_pp_parsed"):
-                submitted_pp = 0
-                for bet in pp_parsed:
-                    if bet.get("outcome") not in ("WIN", "LOSS"):
-                        continue
-                    try:
-                        bd_str = datetime.combine(pp_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
-                        log_manual_bet(
-                            player=bet["player"], prop=bet["prop"],
-                            line=float(bet["line"]), side=bet["side"],
-                            sport=bet["sport"], outcome=bet["outcome"],
-                            wager=float(bet["wager"]), pick_count=int(bet["pick_count"]),
-                            bet_type="prop", source="PrizePicks Text Import",
-                            bet_date=bd_str,
-                        )
-                        submitted_pp += 1
-                    except Exception:
-                        continue
-                if submitted_pp > 0:
-                    st.success(f"✅ Submitted {submitted_pp} bets — Bankroll: ${st.session_state.bankroll:.2f}")
-                    st.session_state["pp_parsed_bets"] = []
-                    st.rerun()
-            if clr_col.button("❌ Clear", key="clear_pp_parsed"):
-                st.session_state["pp_parsed_bets"] = []
-                st.rerun()
-
-        st.markdown("---")
-        st.markdown("### CSV Bulk Entry")
-        st.caption("Paste multiple bets at once. One bet per line: Player, Stat, Line, OVER/UNDER, Sport, WIN/LOSS, Wager, PickCount")
-        st.caption("Example: Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2")
-        bulk_text = st.text_area("Paste bets here", height=200, key="bulk_bet_text", placeholder="Nikola Jokic, Points, 26.5, OVER, NBA, WIN, 25, 2\nJayson Tatum, Rebounds, 8.5, OVER, NBA, LOSS, 25, 2")
-        bulk_date = st.date_input("Date for all bets", value=date.today(), key="bulk_date")
-        if st.button("\U0001f4e5 Import All Bets", key="import_bulk_bets"):
-            if not bulk_text.strip():
-                st.error("No bets entered.")
-            else:
-                lines_list = [l.strip() for l in bulk_text.strip().split("\n") if l.strip()]
-                success_count = 0
-                error_count = 0
-                for line_text in lines_list:
-                    try:
-                        parts = [p.strip() for p in line_text.split(",")]
-                        if len(parts) < 7:
-                            error_count += 1
-                            continue
-                        player_b, prop_b = parts[0], parts[1]
-                        line_val_b = float(parts[2])
-                        side_b = parts[3].upper()
-                        sport_b = parts[4].upper()
-                        outcome_b = parts[5].upper()
-                        wager_b = float(parts[6])
-                        pick_count_b = int(parts[7]) if len(parts) > 7 else 2
-                        if outcome_b not in ("WIN", "LOSS"):
-                            error_count += 1
-                            continue
-                        bet_date_str_b = datetime.combine(bulk_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
-                        log_manual_bet(player=player_b, prop=prop_b, line=line_val_b, side=side_b, sport=sport_b, outcome=outcome_b, wager=wager_b, pick_count=pick_count_b, bet_type="prop", source="Manual Import", bet_date=bet_date_str_b)
-                        success_count += 1
-                    except Exception:
-                        error_count += 1
-                        continue
-                if success_count > 0:
-                    st.success(f"\u2705 Imported {success_count} bets | Bankroll: ${st.session_state.bankroll:.2f}")
-                if error_count > 0:
-                    st.warning(f"\u26a0\ufe0f {error_count} lines skipped \u2014 check format")
-                if success_count > 0:
-                    st.rerun()
-    st.markdown("---")
-    st.markdown("### \U0001f4ca Recent Manual Entries")
-    manual_history = [h for h in st.session_state.history if h.get("manual_entry") or h.get("source") in ("Screenshot Import","Manual")]
-    if manual_history:
-        st.caption(f"{len(manual_history)} manually logged bets")
-        manual_df = pd.DataFrame(manual_history[-20:])
-        show_cols_m = [c for c in ["timestamp", "player", "prop", "line", "side", "sport", "outcome", "wager", "net", "source"] if c in manual_df.columns]
-        st.dataframe(manual_df[show_cols_m].iloc[::-1], width="stretch", hide_index=True)
-    else:
-        st.caption("No manual entries yet.")
-
-# ----- TAB 6: LINE SHOP -----
 with tabs[8]:
     st.markdown("## \U0001f6d2 Line Shopping")
     board_ls = st.session_state.board_data
