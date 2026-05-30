@@ -9529,9 +9529,49 @@ with tabs[6]:
     if not BDL_API_KEY:
         st.warning("BallsDontLie API key required. Add BALLSDONTLIE_API_KEY to Streamlit Secrets.")
     else:
+        # ── Auto-suggest: search BDL as user types, populate from board if matched ──
+        # Pre-populate suggestions from today's loaded board (zero API calls)
+        board_player_names = sorted(set(p["Player"] for p in st.session_state.board_data)) if st.session_state.board_data else []
+
         col_pl1, col_pl2, col_pl3 = st.columns(3)
         with col_pl1:
-            pl_name = st.text_input("Player name", placeholder="Shai Gilgeous-Alexander", key="pl_name")
+            pl_name_input = st.text_input("Player name", placeholder="Start typing a name…", key="pl_name")
+            # Auto-suggest from loaded board
+            if pl_name_input and len(pl_name_input) >= 3:
+                _matches = [n for n in board_player_names if pl_name_input.lower() in n.lower()]
+                if _matches:
+                    _selected = st.selectbox("Suggestions from today's board", ["— type to search —"] + _matches[:8], key="pl_suggest")
+                    if _selected and _selected != "— type to search —":
+                        pl_name_input = _selected
+                        # Auto-fill opponent from board data
+                        _board_match = next((p for p in st.session_state.board_data if p["Player"] == _selected), None)
+                        if _board_match and not st.session_state.get("pl_opp"):
+                            st.session_state["pl_opp_autofill"] = _board_match.get("Opponent", "")
+                elif len(pl_name_input) >= 4:
+                    # Fall back to BDL search if not on today's board
+                    _bdl_cache_key = f"bdl_suggest_{pl_name_input[:6].lower()}"
+                    if _bdl_cache_key not in st.session_state:
+                        try:
+                            _sr = requests.get(
+                                "https://api.balldontlie.io/v1/players",
+                                headers={"Authorization": BDL_API_KEY},
+                                params={"search": pl_name_input, "per_page": 8},
+                                timeout=6
+                            )
+                            if _sr.status_code == 200:
+                                _sdata = _sr.json().get("data", [])
+                                st.session_state[_bdl_cache_key] = [
+                                    f"{p['first_name']} {p['last_name']}" for p in _sdata
+                                ]
+                        except Exception:
+                            st.session_state[_bdl_cache_key] = []
+                    _bdl_matches = st.session_state.get(_bdl_cache_key, [])
+                    if _bdl_matches:
+                        _selected2 = st.selectbox("Players found (BDL)", ["— select —"] + _bdl_matches, key="pl_bdl_suggest")
+                        if _selected2 and _selected2 != "— select —":
+                            pl_name_input = _selected2
+            pl_name = pl_name_input
+
         with col_pl2:
             pl_stat = st.selectbox("Stat", [
                 "Points", "Rebounds", "Assists", "3-PT Made",
@@ -9542,7 +9582,8 @@ with tabs[6]:
 
         col_pl4, col_pl5 = st.columns(2)
         with col_pl4:
-            pl_opp = st.text_input("Opponent (abbr)", placeholder="SAS", key="pl_opp")
+            _opp_default = st.session_state.pop("pl_opp_autofill", "")
+            pl_opp = st.text_input("Opponent (abbr)", placeholder="SAS", value=_opp_default, key="pl_opp")
         with col_pl5:
             pl_games = st.slider("Last N games", 5, 30, 15, key="pl_games")
 
@@ -9851,38 +9892,96 @@ with tabs[7]:
 
 with tabs[8]:
     st.markdown("## \U0001f6d2 Line Shopping")
+    st.caption("Compares lines across all loaded sources — DFS platforms + sportsbooks. Load the board first to populate.")
     board_ls = st.session_state.board_data
-    ud_props_ls = st.session_state.get("ud_props_compare", [])
-    ow_props_ls = st.session_state.get("oddswrap_props", [])
     if not board_ls:
         st.info("Load the board first.")
     else:
-        ud_dict_ls = {}
-        for p in ud_props_ls:
-            k = normalize_name(p["Player"])
-            if k not in ud_dict_ls:
-                ud_dict_ls[k] = {}
-            ud_dict_ls[k][p["Prop"]] = p["Line"]
+        # ── Build multi-source lookup from everything already in session (zero new API calls) ──
+        ls_sources = {}
+
+        def _ls_add(props_list, source_name):
+            for p in (props_list or []):
+                k = normalize_name(p.get("Player", ""))
+                prop = p.get("Prop", "")
+                line = p.get("Line")
+                if not k or not prop or line is None:
+                    continue
+                ls_sources.setdefault(k, {}).setdefault(prop, {})[source_name] = float(line)
+
+        _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
+        _pa_all = st.session_state.get("parlayapi_props_cache", [])
+        _ls_add([p for p in _pa_all if p.get("source","").lower() in ("parlayplay","parlay play")], "ParlayPlay")
+        for ow_p in (st.session_state.get("oddswrap_props", []) or []):
+            _bk = ow_p.get("Book", ow_p.get("source", "")).replace("oddswrap_","").title()
+            _bk = {"Draftkings":"DraftKings","Fanduel":"FanDuel","Betmgm":"BetMGM","Caesars":"Caesars","Betrivers":"BetRivers"}.get(_bk, _bk)
+            if _bk:
+                _ls_add([ow_p], _bk)
+        _sport_ls = st.session_state.get("current_sport", "NBA")
+        _odds_cache = os.path.join(CACHE_DIR, f"odds_api_props_{_sport_ls}.pkl")
+        if os.path.exists(_odds_cache):
+            try:
+                with open(_odds_cache, "rb") as _f:
+                    _odds_props = pickle.load(_f)
+                for _op in (_odds_props or []):
+                    _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada"}.get(_op.get("Book","").lower())
+                    if _bk2:
+                        _ls_add([_op], _bk2)
+            except Exception:
+                pass
+        _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
+
+        all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
+        BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Bovada","Sleeper"]
+        all_books_ls = [b for b in BOOK_ORDER if b in all_books_ls] + [b for b in all_books_ls if b not in BOOK_ORDER]
+
         rows_ls = []
-        for prop in board_ls[:20]:
+        for prop in board_ls[:50]:
             player_ls, pn_ls, pp_line_ls, side_ls = prop["Player"], prop["Prop"], prop["Line"], prop["Side"]
             norm_ls = normalize_name(player_ls)
-            ud_line_ls = ud_dict_ls.get(norm_ls, {}).get(pn_ls)
-            all_lines_ls = {"PrizePicks": pp_line_ls}
-            if ud_line_ls:
-                all_lines_ls["Underdog"] = ud_line_ls
-            best_book_ls = (min(all_lines_ls, key=all_lines_ls.get) if side_ls == "OVER" else max(all_lines_ls, key=all_lines_ls.get))
-            best_line_ls = all_lines_ls[best_book_ls]
-            rows_ls.append({"Player": player_ls, "Prop": pn_ls, "Side": side_ls, "PrizePicks": pp_line_ls, "Underdog": ud_line_ls if ud_line_ls else "\u2014", "Best Line": best_line_ls, "Best Book": best_book_ls, "Saves": round(abs(best_line_ls - pp_line_ls), 1) if best_line_ls != pp_line_ls else 0, "Tier": prop.get("Tier", "\u2014")})
-        st.dataframe(pd.DataFrame(rows_ls), width="stretch")
-        best_opps_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Saves"] >= 0.5]
-        if best_opps_ls:
-            st.markdown("### \U0001f525 Better Lines Available")
-            st.dataframe(pd.DataFrame(best_opps_ls)[["Player","Prop","PrizePicks","Best Line","Best Book","Saves","Tier"]], width="stretch")
-    disc_ls = st.session_state.get("multibook_discrepancies", [])
-    if disc_ls:
-        st.markdown("### \U0001f4ca Cross-Book Discrepancies")
-        st.dataframe(pd.DataFrame(disc_ls[:10]), width="stretch")
+            row = {"Player": player_ls, "Prop": pn_ls, "Side": side_ls, "Tier": prop.get("Tier","—"), "PrizePicks": pp_line_ls}
+            other_lines = {}
+            prop_sources = ls_sources.get(norm_ls, {}).get(pn_ls, {})
+            for bk in all_books_ls:
+                lv = prop_sources.get(bk)
+                row[bk] = lv if lv is not None else "—"
+                if lv is not None:
+                    other_lines[bk] = lv
+            all_cands = {"PrizePicks": pp_line_ls, **other_lines}
+            best_bk = min(all_cands, key=all_cands.get) if side_ls == "OVER" else max(all_cands, key=all_cands.get)
+            best_ln = all_cands[best_bk]
+            row["Best Book"] = best_bk
+            row["Best Line"] = best_ln
+            row["Edge Gain"] = round(abs(best_ln - pp_line_ls), 1) if best_ln != pp_line_ls else 0
+            rows_ls.append(row)
+
+        if rows_ls:
+            active_sources = ["PrizePicks"] + [b for b in all_books_ls if b != "PrizePicks"]
+            src_cols = st.columns(min(len(active_sources), 8))
+            for i, src in enumerate(active_sources[:8]):
+                count = sum(1 for r in rows_ls if r.get(src) not in ("—", None))
+                src_cols[i].metric(src, f"{count}")
+            st.markdown("---")
+            col_order = ["Player","Prop","Side","Tier","PrizePicks"] + [b for b in all_books_ls if b != "PrizePicks"] + ["Best Book","Best Line","Edge Gain"]
+            col_order = [c for c in col_order if c in rows_ls[0]]
+            st.dataframe(pd.DataFrame(rows_ls)[col_order], use_container_width=True, hide_index=True)
+            better_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Edge Gain"] >= 0.5]
+            if better_ls:
+                st.markdown("### \U0001f525 Better Lines Available Elsewhere")
+                st.caption(f"{len(better_ls)} props where another platform has a more favorable line (≥0.5)")
+                bc = ["Player","Prop","Side","Tier","PrizePicks","Best Book","Best Line","Edge Gain"]
+                st.dataframe(pd.DataFrame(better_ls)[[c for c in bc if c in better_ls[0]]], use_container_width=True, hide_index=True)
+            else:
+                st.success("✅ PrizePicks has the best available line on all loaded props.")
+        disc_ls = st.session_state.get("multibook_discrepancies", [])
+        if disc_ls:
+            st.markdown("### \U0001f4ca Cross-Book Discrepancies")
+            st.caption("Large gaps between books signal sharp money or line errors")
+            st.dataframe(pd.DataFrame(disc_ls[:10]), use_container_width=True, hide_index=True)
+        arb_ls = st.session_state.get("arb_opportunities", [])
+        if arb_ls:
+            st.markdown("### \u26a1 Arbitrage Opportunities")
+            st.dataframe(pd.DataFrame(arb_ls[:10]), use_container_width=True, hide_index=True)
 
 # ----- TAB 7: SYSTEM -----
 with tabs[9]:
