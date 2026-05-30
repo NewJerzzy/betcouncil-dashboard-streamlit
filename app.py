@@ -7606,13 +7606,30 @@ if "persistence_loaded" not in st.session_state:
     gist_history = load_from_gist("history", None)
     gist_locks = load_from_gist("locks", None)
     gist_bankroll = load_from_gist("bankroll", None)
-    # Use local cache - filter out known bad patterns (garbled player names, impossible lines)
-    _raw_history = load_json_data(HISTORY_PATH, [])
-    _clean_history = [h for h in _raw_history
-                      if h.get("player","") and len(h.get("player","")) < 40
-                      and float(h.get("line",0) or 0) < 100
-                      and h.get("outcome","") in ("WIN","LOSS","PENDING","PUSH")]
+    # Merge Gist + local cache — Gist is source of truth on Streamlit Cloud
+    _local_history = load_json_data(HISTORY_PATH, [])
+    _gist_history  = gist_history if isinstance(gist_history, list) else []
+    # Deduplicate by timestamp+player+prop — prefer Gist entry on conflict
+    _seen_keys = set()
+    _merged = []
+    for h in _gist_history + _local_history:
+        _key = (h.get("timestamp",""), h.get("player",""), h.get("prop",""))
+        if _key not in _seen_keys:
+            _seen_keys.add(_key)
+            _merged.append(h)
+    # Filter out obviously corrupted entries (UI text captured instead of values)
+    _GARBAGE_NAMES = {"show details", "unknown player", "show details v", "show details ~"}
+    _clean_history = [
+        h for h in _merged
+        if h.get("player","") and len(h.get("player","")) < 50
+        and h.get("outcome","") in ("WIN","LOSS","PENDING","PUSH")
+        and normalize_name(h.get("player","")) not in _GARBAGE_NAMES
+        and not str(h.get("player","")).startswith("@")
+    ]
     st.session_state.history = _clean_history
+    # If Gist had more clean data than local, resync local to match
+    if len(_clean_history) > len(_local_history):
+        save_json_data(HISTORY_PATH, _clean_history)
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
     st.session_state.day_start_br = st.session_state.bankroll
