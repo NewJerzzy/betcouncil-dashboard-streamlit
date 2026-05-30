@@ -2548,10 +2548,17 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 h_power = power_ratings.get(home_team, 112.0)
                 a_power = power_ratings.get(away_team, 112.0)
                 avg_pace = (h_pace + a_pace) / 2
-                base_total = 220.0
+                base_total = 227.0  # updated 2025-26 season baseline
                 pace_adj = (avg_pace - 99.5) * 1.5
                 off_adj = ((h_power + a_power) / 2 - 112.0) * 0.8
                 fair_total = base_total + pace_adj + off_adj
+            elif sport == "WNBA":
+                # WNBA totals — pace-adjusted, base ~165 per 2025 season
+                h_power = power_ratings.get(home_team, 106.0)
+                a_power = power_ratings.get(away_team, 106.0)
+                base_total = 165.0
+                off_adj = ((h_power + a_power) / 2 - 106.0) * 0.6
+                fair_total = base_total + off_adj
             elif sport == "MLB":
                 base_total = 8.5
                 mlb_pitchers = _mlb_pitchers
@@ -2589,6 +2596,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     total_edge_pct = total_edge / 8.0
                 elif sport == "NFL":
                     total_edge_pct = total_edge / 30.0
+                elif sport == "WNBA":
+                    total_edge_pct = total_edge / 30.0  # WNBA ~165pt range, similar scale to NFL
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
@@ -2616,7 +2625,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 h_power = power_ratings[home_team]
                 a_power = power_ratings[away_team]
                 power_diff = h_power - a_power
-                h_fair = 1 / (1 + math.exp(-power_diff/7))
+                # Sport-specific sigmoid divisors — tuned to each sport's power rating scale
+                # NBA/NFL/WNBA use 100-112 scale; MLB uses same scale but smaller diffs
+                # NHL uses same scale; sigmoid /7 was too flat for all except NHL
+                _ml_divisor = {"NBA": 4, "NFL": 4, "WNBA": 4, "MLB": 1.5, "NHL": 7}.get(sport, 7)
+                h_fair = 1 / (1 + math.exp(-power_diff / _ml_divisor))
                 a_fair = 1 - h_fair
                 h_ml_edge = h_fair - h_implied
                 a_ml_edge = a_fair - a_implied
@@ -2716,6 +2729,9 @@ def analyze_all_games(games, sport, home_teams, away_teams):
         "Buffalo Sabres": 99.5, "Chicago Blackhawks": 98.0,
     }
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
+    # Soccer/UFC/Tennis/Golf have no power rating data — skip game line analysis
+    if sport in ("Soccer", "UFC", "Tennis", "Golf"):
+        return all_game_analysis
     power_ratings = power_map.get(sport, {})
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings)
