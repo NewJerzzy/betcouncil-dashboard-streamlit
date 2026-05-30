@@ -7076,11 +7076,17 @@ def load_sport_data(sport):
     # Cache static data once per session (never changes mid-day)
     _sport_key = f"_cached_{sport}"
     if _sport_key not in st.session_state:
-        _power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
+        _power_map = {
+            "NBA": NBA_POWER_RATINGS,
+            "WNBA": {},
+            "MLB": {},
+            "NHL": {},
+            "NFL": {},
+        }
         st.session_state[_sport_key] = {
             "power": _power_map.get(sport, {}),
             "pace": NBA_TEAM_PACE if sport == "NBA" else {},
-            "def_ratings": {},  # populated lazily below
+            "def_ratings": {},
         }
     _static = st.session_state[_sport_key]
     _power_ratings = _static["power"]
