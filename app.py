@@ -3273,6 +3273,18 @@ def fetch_underdog_props(sport):
     sport_id = sport_map.get(sport)
     if not sport_id:
         return []
+    # ── Cache layer (was missing — added for parity with all other fetch functions) ──
+    cache_path = os.path.join(CACHE_DIR, f"underdog_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 25:
+            try:
+                with open(cache_path, "rb") as _f:
+                    cached = pickle.load(_f)
+                if cached:
+                    return cached
+            except Exception:
+                pass
     # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
     product_exp_id = "018e1234-5678-9abc-def0-123456789006"
     state_config_id = "725014ef-3570-4e93-871d-d69674ab3521"
@@ -3409,6 +3421,12 @@ def fetch_underdog_props(sport):
                             props.append({"Player": name, "Prop": stat_name,
                                         "Line": float(line_val), "Side": "OVER",
                                         "Sport": sport, "source": "Underdog"})
+        if props:
+            try:
+                with open(cache_path, "wb") as _f:
+                    pickle.dump(props, _f)
+            except Exception:
+                pass
         return props
     except Exception as e:
         print(f"Underdog props error: {e}")
@@ -6846,14 +6864,61 @@ def load_sport_data(sport):
     else:
         season_avgs = PLAYER_AVERAGES.get(sport, {})
     defaults = DEFAULT_AVERAGES.get(sport, DEFAULT_AVERAGES["NBA"])
-    pp_props = scrape_prizepicks(sport)
-    ud_props_compare = fetch_underdog_props(sport)
-    dk_salaries = fetch_dk_salaries(sport)
-    st.session_state["dk_salaries"] = dk_salaries
 
-    # Fetch Pinnacle fair value lines — 1 call per board load, cached 60 min
-    pinnacle_data = fetch_pinnacle_lines(sport)
-    st.session_state[f"pinnacle_{sport}"] = pinnacle_data
+    # ── PARALLEL FETCH — all independent data sources fire simultaneously ──
+    # Groups fetches with no inter-dependencies into one ThreadPoolExecutor call.
+    # _fetch_parallel was built last session but never wired in — now connected.
+    def _pf_prizepicks():   return scrape_prizepicks(sport)
+    def _pf_underdog():     return fetch_underdog_props(sport)
+    def _pf_dk_sal():       return fetch_dk_salaries(sport)
+    def _pf_pinnacle():     return fetch_pinnacle_lines(sport)
+    def _pf_oddswrap():     return fetch_oddswrap_props(sport)
+    def _pf_parlayapi():    return fetch_parlayapi_props(sport)
+    def _pf_odds_api():     return fetch_odds_api_props(sport)
+    def _pf_oddspapi():     return fetch_oddspapi_props(sport)
+    def _pf_bdl():          return fetch_bdl_props(sport)
+    def _pf_sleeper():      return fetch_sleeper_props(sport)
+    def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL"] else {}
+    def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
+    def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
+    def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
+    def _pf_game_lines():   return fetch_game_lines(sport)
+    def _pf_parlayplay():   return fetch_parlayplay_props(sport)
+
+    _parallel_fns = [
+        _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
+        _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
+        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_public,
+        _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
+    ]
+    _results = _fetch_parallel(_parallel_fns)
+    (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
+     oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
+     bdl_props_raw, sleeper_props_raw, injuries, public_betting,
+     an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw) = _results
+
+    # Unpack game_lines tuple safely
+    if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
+        games, is_playoff, home_teams, away_teams = _game_lines_result
+    else:
+        games, is_playoff, home_teams, away_teams = [], False, {}, {}
+
+    # Store parallel results into session state
+    st.session_state["dk_salaries"]      = dk_salaries or []
+    st.session_state[f"pinnacle_{sport}"] = pinnacle_data or {}
+    st.session_state["oddswrap_props"]   = oddswrap_props or []
+    st.session_state["ud_props_compare"] = ud_props_compare or []
+    st.session_state["officials_data"]   = officials_data_raw or {}
+    if public_betting:
+        st.session_state["public_betting_data"] = public_betting
+    if an_props:
+        st.session_state["an_props_data"] = an_props
+
+    # Build action network lookup
+    an_lookup = {}
+    for ap in (an_props or []):
+        key = (ap.get("player_abbr","").lower(), ap.get("stat",""))
+        an_lookup[key] = ap
 
     # Build cross-platform line lookup for better line detection
     # Includes DFS platforms + sportsbooks for maximum line shopping
@@ -6899,30 +6964,25 @@ def load_sport_data(sport):
             "side": alt_prop.get("Side", "OVER")
         })
     st.session_state["better_lines_lookup"] = better_lines
-    oddswrap_props = fetch_oddswrap_props(sport)
-    st.session_state["oddswrap_props"] = oddswrap_props
-    st.session_state["ud_props_compare"] = ud_props_compare
-    multibook_discrepancies = compare_multibook_lines(pp_props if pp_props else [], oddswrap_props)
+    # oddswrap already fetched in parallel above — just compute discrepancies
+    multibook_discrepancies = compare_multibook_lines(pp_props if pp_props else [], oddswrap_props or [])
     st.session_state["line_discrepancies"] = []
     st.session_state["multibook_discrepancies"] = multibook_discrepancies
-    
+
     props = []  # Initialize — will be set by fallback chain below
     if pp_props:
         props = pp_props
     elif ud_props_compare:
         props = ud_props_compare
     else:
-        # All primary DFS sources failed - try aggregator immediately
-        parlayapi_props = fetch_parlayapi_props(sport)
+        # All primary DFS sources failed — use parallel-fetched alternates
+        parlayapi_props = parlayapi_props_raw or []
         if parlayapi_props:
-            # Debug: show what sources are present
-            sources = set(p.get("source","").lower() for p in parlayapi_props[:50])
             parlayplay_props = [p for p in parlayapi_props if p.get("source","").lower() in ("parlayplay","parlay play")]
             pa_underdog = [p for p in parlayapi_props if p.get("source","").lower() in ("underdog","underdog fantasy")]
             pa_pp = [p for p in parlayapi_props if p.get("source","").lower() in ("prizepicks","prize picks")]
             if pa_underdog:
                 st.session_state["ud_props_compare"] = pa_underdog
-            # Use best available source, fall back to all props if none match
             if parlayplay_props:
                 props = parlayplay_props
             elif pa_underdog:
@@ -6930,57 +6990,27 @@ def load_sport_data(sport):
             elif pa_pp:
                 props = pa_pp
             else:
-                # Use all props regardless of source
                 props = parlayapi_props
+        elif parlayplay_props_raw:
+            props = parlayplay_props_raw
+        elif oddswrap_props:
+            props = [p for p in oddswrap_props if p.get("Side") == "OVER"]
+        elif odds_api_props_raw:
+            props = odds_api_props_raw
+        elif oddspapi_props_raw:
+            props = oddspapi_props_raw
+        elif sport == "NBA" and BDL_API_KEY and bdl_props_raw:
+            props = bdl_props_raw
+        elif sleeper_props_raw:
+            props = sleeper_props_raw
         else:
-            parlayplay_props = fetch_parlayplay_props(sport)
-            if parlayplay_props:
-                props = parlayplay_props
-            elif oddswrap_props:
-                props = [p for p in oddswrap_props if p.get("Side") == "OVER"]
+            cached_props = st.session_state.get("last_good_props", {}).get(sport, [])
+            if cached_props:
+                props = cached_props
             else:
-                odds_api_props = fetch_odds_api_props(sport)
-                if odds_api_props:
-                    props = odds_api_props
-                else:
-                    oddspapi_props = fetch_oddspapi_props(sport)
-                    if oddspapi_props:
-                        props = oddspapi_props
-                    elif sport == "NBA" and BDL_API_KEY:
-                        bdl_props = fetch_bdl_props(sport)
-                        if bdl_props:
-                            props = bdl_props
-                        else:
-                            games, _, _, _ = fetch_game_lines(sport)
-                            return [], games, 0, 0, {}, {}
-                    else:
-                        # Try Sleeper DFS projections
-                        sleeper_props = fetch_sleeper_props(sport)
-                        if sleeper_props:
-                            props = sleeper_props
-                        else:
-                            # Last resort: cached props from previous load
-                            cached_props = st.session_state.get("last_good_props", {}).get(sport, [])
-                            if cached_props:
-                                props = cached_props
-                            else:
-                                games, _, _, _ = fetch_game_lines(sport)
-                                return [], games, 0, 0, {}, {}
-    
-    injuries = fetch_injury_news(sport) if sport in ["NBA", "MLB", "NFL", "NHL"] else {}
-    public_betting = {}
-    if sport in ["NBA", "MLB", "NHL", "NFL"]:
-        public_betting = fetch_public_betting(sport)
-        st.session_state["public_betting_data"] = public_betting
-    an_props = []
-    if sport in ["NBA", "MLB", "NHL", "NFL", "WNBA"]:
-        an_props = fetch_action_network_props(sport)
-        st.session_state["an_props_data"] = an_props
-    an_lookup = {}
-    for ap in an_props:
-        key = (ap["player_abbr"].lower(), ap["stat"])
-        an_lookup[key] = ap
-    games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
+                return [], games, 0, 0, {}, {}
+
+    # injuries, public_betting, an_props, games already fetched in parallel above
     b2b_teams = set()
     try:
         yesterday = date.today() - timedelta(days=1)
@@ -7000,11 +7030,7 @@ def load_sport_data(sport):
     except Exception:
         pass
     game_ids = fetch_espn_game_ids(sport)
-    if sport in ["NBA", "MLB"]:
-        officials_data = fetch_todays_referees(sport)
-        st.session_state["officials_data"] = officials_data
-    else:
-        st.session_state["officials_data"] = {}
+    # officials_data already fetched in parallel — session_state set above
     power_divergences = {}
     if sport == "NBA":
         for game in games:
