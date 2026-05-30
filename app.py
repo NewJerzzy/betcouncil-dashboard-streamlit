@@ -7265,9 +7265,9 @@ def load_sport_data(sport):
         h2h_note = ""
         if opp_abbr:
             try:
-                game_logs = get_player_game_logs(player, sport, 20)
+                game_logs = fetch_player_game_logs(player, sport, 20)
                 if game_logs:
-                    h2h_rate, h2h_games, _ = h2h_hit_rate(game_logs, opp_abbr, stat_norm, line)
+                    h2h_rate, h2h_games, _ = compute_h2h_hit_rate(game_logs, opp_abbr, stat_norm, line)
                     if h2h_games >= 3:
                         if h2h_rate >= 0.70:
                             h2h_adj = 0.02
