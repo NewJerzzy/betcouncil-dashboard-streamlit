@@ -7562,6 +7562,237 @@ def load_sport_data(sport):
     enriched.sort(key=lambda x: x["Edge"], reverse=True)
     for prop in enriched:
         prop["LockScore"] = calculate_lock_quality_score(prop)
+
+    # ═══════════════════════════════════════════════════════════
+    # ENGINE 1 — NARRATIVE REASONING
+    # Generates plain-English "why this makes sense" + "biggest
+    # risk" for every SOVEREIGN/ELITE/APPROVED prop.
+    # ═══════════════════════════════════════════════════════════
+    for prop in enriched:
+        if prop.get("Tier") not in ("SOVEREIGN","ELITE","APPROVED"):
+            prop["Narrative"] = ""
+            prop["NarrativeRisk"] = ""
+            continue
+        player   = prop.get("Player","")
+        stat     = prop.get("Prop","")
+        line     = prop.get("Line",0)
+        avg      = prop.get("Avg",0)
+        edge     = prop.get("Edge",0)
+        side     = prop.get("Side","OVER")
+        tier     = prop.get("Tier","")
+        opp      = prop.get("Opponent", opp_team_abbrev if 'opp_team_abbrev' in dir() else "")
+        is_home  = prop.get("SignalLocation",0) > 0
+        b2b      = prop.get("SignalRest",0) < 0
+        sig_def  = prop.get("SignalDefense",0)
+        sig_base = prop.get("SignalBase",0)
+        sig_pace = prop.get("SignalPace",0)
+        h2h_note = prop.get("H2HNote","")
+        pinn     = prop.get("PinnacleConfirms", None)
+        injury   = prop.get("Injury","")
+        sharp    = prop.get("SharpFlag","")
+        trend    = prop.get("Trend","")
+        weather  = prop.get("WeatherNote","")
+        ref_note = prop.get("RefNote","")
+        better   = prop.get("BetterLineNote","")
+        an_grade = prop.get("AN_Grade","")
+        blowout  = prop.get("SignalBlowout",0)
+
+        # Build WHY narrative
+        why_parts = []
+        diff = avg - line if side == "OVER" else line - avg
+        if diff > 0:
+            why_parts.append(f"averaging {avg:.1f} vs line of {line} ({diff:+.1f} cushion)")
+        if sig_def > 0.02:
+            why_parts.append(f"weak opponent defense (+{sig_def:.0%} boost)")
+        elif sig_def < -0.02:
+            why_parts.append(f"tough opponent defense ({sig_def:.0%})")
+        if is_home:
+            why_parts.append("home court advantage")
+        if h2h_note and "%" in h2h_note:
+            why_parts.append(f"strong H2H history ({h2h_note})")
+        if pinn is True:
+            why_parts.append("Pinnacle confirms edge")
+        if sharp and "↑" in sharp:
+            why_parts.append("sharp money aligned")
+        if sig_pace > 0.01:
+            why_parts.append("fast-paced matchup favors volume")
+        if ref_note and "foul" in ref_note.lower():
+            why_parts.append(f"ref tendency: {ref_note}")
+        if an_grade in ("SOVEREIGN","ELITE"):
+            why_parts.append("Action Network projection confirms")
+        narrative = (f"{player} {side} {line} {stat}: " +
+                     (", ".join(why_parts[:3]) if why_parts else f"edge {edge:.1%} above threshold"))
+
+        # Build RISK narrative
+        risk_parts = []
+        if b2b:
+            risk_parts.append("back-to-back fatigue (-8%)")
+        if blowout < -0.02:
+            risk_parts.append(f"blowout risk in this matchup")
+        if injury:
+            risk_parts.append(f"injury flag: {injury}")
+        if pinn is False:
+            risk_parts.append("Pinnacle fades this pick")
+        if prop.get("Quality","") == "Default":
+            risk_parts.append("using default averages — real stats unknown")
+        if prop.get("OddsType","") == "demon":
+            risk_parts.append("Demon line — boosted payout = harder target")
+        if weather and any(w in weather.lower() for w in ("wind","cold","rain")):
+            risk_parts.append(f"weather: {weather}")
+        if trend and "↓" in trend:
+            risk_parts.append("recent downward trend")
+        risk = (", ".join(risk_parts[:3]) if risk_parts else "No major flags")
+
+        prop["Narrative"]     = narrative
+        prop["NarrativeRisk"] = f"⚠️ Risk: {risk}"
+
+    # ═══════════════════════════════════════════════════════════
+    # ENGINE 2 — LOSS PATTERN ANALYZER
+    # Runs after 20+ resolved bets. Detects patterns in losses
+    # and surfaces actionable diagnostics into session state.
+    # ═══════════════════════════════════════════════════════════
+    _history_all = st.session_state.get("history", [])
+    _resolved    = [h for h in _history_all if h.get("outcome") in ("WIN","LOSS")]
+    _loss_patterns = []
+    if len(_resolved) >= 20:
+        _losses = [h for h in _resolved if h.get("outcome") == "LOSS"]
+        _wins   = [h for h in _resolved if h.get("outcome") == "WIN"]
+        _total  = len(_resolved)
+        _wr     = len(_wins) / _total
+
+        # Pattern: away game losses
+        _away_losses = [h for h in _losses if not h.get("signals_active",{}).get("location_home", True)]
+        _away_total  = [h for h in _resolved if not h.get("signals_active",{}).get("location_home", True)]
+        if len(_away_total) >= 5:
+            _away_wr = sum(1 for h in _away_total if h.get("outcome") == "WIN") / len(_away_total)
+            if _away_wr < _wr - 0.10:
+                _loss_patterns.append(f"📍 Away game picks hitting only {_away_wr:.0%} vs {_wr:.0%} overall — location signal may be under-weighted")
+
+        # Pattern: back-to-back losses
+        _b2b_losses = [h for h in _losses if h.get("signals_active",{}).get("back_to_back", False)]
+        _b2b_total  = [h for h in _resolved if h.get("signals_active",{}).get("back_to_back", False)]
+        if len(_b2b_total) >= 3:
+            _b2b_wr = sum(1 for h in _b2b_total if h.get("outcome") == "WIN") / len(_b2b_total)
+            if _b2b_wr < 0.40:
+                _loss_patterns.append(f"😴 Back-to-back picks hitting only {_b2b_wr:.0%} — consider avoiding B2B props")
+
+        # Pattern: sport-specific underperformance
+        _sport_groups = {}
+        for h in _resolved:
+            sp = h.get("sport","?")
+            _sport_groups.setdefault(sp, []).append(h)
+        for sp, records in _sport_groups.items():
+            if len(records) >= 8:
+                sp_wr = sum(1 for h in records if h.get("outcome") == "WIN") / len(records)
+                if sp_wr < _wr - 0.12:
+                    _loss_patterns.append(f"📊 {sp} picking at only {sp_wr:.0%} vs {_wr:.0%} overall — review {sp} signal weights")
+
+        # Pattern: tier-level mismatch
+        for tier_check in ("SOVEREIGN","ELITE","APPROVED","LEAN"):
+            _tier_records = [h for h in _resolved if h.get("tier","") == tier_check]
+            if len(_tier_records) >= 5:
+                _tier_wr = sum(1 for h in _tier_records if h.get("outcome") == "WIN") / len(_tier_records)
+                _expected = {"SOVEREIGN": 0.65, "ELITE": 0.60, "APPROVED": 0.58, "LEAN": 0.55}.get(tier_check, 0.58)
+                if _tier_wr < _expected - 0.10:
+                    _loss_patterns.append(f"🎯 {tier_check} tier hitting {_tier_wr:.0%} vs expected {_expected:.0%} — thresholds may be too loose")
+                elif _tier_wr > _expected + 0.12 and len(_tier_records) >= 10:
+                    _loss_patterns.append(f"✅ {tier_check} tier crushing at {_tier_wr:.0%} — model is well-calibrated here")
+
+        # Pattern: default-average prop losses
+        _default_losses = [h for h in _losses if h.get("tier","") in ("SOVEREIGN","ELITE") and not h.get("signals_active",{}).get("base_positive", True)]
+        if len(_default_losses) >= 3:
+            _loss_patterns.append(f"⚠️ {len(_default_losses)} SOVEREIGN/ELITE losses came from props without strong base signal — review edge calculation on low-data props")
+
+    st.session_state["loss_patterns"] = _loss_patterns
+
+    # ═══════════════════════════════════════════════════════════
+    # ENGINE 3 — CONTEXTUAL OVERRIDE
+    # Detects real-world situations where math is right but
+    # context says otherwise. Warns AND downgrades with flag.
+    # User can manually override by re-locking post-override.
+    # ═══════════════════════════════════════════════════════════
+    _today_month = date.today().month
+    _is_late_season = _today_month in [3, 4, 6, 9]  # NBA/NHL playoffs, NFL preseason end, MLB late
+    for prop in enriched:
+        if prop.get("Tier") not in ("SOVEREIGN","ELITE","APPROVED"):
+            continue
+        _overrides = []
+        _original_tier = prop.get("Tier","")
+        _player  = prop.get("Player","")
+        _team    = PLAYER_TEAM_MAP.get(_player,"")
+        _stat    = prop.get("Prop","")
+        _avg     = prop.get("Avg", 0)
+        _line    = prop.get("Line", 0)
+        _games   = games
+
+        # Check 1: Clinched/Eliminated — team has nothing to play for
+        # Proxy: late season + heavy favorite spread (team resting starters)
+        if _is_late_season and _team and _games:
+            for game in _games:
+                matchup = game.get("Matchup","")
+                if _team in matchup:
+                    try:
+                        spread_raw = str(game.get("Spread","0")).replace("+","")
+                        spread_val = abs(float(spread_raw)) if spread_raw not in ("—","") else 0
+                        if spread_val >= 12 and _stat in ("Points","Pts+Reb+Ast","Rebounds","Assists"):
+                            _overrides.append(f"🗓️ Late season + large spread ({spread_raw}) — possible rest/load management situation. Starters may play limited minutes.")
+                            if _original_tier == "SOVEREIGN":
+                                prop["Tier"] = "ELITE"
+                                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: late season load mgmt risk"
+                            elif _original_tier == "ELITE":
+                                prop["Tier"] = "APPROVED"
+                                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: late season load mgmt risk"
+                    except (ValueError, TypeError):
+                        pass
+
+        # Check 2: Recent low minutes — player averaging far less than baseline
+        _sample_size = prop.get("SampleSize", 0)
+        _conf_mult = prop.get("ConfidenceMult", 1.0)
+        if isinstance(_sample_size, (int,float)) and _sample_size >= 3:
+            if _conf_mult < 0.80 and _original_tier in ("SOVEREIGN","ELITE"):
+                _overrides.append(f"📉 Confidence multiplier {_conf_mult:.0%} — small sample or recent minute restriction detected. Stats may not reflect current role.")
+                if _original_tier == "SOVEREIGN":
+                    prop["Tier"] = "ELITE"
+                    prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: low sample confidence"
+                elif _original_tier == "ELITE":
+                    prop["Tier"] = "APPROVED"
+                    prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: low sample confidence"
+
+        # Check 3: Injury flag on a high-tier pick
+        if prop.get("Injury","") and _original_tier in ("SOVEREIGN","ELITE"):
+            _overrides.append(f"🚑 Injury flag active: {prop['Injury']}. High-tier pick with injury concern — monitor status before locking.")
+            if _original_tier == "SOVEREIGN":
+                prop["Tier"] = "ELITE"
+                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: injury flag"
+            elif _original_tier == "ELITE":
+                prop["Tier"] = "APPROVED"
+                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: injury flag"
+
+        # Check 4: Line significantly above season average (fade signal)
+        if isinstance(_avg, (int,float)) and _avg > 0 and isinstance(_line, (int,float)) and _line > 0:
+            pct_above = (_line - _avg) / _avg
+            if pct_above > 0.20 and prop.get("Side","OVER") == "OVER":
+                _overrides.append(f"📊 Line {_line} is {pct_above:.0%} above season avg {_avg:.1f}. Even with edge, chasing a historically inflated line.")
+                if _original_tier == "SOVEREIGN":
+                    prop["Tier"] = "ELITE"
+                    prop["TierNote"] = prop.get("TierNote","") + f" | ⬇️ Contextual: line {pct_above:.0%} above avg"
+
+        # Check 5: Pinnacle AND FD/DK both fade — strong market disagreement
+        if prop.get("PinnacleConfirms") is False and prop.get("FDDKFades") is True:
+            _overrides.append("🚫 Both Pinnacle AND FanDuel/DK fade this pick. Two sharp books disagree with model — high-confidence fade signal.")
+            if _original_tier in ("SOVEREIGN","ELITE"):
+                prop["Tier"] = "APPROVED"
+                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: dual sharp fade"
+            elif _original_tier == "APPROVED":
+                prop["Tier"] = "LEAN"
+                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: dual sharp fade"
+
+        # Store overrides and original tier for display
+        prop["ContextOverrides"]  = _overrides
+        prop["OriginalTier"]      = _original_tier if _overrides else ""
+        prop["OverrideActive"]    = len(_overrides) > 0 and _original_tier != prop.get("Tier","")
+
+
     quality_sorted = sorted(enriched, key=lambda x: x.get("LockScore", 0), reverse=True)
     st.session_state["quality_sorted_board"] = quality_sorted
 
@@ -8340,6 +8571,24 @@ with tabs[1]:
                             f'</div>',
                             unsafe_allow_html=True
                         )
+                        # ── Engine 1: Narrative reasoning ──
+                        if _p.get('Narrative'):
+                            st.markdown(
+                                f'<div style="padding:4px 12px 4px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'  
+                                f'<span style="font-size:13px;color:#9ab8d0;">💡 {_p.get("Narrative","")}</span>'
+                                f'</div>'
+                                f'<div style="padding:2px 12px 6px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
+                                f'<span style="font-size:12px;color:#c0734a;">{_p.get("NarrativeRisk","")}</span>'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+                        # ── Engine 3: Contextual override warning ──
+                        if _p.get('OverrideActive'):
+                            _ov_html = '<div style="padding:5px 12px 6px 52px;background:#1a0d08;border:1px solid #e04040aa;border-top:none;border-left:3px solid #e04040;">'
+                            for _ov in _p.get('ContextOverrides', []):
+                                _ov_html += f'<div style="font-size:12px;color:#e04040;margin-bottom:2px;">⚠️ {_ov}</div>'
+                            _ov_html += f'<div style="font-size:11px;color:#8a9ab0;margin-top:3px;">Downgraded: <b style="color:#e8a020;">{_p.get("OriginalTier","")}</b> → <b style="color:#22c55e;">{_p.get("Tier","")}</b> · Lock to manually override</div></div>'
+                            st.markdown(_ov_html, unsafe_allow_html=True)
                     with _col_lock:
                         _lk = f"fblk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
                         if _already_locked:
@@ -9151,6 +9400,21 @@ with tabs[4]:
     else:
         st.success(f"\u2705 Analyzing {n_resolved} resolved bets")
         st.dataframe(pd.DataFrame(signal_results), width="stretch", hide_index=True)
+
+    # ── Engine 2: Loss Pattern Analyzer ──
+    st.markdown("---")
+    st.markdown("### 🧠 Loss Pattern Analysis")
+    _lp = st.session_state.get("loss_patterns", [])
+    _resolved_count = len([h for h in st.session_state.get("history",[]) if h.get("outcome") in ("WIN","LOSS")])
+    if _resolved_count < 20:
+        st.info(f"Loss pattern analysis activates at 20 resolved bets. Current: {_resolved_count}. Need {20 - _resolved_count} more.")
+    elif not _lp:
+        st.success("✅ No significant loss patterns detected — model performing as expected across all segments.")
+    else:
+        st.warning(f"⚠️ {len(_lp)} pattern(s) detected in your bet history — review and consider adjustments:")
+        for pattern in _lp:
+            st.markdown(f"- {pattern}")
+        st.caption("These patterns auto-update every time you load the board. Weight optimizer will incorporate them at 50 bets.")
     st.markdown("---")
     st.markdown("### \U0001f4cd Pinnacle CLV Tracker")
     pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
