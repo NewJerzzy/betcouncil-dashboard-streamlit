@@ -3168,7 +3168,38 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     except Exception:
         pass
     
-    return {"matchup": matchup, "home": home_team, "away": away_team, "recommendations": recommendations, "best_bet": best_bet, "best_edge": best_edge, "sport": sport, "public_signals": public_sharp_signals, "public_data": game_public}
+        # Extract per-bet-type edges and tiers for Game Lines tab display
+    _spread_rec = next((r for r in recommendations if r.get("type")=="spread"), {})
+    _total_rec  = next((r for r in recommendations if r.get("type")=="total"), {})
+    _ml_rec     = next((r for r in recommendations if r.get("type") in ("ml","moneyline")), {})
+
+    return {
+        "matchup": matchup, "Matchup": matchup,
+        "home": home_team, "away": away_team,
+        "recommendations": recommendations,
+        "best_bet": best_bet, "best_edge": best_edge,
+        "best_tier": get_tier(best_edge, sport),
+        "sport": sport,
+        # Spread
+        "SpreadEdge": _spread_rec.get("edge", 0),
+        "SpreadTier":  get_tier(_spread_rec.get("edge", 0), sport) if _spread_rec else "LEAN",
+        "SpreadPick":  _spread_rec.get("pick", ""),
+        "Spread":      _spread_rec.get("line", "—"),
+        # Total
+        "TotalEdge": _total_rec.get("edge", 0),
+        "TotalTier":  get_tier(_total_rec.get("edge", 0), sport) if _total_rec else "LEAN",
+        "TotalPick":  _total_rec.get("pick", "O/U"),
+        "Total":      _total_rec.get("line", "—"),
+        # ML
+        "MLEdge":  _ml_rec.get("edge", 0),
+        "MLTier":   get_tier(_ml_rec.get("edge", 0), sport) if _ml_rec else "LEAN",
+        "MLPick":   _ml_rec.get("pick", ""),
+        "HomeML":   _ml_rec.get("home_ml", "—"),
+        "AwayML":   _ml_rec.get("away_ml", "—"),
+        # Metadata
+        "public_signals": public_sharp_signals,
+        "public_data": game_public,
+    }
 
 def fetch_alternate_lines(sport, matchup):
     if not ODDSWRAP_AVAILABLE:
@@ -9520,8 +9551,74 @@ with tabs[1]:
 
 # ----- TAB 2: GAME LINES -----
 with tabs[2]:
-    _games = st.session_state.games or []
     _sport2 = st.session_state.last_sport or "NBA"
+
+    # Merge game_analysis results INTO games for display
+    # game_analysis has the real edges/tiers; games has the raw lines
+    _raw_games = st.session_state.games or []
+    _analysis = st.session_state.get("game_analysis", [])
+
+    # Build lookup from analysis by matchup
+    _analysis_map = {}
+    for _ga in _analysis:
+        _mkey = _ga.get("Matchup", _ga.get("matchup", ""))
+        if _mkey:
+            _analysis_map[_mkey] = _ga
+
+    # Merge analysis fields back into games
+    _games = []
+    for _rg in _raw_games:
+        _g = dict(_rg)
+        _matchup = _g.get("Matchup","")
+        if _matchup in _analysis_map:
+            _a = _analysis_map[_matchup]
+            # Override edges and tiers from analysis
+            _best_bet = _a.get("best_bet", {})
+            _bet_type = _best_bet.get("type","") if _best_bet else ""
+            _bet_edge = float(_a.get("best_edge", 0) or 0)
+            _bet_tier = _a.get("best_tier", "LEAN")
+
+            # Write spread edge/tier
+            if _a.get("SpreadEdge") is not None:
+                _g["SpreadEdge"] = float(_a.get("SpreadEdge", 0) or 0)
+                _g["SpreadTier"] = _a.get("SpreadTier", "LEAN")
+                _g["SpreadPick"] = _a.get("SpreadPick", _g.get("SpreadPick",""))
+            # Write total edge/tier
+            if _a.get("TotalEdge") is not None:
+                _g["TotalEdge"] = float(_a.get("TotalEdge", 0) or 0)
+                _g["TotalTier"] = _a.get("TotalTier", "LEAN")
+                _g["TotalPick"] = _a.get("TotalPick", _g.get("TotalPick",""))
+            # Write ML edge/tier
+            if _a.get("MLEdge") is not None:
+                _g["MLEdge"] = float(_a.get("MLEdge", 0) or 0)
+                _g["MLTier"] = _a.get("MLTier", "LEAN")
+                _g["MLPick"] = _a.get("MLPick", _g.get("MLPick",""))
+            # Best bet overall
+            _g["BestEdge"] = _bet_edge
+            _g["BestTier"] = _bet_tier
+        _games.append(_g)
+
+    # If no raw games but we have analysis, build display from analysis
+    if not _games and _analysis:
+        for _a in _analysis:
+            _g = {
+                "Matchup": _a.get("Matchup",""),
+                "Sport": _sport2,
+                "Spread": _a.get("Spread","—"),
+                "SpreadEdge": float(_a.get("SpreadEdge", 0) or 0),
+                "SpreadTier": _a.get("SpreadTier","LEAN"),
+                "SpreadPick": _a.get("SpreadPick",""),
+                "Total": _a.get("Total","—"),
+                "TotalEdge": float(_a.get("TotalEdge", 0) or 0),
+                "TotalTier": _a.get("TotalTier","LEAN"),
+                "TotalPick": _a.get("TotalPick","O/U"),
+                "HomeML": _a.get("HomeML","—"),
+                "AwayML": _a.get("AwayML","—"),
+                "MLEdge": float(_a.get("MLEdge", 0) or 0),
+                "MLTier": _a.get("MLTier","LEAN"),
+                "MLPick": _a.get("MLPick",""),
+            }
+            _games.append(_g)
     st.markdown(f"## 🏟️ Game Lines — {_sport2}")
 
     # Slip grouping controls
