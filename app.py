@@ -2625,7 +2625,7 @@ def track_line_movement(props):
     for key, move in movement.items():
         player_name = move.get("player", "")
         prop_name = move.get("prop", "")
-        for lock in _locks_snapshot:
+        for lock in st.session_state.get("locks", []):
             if (lock.get("status") == "PENDING" and normalize_name(lock.get("player","")) == normalize_name(player_name) and lock.get("prop","") == prop_name):
                 locked_line = lock.get("line", 0)
                 current_line = move.get("curr_line", 0)
