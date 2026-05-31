@@ -1178,6 +1178,22 @@ def compute_std_dev(game_values, decay=0.85, sport=None):
     weighted_var = sum(w * (v - weighted_mean)**2 for v, w in zip(reversed(game_values), weights)) / total_weight
     return round(weighted_var**0.5, 3)
 
+def calculate_edge(fair_prob, side="OVER", sport="NBA"):
+    """
+    Single source of truth for sportsbook edge calculation.
+    All prop edge calculations must use this function.
+    
+    Returns signed edge: positive = good bet, negative = fade.
+    For display: use abs(calculate_edge(...))
+    The sign is preserved internally for UNDER detection logic.
+    
+    Breakeven: sportsbook -110 = 52.4%
+    For DFS props use calculate_prizepicks_ev() instead.
+    """
+    breakeven = 0.524  # -110 standard juice
+    return round(fair_prob - breakeven, 4)
+
+
 def compute_fair_prob(line, avg, std_dev, side="OVER"):
     if avg <= 0:
         return 0.5
@@ -2625,7 +2641,7 @@ def track_line_movement(props):
     for key, move in movement.items():
         player_name = move.get("player", "")
         prop_name = move.get("prop", "")
-        for lock in st.session_state.get("locks", []):
+        for lock in _locks_snapshot:
             if (lock.get("status") == "PENDING" and normalize_name(lock.get("player","")) == normalize_name(player_name) and lock.get("prop","") == prop_name):
                 locked_line = lock.get("line", 0)
                 current_line = move.get("curr_line", 0)
@@ -3047,7 +3063,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_tier(abs(spread_edge_pct), sport)
-                    recommendations.append({"type": "SPREAD", "pick": rec_text, "line": spread, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts"})
+                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts"})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
@@ -3118,7 +3134,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_tier(abs(total_edge_pct), sport)
-                    recommendations.append({"type": "TOTAL", "line": total_val, "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
+                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
@@ -3161,45 +3177,14 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                         fair_prob = a_fair
                     tier = get_tier(ml_edge, sport)
                     ev = fair_prob * (abs(float(str(home_ml if h_ml_edge > a_ml_edge else away_ml).replace("+",""))) / 100) - (1 - fair_prob)
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "line": 0, "home_ml": home_ml, "away_ml": away_ml, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"})
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
     except Exception:
         pass
     
-        # Extract per-bet-type edges and tiers for Game Lines tab display
-    _spread_rec = next((r for r in recommendations if r.get("type","").upper()=="SPREAD"), {})
-    _total_rec  = next((r for r in recommendations if r.get("type","").upper()=="TOTAL"), {})
-    _ml_rec     = next((r for r in recommendations if r.get("type","").upper() in ("ML","MONEYLINE")), {})
-
-    return {
-        "matchup": matchup, "Matchup": matchup,
-        "home": home_team, "away": away_team,
-        "recommendations": recommendations,
-        "best_bet": best_bet, "best_edge": best_edge,
-        "best_tier": get_tier(best_edge, sport),
-        "sport": sport,
-        # Spread
-        "SpreadEdge": _spread_rec.get("edge", 0),
-        "SpreadTier":  get_tier(_spread_rec.get("edge", 0), sport) if _spread_rec else "LEAN",
-        "SpreadPick":  _spread_rec.get("pick", ""),
-        "Spread":      _spread_rec.get("line", "—"),
-        # Total
-        "TotalEdge": _total_rec.get("edge", 0),
-        "TotalTier":  get_tier(_total_rec.get("edge", 0), sport) if _total_rec else "LEAN",
-        "TotalPick":  _total_rec.get("pick", "O/U"),
-        "Total":      _total_rec.get("line", "—"),
-        # ML
-        "MLEdge":  _ml_rec.get("edge", 0),
-        "MLTier":   get_tier(_ml_rec.get("edge", 0), sport) if _ml_rec else "LEAN",
-        "MLPick":   _ml_rec.get("pick", ""),
-        "HomeML":   _ml_rec.get("home_ml", "—"),
-        "AwayML":   _ml_rec.get("away_ml", "—"),
-        # Metadata
-        "public_signals": public_sharp_signals,
-        "public_data": game_public,
-    }
+    return {"matchup": matchup, "home": home_team, "away": away_team, "recommendations": recommendations, "best_bet": best_bet, "best_edge": best_edge, "sport": sport, "public_signals": public_sharp_signals, "public_data": game_public}
 
 def fetch_alternate_lines(sport, matchup):
     if not ODDSWRAP_AVAILABLE:
@@ -6009,6 +5994,58 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
+def generate_why_drivers(prop):
+    """
+    Generates top 3 positive signal drivers and top downgrade risk
+    for a prop card. Used in Summary and Full Board lock cards.
+    Format: [(label, value_str, color), ...]
+    """
+    drivers = []
+    risks = []
+
+    edge = prop.get("Edge", 0)
+    sig_base    = prop.get("SignalBase", 0)
+    sig_def     = prop.get("SignalDefense", 0)
+    sig_loc     = prop.get("SignalLocation", 0)
+    sig_rest    = prop.get("SignalRest", 0)
+    sig_pace    = prop.get("SignalPace", 0)
+    sig_usage   = prop.get("SignalUsage", 0)
+    h2h_note    = prop.get("H2HNote", "")
+    pinnacle    = prop.get("PinnacleConfirms")
+    sharp       = prop.get("SharpFlag", "")
+    injury      = prop.get("Injury", "")
+    blowout     = prop.get("SignalBlowout", 0)
+    b2b         = prop.get("SignalRest", 0) < -0.05
+
+    signal_pairs = [
+        ("Base (avg>line)",   sig_base,   sig_base > 0.02),
+        ("Defense (weak opp)",sig_def,    sig_def > 0.01),
+        ("Home court",        sig_loc,    sig_loc > 0.01),
+        ("Usage boost",       sig_usage,  sig_usage > 0.01),
+        ("Fast pace",         sig_pace,   sig_pace > 0.01),
+    ]
+    for label, val, positive in signal_pairs:
+        if positive and val > 0.005:
+            drivers.append((label, f"+{val:.1%}", "#22c55e"))
+        elif not positive and val < -0.005:
+            risks.append((label, f"{val:.1%}", "#e04040"))
+
+    if h2h_note and "%" in h2h_note:
+        drivers.append(("H2H history", h2h_note, "#22c55e"))
+    if pinnacle is True:
+        drivers.append(("Pinnacle confirms", "📌", "#22c55e"))
+    if sharp and "↑" in sharp:
+        drivers.append(("Sharp money", "aligned", "#22c55e"))
+    if injury:
+        risks.append(("Injury flag", injury[:20], "#e04040"))
+    if blowout < -0.02:
+        risks.append(("Blowout risk", f"{blowout:.1%}", "#e8a020"))
+    if b2b:
+        risks.append(("B2B fatigue", "-8%", "#e8a020"))
+
+    return drivers[:3], risks[:1]
+
+
 def generate_gem_summary():
     board = st.session_state.get("board_data", [])
     games = st.session_state.get("games", [])
@@ -6701,7 +6738,7 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
         prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
             prob = 1 - prob
-        base_edge = prob - 0.524
+        base_edge = calculate_edge(prob, side, sport)
         fair_prob = prob
     else:
         fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
@@ -8051,8 +8088,8 @@ def load_sport_data(sport):
             blended_under_prob = round((1 - consensus_prob) * 0.60 + under_prob * 0.40, 4)
             over_prob = max(0.20, min(0.80, blended_over_prob))
             under_prob = max(0.20, min(0.80, blended_under_prob))
-            over_edge = over_prob - 0.524
-            under_edge = under_prob - 0.524
+            over_edge  = calculate_edge(over_prob,  "OVER",  sport)
+            under_edge = calculate_edge(under_prob, "UNDER", sport)
         if fairness_grade == "BAD":
             over_edge = over_edge * 0.75
             under_edge = under_edge * 0.75
@@ -8583,37 +8620,6 @@ if "persistence_loaded" not in st.session_state:
 # =========================
 # SIDEBAR (Full as in original)
 # =========================
-def _build_signal_bar(prop, color="#378add") -> str:
-    """Build a compact signal impact bar for a prop."""
-    signals = {
-        "Base": float(prop.get("SignalBase", 0) or 0),
-        "Defense": float(prop.get("SignalDef", 0) or 0),
-        "Location": float(prop.get("SignalLoc", 0) or 0),
-        "Rest": float(prop.get("SignalRest", 0) or 0),
-        "Pace": float(prop.get("SignalPace", 0) or 0),
-        "H2H": float(prop.get("SignalH2H", 0) or 0),
-    }
-    # Only show signals with non-zero values
-    active = {k: v for k, v in signals.items() if abs(v) > 0.001}
-    if not active:
-        return ""
-    max_val = max(abs(v) for v in active.values()) or 1
-    html = '<div style="display:flex;flex-direction:column;gap:1px;">'
-    html += '<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px;">SIGNAL IMPACT</div>'
-    for sig, val in sorted(active.items(), key=lambda x: abs(x[1]), reverse=True):
-        bar_len = int((abs(val) / max_val) * 12)
-        bar = "█" * bar_len
-        sig_color = color if val > 0 else "#e04040"
-        sign = "+" if val > 0 else ""
-        html += f'<div style="display:flex;align-items:center;gap:6px;">'
-        html += f'<span style="font-size:11px;color:#6a7a8a;width:55px;">{sig}</span>'
-        html += f'<span style="font-family:monospace;font-size:12px;color:{sig_color};">{bar}</span>'
-        html += f'<span style="font-size:11px;color:{sig_color};">{sign}{val*100:.1f}%</span>'
-        html += '</div>'
-    html += '</div>'
-    return html
-
-
 with st.sidebar:
     st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:14px;color:#4a8a8a;">v4.6 · Complete</div></div>', unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
@@ -8749,7 +8755,6 @@ st.markdown(f"""
 
 
 
-
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
@@ -8757,89 +8762,9 @@ with tabs[0]:
     # ═══════════════════════════════════════════════════════
     # SUMMARY TAB — DARK UI OVERHAUL
     # ═══════════════════════════════════════════════════════
-
-    # ── COMMAND CENTER ─────────────────────────────────────
-    board = st.session_state.board_data or []
-    if board:
-        _sov_n = sum(1 for p in board if p.get("Tier")=="SOVEREIGN")
-        _eli_n = sum(1 for p in board if p.get("Tier")=="ELITE")
-        _app_n = sum(1 for p in board if p.get("Tier")=="APPROVED")
-        _lea_n = sum(1 for p in board if p.get("Tier")=="LEAN")
-        _hist = st.session_state.history or []
-        _wins_cc = sum(1 for h in _hist if h.get("outcome")=="WIN")
-        _total_cc = sum(1 for h in _hist if h.get("outcome") in ("WIN","LOSS"))
-        _hit_rate_cc = f"{_wins_cc/_total_cc*100:.1f}%" if _total_cc > 0 else "—"
-        _net_cc = sum(float(h.get("net",0) or 0) for h in _hist)
-        _avg_clv_cc = sum(float(h.get("clv",0) or 0) for h in _hist) / max(len(_hist),1) if _hist else 0
-        _active_locks_cc = len(st.session_state.locks)
-        _wr_color = "#22c55e" if _total_cc > 0 and _wins_cc/_total_cc >= 0.577 else "#e8f0f8"
-        _clv_color = "#22c55e" if _avg_clv_cc > 0 else "#e04040"
-        _pnl_color = "#22c55e" if _net_cc >= 0 else "#e04040"
-        st.markdown(
-            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:0.8rem;">'
-            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Total Bets</div><div style="font-size:1.4rem;font-weight:800;color:#e8f0f8;">{_total_cc}</div></div>'
-            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Win Rate</div><div style="font-size:1.4rem;font-weight:800;color:{_wr_color};">{_hit_rate_cc}</div></div>'
-            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Avg CLV</div><div style="font-size:1.4rem;font-weight:800;color:{_clv_color};">{_avg_clv_cc:+.1f}</div></div>'
-            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Net P&L</div><div style="font-size:1.4rem;font-weight:800;color:{_pnl_color};">${_net_cc:+.2f}</div></div>'
-            + '</div>'
-            + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:1rem;">'
-            + f'<div style="background:#a855f722;border:1px solid #a855f744;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#a855f7;font-weight:700;text-transform:uppercase;">SOVEREIGN</div><div style="font-size:1.8rem;font-weight:800;color:#a855f7;">{_sov_n}</div></div>'
-            + f'<div style="background:#22c55e22;border:1px solid #22c55e44;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#22c55e;font-weight:700;text-transform:uppercase;">ELITE</div><div style="font-size:1.8rem;font-weight:800;color:#22c55e;">{_eli_n}</div></div>'
-            + f'<div style="background:#378add22;border:1px solid #378add44;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#378add;font-weight:700;text-transform:uppercase;">APPROVED</div><div style="font-size:1.8rem;font-weight:800;color:#378add;">{_app_n}</div></div>'
-            + f'<div style="background:#eab30822;border:1px solid #eab30844;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#eab308;font-weight:700;text-transform:uppercase;">LEAN</div><div style="font-size:1.8rem;font-weight:800;color:#eab308;">{_lea_n}</div></div>'
-            + '</div>',
-            unsafe_allow_html=True
-        )
-
-        # ── RISK DASHBOARD ────────────────────────────────
-        _sport_counts_cc = {}
-        for _l in st.session_state.locks:
-            _s = _l.get("sport","?")
-            _sport_counts_cc[_s] = _sport_counts_cc.get(_s, 0) + 1
-        _risk_level_cc = "LOW" if _active_locks_cc <= 2 else "MODERATE" if _active_locks_cc <= 5 else "HIGH"
-        _risk_color_cc = "#22c55e" if _risk_level_cc=="LOW" else "#eab308" if _risk_level_cc=="MODERATE" else "#e04040"
-        _corr_risk_cc = "HIGH" if any(v >= 3 for v in _sport_counts_cc.values()) else "LOW"
-        _corr_color_cc = "#e04040" if _corr_risk_cc == "HIGH" else "#22c55e"
-        st.markdown(
-            '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;margin-bottom:1rem;">'
-            '<div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">🛡 RISK STATUS</div>'
-            '<div style="display:flex;gap:16px;flex-wrap:wrap;">'
-            + f'<div><div style="font-size:0.7rem;color:#6a7a8a;">Active Locks</div><div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_active_locks_cc}</div></div>'
-            + f'<div><div style="font-size:0.7rem;color:#6a7a8a;">Risk Level</div><div style="font-size:1rem;font-weight:700;color:{_risk_color_cc};">{_risk_level_cc}</div></div>'
-            + f'<div><div style="font-size:0.7rem;color:#6a7a8a;">Correlation</div><div style="font-size:1rem;font-weight:700;color:{_corr_color_cc};">{_corr_risk_cc}</div></div>'
-            + "".join(f'<div><div style="font-size:0.7rem;color:#6a7a8a;">{_s}</div><div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_n}</div></div>' for _s, _n in _sport_counts_cc.items())
-            + '</div></div>',
-            unsafe_allow_html=True
-        )
-
     col_left, col_right = st.columns([4, 1.2])
 
     with col_left:
-
-        # ── CLV WIDGET ───────────────────────────────────────
-        _hist_clv = st.session_state.history or []
-        if _hist_clv:
-            from datetime import timedelta
-            _now = datetime.now()
-            _7d = [h for h in _hist_clv if h.get("timestamp","") >= (_now - timedelta(days=7)).strftime("%Y-%m-%d")]
-            _30d = [h for h in _hist_clv if h.get("timestamp","") >= (_now - timedelta(days=30)).strftime("%Y-%m-%d")]
-            def _avg_clv_f(hl):
-                v = [float(h.get("clv",0) or 0) for h in hl if h.get("clv") is not None]
-                return sum(v)/len(v) if v else None
-            _clv7 = _avg_clv_f(_7d); _clv30 = _avg_clv_f(_30d); _clvAll = _avg_clv_f(_hist_clv)
-            if any(v is not None for v in [_clv7, _clv30, _clvAll]):
-                def _cv(lbl, val):
-                    if val is None: return f'<div><div style="font-size:0.7rem;color:#6a7a8a;">{lbl}</div><div style="font-size:1rem;color:#6a7a8a;">—</div></div>'
-                    c = "#22c55e" if val>1 else "#eab308" if val>0 else "#e04040"
-                    return f'<div><div style="font-size:0.7rem;color:#6a7a8a;">{lbl}</div><div style="font-size:1rem;font-weight:700;color:{c};">{val:+.2f}</div></div>'
-                st.markdown(
-                    '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.8rem;">'
-                    '<div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">📈 CLV TRACKER</div>'
-                    '<div style="display:flex;gap:24px;">'
-                    + _cv("7-Day", _clv7) + _cv("30-Day", _clv30) + _cv("Season", _clvAll)
-                    + '</div></div>',
-                    unsafe_allow_html=True
-                )
 
         # ── 1. RECOMMENDED ACTION ──────────────────────────
         board = st.session_state.board_data or []
@@ -8916,30 +8841,6 @@ with tabs[0]:
             inj_html += '</div>'
             st.markdown(inj_html, unsafe_allow_html=True)
 
-        # ── TODAY'S CHANGES FEED ────────────────────────────
-        _board_prev = st.session_state.get("board_data_prev", [])
-        _board_curr = st.session_state.get("board_data", [])
-        if _board_prev and _board_curr:
-            _changes = []
-            _prev_map = {f"{p.get('Player','')}_{p.get('Prop','')}_{p.get('Side','')}": p for p in _board_prev}
-            for _cp in _board_curr:
-                _key = f"{_cp.get('Player','')}_{_cp.get('Prop','')}_{_cp.get('Side','')}"
-                if _key in _prev_map:
-                    _old_edge = float(_prev_map[_key].get("Edge", 0) or 0)
-                    _new_edge = float(_cp.get("Edge", 0) or 0)
-                    _delta = _new_edge - _old_edge
-                    if abs(_delta) >= 0.02:
-                        _changes.append({"player": _cp.get("Player",""), "prop": _cp.get("Prop",""), "delta": _delta, "tier": _cp.get("Tier","")})
-            if _changes:
-                _ch_html = '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.8rem;">'
-                _ch_html += '<div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">⚡ MODEL MOVEMENT</div>'
-                for _ch in sorted(_changes, key=lambda x: abs(x["delta"]), reverse=True)[:5]:
-                    _cc = "#22c55e" if _ch["delta"] > 0 else "#e04040"
-                    _arrow = "↑" if _ch["delta"] > 0 else "↓"
-                    _ch_html += f'<div style="display:flex;justify-content:space-between;padding:2px 0;"><span style="font-size:0.85rem;color:#e8f0f8;">{_arrow} {_ch["player"]} {_ch["prop"]}</span><span style="font-size:0.85rem;font-weight:700;color:{_cc};">{_ch["delta"]*100:+.1f}%</span></div>'
-                _ch_html += '</div>'
-                st.markdown(_ch_html, unsafe_allow_html=True)
-
         # ── SHARP MONEY ALERTS ──────────────────────────────
         sharp_alerts_s = st.session_state.get("sharp_alerts", [])
         steam_moves_s = st.session_state.get("steam_moves", [])
@@ -8951,6 +8852,159 @@ with tabs[0]:
                 st.markdown(f'<div style="background:#0a0e14;border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.05rem;color:#e8f0f8;">{_sa.get("message","")}</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
+
+
+        # ══════════════════════════════════════════════════════
+        # PROFESSIONAL DASHBOARD — 5 insight cards
+        # ══════════════════════════════════════════════════════
+        st.markdown("---")
+        _d1, _d2, _d3, _d4, _d5 = st.columns(5)
+
+        # Card 1 — Edge Distribution
+        with _d1:
+            _tier_counts = {"SOVEREIGN":0,"ELITE":0,"APPROVED":0,"LEAN":0,"PASS":0}
+            for _p in board:
+                _t = _p.get("Tier","PASS")
+                _tier_counts[_t] = _tier_counts.get(_t, 0) + 1
+            _tier_html = "".join([
+                f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
+                f'<span style="color:#8a9ab0;">{t}</span>'
+                f'<span style="color:{"#22c55e" if t in ("SOVEREIGN","ELITE") else "#e8f0f8"};font-weight:{"700" if t in ("SOVEREIGN","ELITE") else "400"};">{c}</span>'
+                f'</div>'
+                for t, c in _tier_counts.items() if c > 0
+            ])
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">📊 Edge Distribution</div>'
+                f'{_tier_html}</div>',
+                unsafe_allow_html=True
+            )
+
+        # Card 2 — Sport Exposure
+        with _d2:
+            _sport_exp = {}
+            _total_locked = max(1, sum(1 for _p in board if _p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")))
+            for _p in board:
+                if _p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED"):
+                    _s = _p.get("Sport", _p.get("sport","?"))
+                    _sport_exp[_s] = _sport_exp.get(_s, 0) + 1
+            _exp_html = "".join([
+                f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
+                f'<span style="color:#8a9ab0;">{s}</span>'
+                f'<span style="color:#e8f0f8;">{round(c/_total_locked*100)}%</span>'
+                f'</div>'
+                for s, c in sorted(_sport_exp.items(), key=lambda x: -x[1])[:5]
+            ])
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">🎯 Sport Exposure</div>'
+                f'{_exp_html or "<div style=\'color:#6a7a8a;font-size:11px;\'>Load board first</div>"}</div>',
+                unsafe_allow_html=True
+            )
+
+        # Card 3 — CLV Tracker
+        with _d3:
+            _clv = get_clv_summary()
+            if _clv:
+                _clv_color = "#22c55e" if _clv["avg_clv"] > 0 else "#e04040"
+                _clv_html = (
+                    f'<div style="font-size:20px;font-weight:700;color:{_clv_color};">{_clv["avg_clv"]:+.2f}</div>'
+                    f'<div style="font-size:10px;color:#8a9ab0;">Avg CLV</div>'
+                    f'<div style="font-size:11px;color:#e8f0f8;margin-top:4px;">Beat Pinnacle: {_clv.get("positive_clv_pct",0):.0%}</div>'
+                    f'<div style="font-size:10px;color:#6a7a8a;">{_clv.get("total_tracked",0)} bets tracked</div>'
+                )
+            else:
+                _clv_html = '<div style="font-size:11px;color:#6a7a8a;">CLV activates<br>after 5 bets</div>'
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">📈 CLV Tracker</div>'
+                f'{_clv_html}</div>',
+                unsafe_allow_html=True
+            )
+
+        # Card 4 — Signal Health
+        with _d4:
+            _sig_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+            _sig_resolved = [p for p in _sig_perf if p.get("outcome") in ("WIN","LOSS")]
+            if len(_sig_resolved) >= 10:
+                _sig_html = ""
+                for _sig, _lbl in [
+                    ("signal_defense_positive","Defense"),
+                    ("signal_base_positive","Base"),
+                    ("signal_sharp_flag","Sharp"),
+                    ("signal_usage_boost","Usage"),
+                ]:
+                    _with = [r for r in _sig_resolved if r.get(_sig,0)==1]
+                    if len(_with) >= 3:
+                        _wr = sum(r["win"] for r in _with) / len(_with)
+                        _overall = sum(r["win"] for r in _sig_resolved) / len(_sig_resolved)
+                        _lift = _wr - _overall
+                        _c = "#22c55e" if _lift > 0.02 else ("#e04040" if _lift < -0.02 else "#8a9ab0")
+                        _sig_html += (
+                            f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
+                            f'<span style="color:#8a9ab0;">{_lbl}</span>'
+                            f'<span style="color:{_c};">{_lift:+.1%}</span>'
+                            f'</div>'
+                        )
+            else:
+                _sig_html = f'<div style="font-size:11px;color:#6a7a8a;">Signal health<br>activates at 10 bets</div>'
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">⚡ Signal Health</div>'
+                f'{_sig_html}</div>',
+                unsafe_allow_html=True
+            )
+
+        # Card 5 — Tier Performance
+        with _d5:
+            _resolved = [h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")]
+            if len(_resolved) >= 10:
+                _tier_perf_html = ""
+                for _tier, _color in [("SOVEREIGN","#22c55e"),("ELITE","#378add"),("APPROVED","#e8a020"),("LEAN","#8a9ab0")]:
+                    _tr = [h for h in _resolved if h.get("tier","") == _tier]
+                    if len(_tr) >= 3:
+                        _twr = sum(1 for h in _tr if h.get("outcome")=="WIN") / len(_tr)
+                        _tier_perf_html += (
+                            f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
+                            f'<span style="color:{_color};">{_tier[:3]}</span>'
+                            f'<span style="color:#e8f0f8;">{_twr:.0%}</span>'
+                            f'<span style="color:#6a7a8a;">n={len(_tr)}</span>'
+                            f'</div>'
+                        )
+            else:
+                _tier_perf_html = '<div style="font-size:11px;color:#6a7a8a;">Tier performance<br>activates at 10 bets</div>'
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">🏆 Tier Performance</div>'
+                f'{_tier_perf_html}</div>',
+                unsafe_allow_html=True
+            )
+        st.markdown("---")
+
+
+        # ── BEST BET QUEUE ─────────────────────────────────
+        _top_plays = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
+        if _top_plays:
+            st.markdown("""<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0.8rem;">
+                <div style="flex:1;height:1px;background:#1e2d3d;"></div>
+                <span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🎯 Best Bet Queue</span>
+                <div style="flex:1;height:1px;background:#1e2d3d;"></div></div>""", unsafe_allow_html=True)
+            for _qi, _qp in enumerate(_top_plays):
+                _qe = _qp.get("Edge",0)
+                _qc = "#22c55e" if _qp.get("Tier")=="SOVEREIGN" else "#378add"
+                _qpin = "📌" if _qp.get("PinnacleConfirms") else ""
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:0.8rem;background:#0a0e14;'
+                    f'border:1px solid #1e2d3d;border-left:3px solid {_qc};border-radius:6px;'
+                    f'padding:0.5rem 0.8rem;margin-bottom:0.3rem;">'
+                    f'<span style="color:{_qc};font-weight:700;font-size:1.1rem;min-width:22px;">#{_qi+1}</span>'
+                    f'<span style="color:#e8f0f8;font-weight:600;flex:1;">{_qp.get("Player","")} '
+                    f'{_qp.get("Side","OVER")} {_qp.get("Line","")}</span>'
+                    f'<span style="color:#8a9ab0;font-size:0.95rem;">{_qp.get("Prop","")}</span>'
+                    f'<span style="color:{_qc};font-weight:700;">Edge {_qe:.1%}</span>'
+                    f'{_qpin}</div>',
+                    unsafe_allow_html=True
+                )
 
         # ── LOCK OF THE DAY — PROP ─────────────────────────
         if board:
@@ -9008,6 +9062,18 @@ with tabs[0]:
                 </div>
             </div>"""
             components.html(_lock_html, height=220, scrolling=False)
+            # ── Why This Is A Play ──
+            _why_drivers, _why_risks = generate_why_drivers(lock_prop)
+            if _why_drivers or _why_risks:
+                _why_html = '<div style="background:#060a10;border:1px solid #1e2d3d;border-top:none;border-radius:0 0 8px 8px;padding:0.5rem 1rem;margin-top:-4px;margin-bottom:8px;">'
+                if _why_drivers:
+                    _why_html += '<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Top Drivers: </span>'
+                    _why_html += " &nbsp;·&nbsp; ".join(f'<span style="color:{c};font-size:11px;">{l} <b>{v}</b></span>' for l,v,c in _why_drivers)
+                if _why_risks:
+                    _why_html += '&nbsp;&nbsp;<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Risk: </span>'
+                    _why_html += " · ".join(f'<span style="color:{c};font-size:11px;">{l} {v}</span>' for l,v,c in _why_risks)
+                _why_html += '</div>'
+                st.markdown(_why_html, unsafe_allow_html=True)
             with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
                 try:
                     chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
@@ -9026,7 +9092,7 @@ with tabs[0]:
                     <div style="font-size:1.0rem;color:#378add;text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
                     <div style="font-size:1.2rem;font-weight:700;color:#e8f0f8;margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
                     <div style="display:flex;gap:1.5rem;margin-bottom:0.5rem;">
-                        <span style="color:#378add;font-weight:700;">Edge: {bb.get("edge",0):+.1%}</span>
+                        <span style="color:#378add;font-weight:700;">Edge: {abs(bb.get("edge",0)):.1%}</span>
                         <span style="color:#7f77dd;font-size:1.0rem;">{bb.get("note","")[:80]}</span>
                     </div>
                     <div style="display:flex;gap:0.8rem;font-size:1.0rem;color:#8a9ab0;">
@@ -9063,7 +9129,7 @@ with tabs[0]:
             # Only show if positive EV — otherwise show warning
             if ev > 0:
                 ev_color = "#22c55e"
-                tier_dot = {"SOVEREIGN":"#a855f7","ELITE":"#378add","APPROVED":"#e8a020"}
+                tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
                 legs_html = ""
                 for p in parlay_props:
                     dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
@@ -9336,22 +9402,17 @@ with tabs[0]:
 with tabs[1]:
     _board = st.session_state.board_data or []
     _sport = st.session_state.last_sport or "NBA"
-    _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#378add","LEAN":"#eab308","PASS":"#e04040"}
-    _tier_labels = {"SOVEREIGN":"🟣 SOVEREIGN","ELITE":"🟢 ELITE","APPROVED":"🔵 APPROVED","LEAN":"🟡 LEAN","PASS":"🔴 PASS"}
     st.markdown(f"## 📊 Full Board — {_sport}")
     if _board:
-        # Filters row
-        _fcol1, _fcol2, _fcol3, _fcol4, _fcol5 = st.columns([2,2,2,1,1])
+        _tc = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+        # Filters
+        _fcol1, _fcol2, _fcol3 = st.columns([3,2,1])
         with _fcol1:
             _tf = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"], default=["SOVEREIGN","ELITE","APPROVED","LEAN"], key="fb_tier")
         with _fcol2:
             _all_sports = list(set(p.get("Sport","") for p in _board if p.get("Sport","")))
             _sf = st.multiselect("Sport", _all_sports, default=_all_sports, key="fb_sport")
         with _fcol3:
-            _side_filter = st.radio("Side", ["Both","OVER","UNDER"], horizontal=True, key="fb_side_filter")
-        with _fcol4:
-            _min_edge = st.slider("Min Edge%", 0, 20, 0, key="fb_min_edge")
-        with _fcol5:
             if st.button("🔒 Lock All SOVEREIGN/ELITE", key="fb_lock_all"):
                 for _p in _board:
                     if _p.get("Tier") in ("SOVEREIGN","ELITE"):
@@ -9362,11 +9423,8 @@ with tabs[1]:
                 save_to_gist("locks", st.session_state.locks)
                 st.rerun()
 
-        _filtered = [p for p in _board
-                     if p.get("Tier","") in (_tf or ["SOVEREIGN","ELITE","APPROVED","LEAN"])
-                     and p.get("Sport","") in (_sf or _all_sports)
-                     and (_side_filter == "Both" or p.get("Side","") == _side_filter)
-                     and float(p.get("Edge",0) or 0) >= _min_edge / 100]
+        _filtered = [p for p in _board if p.get("Tier","") in (_tf or ["SOVEREIGN","ELITE","APPROVED","LEAN"]) and p.get("Sport","") in (_sf or _all_sports)]
+
         if _filtered:
             # Group by sport+game
             _groups = {}
@@ -9449,176 +9507,22 @@ with tabs[1]:
                             st.markdown(_ov_html, unsafe_allow_html=True)
                     with _col_lock:
                         _lk = f"fblk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
-                        _slip_key_fb = f"slip_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
-                        _in_slip = any(
-                            s.get("player") == _p.get("Player","") and str(s.get("line","")) == str(_p.get("Line",""))
-                            for s in st.session_state.get("slip_builder", [])
-                        )
                         if _already_locked:
-                            st.markdown('<div style="text-align:center;padding-top:4px;color:#22c55e;font-size:14px;">✅</div>', unsafe_allow_html=True)
-                        else:
-                            if st.button("🔒", key=_lk, use_container_width=True, help="Lock this pick"):
-                                st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
-                                save_json_data(LOCKS_PATH, st.session_state.locks)
-                                save_to_gist("locks", st.session_state.locks)
-                                st.rerun()
-                        if _in_slip:
-                            st.markdown('<div style="text-align:center;color:#a855f7;font-size:12px;padding-top:2px;">📋 In Slip</div>', unsafe_allow_html=True)
-                        else:
-                            if st.button("📋", key=_slip_key_fb, use_container_width=True, help="Add to Slip Builder"):
-                                if "slip_builder" not in st.session_state:
-                                    st.session_state.slip_builder = []
-                                st.session_state.slip_builder.append({
-                                    "player": _p.get("Player",""), "prop": _p.get("Prop",""),
-                                    "line": _p.get("Line",0), "side": _p.get("Side","OVER"),
-                                    "tier": _p.get("Tier",""), "edge": _p.get("Edge",0),
-                                    "prob": _p.get("Prob",0.5), "sport": _sport,
-                                    "pinnacle": _p.get("PinnacleConfirms", False)
-                                })
-                                st.rerun()
+                            st.markdown('<div style="text-align:center;padding-top:8px;color:#22c55e;font-size:16px;">✅</div>', unsafe_allow_html=True)
+                        elif st.button("🔒", key=_lk, use_container_width=True):
+                            st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
+                            save_json_data(LOCKS_PATH, st.session_state.locks)
+                            save_to_gist("locks", st.session_state.locks)
+                            st.rerun()
         else:
             st.info("No props match the selected filters.")
     else:
         st.info("Select a sport and click Load Board.")
 
-    # ── SLIP BUILDER PANEL ──────────────────────────────────
-    slip = st.session_state.get("slip_builder", [])
-    if slip:
-        st.markdown("---")
-        st.markdown("### 📋 Current Slip Builder")
-        _sb_col1, _sb_col2 = st.columns([3, 1])
-        with _sb_col1:
-            # Calculate slip metrics
-            _sb_probs = [float(s.get("prob", 0.55)) for s in slip]
-            _sb_edges = [float(s.get("edge", 0)) for s in slip]
-            _sb_combined = 1.0
-            for _p in _sb_probs:
-                _sb_combined *= _p
-            _sb_n = len(slip)
-            _sb_be = {2: 0.577, 3: 0.585, 4: 0.562, 5: 0.557}.get(_sb_n, 0.577) ** _sb_n if _sb_n > 0 else 0.5
-            _sb_mult = {2: 3, 3: 5, 4: 10, 5: 20}.get(_sb_n, 3)
-            _sb_ev = _sb_combined * _sb_mult - 1
-            _sb_avg_edge = sum(_sb_edges) / max(len(_sb_edges), 1)
-            # Correlation penalty
-            _sb_sports = [s.get("sport","") for s in slip]
-            _sb_corr_penalty = sum(0.15 for i in range(len(slip)) for j in range(i+1, len(slip)) if _sb_sports[i] == _sb_sports[j])
-            _sb_adj_edge = _sb_avg_edge - _sb_corr_penalty
-            # Grade
-            _sb_grade = "A" if _sb_ev > 0.05 and _sb_adj_edge > 0.08 else "B" if _sb_ev > 0 else "C" if _sb_ev > -0.05 else "D"
-            _sb_grade_c = "#22c55e" if _sb_grade == "A" else "#378add" if _sb_grade == "B" else "#eab308" if _sb_grade == "C" else "#e04040"
-
-            # Display slip picks
-            for _si, _sp in enumerate(slip):
-                _sc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#378add","LEAN":"#eab308"}.get(_sp.get("tier",""), "#6a7a8a")
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;justify-content:space-between;background:#0a0e14;border-left:3px solid {_sc};border-radius:0 4px 4px 0;padding:6px 10px;margin-bottom:3px;">'
-                    f'<div><span style="font-size:13px;font-weight:600;color:#e8f0f8;">#{_si+1} {_sp.get("player","")}</span> '
-                    f'<span style="font-size:12px;color:#8a9ab0;">{_sp.get("side","")} {_sp.get("line","")} {_sp.get("prop","")}</span></div>'
-                    f'<div style="display:flex;align-items:center;gap:8px;">'
-                    f'<span style="color:{_sc};font-weight:700;font-size:13px;">{_sp.get("edge",0)*100:.1f}%</span>'
-                    f'<span style="background:{_sc}22;color:{_sc};font-size:10px;padding:1px 6px;border-radius:8px;">{_sp.get("tier","")}</span>'
-                    f'</div></div>',
-                    unsafe_allow_html=True
-                )
-
-        with _sb_col2:
-            st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;text-align:center;">'
-                f'<div style="font-size:0.7rem;color:#6a7a8a;margin-bottom:4px;">{_sb_n}-PICK SLIP</div>'
-                f'<div style="font-size:2rem;font-weight:800;color:{_sb_grade_c};">Grade {_sb_grade}</div>'
-                f'<div style="margin-top:8px;font-size:0.8rem;color:#6a7a8a;">Combined</div>'
-                f'<div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_sb_combined*100:.1f}%</div>'
-                f'<div style="font-size:0.8rem;color:#6a7a8a;">EV</div>'
-                f'<div style="font-size:1rem;font-weight:700;color:{"#22c55e" if _sb_ev>0 else "#e04040"};">{_sb_ev*100:+.1f}%</div>'
-                f'<div style="font-size:0.8rem;color:#6a7a8a;">Payout</div>'
-                f'<div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_sb_mult}x</div>'
-                f'<div style="font-size:0.8rem;color:{"#e04040" if _sb_corr_penalty>0 else "#6a7a8a"};">Corr Penalty {_sb_corr_penalty*100:.0f}%</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-            if st.button("🔒 Lock Slip", key="lock_slip_builder", use_container_width=True):
-                _ts = st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M")
-                for _sl in slip:
-                    st.session_state.locks.append({"player":_sl.get("player",""),"prop":_sl.get("prop",""),"line":_sl.get("line",0),"side":_sl.get("side","OVER"),"tier":_sl.get("tier",""),"edge":_sl.get("edge",0),"sport":_sl.get("sport",""),"source":"Slip Builder","timestamp":_ts,"prob":_sl.get("prob",0.5)})
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
-                st.session_state.slip_builder = []
-                st.success(f"✅ {_sb_n}-pick slip locked!")
-                st.rerun()
-            if st.button("🗑 Clear Slip", key="clear_slip_builder", use_container_width=True):
-                st.session_state.slip_builder = []
-                st.rerun()
-
 # ----- TAB 2: GAME LINES -----
 with tabs[2]:
+    _games = st.session_state.games or []
     _sport2 = st.session_state.last_sport or "NBA"
-
-    # Merge game_analysis results INTO games for display
-    # game_analysis has the real edges/tiers; games has the raw lines
-    _raw_games = st.session_state.games or []
-    _analysis = st.session_state.get("game_analysis", [])
-
-    # Build lookup from analysis by matchup
-    _analysis_map = {}
-    for _ga in _analysis:
-        _mkey = _ga.get("Matchup", _ga.get("matchup", ""))
-        if _mkey:
-            _analysis_map[_mkey] = _ga
-
-    # Merge analysis fields back into games
-    _games = []
-    for _rg in _raw_games:
-        _g = dict(_rg)
-        _matchup = _g.get("Matchup","")
-        if _matchup in _analysis_map:
-            _a = _analysis_map[_matchup]
-            # Override edges and tiers from analysis
-            _best_bet = _a.get("best_bet", {})
-            _bet_type = _best_bet.get("type","") if _best_bet else ""
-            _bet_edge = float(_a.get("best_edge", 0) or 0)
-            _bet_tier = _a.get("best_tier", "LEAN")
-
-            # Write spread edge/tier
-            if _a.get("SpreadEdge") is not None:
-                _g["SpreadEdge"] = float(_a.get("SpreadEdge", 0) or 0)
-                _g["SpreadTier"] = _a.get("SpreadTier", "LEAN")
-                _g["SpreadPick"] = _a.get("SpreadPick", _g.get("SpreadPick",""))
-            # Write total edge/tier
-            if _a.get("TotalEdge") is not None:
-                _g["TotalEdge"] = float(_a.get("TotalEdge", 0) or 0)
-                _g["TotalTier"] = _a.get("TotalTier", "LEAN")
-                _g["TotalPick"] = _a.get("TotalPick", _g.get("TotalPick",""))
-            # Write ML edge/tier
-            if _a.get("MLEdge") is not None:
-                _g["MLEdge"] = float(_a.get("MLEdge", 0) or 0)
-                _g["MLTier"] = _a.get("MLTier", "LEAN")
-                _g["MLPick"] = _a.get("MLPick", _g.get("MLPick",""))
-            # Best bet overall
-            _g["BestEdge"] = _bet_edge
-            _g["BestTier"] = _bet_tier
-        _games.append(_g)
-
-    # If no raw games but we have analysis, build display from analysis
-    if not _games and _analysis:
-        for _a in _analysis:
-            _g = {
-                "Matchup": _a.get("Matchup",""),
-                "Sport": _sport2,
-                "Spread": _a.get("Spread","—"),
-                "SpreadEdge": float(_a.get("SpreadEdge", 0) or 0),
-                "SpreadTier": _a.get("SpreadTier","LEAN"),
-                "SpreadPick": _a.get("SpreadPick",""),
-                "Total": _a.get("Total","—"),
-                "TotalEdge": float(_a.get("TotalEdge", 0) or 0),
-                "TotalTier": _a.get("TotalTier","LEAN"),
-                "TotalPick": _a.get("TotalPick","O/U"),
-                "HomeML": _a.get("HomeML","—"),
-                "AwayML": _a.get("AwayML","—"),
-                "MLEdge": float(_a.get("MLEdge", 0) or 0),
-                "MLTier": _a.get("MLTier","LEAN"),
-                "MLPick": _a.get("MLPick",""),
-            }
-            _games.append(_g)
     st.markdown(f"## 🏟️ Game Lines — {_sport2}")
 
     # Slip grouping controls
@@ -9644,7 +9548,7 @@ with tabs[2]:
         _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
         _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
         _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
-        _tc2 = {"SOVEREIGN":"#a855f7","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+        _tc2 = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
 
         for _g in _fgames:
             _matchup = _g.get("Matchup","—")
@@ -10910,36 +10814,6 @@ with tabs[5]:
         st.caption("💡 Ctrl+A to select all, Ctrl+C to copy.")
 
 
-
-        # ── CORRELATION HEALTH ────────────────────────────────
-        active_locks = st.session_state.get("locks", [])
-        if active_locks:
-            st.markdown("---")
-            st.markdown("### 🔗 Correlation Health")
-            _sports_count = {}
-            _players_seen = []
-            _warnings = []
-            for _lk in active_locks:
-                _s = _lk.get("sport","")
-                _pl = _lk.get("player","")
-                _sports_count[_s] = _sports_count.get(_s, 0) + 1
-                # Check same player two props
-                if _pl in _players_seen:
-                    _warnings.append({"level":"red","msg":f"Same player ({_pl}) in 2 props → -25% correlation penalty","penalty":0.25})
-                _players_seen.append(_pl)
-            for _s, _n in _sports_count.items():
-                if _n >= 3:
-                    _warnings.append({"level":"red","msg":f"3+ props from {_s} → HIGH correlation risk → -35% per pair","penalty":0.35})
-                elif _n == 2:
-                    _warnings.append({"level":"yellow","msg":f"2 props from {_s} → moderate correlation → -15%","penalty":0.15})
-            if not _warnings:
-                st.markdown('<div style="background:#0a0e1400;border:1px solid #22c55e44;border-radius:6px;padding:0.6rem 1rem;color:#22c55e;">✅ GREEN — No correlation concerns</div>', unsafe_allow_html=True)
-            else:
-                for _w in _warnings:
-                    _wc = "#e04040" if _w["level"]=="red" else "#eab308"
-                    _wi = "🔴" if _w["level"]=="red" else "🟡"
-                    st.markdown(f'<div style="background:#0a0e14;border:1px solid {_wc}44;border-radius:6px;padding:0.6rem 1rem;margin-bottom:4px;color:{_wc};">{_wi} {_w["msg"]}</div>', unsafe_allow_html=True)
-
 # ----- TAB 6: PLAYER LOOKUP -----
 with tabs[6]:
     st.markdown("## 🔎 Player Lookup")
@@ -11919,50 +11793,6 @@ with tabs[9]:
                     icon = "✅" if entry['status']==200 and not entry['html'] else "⚠️"
                     st.caption(f"{icon} {entry['url']} — {entry['status']} {entry['size']}b HTML:{entry['html']} CT:{entry['ct']}")
 
-    # ── SIGNAL HEALTH DASHBOARD ──────────────────────────
-    st.markdown("### 📊 Signal Health Dashboard")
-    _sig_history = [h for h in st.session_state.history if h.get("signals")]
-    if len(_sig_history) >= 10:
-        _sig_names = ["base","defense","location","rest","pace","h2h"]
-        _sig_data = {}
-        for _sn in _sig_names:
-            _vals = [float(h.get("signals",{}).get(_sn, 0) or 0) for h in _sig_history if h.get("signals",{}).get(_sn) is not None]
-            if _vals:
-                _wins_s = [float(h.get("signals",{}).get(_sn,0) or 0) for h in _sig_history if h.get("outcome")=="WIN" and h.get("signals",{}).get(_sn) is not None]
-                _lift = (sum(_wins_s)/max(len(_wins_s),1)) - (sum(_vals)/max(len(_vals),1))
-                _sig_data[_sn] = {"lift": _lift, "count": len(_vals)}
-        if _sig_data:
-            _sh_html = '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
-            _sh_html += '<div style="display:grid;grid-template-columns:1fr 80px;gap:4px;padding:4px 0;border-bottom:1px solid #1e2d3d;margin-bottom:4px;"><span style="font-size:0.72rem;color:#6a7a8a;text-transform:uppercase;">Signal</span><span style="font-size:0.72rem;color:#6a7a8a;text-transform:uppercase;text-align:right;">Lift</span></div>'
-            for _sn, _sd in sorted(_sig_data.items(), key=lambda x: abs(x[1]["lift"]), reverse=True):
-                _lc = "#22c55e" if _sd["lift"] > 0 else "#e04040"
-                _sh_html += f'<div style="display:grid;grid-template-columns:1fr 80px;gap:4px;padding:3px 0;"><span style="font-size:0.88rem;color:#e8f0f8;text-transform:capitalize;">{_sn}</span><span style="font-size:0.88rem;font-weight:700;color:{_lc};text-align:right;">{_sd["lift"]*100:+.1f}%</span></div>'
-            _sh_html += '</div>'
-            st.markdown(_sh_html, unsafe_allow_html=True)
-    else:
-        st.info(f"Need 10+ resolved bets for signal health. Current: {len(_sig_history)}")
-
-    # ── CALIBRATION DASHBOARD ─────────────────────────────
-    st.markdown("### 🎯 Calibration Dashboard")
-    _cal_history = [h for h in st.session_state.history if h.get("prob") and h.get("outcome") in ("WIN","LOSS")]
-    if len(_cal_history) >= 20:
-        _buckets = [(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),(0.70,0.75),(0.75,1.0)]
-        _cal_html = '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
-        _cal_html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:4px;padding:4px 0;border-bottom:1px solid #1e2d3d;margin-bottom:4px;"><span style="font-size:0.72rem;color:#6a7a8a;">Bucket</span><span style="font-size:0.72rem;color:#6a7a8a;">Predicted</span><span style="font-size:0.72rem;color:#6a7a8a;">Actual</span><span style="font-size:0.72rem;color:#6a7a8a;">n</span></div>'
-        for _lo, _hi in _buckets:
-            _bucket_bets = [h for h in _cal_history if _lo <= float(h.get("prob",0)) < _hi]
-            if not _bucket_bets: continue
-            _pred = (_lo + _hi) / 2
-            _actual = sum(1 for h in _bucket_bets if h.get("outcome")=="WIN") / len(_bucket_bets)
-            _diff = _actual - _pred
-            _dc = "#22c55e" if abs(_diff) < 0.03 else "#eab308" if abs(_diff) < 0.07 else "#e04040"
-            _cal_html += f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:4px;padding:3px 0;"><span style="font-size:0.85rem;color:#8a9ab0;">{_lo:.0%}-{_hi:.0%}</span><span style="font-size:0.85rem;color:#e8f0f8;">{_pred:.0%}</span><span style="font-size:0.85rem;font-weight:700;color:{_dc};">{_actual:.0%}</span><span style="font-size:0.85rem;color:#6a7a8a;">{len(_bucket_bets)}</span></div>'
-        _cal_html += '</div>'
-        st.markdown(_cal_html, unsafe_allow_html=True)
-    else:
-        st.info(f"Need 20+ resolved bets for calibration. Current: {len(_cal_history)}")
-
-    st.markdown("---")
     if st.button("🔍 Test ScrapeOps Proxy", key="test_scrapeops"):
         if not SCRAPEOPS_KEY:
             st.error("SCRAPEOPS_KEY not in Secrets")
