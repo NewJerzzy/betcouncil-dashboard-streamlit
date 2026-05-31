@@ -4775,8 +4775,6 @@ def fetch_parlayplay_props(sport):
                 line_val = main_line.get("selectionPoints")
                 if line_val is None:
                     continue
-                multiplier = stat.get("defaultMultiplier", 1.77)
-                live_val = stat.get("liveStatValue", 0)
                 alt_count = stat.get("altLineCount", 0)
                 alt_key = f"{player_name}_{stat_name}"
                 if len(line_values) > 1:
@@ -5810,7 +5808,7 @@ def parse_bet_screenshot_ocr(image_bytes):
             # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 6, 14)
             for n in re.findall(r"\b(\d{1,2})\b", t_clean):
                 v = float(n)
-                if 1.0 <= v <= 60.0:
+                if 0.5 <= v <= 60.0:
                     return v
             # Pass 3 — OCR dropped decimal point: "215"→21.5, "75"→7.5, "235"→23.5
             # Only applies when the number ends in 5 (PrizePicks uses half-point lines)
@@ -5959,6 +5957,8 @@ def parse_bet_screenshot_ocr(image_bytes):
 
             blob_bets = []
             seen_players = {}
+            prev_stat_end = None
+            last_line_val = None
             for stat_start, stat_end, stat_name in deduped:
                 # Player: last proper-name sequence in the 150 chars before stat
                 snippet = text[max(0, stat_start - 150):stat_start]
@@ -5972,21 +5972,39 @@ def parse_bet_screenshot_ocr(image_bytes):
                     continue
                 player = name_matches[-1].group().strip()
 
-                # Line: first plausible number in 40 chars after stat keyword
-                after = re.sub(r"[()\[\]|<>@]", " ", text[stat_end:stat_end + 40])
+                # Line: check BEFORE the stat first (PrizePicks UI puts line value
+                # to the right of player name, which OCR reads before the stat label)
+                # Look back to previous stat end (or 150 chars) so we stay in this pick's zone
+                look_back_start = prev_stat_end if prev_stat_end is not None else max(0, stat_start - 150)
+                before_snip = re.sub(r"[()\[\]|<>@]", " ", text[look_back_start:stat_start])
+                after_snip  = re.sub(r"[()\[\]|<>@]", " ", text[stat_end:stat_end + 50])
                 line_val = None
-                for n in re.findall(r"(\d{1,2}\.\d)", after):
-                    v = float(n)
-                    if 0.5 <= v <= 99.5:
-                        line_val = v; break
-                if line_val is None:
-                    for n in re.findall(r"(\d{1,2})", after):
+
+                def _extract_line(s):
+                    # Proper decimal first (e.g. 0.5, 21.5)
+                    for n in re.findall(r"\b(\d{1,2}\.\d)\b", s):
                         v = float(n)
-                        if 1.0 <= v <= 60.0:
-                            line_val = v; break
+                        if 0.5 <= v <= 99.5:
+                            return v
+                    # "05"→0.5, "15"→1.5 etc. (OCR drops decimal from 0.5)
+                    for n in re.findall(r"\b(0\d)\b", s):
+                        v = int(n) / 10.0
+                        if 0.5 <= v <= 9.5:
+                            return v
+                    # Plain integer
+                    for n in re.findall(r"\b(\d{1,2})\b", s):
+                        v = float(n)
+                        if 0.5 <= v <= 60.0:
+                            return v
+                    return None
+
+                line_val = _extract_line(before_snip)
+                if line_val is None:
+                    line_val = _extract_line(after_snip)
+                if line_val is None:
+                    line_val = last_line_val  # inherit line from previous pick on same slip
                 if line_val is None:
                     continue
-
                 # Side: look for UNDER signals between player name and stat
                 between = text[max(0, stat_start - 150):stat_start].lower()
                 under_signals = ["less","under","demon","↓","vv","vy","mis","sis","<sis"]
@@ -6005,6 +6023,8 @@ def parse_bet_screenshot_ocr(image_bytes):
                                         "wager": 0, "pick_count": 2,
                                         "source": "PrizePicks", "bet_type": "prop"}
                 blob_bets.append(seen_players[player])
+                last_line_val = line_val
+                prev_stat_end = stat_end
 
             return blob_bets
 
