@@ -9690,22 +9690,24 @@ with tabs[5]:
             accept_multiple_files=True
         )
         if slip_imgs:
-            # Parse on upload — button re-triggers manually if needed
-            all_parsed = []
-            with st.spinner("Reading screenshot..."):
-                for img_file in slip_imgs:
-                    img_file.seek(0)
-                    img_bytes = img_file.read()
-                    result = parse_bet_screenshot_ocr(img_bytes)
-                    if result:
-                        all_parsed.extend(result)
+            # Use a content-hash to parse only once per unique upload
+            img_key = "_".join(f"{f.name}{f.size}" for f in slip_imgs)
+            if st.session_state.get("_parsed_key") != img_key:
+                st.session_state["_parsed_key"] = img_key
+                all_parsed = []
+                with st.spinner("Reading screenshot..."):
+                    for img_file in slip_imgs:
+                        img_file.seek(0)
+                        img_bytes = img_file.read()
+                        result = parse_bet_screenshot_ocr(img_bytes)
+                        if result:
+                            all_parsed.extend(result)
                 if all_parsed:
                     analyzer_picks = []
                     for bet in all_parsed:
                         player = bet.get("player", "").strip()
                         stat   = bet.get("prop", bet.get("stat", "")).strip()
                         line   = bet.get("line", 0)
-                        # Skip only if missing essential fields or settled loss
                         if not player or not stat:
                             continue
                         if bet.get("outcome") == "LOSS":
@@ -9724,19 +9726,17 @@ with tabs[5]:
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
                         st.session_state["_auto_analyze"] = True
-                        st.success(f"✅ Found {len(analyzer_picks)} picks — analyzing...")
-                        st.rerun()
                     else:
-                        # Show what was parsed for debugging
-                        st.warning(f"Screenshot parsed {len(all_parsed)} raw bets but none passed filters.")
+                        st.warning(f"Parsed {len(all_parsed)} bets but none passed filters.")
                         for b in all_parsed:
-                            st.caption(f"  raw: player={b.get('player')!r} stat={b.get('prop')!r} line={b.get('line')} outcome={b.get('outcome')}")
+                            st.caption(f"  {b.get('player')!r} | {b.get('prop')!r} | {b.get('line')} | {b.get('outcome')}")
                 else:
-                    st.error("Could not read screenshot — see OCR debug below, or paste the slip manually.")
+                    st.error("Could not read screenshot — check OCR debug below or paste manually.")
 
-            # Manual re-parse button in case auto didn't catch it
+            # Manual re-parse button clears the key so next render re-runs
             if st.button("🔄 Re-parse Screenshot", key="parse_slip_screenshot"):
-                st.session_state.pop("_last_parsed_imgs", None)
+                st.session_state.pop("_parsed_key", None)
+                st.session_state.pop("_auto_analyze", None)
                 st.rerun()
 
         # OCR debug outside nested expander (Streamlit doesn't support nesting)
