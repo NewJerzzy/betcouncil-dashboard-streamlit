@@ -5569,50 +5569,66 @@ def _tier_why(r):
 
     reasons = []
 
-    # Data quality caveat first
-    if "Historical" in source:
-        reasons.append("No live board data — rating based on season averages only")
+    no_board = "Historical" in source or not source
+    no_avg   = not avg
 
-    # Core edge explanation
+    # Data quality caveat — explain what this means practically
+    if no_board and no_avg:
+        reasons.append(
+            "⚠️ No live board data and no historical avg found — run the board first for a real score. "
+            "Rating defaulted to PASS/50% because the model has nothing to work with for this player/stat combo"
+        )
+    elif no_board:
+        reasons.append("Live board not loaded — score uses season averages only (less accurate than full model)")
+
+    # Core edge explanation — avg vs line
     if avg and line:
         gap = avg - line if side == "OVER" else line - avg
         if gap > 0:
             reasons.append(
-                f"Season avg ({avg:.1f}) sits {gap:+.1f} {'above' if side == 'OVER' else 'below'} the line ({line}) — that's {'a solid cushion' if abs(gap) >= 2 else 'a small cushion'}"
+                f"Season avg ({avg:.1f}) is {abs(gap):.1f} pts {'above' if side == 'OVER' else 'below'} "
+                f"the line ({line}) — {'comfortable cushion' if abs(gap) >= 3 else 'small cushion'}"
             )
+        elif gap == 0:
+            reasons.append(f"Season avg ({avg:.1f}) is right on the line ({line}) — coin flip territory")
         else:
             reasons.append(
-                f"Season avg ({avg:.1f}) is {'below' if side == 'OVER' else 'above'} the line ({line}) by {abs(gap):.1f} — line is working against you"
+                f"Season avg ({avg:.1f}) is {abs(gap):.1f} pts {'below' if side == 'OVER' else 'above'} "
+                f"the line ({line}) — avg is working against this bet"
             )
 
-    # Probability framing
+    # Probability framing — include 50% case explicitly
     if prob >= 0.65:
-        reasons.append(f"Model gives {prob:.0%} hit probability — strong confidence")
+        reasons.append(f"Hit probability {prob:.0%} — strong model confidence")
     elif prob >= 0.58:
-        reasons.append(f"Model gives {prob:.0%} hit probability — above breakeven")
-    elif prob < 0.50:
-        reasons.append(f"Model gives only {prob:.0%} hit probability — below coin flip")
+        reasons.append(f"Hit probability {prob:.0%} — above the {prizepicks_breakeven_prob(3):.0%} breakeven needed")
+    elif prob > 0.50:
+        reasons.append(f"Hit probability {prob:.0%} — slightly above 50/50 but below breakeven")
+    elif prob == 0.50:
+        reasons.append("Hit probability 50% — model has no edge data, treating as a coin flip")
+    else:
+        reasons.append(f"Hit probability only {prob:.0%} — below 50/50, model leans against this bet")
 
-    # Signals
+    # Active signals
     if sig_b > 0:
-        reasons.append("Base signal positive — recent output trending above this line")
+        reasons.append("Base signal ✅ — player's recent output trending above this line")
     if sig_d > 0:
-        reasons.append("Defense signal positive — opponent is weak in this category")
+        reasons.append("Defense signal ✅ — opponent ranks weak in this stat category")
     if sharp:
-        reasons.append(f"Sharp money indicator: {sharp}")
+        reasons.append(f"Sharp money flagged: {sharp}")
 
-    # Tier-specific context
+    # What the tier actually means in betting terms
     TIER_CONTEXT = {
-        "SOVEREIGN": "Edge ≥15% — highest conviction tier, bet full unit",
-        "ELITE":     "Edge 10–15% — strong play, confident bet",
-        "APPROVED":  "Edge 5–10% — solid value, worth including",
-        "LEAN":      "Edge 2–5% — slight value but not a strong conviction play",
-        "PASS":      "Edge <2% — no meaningful edge, avoid or use as filler only",
+        "SOVEREIGN": "SOVEREIGN = edge ≥15%. Max conviction — full unit bet",
+        "ELITE":     "ELITE = edge 10–15%. Strong play — confident bet",
+        "APPROVED":  "APPROVED = edge 5–10%. Solid value — include in parlays",
+        "LEAN":      "LEAN = edge 2–5%. Small edge — use as filler, not anchor",
+        "PASS":      "PASS = edge <2% or no data. Skip this pick or replace it",
     }
     if tier in TIER_CONTEXT:
         reasons.append(TIER_CONTEXT[tier])
 
-    return " | ".join(reasons) if reasons else "Insufficient data for detailed reasoning"
+    return "\n         ".join(reasons) if reasons else "Insufficient data"
 
 
 def generate_slip_summary(picks, results):
@@ -9873,6 +9889,14 @@ with tabs[5]:
     # Show current slip
     if st.session_state["analyzer_picks"]:
         st.markdown("---")
+        if not board:
+            st.warning(
+                "⚠️ **Live board not loaded** — analysis will use historical averages only, "
+                "which may not reflect today's lines or recent form. "
+                "For full accuracy: go to **Board** tab → click **Run Board**. "
+                "Then come back here and re-analyze.",
+                icon="📋"
+            )
         st.markdown(f"### Your Slip ({len(st.session_state['analyzer_picks'])} picks)")
 
         for i, pick in enumerate(st.session_state["analyzer_picks"]):
