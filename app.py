@@ -1344,8 +1344,10 @@ def get_api_counter(counter_path):
                 counter["month"] = current_month
                 counter["monthly_count"] = 0 if "monthly_count" in counter else 0
             return counter
-        except Exception:
-            pass
+        except Exception as _e:
+            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+            if 'errors' not in st.session_state: st.session_state['errors'] = []
+            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
 
 def increment_api_counter(counter_path):
@@ -1654,8 +1656,10 @@ def get_clv_summary():
                 model_prob = c.get("prob", 0.5)
                 if pinn_prob > 0:
                     edges.append(model_prob - pinn_prob)
-            except Exception:
-                pass
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         pinn_avg_edge = sum(edges) / len(edges) if edges else 0
 
     # Recent form (last 20)
@@ -2044,8 +2048,10 @@ def detect_game_script_contradictions(parlay_props, games):
         if total and total != "N/A":
             try:
                 game_total_map[matchup] = float(total)
-            except Exception:
-                pass
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     for i, j in combinations(range(len(parlay_props)), 2):
         p1 = parlay_props[i]
         p2 = parlay_props[j]
@@ -2086,8 +2092,10 @@ def detect_game_script_contradictions(parlay_props, games):
                             fav_team = str(spread).split()[0]
                             if team1 == fav_team:
                                 warnings.append(f"⚠️ Blowout risk: {p1['Player']} on {team1} favored by {spread_val}pts. May sit late if big lead develops.")
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                        if 'errors' not in st.session_state: st.session_state['errors'] = []
+                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return warnings
 
 def track_line_movement(props):
@@ -2472,8 +2480,10 @@ def fetch_todays_referees(sport):
         if officials:
             with open(cache_path, "wb") as f:
                 pickle.dump(officials, f)
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return officials
 
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
@@ -2535,9 +2545,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
-    except Exception:
-        pass
-    
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     try:
         if total_str and total_str != "N/A":
             total_val = float(total_str)
@@ -2606,9 +2617,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
-    except Exception:
-        pass
-    
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     try:
         if home_ml and away_ml and home_ml != "N/A" and away_ml != "N/A":
             h_ml = float(str(home_ml).replace("+",""))
@@ -2649,9 +2661,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
-    except Exception:
-        pass
-    
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return {"matchup": matchup, "home": home_team, "away": away_team, "recommendations": recommendations, "best_bet": best_bet, "best_edge": best_edge, "sport": sport, "public_signals": public_sharp_signals, "public_data": game_public}
 
 def fetch_alternate_lines(sport, matchup):
@@ -3299,8 +3312,10 @@ def fetch_underdog_props(sport):
                     cached = pickle.load(_f)
                 if cached:
                     return cached
-            except Exception:
-                pass
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
     product_exp_id = "018e1234-5678-9abc-def0-123456789006"
     state_config_id = "725014ef-3570-4e93-871d-d69674ab3521"
@@ -3441,8 +3456,10 @@ def fetch_underdog_props(sport):
             try:
                 with open(cache_path, "wb") as _f:
                     pickle.dump(props, _f)
-            except Exception:
-                pass
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         return props
     except Exception as e:
         print(f"Underdog props error: {e}")
@@ -3600,8 +3617,10 @@ def scrape_prizepicks(sport):
         import glob
         for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
             os.remove(f)
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return fetch_underdog_props(sport)
 
 def fetch_underdog_injuries(sport):
@@ -3628,8 +3647,10 @@ def fetch_underdog_injuries(sport):
                     age_hours = (datetime.now(timezone.utc) - item_dt).total_seconds() / 3600
                     if age_hours > 48:
                         continue
-                except Exception:
-                    pass
+                except Exception as _e:
+                    import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                    if 'errors' not in st.session_state: st.session_state['errors'] = []
+                    st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
             if "out" in content and "ruled out" in content:
                 injuries[name] = "Out"
             elif "questionable" in content or "day-to-day" in content:
@@ -3856,16 +3877,20 @@ def fetch_action_network_props(sport):
                     if lv is not None:
                         try:
                             line_val = float(lv)
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                            if 'errors' not in st.session_state: st.session_state['errors'] = []
+                            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
                 odds = line_entry.get("odds")
                 if odds:
                     over_odds = odds
             if line_val is None and implied_value:
                 try:
                     line_val = round(float(implied_value), 1)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                    if 'errors' not in st.session_state: st.session_state['errors'] = []
+                    st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
             if line_val is None:
                 continue
             key = (sport, player_abbr, stat_name, line_val)
@@ -5185,8 +5210,10 @@ def check_data_freshness():
         days_old = (datetime.now() - last_updated).days
         if days_old > 14:
             warnings.append(f"Hardcoded averages (NFL/Soccer/UFC): {days_old} days old")
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return warnings
 
 def fetch_espn_game_ids(sport):
@@ -5215,8 +5242,10 @@ def fetch_espn_game_ids(sport):
         if game_ids:
             with open(cache_path, "wb") as f:
                 pickle.dump(game_ids, f)
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return game_ids
 
 def fetch_espn_line_movement(sport, event_id):
@@ -5283,8 +5312,10 @@ def detect_sharp_movement(movements):
         if ou_move >= 2.0:
             direction = "↑" if last_ou > first_ou else "↓"
             return True, direction, round(ou_move, 1)
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return False, "", 0
 
 def detect_steam_moves(sport):
@@ -5347,8 +5378,10 @@ def detect_steam_moves(sport):
                                 "age_mins": round(baseline_age, 0),
                                 "signal": f"🔥 STEAM {direction}: Total moved {direction}{abs(espn_move)} on ESPN + Bovada in {baseline_age:.0f}m",
                             })
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                        if 'errors' not in st.session_state: st.session_state['errors'] = []
+                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         save_json_data(baseline_path, current_lines)
         return steam_moves
     except Exception as e:
@@ -5554,8 +5587,10 @@ def generate_gem_summary():
     return "\n".join(lines)
 
 
-def _tier_why(r):
-    """Return a plain-English sentence explaining WHY this pick got its tier."""
+def _tier_why(r, html=False):
+    """Return a plain-English explanation of WHY this pick got its tier.
+    html=True uses <br> separators for pick cards; html=False uses newline for text summary.
+    """
     edge   = r.get("edge", 0)
     prob   = r.get("prob", 0.5)
     avg    = r.get("avg")
@@ -5628,7 +5663,8 @@ def _tier_why(r):
     if tier in TIER_CONTEXT:
         reasons.append(TIER_CONTEXT[tier])
 
-    return "\n         ".join(reasons) if reasons else "Insufficient data"
+    sep = "<br>" if html else "\n         "
+    return sep.join(reasons) if reasons else "Insufficient data"
 
 
 def generate_slip_summary(picks, results):
@@ -6051,10 +6087,9 @@ def parse_bet_screenshot_ocr(image_bytes):
                 def _extract_line(s):
                     # Strip pagination (2/3, 4/90) and time patterns (11h, 38m, 1h)
                     s = re.sub(r"\b\d+/\d+\b", " ", s)
-                    s = re.sub(r"\b\d+[hm]\b", " ", s)
+                    s = re.sub(r"\b\d+\s*[hm]\b", " ", s)
                     # Normalise capital-O that OCR reads instead of zero: O05→05, O5→05
-                    s = re.sub(r"\bO(0?\d)\b", r"0\1", s)
-                    s = re.sub(r"\bO(\d{1,2})\b", r"\1", s)   # O05→05, O5→5
+                    s = re.sub(r"\bO(\d{1,2})\b", r"\1", s)  # O05→05, O5→5 (OCR capital-O for zero)
                     for n in re.findall(r"\b(\d{1,2}\.\d)\b", s):
                         v = float(n)
                         if 0.5 <= v <= 99.5:
@@ -6184,9 +6219,10 @@ def parse_bet_screenshot_ocr(image_bytes):
                 if 1 <= w <= 10000:
                     for b in bets:
                         b["wager"] = w
-            except Exception:
-                pass
-
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         pc_m = re.search(r"(\d+)[- ]pick|pick[- ](\d+)", raw_text.lower())
         if pc_m and bets:
             try:
@@ -6194,9 +6230,10 @@ def parse_bet_screenshot_ocr(image_bytes):
                 if 2 <= pc <= 6:
                     for b in bets:
                         b["pick_count"] = pc
-            except Exception:
-                pass
-
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         return bets
 
     except Exception as e:
@@ -6451,9 +6488,10 @@ def fetch_dk_salaries(sport="NBA"):
                 if attr.get("id") == 90:  # FPPG stat id
                     try:
                         fppg = float(attr.get("value", 0))
-                    except Exception:
-                        pass
-
+                    except Exception as _e:
+                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                        if 'errors' not in st.session_state: st.session_state['errors'] = []
+                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
             if name and salary:
                 value_score = round((fppg / (salary / 1000)), 2) if salary > 0 else 0
                 salaries[normalize_name(name)] = {
@@ -6760,8 +6798,10 @@ def fetch_player_id_bdl(player_name):
                 with open(cache_path, "wb") as f:
                     pickle.dump(pid, f)
                 return pid
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     return None
 
 
@@ -7203,8 +7243,10 @@ def load_sport_data(sport):
                         "bovada": "Bovada"
                     }.get(book, book.title())
                     all_alt_sources.append((op, book_display))
-        except Exception:
-            pass
+        except Exception as _e:
+            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+            if 'errors' not in st.session_state: st.session_state['errors'] = []
+            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     for alt_prop, source in all_alt_sources:
         key = (normalize_name(alt_prop.get("Player","")), alt_prop.get("Prop",""))
         if key not in better_lines:
@@ -7278,8 +7320,10 @@ def load_sport_data(sport):
                             team = competitor.get("team", {}).get("abbreviation", "")
                             if team:
                                 b2b_teams.add(team)
-    except Exception:
-        pass
+    except Exception as _e:
+        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+        if 'errors' not in st.session_state: st.session_state['errors'] = []
+        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
     game_ids = fetch_espn_game_ids(sport)
     # officials_data already fetched in parallel — session_state set above
     power_divergences = {}
@@ -7526,8 +7570,10 @@ def load_sport_data(sport):
                         elif h2h_rate <= 0.30:
                             h2h_adj = -0.02
                             h2h_note = f"H2H {h2h_rate:.0%} vs {opp_abbr} ({h2h_games}g)"
-            except Exception:
-                pass
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         game_total_adj = 0.0
         if sport == "NBA" and player_team:
             for game in games:
@@ -7536,8 +7582,10 @@ def load_sport_data(sport):
                     if total and total != "N/A":
                         try:
                             game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                            if 'errors' not in st.session_state: st.session_state['errors'] = []
+                            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
                     break
         weather_adj = 0.0
         weather_note = ""
@@ -7588,8 +7636,15 @@ def load_sport_data(sport):
         an_money = an_data.get("money_pct", 0)
         over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
+        # Reflect MLB pitcher+weather adjustments in prob (not just edge)
+        if sport == "MLB" and (pitcher_adj != 0 or weather_adj != 0):
+            mlb_extra = pitcher_adj + weather_adj
+            over_prob  = max(0.30, min(0.70, over_prob  + mlb_extra))
         under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
         under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj - h2h_adj))
+        if sport == "MLB" and (pitcher_adj != 0 or weather_adj != 0):
+            mlb_extra = pitcher_adj + weather_adj
+            under_prob = max(0.30, min(0.70, under_prob - mlb_extra))
         if consensus_prob is not None:
             blended_over_prob = round(consensus_prob * 0.60 + over_prob * 0.40, 4)
             blended_under_prob = round((1 - consensus_prob) * 0.60 + under_prob * 0.40, 4)
@@ -8157,8 +8212,10 @@ with st.sidebar:
                                 os.remove(fp)
                         except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
                             os.remove(fp)
-        except Exception:
-            pass
+        except Exception as _e:
+            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+            if 'errors' not in st.session_state: st.session_state['errors'] = []
+            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
             st.session_state.board_data = board
@@ -9241,8 +9298,10 @@ with tabs[3]:
                                                 if i < len(stats_vals):
                                                     try:
                                                         player_stats[aname_norm][key.upper()] = float(stats_vals[i])
-                                                    except Exception:
-                                                        pass
+                                                    except Exception as _e:
+                                                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                                                        if 'errors' not in st.session_state: st.session_state['errors'] = []
+                                                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
                                             # Map common stat label variants
                                             for label, variants in [
                                                 ("PTS",["PTS","points"]),("REB",["REB","rebounds"]),
@@ -9260,8 +9319,10 @@ with tabs[3]:
                                                     if any(v.upper() == key.upper() for v in variants) and i < len(stats_vals):
                                                         try:
                                                             player_stats[aname_norm][label] = float(stats_vals[i])
-                                                        except Exception:
-                                                            pass
+                                                        except Exception as _e:
+                                                            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                                                            if 'errors' not in st.session_state: st.session_state['errors'] = []
+                                                            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
                             except (ValueError, TypeError):
                                 continue
 
@@ -9787,7 +9848,7 @@ with tabs[5]:
                             "stat":   stat,
                             "line":   line_f,
                             "side":   bet.get("side", "OVER"),
-                            "sport":  bet.get("sport", "MLB"),
+                            "sport":  bet.get("sport", "NBA"),  # blob parser sets correct sport; NBA is safer fallback than MLB
                         })
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
@@ -10118,7 +10179,7 @@ with tabs[5]:
                 f'{"<div style=\"font-size:14px;color:#22c55e;margin-top:4px\">⚡ " + r["better_line"] + "</div>" if r["better_line"] else ""}'
                 f'{"<div style=\"font-size:14px;color:#e8a020;margin-top:4px\">⚠️ " + r["line_note"] + "</div>" if r["line_note"] else ""}'
                 f'<div style="font-size:13px;color:#8a9aaa;margin-top:6px;border-top:1px solid #1a2a3a;padding-top:6px;">'
-                f'💬 <b>Why {r["tier"]}:</b> {_tier_why(r)}</div>'
+                f'💬 <b>Why {r["tier"]}:</b> {_tier_why(r, html=True)}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -10569,8 +10630,10 @@ with tabs[8]:
                     _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada"}.get(_op.get("Book","").lower())
                     if _bk2:
                         _ls_add([_op], _bk2)
-            except Exception:
-                pass
+            except Exception as _e:
+                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                if 'errors' not in st.session_state: st.session_state['errors'] = []
+                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
@@ -10875,8 +10938,10 @@ with tabs[9]:
                         elif n == 0:
                             detail = "⚠️ 200 OK — Connected but 0 props. No slate posted yet."
                             color = "yellow"
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
+                        if 'errors' not in st.session_state: st.session_state['errors'] = []
+                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
                 results[src["name"]] = (code, detail, color)
             st.session_state["api_panel_results"] = results
 
