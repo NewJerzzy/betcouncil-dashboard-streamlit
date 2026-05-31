@@ -8810,15 +8810,37 @@ with tabs[0]:
         if board:
             gem_brief = generate_gem_summary()
             st.session_state["gem_brief"] = gem_brief
-            st.download_button(
-                label="📋 Copy Gem Brief",
-                data=gem_brief,
-                file_name=f"betcouncil_gem_{date.today().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                key="dl_gem_brief",
-                use_container_width=True,
-                help="Download and paste into your Gemini Gem for mobile analysis"
-            )
+            # Escape backticks and backslashes for safe JS template literal
+            import json
+            gem_js = json.dumps(gem_brief)
+            st.components.v1.html(f"""
+<button onclick="(function(){{
+    var txt = {gem_js};
+    navigator.clipboard.writeText(txt).then(function(){{
+        var b = document.getElementById('gcb');
+        b.innerText = '✅ Copied!';
+        b.style.background = '#0f2a1a';
+        b.style.borderColor = '#22c55e';
+        b.style.color = '#22c55e';
+        setTimeout(function(){{
+            b.innerText = '📋 Copy Gem Brief';
+            b.style.background = '#0a0e14';
+            b.style.borderColor = '#1e2d3d';
+            b.style.color = '#b8c6d6';
+        }}, 2500);
+    }}).catch(function(){{
+        var b = document.getElementById('gcb');
+        b.innerText = '⚠️ Long-press to copy';
+    }});
+}})()" id="gcb" style="
+    width:100%; padding:10px 0; cursor:pointer;
+    background:#0a0e14; border:1px solid #1e2d3d;
+    border-radius:8px; color:#b8c6d6;
+    font-size:14px; font-weight:600;
+    font-family:sans-serif; letter-spacing:0.03em;
+    transition: all 0.2s;
+">📋 Copy Gem Brief</button>
+""", height=48)
             with st.expander("👁 Preview Gem Brief", expanded=False):
                 st.text_area(
                     label="",
