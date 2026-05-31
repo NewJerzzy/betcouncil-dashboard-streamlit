@@ -9169,58 +9169,22 @@ with tabs[0]:
 with tabs[1]:
     _board = st.session_state.board_data or []
     _sport = st.session_state.last_sport or "NBA"
-
-    # ── TERMINAL LAYOUT: Filter panel left + Results right ──
     _tc = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
-    _filter_col, _results_col = st.columns([1, 3], gap="small")
-
-    with _filter_col:
-        st.markdown('''<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1rem;">
-<div style="color:#378add;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;margin-bottom:0.8rem;">⚙ FILTERS</div>''', unsafe_allow_html=True)
-
-        _tf = st.multiselect(
-            "Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"],
-            default=["SOVEREIGN","ELITE","APPROVED","LEAN"],
-            key="fb_tier"
-        )
-        _all_sports = list(set(p.get("Sport","") for p in _board if p.get("Sport","")))
-        _sf = st.multiselect(
-            "Sport", _all_sports,
-            default=_all_sports,
-            key="fb_sport"
-        )
-        _all_props = sorted(set(p.get("Prop","") for p in _board if p.get("Prop","")))
-        _pf = st.multiselect(
-            "Stat Type", _all_props,
-            default=_all_props,
-            key="fb_prop_filter"
-        )
-        _side_filter = st.radio(
-            "Side", ["Both","OVER","UNDER"],
-            horizontal=True,
-            key="fb_side_filter"
-        )
-        _min_edge = st.slider(
-            "Min Edge %", 0, 20, 0,
-            key="fb_min_edge"
-        )
-        st.markdown("---")
-
-        # Stats summary
-        _total = len(_board)
-        _sov = sum(1 for p in _board if p.get("Tier")=="SOVEREIGN")
-        _eli = sum(1 for p in _board if p.get("Tier")=="ELITE")
-        _app = sum(1 for p in _board if p.get("Tier")=="APPROVED")
-        st.markdown(f'''<div style="font-size:0.82rem;">
-<div style="color:#6a7a8a;margin-bottom:4px;">BOARD SUMMARY</div>
-<div style="color:#22c55e;">SOVEREIGN: {_sov}</div>
-<div style="color:#378add;">ELITE: {_eli}</div>
-<div style="color:#e8a020;">APPROVED: {_app}</div>
-<div style="color:#6a7a8a;">Total: {_total}</div>
-</div>''', unsafe_allow_html=True)
-
-        st.markdown("---")
-        if st.button("🔒 Lock All SOVEREIGN/ELITE", key="fb_lock_all", use_container_width=True):
+    st.markdown(f"## 📊 Full Board — {_sport}")
+    if _board:
+        # Filters row
+        _fcol1, _fcol2, _fcol3, _fcol4, _fcol5 = st.columns([2,2,2,1,1])
+        with _fcol1:
+            _tf = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"], default=["SOVEREIGN","ELITE","APPROVED","LEAN"], key="fb_tier")
+        with _fcol2:
+            _all_sports = list(set(p.get("Sport","") for p in _board if p.get("Sport","")))
+            _sf = st.multiselect("Sport", _all_sports, default=_all_sports, key="fb_sport")
+        with _fcol3:
+            _side_filter = st.radio("Side", ["Both","OVER","UNDER"], horizontal=True, key="fb_side_filter")
+        with _fcol4:
+            _min_edge = st.slider("Min Edge%", 0, 20, 0, key="fb_min_edge")
+        with _fcol5:
+            if st.button("🔒 Lock All SOVEREIGN/ELITE", key="fb_lock_all"):
                 for _p in _board:
                     if _p.get("Tier") in ("SOVEREIGN","ELITE"):
                         _already = any(normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and str(l.get("line",""))==str(_p.get("Line","")) for l in st.session_state.locks)
@@ -9230,21 +9194,11 @@ with tabs[1]:
                 save_to_gist("locks", st.session_state.locks)
                 st.rerun()
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with _results_col:
-        st.markdown(f'''<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.5rem 1rem;margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;">
-<span style="color:#378add;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">📊 FULL BOARD — {_sport}</span>
-<span style="color:#6a7a8a;font-size:0.78rem;">{len(_board)} props loaded</span>
-</div>''', unsafe_allow_html=True)
-
         _filtered = [p for p in _board
                      if p.get("Tier","") in (_tf or ["SOVEREIGN","ELITE","APPROVED","LEAN"])
                      and p.get("Sport","") in (_sf or _all_sports)
-                     and (_pf == _all_props or p.get("Prop","") in _pf)
                      and (_side_filter == "Both" or p.get("Side","") == _side_filter)
                      and float(p.get("Edge",0) or 0) >= _min_edge / 100]
-
         if _filtered:
             # Group by sport+game
             _groups = {}
@@ -9335,9 +9289,8 @@ with tabs[1]:
                             save_to_gist("locks", st.session_state.locks)
                             st.rerun()
         else:
-                st.info("No props match the selected filters.")
-
-    if not _board:
+            st.info("No props match the selected filters.")
+    else:
         st.info("Select a sport and click Load Board.")
 
 # ----- TAB 2: GAME LINES -----
