@@ -5800,19 +5800,21 @@ def parse_bet_screenshot_ocr(image_bytes):
             return None
 
         def get_line(t):
+            # Strip OCR noise characters before parsing (parens, brackets, pipe, etc.)
+            t_clean = re.sub(r"[()\[\]|<>@]", " ", t)
             # Pass 1 — well-formed decimal (e.g. 21.5, 7.5)
-            for n in re.findall(r"\b(\d{1,2}\.\d)\b", t):
+            for n in re.findall(r"\b(\d{1,2}\.\d)\b", t_clean):
                 v = float(n)
                 if 0.5 <= v <= 99.5:
                     return v
-            # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 14, 8)
-            for n in re.findall(r"\b(\d{1,2})\b", t):
+            # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 6, 14)
+            for n in re.findall(r"\b(\d{1,2})\b", t_clean):
                 v = float(n)
                 if 1.0 <= v <= 60.0:
                     return v
             # Pass 3 — OCR dropped decimal point: "215"→21.5, "75"→7.5, "235"→23.5
             # Only applies when the number ends in 5 (PrizePicks uses half-point lines)
-            for n in re.findall(r"\b(\d{2,3})\b", t):
+            for n in re.findall(r"\b(\d{2,3})\b", t_clean):
                 iv = int(n)
                 if str(iv).endswith("5"):
                     v = iv / 10.0
@@ -5822,10 +5824,11 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def get_side(t):
             tl = t.lower()
-            # Tesseract commonly misreads ↓ as: vv, vy, v (standalone)
-            # and ↑ as: t, wt, tt, 1 (standalone before a number)
-            under_tokens = ["less","under","demon","↓","vv","vy"]
-            # Check for isolated "v" before a digit (OCR for ↓)
+            # Tesseract commonly misreads ↓ (UNDER arrow) as many things:
+            # vv, vy, v, mis, sis, '<sis, tT (when combined with other noise)
+            # and OVER arrow as: 05, o5, oS, tT
+            under_tokens = ["less","under","demon","↓","vv","vy","mis","sis","<sis"]
+            # Isolated v/vy/vv or noise strings that indicate UNDER
             if re.search(r'\bv[vy]?\b', tl) or any(w in tl for w in under_tokens):
                 return "UNDER"
             return "OVER"
@@ -5873,11 +5876,17 @@ def parse_bet_screenshot_ocr(image_bytes):
             "More","Less","Over","Under","Pick","Entry","Flex",
             "Goblin","Demon","Final","Pending","Live","Show",
             "Details","Leaderboard","Vs","At","Play","Win",
+            "Starts","Flex","Slip","Pay","Parlay","Power",
+            "HOU","MIL","SDV","WSH","LAL","GSW","BOS","NYK",
         }
 
         def is_player_name(tok):
             """Return cleaned player name if token looks like one, else None."""
-            # Strip trailing position code
+            # Strip OCR junk characters before analysis
+            tok = re.sub(r"[*@|<>()\[\]]", " ", tok).strip()
+            # Preserve Jr/Sr/II/III suffixes before stripping trailing position codes
+            tok = re.sub(r'\s+(Jr|Sr|II|III|IV)\.?\s*$', lambda m: " " + m.group(1), tok, flags=re.IGNORECASE)
+            # Strip trailing position code (OF, PG, SP, etc.)
             cleaned = re.sub(
                 r'\s+[A-Za-z]{1,3}(?:-[A-Za-z]{1,2})?$', '', tok
             ).strip()
@@ -5887,11 +5896,12 @@ def parse_bet_screenshot_ocr(image_bytes):
                 return None
             if any(w.upper() in SKIP_WORDS for w in words):
                 return None
-            # All substantial words must start with uppercase
-            if not all(w[0].isupper() for w in words if len(w) > 1):
+            # All substantial words must start with uppercase; allow lowercase suffixes
+            if not all(w[0].isupper() for w in words if len(w) > 1 and w.lower() not in ("jr","sr","ii","iii","iv")):
                 return None
-            # Must have at least 2 words of 3+ chars (filters out junk like "Vv Vy")
-            if sum(1 for w in words if len(w) >= 3) < 2:
+            # Must have at least 2 words of 3+ chars; Jr/Sr count even though short
+            long_words = sum(1 for w in words if len(w) >= 3 or w.lower() in ("jr","sr"))
+            if long_words < 2:
                 return None
             return cleaned
 
@@ -5915,11 +5925,18 @@ def parse_bet_screenshot_ocr(image_bytes):
             line_val = None
             side     = "OVER"
 
+            # First try each token individually
             for tok in segment_toks:
                 if line_val is None:
                     line_val = get_line(tok)
                     if line_val is not None:
                         side = get_side(tok)
+
+            # Fallback: try full segment text in case line is embedded in a phrase
+            if line_val is None:
+                line_val = get_line(segment_text)
+                if line_val is not None:
+                    side = get_side(segment_text)
 
             if stat is None or line_val is None:
                 continue
