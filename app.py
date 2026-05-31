@@ -8785,6 +8785,31 @@ with tabs[0]:
 
     with col_left:
 
+        # ── CLV WIDGET ───────────────────────────────────────
+        _hist_clv = st.session_state.history or []
+        if _hist_clv:
+            from datetime import timedelta
+            _now = datetime.now()
+            _7d = [h for h in _hist_clv if h.get("timestamp","") >= (_now - timedelta(days=7)).strftime("%Y-%m-%d")]
+            _30d = [h for h in _hist_clv if h.get("timestamp","") >= (_now - timedelta(days=30)).strftime("%Y-%m-%d")]
+            def _avg_clv_f(hl):
+                v = [float(h.get("clv",0) or 0) for h in hl if h.get("clv") is not None]
+                return sum(v)/len(v) if v else None
+            _clv7 = _avg_clv_f(_7d); _clv30 = _avg_clv_f(_30d); _clvAll = _avg_clv_f(_hist_clv)
+            if any(v is not None for v in [_clv7, _clv30, _clvAll]):
+                def _cv(lbl, val):
+                    if val is None: return f'<div><div style="font-size:0.7rem;color:#6a7a8a;">{lbl}</div><div style="font-size:1rem;color:#6a7a8a;">—</div></div>'
+                    c = "#22c55e" if val>1 else "#eab308" if val>0 else "#e04040"
+                    return f'<div><div style="font-size:0.7rem;color:#6a7a8a;">{lbl}</div><div style="font-size:1rem;font-weight:700;color:{c};">{val:+.2f}</div></div>'
+                st.markdown(
+                    '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.8rem;">'
+                    '<div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">📈 CLV TRACKER</div>'
+                    '<div style="display:flex;gap:24px;">'
+                    + _cv("7-Day", _clv7) + _cv("30-Day", _clv30) + _cv("Season", _clvAll)
+                    + '</div></div>',
+                    unsafe_allow_html=True
+                )
+
         # ── 1. RECOMMENDED ACTION ──────────────────────────
         board = st.session_state.board_data or []
         game_analysis = st.session_state.get("game_analysis", [])
@@ -8859,6 +8884,30 @@ with tabs[0]:
                     inj_html += f'<div style="margin-bottom:0.5rem;"><span style="color:#e04040;font-weight:700;">{player}</span> <span style="color:#b8c6d6;font-size:1.0rem;">— {ip.get("Injury","Questionable")}: Monitor usage impact</span></div>'
             inj_html += '</div>'
             st.markdown(inj_html, unsafe_allow_html=True)
+
+        # ── TODAY'S CHANGES FEED ────────────────────────────
+        _board_prev = st.session_state.get("board_data_prev", [])
+        _board_curr = st.session_state.get("board_data", [])
+        if _board_prev and _board_curr:
+            _changes = []
+            _prev_map = {f"{p.get('Player','')}_{p.get('Prop','')}_{p.get('Side','')}": p for p in _board_prev}
+            for _cp in _board_curr:
+                _key = f"{_cp.get('Player','')}_{_cp.get('Prop','')}_{_cp.get('Side','')}"
+                if _key in _prev_map:
+                    _old_edge = float(_prev_map[_key].get("Edge", 0) or 0)
+                    _new_edge = float(_cp.get("Edge", 0) or 0)
+                    _delta = _new_edge - _old_edge
+                    if abs(_delta) >= 0.02:
+                        _changes.append({"player": _cp.get("Player",""), "prop": _cp.get("Prop",""), "delta": _delta, "tier": _cp.get("Tier","")})
+            if _changes:
+                _ch_html = '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.8rem;">'
+                _ch_html += '<div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">⚡ MODEL MOVEMENT</div>'
+                for _ch in sorted(_changes, key=lambda x: abs(x["delta"]), reverse=True)[:5]:
+                    _cc = "#22c55e" if _ch["delta"] > 0 else "#e04040"
+                    _arrow = "↑" if _ch["delta"] > 0 else "↓"
+                    _ch_html += f'<div style="display:flex;justify-content:space-between;padding:2px 0;"><span style="font-size:0.85rem;color:#e8f0f8;">{_arrow} {_ch["player"]} {_ch["prop"]}</span><span style="font-size:0.85rem;font-weight:700;color:{_cc};">{_ch["delta"]*100:+.1f}%</span></div>'
+                _ch_html += '</div>'
+                st.markdown(_ch_html, unsafe_allow_html=True)
 
         # ── SHARP MONEY ALERTS ──────────────────────────────
         sharp_alerts_s = st.session_state.get("sharp_alerts", [])
@@ -9369,17 +9418,105 @@ with tabs[1]:
                             st.markdown(_ov_html, unsafe_allow_html=True)
                     with _col_lock:
                         _lk = f"fblk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
+                        _slip_key_fb = f"slip_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
+                        _in_slip = any(
+                            s.get("player") == _p.get("Player","") and str(s.get("line","")) == str(_p.get("Line",""))
+                            for s in st.session_state.get("slip_builder", [])
+                        )
                         if _already_locked:
-                            st.markdown('<div style="text-align:center;padding-top:8px;color:#22c55e;font-size:16px;">✅</div>', unsafe_allow_html=True)
-                        elif st.button("🔒", key=_lk, use_container_width=True):
-                            st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
-                            save_json_data(LOCKS_PATH, st.session_state.locks)
-                            save_to_gist("locks", st.session_state.locks)
-                            st.rerun()
+                            st.markdown('<div style="text-align:center;padding-top:4px;color:#22c55e;font-size:14px;">✅</div>', unsafe_allow_html=True)
+                        else:
+                            if st.button("🔒", key=_lk, use_container_width=True, help="Lock this pick"):
+                                st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
+                                save_json_data(LOCKS_PATH, st.session_state.locks)
+                                save_to_gist("locks", st.session_state.locks)
+                                st.rerun()
+                        if _in_slip:
+                            st.markdown('<div style="text-align:center;color:#a855f7;font-size:12px;padding-top:2px;">📋 In Slip</div>', unsafe_allow_html=True)
+                        else:
+                            if st.button("📋", key=_slip_key_fb, use_container_width=True, help="Add to Slip Builder"):
+                                if "slip_builder" not in st.session_state:
+                                    st.session_state.slip_builder = []
+                                st.session_state.slip_builder.append({
+                                    "player": _p.get("Player",""), "prop": _p.get("Prop",""),
+                                    "line": _p.get("Line",0), "side": _p.get("Side","OVER"),
+                                    "tier": _p.get("Tier",""), "edge": _p.get("Edge",0),
+                                    "prob": _p.get("Prob",0.5), "sport": _sport,
+                                    "pinnacle": _p.get("PinnacleConfirms", False)
+                                })
+                                st.rerun()
         else:
             st.info("No props match the selected filters.")
     else:
         st.info("Select a sport and click Load Board.")
+
+    # ── SLIP BUILDER PANEL ──────────────────────────────────
+    slip = st.session_state.get("slip_builder", [])
+    if slip:
+        st.markdown("---")
+        st.markdown("### 📋 Current Slip Builder")
+        _sb_col1, _sb_col2 = st.columns([3, 1])
+        with _sb_col1:
+            # Calculate slip metrics
+            _sb_probs = [float(s.get("prob", 0.55)) for s in slip]
+            _sb_edges = [float(s.get("edge", 0)) for s in slip]
+            _sb_combined = 1.0
+            for _p in _sb_probs:
+                _sb_combined *= _p
+            _sb_n = len(slip)
+            _sb_be = {2: 0.577, 3: 0.585, 4: 0.562, 5: 0.557}.get(_sb_n, 0.577) ** _sb_n if _sb_n > 0 else 0.5
+            _sb_mult = {2: 3, 3: 5, 4: 10, 5: 20}.get(_sb_n, 3)
+            _sb_ev = _sb_combined * _sb_mult - 1
+            _sb_avg_edge = sum(_sb_edges) / max(len(_sb_edges), 1)
+            # Correlation penalty
+            _sb_sports = [s.get("sport","") for s in slip]
+            _sb_corr_penalty = sum(0.15 for i in range(len(slip)) for j in range(i+1, len(slip)) if _sb_sports[i] == _sb_sports[j])
+            _sb_adj_edge = _sb_avg_edge - _sb_corr_penalty
+            # Grade
+            _sb_grade = "A" if _sb_ev > 0.05 and _sb_adj_edge > 0.08 else "B" if _sb_ev > 0 else "C" if _sb_ev > -0.05 else "D"
+            _sb_grade_c = "#22c55e" if _sb_grade == "A" else "#378add" if _sb_grade == "B" else "#eab308" if _sb_grade == "C" else "#e04040"
+
+            # Display slip picks
+            for _si, _sp in enumerate(slip):
+                _sc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#378add","LEAN":"#eab308"}.get(_sp.get("tier",""), "#6a7a8a")
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;background:#0a0e14;border-left:3px solid {_sc};border-radius:0 4px 4px 0;padding:6px 10px;margin-bottom:3px;">'
+                    f'<div><span style="font-size:13px;font-weight:600;color:#e8f0f8;">#{_si+1} {_sp.get("player","")}</span> '
+                    f'<span style="font-size:12px;color:#8a9ab0;">{_sp.get("side","")} {_sp.get("line","")} {_sp.get("prop","")}</span></div>'
+                    f'<div style="display:flex;align-items:center;gap:8px;">'
+                    f'<span style="color:{_sc};font-weight:700;font-size:13px;">{_sp.get("edge",0)*100:.1f}%</span>'
+                    f'<span style="background:{_sc}22;color:{_sc};font-size:10px;padding:1px 6px;border-radius:8px;">{_sp.get("tier","")}</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+        with _sb_col2:
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;text-align:center;">'
+                f'<div style="font-size:0.7rem;color:#6a7a8a;margin-bottom:4px;">{_sb_n}-PICK SLIP</div>'
+                f'<div style="font-size:2rem;font-weight:800;color:{_sb_grade_c};">Grade {_sb_grade}</div>'
+                f'<div style="margin-top:8px;font-size:0.8rem;color:#6a7a8a;">Combined</div>'
+                f'<div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_sb_combined*100:.1f}%</div>'
+                f'<div style="font-size:0.8rem;color:#6a7a8a;">EV</div>'
+                f'<div style="font-size:1rem;font-weight:700;color:{"#22c55e" if _sb_ev>0 else "#e04040"};">{_sb_ev*100:+.1f}%</div>'
+                f'<div style="font-size:0.8rem;color:#6a7a8a;">Payout</div>'
+                f'<div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_sb_mult}x</div>'
+                f'<div style="font-size:0.8rem;color:{"#e04040" if _sb_corr_penalty>0 else "#6a7a8a"};">Corr Penalty {_sb_corr_penalty*100:.0f}%</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            if st.button("🔒 Lock Slip", key="lock_slip_builder", use_container_width=True):
+                _ts = st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M")
+                for _sl in slip:
+                    st.session_state.locks.append({"player":_sl.get("player",""),"prop":_sl.get("prop",""),"line":_sl.get("line",0),"side":_sl.get("side","OVER"),"tier":_sl.get("tier",""),"edge":_sl.get("edge",0),"sport":_sl.get("sport",""),"source":"Slip Builder","timestamp":_ts,"prob":_sl.get("prob",0.5)})
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                st.session_state.slip_builder = []
+                st.success(f"✅ {_sb_n}-pick slip locked!")
+                st.rerun()
+            if st.button("🗑 Clear Slip", key="clear_slip_builder", use_container_width=True):
+                st.session_state.slip_builder = []
+                st.rerun()
 
 # ----- TAB 2: GAME LINES -----
 with tabs[2]:
@@ -10676,6 +10813,36 @@ with tabs[5]:
         st.caption("💡 Ctrl+A to select all, Ctrl+C to copy.")
 
 
+
+        # ── CORRELATION HEALTH ────────────────────────────────
+        active_locks = st.session_state.get("locks", [])
+        if active_locks:
+            st.markdown("---")
+            st.markdown("### 🔗 Correlation Health")
+            _sports_count = {}
+            _players_seen = []
+            _warnings = []
+            for _lk in active_locks:
+                _s = _lk.get("sport","")
+                _pl = _lk.get("player","")
+                _sports_count[_s] = _sports_count.get(_s, 0) + 1
+                # Check same player two props
+                if _pl in _players_seen:
+                    _warnings.append({"level":"red","msg":f"Same player ({_pl}) in 2 props → -25% correlation penalty","penalty":0.25})
+                _players_seen.append(_pl)
+            for _s, _n in _sports_count.items():
+                if _n >= 3:
+                    _warnings.append({"level":"red","msg":f"3+ props from {_s} → HIGH correlation risk → -35% per pair","penalty":0.35})
+                elif _n == 2:
+                    _warnings.append({"level":"yellow","msg":f"2 props from {_s} → moderate correlation → -15%","penalty":0.15})
+            if not _warnings:
+                st.markdown('<div style="background:#0a0e1400;border:1px solid #22c55e44;border-radius:6px;padding:0.6rem 1rem;color:#22c55e;">✅ GREEN — No correlation concerns</div>', unsafe_allow_html=True)
+            else:
+                for _w in _warnings:
+                    _wc = "#e04040" if _w["level"]=="red" else "#eab308"
+                    _wi = "🔴" if _w["level"]=="red" else "🟡"
+                    st.markdown(f'<div style="background:#0a0e14;border:1px solid {_wc}44;border-radius:6px;padding:0.6rem 1rem;margin-bottom:4px;color:{_wc};">{_wi} {_w["msg"]}</div>', unsafe_allow_html=True)
+
 # ----- TAB 6: PLAYER LOOKUP -----
 with tabs[6]:
     st.markdown("## 🔎 Player Lookup")
@@ -11655,6 +11822,50 @@ with tabs[9]:
                     icon = "✅" if entry['status']==200 and not entry['html'] else "⚠️"
                     st.caption(f"{icon} {entry['url']} — {entry['status']} {entry['size']}b HTML:{entry['html']} CT:{entry['ct']}")
 
+    # ── SIGNAL HEALTH DASHBOARD ──────────────────────────
+    st.markdown("### 📊 Signal Health Dashboard")
+    _sig_history = [h for h in st.session_state.history if h.get("signals")]
+    if len(_sig_history) >= 10:
+        _sig_names = ["base","defense","location","rest","pace","h2h"]
+        _sig_data = {}
+        for _sn in _sig_names:
+            _vals = [float(h.get("signals",{}).get(_sn, 0) or 0) for h in _sig_history if h.get("signals",{}).get(_sn) is not None]
+            if _vals:
+                _wins_s = [float(h.get("signals",{}).get(_sn,0) or 0) for h in _sig_history if h.get("outcome")=="WIN" and h.get("signals",{}).get(_sn) is not None]
+                _lift = (sum(_wins_s)/max(len(_wins_s),1)) - (sum(_vals)/max(len(_vals),1))
+                _sig_data[_sn] = {"lift": _lift, "count": len(_vals)}
+        if _sig_data:
+            _sh_html = '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+            _sh_html += '<div style="display:grid;grid-template-columns:1fr 80px;gap:4px;padding:4px 0;border-bottom:1px solid #1e2d3d;margin-bottom:4px;"><span style="font-size:0.72rem;color:#6a7a8a;text-transform:uppercase;">Signal</span><span style="font-size:0.72rem;color:#6a7a8a;text-transform:uppercase;text-align:right;">Lift</span></div>'
+            for _sn, _sd in sorted(_sig_data.items(), key=lambda x: abs(x[1]["lift"]), reverse=True):
+                _lc = "#22c55e" if _sd["lift"] > 0 else "#e04040"
+                _sh_html += f'<div style="display:grid;grid-template-columns:1fr 80px;gap:4px;padding:3px 0;"><span style="font-size:0.88rem;color:#e8f0f8;text-transform:capitalize;">{_sn}</span><span style="font-size:0.88rem;font-weight:700;color:{_lc};text-align:right;">{_sd["lift"]*100:+.1f}%</span></div>'
+            _sh_html += '</div>'
+            st.markdown(_sh_html, unsafe_allow_html=True)
+    else:
+        st.info(f"Need 10+ resolved bets for signal health. Current: {len(_sig_history)}")
+
+    # ── CALIBRATION DASHBOARD ─────────────────────────────
+    st.markdown("### 🎯 Calibration Dashboard")
+    _cal_history = [h for h in st.session_state.history if h.get("prob") and h.get("outcome") in ("WIN","LOSS")]
+    if len(_cal_history) >= 20:
+        _buckets = [(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),(0.70,0.75),(0.75,1.0)]
+        _cal_html = '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+        _cal_html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:4px;padding:4px 0;border-bottom:1px solid #1e2d3d;margin-bottom:4px;"><span style="font-size:0.72rem;color:#6a7a8a;">Bucket</span><span style="font-size:0.72rem;color:#6a7a8a;">Predicted</span><span style="font-size:0.72rem;color:#6a7a8a;">Actual</span><span style="font-size:0.72rem;color:#6a7a8a;">n</span></div>'
+        for _lo, _hi in _buckets:
+            _bucket_bets = [h for h in _cal_history if _lo <= float(h.get("prob",0)) < _hi]
+            if not _bucket_bets: continue
+            _pred = (_lo + _hi) / 2
+            _actual = sum(1 for h in _bucket_bets if h.get("outcome")=="WIN") / len(_bucket_bets)
+            _diff = _actual - _pred
+            _dc = "#22c55e" if abs(_diff) < 0.03 else "#eab308" if abs(_diff) < 0.07 else "#e04040"
+            _cal_html += f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:4px;padding:3px 0;"><span style="font-size:0.85rem;color:#8a9ab0;">{_lo:.0%}-{_hi:.0%}</span><span style="font-size:0.85rem;color:#e8f0f8;">{_pred:.0%}</span><span style="font-size:0.85rem;font-weight:700;color:{_dc};">{_actual:.0%}</span><span style="font-size:0.85rem;color:#6a7a8a;">{len(_bucket_bets)}</span></div>'
+        _cal_html += '</div>'
+        st.markdown(_cal_html, unsafe_allow_html=True)
+    else:
+        st.info(f"Need 20+ resolved bets for calibration. Current: {len(_cal_history)}")
+
+    st.markdown("---")
     if st.button("🔍 Test ScrapeOps Proxy", key="test_scrapeops"):
         if not SCRAPEOPS_KEY:
             st.error("SCRAPEOPS_KEY not in Secrets")
