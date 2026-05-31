@@ -6035,9 +6035,17 @@ def parse_bet_screenshot_ocr(image_bytes):
 
             return blob_bets
 
-        # Detect blob: fewer than 3 tokens but text is long
-        is_blob = len(lines) < 3 and len(raw_text) > 80
-        if is_blob:
+        # Run blob parser if any compound stat keyword is found in the text.
+        # Blob mode handles both true single-line OCR output AND multi-line output
+        # where the token parser would fail (no clean name/stat pairing per line).
+        _blob_stat_present = bool(re.search(
+            r"hits\+runs|pts\+reb|passing yards|rushing yards|receiving yards"
+            r"|strikeouts|home runs|blocked shots|fantasy score|shots on goal",
+            raw_text.lower()
+        ))
+        # Also trigger on any slip with fewer than 4 tokens (pure blob)
+        _is_short = len(lines) < 4
+        if _blob_stat_present or _is_short:
             blob_results = parse_blob(raw_text)
             if blob_results:
                 return blob_results
@@ -9682,17 +9690,15 @@ with tabs[5]:
             accept_multiple_files=True
         )
         if slip_imgs:
-            # Auto-parse as soon as files are uploaded — track last parsed set to avoid re-running
-            img_keys = tuple(f.name + str(f.size) for f in slip_imgs)
-            if st.session_state.get("_last_parsed_imgs") != img_keys:
-                all_parsed = []
-                with st.spinner("Reading screenshot..."):
-                    for img_file in slip_imgs:
-                        img_bytes = img_file.read()
-                        result = parse_bet_screenshot_ocr(img_bytes)
-                        if result:
-                            all_parsed.extend(result)
-                st.session_state["_last_parsed_imgs"] = img_keys
+            # Parse on upload — button re-triggers manually if needed
+            all_parsed = []
+            with st.spinner("Reading screenshot..."):
+                for img_file in slip_imgs:
+                    img_file.seek(0)
+                    img_bytes = img_file.read()
+                    result = parse_bet_screenshot_ocr(img_bytes)
+                    if result:
+                        all_parsed.extend(result)
                 if all_parsed:
                     analyzer_picks = []
                     for bet in all_parsed:
@@ -10063,18 +10069,16 @@ with tabs[5]:
                     st.success(f"✅ Locked {locked} picks")
                     st.rerun()
 
-        # Generate slip summary report
+        # Slip summary — inline, no copy-to-Gem needed
         st.markdown("---")
-        st.markdown("## 📋 Slip Analysis Report")
-        st.caption("Same format as your daily Gem brief — copy and paste into your Gemini Gem for deeper analysis.")
+        st.markdown("## 📋 Slip Summary")
         slip_summary = generate_slip_summary(st.session_state["analyzer_picks"], results)
         st.text_area(
-            "Copy this into your Gem:",
+            "Full analysis report (copy to save or share):",
             value=slip_summary,
-            height=400,
+            height=380,
             key="slip_summary_output"
         )
-        st.caption("💡 Ctrl+A to select all, Ctrl+C to copy.")
 
 
 # ----- TAB 6: PLAYER LOOKUP -----
