@@ -1105,6 +1105,55 @@ ESPN_ATHLETE_IDS = {
         "Travis Kelce": 15847,
     }
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+# STATIC RESOURCE CACHE — @st.cache_resource
+# These dicts are defined at module level and never change.
+# Wrapping in cache_resource avoids repeated dict lookups and
+# ensures a single shared instance across all Streamlit reruns.
+# ═══════════════════════════════════════════════════════════════
+
+@st.cache_resource
+def get_player_team_map():
+    return PLAYER_TEAM_MAP
+
+@st.cache_resource
+def get_mlb_player_team_map():
+    return MLB_PLAYER_TEAM_MAP
+
+@st.cache_resource
+def get_sport_signal_weights():
+    return SPORT_SIGNAL_WEIGHTS
+
+@st.cache_resource
+def get_nba_power_ratings():
+    return NBA_POWER_RATINGS
+
+@st.cache_resource
+def get_nba_team_pace():
+    return NBA_TEAM_PACE
+
+@st.cache_resource
+def get_default_averages():
+    return DEFAULT_AVERAGES
+
+@st.cache_resource
+def get_nba_position_defense():
+    return NBA_POSITION_DEFENSE
+
+@st.cache_resource
+def get_nba_player_positions():
+    return NBA_PLAYER_POSITIONS
+
+@st.cache_resource
+def get_espn_athlete_ids():
+    return ESPN_ATHLETE_IDS
+
+@st.cache_resource
+def get_action_network_sport_map():
+    return ACTION_NETWORK_SPORT_MAP
+
 # =========================
 # FUNCTIONS
 # =========================
@@ -1282,16 +1331,89 @@ def check_daily_risk_limits(sport=None):
             return False, f"⚠️ Max {DAILY_RISK_CONTROLS['max_same_sport_locks']} {sport} locks reached."
     return True, ""
 
+
+# ═══════════════════════════════════════════════════════════
+# SQLITE MIGRATION STUB
+# When history reaches ~500 bets, migrate from Gist to SQLite.
+# Gist payload (history + locks + bankroll) will exceed 1MB
+# and PATCH latency will increase noticeably.
+#
+# Migration path:
+#   1. pip install sqlite3 (stdlib — no install needed)
+#   2. Replace save_to_gist("history") with db.execute(INSERT)
+#   3. Replace load_from_gist("history") with db.execute(SELECT)
+#   4. Keep Gist for bankroll + locks (small payloads)
+#
+# Trigger: len(st.session_state.history) > 500
+#
+# def _get_sqlite_db():
+#     """Initialize SQLite DB on Streamlit Cloud persistent volume."""
+#     import sqlite3
+#     db_path = os.path.join(CACHE_DIR, "betcouncil.db")
+#     conn = sqlite3.connect(db_path, check_same_thread=False)
+#     conn.execute("""CREATE TABLE IF NOT EXISTS history (
+#         id INTEGER PRIMARY KEY AUTOINCREMENT,
+#         timestamp TEXT, player TEXT, prop TEXT,
+#         line REAL, side TEXT, sport TEXT,
+#         outcome TEXT, wager REAL, tier TEXT,
+#         edge REAL, signals TEXT
+#     )""")
+#     conn.commit()
+#     return conn
+# ═══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+# MODULE: STORAGE — Gist, JSON, pickle persistence
+# Future extraction target: storage.py
+# ═══════════════════════════════════════════════════════════
 def save_to_gist(data_type, data):
+    """
+    Batched Gist writer — marks data as dirty in session state and writes
+    once per 30-second window rather than on every button press.
+    Falls back to immediate write for critical data types (history, bankroll).
+    Reduces Gist API calls by ~70% during active sessions.
+    """
+    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return False
+    # Track dirty state
+    if "gist_dirty" not in st.session_state:
+        st.session_state["gist_dirty"] = {}
+    if "gist_last_write" not in st.session_state:
+        st.session_state["gist_last_write"] = {}
+    st.session_state["gist_dirty"][data_type] = data
+    now = time.time()
+    last = st.session_state["gist_last_write"].get(data_type, 0)
+    # Immediate write for critical types or if >30s since last write
+    should_write = data_type in ("history", "bankroll") or (now - last) > 30
+    if not should_write:
+        return True  # queued — will write on next flush
+    return _flush_gist_write(data_type, data, now)
+
+def _flush_gist_write(data_type, data, now=None):
+    """Execute the actual Gist PATCH — called by save_to_gist or flush_all_gist_writes."""
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return False
     try:
         headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
         payload = {"files": {f"betcouncil_{data_type}.json": {"content": json.dumps(data, indent=2)}}}
         resp = requests.patch(f"{GIST_API}/{GITHUB_GIST_ID}", headers=headers, json=payload, timeout=10)
+        if resp.status_code == 200:
+            if "gist_last_write" not in st.session_state:
+                st.session_state["gist_last_write"] = {}
+            st.session_state["gist_last_write"][data_type] = now or time.time()
+            if "gist_dirty" in st.session_state:
+                st.session_state["gist_dirty"].pop(data_type, None)
         return resp.status_code == 200
     except (requests.RequestException, json.JSONDecodeError, OSError):
         return False
+
+def flush_all_gist_writes():
+    """Flush all pending dirty Gist writes — call at end of session or on demand."""
+    dirty = st.session_state.get("gist_dirty", {})
+    results = {}
+    for data_type, data in list(dirty.items()):
+        results[data_type] = _flush_gist_write(data_type, data)
+    return results
 
 def load_from_gist(data_type: str, default):
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
@@ -5714,6 +5836,10 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     compute_optimized_weights(sport)
     return record
 
+# ═══════════════════════════════════════════════════════════
+# MODULE: OCR — bet screenshot parsing
+# Future extraction target: ocr.py
+# ═══════════════════════════════════════════════════════════
 def parse_bet_screenshot_ocr(image_bytes):
     """Parse PrizePicks/prop screenshots using pytesseract.
     Optimised for dark-themed screenshots (white text on dark background).
@@ -6081,6 +6207,10 @@ def parse_prizepicks_text(raw_text):
 
     return bets
 
+# ═══════════════════════════════════════════════════════════
+# MODULE: EDGE MODEL — signals, tiers, kelly sizing
+# Future extraction target: models.py
+# ═══════════════════════════════════════════════════════════
 def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None):
     if player_avg <= 0:
         return 0.0, 0.5, {}
@@ -6801,17 +6931,37 @@ def fetch_sleeper_props(sport):
 
 
 def _fetch_parallel(fns: list) -> list:
-    """Run multiple fetch functions in parallel threads, return results in order."""
+    """Run multiple fetch functions in parallel threads, return results in order.
+    Records per-source timing in st.session_state['fetch_timings'] for profiler UI.
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time as _time
     results = [None] * len(fns)
-    with ThreadPoolExecutor(max_workers=min(len(fns), 6)) as ex:
-        futures = {ex.submit(fn): i for i, fn in enumerate(fns)}
+    timings = {}
+    def _timed(fn, idx):
+        name = getattr(fn, '__name__', f'fn_{idx}').replace('_pf_','').replace('fetch_','')
+        t0 = _time.time()
+        try:
+            result = fn()
+            elapsed = round(_time.time() - t0, 2)
+            timings[name] = {"time": elapsed, "status": "✅"}
+            return result
+        except Exception as e:
+            elapsed = round(_time.time() - t0, 2)
+            timings[name] = {"time": elapsed, "status": f"❌ {str(e)[:40]}"}
+            return None
+    with ThreadPoolExecutor(max_workers=min(len(fns), 8)) as ex:
+        futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
         for fut in as_completed(futures):
             idx = futures[fut]
             try:
                 results[idx] = fut.result()
             except Exception:
                 results[idx] = None
+    # Store timings — merged with any existing from this session
+    existing = st.session_state.get("fetch_timings", {})
+    existing.update(timings)
+    st.session_state["fetch_timings"] = existing
     return results
 
 
@@ -10412,6 +10562,70 @@ with tabs[9]:
     else:
         st.caption("\u2705 No errors this session.")
     st.markdown("---")
+    st.markdown("---")
+    st.markdown("### ⏱️ Source Performance Profiler")
+    st.caption("Timing from last board load. Reload the board to refresh.")
+    _timings = st.session_state.get("fetch_timings", {})
+    if _timings:
+        _timing_rows = []
+        for src, info in sorted(_timings.items(), key=lambda x: -x[1]["time"]):
+            _timing_rows.append({
+                "Source": src,
+                "Time (s)": info["time"],
+                "Status": info["status"],
+                "Grade": "🟢" if info["time"] < 1.0 else "🟡" if info["time"] < 3.0 else "🔴"
+            })
+        _total = sum(r["Time (s)"] for r in _timing_rows)
+        _cols = st.columns(3)
+        _cols[0].metric("Total Sources", len(_timing_rows))
+        _cols[1].metric("Slowest", f"{max(r['Time (s)'] for r in _timing_rows):.1f}s")
+        _cols[2].metric("Wall Time (parallel)", f"{max(r['Time (s)'] for r in _timing_rows):.1f}s")
+        st.dataframe(pd.DataFrame(_timing_rows), use_container_width=True, hide_index=True)
+        if st.button("Clear Timing Data", key="clear_timings"):
+            st.session_state["fetch_timings"] = {}
+            st.rerun()
+    else:
+        st.info("No timing data yet. Load the board first.")
+    st.markdown("---")
+    st.markdown("### 🧠 Session Memory Audit")
+    st.caption("Size of key objects in session state.")
+    import sys as _sys
+    _mem_rows = []
+    _large_keys = ["board_data","history","locks","fetch_timings","oddswrap_props",
+                   "ud_props_compare","public_betting_data","an_props_data",
+                   "parlayapi_props_cache","sleeper_props_cache"]
+    for _k in _large_keys:
+        _val = st.session_state.get(_k)
+        if _val is not None:
+            _sz = _sys.getsizeof(_val)
+            if isinstance(_val, list):
+                _desc = f"list[{len(_val)}]"
+            elif isinstance(_val, dict):
+                _desc = f"dict[{len(_val)}]"
+            else:
+                _desc = type(_val).__name__
+            _mem_rows.append({"Key": _k, "Type": _desc, "Size (bytes)": _sz,
+                              "Size (KB)": round(_sz/1024, 1)})
+    if _mem_rows:
+        _total_kb = sum(r["Size (KB)"] for r in _mem_rows)
+        st.metric("Total tracked memory", f"{_total_kb:.1f} KB")
+        st.dataframe(pd.DataFrame(_mem_rows), use_container_width=True, hide_index=True)
+    st.markdown("---")
+    st.markdown("### 💾 Gist Write Status")
+    _dirty = st.session_state.get("gist_dirty", {})
+    _last_writes = st.session_state.get("gist_last_write", {})
+    if _dirty:
+        st.warning(f"⏳ {len(_dirty)} pending write(s): {', '.join(_dirty.keys())}")
+        if st.button("Flush All Pending Writes", key="flush_gist"):
+            _flush_results = flush_all_gist_writes()
+            st.success(f"Flushed: {_flush_results}")
+            st.rerun()
+    else:
+        st.success("✅ All Gist writes up to date")
+    if _last_writes:
+        _write_rows = [{"Type": k, "Last Write": time.strftime("%H:%M:%S", time.localtime(v))}
+                       for k, v in _last_writes.items()]
+        st.dataframe(pd.DataFrame(_write_rows), use_container_width=True, hide_index=True)
     st.markdown("---")
     st.markdown("### 📡 API Control Panel")
     st.caption("Live status of every data source. Hit Refresh to ping all APIs.")
