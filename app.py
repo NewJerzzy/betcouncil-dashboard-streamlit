@@ -5554,22 +5554,73 @@ def generate_gem_summary():
     return "\n".join(lines)
 
 
+def _tier_why(r):
+    """Return a plain-English sentence explaining WHY this pick got its tier."""
+    edge   = r.get("edge", 0)
+    prob   = r.get("prob", 0.5)
+    avg    = r.get("avg")
+    line   = r.get("line", 0)
+    side   = r.get("side", "OVER")
+    sig_b  = r.get("signal_base", 0)
+    sig_d  = r.get("signal_def", 0)
+    sharp  = r.get("sharp_flag", "")
+    source = r.get("data_source", "")
+    tier   = r.get("tier", "LEAN")
+
+    reasons = []
+
+    # Data quality caveat first
+    if "Historical" in source:
+        reasons.append("No live board data — rating based on season averages only")
+
+    # Core edge explanation
+    if avg and line:
+        gap = avg - line if side == "OVER" else line - avg
+        if gap > 0:
+            reasons.append(
+                f"Season avg ({avg:.1f}) sits {gap:+.1f} {'above' if side == 'OVER' else 'below'} the line ({line}) — that's {'a solid cushion' if abs(gap) >= 2 else 'a small cushion'}"
+            )
+        else:
+            reasons.append(
+                f"Season avg ({avg:.1f}) is {'below' if side == 'OVER' else 'above'} the line ({line}) by {abs(gap):.1f} — line is working against you"
+            )
+
+    # Probability framing
+    if prob >= 0.65:
+        reasons.append(f"Model gives {prob:.0%} hit probability — strong confidence")
+    elif prob >= 0.58:
+        reasons.append(f"Model gives {prob:.0%} hit probability — above breakeven")
+    elif prob < 0.50:
+        reasons.append(f"Model gives only {prob:.0%} hit probability — below coin flip")
+
+    # Signals
+    if sig_b > 0:
+        reasons.append("Base signal positive — recent output trending above this line")
+    if sig_d > 0:
+        reasons.append("Defense signal positive — opponent is weak in this category")
+    if sharp:
+        reasons.append(f"Sharp money indicator: {sharp}")
+
+    # Tier-specific context
+    TIER_CONTEXT = {
+        "SOVEREIGN": "Edge ≥15% — highest conviction tier, bet full unit",
+        "ELITE":     "Edge 10–15% — strong play, confident bet",
+        "APPROVED":  "Edge 5–10% — solid value, worth including",
+        "LEAN":      "Edge 2–5% — slight value but not a strong conviction play",
+        "PASS":      "Edge <2% — no meaningful edge, avoid or use as filler only",
+    }
+    if tier in TIER_CONTEXT:
+        reasons.append(TIER_CONTEXT[tier])
+
+    return " | ".join(reasons) if reasons else "Insufficient data for detailed reasoning"
+
+
 def generate_slip_summary(picks, results):
-    """
-    Generate a formatted summary report for an analyzed slip.
-    Same format as the daily Gem brief — copy into Gem or save.
-    """
+    """Generate a plain-English slip analysis report."""
     today = date.today().strftime("%A, %B %d, %Y")
-    sport = results[0]["sport"] if results else "NBA"
-    lines = []
+    sport = results[0]["sport"] if results else "MLB"
+    out = []
 
-    # Header
-    lines.append("⚡ BETCOUNCIL SLIP ANALYSIS REPORT")
-    lines.append(f"{sport} — {today} | v4.6")
-    lines.append("=" * 44)
-    lines.append("")
-
-    # Overall verdict
     n_picks = len(results)
     all_probs = [r["prob"] for r in results]
     combined_prob = parlay_prob(all_probs)
@@ -5577,7 +5628,7 @@ def generate_slip_summary(picks, results):
     breakeven = prizepicks_breakeven_prob(n_picks)
     parlay_ev = combined_prob - breakeven
 
-    fades = sum(1 for r in results if r["edge"] < -0.05)
+    fades  = sum(1 for r in results if r["edge"] < -0.05)
     strong = sum(1 for r in results if r["edge"] >= 0.08)
 
     if fades > 0:
@@ -5587,63 +5638,62 @@ def generate_slip_summary(picks, results):
     elif parlay_ev > 0:
         verdict = "GOOD SLIP — Positive combined EV"
     else:
-        verdict = "SKIP — Combined EV is negative"
+        verdict = "MARGINAL — Combined EV is negative, play at reduced size or pass"
 
-    lines.append(f"🎯 VERDICT: {verdict}")
-    lines.append("")
-
-    # Parlay math
-    lines.append(f"📊 PARLAY MATH ({n_picks}-pick)")
-    lines.append(f"Combined Prob: {combined_prob:.1%}")
-    lines.append(f"Payout: {multiplier}x | Breakeven: {breakeven:.1%}")
-    lines.append(f"True EV: {parlay_ev:+.1%} {'✅ +EV' if parlay_ev > 0 else '❌ -EV'}")
-    lines.append("")
-
-    # Pick by pick
-    lines.append("─" * 44)
-    lines.append("🔒 PICK-BY-PICK BREAKDOWN")
-    lines.append("─" * 44)
+    out.append("⚡ BETCOUNCIL SLIP ANALYSIS")
+    out.append(f"{sport} | {today} | v4.6")
+    out.append("=" * 46)
+    out.append(f"🎯 VERDICT: {verdict}")
+    out.append("")
+    out.append(f"📊 {n_picks}-PICK PARLAY MATH")
+    out.append(f"  Combined hit prob : {combined_prob:.1%}  (need {breakeven:.1%} to break even)")
+    out.append(f"  Payout            : {multiplier}x")
+    out.append(f"  True EV           : {parlay_ev:+.1%}  {'✅ Positive' if parlay_ev > 0 else '❌ Negative'}")
+    out.append("")
+    out.append("─" * 46)
+    out.append("PICK-BY-PICK BREAKDOWN")
+    out.append("─" * 46)
 
     for i, r in enumerate(results, 1):
-        avg_display = f"{r['avg']:.1f}" if r.get("avg") else "No historical data"
-        lines.append(f"")
-        lines.append(f"[{i}] {r['player']} — {r['side']} {r['line']} {r['stat']}")
-        lines.append(f"Tier: {r['tier']} | Edge: {r['edge']:+.1%} | Prob: {r['prob']:.1%}")
-        lines.append(f"Avg (historical): {avg_display}")
-        lines.append(f"2-pick EV: {r['ev_2']} | Recommendation: {r['rec']}")
-        if r.get("better_line"):
-            lines.append(f"⚡ {r['better_line']}")
+        avg_str = f"{r['avg']:.1f}" if r.get("avg") else "n/a"
+        out.append("")
+        out.append(f"[{i}] {r['player']}")
+        out.append(f"    Bet   : {r['side']} {r['line']} {r['stat']}")
+        out.append(f"    Tier  : {r['tier']}  |  Edge: {r['edge']:+.1%}  |  Hit prob: {r['prob']:.1%}")
+        out.append(f"    Avg   : {avg_str}  |  2-pick EV: {r['ev_2']}")
+        out.append(f"    Call  : {r['rec']}")
+        out.append(f"    Why   : {_tier_why(r)}")
         if r.get("line_note"):
-            lines.append(f"⚠️ {r['line_note']}")
+            out.append(f"    ⚠️    : {r['line_note']}")
+        if r.get("better_line"):
+            out.append(f"    ⚡    : {r['better_line']}")
         if r.get("sharp_flag"):
-            lines.append(f"💰 Sharp: {r['sharp_flag']}")
+            out.append(f"    💰    : Sharp — {r['sharp_flag']}")
         if r.get("dk_note"):
-            lines.append(f"🏀 DK: {r['dk_note']}")
-        lines.append(f"Data: {r['data_source']}")
+            out.append(f"    🏀    : {r['dk_note']}")
 
-    lines.append("")
-    lines.append("─" * 44)
+    out.append("")
+    out.append("─" * 46)
+    strong_picks = sorted([r for r in results if r["edge"] >= 0.04], key=lambda x: -x["edge"])
+    weak_picks   = [r for r in results if r["edge"] < 0]
 
-    # Strengths and weaknesses
-    good = [r for r in results if r["edge"] >= 0.04]
-    weak = [r for r in results if r["edge"] < 0]
+    if strong_picks:
+        out.append("✅ BEST PICKS ON THIS SLIP:")
+        for r in strong_picks:
+            out.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']}  — {r['tier']} ({r['edge']:+.1%} edge)")
+            out.append(f"    {_tier_why(r)}")
 
-    if good:
-        lines.append("✅ STRONGEST PICKS:")
-        for r in sorted(good, key=lambda x: x["edge"], reverse=True):
-            lines.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']} | Edge: {r['edge']:+.1%}")
+    if weak_picks:
+        out.append("")
+        out.append("❌ WEAK PICKS — consider replacing:")
+        for r in weak_picks:
+            out.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']}  — {r['tier']} ({r['edge']:+.1%} edge)")
+            out.append(f"    {_tier_why(r)}")
 
-    if weak:
-        lines.append("")
-        lines.append("❌ WEAK PICKS (consider replacing):")
-        for r in weak:
-            lines.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']} | Edge: {r['edge']:+.1%}")
-
-    lines.append("")
-    lines.append("=" * 44)
-    lines.append("Generated by BetCouncil v4.6")
-
-    return "\n".join(lines)
+    out.append("")
+    out.append("=" * 46)
+    out.append("BetCouncil v4.6")
+    return "\n".join(out)
 
 
 def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes=""):
@@ -9945,6 +9995,8 @@ with tabs[5]:
                     "line_note": line_note,
                     "confidence": confidence,
                     "data_source": data_source,
+                    "signal_base": signal_base if board_match else 0,
+                    "signal_def": signal_def if board_match else 0,
                 })
 
             st.session_state["analyzer_results"] = results
@@ -10037,6 +10089,8 @@ with tabs[5]:
                 f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
                 f'{"<div style=\"font-size:14px;color:#22c55e;margin-top:4px\">⚡ " + r["better_line"] + "</div>" if r["better_line"] else ""}'
                 f'{"<div style=\"font-size:14px;color:#e8a020;margin-top:4px\">⚠️ " + r["line_note"] + "</div>" if r["line_note"] else ""}'
+                f'<div style="font-size:13px;color:#8a9aaa;margin-top:6px;border-top:1px solid #1a2a3a;padding-top:6px;">'
+                f'💬 <b>Why {r["tier"]}:</b> {_tier_why(r)}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
