@@ -56,8 +56,8 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 # CONSTANTS
 # =========================
 DEFAULT_BANKROLL = 468.49
-KELLY_FRACTION = 0.15
-KELLY_CAP = 0.25
+KELLY_FRACTION = 0.15   # conservative fraction of full Kelly
+KELLY_CAP = 0.20        # max 20% bankroll per bet (reduced from 0.25 — props are noisy)
 ODDS = -110
 EDGE_CAP = 0.20
 MIN_EDGE_DEFAULT = 0.02
@@ -381,13 +381,13 @@ TIER_THRESHOLDS = {
 
 # Sport-specific signal weights
 SPORT_SIGNAL_WEIGHTS = {
-    "NBA": {"base": 0.45, "defense": 0.30, "location": 0.15, "rest": 0.05, "pace": 0.05},
-    "MLB": {"base": 0.40, "defense": 0.15, "location": 0.10, "rest": 0.05, "pace": 0.00, "pitcher": 0.15, "weather": 0.15},
-    "NFL": {"base": 0.40, "defense": 0.35, "location": 0.10, "rest": 0.10, "pace": 0.05},
-    "NHL": {"base": 0.50, "defense": 0.25, "location": 0.15, "rest": 0.05, "pace": 0.05},
-    "WNBA": {"base": 0.50, "defense": 0.25, "location": 0.15, "rest": 0.05, "pace": 0.05},
-    "Soccer": {"base": 0.60, "defense": 0.20, "location": 0.15, "rest": 0.05, "pace": 0.00},
-    "UFC": {"base": 0.70, "defense": 0.10, "location": 0.10, "rest": 0.10, "pace": 0.00},
+    "NBA":    {"base": 0.45, "defense": 0.30, "location": 0.15, "rest": 0.075, "pace": 0.025, "usage": 0.74},
+    "MLB":    {"base": 0.40, "defense": 0.15, "location": 0.10, "rest": 0.075, "pace": 0.00,  "pitcher": 0.15, "weather": 0.125, "usage": 0.74},
+    "NFL":    {"base": 0.40, "defense": 0.35, "location": 0.10, "rest": 0.10,  "pace": 0.05,  "usage": 0.74},
+    "NHL":    {"base": 0.50, "defense": 0.25, "location": 0.15, "rest": 0.075, "pace": 0.025, "usage": 0.74},
+    "WNBA":   {"base": 0.50, "defense": 0.25, "location": 0.15, "rest": 0.075, "pace": 0.025, "usage": 0.74},
+    "Soccer": {"base": 0.60, "defense": 0.20, "location": 0.15, "rest": 0.05,  "pace": 0.00,  "usage": 0.74},
+    "UFC":    {"base": 0.70, "defense": 0.10, "location": 0.10, "rest": 0.10,  "pace": 0.00,  "usage": 0.74},
 }
 
 # Signal reliability scores based on historical accuracy
@@ -6649,7 +6649,7 @@ GLOBAL_AWAY_ADJ  = -0.05
 # MODULE: EDGE MODEL — signals, tiers, kelly sizing
 # Future extraction target: models.py
 # ═══════════════════════════════════════════════════════════
-def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None):
+def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None, player_name=""):
     if player_avg <= 0:
         return 0.0, 0.5, {}
     signals = {}
@@ -6687,7 +6687,7 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
         signals["defense"] = 0
     # Player-specific home/away split — falls back to global constant
     _splits = PLAYER_HOME_SPLITS.get(
-        next((k for k in PLAYER_HOME_SPLITS if normalize_name(k) == normalize_name(str(signals.get("player_name","")))), ""),
+        next((k for k in PLAYER_HOME_SPLITS if normalize_name(k) == normalize_name(player_name)), ""),
         None
     )
     if _splits:
@@ -6714,7 +6714,10 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
     signals["pace"] = pace_adj if side.upper() == "OVER" else -pace_adj
     combined = (signals["base"] * weights.get("base", 0.45) + signals["defense"] * weights.get("defense", 0.30) + signals["location"] * weights.get("location", 0.15) + signals["rest"] * weights.get("rest", 0.05) + signals["pace"] * weights.get("pace", 0.05))
     if teammate_out_boost:
-        usage_signal = teammate_out_boost
+        # Usage signal now governed by weights framework — optimizer can tune it
+        # Default weight 0.74 matches prior behavior; optimizer will adjust from data
+        usage_weight = weights.get("usage", 0.74)
+        usage_signal = teammate_out_boost * usage_weight
         combined += usage_signal
         signals["usage"] = usage_signal
     else:
@@ -8008,9 +8011,9 @@ def load_sport_data(sport):
         an_tier = an_data.get("tier", "")
         an_tickets = an_data.get("tickets_pct", 0)
         an_money = an_data.get("money_pct", 0)
-        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
+        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
-        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
+        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player)
         under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj - h2h_adj))
         if consensus_prob is not None:
             blended_over_prob = round(consensus_prob * 0.60 + over_prob * 0.40, 4)
