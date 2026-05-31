@@ -1344,10 +1344,8 @@ def get_api_counter(counter_path):
                 counter["month"] = current_month
                 counter["monthly_count"] = 0 if "monthly_count" in counter else 0
             return counter
-        except Exception as _e:
-            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-            if 'errors' not in st.session_state: st.session_state['errors'] = []
-            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+        except Exception:
+            pass
     return {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
 
 def increment_api_counter(counter_path):
@@ -1656,10 +1654,8 @@ def get_clv_summary():
                 model_prob = c.get("prob", 0.5)
                 if pinn_prob > 0:
                     edges.append(model_prob - pinn_prob)
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
         pinn_avg_edge = sum(edges) / len(edges) if edges else 0
 
     # Recent form (last 20)
@@ -2048,10 +2044,8 @@ def detect_game_script_contradictions(parlay_props, games):
         if total and total != "N/A":
             try:
                 game_total_map[matchup] = float(total)
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
     for i, j in combinations(range(len(parlay_props)), 2):
         p1 = parlay_props[i]
         p2 = parlay_props[j]
@@ -2092,10 +2086,8 @@ def detect_game_script_contradictions(parlay_props, games):
                             fav_team = str(spread).split()[0]
                             if team1 == fav_team:
                                 warnings.append(f"⚠️ Blowout risk: {p1['Player']} on {team1} favored by {spread_val}pts. May sit late if big lead develops.")
-                    except Exception as _e:
-                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                        if 'errors' not in st.session_state: st.session_state['errors'] = []
-                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                    except Exception:
+                        pass
     return warnings
 
 def track_line_movement(props):
@@ -2312,6 +2304,7 @@ def get_clv_edge_adjustment(sport, tier):
     except Exception as e:
         return 1.0, f"CLV calc error: {str(e)[:50]}"
 
+@st.cache_data(ttl=1800)
 def fetch_mlb_probable_pitchers():
     cache_path = os.path.join(CACHE_DIR, "mlb_pitchers.pkl")
     if os.path.exists(cache_path):
@@ -2389,6 +2382,7 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
     return None
 
 
+@st.cache_data(ttl=7200)
 def fetch_espn_fpi_ratings(sport="NBA"):
     cache_path = os.path.join(CACHE_DIR, f"espn_fpi_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -2453,6 +2447,7 @@ def power_rating_spread_divergence(home_team, away_team, spread_str):
     except (ValueError, TypeError, AttributeError):
         return 0, ""
 
+@st.cache_data(ttl=3600)
 def fetch_todays_referees(sport):
     cache_path = os.path.join(CACHE_DIR, f"officials_{sport}_{date.today()}.pkl")
     if os.path.exists(cache_path):
@@ -2480,10 +2475,8 @@ def fetch_todays_referees(sport):
         if officials:
             with open(cache_path, "wb") as f:
                 pickle.dump(officials, f)
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     return officials
 
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
@@ -2545,10 +2538,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
+    
     try:
         if total_str and total_str != "N/A":
             total_val = float(total_str)
@@ -2617,10 +2609,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
+    
     try:
         if home_ml and away_ml and home_ml != "N/A" and away_ml != "N/A":
             h_ml = float(str(home_ml).replace("+",""))
@@ -2661,10 +2652,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
+    
     return {"matchup": matchup, "home": home_team, "away": away_team, "recommendations": recommendations, "best_bet": best_bet, "best_edge": best_edge, "sport": sport, "public_signals": public_sharp_signals, "public_data": game_public}
 
 def fetch_alternate_lines(sport, matchup):
@@ -2705,41 +2695,41 @@ def analyze_all_games(games, sport, home_teams, away_teams):
     all_game_analysis = []
     # Power ratings for all sports
     WNBA_POWER_RATINGS = {
-        "NY": 112.0, "LV": 111.0,
-        "CONN": 109.0, "MIN": 108.5,
-        "SEA": 107.0, "DAL": 106.0,
-        "CHI": 105.0, "PHX": 104.5,
-        "ATL": 104.0, "IND": 103.5,
-        "WSH": 102.0, "LA": 101.0,
-        "TOR": 103.0, "GS": 102.5,
+        "New York Liberty": 112.0, "Las Vegas Aces": 111.0,
+        "Connecticut Sun": 109.0, "Minnesota Lynx": 108.5,
+        "Seattle Storm": 107.0, "Dallas Wings": 106.0,
+        "Chicago Sky": 105.0, "Phoenix Mercury": 104.5,
+        "Atlanta Dream": 104.0, "Indiana Fever": 103.5,
+        "Washington Mystics": 102.0, "Los Angeles Sparks": 101.0,
+        "Toronto Tempo": 103.0, "Golden State Valkyries": 102.5,
     }
     MLB_POWER_RATINGS = {
-        "LAD": 112.0, "NYY": 110.5,
-        "ATL": 109.0, "PHI": 108.5,
-        "HOU": 108.0, "SD": 107.5,
-        "CLE": 107.0, "BAL": 106.5,
-        "MIN": 106.0, "ARI": 105.5,
-        "SF": 104.5, "SEA": 104.0,
-        "BOS": 103.5, "TB": 103.0,
-        "TEX": 102.5, "MIA": 100.0,
-        "COL": 97.0, "CWS": 98.0,
-        "OAK": 97.5, "KC": 101.0,
-        "TOR": 102.0, "CHC": 103.0,
-        "STL": 102.5, "MIL": 104.0,
-        "PIT": 99.0, "CIN": 100.5,
-        "DET": 101.5, "NYM": 103.5,
-        "WSH": 99.5, "LAA": 100.0,
+        "Los Angeles Dodgers": 112.0, "New York Yankees": 110.5,
+        "Atlanta Braves": 109.0, "Philadelphia Phillies": 108.5,
+        "Houston Astros": 108.0, "San Diego Padres": 107.5,
+        "Cleveland Guardians": 107.0, "Baltimore Orioles": 106.5,
+        "Minnesota Twins": 106.0, "Arizona Diamondbacks": 105.5,
+        "San Francisco Giants": 104.5, "Seattle Mariners": 104.0,
+        "Boston Red Sox": 103.5, "Tampa Bay Rays": 103.0,
+        "Texas Rangers": 102.5, "Miami Marlins": 100.0,
+        "Colorado Rockies": 97.0, "Chicago White Sox": 98.0,
+        "Oakland Athletics": 97.5, "Kansas City Royals": 101.0,
+        "Toronto Blue Jays": 102.0, "Chicago Cubs": 103.0,
+        "St. Louis Cardinals": 102.5, "Milwaukee Brewers": 104.0,
+        "Pittsburgh Pirates": 99.0, "Cincinnati Reds": 100.5,
+        "Detroit Tigers": 101.5, "New York Mets": 103.5,
+        "Washington Nationals": 99.5, "Los Angeles Angels": 100.0,
     }
     NHL_POWER_RATINGS = {
-        "FLA": 110.0, "VAN": 109.0,
-        "COL": 108.5, "BOS": 108.0,
-        "DAL": 107.5, "CAR": 107.0,
-        "EDM": 106.5, "NYR": 106.0,
-        "TB": 105.5, "VGK": 105.0,
-        "TOR": 104.5, "NJ": 104.0,
-        "MIN": 103.5, "WPG": 103.0,
-        "PIT": 101.0, "MTL": 100.0,
-        "BUF": 99.5, "CHI": 98.0,
+        "Florida Panthers": 110.0, "Vancouver Canucks": 109.0,
+        "Colorado Avalanche": 108.5, "Boston Bruins": 108.0,
+        "Dallas Stars": 107.5, "Carolina Hurricanes": 107.0,
+        "Edmonton Oilers": 106.5, "New York Rangers": 106.0,
+        "Tampa Bay Lightning": 105.5, "Vegas Golden Knights": 105.0,
+        "Toronto Maple Leafs": 104.5, "New Jersey Devils": 104.0,
+        "Minnesota Wild": 103.5, "Winnipeg Jets": 103.0,
+        "Pittsburgh Penguins": 101.0, "Montreal Canadiens": 100.0,
+        "Buffalo Sabres": 99.5, "Chicago Blackhawks": 98.0,
     }
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     # Soccer/UFC/Tennis/Golf have no power rating data — skip game line analysis
@@ -2800,6 +2790,7 @@ def scan_all_sports_best_plays():
     results["best_games"].sort(key=lambda x: x["best_edge"], reverse=True)
     return results
 
+@st.cache_data(ttl=1800)
 def fetch_nba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nba_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -2871,6 +2862,7 @@ def fetch_nba_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+@st.cache_data(ttl=1800)
 def fetch_wnba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "wnba_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -2934,6 +2926,7 @@ def fetch_wnba_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+@st.cache_data(ttl=1800)
 def fetch_mlb_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -2998,6 +2991,7 @@ def fetch_mlb_rolling_averages():
     return rolling
 
 
+@st.cache_data(ttl=1800)
 def fetch_nhl_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nhl_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -3041,6 +3035,7 @@ def fetch_nhl_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+@st.cache_data(ttl=3600)
 def fetch_nba_team_defense():
     cache_path = os.path.join(CACHE_DIR, "nba_team_defense.pkl")
     if os.path.exists(cache_path):
@@ -3096,6 +3091,7 @@ def fetch_nba_team_defense():
             pickle.dump(team_def, f)
     return team_def
 
+@st.cache_data(ttl=3600)
 def fetch_nfl_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nfl_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -3159,6 +3155,7 @@ def fetch_nfl_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+@st.cache_data(ttl=3600)
 def fetch_soccer_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "soccer_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -3256,6 +3253,7 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
         return None
 
 
+@st.cache_data(ttl=1800)
 def fetch_nba_averages_bdl():
     cache_path = os.path.join(CACHE_DIR, "bdl_nba_avgs.pkl")
     if os.path.exists(cache_path):
@@ -3297,6 +3295,7 @@ def fetch_nba_averages_bdl():
     except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
         return {}
 
+@st.cache_data(ttl=900)
 def fetch_underdog_props(sport):
     sport_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "NFL": "NFL", "WNBA": "WNBA"}
     sport_id = sport_map.get(sport)
@@ -3312,10 +3311,8 @@ def fetch_underdog_props(sport):
                     cached = pickle.load(_f)
                 if cached:
                     return cached
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
     # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
     product_exp_id = "018e1234-5678-9abc-def0-123456789006"
     state_config_id = "725014ef-3570-4e93-871d-d69674ab3521"
@@ -3456,10 +3453,8 @@ def fetch_underdog_props(sport):
             try:
                 with open(cache_path, "wb") as _f:
                     pickle.dump(props, _f)
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
         return props
     except Exception as e:
         print(f"Underdog props error: {e}")
@@ -3617,12 +3612,11 @@ def scrape_prizepicks(sport):
         import glob
         for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
             os.remove(f)
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     return fetch_underdog_props(sport)
 
+@st.cache_data(ttl=900)
 def fetch_underdog_injuries(sport):
     sport_map = {"NBA": "NBA", "MLB": "MLB", "NFL": "NFL", "NHL": "NHL"}
     sport_id = sport_map.get(sport)
@@ -3647,10 +3641,8 @@ def fetch_underdog_injuries(sport):
                     age_hours = (datetime.now(timezone.utc) - item_dt).total_seconds() / 3600
                     if age_hours > 48:
                         continue
-                except Exception as _e:
-                    import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                    if 'errors' not in st.session_state: st.session_state['errors'] = []
-                    st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                except Exception:
+                    pass
             if "out" in content and "ruled out" in content:
                 injuries[name] = "Out"
             elif "questionable" in content or "day-to-day" in content:
@@ -3660,6 +3652,7 @@ def fetch_underdog_injuries(sport):
         print(f"Underdog injuries error: {e}")
         return {}
 
+@st.cache_data(ttl=900)
 def fetch_injury_news(sport):
     slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
     path = slug_map.get(sport, "")
@@ -3689,6 +3682,7 @@ def fetch_injury_news(sport):
     injuries.update(underdog_injuries)
     return injuries
 
+@st.cache_data(ttl=600)
 def fetch_public_betting(sport):
     sport_slug = ACTION_NETWORK_SPORT_MAP.get(sport)
     if not sport_slug:
@@ -3811,6 +3805,7 @@ def fetch_public_betting(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_public_betting", "error": str(e)[:100]})
         return {}
 
+@st.cache_data(ttl=600)
 def fetch_action_network_props(sport):
     league_id = ACTION_NETWORK_LEAGUE_IDS.get(sport)
     if not league_id:
@@ -3877,20 +3872,16 @@ def fetch_action_network_props(sport):
                     if lv is not None:
                         try:
                             line_val = float(lv)
-                        except Exception as _e:
-                            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                            if 'errors' not in st.session_state: st.session_state['errors'] = []
-                            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                        except Exception:
+                            pass
                 odds = line_entry.get("odds")
                 if odds:
                     over_odds = odds
             if line_val is None and implied_value:
                 try:
                     line_val = round(float(implied_value), 1)
-                except Exception as _e:
-                    import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                    if 'errors' not in st.session_state: st.session_state['errors'] = []
-                    st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                except Exception:
+                    pass
             if line_val is None:
                 continue
             key = (sport, player_abbr, stat_name, line_val)
@@ -3923,6 +3914,7 @@ def fetch_action_network_props(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_action_network_props", "error": str(e)[:100]})
         return []
 
+@st.cache_data(ttl=600)
 def fetch_game_lines(sport):
     if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
         return [], False, {}, {}
@@ -4215,6 +4207,7 @@ def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
             }
     return None
 
+@st.cache_data(ttl=600)
 def fetch_odds_api_props(sport):
     if not ODDS_API_KEY:
         return []
@@ -4462,6 +4455,7 @@ def detect_arbitrage_opportunities(sport):
     arb_opportunities.sort(key=lambda x: x["Arb Pct"], reverse=True)
     return arb_opportunities
 
+@st.cache_data(ttl=600)
 def fetch_oddswrap_props(sport):
     if not ODDSWRAP_AVAILABLE:
         return []
@@ -4546,6 +4540,7 @@ def fetch_oddswrap_lines(sport):
     return lines_data
 
 
+@st.cache_data(ttl=600)
 def fetch_parlayapi_props(sport):
     """
     Fetch ParlayPlay props via parlay-api.com aggregator.
@@ -4646,6 +4641,7 @@ def fetch_parlayapi_props(sport):
         return []
 
 
+@st.cache_data(ttl=600)
 def fetch_parlayapi_arbitrage(sport):
     """Fetch arbitrage opportunities via parlay-api.com"""
     if not PARLAY_API_KEY:
@@ -4671,6 +4667,7 @@ def fetch_parlayapi_arbitrage(sport):
         return []
 
 
+@st.cache_data(ttl=600)
 def fetch_parlayapi_ev(sport):
     """Fetch +EV picks vs Pinnacle baseline via parlay-api.com"""
     if not PARLAY_API_KEY:
@@ -4694,6 +4691,7 @@ def fetch_parlayapi_ev(sport):
     except (json.JSONDecodeError, KeyError, TypeError):
         return []
 
+@st.cache_data(ttl=600)
 def fetch_parlayplay_props(sport):
     allowed, reason = api_budget_check("PARLAYPLAY")
     if not allowed:
@@ -4800,6 +4798,8 @@ def fetch_parlayplay_props(sport):
                 line_val = main_line.get("selectionPoints")
                 if line_val is None:
                     continue
+                multiplier = stat.get("defaultMultiplier", 1.77)
+                live_val = stat.get("liveStatValue", 0)
                 alt_count = stat.get("altLineCount", 0)
                 alt_key = f"{player_name}_{stat_name}"
                 if len(line_values) > 1:
@@ -4975,6 +4975,7 @@ def optimize_parlay_with_alt_lines(selected_props, n_picks, bankroll):
         "adjusted_probs": adjusted_probs,
     }
 
+@st.cache_data(ttl=600)
 def fetch_bdl_props(sport):
     if sport != "NBA":
         return []
@@ -5061,6 +5062,7 @@ def fetch_bdl_props(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_bdl_props", "error": str(e)[:100]})
         return []
 
+@st.cache_data(ttl=600)
 def fetch_oddspapi_props(sport):
     if not ODDSPAPI_KEY:
         return []
@@ -5210,12 +5212,11 @@ def check_data_freshness():
         days_old = (datetime.now() - last_updated).days
         if days_old > 14:
             warnings.append(f"Hardcoded averages (NFL/Soccer/UFC): {days_old} days old")
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     return warnings
 
+@st.cache_data(ttl=3600)
 def fetch_espn_game_ids(sport):
     slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NHL": "hockey/nhl", "NFL": "football/nfl", "WNBA": "basketball/wnba"}
     path = slug_map.get(sport)
@@ -5242,10 +5243,8 @@ def fetch_espn_game_ids(sport):
         if game_ids:
             with open(cache_path, "wb") as f:
                 pickle.dump(game_ids, f)
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     return game_ids
 
 def fetch_espn_line_movement(sport, event_id):
@@ -5312,10 +5311,8 @@ def detect_sharp_movement(movements):
         if ou_move >= 2.0:
             direction = "↑" if last_ou > first_ou else "↓"
             return True, direction, round(ou_move, 1)
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     return False, "", 0
 
 def detect_steam_moves(sport):
@@ -5378,10 +5375,8 @@ def detect_steam_moves(sport):
                                 "age_mins": round(baseline_age, 0),
                                 "signal": f"🔥 STEAM {direction}: Total moved {direction}{abs(espn_move)} on ESPN + Bovada in {baseline_age:.0f}m",
                             })
-                    except Exception as _e:
-                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                        if 'errors' not in st.session_state: st.session_state['errors'] = []
-                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                    except Exception:
+                        pass
         save_json_data(baseline_path, current_lines)
         return steam_moves
     except Exception as e:
@@ -5587,92 +5582,22 @@ def generate_gem_summary():
     return "\n".join(lines)
 
 
-def _tier_why(r, html=False):
-    """Return a plain-English explanation of WHY this pick got its tier.
-    html=True uses <br> separators for pick cards; html=False uses newline for text summary.
-    """
-    edge   = r.get("edge", 0)
-    prob   = r.get("prob", 0.5)
-    avg    = r.get("avg")
-    line   = r.get("line", 0)
-    side   = r.get("side", "OVER")
-    sig_b  = r.get("signal_base", 0)
-    sig_d  = r.get("signal_def", 0)
-    sharp  = r.get("sharp_flag", "")
-    source = r.get("data_source", "")
-    tier   = r.get("tier", "LEAN")
-
-    reasons = []
-
-    no_board = "Historical" in source or not source
-    no_avg   = not avg
-
-    # Data quality caveat — explain what this means practically
-    if no_board and no_avg:
-        reasons.append(
-            "⚠️ No live board data and no historical avg found — run the board first for a real score. "
-            "Rating defaulted to PASS/50% because the model has nothing to work with for this player/stat combo"
-        )
-    elif no_board:
-        reasons.append("Live board not loaded — score uses season averages only (less accurate than full model)")
-
-    # Core edge explanation — avg vs line
-    if avg and line:
-        gap = avg - line if side == "OVER" else line - avg
-        if gap > 0:
-            reasons.append(
-                f"Season avg ({avg:.1f}) is {abs(gap):.1f} pts {'above' if side == 'OVER' else 'below'} "
-                f"the line ({line}) — {'comfortable cushion' if abs(gap) >= 3 else 'small cushion'}"
-            )
-        elif gap == 0:
-            reasons.append(f"Season avg ({avg:.1f}) is right on the line ({line}) — coin flip territory")
-        else:
-            reasons.append(
-                f"Season avg ({avg:.1f}) is {abs(gap):.1f} pts {'below' if side == 'OVER' else 'above'} "
-                f"the line ({line}) — avg is working against this bet"
-            )
-
-    # Probability framing — include 50% case explicitly
-    if prob >= 0.65:
-        reasons.append(f"Hit probability {prob:.0%} — strong model confidence")
-    elif prob >= 0.58:
-        reasons.append(f"Hit probability {prob:.0%} — above the {prizepicks_breakeven_prob(3):.0%} breakeven needed")
-    elif prob > 0.50:
-        reasons.append(f"Hit probability {prob:.0%} — slightly above 50/50 but below breakeven")
-    elif prob == 0.50:
-        reasons.append("Hit probability 50% — model has no edge data, treating as a coin flip")
-    else:
-        reasons.append(f"Hit probability only {prob:.0%} — below 50/50, model leans against this bet")
-
-    # Active signals
-    if sig_b > 0:
-        reasons.append("Base signal ✅ — player's recent output trending above this line")
-    if sig_d > 0:
-        reasons.append("Defense signal ✅ — opponent ranks weak in this stat category")
-    if sharp:
-        reasons.append(f"Sharp money flagged: {sharp}")
-
-    # What the tier actually means in betting terms
-    TIER_CONTEXT = {
-        "SOVEREIGN": "SOVEREIGN = edge ≥15%. Max conviction — full unit bet",
-        "ELITE":     "ELITE = edge 10–15%. Strong play — confident bet",
-        "APPROVED":  "APPROVED = edge 5–10%. Solid value — include in parlays",
-        "LEAN":      "LEAN = edge 2–5%. Small edge — use as filler, not anchor",
-        "PASS":      "PASS = edge <2% or no data. Skip this pick or replace it",
-    }
-    if tier in TIER_CONTEXT:
-        reasons.append(TIER_CONTEXT[tier])
-
-    sep = "<br>" if html else "\n         "
-    return sep.join(reasons) if reasons else "Insufficient data"
-
-
 def generate_slip_summary(picks, results):
-    """Generate a plain-English slip analysis report."""
+    """
+    Generate a formatted summary report for an analyzed slip.
+    Same format as the daily Gem brief — copy into Gem or save.
+    """
     today = date.today().strftime("%A, %B %d, %Y")
-    sport = results[0]["sport"] if results else "MLB"
-    out = []
+    sport = results[0]["sport"] if results else "NBA"
+    lines = []
 
+    # Header
+    lines.append("⚡ BETCOUNCIL SLIP ANALYSIS REPORT")
+    lines.append(f"{sport} — {today} | v4.6")
+    lines.append("=" * 44)
+    lines.append("")
+
+    # Overall verdict
     n_picks = len(results)
     all_probs = [r["prob"] for r in results]
     combined_prob = parlay_prob(all_probs)
@@ -5680,7 +5605,7 @@ def generate_slip_summary(picks, results):
     breakeven = prizepicks_breakeven_prob(n_picks)
     parlay_ev = combined_prob - breakeven
 
-    fades  = sum(1 for r in results if r["edge"] < -0.05)
+    fades = sum(1 for r in results if r["edge"] < -0.05)
     strong = sum(1 for r in results if r["edge"] >= 0.08)
 
     if fades > 0:
@@ -5690,62 +5615,63 @@ def generate_slip_summary(picks, results):
     elif parlay_ev > 0:
         verdict = "GOOD SLIP — Positive combined EV"
     else:
-        verdict = "MARGINAL — Combined EV is negative, play at reduced size or pass"
+        verdict = "SKIP — Combined EV is negative"
 
-    out.append("⚡ BETCOUNCIL SLIP ANALYSIS")
-    out.append(f"{sport} | {today} | v4.6")
-    out.append("=" * 46)
-    out.append(f"🎯 VERDICT: {verdict}")
-    out.append("")
-    out.append(f"📊 {n_picks}-PICK PARLAY MATH")
-    out.append(f"  Combined hit prob : {combined_prob:.1%}  (need {breakeven:.1%} to break even)")
-    out.append(f"  Payout            : {multiplier}x")
-    out.append(f"  True EV           : {parlay_ev:+.1%}  {'✅ Positive' if parlay_ev > 0 else '❌ Negative'}")
-    out.append("")
-    out.append("─" * 46)
-    out.append("PICK-BY-PICK BREAKDOWN")
-    out.append("─" * 46)
+    lines.append(f"🎯 VERDICT: {verdict}")
+    lines.append("")
+
+    # Parlay math
+    lines.append(f"📊 PARLAY MATH ({n_picks}-pick)")
+    lines.append(f"Combined Prob: {combined_prob:.1%}")
+    lines.append(f"Payout: {multiplier}x | Breakeven: {breakeven:.1%}")
+    lines.append(f"True EV: {parlay_ev:+.1%} {'✅ +EV' if parlay_ev > 0 else '❌ -EV'}")
+    lines.append("")
+
+    # Pick by pick
+    lines.append("─" * 44)
+    lines.append("🔒 PICK-BY-PICK BREAKDOWN")
+    lines.append("─" * 44)
 
     for i, r in enumerate(results, 1):
-        avg_str = f"{r['avg']:.1f}" if r.get("avg") else "n/a"
-        out.append("")
-        out.append(f"[{i}] {r['player']}")
-        out.append(f"    Bet   : {r['side']} {r['line']} {r['stat']}")
-        out.append(f"    Tier  : {r['tier']}  |  Edge: {r['edge']:+.1%}  |  Hit prob: {r['prob']:.1%}")
-        out.append(f"    Avg   : {avg_str}  |  2-pick EV: {r['ev_2']}")
-        out.append(f"    Call  : {r['rec']}")
-        out.append(f"    Why   : {_tier_why(r)}")
-        if r.get("line_note"):
-            out.append(f"    ⚠️    : {r['line_note']}")
+        avg_display = f"{r['avg']:.1f}" if r.get("avg") else "No historical data"
+        lines.append(f"")
+        lines.append(f"[{i}] {r['player']} — {r['side']} {r['line']} {r['stat']}")
+        lines.append(f"Tier: {r['tier']} | Edge: {r['edge']:+.1%} | Prob: {r['prob']:.1%}")
+        lines.append(f"Avg (historical): {avg_display}")
+        lines.append(f"2-pick EV: {r['ev_2']} | Recommendation: {r['rec']}")
         if r.get("better_line"):
-            out.append(f"    ⚡    : {r['better_line']}")
+            lines.append(f"⚡ {r['better_line']}")
+        if r.get("line_note"):
+            lines.append(f"⚠️ {r['line_note']}")
         if r.get("sharp_flag"):
-            out.append(f"    💰    : Sharp — {r['sharp_flag']}")
+            lines.append(f"💰 Sharp: {r['sharp_flag']}")
         if r.get("dk_note"):
-            out.append(f"    🏀    : {r['dk_note']}")
+            lines.append(f"🏀 DK: {r['dk_note']}")
+        lines.append(f"Data: {r['data_source']}")
 
-    out.append("")
-    out.append("─" * 46)
-    strong_picks = sorted([r for r in results if r["edge"] >= 0.04], key=lambda x: -x["edge"])
-    weak_picks   = [r for r in results if r["edge"] < 0]
+    lines.append("")
+    lines.append("─" * 44)
 
-    if strong_picks:
-        out.append("✅ BEST PICKS ON THIS SLIP:")
-        for r in strong_picks:
-            out.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']}  — {r['tier']} ({r['edge']:+.1%} edge)")
-            out.append(f"    {_tier_why(r)}")
+    # Strengths and weaknesses
+    good = [r for r in results if r["edge"] >= 0.04]
+    weak = [r for r in results if r["edge"] < 0]
 
-    if weak_picks:
-        out.append("")
-        out.append("❌ WEAK PICKS — consider replacing:")
-        for r in weak_picks:
-            out.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']}  — {r['tier']} ({r['edge']:+.1%} edge)")
-            out.append(f"    {_tier_why(r)}")
+    if good:
+        lines.append("✅ STRONGEST PICKS:")
+        for r in sorted(good, key=lambda x: x["edge"], reverse=True):
+            lines.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']} | Edge: {r['edge']:+.1%}")
 
-    out.append("")
-    out.append("=" * 46)
-    out.append("BetCouncil v4.6")
-    return "\n".join(out)
+    if weak:
+        lines.append("")
+        lines.append("❌ WEAK PICKS (consider replacing):")
+        for r in weak:
+            lines.append(f"  • {r['player']} {r['side']} {r['line']} {r['stat']} | Edge: {r['edge']:+.1%}")
+
+    lines.append("")
+    lines.append("=" * 44)
+    lines.append("Generated by BetCouncil v4.6")
+
+    return "\n".join(lines)
 
 
 def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes=""):
@@ -5808,21 +5734,14 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def preprocess(image, invert=False):
             w, h = image.size
-            max_dim = max(w, h)
-            if max_dim < 800:
-                scale = 3
-            elif max_dim < 1800:
-                scale = 2
-            else:
-                scale = 1
-            if scale > 1:
-                image = image.resize((w * scale, h * scale), Image.LANCZOS)
+            scale = 3 if max(w, h) < 1200 else 2
+            image = image.resize((w * scale, h * scale), Image.LANCZOS)
             image = image.convert("L")
             if invert:
                 image = ImageOps.invert(image)
-            image = ImageEnhance.Contrast(image).enhance(2.5)
-            image = ImageEnhance.Sharpness(image).enhance(1.5)
-            image = image.point(lambda x: 0 if x < 140 else 255, "1").convert("L")
+            image = ImageEnhance.Contrast(image).enhance(3.0)
+            image = ImageEnhance.Sharpness(image).enhance(2.0)
+            image = image.point(lambda x: 0 if x < 128 else 255, "1").convert("L")
             return image
 
         raw_texts = []
@@ -5900,21 +5819,19 @@ def parse_bet_screenshot_ocr(image_bytes):
             return None
 
         def get_line(t):
-            # Strip OCR noise characters before parsing (parens, brackets, pipe, etc.)
-            t_clean = re.sub(r"[()\[\]|<>@]", " ", t)
             # Pass 1 — well-formed decimal (e.g. 21.5, 7.5)
-            for n in re.findall(r"\b(\d{1,2}\.\d)\b", t_clean):
+            for n in re.findall(r"\b(\d{1,2}\.\d)\b", t):
                 v = float(n)
                 if 0.5 <= v <= 99.5:
                     return v
-            # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 6, 14)
-            for n in re.findall(r"\b(\d{1,2})\b", t_clean):
+            # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 14, 8)
+            for n in re.findall(r"\b(\d{1,2})\b", t):
                 v = float(n)
-                if 0.5 <= v <= 60.0:
+                if 1.0 <= v <= 60.0:
                     return v
             # Pass 3 — OCR dropped decimal point: "215"→21.5, "75"→7.5, "235"→23.5
             # Only applies when the number ends in 5 (PrizePicks uses half-point lines)
-            for n in re.findall(r"\b(\d{2,3})\b", t_clean):
+            for n in re.findall(r"\b(\d{2,3})\b", t):
                 iv = int(n)
                 if str(iv).endswith("5"):
                     v = iv / 10.0
@@ -5924,11 +5841,10 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def get_side(t):
             tl = t.lower()
-            # Tesseract commonly misreads ↓ (UNDER arrow) as many things:
-            # vv, vy, v, mis, sis, '<sis, tT (when combined with other noise)
-            # and OVER arrow as: 05, o5, oS, tT
-            under_tokens = ["less","under","demon","↓","vv","vy","mis","sis","<sis"]
-            # Isolated v/vy/vv or noise strings that indicate UNDER
+            # Tesseract commonly misreads ↓ as: vv, vy, v (standalone)
+            # and ↑ as: t, wt, tt, 1 (standalone before a number)
+            under_tokens = ["less","under","demon","↓","vv","vy"]
+            # Check for isolated "v" before a digit (OCR for ↓)
             if re.search(r'\bv[vy]?\b', tl) or any(w in tl for w in under_tokens):
                 return "UNDER"
             return "OVER"
@@ -5976,17 +5892,11 @@ def parse_bet_screenshot_ocr(image_bytes):
             "More","Less","Over","Under","Pick","Entry","Flex",
             "Goblin","Demon","Final","Pending","Live","Show",
             "Details","Leaderboard","Vs","At","Play","Win",
-            "Starts","Flex","Slip","Pay","Parlay","Power",
-            "HOU","MIL","SDV","WSH","LAL","GSW","BOS","NYK",
         }
 
         def is_player_name(tok):
             """Return cleaned player name if token looks like one, else None."""
-            # Strip OCR junk characters before analysis
-            tok = re.sub(r"[*@|<>()\[\]]", " ", tok).strip()
-            # Preserve Jr/Sr/II/III suffixes before stripping trailing position codes
-            tok = re.sub(r'\s+(Jr|Sr|II|III|IV)\.?\s*$', lambda m: " " + m.group(1), tok, flags=re.IGNORECASE)
-            # Strip trailing position code (OF, PG, SP, etc.)
+            # Strip trailing position code
             cleaned = re.sub(
                 r'\s+[A-Za-z]{1,3}(?:-[A-Za-z]{1,2})?$', '', tok
             ).strip()
@@ -5996,160 +5906,13 @@ def parse_bet_screenshot_ocr(image_bytes):
                 return None
             if any(w.upper() in SKIP_WORDS for w in words):
                 return None
-            # All substantial words must start with uppercase; allow lowercase suffixes
-            if not all(w[0].isupper() for w in words if len(w) > 1 and w.lower() not in ("jr","sr","ii","iii","iv")):
+            # All substantial words must start with uppercase
+            if not all(w[0].isupper() for w in words if len(w) > 1):
                 return None
-            # Must have at least 2 words of 3+ chars; Jr/Sr count even though short
-            long_words = sum(1 for w in words if len(w) >= 3 or w.lower() in ("jr","sr"))
-            if long_words < 2:
+            # Must have at least 2 words of 3+ chars (filters out junk like "Vv Vy")
+            if sum(1 for w in words if len(w) >= 3) < 2:
                 return None
             return cleaned
-
-        # ---------------------------------------------------------------
-        # BLOB-MODE: If Tesseract collapsed the whole slip onto one line
-        # (no newlines, everything in tokens[0]), parse directly via regex
-        # anchored on stat keyword positions instead of token boundaries.
-        # ---------------------------------------------------------------
-        def parse_blob(text):
-            """Stat-anchored parser for single-line OCR blobs."""
-            BLOB_STATS = [
-                (r"hits\+runs\+rb[li]s", "Hits+Runs+RBIs"),
-                (r"pts\+reb\+ast",        "Pts+Reb+Ast"),
-                (r"passing yards",        "Passing Yards"),
-                (r"rushing yards",        "Rushing Yards"),
-                (r"receiving yards",      "Receiving Yards"),
-                (r"fantasy score|hitter fs", "Fantasy Score"),
-                (r"shots on goal",        "Shots On Goal"),
-                (r"home runs",            "Home Runs"),
-                (r"strikeouts",           "Strikeouts"),
-                (r"3-pt made|3pt made|threes", "3-PT Made"),
-                (r"blocked shots|blocks", "Blocked Shots"),
-                (r"receptions",           "Receptions"),
-                (r"touchdowns",           "Touchdowns"),
-                (r"turnovers",            "Turnovers"),
-                (r"steals",               "Steals"),
-                (r"assists",              "Assists"),
-                (r"rebounds",             "Rebounds"),
-                (r"points",               "Points"),
-                (r"strikeouts",           "Strikeouts"),
-                (r"goals",                "Goals"),
-                (r"saves",                "Saves"),
-                (r"hits",                 "Hits"),
-                (r"runs",                 "Runs"),
-            ]
-            BLOB_JUNK = {"Flex","Play","Show","Details","Leaderboard",
-                         "Starts","Hits","Runs","More","Less","Pick",
-                         "Entry","Final","Pending","Live","Win","Loss",
-                         "Mts","Mts","Mip","Mis","Sis","Sds","Wsh","Hou","Mil",
-                         "Hou","Okc","Sas","Nba","Mlb","Nfl","Nhl","Wnba"}
-
-            tl = text.lower()
-            stat_hits = []
-            for pat, name in BLOB_STATS:
-                for m in re.finditer(pat, tl):
-                    stat_hits.append((m.start(), m.end(), name))
-            stat_hits.sort()
-
-            # Deduplicate: if two stats overlap, keep the longer one
-            deduped = []
-            for s, e, n in stat_hits:
-                if deduped and s < deduped[-1][1]:
-                    if (e - s) > (deduped[-1][1] - deduped[-1][0]):
-                        deduped[-1] = (s, e, n)
-                else:
-                    deduped.append((s, e, n))
-
-            blob_bets = []
-            seen_players = {}
-            prev_stat_end = None
-            last_line_val = None
-            for stat_start, stat_end, stat_name in deduped:
-                # Player: last proper-name sequence in the 150 chars before stat
-                snippet = text[max(0, stat_start - 150):stat_start]
-                snippet_clean = re.sub(r"[*@|<>()\[\]0-9$]", " ", snippet)
-                name_matches = list(re.finditer(
-                    r'([A-Z][a-z]{1,15}(?:\s+[A-Z][a-z]{0,15}){1,3}'
-                    r'(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)', snippet_clean))
-                name_matches = [m for m in name_matches
-                                if not any(w in BLOB_JUNK for w in m.group().split())]
-                if not name_matches:
-                    continue
-                player = name_matches[-1].group().strip()
-
-                # Line: check BEFORE the stat first (PrizePicks UI puts line value
-                # to the right of player name, which OCR reads before the stat label)
-                # Look back to previous stat end (or 150 chars) so we stay in this pick's zone
-                look_back_start = prev_stat_end if prev_stat_end is not None else max(0, stat_start - 150)
-                before_snip = re.sub(r"[()\[\]|<>@]", " ", text[look_back_start:stat_start])
-                after_snip  = re.sub(r"[()\[\]|<>@]", " ", text[stat_end:stat_end + 50])
-                line_val = None
-
-                def _extract_line(s):
-                    # Strip pagination (2/3, 4/90) and time patterns (11h, 38m, 1h)
-                    s = re.sub(r"\b\d+/\d+\b", " ", s)
-                    s = re.sub(r"\b\d+\s*[hm]\b", " ", s)
-                    # Normalise capital-O that OCR reads instead of zero: O05→05, O5→05
-                    s = re.sub(r"\bO(\d{1,2})\b", r"\1", s)  # O05→05, O5→5 (OCR capital-O for zero)
-                    for n in re.findall(r"\b(\d{1,2}\.\d)\b", s):
-                        v = float(n)
-                        if 0.5 <= v <= 99.5:
-                            return v
-                    # "05"→0.5 — OCR collapses "0.5" into "05"
-                    for n in re.findall(r"\b(0\d)\b", s):
-                        v = int(n) / 10.0
-                        if 0.5 <= v <= 9.5:
-                            return v
-                    # Plain integer (skip 0 itself)
-                    for n in re.findall(r"\b(\d{1,2})\b", s):
-                        v = float(n)
-                        if 0.5 <= v <= 60.0:
-                            return v
-                    return None
-
-                line_val = _extract_line(before_snip)
-                if line_val is None:
-                    line_val = _extract_line(after_snip)
-                if line_val is None:
-                    line_val = last_line_val  # inherit line from previous pick on same slip
-                if line_val is None:
-                    continue
-                # Side: look for UNDER signals between player name and stat
-                between = text[max(0, stat_start - 150):stat_start].lower()
-                under_signals = ["less","under","demon","↓","vv","vy","mis","sis","<sis"]
-                side = "UNDER" if any(w in between for w in under_signals) else "OVER"
-
-                # Per-player: if we already have this player, only upgrade to longer stat
-                if player in seen_players:
-                    prev = seen_players[player]
-                    if len(stat_name) <= len(prev["prop"]):
-                        continue
-                    blob_bets = [b for b in blob_bets if b["player"] != player]
-
-                seen_players[player] = {"player": player, "prop": stat_name,
-                                        "line": line_val, "side": side,
-                                        "sport": sport, "outcome": "PENDING",
-                                        "wager": 0, "pick_count": 2,
-                                        "source": "PrizePicks", "bet_type": "prop"}
-                blob_bets.append(seen_players[player])
-                last_line_val = line_val
-                prev_stat_end = stat_end
-
-            return blob_bets
-
-        # Run blob parser if any compound stat keyword is found in the text.
-        # Blob mode handles both true single-line OCR output AND multi-line output
-        # where the token parser would fail (no clean name/stat pairing per line).
-        _blob_stat_present = bool(re.search(
-            r"hits\+runs|pts\+reb|passing yards|rushing yards|receiving yards"
-            r"|strikeouts|home runs|blocked shots|fantasy score|shots on goal",
-            raw_text.lower()
-        ))
-        # Also trigger on any slip with fewer than 4 tokens (pure blob)
-        _is_short = len(lines) < 4
-        if _blob_stat_present or _is_short:
-            blob_results = parse_blob(raw_text)
-            if blob_results:
-                return blob_results
 
         # --- Step 1: Find all player name positions in the token list ---
         player_positions = []   # list of (token_index, cleaned_name)
@@ -6171,18 +5934,11 @@ def parse_bet_screenshot_ocr(image_bytes):
             line_val = None
             side     = "OVER"
 
-            # First try each token individually
             for tok in segment_toks:
                 if line_val is None:
                     line_val = get_line(tok)
                     if line_val is not None:
                         side = get_side(tok)
-
-            # Fallback: try full segment text in case line is embedded in a phrase
-            if line_val is None:
-                line_val = get_line(segment_text)
-                if line_val is not None:
-                    side = get_side(segment_text)
 
             if stat is None or line_val is None:
                 continue
@@ -6219,10 +5975,9 @@ def parse_bet_screenshot_ocr(image_bytes):
                 if 1 <= w <= 10000:
                     for b in bets:
                         b["wager"] = w
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
+
         pc_m = re.search(r"(\d+)[- ]pick|pick[- ](\d+)", raw_text.lower())
         if pc_m and bets:
             try:
@@ -6230,10 +5985,9 @@ def parse_bet_screenshot_ocr(image_bytes):
                 if 2 <= pc <= 6:
                     for b in bets:
                         b["pick_count"] = pc
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
+
         return bets
 
     except Exception as e:
@@ -6333,12 +6087,17 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
     signals = {}
     league_avg_def = 112.0
     if weights is None:
-        from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
-        sport_optimizer = from_optimizer.get(sport, {})
-        if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
-            weights = sport_optimizer["weights"]
-        else:
-            weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+        # Load optimizer weights once per session — cached in session_state
+        # Avoids 50+ disk reads per board load (one per prop)
+        _cache_key = f"_opt_weights_{sport}"
+        if _cache_key not in st.session_state:
+            from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+            sport_optimizer = from_optimizer.get(sport, {})
+            if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
+                st.session_state[_cache_key] = sport_optimizer["weights"]
+            else:
+                st.session_state[_cache_key] = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+        weights = st.session_state[_cache_key]
     if stat_key in ["HR", "GOALS"]:
         prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
@@ -6488,10 +6247,9 @@ def fetch_dk_salaries(sport="NBA"):
                 if attr.get("id") == 90:  # FPPG stat id
                     try:
                         fppg = float(attr.get("value", 0))
-                    except Exception as _e:
-                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                        if 'errors' not in st.session_state: st.session_state['errors'] = []
-                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                    except Exception:
+                        pass
+
             if name and salary:
                 value_score = round((fppg / (salary / 1000)), 2) if salary > 0 else 0
                 salaries[normalize_name(name)] = {
@@ -6565,6 +6323,7 @@ def apply_dk_salary_signal(prop, dk_salaries):
 PINNACLE_PROP_CACHE = {}  # in-memory: {(player_norm, stat, line): {"over_prob": x, "under_prob": x}}
 PINNACLE_GAME_CACHE = {}  # in-memory: {(home, away, market): {"prob": x, "line": x}}
 
+@st.cache_data(ttl=900)
 def fetch_pinnacle_lines(sport):
     """
     Fetch Pinnacle lines via OddsPAPI (already in our stack).
@@ -6798,10 +6557,8 @@ def fetch_player_id_bdl(player_name):
                 with open(cache_path, "wb") as f:
                     pickle.dump(pid, f)
                 return pid
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     return None
 
 
@@ -6925,6 +6682,7 @@ def compute_home_away_splits(game_logs, stat, line):
         "home_games": len(home_games),
         "away_games": len(away_games),
     }
+@st.cache_data(ttl=3600)
 def fetch_dk_nba_draftgroup_id():
     """Find today's NBA classic draftGroupId from DraftKings."""
     cache_path = os.path.join(CACHE_DIR, "dk_draftgroup_nba.pkl")
@@ -6967,6 +6725,7 @@ def fetch_dk_nba_draftgroup_id():
 
 
 
+@st.cache_data(ttl=900)
 def fetch_sleeper_props(sport):
     """
     Fetch player props from Sleeper DFS - free public API.
@@ -7243,10 +7002,8 @@ def load_sport_data(sport):
                         "bovada": "Bovada"
                     }.get(book, book.title())
                     all_alt_sources.append((op, book_display))
-        except Exception as _e:
-            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-            if 'errors' not in st.session_state: st.session_state['errors'] = []
-            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+        except Exception:
+            pass
     for alt_prop, source in all_alt_sources:
         key = (normalize_name(alt_prop.get("Player","")), alt_prop.get("Prop",""))
         if key not in better_lines:
@@ -7303,6 +7060,9 @@ def load_sport_data(sport):
             else:
                 return [], games, 0, 0, {}, {}
 
+    # ── SECTION: DATA ACQUISITION COMPLETE ─────────────────────────────────────
+    # All network I/O is done above via _fetch_parallel().
+    # Below: pure computation — B2B detection, enrichment, game analysis.
     # injuries, public_betting, an_props, games already fetched in parallel above
     b2b_teams = set()
     try:
@@ -7320,10 +7080,8 @@ def load_sport_data(sport):
                             team = competitor.get("team", {}).get("abbreviation", "")
                             if team:
                                 b2b_teams.add(team)
-    except Exception as _e:
-        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-        if 'errors' not in st.session_state: st.session_state['errors'] = []
-        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+    except Exception:
+        pass
     game_ids = fetch_espn_game_ids(sport)
     # officials_data already fetched in parallel — session_state set above
     power_divergences = {}
@@ -7570,10 +7328,8 @@ def load_sport_data(sport):
                         elif h2h_rate <= 0.30:
                             h2h_adj = -0.02
                             h2h_note = f"H2H {h2h_rate:.0%} vs {opp_abbr} ({h2h_games}g)"
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
         game_total_adj = 0.0
         if sport == "NBA" and player_team:
             for game in games:
@@ -7582,10 +7338,8 @@ def load_sport_data(sport):
                     if total and total != "N/A":
                         try:
                             game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
-                        except Exception as _e:
-                            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                            if 'errors' not in st.session_state: st.session_state['errors'] = []
-                            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                        except Exception:
+                            pass
                     break
         weather_adj = 0.0
         weather_note = ""
@@ -7636,15 +7390,8 @@ def load_sport_data(sport):
         an_money = an_data.get("money_pct", 0)
         over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
-        # Reflect MLB pitcher+weather adjustments in prob (not just edge)
-        if sport == "MLB" and (pitcher_adj != 0 or weather_adj != 0):
-            mlb_extra = pitcher_adj + weather_adj
-            over_prob  = max(0.30, min(0.70, over_prob  + mlb_extra))
         under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights)
         under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj - h2h_adj))
-        if sport == "MLB" and (pitcher_adj != 0 or weather_adj != 0):
-            mlb_extra = pitcher_adj + weather_adj
-            under_prob = max(0.30, min(0.70, under_prob - mlb_extra))
         if consensus_prob is not None:
             blended_over_prob = round(consensus_prob * 0.60 + over_prob * 0.40, 4)
             blended_under_prob = round((1 - consensus_prob) * 0.60 + under_prob * 0.40, 4)
@@ -8195,8 +7942,8 @@ with st.sidebar:
     st.session_state.min_edge = st.slider("Min Edge (%)", 0, 15, int(st.session_state.min_edge * 100), step=1) / 100.0
     st.session_state.skip_defaults = st.checkbox("Skip unknown players", value=st.session_state.skip_defaults)
     st.markdown("---")
-    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0, label_visibility="collapsed")
-    if st.button("🔄 Load Board", use_container_width=True):
+    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0)
+    if st.button("Load Board", width="stretch"):
         try:
             for f in os.listdir(CACHE_DIR):
                 if "_pp.pkl" in f:
@@ -8212,10 +7959,8 @@ with st.sidebar:
                                 os.remove(fp)
                         except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
                             os.remove(fp)
-        except Exception as _e:
-            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-            if 'errors' not in st.session_state: st.session_state['errors'] = []
-            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+        except Exception:
+            pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
             st.session_state.board_data = board
@@ -8318,47 +8063,6 @@ st.markdown(f"""
 # =========================
 
 
-
-# ── SPORT NAVIGATION BAR ────────────────────────────────────────
-_sport_icons = {
-    "NBA": "🏀", "MLB": "⚾", "NFL": "🏈", "WNBA": "🏀",
-    "NHL": "🏒", "Soccer": "⚽", "Tennis": "🎾",
-    "Golf": "⛳", "UFC": "🥊"
-}
-_active_sport = st.session_state.get("last_sport", "NBA")
-_nav_cols = st.columns(len(SPORTS))
-for _si, _sp in enumerate(SPORTS):
-    with _nav_cols[_si]:
-        _icon = _sport_icons.get(_sp, "🎯")
-        _is_active = _sp == _active_sport
-        _btn_style = "primary" if _is_active else "secondary"
-        if st.button(
-            f"{_icon} {_sp}",
-            key=f"nav_sport_{_sp}",
-            type=_btn_style,
-            use_container_width=True
-        ):
-            if _sp != _active_sport:
-                st.session_state.last_sport = _sp
-                with st.spinner(f"Loading {_sp} board..."):
-                    _b, _g, _nd, _ne, _ht, _at = load_sport_data(_sp)
-                    st.session_state.board_data = _b
-                    st.session_state.games = _g
-                    st.session_state.last_sport = _sp
-                    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
-                    st.session_state.board_ready = True
-                    st.session_state.n_skipped_def = _nd
-                    st.session_state.n_skipped_edge = _ne
-                    if "last_good_props" not in st.session_state:
-                        st.session_state["last_good_props"] = {}
-                    if _b:
-                        st.session_state["last_good_props"][_sp] = _b
-                    if _g and _ht and _at:
-                        st.session_state["game_analysis"] = analyze_all_games(_g, _sp, _ht, _at)
-                    else:
-                        st.session_state["game_analysis"] = []
-                st.rerun()
-st.markdown('<div style="margin-bottom:0.5rem;"></div>', unsafe_allow_html=True)
 
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
@@ -8806,53 +8510,6 @@ with tabs[0]:
             st.markdown('<div style="color:#6a7a8a;font-size:1.05rem;">Lock picks to start tracking trends.</div>', unsafe_allow_html=True)
 
     with col_right:
-        # ── GEM BRIEF BUTTON ──────────────────────────────
-        if board:
-            gem_brief = generate_gem_summary()
-            st.session_state["gem_brief"] = gem_brief
-            # Escape backticks and backslashes for safe JS template literal
-            import json
-            gem_js = json.dumps(gem_brief)
-            st.components.v1.html(f"""
-<button onclick="(function(){{
-    var txt = {gem_js};
-    navigator.clipboard.writeText(txt).then(function(){{
-        var b = document.getElementById('gcb');
-        b.innerText = '✅ Copied!';
-        b.style.background = '#0f2a1a';
-        b.style.borderColor = '#22c55e';
-        b.style.color = '#22c55e';
-        setTimeout(function(){{
-            b.innerText = '📋 Copy Gem Brief';
-            b.style.background = '#0a0e14';
-            b.style.borderColor = '#1e2d3d';
-            b.style.color = '#b8c6d6';
-        }}, 2500);
-    }}).catch(function(){{
-        var b = document.getElementById('gcb');
-        b.innerText = '⚠️ Long-press to copy';
-    }});
-}})()" id="gcb" style="
-    width:100%; padding:10px 0; cursor:pointer;
-    background:#0a0e14; border:1px solid #1e2d3d;
-    border-radius:8px; color:#b8c6d6;
-    font-size:14px; font-weight:600;
-    font-family:sans-serif; letter-spacing:0.03em;
-    transition: all 0.2s;
-">📋 Copy Gem Brief</button>
-""", height=48)
-            with st.expander("👁 Preview Gem Brief", expanded=False):
-                st.text_area(
-                    label="",
-                    value=gem_brief,
-                    height=300,
-                    key="gem_brief_preview",
-                    label_visibility="collapsed"
-                )
-            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.8rem;color:#6a7a8a;font-size:0.9rem;text-align:center;">📋 Run board to generate Gem Brief</div>', unsafe_allow_html=True)
-
         st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.8rem;font-weight:700;">Sharp Money Alerts</div>', unsafe_allow_html=True)
         sharp_data = st.session_state.get("sharp_alerts", [])
         steam_moves = st.session_state.get("steam_moves", [])
@@ -9345,10 +9002,8 @@ with tabs[3]:
                                                 if i < len(stats_vals):
                                                     try:
                                                         player_stats[aname_norm][key.upper()] = float(stats_vals[i])
-                                                    except Exception as _e:
-                                                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                                                        if 'errors' not in st.session_state: st.session_state['errors'] = []
-                                                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                                                    except Exception:
+                                                        pass
                                             # Map common stat label variants
                                             for label, variants in [
                                                 ("PTS",["PTS","points"]),("REB",["REB","rebounds"]),
@@ -9366,10 +9021,8 @@ with tabs[3]:
                                                     if any(v.upper() == key.upper() for v in variants) and i < len(stats_vals):
                                                         try:
                                                             player_stats[aname_norm][label] = float(stats_vals[i])
-                                                        except Exception as _e:
-                                                            import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                                                            if 'errors' not in st.session_state: st.session_state['errors'] = []
-                                                            st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                                                        except Exception:
+                                                            pass
                             except (ValueError, TypeError):
                                 continue
 
@@ -9856,7 +9509,7 @@ with tabs[5]:
         st.session_state["analyzer_picks"] = []
 
     # Screenshot upload section
-    with st.expander("📸 Upload a screenshot of your slip (auto-parse)", expanded=True):
+    with st.expander("📸 Upload a screenshot of your slip (auto-parse)", expanded=False):
         slip_imgs = st.file_uploader(
             "Upload screenshot of your PrizePicks, ParlayPlay, or Underdog slip",
             type=["jpg", "jpeg", "png", "heic", "webp"],
@@ -9864,62 +9517,41 @@ with tabs[5]:
             accept_multiple_files=True
         )
         if slip_imgs:
-            # Use a content-hash to parse only once per unique upload
-            img_key = "_".join(f"{f.name}{f.size}" for f in slip_imgs)
-            if st.session_state.get("_parsed_key") != img_key:
-                st.session_state["_parsed_key"] = img_key
+            if st.button("🔍 Parse Screenshot", key="parse_slip_screenshot"):
                 all_parsed = []
                 with st.spinner("Reading screenshot..."):
                     for img_file in slip_imgs:
-                        img_file.seek(0)
                         img_bytes = img_file.read()
                         result = parse_bet_screenshot_ocr(img_bytes)
                         if result:
                             all_parsed.extend(result)
                 if all_parsed:
+                    # Convert OCR results to analyzer format
                     analyzer_picks = []
                     for bet in all_parsed:
-                        player = bet.get("player", "").strip()
-                        stat   = bet.get("prop", bet.get("stat", "")).strip()
-                        line   = bet.get("line", 0)
-                        if not player or not stat:
-                            continue
-                        if bet.get("outcome") == "LOSS":
-                            continue
-                        try:
-                            line_f = float(line or 0)
-                        except (TypeError, ValueError):
-                            line_f = 0.0
+                        if bet.get("outcome") in ("WIN", "LOSS"):
+                            continue  # Skip settled bets
                         analyzer_picks.append({
-                            "player": player,
-                            "stat":   stat,
-                            "line":   line_f,
-                            "side":   bet.get("side", "OVER"),
-                            "sport":  bet.get("sport", "NBA"),  # blob parser sets correct sport; NBA is safer fallback than MLB
+                            "player": bet.get("player", ""),
+                            "stat": bet.get("prop", ""),
+                            "line": float(bet.get("line", 0) or 0),
+                            "side": bet.get("side", "OVER"),
+                            "sport": bet.get("sport", "NBA"),
                         })
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
-                        st.session_state["_auto_analyze"] = True
+                        st.success(f"✅ Found {len(analyzer_picks)} picks from screenshot")
+                        st.rerun()
                     else:
-                        st.warning(f"Parsed {len(all_parsed)} bets but none passed filters.")
-                        for b in all_parsed:
-                            st.caption(f"  {b.get('player')!r} | {b.get('prop')!r} | {b.get('line')} | {b.get('outcome')}")
+                        st.warning("Screenshot parsed but no pending picks found. Try the paste option below.")
                 else:
-                    st.error("Could not read screenshot — check OCR debug below or paste manually.")
-
-            # Manual re-parse button clears the key so next render re-runs
-            if st.button("🔄 Re-parse Screenshot", key="parse_slip_screenshot"):
-                st.session_state.pop("_parsed_key", None)
-                st.session_state.pop("_auto_analyze", None)
-                st.rerun()
-
-        # OCR debug outside nested expander (Streamlit doesn't support nesting)
-        raw = st.session_state.get("ocr_raw_text", "")
-        if raw:
-            with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
-                st.text(raw[:1000])
-        elif slip_imgs:
-            st.caption("🔍 OCR Debug: no text extracted — image may be too dark, blurry, or low-res.")
+                    st.error("Could not read screenshot. Try the OCR Debug in Log Bet tab, or paste the slip manually below.")
+        with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
+            raw = st.session_state.get("ocr_raw_text", "")
+            if raw:
+                st.text(raw[:500])
+            else:
+                st.caption("Upload a screenshot to see extracted text.")
 
     # Quick paste section
     # Manual entry in slip analyzer kept minimal - screenshot/text only
@@ -9997,14 +9629,6 @@ with tabs[5]:
     # Show current slip
     if st.session_state["analyzer_picks"]:
         st.markdown("---")
-        if not board:
-            st.warning(
-                "⚠️ **Live board not loaded** — analysis will use historical averages only, "
-                "which may not reflect today's lines or recent form. "
-                "For full accuracy: go to **Board** tab → click **Run Board**. "
-                "Then come back here and re-analyze.",
-                icon="📋"
-            )
         st.markdown(f"### Your Slip ({len(st.session_state['analyzer_picks'])} picks)")
 
         for i, pick in enumerate(st.session_state["analyzer_picks"]):
@@ -10022,8 +9646,7 @@ with tabs[5]:
 
         st.markdown("---")
 
-        _auto = st.session_state.pop("_auto_analyze", False)
-        if st.button("🔍 Analyze This Slip", key="analyze_slip_btn", type="primary") or _auto:
+        if st.button("🔍 Analyze This Slip", key="analyze_slip_btn", type="primary"):
             picks = st.session_state["analyzer_picks"]
             results = []
 
@@ -10038,12 +9661,8 @@ with tabs[5]:
                 board_match = None
                 if board:
                     norm_player = normalize_name(player)
-                    # Normalize stat: strip spaces around + and - for comparison
-                    def _norm_stat(s):
-                        return re.sub(r"\s*([+\-])\s*", r"", s.lower().strip())
-                    stat_norm = _norm_stat(stat)
                     for b in board:
-                        if normalize_name(b.get("Player","")) == norm_player and                            _norm_stat(b.get("Prop","")) == stat_norm:
+                        if normalize_name(b.get("Player","")) == norm_player and                            b.get("Prop","").lower() == stat.lower():
                             board_match = b
                             break
 
@@ -10131,8 +9750,6 @@ with tabs[5]:
                     "line_note": line_note,
                     "confidence": confidence,
                     "data_source": data_source,
-                    "signal_base": signal_base if board_match else 0,
-                    "signal_def": signal_def if board_match else 0,
                 })
 
             st.session_state["analyzer_results"] = results
@@ -10225,8 +9842,6 @@ with tabs[5]:
                 f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
                 f'{"<div style=\"font-size:14px;color:#22c55e;margin-top:4px\">⚡ " + r["better_line"] + "</div>" if r["better_line"] else ""}'
                 f'{"<div style=\"font-size:14px;color:#e8a020;margin-top:4px\">⚠️ " + r["line_note"] + "</div>" if r["line_note"] else ""}'
-                f'<div style="font-size:13px;color:#8a9aaa;margin-top:6px;border-top:1px solid #1a2a3a;padding-top:6px;">'
-                f'💬 <b>Why {r["tier"]}:</b> {_tier_why(r, html=True)}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -10259,16 +9874,18 @@ with tabs[5]:
                     st.success(f"✅ Locked {locked} picks")
                     st.rerun()
 
-        # Slip summary — inline, no copy-to-Gem needed
+        # Generate slip summary report
         st.markdown("---")
-        st.markdown("## 📋 Slip Summary")
+        st.markdown("## 📋 Slip Analysis Report")
+        st.caption("Same format as your daily Gem brief — copy and paste into your Gemini Gem for deeper analysis.")
         slip_summary = generate_slip_summary(st.session_state["analyzer_picks"], results)
         st.text_area(
-            "Full analysis report (copy to save or share):",
+            "Copy this into your Gem:",
             value=slip_summary,
-            height=380,
+            height=400,
             key="slip_summary_output"
         )
+        st.caption("💡 Ctrl+A to select all, Ctrl+C to copy.")
 
 
 # ----- TAB 6: PLAYER LOOKUP -----
@@ -10677,10 +10294,8 @@ with tabs[8]:
                     _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada"}.get(_op.get("Book","").lower())
                     if _bk2:
                         _ls_add([_op], _bk2)
-            except Exception as _e:
-                import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                if 'errors' not in st.session_state: st.session_state['errors'] = []
-                st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+            except Exception:
+                pass
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
@@ -10985,10 +10600,8 @@ with tabs[9]:
                         elif n == 0:
                             detail = "⚠️ 200 OK — Connected but 0 props. No slate posted yet."
                             color = "yellow"
-                    except Exception as _e:
-                        import traceback; _tb = traceback.format_exc(1).strip().split('\n')[-1]
-                        if 'errors' not in st.session_state: st.session_state['errors'] = []
-                        st.session_state['errors'].append({'time': __import__('datetime').datetime.now().strftime('%H:%M:%S'), 'source': 'silent_catch', 'error': _tb[:120]})
+                    except Exception:
+                        pass
                 results[src["name"]] = (code, detail, color)
             st.session_state["api_panel_results"] = results
 
