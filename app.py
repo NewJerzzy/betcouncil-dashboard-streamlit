@@ -8806,6 +8806,31 @@ with tabs[0]:
             st.markdown('<div style="color:#6a7a8a;font-size:1.05rem;">Lock picks to start tracking trends.</div>', unsafe_allow_html=True)
 
     with col_right:
+        # ── GEM BRIEF BUTTON ──────────────────────────────
+        if board:
+            gem_brief = generate_gem_summary()
+            st.session_state["gem_brief"] = gem_brief
+            st.download_button(
+                label="📋 Copy Gem Brief",
+                data=gem_brief,
+                file_name=f"betcouncil_gem_{date.today().strftime('%Y%m%d')}.txt",
+                mime="text/plain",
+                key="dl_gem_brief",
+                use_container_width=True,
+                help="Download and paste into your Gemini Gem for mobile analysis"
+            )
+            with st.expander("👁 Preview Gem Brief", expanded=False):
+                st.text_area(
+                    label="",
+                    value=gem_brief,
+                    height=300,
+                    key="gem_brief_preview",
+                    label_visibility="collapsed"
+                )
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.8rem;color:#6a7a8a;font-size:0.9rem;text-align:center;">📋 Run board to generate Gem Brief</div>', unsafe_allow_html=True)
+
         st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.8rem;font-weight:700;">Sharp Money Alerts</div>', unsafe_allow_html=True)
         sharp_data = st.session_state.get("sharp_alerts", [])
         steam_moves = st.session_state.get("steam_moves", [])
