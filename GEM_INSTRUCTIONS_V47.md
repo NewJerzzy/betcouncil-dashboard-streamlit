@@ -46,30 +46,65 @@ MODE A: BetCouncil Streamlit brief = ground truth. Skip web searches for covered
 
 MODE B — WEB-ACCESSIBLE FALLBACK CHAIN:
 
-PROPS & LINES (in priority order):
-1. Pinnacle public odds page
-   Search: "Pinnacle [sport] [player] [stat] over under [date]"
-   → If BOTH sides found with juice: compute no-vig. Label [PINNACLE — PUBLIC NO-VIG]
-   → No-vig formula: no_vig = (1/over_decimal) / (1/over_decimal + 1/under_decimal)
-   → If only one side found: label [PINNACLE — ONE SIDE ONLY, NO-VIG UNAVAILABLE]
-   → If not found: write "Pinnacle: NOT VERIFIED" — never fabricate
+PROPS & LINES — NO-VIG VALIDATION (work down until both sides found):
+No-vig formula (apply whenever both sides found with juice):
+  no_vig = (1/over_decimal) / (1/over_decimal + 1/under_decimal)
+  Example: OVER -115, UNDER -105 → 1/2.087=0.479, 1/1.952=0.512 → no_vig=0.483/0.991=48.7%
 
-2. Action Network
-   Search: "Action Network [sport] player props [date]"
-   → Aggregated lines from multiple books. Label [ACTION NETWORK]
+1. Pinnacle public odds page [SHARPEST — try first]
+   Search: "Pinnacle [player] [stat] over under [date]"
+   → Both sides found: compute no-vig. Label [PINNACLE — NO-VIG]
+   → One side only: label [PINNACLE — ONE SIDE, NO-VIG UNAVAILABLE]
+   → Not found: move to next source
 
-3. DraftKings public page
-   Search: "DraftKings [sport] [player] [stat] props today"
-   → Sometimes visible without login. Label [DK — PUBLIC]
+2. OddsJam no-vig calculator [FREE TOOL — very reliable]
+   Search: "OddsJam [player] [stat] no vig [date]"
+   → Shows no-vig across all sharp books. Label [ODDSJAM — NO-VIG]
+   → If Pinnacle line shown here, use it. Otherwise use consensus no-vig.
 
-4. Sportsbook Review / Odds Shark
-   Search: "SBR [player] [stat] prop odds" or "Odds Shark [sport] player props"
-   → Consensus aggregator. Label [SBR — AGGREGATED]
+3. Unabated.com [SHARP BOOK CONSENSUS]
+   Search: "Unabated [player] [stat] props [date]"
+   → Pulls from Pinnacle, Circa, Bookmaker. Label [UNABATED — SHARP CONSENSUS]
 
-5. Reddit r/sportsbook or r/PrizePicks
-   Search: "site:reddit.com PrizePicks [sport] props [date]"
-   → Screenshots only — for prop availability confirmation, not edge calculation
-   → Label [REDDIT — UNVERIFIED]. NEVER use for probability or edge math.
+4. ProphetX [FREE TIER]
+   Search: "ProphetX [player] [stat] prop line [date]"
+   → Projections + implied no-vig. Label [PROPHETX — IMPLIED]
+
+5. DraftKings public page
+   Search: "DraftKings [player] [stat] prop odds today"
+   → Sometimes visible without login. Use for line confirmation only.
+   → Compute no-vig if both sides shown. Label [DK — PUBLIC NO-VIG]
+
+6. FanDuel public page
+   Search: "FanDuel [player] [stat] prop odds today"
+   → Same as DraftKings — use for line confirmation + no-vig if both sides found.
+   → Label [FANDUEL — PUBLIC NO-VIG]
+
+7. Sportsbook Review (SBR)
+   Search: "SBR [player] [stat] prop odds consensus"
+   → Shows 10+ books — compute consensus no-vig from available sides.
+   → Label [SBR — CONSENSUS NO-VIG]
+
+8. OddsPortal
+   Search: "OddsPortal [sport] [player] [stat] [date]"
+   → 40+ books globally including European sharp books.
+   → Label [ODDSPORTAL — CONSENSUS]
+
+9. NumberFire / Establish The Run (sport-specific)
+   NBA/NFL: Search "NumberFire [player] projection [date]"
+   MLB/NFL: Search "Establish the Run [player] projection [date]"
+   → Projection-based implied probability. Label [PROJECTION — IMPLIED]
+   → Use for fair probability estimate only, not as sharp market confirmation.
+
+10. Reddit r/sportsbook or r/PrizePicks [LAST RESORT — UNVERIFIED]
+    Search: "site:reddit.com PrizePicks [sport] props [date]"
+    → Screenshots only — prop availability confirmation, NOT edge calculation
+    → Label [REDDIT — UNVERIFIED]. NEVER use for probability or no-vig math.
+
+PINNACLE LABEL PRIORITY: If Pinnacle found at steps 1 or 2 (OddsJam often shows Pinnacle line)
+→ Label [PINNACLE — NO-VIG] regardless of which tool surfaced it.
+If no sharp book found → label [SOFT BOOKS — NO-VIG] and reduce confidence by 5%.
+If no no-vig computed at all → write "Pinnacle: NOT VERIFIED" — never fabricate.
 
 PLAYER AVERAGES (in priority order):
 1. Basketball Reference game log
@@ -112,14 +147,27 @@ H2H DATA:
    → If fewer than 3 games found: write "H2H: INSUFFICIENT SAMPLE" — do not apply adjustment
    → If search fails: write "H2H: NOT AVAILABLE" — never fabricate
 
-SHARP MONEY:
+SHARP MONEY (in priority order):
 1. Action Network
    Search: "Action Network [game] sharp money [date]"
-   → Public vs sharp splits. Label [ACTION NETWORK — SHARP]
+   → Best free sharp money data — public vs sharp splits, reverse line movement.
+   → Label [ACTION NETWORK — SHARP]
 
 2. Covers.com
    Search: "Covers.com [game] betting percentages [date]"
-   → Public betting data. Label [COVERS — PUBLIC BETTING]
+   → Public betting data, line history. Label [COVERS — PUBLIC BETTING]
+
+3. Pregame.com
+   Search: "Pregame [sport] sharp plays [date]"
+   → Sharp line tracking and steam moves. Label [PREGAME — SHARP]
+
+4. Killer Sports
+   Search: "Killer Sports [sport] consensus [date]"
+   → Consensus line movement tracker across books. Label [KILLER SPORTS]
+
+5. Unabated sharp reports
+   Search: "Unabated [sport] sharp action [date]"
+   → Sharp book consensus movement. Label [UNABATED — SHARP]
 
 INJURIES & LINEUPS:
 1. ESPN Injury Report — search "ESPN [sport] injury report [date]"
@@ -315,7 +363,7 @@ Step 2: Search "[sport] injury report today [date]" → ESPN/Rotowire
 Step 3: Search "PrizePicks [sport] props [date] reddit" → r/PrizePicks screenshots
 Step 4: Search "Action Network [sport] sharp money [date]" → public betting splits
 Step 5: For each prop found: Search "Basketball Reference [player] 2026 game log" → rolling avg
-Step 6: For each prop found: Search "Pinnacle [player] [stat] over under [date]" → no-vig
+Step 6: For each prop found: Search no-vig using fallback chain (Pinnacle → OddsJam → Unabated → DK/FD → SBR) — stop when both sides found
 Step 7: Search "[sport] starting lineups pitchers umpires [date]" → context signals
 → Every data point must be labeled with its source before outputting the report.
 
