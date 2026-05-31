@@ -3047,7 +3047,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_tier(abs(spread_edge_pct), sport)
-                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts"})
+                    recommendations.append({"type": "SPREAD", "pick": rec_text, "line": spread, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts"})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
@@ -3118,7 +3118,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_tier(abs(total_edge_pct), sport)
-                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
+                    recommendations.append({"type": "TOTAL", "line": total_val, "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
@@ -3161,7 +3161,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                         fair_prob = a_fair
                     tier = get_tier(ml_edge, sport)
                     ev = fair_prob * (abs(float(str(home_ml if h_ml_edge > a_ml_edge else away_ml).replace("+",""))) / 100) - (1 - fair_prob)
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"})
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "line": 0, "home_ml": home_ml, "away_ml": away_ml, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
@@ -3169,9 +3169,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         pass
     
         # Extract per-bet-type edges and tiers for Game Lines tab display
-    _spread_rec = next((r for r in recommendations if r.get("type")=="spread"), {})
-    _total_rec  = next((r for r in recommendations if r.get("type")=="total"), {})
-    _ml_rec     = next((r for r in recommendations if r.get("type") in ("ml","moneyline")), {})
+    _spread_rec = next((r for r in recommendations if r.get("type","").upper()=="SPREAD"), {})
+    _total_rec  = next((r for r in recommendations if r.get("type","").upper()=="TOTAL"), {})
+    _ml_rec     = next((r for r in recommendations if r.get("type","").upper() in ("ML","MONEYLINE")), {})
 
     return {
         "matchup": matchup, "Matchup": matchup,
