@@ -5937,7 +5937,9 @@ def parse_bet_screenshot_ocr(image_bytes):
             ]
             BLOB_JUNK = {"Flex","Play","Show","Details","Leaderboard",
                          "Starts","Hits","Runs","More","Less","Pick",
-                         "Entry","Final","Pending","Live","Win","Loss"}
+                         "Entry","Final","Pending","Live","Win","Loss",
+                         "Mts","Mts","Mip","Mis","Sis","Sds","Wsh","Hou","Mil",
+                         "Hou","Okc","Sas","Nba","Mlb","Nfl","Nhl","Wnba"}
 
             tl = text.lower()
             stat_hits = []
@@ -5981,17 +5983,22 @@ def parse_bet_screenshot_ocr(image_bytes):
                 line_val = None
 
                 def _extract_line(s):
-                    # Proper decimal first (e.g. 0.5, 21.5)
+                    # Strip pagination (2/3, 4/90) and time patterns (11h, 38m, 1h)
+                    s = re.sub(r"\b\d+/\d+\b", " ", s)
+                    s = re.sub(r"\b\d+[hm]\b", " ", s)
+                    # Normalise capital-O that OCR reads instead of zero: O05→05, O5→05
+                    s = re.sub(r"\bO(0?\d)\b", r"0\1", s)
+                    s = re.sub(r"\bO(\d{1,2})\b", r"\1", s)   # O05→05, O5→5
                     for n in re.findall(r"\b(\d{1,2}\.\d)\b", s):
                         v = float(n)
                         if 0.5 <= v <= 99.5:
                             return v
-                    # "05"→0.5, "15"→1.5 etc. (OCR drops decimal from 0.5)
+                    # "05"→0.5 — OCR collapses "0.5" into "05"
                     for n in re.findall(r"\b(0\d)\b", s):
                         v = int(n) / 10.0
                         if 0.5 <= v <= 9.5:
                             return v
-                    # Plain integer
+                    # Plain integer (skip 0 itself)
                     for n in re.findall(r"\b(\d{1,2})\b", s):
                         v = float(n)
                         if 0.5 <= v <= 60.0:
@@ -9701,7 +9708,8 @@ with tabs[5]:
                         })
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
-                        st.success(f"✅ Found {len(analyzer_picks)} picks from screenshot")
+                        st.session_state["_auto_analyze"] = True
+                        st.success(f"✅ Found {len(analyzer_picks)} picks — analyzing...")
                         st.rerun()
                     else:
                         st.warning("Screenshot parsed but no picks found. Check OCR debug below or paste manually.")
@@ -9814,7 +9822,8 @@ with tabs[5]:
 
         st.markdown("---")
 
-        if st.button("🔍 Analyze This Slip", key="analyze_slip_btn", type="primary"):
+        _auto = st.session_state.pop("_auto_analyze", False)
+        if st.button("🔍 Analyze This Slip", key="analyze_slip_btn", type="primary") or _auto:
             picks = st.session_state["analyzer_picks"]
             results = []
 
