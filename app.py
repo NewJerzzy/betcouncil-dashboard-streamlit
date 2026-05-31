@@ -9696,15 +9696,24 @@ with tabs[5]:
                 if all_parsed:
                     analyzer_picks = []
                     for bet in all_parsed:
-                        # Include PENDING and unknown outcomes — open slips are what we want
+                        player = bet.get("player", "").strip()
+                        stat   = bet.get("prop", bet.get("stat", "")).strip()
+                        line   = bet.get("line", 0)
+                        # Skip only if missing essential fields or settled loss
+                        if not player or not stat:
+                            continue
                         if bet.get("outcome") == "LOSS":
-                            continue  # Only skip settled losses
+                            continue
+                        try:
+                            line_f = float(line or 0)
+                        except (TypeError, ValueError):
+                            line_f = 0.0
                         analyzer_picks.append({
-                            "player": bet.get("player", ""),
-                            "stat": bet.get("prop", ""),
-                            "line": float(bet.get("line", 0) or 0),
-                            "side": bet.get("side", "OVER"),
-                            "sport": bet.get("sport", "NBA"),
+                            "player": player,
+                            "stat":   stat,
+                            "line":   line_f,
+                            "side":   bet.get("side", "OVER"),
+                            "sport":  bet.get("sport", "MLB"),
                         })
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
@@ -9712,7 +9721,10 @@ with tabs[5]:
                         st.success(f"✅ Found {len(analyzer_picks)} picks — analyzing...")
                         st.rerun()
                     else:
-                        st.warning("Screenshot parsed but no picks found. Check OCR debug below or paste manually.")
+                        # Show what was parsed for debugging
+                        st.warning(f"Screenshot parsed {len(all_parsed)} raw bets but none passed filters.")
+                        for b in all_parsed:
+                            st.caption(f"  raw: player={b.get('player')!r} stat={b.get('prop')!r} line={b.get('line')} outcome={b.get('outcome')}")
                 else:
                     st.error("Could not read screenshot — see OCR debug below, or paste the slip manually.")
 
