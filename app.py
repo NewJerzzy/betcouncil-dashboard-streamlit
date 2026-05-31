@@ -7905,8 +7905,8 @@ with st.sidebar:
     st.session_state.min_edge = st.slider("Min Edge (%)", 0, 15, int(st.session_state.min_edge * 100), step=1) / 100.0
     st.session_state.skip_defaults = st.checkbox("Skip unknown players", value=st.session_state.skip_defaults)
     st.markdown("---")
-    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0)
-    if st.button("Load Board", width="stretch"):
+    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0, label_visibility="collapsed")
+    if st.button("🔄 Load Board", use_container_width=True):
         try:
             for f in os.listdir(CACHE_DIR):
                 if "_pp.pkl" in f:
@@ -8026,6 +8026,47 @@ st.markdown(f"""
 # =========================
 
 
+
+# ── SPORT NAVIGATION BAR ────────────────────────────────────────
+_sport_icons = {
+    "NBA": "🏀", "MLB": "⚾", "NFL": "🏈", "WNBA": "🏀",
+    "NHL": "🏒", "Soccer": "⚽", "Tennis": "🎾",
+    "Golf": "⛳", "UFC": "🥊"
+}
+_active_sport = st.session_state.get("last_sport", "NBA")
+_nav_cols = st.columns(len(SPORTS))
+for _si, _sp in enumerate(SPORTS):
+    with _nav_cols[_si]:
+        _icon = _sport_icons.get(_sp, "🎯")
+        _is_active = _sp == _active_sport
+        _btn_style = "primary" if _is_active else "secondary"
+        if st.button(
+            f"{_icon} {_sp}",
+            key=f"nav_sport_{_sp}",
+            type=_btn_style,
+            use_container_width=True
+        ):
+            if _sp != _active_sport:
+                st.session_state.last_sport = _sp
+                with st.spinner(f"Loading {_sp} board..."):
+                    _b, _g, _nd, _ne, _ht, _at = load_sport_data(_sp)
+                    st.session_state.board_data = _b
+                    st.session_state.games = _g
+                    st.session_state.last_sport = _sp
+                    st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
+                    st.session_state.board_ready = True
+                    st.session_state.n_skipped_def = _nd
+                    st.session_state.n_skipped_edge = _ne
+                    if "last_good_props" not in st.session_state:
+                        st.session_state["last_good_props"] = {}
+                    if _b:
+                        st.session_state["last_good_props"][_sp] = _b
+                    if _g and _ht and _at:
+                        st.session_state["game_analysis"] = analyze_all_games(_g, _sp, _ht, _at)
+                    else:
+                        st.session_state["game_analysis"] = []
+                st.rerun()
+st.markdown('<div style="margin-bottom:0.5rem;"></div>', unsafe_allow_html=True)
 
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
