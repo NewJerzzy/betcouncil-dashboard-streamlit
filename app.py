@@ -2086,6 +2086,272 @@ def analyze_signal_performance():
     results.sort(key=lambda x: float(x["Lift"].replace("%","").replace("+","")), reverse=True)
     return results, len(resolved)
 
+# ═══════════════════════════════════════════════════════════════
+# SIGNAL INTELLIGENCE SUITE
+# Three complementary audit tools:
+#   1. compute_signal_correlation_matrix() — are signals independent?
+#   2. compute_signal_lift_analysis()      — does each signal add value?
+#   3. compute_signal_stability()          — are signals consistent over time?
+# ═══════════════════════════════════════════════════════════════
+
+SIGNAL_COLS = [
+    "signal_base_positive",
+    "signal_defense_positive",
+    "signal_location_home",
+    "signal_back_to_back",
+    "signal_sharp_flag",
+    "signal_usage_boost",
+    "signal_blowout_risk",
+    "signal_weather_active",
+]
+
+SIGNAL_LABELS = {
+    "signal_base_positive":    "Base (avg>line)",
+    "signal_defense_positive": "Defense (weak opp)",
+    "signal_location_home":    "Location (home)",
+    "signal_back_to_back":     "Rest (B2B)",
+    "signal_sharp_flag":       "Sharp Money",
+    "signal_usage_boost":      "Usage Boost",
+    "signal_blowout_risk":     "Blowout Risk",
+    "signal_weather_active":   "Weather",
+}
+
+
+def compute_signal_correlation_matrix(performance_data=None):
+    """
+    Signal Correlation Matrix.
+    
+    Computes pairwise co-occurrence rate between all signal pairs.
+    If two signals fire together >75% of the time they're both active,
+    the model may be double-counting the same edge.
+    
+    Returns: matrix_rows (list of dicts), n_bets, warnings
+    Activates at 20+ resolved bets.
+    """
+    if performance_data is None:
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 20:
+        return None, len(resolved), []
+
+    active_signals = [s for s in SIGNAL_COLS
+                      if sum(1 for r in resolved if r.get(s, 0) == 1) >= 5]
+
+    matrix_rows = []
+    warnings = []
+
+    for i, sig_a in enumerate(active_signals):
+        for sig_b in active_signals[i+1:]:
+            a_active = [r for r in resolved if r.get(sig_a, 0) == 1]
+            b_active = [r for r in resolved if r.get(sig_b, 0) == 1]
+            both    = [r for r in resolved if r.get(sig_a, 0) == 1 and r.get(sig_b, 0) == 1]
+
+            if not a_active or not b_active:
+                continue
+
+            # Co-occurrence rate: when A fires, how often does B also fire?
+            co_rate_ab = len(both) / len(a_active)
+            co_rate_ba = len(both) / len(b_active)
+            co_rate = max(co_rate_ab, co_rate_ba)  # use the higher direction
+
+            # Phi correlation coefficient (proper binary correlation)
+            n = len(resolved)
+            n_ab   = len(both)
+            n_a    = len(a_active)
+            n_b    = len(b_active)
+            n_na   = n - n_a
+            n_nb   = n - n_b
+            denom  = (n_a * n_b * n_na * n_nb) ** 0.5
+            phi    = (n_ab * n - n_a * n_b) / denom if denom > 0 else 0
+
+            # Win rates
+            wr_both   = sum(r["win"] for r in both) / len(both) if both else 0
+            wr_a_only = sum(r["win"] for r in a_active if r.get(sig_b,0)==0) / max(1, len([r for r in a_active if r.get(sig_b,0)==0]))
+            wr_b_only = sum(r["win"] for r in b_active if r.get(sig_a,0)==0) / max(1, len([r for r in b_active if r.get(sig_a,0)==0]))
+
+            # Grade
+            if abs(phi) >= 0.70:
+                grade = "🔴 HIGH overlap"
+                recommendation = "Dampen one signal"
+            elif abs(phi) >= 0.45:
+                grade = "🟡 Moderate overlap"
+                recommendation = "Monitor"
+            elif abs(phi) >= 0.20:
+                grade = "🟢 Low overlap"
+                recommendation = "Independent"
+            else:
+                grade = "✅ Uncorrelated"
+                recommendation = "Keep both"
+
+            if abs(phi) >= 0.70:
+                warnings.append(
+                    f"⚠️ {SIGNAL_LABELS[sig_a]} ↔ {SIGNAL_LABELS[sig_b]}: "
+                    f"phi={phi:.2f} co-occurrence={co_rate:.0%} — may be double-counting"
+                )
+
+            matrix_rows.append({
+                "Signal A":       SIGNAL_LABELS[sig_a],
+                "Signal B":       SIGNAL_LABELS[sig_b],
+                "Phi (ϕ)":        round(phi, 3),
+                "Co-occur %":     f"{co_rate:.0%}",
+                "WR (both)":      f"{wr_both:.1%}" if both else "—",
+                "WR (A only)":    f"{wr_a_only:.1%}",
+                "WR (B only)":    f"{wr_b_only:.1%}",
+                "n (both)":       len(both),
+                "Grade":          grade,
+                "Action":         recommendation,
+            })
+
+    # Sort by correlation strength descending
+    matrix_rows.sort(key=lambda x: abs(x["Phi (ϕ)"]), reverse=True)
+    return matrix_rows, len(resolved), warnings
+
+
+def compute_signal_lift_analysis(performance_data=None):
+    """
+    Signal Lift Analysis.
+    
+    Measures incremental value of each signal ABOVE the base model.
+    Answers: "Does adding Defense signal to Base actually improve results?"
+    
+    Tests: Base alone vs Base + each signal combination.
+    Returns rows sorted by incremental lift.
+    Activates at 30+ resolved bets.
+    """
+    if performance_data is None:
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 30:
+        return None, len(resolved)
+
+    overall_wr  = sum(r["win"] for r in resolved) / len(resolved)
+    base_active = [r for r in resolved if r.get("signal_base_positive", 0) == 1]
+    base_wr     = sum(r["win"] for r in base_active) / len(base_active) if base_active else overall_wr
+
+    results = []
+    for sig in SIGNAL_COLS:
+        if sig == "signal_base_positive":
+            continue
+        # Base + this signal
+        combo = [r for r in resolved
+                 if r.get("signal_base_positive", 0) == 1 and r.get(sig, 0) == 1]
+        # Base without this signal
+        base_without = [r for r in resolved
+                        if r.get("signal_base_positive", 0) == 1 and r.get(sig, 0) == 0]
+
+        if len(combo) < 5:
+            continue
+
+        wr_combo   = sum(r["win"] for r in combo) / len(combo)
+        wr_without = sum(r["win"] for r in base_without) / len(base_without) if base_without else base_wr
+        incremental_lift = wr_combo - wr_without
+        vs_base = wr_combo - base_wr
+
+        # EV contribution estimate
+        ev_contribution = incremental_lift * 0.5  # rough prop EV multiplier
+
+        if incremental_lift >= 0.05:
+            grade = "🟢 Strong contributor"
+        elif incremental_lift >= 0.02:
+            grade = "🟡 Mild contributor"
+        elif incremental_lift >= -0.02:
+            grade = "⚪ Neutral"
+        else:
+            grade = "🔴 Negative drag"
+
+        results.append({
+            "Signal":           SIGNAL_LABELS[sig],
+            "n (combo)":        len(combo),
+            "WR (Base+Signal)": f"{wr_combo:.1%}",
+            "WR (Base only)":   f"{wr_without:.1%}",
+            "Incremental Lift": f"{incremental_lift:+.1%}",
+            "vs Overall":       f"{vs_base:+.1%}",
+            "Est EV Contrib":   f"{ev_contribution:+.1%}",
+            "Grade":            grade,
+        })
+
+    results.sort(key=lambda x: float(x["Incremental Lift"].replace("%","").replace("+","")), reverse=True)
+    return results, len(resolved)
+
+
+def compute_signal_stability(performance_data=None, window_days=30):
+    """
+    Signal Stability Analysis.
+    
+    Computes signal win rates across three time windows:
+    Last 30 days / Last 90 days / Season (all-time).
+    
+    Stable signals: consistent win rate across all windows.
+    Unstable signals: hot/cold streaks — reduce weight.
+    Activates at 30+ resolved bets.
+    """
+    if performance_data is None:
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 30:
+        return None, len(resolved)
+
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    cutoff_30  = now - timedelta(days=30)
+    cutoff_90  = now - timedelta(days=90)
+
+    def parse_ts(ts_str):
+        try:
+            return datetime.strptime(ts_str[:16], "%Y-%m-%d %H:%M")
+        except Exception:
+            return now - timedelta(days=999)
+
+    last_30  = [r for r in resolved if parse_ts(r.get("timestamp","")) >= cutoff_30]
+    last_90  = [r for r in resolved if parse_ts(r.get("timestamp","")) >= cutoff_90]
+    all_time = resolved
+
+    results = []
+    for sig in SIGNAL_COLS:
+        rows = {}
+        for label, dataset in [("L30d", last_30), ("L90d", last_90), ("Season", all_time)]:
+            with_sig = [r for r in dataset if r.get(sig, 0) == 1]
+            if len(with_sig) < 3:
+                rows[label] = "—"
+                rows[f"n_{label}"] = 0
+            else:
+                wr = sum(r["win"] for r in with_sig) / len(with_sig)
+                rows[label] = f"{wr:.1%}"
+                rows[f"n_{label}"] = len(with_sig)
+
+        # Stability score: how consistent is the WR across windows?
+        numeric = []
+        for label in ["L30d","L90d","Season"]:
+            v = rows.get(label,"—")
+            if v != "—":
+                numeric.append(float(v.replace("%",""))/100)
+
+        if len(numeric) >= 2:
+            spread = max(numeric) - min(numeric)
+            if spread < 0.05:
+                stability = "🟢 Stable"
+            elif spread < 0.12:
+                stability = "🟡 Mild variance"
+            else:
+                stability = "🔴 Unstable"
+        else:
+            stability = "⚪ Insufficient data"
+
+        if rows.get(f"n_Season", 0) >= 3:
+            results.append({
+                "Signal":           SIGNAL_LABELS[sig],
+                "L30d":             rows.get("L30d","—"),
+                "n L30d":           rows.get("n_L30d", 0),
+                "L90d":             rows.get("L90d","—"),
+                "n L90d":           rows.get("n_L90d", 0),
+                "Season":           rows.get("Season","—"),
+                "n Season":         rows.get("n_Season", 0),
+                "Stability":        stability,
+            })
+
+    return results, len(resolved)
+
+
 def compute_optimized_weights(sport):
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
     sport_data = [p for p in performance if p.get("sport") == sport and p.get("outcome") in ("WIN", "LOSS")]
@@ -5736,6 +6002,16 @@ def generate_gem_summary():
     # Add calibration summary to gem brief
     _cal_summary_gem = get_calibration_summary(st.session_state.history)
     lines.append(f"Calibration: {_cal_summary_gem}")
+    # Add signal correlation warnings to gem brief
+    _gem_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _, _gem_corr_n, _gem_corr_warnings = compute_signal_correlation_matrix(_gem_perf)
+    if _gem_corr_warnings:
+        lines.append(f"Signal Overlap Warnings: {'; '.join(_gem_corr_warnings[:2])}")
+    _gem_lift_rows, _ = compute_signal_lift_analysis(_gem_perf)
+    if _gem_lift_rows:
+        _neg_signals = [r["Signal"] for r in _gem_lift_rows if "Negative" in r["Grade"]]
+        if _neg_signals:
+            lines.append(f"Negative Drag Signals: {', '.join(_neg_signals)}")
     signal_results, n_sig = analyze_signal_performance()
     if signal_results:
         lines.append(f"=== SIGNAL PERFORMANCE ({n_sig} bets) ===")
@@ -9807,6 +10083,59 @@ with tabs[4]:
 
     # ── Engine 2: Loss Pattern Analyzer ──
     st.markdown("---")
+
+    # ── Signal Correlation Matrix ──────────────────────────────
+    st.markdown("### 🔗 Signal Correlation Matrix")
+    st.caption("Are your signals independent? High phi (ϕ) = signals fire together frequently = possible double-counting. Run this after 20+ bets.")
+    _perf_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _corr_rows, _corr_n, _corr_warnings = compute_signal_correlation_matrix(_perf_data)
+    if _corr_rows is None:
+        st.info(f"Correlation matrix activates at 20 resolved bets. Current: {_corr_n}.")
+    else:
+        if _corr_warnings:
+            for w in _corr_warnings:
+                st.warning(w)
+        else:
+            st.success("✅ No high-overlap signal pairs detected — signals appear independent.")
+        _show_all_corr = st.checkbox("Show all signal pairs", value=False, key="show_all_corr")
+        _display_rows = _corr_rows if _show_all_corr else [r for r in _corr_rows if r["Phi (ϕ)"] != 0][:10]
+        if _display_rows:
+            st.dataframe(pd.DataFrame(_display_rows), use_container_width=True, hide_index=True)
+        st.caption("Phi (ϕ): 0=uncorrelated, 1=always fire together. Co-occur %: when Signal A fires, how often does B also fire?")
+
+    st.markdown("---")
+
+    # ── Signal Lift Analysis ───────────────────────────────────
+    st.markdown("### 📈 Signal Lift Analysis")
+    st.caption("Does each signal actually improve results above the base model? Incremental lift = win rate improvement from adding that signal.")
+    _lift_rows, _lift_n = compute_signal_lift_analysis(_perf_data)
+    if _lift_rows is None:
+        st.info(f"Lift analysis activates at 30 resolved bets. Current: {_lift_n}.")
+    else:
+        _negative = [r for r in _lift_rows if "Negative" in r["Grade"]]
+        if _negative:
+            st.warning(f"⚠️ {len(_negative)} signal(s) showing negative drag — consider reducing weight: {', '.join(r['Signal'] for r in _negative)}")
+        st.dataframe(pd.DataFrame(_lift_rows), use_container_width=True, hide_index=True)
+        st.caption("Incremental Lift = WR(Base+Signal) minus WR(Base only). Positive = signal adds value. Negative = signal hurts model.")
+
+    st.markdown("---")
+
+    # ── Signal Stability Analysis ──────────────────────────────
+    st.markdown("### 📅 Signal Stability (30d / 90d / Season)")
+    st.caption("Are signals consistent over time? Unstable signals may be chasing recent variance. Use this to audit optimizer decisions.")
+    _stab_rows, _stab_n = compute_signal_stability(_perf_data)
+    if _stab_rows is None:
+        st.info(f"Stability analysis activates at 30 resolved bets. Current: {_stab_n}.")
+    else:
+        _unstable = [r for r in _stab_rows if "Unstable" in r["Stability"]]
+        if _unstable:
+            st.warning(f"⚠️ Unstable signals detected (high variance across windows): {', '.join(r['Signal'] for r in _unstable)}")
+        else:
+            st.success("✅ All signals showing stable win rates across time windows.")
+        st.dataframe(pd.DataFrame(_stab_rows), use_container_width=True, hide_index=True)
+        st.caption("Stable = WR consistent across L30d/L90d/Season. Unstable = hot/cold streaks — reduce optimizer trust for that signal.")
+
+    st.markdown("---")
     st.markdown("### 🧠 Loss Pattern Analysis")
     _lp = st.session_state.get("loss_patterns", [])
     _resolved_count = len([h for h in st.session_state.get("history",[]) if h.get("outcome") in ("WIN","LOSS")])
@@ -10737,6 +11066,26 @@ with tabs[9]:
         st.success("\u2705 All risk controls green")
     else:
         st.error(f"\U0001f6d1 {risk_msg_s}")
+    st.markdown("---")
+    st.markdown("### 🔬 Signal Intelligence Summary")
+    st.caption("Quick health check on signal quality. Full details in History tab.")
+    _sys_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _sys_resolved = [p for p in _sys_perf if p.get("outcome") in ("WIN","LOSS")]
+    _scol1, _scol2, _scol3 = st.columns(3)
+    _scol1.metric("Resolved Bets", len(_sys_resolved), help="Signal analysis needs 20+")
+    if len(_sys_resolved) >= 20:
+        _, _, _sys_warnings = compute_signal_correlation_matrix(_sys_perf)
+        _scol2.metric("Overlap Warnings", len(_sys_warnings),
+                     delta="⚠️ Review" if _sys_warnings else "✅ Clean",
+                     delta_color="inverse" if _sys_warnings else "off")
+        _sys_lift, _ = compute_signal_lift_analysis(_sys_perf)
+        _neg_count = len([r for r in (_sys_lift or []) if "Negative" in r["Grade"]])
+        _scol3.metric("Negative Signals", _neg_count,
+                     delta="⚠️ Review" if _neg_count else "✅ All positive",
+                     delta_color="inverse" if _neg_count else "off")
+    else:
+        _scol2.metric("Overlap Warnings", "—", help=f"Need {20-len(_sys_resolved)} more bets")
+        _scol3.metric("Negative Signals", "—", help=f"Need {30-len(_sys_resolved)} more bets")
     st.markdown("---")
     st.markdown("### \u2696\ufe0f Signal Weights Status")
     weight_rows = []
