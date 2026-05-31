@@ -5708,14 +5708,21 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         def preprocess(image, invert=False):
             w, h = image.size
-            scale = 3 if max(w, h) < 1200 else 2
-            image = image.resize((w * scale, h * scale), Image.LANCZOS)
+            max_dim = max(w, h)
+            if max_dim < 800:
+                scale = 3
+            elif max_dim < 1800:
+                scale = 2
+            else:
+                scale = 1
+            if scale > 1:
+                image = image.resize((w * scale, h * scale), Image.LANCZOS)
             image = image.convert("L")
             if invert:
                 image = ImageOps.invert(image)
-            image = ImageEnhance.Contrast(image).enhance(3.0)
-            image = ImageEnhance.Sharpness(image).enhance(2.0)
-            image = image.point(lambda x: 0 if x < 128 else 255, "1").convert("L")
+            image = ImageEnhance.Contrast(image).enhance(2.5)
+            image = ImageEnhance.Sharpness(image).enhance(1.5)
+            image = image.point(lambda x: 0 if x < 140 else 255, "1").convert("L")
             return image
 
         raw_texts = []
@@ -9513,7 +9520,7 @@ with tabs[5]:
         st.session_state["analyzer_picks"] = []
 
     # Screenshot upload section
-    with st.expander("📸 Upload a screenshot of your slip (auto-parse)", expanded=False):
+    with st.expander("📸 Upload a screenshot of your slip (auto-parse)", expanded=True):
         slip_imgs = st.file_uploader(
             "Upload screenshot of your PrizePicks, ParlayPlay, or Underdog slip",
             type=["jpg", "jpeg", "png", "heic", "webp"],
@@ -9521,7 +9528,9 @@ with tabs[5]:
             accept_multiple_files=True
         )
         if slip_imgs:
-            if st.button("🔍 Parse Screenshot", key="parse_slip_screenshot"):
+            # Auto-parse as soon as files are uploaded — track last parsed set to avoid re-running
+            img_keys = tuple(f.name + str(f.size) for f in slip_imgs)
+            if st.session_state.get("_last_parsed_imgs") != img_keys:
                 all_parsed = []
                 with st.spinner("Reading screenshot..."):
                     for img_file in slip_imgs:
@@ -9529,12 +9538,13 @@ with tabs[5]:
                         result = parse_bet_screenshot_ocr(img_bytes)
                         if result:
                             all_parsed.extend(result)
+                st.session_state["_last_parsed_imgs"] = img_keys
                 if all_parsed:
-                    # Convert OCR results to analyzer format
                     analyzer_picks = []
                     for bet in all_parsed:
-                        if bet.get("outcome") in ("WIN", "LOSS"):
-                            continue  # Skip settled bets
+                        # Include PENDING and unknown outcomes — open slips are what we want
+                        if bet.get("outcome") == "LOSS":
+                            continue  # Only skip settled losses
                         analyzer_picks.append({
                             "player": bet.get("player", ""),
                             "stat": bet.get("prop", ""),
@@ -9547,15 +9557,22 @@ with tabs[5]:
                         st.success(f"✅ Found {len(analyzer_picks)} picks from screenshot")
                         st.rerun()
                     else:
-                        st.warning("Screenshot parsed but no pending picks found. Try the paste option below.")
+                        st.warning("Screenshot parsed but no picks found. Check OCR debug below or paste manually.")
                 else:
-                    st.error("Could not read screenshot. Try the OCR Debug in Log Bet tab, or paste the slip manually below.")
-        with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
-            raw = st.session_state.get("ocr_raw_text", "")
-            if raw:
-                st.text(raw[:500])
-            else:
-                st.caption("Upload a screenshot to see extracted text.")
+                    st.error("Could not read screenshot — see OCR debug below, or paste the slip manually.")
+
+            # Manual re-parse button in case auto didn't catch it
+            if st.button("🔄 Re-parse Screenshot", key="parse_slip_screenshot"):
+                st.session_state.pop("_last_parsed_imgs", None)
+                st.rerun()
+
+        # OCR debug outside nested expander (Streamlit doesn't support nesting)
+        raw = st.session_state.get("ocr_raw_text", "")
+        if raw:
+            with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
+                st.text(raw[:1000])
+        elif slip_imgs:
+            st.caption("🔍 OCR Debug: no text extracted — image may be too dark, blurry, or low-res.")
 
     # Quick paste section
     # Manual entry in slip analyzer kept minimal - screenshot/text only
