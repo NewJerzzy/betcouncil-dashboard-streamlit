@@ -5905,6 +5905,116 @@ def parse_bet_screenshot_ocr(image_bytes):
                 return None
             return cleaned
 
+        # ---------------------------------------------------------------
+        # BLOB-MODE: If Tesseract collapsed the whole slip onto one line
+        # (no newlines, everything in tokens[0]), parse directly via regex
+        # anchored on stat keyword positions instead of token boundaries.
+        # ---------------------------------------------------------------
+        def parse_blob(text):
+            """Stat-anchored parser for single-line OCR blobs."""
+            BLOB_STATS = [
+                (r"hits\+runs\+rb[li]s", "Hits+Runs+RBIs"),
+                (r"pts\+reb\+ast",        "Pts+Reb+Ast"),
+                (r"passing yards",        "Passing Yards"),
+                (r"rushing yards",        "Rushing Yards"),
+                (r"receiving yards",      "Receiving Yards"),
+                (r"fantasy score|hitter fs", "Fantasy Score"),
+                (r"shots on goal",        "Shots On Goal"),
+                (r"home runs",            "Home Runs"),
+                (r"strikeouts",           "Strikeouts"),
+                (r"3-pt made|3pt made|threes", "3-PT Made"),
+                (r"blocked shots|blocks", "Blocked Shots"),
+                (r"receptions",           "Receptions"),
+                (r"touchdowns",           "Touchdowns"),
+                (r"turnovers",            "Turnovers"),
+                (r"steals",               "Steals"),
+                (r"assists",              "Assists"),
+                (r"rebounds",             "Rebounds"),
+                (r"points",               "Points"),
+                (r"strikeouts",           "Strikeouts"),
+                (r"goals",                "Goals"),
+                (r"saves",                "Saves"),
+                (r"hits",                 "Hits"),
+                (r"runs",                 "Runs"),
+            ]
+            BLOB_JUNK = {"Flex","Play","Show","Details","Leaderboard",
+                         "Starts","Hits","Runs","More","Less","Pick",
+                         "Entry","Final","Pending","Live","Win","Loss"}
+
+            tl = text.lower()
+            stat_hits = []
+            for pat, name in BLOB_STATS:
+                for m in re.finditer(pat, tl):
+                    stat_hits.append((m.start(), m.end(), name))
+            stat_hits.sort()
+
+            # Deduplicate: if two stats overlap, keep the longer one
+            deduped = []
+            for s, e, n in stat_hits:
+                if deduped and s < deduped[-1][1]:
+                    if (e - s) > (deduped[-1][1] - deduped[-1][0]):
+                        deduped[-1] = (s, e, n)
+                else:
+                    deduped.append((s, e, n))
+
+            blob_bets = []
+            seen_players = {}
+            for stat_start, stat_end, stat_name in deduped:
+                # Player: last proper-name sequence in the 150 chars before stat
+                snippet = text[max(0, stat_start - 150):stat_start]
+                snippet_clean = re.sub(r"[*@|<>()\[\]0-9$]", " ", snippet)
+                name_matches = list(re.finditer(
+                    r'([A-Z][a-z]{1,15}(?:\s+[A-Z][a-z]{0,15}){1,3}'
+                    r'(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)', snippet_clean))
+                name_matches = [m for m in name_matches
+                                if not any(w in BLOB_JUNK for w in m.group().split())]
+                if not name_matches:
+                    continue
+                player = name_matches[-1].group().strip()
+
+                # Line: first plausible number in 40 chars after stat keyword
+                after = re.sub(r"[()\[\]|<>@]", " ", text[stat_end:stat_end + 40])
+                line_val = None
+                for n in re.findall(r"(\d{1,2}\.\d)", after):
+                    v = float(n)
+                    if 0.5 <= v <= 99.5:
+                        line_val = v; break
+                if line_val is None:
+                    for n in re.findall(r"(\d{1,2})", after):
+                        v = float(n)
+                        if 1.0 <= v <= 60.0:
+                            line_val = v; break
+                if line_val is None:
+                    continue
+
+                # Side: look for UNDER signals between player name and stat
+                between = text[max(0, stat_start - 150):stat_start].lower()
+                under_signals = ["less","under","demon","↓","vv","vy","mis","sis","<sis"]
+                side = "UNDER" if any(w in between for w in under_signals) else "OVER"
+
+                # Per-player: if we already have this player, only upgrade to longer stat
+                if player in seen_players:
+                    prev = seen_players[player]
+                    if len(stat_name) <= len(prev["prop"]):
+                        continue
+                    blob_bets = [b for b in blob_bets if b["player"] != player]
+
+                seen_players[player] = {"player": player, "prop": stat_name,
+                                        "line": line_val, "side": side,
+                                        "sport": sport, "outcome": "PENDING",
+                                        "wager": 0, "pick_count": 2,
+                                        "source": "PrizePicks", "bet_type": "prop"}
+                blob_bets.append(seen_players[player])
+
+            return blob_bets
+
+        # Detect blob: fewer than 3 tokens but text is long
+        is_blob = len(lines) < 3 and len(raw_text) > 80
+        if is_blob:
+            blob_results = parse_blob(raw_text)
+            if blob_results:
+                return blob_results
+
         # --- Step 1: Find all player name positions in the token list ---
         player_positions = []   # list of (token_index, cleaned_name)
         for i, tok in enumerate(lines):
