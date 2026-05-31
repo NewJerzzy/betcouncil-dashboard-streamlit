@@ -9930,8 +9930,12 @@ with tabs[5]:
                 board_match = None
                 if board:
                     norm_player = normalize_name(player)
+                    # Normalize stat: strip spaces around + and - for comparison
+                    def _norm_stat(s):
+                        return re.sub(r"\s*([+\-])\s*", r"", s.lower().strip())
+                    stat_norm = _norm_stat(stat)
                     for b in board:
-                        if normalize_name(b.get("Player","")) == norm_player and                            b.get("Prop","").lower() == stat.lower():
+                        if normalize_name(b.get("Player","")) == norm_player and                            _norm_stat(b.get("Prop","")) == stat_norm:
                             board_match = b
                             break
 
