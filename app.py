@@ -8552,6 +8552,37 @@ if "persistence_loaded" not in st.session_state:
 # =========================
 # SIDEBAR (Full as in original)
 # =========================
+def _build_signal_bar(prop, color="#378add") -> str:
+    """Build a compact signal impact bar for a prop."""
+    signals = {
+        "Base": float(prop.get("SignalBase", 0) or 0),
+        "Defense": float(prop.get("SignalDef", 0) or 0),
+        "Location": float(prop.get("SignalLoc", 0) or 0),
+        "Rest": float(prop.get("SignalRest", 0) or 0),
+        "Pace": float(prop.get("SignalPace", 0) or 0),
+        "H2H": float(prop.get("SignalH2H", 0) or 0),
+    }
+    # Only show signals with non-zero values
+    active = {k: v for k, v in signals.items() if abs(v) > 0.001}
+    if not active:
+        return ""
+    max_val = max(abs(v) for v in active.values()) or 1
+    html = '<div style="display:flex;flex-direction:column;gap:1px;">'
+    html += '<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px;">SIGNAL IMPACT</div>'
+    for sig, val in sorted(active.items(), key=lambda x: abs(x[1]), reverse=True):
+        bar_len = int((abs(val) / max_val) * 12)
+        bar = "█" * bar_len
+        sig_color = color if val > 0 else "#e04040"
+        sign = "+" if val > 0 else ""
+        html += f'<div style="display:flex;align-items:center;gap:6px;">'
+        html += f'<span style="font-size:11px;color:#6a7a8a;width:55px;">{sig}</span>'
+        html += f'<span style="font-family:monospace;font-size:12px;color:{sig_color};">{bar}</span>'
+        html += f'<span style="font-size:11px;color:{sig_color};">{sign}{val*100:.1f}%</span>'
+        html += '</div>'
+    html += '</div>'
+    return html
+
+
 with st.sidebar:
     st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:14px;color:#4a8a8a;">v4.6 · Complete</div></div>', unsafe_allow_html=True)
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
@@ -8687,6 +8718,7 @@ st.markdown(f"""
 
 
 
+
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ----- TAB 0: SUMMARY (Full version from original) -----
@@ -8694,6 +8726,61 @@ with tabs[0]:
     # ═══════════════════════════════════════════════════════
     # SUMMARY TAB — DARK UI OVERHAUL
     # ═══════════════════════════════════════════════════════
+
+    # ── COMMAND CENTER ─────────────────────────────────────
+    board = st.session_state.board_data or []
+    if board:
+        _sov_n = sum(1 for p in board if p.get("Tier")=="SOVEREIGN")
+        _eli_n = sum(1 for p in board if p.get("Tier")=="ELITE")
+        _app_n = sum(1 for p in board if p.get("Tier")=="APPROVED")
+        _lea_n = sum(1 for p in board if p.get("Tier")=="LEAN")
+        _hist = st.session_state.history or []
+        _wins_cc = sum(1 for h in _hist if h.get("outcome")=="WIN")
+        _total_cc = sum(1 for h in _hist if h.get("outcome") in ("WIN","LOSS"))
+        _hit_rate_cc = f"{_wins_cc/_total_cc*100:.1f}%" if _total_cc > 0 else "—"
+        _net_cc = sum(float(h.get("net",0) or 0) for h in _hist)
+        _avg_clv_cc = sum(float(h.get("clv",0) or 0) for h in _hist) / max(len(_hist),1) if _hist else 0
+        _active_locks_cc = len(st.session_state.locks)
+        _wr_color = "#22c55e" if _total_cc > 0 and _wins_cc/_total_cc >= 0.577 else "#e8f0f8"
+        _clv_color = "#22c55e" if _avg_clv_cc > 0 else "#e04040"
+        _pnl_color = "#22c55e" if _net_cc >= 0 else "#e04040"
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:0.8rem;">'
+            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Total Bets</div><div style="font-size:1.4rem;font-weight:800;color:#e8f0f8;">{_total_cc}</div></div>'
+            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Win Rate</div><div style="font-size:1.4rem;font-weight:800;color:{_wr_color};">{_hit_rate_cc}</div></div>'
+            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Avg CLV</div><div style="font-size:1.4rem;font-weight:800;color:{_clv_color};">{_avg_clv_cc:+.1f}</div></div>'
+            + f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;"><div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px;">Net P&L</div><div style="font-size:1.4rem;font-weight:800;color:{_pnl_color};">${_net_cc:+.2f}</div></div>'
+            + '</div>'
+            + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:1rem;">'
+            + f'<div style="background:#a855f722;border:1px solid #a855f744;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#a855f7;font-weight:700;text-transform:uppercase;">SOVEREIGN</div><div style="font-size:1.8rem;font-weight:800;color:#a855f7;">{_sov_n}</div></div>'
+            + f'<div style="background:#22c55e22;border:1px solid #22c55e44;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#22c55e;font-weight:700;text-transform:uppercase;">ELITE</div><div style="font-size:1.8rem;font-weight:800;color:#22c55e;">{_eli_n}</div></div>'
+            + f'<div style="background:#378add22;border:1px solid #378add44;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#378add;font-weight:700;text-transform:uppercase;">APPROVED</div><div style="font-size:1.8rem;font-weight:800;color:#378add;">{_app_n}</div></div>'
+            + f'<div style="background:#eab30822;border:1px solid #eab30844;border-radius:8px;padding:0.6rem 1rem;text-align:center;"><div style="font-size:0.7rem;color:#eab308;font-weight:700;text-transform:uppercase;">LEAN</div><div style="font-size:1.8rem;font-weight:800;color:#eab308;">{_lea_n}</div></div>'
+            + '</div>',
+            unsafe_allow_html=True
+        )
+
+        # ── RISK DASHBOARD ────────────────────────────────
+        _sport_counts_cc = {}
+        for _l in st.session_state.locks:
+            _s = _l.get("sport","?")
+            _sport_counts_cc[_s] = _sport_counts_cc.get(_s, 0) + 1
+        _risk_level_cc = "LOW" if _active_locks_cc <= 2 else "MODERATE" if _active_locks_cc <= 5 else "HIGH"
+        _risk_color_cc = "#22c55e" if _risk_level_cc=="LOW" else "#eab308" if _risk_level_cc=="MODERATE" else "#e04040"
+        _corr_risk_cc = "HIGH" if any(v >= 3 for v in _sport_counts_cc.values()) else "LOW"
+        _corr_color_cc = "#e04040" if _corr_risk_cc == "HIGH" else "#22c55e"
+        st.markdown(
+            '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.7rem 1rem;margin-bottom:1rem;">'
+            '<div style="font-size:0.7rem;color:#6a7a8a;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">🛡 RISK STATUS</div>'
+            '<div style="display:flex;gap:16px;flex-wrap:wrap;">'
+            + f'<div><div style="font-size:0.7rem;color:#6a7a8a;">Active Locks</div><div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_active_locks_cc}</div></div>'
+            + f'<div><div style="font-size:0.7rem;color:#6a7a8a;">Risk Level</div><div style="font-size:1rem;font-weight:700;color:{_risk_color_cc};">{_risk_level_cc}</div></div>'
+            + f'<div><div style="font-size:0.7rem;color:#6a7a8a;">Correlation</div><div style="font-size:1rem;font-weight:700;color:{_corr_color_cc};">{_corr_risk_cc}</div></div>'
+            + "".join(f'<div><div style="font-size:0.7rem;color:#6a7a8a;">{_s}</div><div style="font-size:1rem;font-weight:700;color:#e8f0f8;">{_n}</div></div>' for _s, _n in _sport_counts_cc.items())
+            + '</div></div>',
+            unsafe_allow_html=True
+        )
+
     col_left, col_right = st.columns([4, 1.2])
 
     with col_left:
@@ -8896,7 +8983,7 @@ with tabs[0]:
             # Only show if positive EV — otherwise show warning
             if ev > 0:
                 ev_color = "#22c55e"
-                tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
+                tier_dot = {"SOVEREIGN":"#a855f7","ELITE":"#378add","APPROVED":"#e8a020"}
                 legs_html = ""
                 for p in parlay_props:
                     dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
@@ -9169,7 +9256,8 @@ with tabs[0]:
 with tabs[1]:
     _board = st.session_state.board_data or []
     _sport = st.session_state.last_sport or "NBA"
-    _tc = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+    _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#378add","LEAN":"#eab308","PASS":"#e04040"}
+    _tier_labels = {"SOVEREIGN":"🟣 SOVEREIGN","ELITE":"🟢 ELITE","APPROVED":"🔵 APPROVED","LEAN":"🟡 LEAN","PASS":"🔴 PASS"}
     st.markdown(f"## 📊 Full Board — {_sport}")
     if _board:
         # Filters row
@@ -9322,7 +9410,7 @@ with tabs[2]:
         _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
         _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
         _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
-        _tc2 = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+        _tc2 = {"SOVEREIGN":"#a855f7","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
 
         for _g in _fgames:
             _matchup = _g.get("Matchup","—")
