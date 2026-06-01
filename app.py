@@ -1210,6 +1210,38 @@ def tier_badge(tier):
             f'{s["icon"]} {tier}</span>')
 
 
+# Game-total prop detection thresholds
+# If a prop line exceeds this, it's a game total, not a player stat
+GAME_TOTAL_LINE_THRESHOLDS = {
+    "NBA":  180.0,   # game totals ~210-240
+    "WNBA": 130.0,   # game totals ~155-175
+    "MLB":  15.0,    # game totals ~7-12 runs
+    "NHL":  8.0,     # game totals ~5-7 goals
+    "NFL":  60.0,    # game totals ~40-55
+    "Soccer": 4.0,   # game totals ~2-3 goals
+}
+
+GAME_TOTAL_PROP_NAMES = {
+    "Points Total", "Total Points", "Game Total", "Match Total",
+    "Total Goals", "Total Runs", "Total Score", "Team Total",
+    "Alternate Total",
+}
+
+def is_game_total_prop(player, prop_name, line, sport):
+    """
+    Detect whether a prop is a game-total bet vs a player stat.
+    Game total props must NOT use the player avg model.
+    """
+    threshold = GAME_TOTAL_LINE_THRESHOLDS.get(sport, 999)
+    if line >= threshold:
+        return True
+    if any(t.lower() in prop_name.lower() for t in GAME_TOTAL_PROP_NAMES):
+        return True
+    if "@" in player or " vs " in player.lower():
+        return True
+    return False
+
+
 def compute_fair_prob(line, avg, std_dev, side="OVER"):
     if avg <= 0:
         return 0.5
@@ -3200,7 +3232,22 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     except Exception:
         pass
     
-    return {"matchup": matchup, "home": home_team, "away": away_team, "recommendations": recommendations, "best_bet": best_bet, "best_edge": best_edge, "sport": sport, "public_signals": public_sharp_signals, "public_data": game_public}
+    # Market availability flags for UI labeling
+    spread_available = spread_str not in ("N/A", None, "")
+    total_available  = total_str  not in ("N/A", None, "")
+    ml_available     = home_ml    not in ("N/A", None, "")
+
+    return {
+        "matchup": matchup, "home": home_team, "away": away_team,
+        "recommendations": recommendations, "best_bet": best_bet,
+        "best_edge": best_edge, "sport": sport,
+        "public_signals": public_sharp_signals, "public_data": game_public,
+        "market_flags": {
+            "spread": "available" if spread_available else "no_market",
+            "total":  "available" if total_available  else "no_market",
+            "ml":     "available" if ml_available      else "no_market",
+        }
+    }
 
 def fetch_alternate_lines(sport, matchup):
     if not ODDSWRAP_AVAILABLE:
@@ -7905,12 +7952,56 @@ def load_sport_data(sport):
     else:
         _preloaded_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
 
+    # Pre-build game analysis lookup by matchup for game total routing
+    _game_analysis_by_matchup = {}
+    for _ga in (st.session_state.get("game_analysis") or []):
+        _mb = _ga.get("matchup","")
+        if _mb:
+            _game_analysis_by_matchup[_mb.lower()] = _ga
+
     for p in props:
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
         player = p["Player"]
         line = p["Line"]
         side = p["Side"]
+
+        # ── GAME TOTAL PROP ROUTING ──────────────────────────
+        # If this is a game-total prop (e.g. WNBA O/U 169.5),
+        # the player model is wrong (avg ~20pts vs line ~169).
+        # Route to game_analysis result instead.
+        if is_game_total_prop(player, stat_raw, safe_float(line), sport):
+            # Find matching game analysis
+            _gt_game = None
+            for _mb, _ga in _game_analysis_by_matchup.items():
+                if any(t.lower() in _mb for t in player.lower().split() if len(t) > 2):
+                    _gt_game = _ga
+                    break
+            if _gt_game and _gt_game.get("best_bet"):
+                _gt_bb = _gt_game["best_bet"]
+                _gt_edge = float(_gt_bb.get("edge", 0))
+                _gt_tier  = get_tier(abs(_gt_edge), sport)
+                _gt_prob  = float(_gt_bb.get("fair_prob", 0.55))
+                enriched.append({
+                    "Player": player, "Prop": stat_raw, "Line": line,
+                    "Side": side, "Sport": sport, "Tier": _gt_tier,
+                    "Edge": round(_gt_edge, 4),
+                    "Prob": _gt_prob,
+                    "Avg": safe_float(line),  # line IS the reference for game totals
+                    "Source": p.get("source",""),
+                    "IsGameTotal": True,
+                    "GameAnalysisRef": _gt_game.get("matchup",""),
+                    "Narrative": f"Game total — routed from game model. {_gt_bb.get('note','')}",
+                    "NarrativeRisk": f"⚠️ Risk: Game script / blowout may nullify",
+                    "TierNote": "Game total — uses team model",
+                    "ContextOverrides": [], "OverrideActive": False,
+                    "LockScore": min(100, int(abs(_gt_edge)*300 + 20)),
+                })
+            else:
+                # No game analysis match — skip this prop to avoid 0% edge confusion
+                skipped_edge += 1
+            continue
+        # ── END GAME TOTAL ROUTING ───────────────────────────
         odds_type = p.get("OddsType", "standard")
         if sport == "NBA" and player in season_avgs:
             season_avg = season_avgs.get(player, {})
@@ -9730,9 +9821,21 @@ with tabs[2]:
             _alt_edge = float(_g.get("AltEdge",0) or 0)
             _alt_tier = _g.get("AltTier","LEAN")
             _picks = [
-                {"label":"SPREAD","pick":_g.get("SpreadPick",_g.get("Spread","—")),"line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","LEAN")},
-                {"label":"TOTAL","pick":_g.get("TotalPick","O/U"),"line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
-                {"label":"ML","pick":_g.get("MLPick",_g.get("FavoriteTeam","—")),"line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
+                {"label":"SPREAD",
+                 "pick":(_g.get("SpreadPick") or
+                         ("No Market" if _g.get("Spread","N/A") in ("N/A","",None)
+                          else ("No Edge" if not any(r.get("type")=="SPREAD" for r in _g.get("recommendations",[])) else _g.get("Spread","—")))),
+                 "line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","LEAN")},
+                {"label":"TOTAL",
+                 "pick":(_g.get("TotalPick") or
+                         ("No Market" if _g.get("Total","N/A") in ("N/A","",None)
+                          else ("No Edge" if not any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[])) else ("O/U " + str(_g.get("Total","")))))),
+                 "line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
+                {"label":"ML",
+                 "pick":(_g.get("MLPick") or
+                         ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
+                          else ("No Edge" if not any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[])) else _g.get("FavoriteTeam","—")))),
+                 "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
                 {"label":"ALT LINE","pick":_alt_line or "—","line":_alt_line or "—","edge":_alt_edge,"tier":_alt_tier},
             ]
             # Game card header
