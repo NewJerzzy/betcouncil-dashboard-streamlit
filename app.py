@@ -10099,7 +10099,7 @@ with tabs[2]:
         _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
         _tc2 = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
 
-        for _g in _fgames:
+        for _gi, _g in enumerate(_fgames):
             _matchup = _g.get("Matchup","—")
             _gtime = _g.get("Time","—")
             _gsport = _g.get("Sport",_sport2)
@@ -10177,7 +10177,7 @@ with tabs[2]:
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
                 with _lk_col:
-                    _glk_key = f"glk_{_matchup.replace(' ','_')[:15]}_{_pk['label']}"
+                    _glk_key = f"glk_{_gi}_{_pk['label']}"
                     _already_glk = any(
                         l.get("player","") == _matchup and l.get("prop","") == _pk["label"]
                         for l in st.session_state.locks
