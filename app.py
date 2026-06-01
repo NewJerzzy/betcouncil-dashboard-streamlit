@@ -3112,9 +3112,18 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         power_ratings = NBA_POWER_RATINGS
     matchup = game.get("Matchup", "")
     spread_str = game.get("Spread", "N/A")
-    total_str = game.get("Total", "N/A")
-    home_ml = game.get("Home ML", "N/A")
-    away_ml = game.get("Away ML", "N/A")
+    total_str  = game.get("Total", "N/A")
+    home_ml    = game.get("Home ML", "N/A")
+    away_ml    = game.get("Away ML", "N/A")
+    # ── OddsAPI fallback — fills gaps ESPN left as N/A ──
+    if spread_str in ("N/A", None, ""):
+        spread_str = game.get("OddsAPI Spread", "N/A")
+    if total_str in ("N/A", None, ""):
+        total_str = game.get("OddsAPI Total", "N/A")
+    if home_ml in ("N/A", None, ""):
+        home_ml = game.get("OddsAPI ML Home", game.get("Bovada ML Home", "N/A"))
+    if away_ml in ("N/A", None, ""):
+        away_ml = game.get("OddsAPI ML Away", game.get("Bovada ML Away", "N/A"))
     home_team = home_teams.get(matchup, "")
     away_team = away_teams.get(matchup, "")
     recommendations = []
@@ -3288,11 +3297,22 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     total_available  = total_str  not in ("N/A", None, "")
     ml_available     = home_ml    not in ("N/A", None, "")
 
+    # Determine favorite for display
+    try:
+        _fav_team = ""
+        if home_ml not in ("N/A", None, "") and away_ml not in ("N/A", None, ""):
+            _fav_team = home_team if float(str(home_ml).replace("+","")) < float(str(away_ml).replace("+","")) else away_team
+    except Exception:
+        _fav_team = home_team
+
     return {
         "matchup": matchup, "home": home_team, "away": away_team,
         "recommendations": recommendations, "best_bet": best_bet,
         "best_edge": best_edge, "sport": sport,
         "public_signals": public_sharp_signals, "public_data": game_public,
+        "HomeML": home_ml, "AwayML": away_ml,
+        "Spread": spread_str, "Total": total_str,
+        "FavoriteTeam": _fav_team,
         "market_flags": {
             "spread": "available" if spread_available else "no_market",
             "total":  "available" if total_available  else "no_market",
@@ -4611,28 +4631,67 @@ def fetch_game_lines(sport):
     if all_final:
         tomorrow_games, playoff, home_teams, away_teams = _fetch_date(tomorrow)
         if tomorrow_games:
-            return tomorrow_games, playoff, home_teams, away_teams
-        return today_games, playoff, home_teams, away_teams
-    if today_games and ODDS_API_KEY:
+            today_games = tomorrow_games
+
+    # ── OddsAPI overlay — runs regardless of ESPN results ──
+    # Fills in ML/spread/total whenever ESPN returns "N/A"
+    # Also provides Circa/BetOnline/Pinnacle market data
+    if ODDS_API_KEY:
         try:
-            bovada_games, bov_home, bov_away = fetch_odds_api_game_lines(sport)
-            if bovada_games:
-                bov_lookup = {g["Matchup"]: g for g in bovada_games}
+            odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
+            if odds_games:
+                odds_lookup = {g["Matchup"]: g for g in odds_games}
                 for game in today_games:
                     matchup = game.get("Matchup","")
-                    for bov_matchup, bov_game in bov_lookup.items():
-                        home1 = home_teams.get(matchup, "")
-                        home2 = bov_home.get(bov_matchup, "")
-                        if home1 and home2 and (home1.upper()[:3] in home2.upper() or home2.upper()[:3] in home1.upper()):
-                            game["Bovada ML Home"] = bov_game.get("Home ML", "N/A")
-                            game["Bovada ML Away"] = bov_game.get("Away ML", "N/A")
-                            game["Bovada Spread"] = bov_game.get("Spread", "N/A")
-                            game["Bovada Total"] = bov_game.get("Total", "N/A")
-                            if game.get("Total") in ("N/A", None) and bov_game.get("Total") not in ("N/A", None):
-                                game["Total"] = bov_game["Total"]
+                    home1 = home_teams.get(matchup, "")
+                    # Match by team abbreviation (ESPN uses abbrev, OddsAPI uses full name)
+                    best_match = None
+                    for odds_matchup, odds_game in odds_lookup.items():
+                        home2 = odds_home.get(odds_matchup, "")
+                        away2 = odds_away.get(odds_matchup, "")
+                        h1u = home1.upper()[:3]
+                        # Match if any 3-char prefix overlaps
+                        if (h1u and (h1u in home2.upper() or h1u in away2.upper()
+                                     or home2.upper()[:3] in h1u
+                                     or any(t[:3].upper() in home2.upper() for t in matchup.split(" @ ")))):
+                            best_match = odds_game
                             break
-        except Exception as e:
+                    if best_match:
+                        # Always store OddsAPI data as backup fields
+                        game["OddsAPI ML Home"] = best_match.get("Home ML", "N/A")
+                        game["OddsAPI ML Away"] = best_match.get("Away ML", "N/A")
+                        game["OddsAPI Spread"]  = best_match.get("Spread", "N/A")
+                        game["OddsAPI Total"]   = best_match.get("Total", "N/A")
+                        game["OddsAPI Source"]  = best_match.get("Odds Source", "OddsAPI")
+                        # Bovada-compatible fields (for steam detection)
+                        game["Bovada ML Home"]  = best_match.get("Home ML", "N/A")
+                        game["Bovada ML Away"]  = best_match.get("Away ML", "N/A")
+                        game["Bovada Spread"]   = best_match.get("Spread", "N/A")
+                        game["Bovada Total"]    = best_match.get("Total", "N/A")
+                        # ── Fill in ESPN N/A gaps with OddsAPI data ──
+                        if game.get("Home ML") in ("N/A", None, ""):
+                            game["Home ML"] = best_match.get("Home ML", "N/A")
+                        if game.get("Away ML") in ("N/A", None, ""):
+                            game["Away ML"] = best_match.get("Away ML", "N/A")
+                        if game.get("Spread") in ("N/A", None, ""):
+                            game["Spread"] = best_match.get("Spread", "N/A")
+                        if game.get("Total") in ("N/A", None, ""):
+                            game["Total"] = best_match.get("Total", "N/A")
+                        # Mark which source filled the data
+                        if game.get("Odds Source") in ("ESPN", "N/A", ""):
+                            game["Odds Source"] = best_match.get("Odds Source", "OddsAPI")
+                # Add any OddsAPI games ESPN missed entirely
+                espn_matchups = {g.get("Matchup","").lower() for g in today_games}
+                for odds_game in odds_games:
+                    om = odds_game.get("Matchup","").lower()
+                    home_word = om.split(" @ ")[-1][:4] if " @ " in om else ""
+                    if not any(home_word in m for m in espn_matchups if home_word):
+                        today_games.append(odds_game)
+        except Exception:
             pass
+
+    if not today_games:
+        return [], playoff, home_teams, away_teams
     return today_games, playoff, home_teams, away_teams
 
 def safe_float(val, default: float = 0.0) -> float:
