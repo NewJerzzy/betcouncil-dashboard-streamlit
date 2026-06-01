@@ -8766,6 +8766,9 @@ with tabs[0]:
 
     with col_left:
 
+        # ═══════════════════════════════════════════════════
+        # SECTION 1 — TODAY'S CARD (first thing user sees)
+        # ═══════════════════════════════════════════════════
         # ── 1. RECOMMENDED ACTION ──────────────────────────
         board = st.session_state.board_data or []
         game_analysis = st.session_state.get("game_analysis", [])
@@ -8794,6 +8797,10 @@ with tabs[0]:
                 <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
                     <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Elite+ Plays</div>
                     <div style="color:#22c55e;font-size:1.4rem;font-weight:700;">{elite_count}</div>
+                </div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
+                    <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Total at Risk</div>
+                    <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{round(sum(safe_float(p.get("Kelly",0)) for p in board if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")), 1)}u</div>
                 </div>
                 <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
                     <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Props</div>
@@ -8854,6 +8861,219 @@ with tabs[0]:
             st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
 
 
+
+        # ═══════════════════════════════════════════════════
+        # SECTION 2 — TOP PLAYS QUEUE
+        # ═══════════════════════════════════════════════════
+        # ── BEST BET QUEUE ─────────────────────────────────
+        _top_plays = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
+        if _top_plays:
+            st.markdown("""<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0.8rem;">
+                <div style="flex:1;height:1px;background:#1e2d3d;"></div>
+                <span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🎯 Best Bet Queue</span>
+                <div style="flex:1;height:1px;background:#1e2d3d;"></div></div>""", unsafe_allow_html=True)
+            for _qi, _qp in enumerate(_top_plays):
+                _qe = _qp.get("Edge",0)
+                _qc = "#22c55e" if _qp.get("Tier")=="SOVEREIGN" else "#378add"
+                _qpin = "📌" if _qp.get("PinnacleConfirms") else ""
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:0.8rem;background:#0a0e14;'
+                    f'border:1px solid #1e2d3d;border-left:3px solid {_qc};border-radius:6px;'
+                    f'padding:0.5rem 0.8rem;margin-bottom:0.3rem;">'
+                    f'<span style="color:{_qc};font-weight:700;font-size:1.1rem;min-width:22px;">#{_qi+1}</span>'
+                    f'<span style="color:#e8f0f8;font-weight:600;flex:1;">{_qp.get("Player","")} '
+                    f'{_qp.get("Side","OVER")} {_qp.get("Line","")}</span>'
+                    f'<span style="color:#8a9ab0;font-size:0.95rem;">{_qp.get("Prop","")}</span>'
+                    f'<span style="color:{_qc};font-weight:700;">Edge {_qe:.1%}</span>'
+                    f'{_qpin}</div>',
+                    unsafe_allow_html=True
+                )
+
+
+        # ═══════════════════════════════════════════════════
+        # SECTION 3 — LOCK OF THE DAY
+        # ═══════════════════════════════════════════════════
+        # ── LOCK OF THE DAY — PROP ─────────────────────────
+        if board:
+            st.markdown(
+                '<div style="background:linear-gradient(135deg,#0d1a0d,#0a1a2a);border:1px solid #22c55e44;border-radius:10px;padding:0.6rem 1.2rem;margin:1rem 0 0.6rem;display:flex;align-items:center;gap:0.8rem;">'
+                '<span style="font-size:1.4rem;">🔒</span>'
+                '<span style="color:#22c55e;font-size:1.15rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">Lock of the Day</span>'
+                '<div style="flex:1;height:1px;background:#22c55e33;"></div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            sorted_board = sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
+            lock_prop = sorted_board[0]
+            tier = lock_prop.get("Tier","LEAN")
+            tier_color = TIER_COLORS.get(tier, "#6a7a8a")
+            prob = float(lock_prop.get("Prob") or 0.5)
+            ev_2 = lock_prop.get("EV_2pick","—") or "—"
+            pinnacle_prob = lock_prop.get("PinnacleProb","—") or "—"
+            pinnacle_confirms = lock_prop.get("PinnacleConfirms", False)
+            better_line = lock_prop.get("BetterLineNote","") or ""
+            edge = float(lock_prop.get("Edge") or 0)
+            avg = float(lock_prop.get("Avg") or lock_prop.get("Line") or 0)
+            lock_score = min(100, int(abs(edge)*300 + (prob - 0.5)*200 + (50 if pinnacle_confirms else 0)))
+            _avg_display = f"{avg:.1f}" if avg else "—"
+            _prob_display = f"{prob:.1%}"
+            _ev2_display = str(ev_2)
+            _pinn_display = str(pinnacle_prob)
+            # Pre-compute conditionals to avoid f-string quote conflicts
+            _pinn_badge = '<span style="color:#7f77dd;font-size:1.0rem;">&#128302; PINNACLE CONFIRMED</span>' if pinnacle_confirms else ""
+            _better_html = f'<div style="color:#22c55e;font-size:1.0rem;margin-bottom:0.5rem;">&#9889; {better_line}</div>' if better_line else ""
+            _risk_note = lock_prop.get("PinnacleNote","monitor lineup")[:50]
+            _player_line = f'{lock_prop.get("Player","")} &mdash; {lock_prop.get("Side","")} {lock_prop.get("Line","")} {lock_prop.get("Prop","")}'
+            _lock_html = f"""
+            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #22c55e;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
+                    <span style="background:{tier_color}22;color:{tier_color};padding:0.2rem 0.7rem;border-radius:20px;font-size:1.15rem;font-weight:700;">{tier}</span>
+                    {_pinn_badge}
+                </div>
+                <div style="font-size:1.3rem;font-weight:700;color:#e8f0f8;margin-bottom:0.8rem;">{_player_line}</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem;margin-bottom:0.8rem;">
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Season Avg</div>
+                        <div style="color:#e8f0f8;font-weight:700;">{_avg_display}</div>
+                    </div>
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Hit Prob</div>
+                        <div style="color:#22c55e;font-weight:700;">{_prob_display}</div>
+                    </div>
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Pinnacle</div>
+                        <div style="color:#7f77dd;font-weight:700;">{_pinn_display}</div>
+                    </div>
+                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">2-Pick EV</div>
+                        <div style="color:#22c55e;font-weight:700;">{_ev2_display}</div>
+                    </div>
+                </div>
+                {_better_html}
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:#22c55e;font-weight:700;font-size:1.0rem;">&#128274; Lock Quality: {lock_score}/100</span>
+                    <span style="color:#e04040;font-size:1.0rem;">Risk: {_risk_note}</span>
+                </div>
+            </div>"""
+            components.html(_lock_html, height=220, scrolling=False)
+            # ── Why This Is A Play ──
+            _why_drivers, _why_risks = generate_why_drivers(lock_prop)
+            if _why_drivers or _why_risks:
+                _why_html = '<div style="background:#060a10;border:1px solid #1e2d3d;border-top:none;border-radius:0 0 8px 8px;padding:0.5rem 1rem;margin-top:-4px;margin-bottom:8px;">'
+                if _why_drivers:
+                    _why_html += '<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Top Drivers: </span>'
+                    _why_html += " &nbsp;·&nbsp; ".join(f'<span style="color:{c};font-size:11px;">{l} <b>{v}</b></span>' for l,v,c in _why_drivers)
+                if _why_risks:
+                    _why_html += '&nbsp;&nbsp;<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Risk: </span>'
+                    _why_html += " · ".join(f'<span style="color:{c};font-size:11px;">{l} {v}</span>' for l,v,c in _why_risks)
+                _why_html += '</div>'
+                st.markdown(_why_html, unsafe_allow_html=True)
+            with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
+                try:
+                    chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
+                    st.markdown(chart_html, unsafe_allow_html=True)
+                except Exception:
+                    st.write("Signal chart unavailable")
+
+
+        # ═══════════════════════════════════════════════════
+        # SECTION 4 — GAME LOCK
+        # ═══════════════════════════════════════════════════
+        # ── LOCK OF THE DAY — GAME ─────────────────────────
+        if game_analysis:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Game</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            best_game = max(game_analysis, key=lambda x: x.get("best_edge",0))
+            bb = best_game.get("best_bet",{})
+            if bb:
+                st.markdown(f"""
+                <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #378add;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                    <div style="font-size:1.0rem;color:#378add;text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
+                    <div style="font-size:1.2rem;font-weight:700;color:#e8f0f8;margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
+                    <div style="display:flex;gap:1.5rem;margin-bottom:0.5rem;">
+                        <span style="color:#378add;font-weight:700;">Edge: {abs(bb.get("edge",0)):.1%}</span>
+                        <span style="color:#7f77dd;font-size:1.0rem;">{bb.get("note","")[:80]}</span>
+                    </div>
+                    <div style="display:flex;gap:0.8rem;font-size:1.0rem;color:#8a9ab0;">
+                        <span>Spread: {best_game.get("games",{}).get("Spread","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
+                        <span>Total: {best_game.get("games",{}).get("Total","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        if game_analysis:
+            _best_g = max(game_analysis, key=lambda x: x.get("best_edge",0))
+            _game_edge = float(_best_g.get("best_edge",0) or 0)
+            _game_score = min(100, int(
+                min(30, _game_edge * 150) +
+                20 +
+                (10 if _game_edge >= 0.10 else 5 if _game_edge >= 0.05 else 0)
+            ))
+            _gscore_icon = "🟢" if _game_score >= 80 else "🟡" if _game_score >= 60 else "🟠" if _game_score >= 40 else "🔴"
+            st.markdown(f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 1rem;margin-top:0.3rem;"><span style="color:#6a7a8a;font-size:1.0rem;">LOCK QUALITY SCORE: </span><span style="color:#e8f0f8;font-weight:700;">{_game_score}/100 {_gscore_icon}</span></div>', unsafe_allow_html=True)
+
+
+        # ═══════════════════════════════════════════════════
+        # SECTION 5 — PARLAY
+        # ═══════════════════════════════════════════════════
+        # ── PARLAY OF THE DAY — PROPS ──────────────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        # Filter to current sport only, SOVEREIGN/ELITE tier
+        _cur_sport = st.session_state.get("last_sport", "NBA")
+        parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
+                        if p.get("Tier","") in ["SOVEREIGN","ELITE"]
+                        and p.get("Sport","") == _cur_sport][:4]
+        n_parlay = st.session_state.get("parlay_size", 3)
+        parlay_props = parlay_props[:n_parlay]
+        if len(parlay_props) >= 2:
+            parlay_probs = [p.get("Prob", 0.55) for p in parlay_props]
+            combined = parlay_prob(parlay_probs)
+            be = prizepicks_breakeven_prob(len(parlay_props))
+            ev = calculate_prizepicks_ev(combined, len(parlay_props))
+            # Only show if positive EV — otherwise show warning
+            if ev > 0:
+                ev_color = "#22c55e"
+                tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
+                legs_html = ""
+                for p in parlay_props:
+                    dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
+                    legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:1.0rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:#6a7a8a;font-size:1.0rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
+                st.markdown(f"""
+                <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                        <span style="color:#e8f0f8;font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
+                        <span style="color:#22c55e;font-weight:700;font-size:1rem;">{ev:+.1%} EV ▶ PLAY</span>
+                    </div>
+                    <div style="display:flex;gap:1.5rem;font-size:1.0rem;margin-bottom:0.7rem;">
+                        <span style="color:#b8c6d6;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
+                        <span style="color:#8a9ab0;">Breakeven: {be:.1%}</span>
+                    </div>
+                    {legs_html}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;color:#9aa8b8;font-size:1.0rem;">⚠️ No +EV prop parlay available today. Combined probability ({combined:.1%}) is below the {be:.1%} breakeven. Sit out or go single picks only.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;padding:0.3rem 0;">Need 2+ SOVEREIGN/ELITE props to build a parlay.</div>', unsafe_allow_html=True)
+
+        # ── PLAYERS TO AVOID (always visible) ──────────────
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        avoid_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0))
+                       if p.get("Edge",0) < 0
+                       and p.get("Sport","") == _cur_sport][:5]
+        if avoid_props:
+            for ap in avoid_props:
+                _ap_avg = ap.get("Avg", 0) or 0
+                _ap_line = ap.get("Line", 0) or 0
+                _ap_edge = ap.get("EdgePct","—")
+                _ap_reason = ap.get("PinnacleNote","") or f"Model projects avg {_ap_avg:.1f} vs line {_ap_line} — line is too high"
+                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">FADE {_ap_edge}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ap_reason[:90]}</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:#6a7a8a;font-size:1.05rem;">✅ No strong fades today — all props show positive or neutral edge.</div>', unsafe_allow_html=True)
+
+
+        # ═══════════════════════════════════════════════════
+        # SECTION 6 — DASHBOARD + ANALYTICS (secondary)
+        # ═══════════════════════════════════════════════════
+        st.markdown("---")
         # ══════════════════════════════════════════════════════
         # PROFESSIONAL DASHBOARD — 5 insight cards
         # ══════════════════════════════════════════════════════
@@ -8980,192 +9200,6 @@ with tabs[0]:
                 unsafe_allow_html=True
             )
         st.markdown("---")
-
-
-        # ── BEST BET QUEUE ─────────────────────────────────
-        _top_plays = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
-        if _top_plays:
-            st.markdown("""<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0.8rem;">
-                <div style="flex:1;height:1px;background:#1e2d3d;"></div>
-                <span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🎯 Best Bet Queue</span>
-                <div style="flex:1;height:1px;background:#1e2d3d;"></div></div>""", unsafe_allow_html=True)
-            for _qi, _qp in enumerate(_top_plays):
-                _qe = _qp.get("Edge",0)
-                _qc = "#22c55e" if _qp.get("Tier")=="SOVEREIGN" else "#378add"
-                _qpin = "📌" if _qp.get("PinnacleConfirms") else ""
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:0.8rem;background:#0a0e14;'
-                    f'border:1px solid #1e2d3d;border-left:3px solid {_qc};border-radius:6px;'
-                    f'padding:0.5rem 0.8rem;margin-bottom:0.3rem;">'
-                    f'<span style="color:{_qc};font-weight:700;font-size:1.1rem;min-width:22px;">#{_qi+1}</span>'
-                    f'<span style="color:#e8f0f8;font-weight:600;flex:1;">{_qp.get("Player","")} '
-                    f'{_qp.get("Side","OVER")} {_qp.get("Line","")}</span>'
-                    f'<span style="color:#8a9ab0;font-size:0.95rem;">{_qp.get("Prop","")}</span>'
-                    f'<span style="color:{_qc};font-weight:700;">Edge {_qe:.1%}</span>'
-                    f'{_qpin}</div>',
-                    unsafe_allow_html=True
-                )
-
-        # ── LOCK OF THE DAY — PROP ─────────────────────────
-        if board:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Prop</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-            sorted_board = sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
-            lock_prop = sorted_board[0]
-            tier = lock_prop.get("Tier","LEAN")
-            tier_color = TIER_COLORS.get(tier, "#6a7a8a")
-            prob = float(lock_prop.get("Prob") or 0.5)
-            ev_2 = lock_prop.get("EV_2pick","—") or "—"
-            pinnacle_prob = lock_prop.get("PinnacleProb","—") or "—"
-            pinnacle_confirms = lock_prop.get("PinnacleConfirms", False)
-            better_line = lock_prop.get("BetterLineNote","") or ""
-            edge = float(lock_prop.get("Edge") or 0)
-            avg = float(lock_prop.get("Avg") or lock_prop.get("Line") or 0)
-            lock_score = min(100, int(abs(edge)*300 + (prob - 0.5)*200 + (50 if pinnacle_confirms else 0)))
-            _avg_display = f"{avg:.1f}" if avg else "—"
-            _prob_display = f"{prob:.1%}"
-            _ev2_display = str(ev_2)
-            _pinn_display = str(pinnacle_prob)
-            # Pre-compute conditionals to avoid f-string quote conflicts
-            _pinn_badge = '<span style="color:#7f77dd;font-size:1.0rem;">&#128302; PINNACLE CONFIRMED</span>' if pinnacle_confirms else ""
-            _better_html = f'<div style="color:#22c55e;font-size:1.0rem;margin-bottom:0.5rem;">&#9889; {better_line}</div>' if better_line else ""
-            _risk_note = lock_prop.get("PinnacleNote","monitor lineup")[:50]
-            _player_line = f'{lock_prop.get("Player","")} &mdash; {lock_prop.get("Side","")} {lock_prop.get("Line","")} {lock_prop.get("Prop","")}'
-            _lock_html = f"""
-            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #22c55e;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
-                    <span style="background:{tier_color}22;color:{tier_color};padding:0.2rem 0.7rem;border-radius:20px;font-size:1.15rem;font-weight:700;">{tier}</span>
-                    {_pinn_badge}
-                </div>
-                <div style="font-size:1.3rem;font-weight:700;color:#e8f0f8;margin-bottom:0.8rem;">{_player_line}</div>
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem;margin-bottom:0.8rem;">
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Season Avg</div>
-                        <div style="color:#e8f0f8;font-weight:700;">{_avg_display}</div>
-                    </div>
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Hit Prob</div>
-                        <div style="color:#22c55e;font-weight:700;">{_prob_display}</div>
-                    </div>
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Pinnacle</div>
-                        <div style="color:#7f77dd;font-weight:700;">{_pinn_display}</div>
-                    </div>
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">2-Pick EV</div>
-                        <div style="color:#22c55e;font-weight:700;">{_ev2_display}</div>
-                    </div>
-                </div>
-                {_better_html}
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:#22c55e;font-weight:700;font-size:1.0rem;">&#128274; Lock Quality: {lock_score}/100</span>
-                    <span style="color:#e04040;font-size:1.0rem;">Risk: {_risk_note}</span>
-                </div>
-            </div>"""
-            components.html(_lock_html, height=220, scrolling=False)
-            # ── Why This Is A Play ──
-            _why_drivers, _why_risks = generate_why_drivers(lock_prop)
-            if _why_drivers or _why_risks:
-                _why_html = '<div style="background:#060a10;border:1px solid #1e2d3d;border-top:none;border-radius:0 0 8px 8px;padding:0.5rem 1rem;margin-top:-4px;margin-bottom:8px;">'
-                if _why_drivers:
-                    _why_html += '<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Top Drivers: </span>'
-                    _why_html += " &nbsp;·&nbsp; ".join(f'<span style="color:{c};font-size:11px;">{l} <b>{v}</b></span>' for l,v,c in _why_drivers)
-                if _why_risks:
-                    _why_html += '&nbsp;&nbsp;<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Risk: </span>'
-                    _why_html += " · ".join(f'<span style="color:{c};font-size:11px;">{l} {v}</span>' for l,v,c in _why_risks)
-                _why_html += '</div>'
-                st.markdown(_why_html, unsafe_allow_html=True)
-            with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
-                try:
-                    chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
-                    st.markdown(chart_html, unsafe_allow_html=True)
-                except Exception:
-                    st.write("Signal chart unavailable")
-
-        # ── LOCK OF THE DAY — GAME ─────────────────────────
-        if game_analysis:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Game</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-            best_game = max(game_analysis, key=lambda x: x.get("best_edge",0))
-            bb = best_game.get("best_bet",{})
-            if bb:
-                st.markdown(f"""
-                <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #378add;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
-                    <div style="font-size:1.0rem;color:#378add;text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
-                    <div style="font-size:1.2rem;font-weight:700;color:#e8f0f8;margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
-                    <div style="display:flex;gap:1.5rem;margin-bottom:0.5rem;">
-                        <span style="color:#378add;font-weight:700;">Edge: {abs(bb.get("edge",0)):.1%}</span>
-                        <span style="color:#7f77dd;font-size:1.0rem;">{bb.get("note","")[:80]}</span>
-                    </div>
-                    <div style="display:flex;gap:0.8rem;font-size:1.0rem;color:#8a9ab0;">
-                        <span>Spread: {best_game.get("games",{}).get("Spread","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
-                        <span>Total: {best_game.get("games",{}).get("Total","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-        if game_analysis:
-            _best_g = max(game_analysis, key=lambda x: x.get("best_edge",0))
-            _game_edge = float(_best_g.get("best_edge",0) or 0)
-            _game_score = min(100, int(
-                min(30, _game_edge * 150) +
-                20 +
-                (10 if _game_edge >= 0.10 else 5 if _game_edge >= 0.05 else 0)
-            ))
-            _gscore_icon = "🟢" if _game_score >= 80 else "🟡" if _game_score >= 60 else "🟠" if _game_score >= 40 else "🔴"
-            st.markdown(f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 1rem;margin-top:0.3rem;"><span style="color:#6a7a8a;font-size:1.0rem;">LOCK QUALITY SCORE: </span><span style="color:#e8f0f8;font-weight:700;">{_game_score}/100 {_gscore_icon}</span></div>', unsafe_allow_html=True)
-
-        # ── PARLAY OF THE DAY — PROPS ──────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-        # Filter to current sport only, SOVEREIGN/ELITE tier
-        _cur_sport = st.session_state.get("last_sport", "NBA")
-        parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
-                        if p.get("Tier","") in ["SOVEREIGN","ELITE"]
-                        and p.get("Sport","") == _cur_sport][:4]
-        n_parlay = st.session_state.get("parlay_size", 3)
-        parlay_props = parlay_props[:n_parlay]
-        if len(parlay_props) >= 2:
-            parlay_probs = [p.get("Prob", 0.55) for p in parlay_props]
-            combined = parlay_prob(parlay_probs)
-            be = prizepicks_breakeven_prob(len(parlay_props))
-            ev = calculate_prizepicks_ev(combined, len(parlay_props))
-            # Only show if positive EV — otherwise show warning
-            if ev > 0:
-                ev_color = "#22c55e"
-                tier_dot = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}
-                legs_html = ""
-                for p in parlay_props:
-                    dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
-                    legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:1.0rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:#6a7a8a;font-size:1.0rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
-                st.markdown(f"""
-                <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-                        <span style="color:#e8f0f8;font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
-                        <span style="color:#22c55e;font-weight:700;font-size:1rem;">{ev:+.1%} EV ▶ PLAY</span>
-                    </div>
-                    <div style="display:flex;gap:1.5rem;font-size:1.0rem;margin-bottom:0.7rem;">
-                        <span style="color:#b8c6d6;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
-                        <span style="color:#8a9ab0;">Breakeven: {be:.1%}</span>
-                    </div>
-                    {legs_html}
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;color:#9aa8b8;font-size:1.0rem;">⚠️ No +EV prop parlay available today. Combined probability ({combined:.1%}) is below the {be:.1%} breakeven. Sit out or go single picks only.</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;padding:0.3rem 0;">Need 2+ SOVEREIGN/ELITE props to build a parlay.</div>', unsafe_allow_html=True)
-
-        # ── PLAYERS TO AVOID (always visible) ──────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
-        avoid_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0))
-                       if p.get("Edge",0) < 0
-                       and p.get("Sport","") == _cur_sport][:5]
-        if avoid_props:
-            for ap in avoid_props:
-                _ap_avg = ap.get("Avg", 0) or 0
-                _ap_line = ap.get("Line", 0) or 0
-                _ap_edge = ap.get("EdgePct","—")
-                _ap_reason = ap.get("PinnacleNote","") or f"Model projects avg {_ap_avg:.1f} vs line {_ap_line} — line is too high"
-                st.markdown(f'<div style="background:#0a0e14;border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">FADE {_ap_edge}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ap_reason[:90]}</div></div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:#6a7a8a;font-size:1.05rem;">✅ No strong fades today — all props show positive or neutral edge.</div>', unsafe_allow_html=True)
 
         # ── PARLAY OF THE DAY — GAMES ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
