@@ -12015,6 +12015,251 @@ with tabs[9]:
     else:
         st.error(f"\U0001f6d1 {risk_msg_s}")
     st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════
+    # 🔍 BOARD AUDIT ENGINE — 6 automated output audits
+    # Runs after every board load. Catches routing bugs,
+    # coverage gaps, tier mismatches, and consistency failures
+    # BEFORE you place a bet.
+    # ══════════════════════════════════════════════════════════
+    st.markdown("### 🔍 Board Audit Engine")
+    st.caption("Automated output validation — audits routing, coverage, consistency, and tier integrity every board load.")
+
+    _audit_board   = st.session_state.get("board_data", [])
+    _audit_games   = st.session_state.get("game_analysis", [])
+    _audit_locks   = st.session_state.get("locks", [])
+    _audit_sport   = st.session_state.get("last_sport", "NBA")
+    _audit_results = []  # list of {name, status, detail, severity}
+
+    def _audit_pass(name, detail=""):
+        return {"name": name, "status": "PASS", "detail": detail, "severity": "green"}
+    def _audit_warn(name, detail=""):
+        return {"name": name, "status": "WARN", "detail": detail, "severity": "yellow"}
+    def _audit_fail(name, detail=""):
+        return {"name": name, "status": "FAIL", "detail": detail, "severity": "red"}
+
+    if not _audit_board:
+        st.info("Load the board first to run audits.")
+    else:
+        # ── AUDIT 1: Board Consistency ──────────────────────────
+        # Checks that the same player+prop shows the same edge
+        # across Full Board, Best Bet Queue, and Lock of Day.
+        _consistency_failures = []
+        _board_lookup = {}
+        for p in _audit_board:
+            _key = (normalize_name(p.get("Player","")), p.get("Prop",""), p.get("Side",""))
+            _board_lookup[_key] = round(float(p.get("Edge",0) or 0), 3)
+
+        # Check queue top picks against board
+        _queue_top = [p for p in _audit_board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
+        for qp in _queue_top:
+            _qk = (normalize_name(qp.get("Player","")), qp.get("Prop",""), qp.get("Side",""))
+            _board_edge = _board_lookup.get(_qk, 0)
+            _queue_edge = round(float(qp.get("Edge",0) or 0), 3)
+            if abs(_board_edge - _queue_edge) > 0.005:
+                _consistency_failures.append(
+                    f"{qp.get('Player','')} {qp.get('Prop','')}: Queue={_queue_edge:.1%} Board={_board_edge:.1%}"
+                )
+
+        # Check today's locked picks against board
+        _today_str = date.today().strftime("%Y-%m-%d")
+        _today_locks_a = [l for l in _audit_locks if l.get("timestamp","").startswith(_today_str)]
+        for lk in _today_locks_a:
+            _lk = (normalize_name(lk.get("player","")), lk.get("prop",""), lk.get("side","OVER"))
+            _board_edge = _board_lookup.get(_lk)
+            _lock_edge  = round(float(lk.get("edge",0) or 0), 3)
+            if _board_edge is not None and abs(_board_edge - _lock_edge) > 0.01:
+                _consistency_failures.append(
+                    f"LOCK: {lk.get('player','')} {lk.get('prop','')}: Lock={_lock_edge:.1%} Board={_board_edge:.1%}"
+                )
+
+        if _consistency_failures:
+            _audit_results.append(_audit_fail(
+                "Audit 1 — Board Consistency",
+                f"{len(_consistency_failures)} mismatch(es): " + " | ".join(_consistency_failures[:3])
+            ))
+        else:
+            _audit_results.append(_audit_pass(
+                "Audit 1 — Board Consistency",
+                f"All {len(_queue_top)} queue picks + {len(_today_locks_a)} locks match board edges"
+            ))
+
+        # ── AUDIT 2: Market Coverage ────────────────────────────
+        # Checks spread/total/ML coverage % for today's games.
+        # Flags if ML < 80% (likely routing failure like WNBA bug).
+        if _audit_games:
+            _cov_spread = sum(1 for g in _audit_games if g.get("Spread") not in ("N/A",None,"")) / len(_audit_games)
+            _cov_total  = sum(1 for g in _audit_games if g.get("Total")  not in ("N/A",None,"")) / len(_audit_games)
+            _cov_ml     = sum(1 for g in _audit_games if g.get("HomeML", g.get("Home ML","N/A")) not in ("N/A",None,"")) / len(_audit_games)
+            _cov_issues = []
+            if _cov_spread < 0.80: _cov_issues.append(f"Spread {_cov_spread:.0%}")
+            if _cov_total  < 0.80: _cov_issues.append(f"Total {_cov_total:.0%}")
+            if _cov_ml     < 0.80: _cov_issues.append(f"ML {_cov_ml:.0%} ← routing suspect")
+            if _cov_issues:
+                _audit_results.append(_audit_fail(
+                    "Audit 2 — Market Coverage",
+                    f"{len(_audit_games)} games | Low: {', '.join(_cov_issues)} (threshold >80%)"
+                ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 2 — Market Coverage",
+                    f"{len(_audit_games)} games | Spread {_cov_spread:.0%} Total {_cov_total:.0%} ML {_cov_ml:.0%}"
+                ))
+        else:
+            _audit_results.append(_audit_warn("Audit 2 — Market Coverage", "No game analysis data"))
+
+        # ── AUDIT 3: Source Health ──────────────────────────────
+        # Checks records returned per source and flags low counts.
+        _src_counts = {}
+        for p in _audit_board:
+            _src = p.get("Source","Unknown")
+            _src_counts[_src] = _src_counts.get(_src, 0) + 1
+        _src_issues = []
+        _timings = st.session_state.get("fetch_timings", {})
+        for src, info in _timings.items():
+            if info.get("status","").startswith("❌"):
+                _src_issues.append(f"{src}: {info['status'][:40]}")
+        _errors = st.session_state.get("errors",[])
+        _recent_errors = [e for e in _errors[-20:] if e.get("source") not in ("",None)]
+        if _src_issues or len(_recent_errors) > 3:
+            _audit_results.append(_audit_warn(
+                "Audit 3 — Source Health",
+                f"{len(_src_issues)} fetch failure(s) | {len(_recent_errors)} recent errors | Sources: {dict(list(_src_counts.items())[:4])}"
+            ))
+        else:
+            _audit_results.append(_audit_pass(
+                "Audit 3 — Source Health",
+                f"{len(_src_counts)} source(s) | {len(_audit_board)} total props | {len(_recent_errors)} errors"
+            ))
+
+        # ── AUDIT 4: Tier Integrity ─────────────────────────────
+        # Verifies each prop's tier matches what get_game_tier/get_tier
+        # would assign given its edge. Catches stale tier assignments.
+        _tier_mismatches = []
+        for p in _audit_board[:50]:
+            _p_edge = abs(float(p.get("Edge",0) or 0))
+            _p_sport = p.get("Sport", _audit_sport)
+            _p_tier = p.get("Tier","LEAN")
+            _expected = get_tier(_p_edge, _p_sport)
+            if _expected != _p_tier and abs(_p_edge) > 0.005:
+                _tier_mismatches.append(
+                    f"{p.get('Player','')} {p.get('Prop','')}: edge={_p_edge:.1%} tier={_p_tier} expected={_expected}"
+                )
+        if _tier_mismatches:
+            _audit_results.append(_audit_fail(
+                "Audit 4 — Tier Integrity",
+                f"{len(_tier_mismatches)} mismatch(es): " + " | ".join(_tier_mismatches[:2])
+            ))
+        else:
+            _audit_results.append(_audit_pass(
+                "Audit 4 — Tier Integrity",
+                f"All {min(50,len(_audit_board))} props have correct tier assignments"
+            ))
+
+        # ── AUDIT 5: Lock Selection ─────────────────────────────
+        # Verifies today's lock is the highest-edge available play.
+        # Flags if a higher-edge play was available but not locked.
+        if _today_locks_a and _audit_board:
+            _best_board_edge = max((float(p.get("Edge",0) or 0) for p in _audit_board), default=0)
+            _lock_edge_max   = max((float(l.get("edge",0) or 0) for l in _today_locks_a), default=0)
+            _gap = _best_board_edge - _lock_edge_max
+            if _gap > 0.05:
+                _better = next((p for p in _audit_board if abs(float(p.get("Edge",0) or 0) - _best_board_edge) < 0.001), None)
+                _audit_results.append(_audit_warn(
+                    "Audit 5 — Lock Selection",
+                    f"Lock edge {_lock_edge_max:.1%} vs best available {_best_board_edge:.1%} "
+                    f"(gap {_gap:.1%})"
+                    + (f" — {_better.get('Player','')} {_better.get('Prop','')} available" if _better else "")
+                ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 5 — Lock Selection",
+                    f"Lock edge {_lock_edge_max:.1%} | Best available {_best_board_edge:.1%} | Gap {_gap:.1%} ✅"
+                ))
+        else:
+            _audit_results.append(_audit_pass(
+                "Audit 5 — Lock Selection",
+                "No locks today yet" if not _today_locks_a else "No board data to compare"
+            ))
+
+        # ── AUDIT 6: Data Routing ───────────────────────────────
+        # Compares OddsAPI raw data vs what the UI shows.
+        # Catches cases where data was fetched but not displayed.
+        _routing_failures = []
+        if _audit_games:
+            for g in _audit_games:
+                _oddsapi_ml  = g.get("OddsAPI ML Home","N/A")
+                _display_ml  = g.get("HomeML", g.get("Home ML","N/A"))
+                _oddsapi_sp  = g.get("OddsAPI Spread","N/A")
+                _display_sp  = g.get("Spread","N/A")
+                _matchup     = g.get("matchup","?")
+                # If OddsAPI has data but display shows N/A = routing failure
+                if _oddsapi_ml not in ("N/A",None,"") and _display_ml in ("N/A",None,""):
+                    _routing_failures.append(
+                        f"🚨 ML routing: {_matchup} OddsAPI={_oddsapi_ml} → UI=No Market"
+                    )
+                if _oddsapi_sp not in ("N/A",None,"") and _display_sp in ("N/A",None,""):
+                    _routing_failures.append(
+                        f"🚨 Spread routing: {_matchup} OddsAPI={_oddsapi_sp} → UI=No Market"
+                    )
+        if _routing_failures:
+            _audit_results.append(_audit_fail(
+                "Audit 6 — Data Routing",
+                " | ".join(_routing_failures[:3])
+            ))
+        else:
+            _games_checked = len(_audit_games)
+            _audit_results.append(_audit_pass(
+                "Audit 6 — Data Routing",
+                f"{_games_checked} game(s) — all OddsAPI fields routed to UI correctly"
+            ))
+
+        # ── Display audit results ───────────────────────────────
+        _fails  = [r for r in _audit_results if r["status"] == "FAIL"]
+        _warns  = [r for r in _audit_results if r["status"] == "WARN"]
+        _passes = [r for r in _audit_results if r["status"] == "PASS"]
+        _score  = round((len(_passes) * 100 + len(_warns) * 60) / max(1, len(_audit_results)))
+
+        # Score banner
+        _score_color = "#22c55e" if _score >= 90 else "#e8a020" if _score >= 70 else "#e04040"
+        _score_label = "PASS" if _score >= 90 else "WARNING" if _score >= 70 else "FAIL"
+        st.markdown(
+            f'<div style="background:{_score_color}11;border:1px solid {_score_color}33;'
+            f'border-radius:8px;padding:0.8rem 1.2rem;margin-bottom:0.8rem;'
+            f'display:flex;align-items:center;justify-content:space-between;">'
+            f'<div>'
+            f'<span style="color:{_score_color};font-size:1.2rem;font-weight:700;">MODEL HEALTH</span>'
+            f'<span style="color:#8a9ab0;font-size:0.9rem;margin-left:1rem;">'
+            f'{len(_passes)} PASS · {len(_warns)} WARN · {len(_fails)} FAIL</span>'
+            f'</div>'
+            f'<div style="text-align:right;">'
+            f'<span style="color:{_score_color};font-size:2rem;font-weight:700;">{_score}</span>'
+            f'<span style="color:#6a7a8a;font-size:0.9rem;">/100 {_score_label}</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # Individual audit rows
+        for r in _audit_results:
+            _rc = "#22c55e" if r["status"]=="PASS" else "#e8a020" if r["status"]=="WARN" else "#e04040"
+            _icon = "✅" if r["status"]=="PASS" else "⚠️" if r["status"]=="WARN" else "🚨"
+            st.markdown(
+                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-left:3px solid {_rc};'
+                f'border-radius:6px;padding:0.5rem 0.8rem;margin-bottom:0.3rem;">'
+                f'<div style="display:flex;align-items:center;justify-content:space-between;">'
+                f'<span style="color:#e8f0f8;font-size:0.95rem;">{_icon} {r["name"]}</span>'
+                f'<span style="color:{_rc};font-size:0.85rem;font-weight:700;">{r["status"]}</span>'
+                f'</div>'
+                + (f'<div style="color:#8a9ab0;font-size:0.8rem;margin-top:2px;">{r["detail"]}</div>' if r["detail"] else "")
+                + '</div>',
+                unsafe_allow_html=True
+            )
+
+        if _fails:
+            st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
+
+    st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
     st.caption("Quick health check on signal quality. Full details in History tab.")
     _sys_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
