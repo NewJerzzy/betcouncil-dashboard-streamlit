@@ -4317,7 +4317,84 @@ def fetch_underdog_injuries(sport):
         return {}
 
 @st.cache_data(ttl=900)
-def fetch_injury_news(sport):
+def fetch_rotowire_injuries(sport):
+    """
+    Fetch injury/news feed from RotoWire RSS — free, no key needed.
+    Supplements ESPN injury data with RotoWire's editorial injury intel.
+    Returns list of {player, status, note, sport, source} dicts.
+    URL format: rotowire.com/rss/news.php?sport=NBA
+    """
+    SPORT_MAP = {
+        "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
+        "NFL": "NFL", "WNBA": "WNBA",
+    }
+    rw_sport = SPORT_MAP.get(sport)
+    if not rw_sport:
+        return []
+    try:
+        url = f"https://www.rotowire.com/rss/news.php?sport={rw_sport}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        }
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return []
+
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+        channel = root.find("channel")
+        if channel is None:
+            return []
+
+        results = []
+        for item in channel.findall("item")[:20]:
+            # Extract CDATA content from title and description
+            title_el = item.find("title")
+            desc_el  = item.find("description")
+            title    = (title_el.text or "").strip() if title_el is not None else ""
+            desc     = (desc_el.text or "").strip() if desc_el is not None else ""
+
+            if not title:
+                continue
+
+            # RotoWire format: "Player Name: News detail here"
+            if ":" in title:
+                player_part, news_part = title.split(":", 1)
+                player = player_part.strip()
+                note   = news_part.strip()
+            else:
+                player = title
+                note   = desc[:150] if desc else ""
+
+            # Detect injury status from keywords
+            note_lower = note.lower()
+            if any(w in note_lower for w in ("out ", "ruled out", "won't play", "will not play", "did not play")):
+                status = "OUT"
+            elif any(w in note_lower for w in ("doubtful",)):
+                status = "DOUBTFUL"
+            elif any(w in note_lower for w in ("questionable", "uncertain", "listed", "probable")):
+                status = "QUESTIONABLE"
+            elif any(w in note_lower for w in ("day-to-day", "dtd", "limited", "rest")):
+                status = "QUESTIONABLE"
+            elif any(w in note_lower for w in ("returns", "cleared", "activated", "available", "no injury")):
+                status = "AVAILABLE"
+            else:
+                status = "NEWS"
+
+            results.append({
+                "player": player,
+                "status": status,
+                "note":   note[:200],
+                "sport":  sport,
+                "source": "RotoWire",
+            })
+
+        return results
+    except Exception:
+        return []
+
+
     slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NFL": "football/nfl", "NHL": "hockey/nhl"}
     path = slug_map.get(sport, "")
     if not path:
@@ -7975,7 +8052,8 @@ def load_sport_data(sport):
     def _pf_oddspapi():     return fetch_oddspapi_props(sport)
     def _pf_bdl():          return fetch_bdl_props(sport)
     def _pf_sleeper():      return fetch_sleeper_props(sport)
-    def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL"] else {}
+    def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else {}
+    def _pf_rw_injuries():  return fetch_rotowire_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
@@ -7985,13 +8063,13 @@ def load_sport_data(sport):
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
-        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_public,
+        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
-     bdl_props_raw, sleeper_props_raw, injuries, public_betting,
+     bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw) = _results
 
     # Unpack game_lines tuple safely
@@ -8011,6 +8089,22 @@ def load_sport_data(sport):
         st.session_state["public_betting_data"] = public_betting
     if an_props:
         st.session_state["an_props_data"] = an_props
+
+    # Merge RotoWire injuries into main injuries dict
+    # RotoWire supplements ESPN with editorial injury intelligence
+    rw_injuries = rw_injuries_raw or []
+    if rw_injuries and isinstance(injuries, dict):
+        for rw in rw_injuries:
+            pname = normalize_name(rw.get("player",""))
+            if pname and rw.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE"):
+                if pname not in injuries:
+                    injuries[pname] = {
+                        "status": rw["status"],
+                        "note":   rw.get("note",""),
+                        "source": "RotoWire",
+                    }
+    st.session_state["rw_injuries"] = rw_injuries
+    st.session_state["injuries_combined"] = injuries
 
     # Build action network lookup
     an_lookup = {}
@@ -9319,15 +9413,33 @@ with tabs[0]:
 
         # ── INJURY ALERTS ───────────────────────────────────
         injury_props = [p for p in board if p.get("Injury")]
-        if injury_props:
+        rw_inj_today = st.session_state.get("rw_injuries", [])
+        rw_inj_serious = [i for i in rw_inj_today if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")]
+        if injury_props or rw_inj_serious:
             st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Injury Alerts</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
             inj_html = '<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">'
             seen_inj = set()
+            # Board-level injuries (affect today's props)
             for ip in injury_props[:4]:
                 player = ip.get("Player","")
                 if player not in seen_inj:
                     seen_inj.add(player)
-                    inj_html += f'<div style="margin-bottom:0.5rem;"><span style="color:#e04040;font-weight:700;">{player}</span> <span style="color:#b8c6d6;font-size:1.0rem;">— {ip.get("Injury","Questionable")}: Monitor usage impact</span></div>'
+                    inj_html += (f'<div style="margin-bottom:0.5rem;">'
+                                 f'<span style="color:#e04040;font-weight:700;">{player}</span> '
+                                 f'<span style="color:#b8c6d6;font-size:1.0rem;">— {ip.get("Injury","Questionable")}: Monitor usage impact</span>'
+                                 f'</div>')
+            # RotoWire additional injuries not already shown
+            for rw in rw_inj_serious[:6]:
+                pname = rw.get("player","")
+                if pname and pname not in seen_inj:
+                    seen_inj.add(pname)
+                    _sc = {"OUT":"#e04040","DOUBTFUL":"#e04040","QUESTIONABLE":"#e8a020"}.get(rw["status"],"#e8a020")
+                    inj_html += (f'<div style="margin-bottom:0.4rem;">'
+                                 f'<span style="color:{_sc};font-weight:700;">{pname}</span> '
+                                 f'<span style="color:{_sc};font-size:0.85rem;">[{rw["status"]}]</span> '
+                                 f'<span style="color:#8a9ab0;font-size:0.9rem;">— {rw.get("note","")[:100]}</span> '
+                                 f'<span style="color:#4a6a8a;font-size:0.8rem;">[RotoWire]</span>'
+                                 f'</div>')
             inj_html += '</div>'
             st.markdown(inj_html, unsafe_allow_html=True)
 
