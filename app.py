@@ -1915,20 +1915,41 @@ def get_clv_summary():
     positive_clv = sum(1 for c in clv_data if c.get("clv", 0) > 0)
     avg_clv = sum(c.get("clv", 0) for c in clv_data) / total if total else 0
 
-    # Pinnacle-specific CLV
-    pinn_clv_entries = [c for c in clv_data if c.get("pinnacle_prob_at_lock")]
+    # Multi-book CLV — Pinnacle + Circa + BetOnline
+    SHARP_BOOK_KEYS = {
+        "pinnacle_prob_at_lock": "Pinnacle",
+        "circa_prob_at_lock":    "Circa",
+        "betonline_prob_at_lock":"BetOnline",
+    }
     pinn_avg_edge = 0
-    if pinn_clv_entries:
+    book_clv_summary = {}
+    for prob_key, book_label in SHARP_BOOK_KEYS.items():
+        entries = [c for c in clv_data if c.get(prob_key)]
+        if not entries:
+            continue
         edges = []
-        for c in pinn_clv_entries:
+        for c in entries:
             try:
-                pinn_prob = float(str(c.get("pinnacle_prob_at_lock","0")).replace("%","")) / 100
+                book_prob = float(str(c.get(prob_key,"0")).replace("%","")) / 100
                 model_prob = c.get("prob", 0.5)
-                if pinn_prob > 0:
-                    edges.append(model_prob - pinn_prob)
+                if book_prob > 0:
+                    edges.append(model_prob - book_prob)
             except Exception:
                 pass
-        pinn_avg_edge = sum(edges) / len(edges) if edges else 0
+        if edges:
+            avg_e = sum(edges) / len(edges)
+            book_clv_summary[book_label] = {
+                "avg_edge": round(avg_e, 4),
+                "n":        len(edges),
+                "beat_pct": sum(1 for e in edges if e > 0) / len(edges),
+            }
+            if book_label == "Pinnacle":
+                pinn_avg_edge = avg_e
+    
+    # Consensus sharp edge — average across all sharp books found
+    all_sharp_edges = [v["avg_edge"] for v in book_clv_summary.values()]
+    consensus_sharp_edge = sum(all_sharp_edges) / len(all_sharp_edges) if all_sharp_edges else 0
+    pinn_clv_entries = [c for c in clv_data if c.get("pinnacle_prob_at_lock")]
 
     # Recent form (last 20)
     recent = clv_data[-20:] if len(clv_data) >= 20 else clv_data
@@ -1936,12 +1957,15 @@ def get_clv_summary():
     recent_positive = sum(1 for c in recent if c.get("clv", 0) > 0)
 
     return {
-        "total_tracked": total,
-        "positive_clv_pct": positive_clv / total if total else 0,
-        "avg_clv": avg_clv,
-        "recent_avg_clv": recent_avg,
-        "recent_positive_pct": recent_positive / len(recent) if recent else 0,
-        "pinnacle_avg_edge": pinn_avg_edge,
+        "total_tracked":        total,
+        "positive_clv_pct":     positive_clv / total if total else 0,
+        "avg_clv":              avg_clv,
+        "recent_avg_clv":       recent_avg,
+        "recent_positive_pct":  recent_positive / len(recent) if recent else 0,
+        "pinnacle_avg_edge":    pinn_avg_edge,
+        "book_clv":             book_clv_summary,
+        "consensus_sharp_edge": round(consensus_sharp_edge, 4),
+        "n_sharp_books":        len(book_clv_summary),
         "verdict": (
             "ELITE — Consistently beating sharp lines" if avg_clv >= 1.0 and positive_clv/total >= 0.55
             else "GOOD — Positive CLV trend" if avg_clv >= 0.3
@@ -5907,6 +5931,120 @@ def detect_sharp_movement(movements):
         pass
     return False, "", 0
 
+def compute_sharp_consensus_no_vig(odds_data, matchup, market="total"):
+    """
+    Builds consensus fair price from the three sharpest books:
+    Pinnacle, Circa Sports, BetOnline.
+    
+    Stronger signal than single-book no-vig because:
+    - Eliminates idiosyncratic book error
+    - Captures true market consensus
+    - Reduces noise from temporary imbalances
+    
+    Returns: {"fair_prob": float, "books_used": list, 
+              "consensus_line": float, "agreement": str}
+    """
+    SHARP_BOOKS = ["pinnacle", "circa_sports", "betonlineag"]
+    SHARP_LABELS = {
+        "pinnacle":    "Pinnacle",
+        "circa_sports": "Circa",
+        "betonlineag": "BetOnline",
+    }
+    
+    book_probs = {}
+    book_lines = {}
+    
+    for game in (odds_data or []):
+        if matchup.lower() not in game.get("Matchup","").lower():
+            continue
+        for book_key, label in SHARP_LABELS.items():
+            over_key  = f"{label} Over"
+            under_key = f"{label} Under"
+            line_key  = f"{label} Total"
+            over_ml   = game.get(over_key)
+            under_ml  = game.get(under_key)
+            if over_ml and under_ml:
+                try:
+                    prob = no_vig_prob(int(over_ml), int(under_ml))
+                    book_probs[label] = prob
+                    if game.get(line_key):
+                        book_lines[label] = float(game[line_key])
+                except Exception:
+                    pass
+
+    if not book_probs:
+        return None
+
+    books_used  = list(book_probs.keys())
+    avg_prob    = sum(book_probs.values()) / len(book_probs)
+    avg_line    = sum(book_lines.values()) / len(book_lines) if book_lines else None
+
+    # Agreement check — how spread are the sharp books?
+    if len(book_probs) >= 2:
+        spread = max(book_probs.values()) - min(book_probs.values())
+        if spread < 0.01:
+            agreement = "STRONG"   # books within 1% — high conviction
+        elif spread < 0.03:
+            agreement = "MODERATE"
+        else:
+            agreement = "DIVERGENT"  # sharp books disagree — flag it
+    else:
+        agreement = "SINGLE_BOOK"
+
+    return {
+        "fair_prob":       round(avg_prob, 4),
+        "book_probs":      book_probs,
+        "books_used":      books_used,
+        "consensus_line":  round(avg_line, 1) if avg_line else None,
+        "agreement":       agreement,
+        "n_books":         len(book_probs),
+        "label":           f"Consensus ({'/'.join(b[:3] for b in books_used)})",
+    }
+
+
+def get_sharp_consensus_for_prop(player, prop_name, line, side, sport, odds_data=None):
+    """
+    Wrapper: finds sharp consensus no-vig for a player prop.
+    Checks Pinnacle + Circa + BetOnline from loaded odds data.
+    Falls back to Pinnacle-only if others unavailable.
+    """
+    if odds_data is None:
+        odds_data = st.session_state.get("odds_api_cache", [])
+    
+    SHARP_BOOKS_PROP = ["pinnacle", "circa_sports", "betonlineag"]
+    book_probs = {}
+    
+    for p in (odds_data or []):
+        if normalize_name(p.get("Player","")) != normalize_name(player):
+            continue
+        if p.get("Prop","") != prop_name:
+            continue
+        book = p.get("Book","").lower()
+        if book not in SHARP_BOOKS_PROP:
+            continue
+        over_prob = p.get("OverProb") or p.get("NoVigProb")
+        if over_prob:
+            label = {"pinnacle":"Pinnacle","circa_sports":"Circa","betonlineag":"BetOnline"}.get(book, book)
+            book_probs[label] = float(over_prob)
+    
+    if not book_probs:
+        return None
+    
+    avg = sum(book_probs.values()) / len(book_probs)
+    if side == "UNDER":
+        avg = 1 - avg
+    
+    spread = (max(book_probs.values()) - min(book_probs.values())) if len(book_probs) >= 2 else 0
+    
+    return {
+        "fair_prob":   round(avg, 4),
+        "book_probs":  book_probs,
+        "n_books":     len(book_probs),
+        "agreement":   "STRONG" if spread < 0.01 else "MODERATE" if spread < 0.03 else "DIVERGENT",
+        "books_used":  list(book_probs.keys()),
+    }
+
+
 def detect_steam_moves(sport):
     cache_path = os.path.join(CACHE_DIR, f"odds_api_games_{sport}.pkl")
     if not os.path.exists(cache_path):
@@ -5954,18 +6092,42 @@ def detect_steam_moves(sport):
                         bov_base = float(str(base.get("bovada_total", 0)).replace("N/A","0"))
                         espn_move = curr_total - base_total
                         bov_move = bov_curr - bov_base
+                        # Triple-book steam: Pinnacle + Circa + BetOnline all move together
+                        # Much stronger signal than ESPN + Bovada
+                        circa_curr  = float(str(curr.get("circa_total", 0) or 0).replace("N/A","0") or "0")
+                        circa_base  = float(str(base.get("circa_total", 0) or 0).replace("N/A","0") or "0")
+                        circa_move  = circa_curr - circa_base if circa_curr and circa_base else None
+                        pinn_curr   = float(str(curr.get("pinnacle_total", 0) or 0).replace("N/A","0") or "0")
+                        pinn_base   = float(str(base.get("pinnacle_total", 0) or 0).replace("N/A","0") or "0")
+                        pinn_move   = pinn_curr - pinn_base if pinn_curr and pinn_base else None
+                        # Count how many books moved in same direction
+                        all_moves = [(espn_move, "ESPN"), (bov_move, "Bovada")]
+                        if circa_move is not None: all_moves.append((circa_move, "Circa"))
+                        if pinn_move  is not None: all_moves.append((pinn_move,  "Pinnacle"))
+                        sig_moves = [m for m, _ in all_moves if abs(m) >= 0.5]
+                        sig_dirs  = [m > 0 for m, _ in all_moves if abs(m) >= 0.5]
+                        n_agree   = sum(sig_dirs) if sum(sig_dirs) > len(sig_dirs)/2 else len(sig_dirs) - sum(sig_dirs)
+                        moved_books = [b for m, b in all_moves if abs(m) >= 0.5 and (m > 0) == (espn_move > 0)]
+                        # Sharp steam = Pinnacle or Circa in the move
+                        is_sharp_steam = any(b in ("Pinnacle","Circa") for b in moved_books)
                         if (abs(espn_move) >= 0.5 and abs(bov_move) >= 0.5 and (espn_move > 0) == (bov_move > 0)):
                             direction = "↑" if espn_move > 0 else "↓"
+                            strength = "🔥🔥 SHARP STEAM" if is_sharp_steam and n_agree >= 3 else "🔥 STEAM"
                             steam_moves.append({
-                                "matchup": matchup,
-                                "type": "TOTAL",
-                                "direction": direction,
-                                "espn_move": round(espn_move, 1),
-                                "bov_move": round(bov_move, 1),
-                                "current": curr_total,
-                                "was": base_total,
-                                "age_mins": round(baseline_age, 0),
-                                "signal": f"🔥 STEAM {direction}: Total moved {direction}{abs(espn_move)} on ESPN + Bovada in {baseline_age:.0f}m",
+                                "matchup":     matchup,
+                                "type":        "TOTAL",
+                                "direction":   direction,
+                                "espn_move":   round(espn_move, 1),
+                                "bov_move":    round(bov_move, 1),
+                                "circa_move":  round(circa_move, 1) if circa_move else None,
+                                "pinn_move":   round(pinn_move, 1) if pinn_move else None,
+                                "books_moved": moved_books,
+                                "n_books":     len(moved_books),
+                                "is_sharp":    is_sharp_steam,
+                                "current":     curr_total,
+                                "was":         base_total,
+                                "age_mins":    round(baseline_age, 0),
+                                "signal":      f"{strength} {direction}: {len(moved_books)} books moved ({', '.join(moved_books)}) in {baseline_age:.0f}m",
                             })
                     except Exception:
                         pass
@@ -9383,10 +9545,14 @@ with tabs[0]:
             _clv = get_clv_summary()
             if _clv:
                 _clv_color = "#22c55e" if _clv["avg_clv"] > 0 else "#e04040"
+                _sharp_edge = _clv.get("consensus_sharp_edge", _clv.get("pinnacle_avg_edge", 0))
+                _sharp_color = "#22c55e" if _sharp_edge > 0 else "#e04040"
+                _n_books = _clv.get("n_sharp_books", 1)
+                _book_label = f"vs {_n_books} sharp book{'s' if _n_books > 1 else ''}"
                 _clv_html = (
                     f'<div style="font-size:20px;font-weight:700;color:{_clv_color};">{_clv["avg_clv"]:+.2f}</div>'
                     f'<div style="font-size:10px;color:#8a9ab0;">Avg CLV</div>'
-                    f'<div style="font-size:11px;color:#e8f0f8;margin-top:4px;">Beat Pinnacle: {_clv.get("positive_clv_pct",0):.0%}</div>'
+                    f'<div style="font-size:11px;color:{_sharp_color};margin-top:3px;">{_book_label}: {_sharp_edge:+.1%}</div>'
                     f'<div style="font-size:10px;color:#6a7a8a;">{_clv.get("total_tracked",0)} bets tracked</div>'
                 )
             else:
