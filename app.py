@@ -132,8 +132,8 @@ BDL_PROPS_DAILY_LIMIT = 60
 
 # Odds API constants
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex"
-ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex"
+ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex,circa_sports,betonlineag"
+ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex,circa_sports,betonlineag"
 
 # Action Network public betting API
 ACTION_NETWORK_BASE = (
@@ -4930,7 +4930,7 @@ def fetch_odds_api_game_lines(sport):
             home_ml = "N/A"
             away_ml = "N/A"
             odds_source = "N/A"
-            priority = ["bovada", "mybookieag", "draftkings", "fanduel", "betmgm", "caesars", "us_ex"]
+            priority = ["bovada", "mybookieag", "draftkings", "fanduel", "betmgm", "caesars", "circa_sports", "betonlineag", "us_ex"]
             for preferred_book in priority:
                 for bm in event.get("bookmakers", []):
                     if bm.get("key") != preferred_book:
@@ -7791,13 +7791,15 @@ def load_sport_data(sport):
             # Group by book
             for op in odds_props:
                 book = op.get("Book","").lower()
-                if book in ("fanduel","draftkings","betmgm","caesars","bovada"):
+                if book in ("fanduel","draftkings","betmgm","caesars","bovada","circa_sports","betonlineag"):
                     book_display = {
                         "fanduel": "FanDuel",
                         "draftkings": "DraftKings",
                         "betmgm": "BetMGM",
                         "caesars": "Caesars",
-                        "bovada": "Bovada"
+                        "bovada": "Bovada",
+                        "circa_sports": "Circa",
+                        "betonlineag": "BetOnline"
                     }.get(book, book.title())
                     all_alt_sources.append((op, book_display))
         except Exception:
@@ -11522,7 +11524,7 @@ with tabs[8]:
                 with open(_odds_cache, "rb") as _f:
                     _odds_props = pickle.load(_f)
                 for _op in (_odds_props or []):
-                    _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada"}.get(_op.get("Book","").lower())
+                    _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada","circa_sports":"Circa","betonlineag":"BetOnline"}.get(_op.get("Book","").lower())
                     if _bk2:
                         _ls_add([_op], _bk2)
             except Exception:
