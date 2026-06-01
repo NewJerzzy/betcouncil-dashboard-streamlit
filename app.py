@@ -369,7 +369,10 @@ TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPR
 
 TIER_THRESHOLDS = {
     "NBA": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
-    "MLB": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "MLB": {"SOVEREIGN": 0.08, "ELITE": 0.04, "APPROVED": 0.02, "LEAN": 0.01},
+    # MLB game-line thresholds are lower than prop thresholds because
+    # power rating diffs are small (0.5-3pts on 100-112 scale).
+    # ML edge of 2% is genuinely meaningful in MLB betting.
     "NFL": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
     "NHL": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
     "WNBA": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
@@ -3080,6 +3083,30 @@ def fetch_todays_referees(sport):
         pass
     return officials
 
+GAME_TIER_THRESHOLDS = {
+    "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "MLB":    {"SOVEREIGN": 0.06, "ELITE": 0.03, "APPROVED": 0.015, "LEAN": 0.005},
+    "NFL":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "NHL":    {"SOVEREIGN": 0.10, "ELITE": 0.06, "APPROVED": 0.03, "LEAN": 0.01},
+    "WNBA":   {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "Soccer": {"SOVEREIGN": 0.10, "ELITE": 0.06, "APPROVED": 0.03, "LEAN": 0.01},
+}
+
+def get_game_tier(edge, sport="NBA") -> str:
+    """
+    Tier for GAME LINES (spread/total/ML).
+    Uses lower thresholds than prop tiers because power rating
+    diffs are compressed — a 2% ML edge in MLB is meaningful.
+    """
+    thresholds = GAME_TIER_THRESHOLDS.get(sport, GAME_TIER_THRESHOLDS["NBA"])
+    edge = abs(edge)
+    if edge >= thresholds["SOVEREIGN"]: return "SOVEREIGN"
+    if edge >= thresholds["ELITE"]:     return "ELITE"
+    if edge >= thresholds["APPROVED"]:  return "APPROVED"
+    if edge >= thresholds["LEAN"]:      return "LEAN"
+    return "PASS"
+
+
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     if power_ratings is None:
         power_ratings = NBA_POWER_RATINGS
@@ -3134,7 +3161,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
-                    tier = get_tier(abs(spread_edge_pct), sport)
+                    tier = get_game_tier(abs(spread_edge_pct), sport)
                     recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts"})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
@@ -3205,7 +3232,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
-                    tier = get_tier(abs(total_edge_pct), sport)
+                    tier = get_game_tier(abs(total_edge_pct), sport)
                     recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
@@ -10023,17 +10050,29 @@ with tabs[2]:
                 {"label":"SPREAD",
                  "pick":(_g.get("SpreadPick") or
                          ("No Market" if _g.get("Spread","N/A") in ("N/A","",None)
-                          else ("No Edge" if not any(r.get("type")=="SPREAD" for r in _g.get("recommendations",[])) else _g.get("Spread","—")))),
+                          else _g.get("Spread","—"))),
+                 "note": ("" if _g.get("SpreadPick") else
+                          ("" if _g.get("Spread","N/A") in ("N/A","",None)
+                           else ("" if any(r.get("type")=="SPREAD" for r in _g.get("recommendations",[]))
+                                else "No Edge"))),
                  "line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","LEAN")},
                 {"label":"TOTAL",
                  "pick":(_g.get("TotalPick") or
                          ("No Market" if _g.get("Total","N/A") in ("N/A","",None)
-                          else ("No Edge" if not any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[])) else ("O/U " + str(_g.get("Total","")))))),
+                          else ("O/U " + str(_g.get("Total",""))))),
+                 "note": ("" if _g.get("TotalPick") else
+                          ("" if _g.get("Total","N/A") in ("N/A","",None)
+                           else ("" if any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[]))
+                                else "No Edge"))),
                  "line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
                 {"label":"ML",
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
-                          else ("No Edge" if not any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[])) else _g.get("FavoriteTeam","—")))),
+                          else (_g.get("FavoriteTeam") or _g.get("home","") + " " + str(_g.get("HomeML",""))))),
+                 "note": ("" if _g.get("MLPick") else
+                          ("" if _g.get("HomeML","N/A") in ("N/A","",None)
+                           else ("" if any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[]))
+                                else "No Edge"))),
                  "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
                 {"label":"ALT LINE","pick":_alt_line or "—","line":_alt_line or "—","edge":_alt_edge,"tier":_alt_tier},
             ]
@@ -10059,11 +10098,12 @@ with tabs[2]:
                         f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#4a6a8a;">{_pk["label"]}</span>'
                         f'<span style="font-size:18px;font-weight:700;padding:1px 6px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
                         f'</div>'
-                        f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">'
+                        f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">'
                         f'<span style="font-size:18px;font-weight:700;color:#e8f0f8;">{_pk["pick"]}</span>'
                         f'<span style="font-size:15px;color:#8a9ab0;">{_pk["line"]}</span>'
                         f'</div>'
-                        f'<span style="font-size:18px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"],1)) if _is_pos else str(round(_pk["edge"],1))}% edge</span>'
+                        + (f'<div style="font-size:10px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
+                        + f'<span style="font-size:18px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"],1)) if _is_pos else str(round(_pk["edge"],1))}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
@@ -11287,6 +11327,135 @@ with tabs[5]:
         st.caption("💡 Ctrl+A to select all, Ctrl+C to copy.")
 
 
+@st.cache_data(ttl=1800)
+def fetch_mlb_player_game_logs(player_name, last_n=15):
+    """Fetch MLB player recent game logs via MLB Stats API."""
+    try:
+        cache_key = f"mlb_logs_{normalize_name(player_name)}"
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+        # Search for player ID
+        search_url = f"https://statsapi.mlb.com/api/v1/people/search?names={player_name.replace(' ','+')}&sportId=1"
+        r = requests.get(search_url, timeout=8)
+        if r.status_code != 200: return []
+        people = r.json().get("people", [])
+        if not people: return []
+        player_id = people[0]["id"]
+        # Get recent game logs
+        stats_url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+                     f"?stats=gameLog&season=2026&sportId=1&group=hitting")
+        r2 = requests.get(stats_url, timeout=8)
+        if r2.status_code != 200: return []
+        splits = r2.json().get("stats", [{}])[0].get("splits", [])[-last_n:]
+        logs = []
+        for s in splits:
+            stat = s.get("stat", {})
+            game = s.get("game", {})
+            team = s.get("team", {})
+            opponent = s.get("opponent", {})
+            logs.append({
+                "date":     s.get("date",""),
+                "home":     s.get("isHome", True),
+                "opponent": opponent.get("abbreviation",""),
+                "H":        stat.get("hits", 0),
+                "HR":       stat.get("homeRuns", 0),
+                "RBI":      stat.get("rbi", 0),
+                "R":        stat.get("runs", 0),
+                "BB":       stat.get("baseOnBalls", 0),
+                "K":        stat.get("strikeOuts", 0),
+                "AB":       stat.get("atBats", 0),
+            })
+        st.session_state[cache_key] = logs
+        return logs
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800)
+def fetch_nhl_player_game_logs(player_name, last_n=15):
+    """Fetch NHL player recent game logs via NHL API."""
+    try:
+        cache_key = f"nhl_logs_{normalize_name(player_name)}"
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+        # Search player
+        search_url = f"https://search.d3.nhle.com/api/v1/search?q={player_name.replace(' ','+')}&type=player&active=true"
+        r = requests.get(search_url, timeout=8)
+        if r.status_code != 200: return []
+        results = r.json()
+        if not results: return []
+        player_id = results[0].get("playerId") or results[0].get("id")
+        if not player_id: return []
+        # Get game log
+        log_url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
+        r2 = requests.get(log_url, timeout=8)
+        if r2.status_code != 200: return []
+        game_log = r2.json().get("gameLog", [])[-last_n:]
+        logs = []
+        for g in game_log:
+            logs.append({
+                "date":      g.get("gameDate",""),
+                "home":      g.get("homeRoadFlag","H") == "H",
+                "opponent":  g.get("opponentAbbrev",""),
+                "PTS":       g.get("points", 0),
+                "G":         g.get("goals", 0),
+                "A":         g.get("assists", 0),
+                "SOG":       g.get("shots", 0),
+                "TOI":       g.get("toi","0:00"),
+            })
+        st.session_state[cache_key] = logs
+        return logs
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800)
+def fetch_wnba_player_game_logs(player_name, last_n=15):
+    """Fetch WNBA player recent game logs via WNBA Stats API."""
+    try:
+        cache_key = f"wnba_logs_{normalize_name(player_name)}"
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+        url = ("https://stats.wnba.com/stats/playergamelogs"
+               "?DateFrom=&DateTo=&GameSegment=&LastNGames=0&LeagueID=10"
+               "&Location=&MeasureType=Base&Month=0&OpponentTeamID=0"
+               "&Outcome=&PORound=0&PerMode=PerGame&Period=0&PlayerID=0"
+               f"&Season=2025&SeasonSegment=&SeasonType=Regular+Season"
+               "&ShotClockRange=&VsConference=&VsDivision=")
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.wnba.com/",
+            "Origin": "https://www.wnba.com",
+        }
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200: return []
+        result_sets = r.json().get("resultSets", [])
+        if not result_sets: return []
+        headers_list = result_sets[0]["headers"]
+        rows = result_sets[0]["rowSet"]
+        # Filter by player name
+        name_idx = headers_list.index("PLAYER_NAME") if "PLAYER_NAME" in headers_list else -1
+        if name_idx < 0: return []
+        player_rows = [row for row in rows
+                       if normalize_name(str(row[name_idx])) == normalize_name(player_name)][-last_n:]
+        logs = []
+        idx = {h: i for i, h in enumerate(headers_list)}
+        for row in player_rows:
+            logs.append({
+                "date":      str(row[idx.get("GAME_DATE",0)])[:10],
+                "home":      "vs" in str(row[idx.get("MATCHUP",0)]),
+                "opponent":  str(row[idx.get("MATCHUP",0)]).split()[-1] if "MATCHUP" in idx else "",
+                "PTS":       row[idx.get("PTS",0)] or 0,
+                "REB":       row[idx.get("REB",0)] or 0,
+                "AST":       row[idx.get("AST",0)] or 0,
+                "MIN":       row[idx.get("MIN",0)] or 0,
+            })
+        st.session_state[cache_key] = logs
+        return logs
+    except Exception:
+        return []
+
+
 # ----- TAB 6: PLAYER LOOKUP -----
 with tabs[6]:
     st.markdown("## 🔎 Player Lookup")
@@ -11299,7 +11468,9 @@ with tabs[6]:
         # Pre-populate suggestions from today's loaded board (zero API calls)
         board_player_names = sorted(set(p["Player"] for p in st.session_state.board_data)) if st.session_state.board_data else []
 
-        col_pl1, col_pl2, col_pl3 = st.columns(3)
+        col_pl0, col_pl1, col_pl2, col_pl3 = st.columns([1,2,1,1])
+        with col_pl0:
+            pl_sport_sel = st.selectbox("Sport", ["NBA","MLB","NHL","WNBA","NFL"], key="pl_sport_sel")
         with col_pl1:
             pl_name_input = st.text_input("Player name", placeholder="Start typing a name…", key="pl_name")
             # Auto-suggest from loaded board
@@ -11356,9 +11527,18 @@ with tabs[6]:
         if st.button("🔍 Look Up Player", key="pl_lookup_btn", type="primary"):
             if pl_name:
                 with st.spinner(f"Loading {pl_name} data..."):
-                    logs = fetch_player_game_logs(pl_name, last_n=pl_games)
+                    _sport_sel = st.session_state.get("pl_sport_sel", "NBA")
+                    if _sport_sel == "MLB":
+                        logs = fetch_mlb_player_game_logs(pl_name, last_n=pl_games)
+                    elif _sport_sel == "NHL":
+                        logs = fetch_nhl_player_game_logs(pl_name, last_n=pl_games)
+                    elif _sport_sel == "WNBA":
+                        logs = fetch_wnba_player_game_logs(pl_name, last_n=pl_games)
+                    else:
+                        logs = fetch_player_game_logs(pl_name, last_n=pl_games)
                     st.session_state["pl_logs"] = logs
                     st.session_state["pl_name_display"] = pl_name
+                    st.session_state["pl_sport_used"] = _sport_sel
             else:
                 st.error("Enter a player name.")
 
