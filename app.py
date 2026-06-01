@@ -8991,17 +8991,21 @@ with tabs[0]:
         # ── 1. RECOMMENDED ACTION ──────────────────────────
         board = st.session_state.board_data or []
         game_analysis = st.session_state.get("game_analysis", [])
-        elite_count = sum(1 for p in board if p.get("Tier","") in ["SOVEREIGN","ELITE"])
+        sov_count     = sum(1 for p in board if p.get("Tier","") == "SOVEREIGN")
+        elite_count   = sum(1 for p in board if p.get("Tier","") == "ELITE")
+        approved_count= sum(1 for p in board if p.get("Tier","") == "APPROVED")
+        lean_count    = sum(1 for p in board if p.get("Tier","") == "LEAN")
+        elite_plus    = sov_count + elite_count   # kept for day verdict logic
         game_edge_count = sum(1 for g in game_analysis if g.get("best_edge",0) >= 0.02)
 
-        # Day verdict
-        if elite_count >= 4:
+        # Day verdict — uses elite_plus (SOV+ELITE combined)
+        if elite_plus >= 4:
             action_label, action_color = "Strong Betting Day", "#22c55e"
             action_desc = "Multiple high-conviction plays confirmed by Pinnacle. Favor props over games today."
-        elif elite_count >= 2:
+        elif elite_plus >= 2:
             action_label, action_color = "Selective Betting Day", "#e8a020"
             action_desc = "A few strong plays available. Be selective — stick to Sovereign and Elite tier only."
-        elif elite_count >= 1:
+        elif elite_plus >= 1:
             action_label, action_color = "Light Betting Day", "#e8a020"
             action_desc = "Limited quality. Consider 1 pick max or sitting out."
         else:
@@ -9013,20 +9017,28 @@ with tabs[0]:
             <div style="color:{action_color};font-size:1.3rem;font-weight:700;margin-bottom:0.4rem;">⚡ {action_label.upper()}</div>
             <p style="color:#b8c6d6;font-size:1.0rem;margin-bottom:1rem;">{action_desc}</p>
             <div style="display:flex;gap:0.8rem;">
-                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
-                    <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Elite+ Plays</div>
-                    <div style="color:#22c55e;font-size:1.4rem;font-weight:700;">{elite_count}</div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #c8840a44;">
+                    <div style="color:#c8840a;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">👑 SOV</div>
+                    <div style="color:#c8840a;font-size:1.6rem;font-weight:700;">{sov_count}</div>
+                </div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #0ea5a044;">
+                    <div style="color:#0ea5a0;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">⭐ ELITE</div>
+                    <div style="color:#0ea5a0;font-size:1.6rem;font-weight:700;">{elite_count}</div>
+                </div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #378add44;">
+                    <div style="color:#378add;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">✓ APP</div>
+                    <div style="color:#378add;font-size:1.6rem;font-weight:700;">{approved_count}</div>
+                </div>
+                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #4a5a6a44;">
+                    <div style="color:#6a7a8a;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">📊 LEAN</div>
+                    <div style="color:#6a7a8a;font-size:1.6rem;font-weight:700;">{lean_count}</div>
                 </div>
                 <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
-                    <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Total at Risk</div>
+                    <div style="color:#8a9ab0;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Total at Risk</div>
                     <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{round(sum(safe_float(p.get("Kelly",0)) for p in board if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")), 1)}u</div>
                 </div>
                 <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
-                    <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Props</div>
-                    <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{len(board)}</div>
-                </div>
-                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
-                    <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.05em;">Game Edges</div>
+                    <div style="color:#8a9ab0;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Game Edges</div>
                     <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{game_edge_count}</div>
                 </div>
             </div>
@@ -9094,17 +9106,36 @@ with tabs[0]:
             for _qi, _qp in enumerate(_top_plays):
                 _qe = _qp.get("Edge",0)
                 _qc = "#22c55e" if _qp.get("Tier")=="SOVEREIGN" else "#378add"
-                _qpin = "📌" if _qp.get("PinnacleConfirms") else ""
+                _qpin = "📌 " if _qp.get("PinnacleConfirms") else ""
+                # Build inline Why drivers
+                _q_drivers, _q_risks = generate_why_drivers(_qp)
+                _q_why = ""
+                if _q_drivers:
+                    _q_why = " · ".join(
+                        f'<span style="color:{c};font-size:10px;">{l} <b>{v}</b></span>'
+                        for l, v, c in _q_drivers
+                    )
+                if _q_risks:
+                    _q_why += (" &nbsp;|&nbsp; "
+                        + " · ".join(
+                            f'<span style="color:{c};font-size:10px;">⚠️ {l} {v}</span>'
+                            for l, v, c in _q_risks
+                        ))
                 st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:0.8rem;background:#0a0e14;'
-                    f'border:1px solid #1e2d3d;border-left:3px solid {_qc};border-radius:6px;'
-                    f'padding:0.5rem 0.8rem;margin-bottom:0.3rem;">'
+                    f'<div style="background:#0a0e14;border:1px solid #1e2d3d;'
+                    f'border-left:3px solid {_qc};border-radius:6px;'
+                    f'padding:0.5rem 0.8rem 0.4rem;margin-bottom:0.4rem;">'
+                    f'<div style="display:flex;align-items:center;gap:0.8rem;">'
                     f'<span style="color:{_qc};font-weight:700;font-size:1.1rem;min-width:22px;">#{_qi+1}</span>'
                     f'<span style="color:#e8f0f8;font-weight:600;flex:1;">{_qp.get("Player","")} '
                     f'{_qp.get("Side","OVER")} {_qp.get("Line","")}</span>'
-                    f'<span style="color:#8a9ab0;font-size:0.95rem;">{_qp.get("Prop","")}</span>'
+                    f'<span style="color:#8a9ab0;font-size:0.9rem;">{_qp.get("Prop","")}</span>'
                     f'<span style="color:{_qc};font-weight:700;">Edge {_qe:.1%}</span>'
-                    f'{_qpin}</div>',
+                    f'<span style="color:#7f77dd;">{_qpin}</span>'
+                    f'</div>'
+                    + (f'<div style="margin-top:3px;padding-left:30px;">{_q_why}</div>'
+                       if _q_why else "")
+                    + f'</div>',
                     unsafe_allow_html=True
                 )
 
