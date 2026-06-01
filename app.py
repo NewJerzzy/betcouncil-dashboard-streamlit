@@ -7997,7 +7997,7 @@ def load_sport_data(sport):
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
         games, is_playoff, home_teams, away_teams = _game_lines_result
-    st.session_state["raw_games_today"] = games  # needed for coverage audit
+        st.session_state["raw_games_today"] = games  # for coverage audit
     else:
         games, is_playoff, home_teams, away_teams = [], False, {}, {}
 
