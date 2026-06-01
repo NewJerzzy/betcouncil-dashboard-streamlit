@@ -3401,8 +3401,9 @@ def analyze_all_games(games, sport, home_teams, away_teams):
     power_ratings = power_map.get(sport, {})
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings)
-        if analysis["best_bet"]:
-            all_game_analysis.append(analysis)
+        # Append all games — not just those with best_bet
+        # Games without edge still needed for coverage audit + display
+        all_game_analysis.append(analysis)
     all_game_analysis.sort(key=lambda x: x["best_edge"], reverse=True)
     return all_game_analysis
 
@@ -7996,6 +7997,7 @@ def load_sport_data(sport):
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
         games, is_playoff, home_teams, away_teams = _game_lines_result
+    st.session_state["raw_games_today"] = games  # needed for coverage audit
     else:
         games, is_playoff, home_teams, away_teams = [], False, {}, {}
 
@@ -12086,11 +12088,15 @@ with tabs[9]:
 
         # ── AUDIT 2: Market Coverage ────────────────────────────
         # Checks spread/total/ML coverage % for today's games.
+        # Uses all games (including those without edge) for accurate coverage.
         # Flags if ML < 80% (likely routing failure like WNBA bug).
-        if _audit_games:
-            _cov_spread = sum(1 for g in _audit_games if g.get("Spread") not in ("N/A",None,"")) / len(_audit_games)
-            _cov_total  = sum(1 for g in _audit_games if g.get("Total")  not in ("N/A",None,"")) / len(_audit_games)
-            _cov_ml     = sum(1 for g in _audit_games if g.get("HomeML", g.get("Home ML","N/A")) not in ("N/A",None,"")) / len(_audit_games)
+        _all_games_raw = st.session_state.get("raw_games_today", _audit_games)
+        _cov_base = _all_games_raw if _all_games_raw else _audit_games
+        if _cov_base:
+            _n_games    = len(_cov_base)
+            _cov_spread = sum(1 for g in _cov_base if g.get("Spread",g.get("spread","N/A")) not in ("N/A",None,"")) / _n_games
+            _cov_total  = sum(1 for g in _cov_base if g.get("Total",g.get("total","N/A"))   not in ("N/A",None,"")) / _n_games
+            _cov_ml     = sum(1 for g in _cov_base if g.get("HomeML",g.get("Home ML","N/A")) not in ("N/A",None,"")) / _n_games
             _cov_issues = []
             if _cov_spread < 0.80: _cov_issues.append(f"Spread {_cov_spread:.0%}")
             if _cov_total  < 0.80: _cov_issues.append(f"Total {_cov_total:.0%}")
@@ -12098,12 +12104,12 @@ with tabs[9]:
             if _cov_issues:
                 _audit_results.append(_audit_fail(
                     "Audit 2 — Market Coverage",
-                    f"{len(_audit_games)} games | Low: {', '.join(_cov_issues)} (threshold >80%)"
+                    f"{_n_games} games | Low: {', '.join(_cov_issues)} (threshold >80%)"
                 ))
             else:
                 _audit_results.append(_audit_pass(
                     "Audit 2 — Market Coverage",
-                    f"{len(_audit_games)} games | Spread {_cov_spread:.0%} Total {_cov_total:.0%} ML {_cov_ml:.0%}"
+                    f"{_n_games} games | Spread {_cov_spread:.0%} Total {_cov_total:.0%} ML {_cov_ml:.0%}"
                 ))
         else:
             _audit_results.append(_audit_warn("Audit 2 — Market Coverage", "No game analysis data"))
