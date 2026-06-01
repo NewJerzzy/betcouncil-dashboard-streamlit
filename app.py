@@ -1194,6 +1194,22 @@ def calculate_edge(fair_prob, side="OVER", sport="NBA"):
     return round(fair_prob - breakeven, 4)
 
 
+def tier_badge(tier):
+    """Reusable HTML tier badge — use in any markdown block."""
+    styles = {
+        "SOVEREIGN": {"bg": "#c8840a", "color": "#fff",     "icon": "👑"},
+        "ELITE":     {"bg": "#0ea5a0", "color": "#fff",     "icon": "⭐"},
+        "APPROVED":  {"bg": "#378add", "color": "#fff",     "icon": "✓"},
+        "LEAN":      {"bg": "#4a5a6a", "color": "#b8c6d6",  "icon": "📊"},
+        "PASS":      {"bg": "#2a3a4a", "color": "#6a7a8a",  "icon": "⏸"},
+    }
+    s = styles.get(tier, styles["LEAN"])
+    return (f'<span style="background:{s["bg"]};color:{s["color"]};'
+            f'padding:2px 9px;border-radius:12px;font-size:11px;'
+            f'font-weight:700;letter-spacing:0.03em;">'
+            f'{s["icon"]} {tier}</span>')
+
+
 def compute_fair_prob(line, avg, std_dev, side="OVER"):
     if avg <= 0:
         return 0.5
@@ -6268,6 +6284,62 @@ def generate_slip_summary(picks, results):
     return "\n".join(lines)
 
 
+@st.dialog("📝 Track This Bet")
+def track_bet_dialog(prop):
+    """
+    Inline bet tracking modal — logs directly from prop card.
+    Faster than navigating to Log Bet tab.
+    Pre-fills all model data; user adds stake, odds, book.
+    """
+    player = prop.get("Player","")
+    prop_name = prop.get("Prop","")
+    side   = prop.get("Side","OVER")
+    line   = prop.get("Line",0)
+    sport  = prop.get("Sport", st.session_state.get("last_sport","NBA"))
+    tier   = prop.get("Tier","APPROVED")
+    edge   = prop.get("Edge",0)
+    prob   = prop.get("Prob",0.55)
+
+    st.markdown(
+        f'{tier_badge(tier)} &nbsp; '
+        f'<span style="font-size:16px;font-weight:700;color:#e8f0f8;">'
+        f'{player} {side} {line} {prop_name}</span>'
+        f'<br><span style="color:#22c55e;font-size:13px;">Edge {edge:.1%} · '
+        f'Fair Prob {prob:.1%}</span>',
+        unsafe_allow_html=True
+    )
+    st.markdown("---")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        stake   = st.number_input("Stake ($)", min_value=1.0, step=5.0, value=25.0)
+        odds    = st.number_input("Odds taken", value=-110, step=5,
+                                  help="-110 = standard juice. Enter positive for underdogs.")
+    with col2:
+        book    = st.selectbox("Sportsbook / Platform",
+                               ["PrizePicks","Underdog","ParlayPlay","DraftKings",
+                                "FanDuel","BetMGM","Caesars","BetRivers","Other"])
+        outcome = st.selectbox("Outcome", ["PENDING","WIN","LOSS","PUSH"])
+
+    notes = st.text_input("Note (optional)", placeholder="Line movement, injury news…")
+
+    if st.button("✅ Confirm & Track", type="primary", use_container_width=True):
+        log_manual_bet(
+            player=player, prop=prop_name, line=line, side=side,
+            sport=sport, outcome=outcome,
+            wager=stake, pick_count=2, bet_type="prop",
+            source=book, bet_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+            tier=tier, edge=edge, prob=prob, notes=notes
+        )
+        # Store odds for CLV tracking
+        _hist = st.session_state.history
+        if _hist:
+            _hist[-1]["odds_taken"] = odds
+            save_to_gist("history", _hist)
+        st.success(f"Tracked ${stake:.0f} on {player} {side} {line}!")
+        st.rerun()
+
+
 def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes=""):
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
@@ -8622,6 +8694,62 @@ if "persistence_loaded" not in st.session_state:
 # =========================
 with st.sidebar:
     st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:14px;color:#4a8a8a;">v4.6 · Complete</div></div>', unsafe_allow_html=True)
+
+    # ── PERSISTENT RISK HEADER ─────────────────────────────
+    # Always visible — sharp bettors need stop-loss status
+    # before interacting with anything else
+    _today_str   = date.today().strftime("%Y-%m-%d")
+    _bankroll_now = float(st.session_state.get("bankroll", 0))
+    _day_start    = float(st.session_state.get("day_start_br", _bankroll_now) or _bankroll_now)
+    _daily_chg    = (_bankroll_now - _day_start) / _day_start if _day_start > 0 else 0
+    _max_loss_pct = DAILY_RISK_CONTROLS.get("stop_loss_pct", 0.15)
+    _max_win_pct  = DAILY_RISK_CONTROLS.get("stop_win_pct", 0.25)
+    _today_locks  = [l for l in st.session_state.get("locks",[])
+                     if l.get("timestamp","").startswith(_today_str)]
+    _n_locks      = len(_today_locks)
+    _max_locks    = DAILY_RISK_CONTROLS.get("max_locks_per_day", 8)
+
+    if _daily_chg <= -_max_loss_pct:
+        _risk_status      = "🛑 STOP-LOSS"
+        _risk_status_color = "#e04040"
+        _risk_border      = "#e04040"
+    elif _daily_chg >= _max_win_pct:
+        _risk_status      = "🏆 STOP-WIN"
+        _risk_status_color = "#e8a020"
+        _risk_border      = "#e8a020"
+    elif _n_locks >= _max_locks:
+        _risk_status      = "🛑 MAX LOCKS"
+        _risk_status_color = "#e04040"
+        _risk_border      = "#e04040"
+    elif _n_locks >= _max_locks - 2:
+        _risk_status      = "⚠️ NEAR LIMIT"
+        _risk_status_color = "#e8a020"
+        _risk_border      = "#e8a020"
+    else:
+        _risk_status      = "🟢 NORMAL"
+        _risk_status_color = "#22c55e"
+        _risk_border      = "#22c55e33"
+
+    _chg_color = "#22c55e" if _daily_chg >= 0 else "#e04040"
+    st.markdown(
+        f'<div style="background:#0a0e14;border:1px solid {_risk_border};'
+        f'border-left:3px solid {_risk_border};border-radius:8px;'
+        f'padding:10px 12px;margin-bottom:12px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;'
+        f'letter-spacing:0.06em;">Risk Status</span>'
+        f'<span style="color:{_risk_status_color};font-size:12px;font-weight:700;">'
+        f'{_risk_status}</span></div>'
+        f'<div style="display:flex;justify-content:space-between;margin-top:6px;">'
+        f'<span style="color:#8a9ab0;font-size:11px;">Locks: '
+        f'<b style="color:#e8f0f8;">{_n_locks}/{_max_locks}</b></span>'
+        f'<span style="color:{_chg_color};font-size:11px;font-weight:600;">'
+        f'{_daily_chg:+.1%} today</span>'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+    # ── END RISK HEADER ────────────────────────────────────
+
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
@@ -8968,6 +9096,10 @@ with tabs[0]:
                     _why_html += " · ".join(f'<span style="color:{c};font-size:11px;">{l} {v}</span>' for l,v,c in _why_risks)
                 _why_html += '</div>'
                 st.markdown(_why_html, unsafe_allow_html=True)
+            # Track from Summary tab lock card
+            _tlk_key = f"sum_track_{lock_prop.get('Player','').replace(' ','_')[:15]}"
+            if st.button("📝 Track This Bet", key=_tlk_key, type="secondary"):
+                track_bet_dialog(lock_prop)
             with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
                 try:
                     chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
@@ -9548,6 +9680,11 @@ with tabs[1]:
                             save_json_data(LOCKS_PATH, st.session_state.locks)
                             save_to_gist("locks", st.session_state.locks)
                             st.rerun()
+                        # Track button — opens inline modal
+                        _tk = f"fbtk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
+                        if st.button("📝", key=_tk, use_container_width=True,
+                                     help="Track this bet with stake + odds"):
+                            track_bet_dialog(_p)
         else:
             st.info("No props match the selected filters.")
     else:
