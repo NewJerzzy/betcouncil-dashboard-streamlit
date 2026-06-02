@@ -2737,6 +2737,72 @@ def track_line_movement(props):
                 save_json_data(CLV_PATH, clv_data)
     return movement
 
+# MLB stadium coordinates for NWS weather fallback
+MLB_STADIUM_COORDS = {
+    "NYY": (40.8296, -73.9262), "NYM": (40.7571, -73.8458),
+    "BOS": (42.3467, -71.0972), "CHC": (41.9484, -87.6553),
+    "CHW": (41.8299, -87.6338), "LAD": (34.0739, -118.2400),
+    "LAA": (33.8003, -117.8827), "SF": (37.7786, -122.3893),
+    "OAK": (37.7516, -122.2005), "SEA": (47.5914, -122.3325),
+    "TEX": (32.7512, -97.0832), "HOU": (29.7573, -95.3555),
+    "ATL": (33.8908, -84.4678), "MIA": (25.7781, -80.2198),
+    "PHI": (39.9061, -75.1665), "WAS": (38.8730, -77.0074),
+    "PIT": (40.4469, -80.0057), "CIN": (39.0975, -84.5067),
+    "MIL": (43.0280, -87.9712), "STL": (38.6226, -90.1928),
+    "COL": (39.7559, -104.9942), "ARI": (33.4455, -112.0667),
+    "SD": (32.7076, -117.1570), "MIN": (44.9817, -93.2778),
+    "DET": (42.3390, -83.0485), "CLE": (41.4962, -81.6852),
+    "KC": (39.0517, -94.4803), "TB": (27.7682, -82.6534),
+    "BAL": (39.2838, -76.6218), "TOR": (43.6414, -79.3894),
+}
+
+def _fetch_nws_weather(city):
+    """National Weather Service fallback — free, no key, US only."""
+    try:
+        # Map city to MLB team coords
+        city_upper = city.upper().replace(" ", "")
+        coords = None
+        for abbr, latlon in MLB_STADIUM_COORDS.items():
+            if abbr in city_upper or city_upper in abbr:
+                coords = latlon
+                break
+        if not coords:
+            return None
+        lat, lon = coords
+        # NWS points endpoint
+        points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
+        r1 = requests.get(points_url, headers={"User-Agent": "BetCouncil/1.0"}, timeout=8)
+        if r1.status_code != 200:
+            return None
+        forecast_url = r1.json().get("properties", {}).get("forecastHourly")
+        if not forecast_url:
+            return None
+        r2 = requests.get(forecast_url, headers={"User-Agent": "BetCouncil/1.0"}, timeout=8)
+        if r2.status_code != 200:
+            return None
+        periods = r2.json().get("properties", {}).get("periods", [])
+        if not periods:
+            return None
+        p = periods[0]
+        # Convert wind direction string to 16-point
+        wind_str = p.get("windDirection", "N")
+        wind_spd_str = p.get("windSpeed", "0 mph")
+        try:
+            wind_mph = int(wind_spd_str.split()[0])
+        except Exception:
+            wind_mph = 0
+        temp_f = int(p.get("temperature", 70))
+        return {
+            "city": city, "wind_speed_mph": wind_mph,
+            "wind_dir": wind_str, "temp_f": temp_f,
+            "humidity": 50,  # NWS hourly doesn't always include humidity
+            "fetched_at": datetime.now().strftime("%H:%M"),
+            "source": "NWS",
+        }
+    except Exception:
+        return None
+
+
 def fetch_weather_for_game(city, is_outdoor=True):
     if not is_outdoor:
         return None
@@ -2747,21 +2813,30 @@ def fetch_weather_for_game(city, is_outdoor=True):
         if age_hours < 3:
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
+    weather = None
+    # Tier 1: wttr.in
     try:
         url = f"https://wttr.in/{city.replace(' ', '+')}?format=j1"
         resp = requests.get(url, headers=HEADERS, timeout=10)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        current = data.get("current_condition", [{}])[0]
-        weather = {"city": city, "wind_speed_mph": int(current.get("windspeedMiles", 0)),
-                   "wind_dir": current.get("winddir16Point", "N"), "temp_f": int(current.get("temp_F", 70)),
-                   "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.now().strftime("%H:%M")}
-        with open(cache_path, "wb") as f:
-            pickle.dump(weather, f)
-        return weather
-    except (pickle.UnpicklingError, OSError, EOFError):
-        return None
+        if resp.status_code == 200:
+            data = resp.json()
+            current = data.get("current_condition", [{}])[0]
+            weather = {"city": city, "wind_speed_mph": int(current.get("windspeedMiles", 0)),
+                       "wind_dir": current.get("winddir16Point", "N"), "temp_f": int(current.get("temp_F", 70)),
+                       "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.now().strftime("%H:%M"),
+                       "source": "wttr.in"}
+    except Exception:
+        pass
+    # Tier 2: NWS fallback
+    if weather is None:
+        weather = _fetch_nws_weather(city)
+    if weather:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(weather, f)
+        except Exception:
+            pass
+    return weather
 
 def weather_edge_adjustment(weather, stat_norm, side="OVER"):
     if not weather:
@@ -4354,6 +4429,87 @@ def fetch_underdog_injuries(sport):
         return {}
 
 @st.cache_data(ttl=900)
+def fetch_injury_news(sport):
+    """
+    Consolidated injury feed — Tier 1 source.
+    Wraps fetch_underdog_injuries (ESPN-backed) as primary.
+    Returns dict of {player_name: status_string}.
+    """
+    return fetch_underdog_injuries(sport) or {}
+
+
+@st.cache_data(ttl=900)
+def fetch_cbs_injuries(sport):
+    """
+    CBS Sports injury feed — Tier 2 injury source.
+    Free RSS, no key needed, different infrastructure from RotoWire.
+    Provides redundancy when RotoWire/ESPN are unavailable.
+    """
+    CBS_SPORT_MAP = {
+        "NBA": "nba", "MLB": "mlb", "NFL": "nfl",
+        "NHL": "nhl", "WNBA": "wnba",
+    }
+    cbs_sport = CBS_SPORT_MAP.get(sport)
+    if not cbs_sport:
+        return []
+    try:
+        urls = [
+            f"https://www.cbssports.com/rss/headlines/fantasy/{cbs_sport}/",
+            f"https://www.cbssports.com/{cbs_sport}/players/injuries/",
+        ]
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        }
+        for url in urls:
+            try:
+                r = requests.get(url, headers=headers, timeout=8)
+                if r.status_code != 200:
+                    continue
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(r.content)
+                channel = root.find("channel")
+                if channel is None:
+                    continue
+                results = []
+                for item in channel.findall("item")[:20]:
+                    title_el = item.find("title")
+                    desc_el  = item.find("description")
+                    title = (title_el.text or "").strip() if title_el is not None else ""
+                    desc  = (desc_el.text or "").strip()[:150] if desc_el is not None else ""
+                    if not title:
+                        continue
+                    if ":" in title:
+                        player, note = title.split(":", 1)
+                    else:
+                        player, note = title, desc
+                    note_lower = note.lower()
+                    if any(w in note_lower for w in ("out","ruled out","won't play","dnp")):
+                        status = "OUT"
+                    elif "doubtful" in note_lower:
+                        status = "DOUBTFUL"
+                    elif any(w in note_lower for w in ("questionable","limited","day-to-day")):
+                        status = "QUESTIONABLE"
+                    elif any(w in note_lower for w in ("probable","likely")):
+                        status = "PROBABLE"
+                    else:
+                        status = "NEWS"
+                    results.append({
+                        "player": player.strip(),
+                        "status": status,
+                        "note":   note.strip()[:150],
+                        "sport":  sport,
+                        "source": "CBS Sports",
+                    })
+                if results:
+                    return results
+            except Exception:
+                continue
+        return []
+    except Exception:
+        return []
+
+
 def fetch_rotowire_injuries(sport):
     """
     Fetch injury/news feed from RotoWire RSS — free, no key needed.
@@ -8036,6 +8192,22 @@ def load_sport_data(sport):
                     merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
                 season_avgs[player] = {**season_avgs[player], **merged}
         mlb_pitchers = fetch_mlb_probable_pitchers()
+        # ── MLB confirmed lineup check ──────────────────────────
+        _mlb_lineups = fetch_mlb_confirmed_lineups()
+        if _mlb_lineups:
+            st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
+            for _p in props:
+                _pname = _p.get("Player","")
+                _pteam = _p.get("Team","")
+                _team_lineup = _mlb_lineups.get(_pteam, {})
+                if _team_lineup.get("confirmed"):
+                    _lineup_names = [normalize_name(pl["name"]) for pl in _team_lineup.get("players",[])]
+                    if normalize_name(_pname) not in _lineup_names:
+                        _p["LineupStatus"] = "⚠️ Not in confirmed lineup"
+                    else:
+                        _bat_pos = next((pl["batting_order"] for pl in _team_lineup["players"]
+                                        if normalize_name(pl["name"]) == normalize_name(_pname)), None)
+                        _p["LineupStatus"] = f"✅ Batting #{_bat_pos}" if _bat_pos else "✅ In lineup"
         st.session_state["mlb_pitchers"] = mlb_pitchers
     elif sport == "NHL":
         nhl_rolling = fetch_nhl_rolling_averages()
@@ -8096,6 +8268,11 @@ def load_sport_data(sport):
             return result
         except Exception:
             return []  # RotoWire RSS blocks cloud IPs — silent fallback, not a board error
+    def _pf_cbs_injuries():
+        try:
+            return fetch_cbs_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
+        except Exception:
+            return []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
@@ -8105,13 +8282,13 @@ def load_sport_data(sport):
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
-        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_public,
+        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
-     bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, public_betting,
+     bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw) = _results
 
     # Unpack game_lines tuple safely
@@ -8145,6 +8322,18 @@ def load_sport_data(sport):
                         "note":   rw.get("note",""),
                         "source": "RotoWire",
                     }
+    # Merge CBS Sports injuries — Tier 2 backup
+    cbs_injuries = cbs_injuries_raw or []
+    if cbs_injuries and isinstance(injuries, dict):
+        for ci in cbs_injuries:
+            pname = normalize_name(ci.get("player",""))
+            if pname and ci.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE") and pname not in injuries:
+                injuries[pname] = {
+                    "status": ci["status"],
+                    "note":   ci.get("note",""),
+                    "source": "CBS Sports",
+                }
+    st.session_state["cbs_injuries"] = cbs_injuries
     st.session_state["rw_injuries"] = rw_injuries
     st.session_state["injuries_combined"] = injuries
 
@@ -11670,6 +11859,66 @@ def fetch_wnba_player_game_logs(player_name, last_n=15):
         return logs
     except Exception:
         return []
+
+
+@st.cache_data(ttl=600)
+def fetch_mlb_confirmed_lineups():
+    """
+    Fetch confirmed MLB batting lineups for today's games.
+    Uses statsapi.mlb.com — same API as mlb averages, already trusted.
+    
+    Returns dict: {team_abbr: [player1, player2, ...]} in batting order.
+    Lineup is "confirmed" when it comes from today's actual game feed.
+    
+    Why this matters: cleanup hitter scratches move HR/RBI props significantly.
+    A confirmed lineup vs a projected lineup is a real betting edge.
+    """
+    try:
+        today_str = date.today().strftime("%Y-%m-%d")
+        schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}&hydrate=lineups,probablePitcher"
+        r = requests.get(schedule_url, timeout=10)
+        if r.status_code != 200:
+            return {}
+        games = r.json().get("dates", [{}])[0].get("games", [])
+        lineups = {}
+        for game in games:
+            game_id = game.get("gamePk")
+            if not game_id:
+                continue
+            # Get lineups from game feed
+            feed_url = f"https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live?fields=gameData,liveData,boxscore,teams,batters,battingOrder,players,fullName,currentTeam,abbreviation"
+            try:
+                rf = requests.get(feed_url, timeout=8)
+                if rf.status_code != 200:
+                    continue
+                feed = rf.json()
+                # Extract home/away batting orders
+                for side in ("home", "away"):
+                    team_data = feed.get("liveData",{}).get("boxscore",{}).get("teams",{}).get(side,{})
+                    batting_order = team_data.get("battingOrder", [])
+                    players = team_data.get("players", {})
+                    team_abbr = feed.get("gameData",{}).get("teams",{}).get(side,{}).get("abbreviation","")
+                    if batting_order and team_abbr:
+                        lineup = []
+                        for pid in batting_order:
+                            player_key = f"ID{pid}"
+                            pdata = players.get(player_key, {})
+                            pname = pdata.get("person",{}).get("fullName","")
+                            pos = pdata.get("position",{}).get("abbreviation","")
+                            if pname:
+                                lineup.append({"name": pname, "position": pos, "batting_order": len(lineup)+1})
+                        if lineup:
+                            lineups[team_abbr] = {
+                                "players": lineup,
+                                "confirmed": len(lineup) >= 9,
+                                "source": "MLB Stats API",
+                                "fetched_at": datetime.now().strftime("%H:%M"),
+                            }
+            except Exception:
+                continue
+        return lineups
+    except Exception:
+        return {}
 
 
 # ----- TAB 6: PLAYER LOOKUP -----
