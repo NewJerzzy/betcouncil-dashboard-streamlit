@@ -2146,6 +2146,261 @@ def generate_weekly_model_report(history, signal_performance):
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+# INSTITUTIONAL INTELLIGENCE — FINAL THREE
+# 1. Prop-to-prop correlation scoring
+# 2. Regime detection (playoff vs regular season)
+# 3. Bankroll intelligence (model-aware stake sizing)
+# ═══════════════════════════════════════════════════════════════
+
+# ── 1. Prop-to-Prop Correlation Scoring ────────────────────────
+KNOWN_PROP_CORRELATIONS = {
+    # Same team scoring correlations
+    ("PTS", "PTS"):       0.15,   # Different players, same team
+    ("PTS", "PRA"):       0.85,   # Same player — high overlap
+    ("PTS", "AST"):       0.45,   # Same player
+    ("PTS", "REB"):       0.30,   # Same player
+    ("PRA", "AST"):       0.70,   # Same player
+    ("AST", "AST"):       0.20,   # Different players, same team
+    # Game total correlations
+    ("PTS", "GameTotal"): 0.55,   # Player pts + team total
+    ("AST", "GameTotal"): 0.40,
+    # NFL
+    ("PassYds","RecYds"):  0.65,  # QB pass yards + WR rec yards
+    ("RushYds","GameTotal"):0.35,
+    # MLB
+    ("HR",  "GameTotal"): 0.40,
+    ("H",   "GameTotal"): 0.45,
+}
+
+
+def compute_parlay_correlation(picks):
+    """
+    Compute correlation score for a set of picks.
+    Returns 0-1 where 1 = perfectly correlated (all rise/fall together).
+    
+    Used to warn: "These 3 picks have 0.83 correlation — high risk"
+    """
+    if len(picks) < 2:
+        return 0.0, []
+
+    correlations = []
+    pair_details = []
+
+    for i, p1 in enumerate(picks):
+        for p2 in picks[i+1:]:
+            p1_player = p1.get("Player", p1.get("player",""))
+            p2_player = p2.get("Player", p2.get("player",""))
+            p1_prop   = p1.get("Prop", p1.get("prop",""))
+            p2_prop   = p2.get("Prop", p2.get("prop",""))
+            p1_team   = p1.get("Team", p1.get("team",""))
+            p2_team   = p2.get("Team", p2.get("team",""))
+            p1_sport  = p1.get("Sport", p1.get("sport",""))
+
+            corr = 0.0
+            reason = ""
+
+            # Same player
+            if normalize_name(p1_player) == normalize_name(p2_player):
+                key = tuple(sorted([p1_prop, p2_prop]))
+                corr = KNOWN_PROP_CORRELATIONS.get(key, 0.60)
+                reason = "Same player"
+            # Same team
+            elif p1_team and p2_team and p1_team == p2_team:
+                key = tuple(sorted([p1_prop, p2_prop]))
+                corr = KNOWN_PROP_CORRELATIONS.get(key, 0.20)
+                reason = f"Same team ({p1_team})"
+            # Game total vs player scoring
+            elif ("Total" in p1_prop or "Total" in p2_prop):
+                corr = 0.40
+                reason = "Game total overlap"
+
+            if corr > 0.10:
+                correlations.append(corr)
+                pair_details.append({
+                    "pair":   f"{p1_player} {p1_prop} ↔ {p2_player} {p2_prop}",
+                    "corr":   round(corr, 2),
+                    "reason": reason,
+                })
+
+    if not correlations:
+        return 0.0, []
+
+    avg_corr = sum(correlations) / len(correlations)
+    return round(avg_corr, 3), sorted(pair_details, key=lambda x: -x["corr"])
+
+
+# ── 2. Regime Detection ─────────────────────────────────────────
+def detect_season_regime(sport):
+    """
+    Detect current season regime: Early / Mid / Late / Playoffs
+    
+    Regime matters because signal weights should shift:
+    - Playoffs: defense signal stronger, pace less reliable
+    - Early season: small sample, trust averages less
+    - Late season: tanking affects some teams
+    
+    Returns dict: {regime, description, adjustments}
+    """
+    today = date.today()
+    month = today.month
+    day   = today.day
+
+    regimes = {
+        "NBA": {
+            (10, 11): ("Early Season",  "Small sample — dampen confidence by 15%", {"base": -0.05, "defense": -0.03}),
+            (12, 1, 2, 3): ("Mid Season", "Peak reliability — full weights", {}),
+            (4,):  ("Late Season",  "Playoff seeding — rest patterns shift",   {"rest": 0.02}),
+            (5, 6): ("Playoffs",    "Playoffs — defense premium, pace down",   {"defense": 0.05, "pace": -0.02}),
+        },
+        "NFL": {
+            (9, 10): ("Early Season",  "Weeks 1-4 — small sample caution",       {"base": -0.05}),
+            (11, 12, 1): ("Mid Season", "Weeks 5-13 — full reliability", {}),
+            (1,):    ("Late Season",   "Week 14-18 — rest/tanking risk",          {"rest": 0.03}),
+            (2,):    ("Playoffs",      "Playoffs — defense dominates",            {"defense": 0.06, "pace": -0.03}),
+        },
+        "MLB": {
+            (3, 4, 5): ("Early Season", "Weeks 1-8 — small sample",              {"base": -0.04}),
+            (6, 7, 8): ("Mid Season",   "Peak season — full confidence", {}),
+            (9,):      ("Late Season",  "Playoff push — lineup changes frequent", {"rest": 0.02}),
+            (10,):     ("Playoffs",     "MLB Playoffs — pitcher-heavy",           {"defense": 0.04, "pace": -0.02}),
+        },
+        "WNBA": {
+            (5, 6):    ("Early Season", "Opening weeks — calibrating",            {"base": -0.04}),
+            (7, 8):    ("Mid Season",   "Peak reliability", {}),
+            (9,):      ("Late Season",  "Playoff push",                           {"rest": 0.02}),
+            (10,):     ("Playoffs",     "WNBA Playoffs — intensity rises",        {"defense": 0.04}),
+        },
+    }
+
+    sport_regimes = regimes.get(sport, {})
+    for months_tuple, (regime, desc, adj) in sport_regimes.items():
+        if month in months_tuple:
+            return {
+                "regime":       regime,
+                "description":  desc,
+                "adjustments":  adj,
+                "sport":        sport,
+                "month":        month,
+                "note":         f"{sport} {regime} — {desc}",
+            }
+    return {
+        "regime":      "Mid Season",
+        "description": "Standard weights apply",
+        "adjustments": {},
+        "sport":       sport,
+        "note":        f"{sport} — Standard season",
+    }
+
+
+def apply_regime_adjustments(signals, sport):
+    """
+    Apply regime-based adjustments to signal weights.
+    Called during edge calculation when regime is detected.
+    Returns adjusted signals dict.
+    """
+    regime = detect_season_regime(sport)
+    adj = regime.get("adjustments", {})
+    if not adj:
+        return signals
+    adjusted = dict(signals)
+    for sig_key, delta in adj.items():
+        if sig_key in adjusted:
+            adjusted[sig_key] = round(adjusted[sig_key] + delta, 4)
+    return adjusted
+
+
+# ── 3. Bankroll Intelligence ────────────────────────────────────
+def compute_bankroll_multiplier(history=None, clv_data=None):
+    """
+    Model-aware stake sizing.
+    Adjusts Kelly multiplier based on model confidence:
+    
+    Conditions for INCREASED stakes (1.25x):
+      - Recent ROI positive
+      - CLV positive
+      - No drift detected
+      - Calibration healthy
+    
+    Conditions for REDUCED stakes (0.5x):
+      - Model drift detected
+      - Negative CLV trend
+      - Calibration degraded
+      - ROI declining
+    
+    Returns: {multiplier, recommendation, reasons}
+    """
+    if history is None:
+        history = st.session_state.get("history", [])
+    if clv_data is None:
+        clv_data = get_clv_summary()
+
+    reasons_up   = []
+    reasons_down = []
+    score = 0  # -3 to +3
+
+    # 1. Recent ROI
+    drift = compute_model_drift(history)
+    if drift:
+        if drift["recent_roi"] > 0.3:
+            score += 1
+            reasons_up.append(f"Recent ROI +{drift['recent_roi']:.2f}u/bet")
+        elif drift["recent_roi"] < -0.3:
+            score -= 1
+            reasons_down.append(f"Recent ROI {drift['recent_roi']:.2f}u/bet")
+        if drift["alert"]:
+            score -= 2
+            reasons_down.append("🚨 Model drift detected")
+
+    # 2. CLV trend
+    if clv_data:
+        avg_clv = clv_data.get("avg_clv", 0)
+        beat_pct = clv_data.get("positive_clv_pct", 0.5)
+        if avg_clv > 1.0 and beat_pct > 0.55:
+            score += 1
+            reasons_up.append(f"CLV +{avg_clv:.2f}, beating line {beat_pct:.0%}")
+        elif avg_clv < -0.5:
+            score -= 1
+            reasons_down.append(f"Negative CLV {avg_clv:.2f}")
+
+    # 3. Calibration
+    cal_summary = get_calibration_summary(history)
+    if "EXCELLENT" in cal_summary or "GOOD" in cal_summary:
+        score += 1
+        reasons_up.append("Calibration healthy")
+    elif "NEEDS" in cal_summary:
+        score -= 1
+        reasons_down.append("Calibration degraded")
+
+    # Translate score to multiplier
+    if score >= 2:
+        multiplier = 1.25
+        label = "📈 INCREASE STAKES"
+        color = "#22c55e"
+    elif score <= -2:
+        multiplier = 0.50
+        label = "📉 REDUCE STAKES"
+        color = "#e04040"
+    elif score == -1:
+        multiplier = 0.75
+        label = "⚠️ SLIGHT REDUCTION"
+        color = "#e8a020"
+    else:
+        multiplier = 1.0
+        label = "✅ NORMAL STAKES"
+        color = "#8a9ab0"
+
+    return {
+        "multiplier":     multiplier,
+        "label":          label,
+        "color":          color,
+        "score":          score,
+        "reasons_up":     reasons_up,
+        "reasons_down":   reasons_down,
+        "kelly_advised":  round(KELLY_FRACTION * multiplier, 3),
+    }
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -2343,7 +2598,8 @@ def calculate_prizepicks_ev(fair_prob, n_picks=2):
     breakeven = prizepicks_breakeven_prob(n_picks)
     return round(fair_prob - breakeven, 4)
 
-def kelly_unit_prizepicks(prob, bankroll, n_picks=2):
+def kelly_unit_prizepicks(prob, bankroll, n_picks=2, apply_bi=False):
+    """apply_bi: apply bankroll intelligence multiplier to Kelly fraction."""
     multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
     breakeven = prizepicks_breakeven_prob(n_picks)
     if prob <= breakeven:
@@ -8070,6 +8326,13 @@ def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammat
         signals["defense"] = (-def_adj * weights.get("defense", 0.30) if side.upper() == "OVER" else def_adj * weights.get("defense", 0.30))
     else:
         signals["defense"] = 0
+    # Apply regime adjustments (early season / playoffs)
+    _regime = detect_season_regime(sport)
+    if _regime.get("adjustments"):
+        for _rsig, _radj in _regime["adjustments"].items():
+            if _rsig in signals:
+                signals[_rsig] = round(signals.get(_rsig, 0) + _radj, 4)
+
     # Player-specific home/away split — falls back to global constant
     _splits = PLAYER_HOME_SPLITS.get(
         next((k for k in PLAYER_HOME_SPLITS if normalize_name(k) == normalize_name(player_name)), ""),
@@ -11222,6 +11485,12 @@ with tabs[0]:
         # ── PARLAY OF THE DAY — GAMES ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         top_games = sorted([g for g in game_analysis if g.get("best_bet") and g.get("best_edge",0)>=0.02], key=lambda x: x.get("best_edge",0), reverse=True)[:3]
+        # Compute prop-to-prop correlation for parlay picks
+        _top_for_corr = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:5]
+        if len(_top_for_corr) >= 2:
+            _corr_score, _corr_pairs = compute_parlay_correlation(_top_for_corr)
+            if _corr_score > 0.40:
+                st.warning(f"⚠️ Top picks correlation score: {_corr_score:.2f} — high correlation may inflate perceived edge. Top pair: {_corr_pairs[0]['pair']} ({_corr_pairs[0]['reason']})")
         if len(top_games) >= 2:
             g_probs = [min(0.65, 0.5 + g.get("best_edge",0.05)) for g in top_games]
             g_combined = parlay_prob(g_probs)
@@ -12517,6 +12786,42 @@ with tabs[4]:
                 st.dataframe(pd.DataFrame(_nfl_pos_rows), use_container_width=True, hide_index=True)
         else:
             st.info(f"NFL position ROI activates after 10 NFL bets. Current: {len(_nfl_bets)}.")
+
+    # ── Bankroll Intelligence ───────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🏦 Bankroll Intelligence")
+    st.caption("Model-aware stake sizing. Adjusts Kelly fraction based on current model confidence.")
+    _bi = compute_bankroll_multiplier()
+    st.markdown(
+        f'<div style="background:#0a0e14;border:1px solid {_bi["color"]}44;border-radius:8px;padding:0.8rem;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="color:{_bi["color"]};font-size:1.1rem;font-weight:700;">{_bi["label"]}</span>'
+        f'<span style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{_bi["multiplier"]:.2f}x</span>'
+        f'</div>'
+        f'<div style="color:#8a9ab0;font-size:0.85rem;margin-top:4px;">'
+        f'Kelly advised: {_bi["kelly_advised"]:.1%} of bankroll per bet</div>'
+        + (f'<div style="color:#22c55e;font-size:0.85rem;">✅ {" · ".join(_bi["reasons_up"])}</div>' if _bi["reasons_up"] else "")
+        + (f'<div style="color:#e04040;font-size:0.85rem;">⚠️ {" · ".join(_bi["reasons_down"])}</div>' if _bi["reasons_down"] else "")
+        + '</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Season Regime ────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📅 Season Regime")
+    st.caption("Detects current season phase and applies appropriate signal weight adjustments.")
+    _regime_sport = st.session_state.get("last_sport","NBA")
+    _regime = detect_season_regime(_regime_sport)
+    _radj = _regime.get("adjustments",{})
+    _rcolor = "#378add" if _regime["regime"] == "Mid Season" else "#22c55e" if "Playoffs" in _regime["regime"] else "#e8a020"
+    st.markdown(
+        f'<div style="background:#0a0e14;border:1px solid {_rcolor}44;border-radius:6px;padding:0.7rem;">'
+        f'<span style="color:{_rcolor};font-weight:700;">{_regime_sport} — {_regime["regime"]}</span>'
+        f'<br><span style="color:#8a9ab0;font-size:0.9rem;">{_regime["description"]}</span>'
+        + (f'<br><span style="color:#e8a020;font-size:0.85rem;">Active adjustments: {_radj}</span>' if _radj else "")
+        + '</div>',
+        unsafe_allow_html=True
+    )
 
     # ── Signal Attribution ──────────────────────────────────
     st.markdown("---")
