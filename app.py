@@ -620,6 +620,8 @@ BDL_API_KEY = st.secrets.get("BALLSDONTLIE_API_KEY", "")
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
 SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
+SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009c00")
+SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "19f5a819c2ec471888ffd80ec807078527e259c1515")
 SPORTMONKS_API_KEY = st.secrets.get("SPORTMONKS_API_KEY", "")
 UNIFIED_API_KEY = st.secrets.get("UNIFIED_API_KEY", "")
 RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
@@ -5204,28 +5206,68 @@ def fetch_underdog_props(sport):
         return []
 
 def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
-    """Route through ScrapeOps residential proxy if key available, else direct."""
+    """
+    Residential proxy chain for anti-bot protected sites (PrizePicks etc).
+    Tries proxies in order until one succeeds:
+      1. ScrapeOps    (25k credits/mo — primary paid)
+      2. ScraperAPI   (1k free credits/mo — backup)
+      3. Scrape.do    (1k free credits/mo — backup)
+      4. Direct request (fallback — will 403 on protected sites)
+    """
+    from urllib.parse import quote
+
+    def _log(proxy, status, size=0, error=None):
+        st.session_state.setdefault("scrapeops_log", []).append({
+            "url": url[:60], "proxy": proxy,
+            "status": status, "size": size,
+            "error": str(error)[:60] if error else None,
+        })
+
+    def _is_valid(resp):
+        ct = resp.headers.get("content-type","")
+        return resp.status_code == 200 and "html" not in ct and not resp.text.strip().startswith("<")
+
+    # ── 1. ScrapeOps ────────────────────────────────────────
     if SCRAPEOPS_KEY:
         try:
-            from urllib.parse import quote
-            encoded_url = quote(url, safe='')
-            resp = requests.get(
-                f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded_url}&residential=true&country=us&render_js=false",
+            encoded = quote(url, safe='')
+            r = requests.get(
+                f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=false",
                 timeout=timeout
             )
-            # Always return ScrapeOps response - let caller handle HTML/captcha check
-            ct = resp.headers.get("content-type","")
-            is_html = "html" in ct or resp.text.strip().startswith("<")
-            st.session_state.setdefault("scrapeops_log", []).append({
-                "url": url[:60], "status": resp.status_code,
-                "size": len(resp.text), "html": is_html,
-                "ct": ct[:40]
-            })
-            # Return if we got actual data
-            if resp.status_code == 200:
-                return resp
-        except Exception as _e:
-            st.session_state.setdefault("scrapeops_log", []).append({"url": url[:60], "error": str(_e)[:60]})
+            _log("ScrapeOps", r.status_code, len(r.text))
+            if _is_valid(r):
+                return r
+        except Exception as e:
+            _log("ScrapeOps", "ERR", error=e)
+
+    # ── 2. ScraperAPI ────────────────────────────────────────
+    if SCRAPERAPI_KEY:
+        try:
+            r = requests.get(
+                f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={quote(url, safe='')}&premium=true&country_code=us",
+                timeout=timeout
+            )
+            _log("ScraperAPI", r.status_code, len(r.text))
+            if _is_valid(r):
+                return r
+        except Exception as e:
+            _log("ScraperAPI", "ERR", error=e)
+
+    # ── 3. Scrape.do ─────────────────────────────────────────
+    if SCRAPEDO_KEY:
+        try:
+            r = requests.get(
+                f"https://api.scrape.do?token={SCRAPEDO_KEY}&url={quote(url, safe='')}&super=true",
+                timeout=timeout
+            )
+            _log("Scrape.do", r.status_code, len(r.text))
+            if _is_valid(r):
+                return r
+        except Exception as e:
+            _log("Scrape.do", "ERR", error=e)
+
+    # ── 4. Direct (fallback) ─────────────────────────────────
     return requests.get(url, headers=headers or {}, timeout=timeout)
 
 
