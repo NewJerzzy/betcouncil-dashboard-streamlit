@@ -2044,7 +2044,7 @@ def record_pinnacle_line(lock, props_data):
 def record_injury_performance(lock, outcome, injuries):
     player = lock.get("player", "")
     sport = lock.get("sport", "")
-    injury_status = injuries.get(player, "")
+    injury_status = injuries.get(player, "") if isinstance(injuries, dict) else ""
     record = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "player": player,
@@ -8685,7 +8685,7 @@ def load_sport_data(sport):
             skipped_edge += 1
             continue
         tier = get_tier(final_edge, sport)
-        injury_flag = injuries.get(player, "")
+        injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
         sem_display, sem_n = compute_sem_for_tier(tier_stats, tier)
         ev_2pick = calculate_prizepicks_ev(best_prob, 2)
         ev_3pick = calculate_prizepicks_ev(best_prob, 3)
