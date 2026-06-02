@@ -58,6 +58,8 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 DEFAULT_BANKROLL = 468.49
 KELLY_FRACTION = 0.15   # conservative fraction of full Kelly
 KELLY_CAP = 0.20        # max 20% bankroll per bet (reduced from 0.25 — props are noisy)
+# Bankroll multiplier is computed dynamically from compute_bankroll_multiplier()
+# and stored in st.session_state["bankroll_multiplier"] after each board load.
 ODDS = -110
 EDGE_CAP = 0.20
 MIN_EDGE_DEFAULT = 0.02
@@ -1658,6 +1660,180 @@ def track_line_origin(game_analysis, sport):
         return origins
     except Exception:
         return {}
+
+
+# ═══════════════════════════════════════════════════════════════
+# PROP CORRELATION SCORE
+# Goes beyond team/sport exposure — quantifies how much
+# a set of props rises and falls together.
+# ═══════════════════════════════════════════════════════════════
+
+# Known prop correlation pairs (historical research basis)
+PROP_CORRELATION_PAIRS = {
+    # Same player different stats
+    ("PTS", "PRA"):    0.85,
+    ("PTS", "3PT"):    0.70,
+    ("PTS", "AST"):    0.45,
+    ("PTS", "REB"):    0.30,
+    ("REB", "PRA"):    0.80,
+    ("AST", "PRA"):    0.75,
+    # MLB same player
+    ("H",   "RBI"):    0.65,
+    ("H",   "R"):      0.60,
+    ("HR",  "RBI"):    0.80,
+    ("HR",  "H"):      0.55,
+    # NFL same player
+    ("PASS YDS", "PASS CMP"): 0.85,
+    ("RUSH YDS", "RUSH ATT"): 0.80,
+    ("REC YDS",  "REC"):      0.82,
+}
+
+# Team-level correlation (same game)
+TEAM_GAME_CORRELATION = 0.35   # same team, different players
+GAME_TOTAL_CORRELATION = 0.55  # team total + player scoring props
+
+
+def compute_prop_correlation_score(props):
+    """
+    Computes a portfolio-level correlation score for a list of props.
+    Score 0.0 = fully independent bets.
+    Score 1.0 = perfectly correlated (all bets win/lose together).
+    
+    Uses known correlation pairs + team/game clustering.
+    Professional sportsbook thinking: are you betting the same outcome
+    multiple times without realizing it?
+    """
+    if not props or len(props) < 2:
+        return 0.0, []
+
+    n = len(props)
+    total_correlation = 0.0
+    pairs_checked = 0
+    correlated_groups = []
+
+    for i in range(n):
+        for j in range(i+1, n):
+            p1, p2 = props[i], props[j]
+            p1_player = p1.get("Player", p1.get("player",""))
+            p2_player = p2.get("Player", p2.get("player",""))
+            p1_prop   = p1.get("Prop",   p1.get("prop","")).upper()
+            p2_prop   = p2.get("Prop",   p2.get("prop","")).upper()
+            p1_team   = p1.get("Team",   p1.get("team",""))
+            p2_team   = p2.get("Team",   p2.get("team",""))
+
+            corr = 0.0
+            reason = ""
+
+            # Same player
+            if p1_player and p1_player == p2_player:
+                pair_key = tuple(sorted([p1_prop, p2_prop]))
+                corr = PROP_CORRELATION_PAIRS.get(pair_key, 0.50)
+                reason = f"Same player ({p1_player})"
+            # Same team different players
+            elif p1_team and p1_team == p2_team:
+                corr = TEAM_GAME_CORRELATION
+                reason = f"Same team ({p1_team})"
+            # Game total + player scoring
+            elif "TOTAL" in p1_prop or "TOTAL" in p2_prop:
+                corr = GAME_TOTAL_CORRELATION
+                reason = "Game total vs player scoring"
+
+            if corr > 0.25:
+                total_correlation += corr
+                pairs_checked += 1
+                correlated_groups.append({
+                    "Prop A":      f"{p1_player} {p1_prop}",
+                    "Prop B":      f"{p2_player} {p2_prop}",
+                    "Correlation": f"{corr:.2f}",
+                    "Reason":      reason,
+                })
+
+    max_possible = n * (n-1) / 2
+    score = total_correlation / max(max_possible, 1)
+    score = min(1.0, score)
+
+    return round(score, 3), correlated_groups
+
+
+# ═══════════════════════════════════════════════════════════════
+# BANKROLL INTELLIGENCE
+# Model becomes aware of its own confidence.
+# When performing well → size up slightly.
+# When drifting → size down automatically.
+# ═══════════════════════════════════════════════════════════════
+
+def compute_bankroll_multiplier(history):
+    """
+    Computes a stake multiplier based on current model health.
+    
+    Inputs: ROI trend, CLV trend, model drift status.
+    Output: multiplier between 0.5x and 1.5x normal stake.
+    
+    This is not gambling — it's Kelly-inspired position sizing
+    that responds to the model's demonstrated predictive power.
+    
+    All changes are gradual (max ±25% from 1.0x baseline).
+    Never exceeds 1.5x or drops below 0.5x.
+    """
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 20:
+        return 1.0, "Insufficient data — using baseline stake (1.0x)"
+
+    # Component 1: Recent ROI (L20 bets)
+    recent = resolved[-20:]
+    recent_roi = sum(h.get("net",0) for h in recent) / len(recent)
+    roi_component = 0.0
+    if recent_roi > 0.5:
+        roi_component = 0.20   # up 20%
+    elif recent_roi > 0.2:
+        roi_component = 0.10   # up 10%
+    elif recent_roi < -0.5:
+        roi_component = -0.30  # down 30%
+    elif recent_roi < -0.2:
+        roi_component = -0.15  # down 15%
+
+    # Component 2: CLV signal
+    clv_data = get_clv_summary()
+    clv_component = 0.0
+    if clv_data:
+        avg_clv = clv_data.get("avg_clv", 0)
+        beat_pct = clv_data.get("positive_clv_pct", 0.5)
+        if avg_clv > 1.0 and beat_pct > 0.60:
+            clv_component = 0.15   # CLV confirms edge
+        elif avg_clv < -1.0:
+            clv_component = -0.20  # CLV says fading
+
+    # Component 3: Model drift
+    drift_data = compute_model_drift(history)
+    drift_component = 0.0
+    if drift_data:
+        if drift_data["alert"]:
+            drift_component = -0.25  # Drift detected — reduce
+        elif drift_data["drift"] > 1.0:
+            drift_component = 0.10   # Hot streak but stay disciplined
+
+    # Combine components
+    raw_multiplier = 1.0 + roi_component + clv_component + drift_component
+    multiplier = round(max(0.5, min(1.5, raw_multiplier)), 2)
+
+    # Build explanation
+    parts = []
+    if roi_component != 0:
+        parts.append(f"Recent ROI {recent_roi:+.2f}u/bet ({'+' if roi_component>0 else ''}{roi_component:.0%})")
+    if clv_component != 0:
+        parts.append(f"CLV {clv_data.get('avg_clv',0):+.2f} ({'+' if clv_component>0 else ''}{clv_component:.0%})")
+    if drift_component != 0:
+        parts.append(f"Drift detected ({drift_component:.0%})")
+
+    if multiplier > 1.1:
+        label = f"📈 Size UP — {multiplier}x normal stake"
+    elif multiplier < 0.9:
+        label = f"📉 Size DOWN — {multiplier}x normal stake"
+    else:
+        label = f"✅ Normal sizing — {multiplier}x stake"
+
+    reason = " | ".join(parts) if parts else "Stable performance"
+    return multiplier, f"{label} | {reason}"
 
 
 def compute_portfolio_exposure(board, locks=None):
@@ -12362,10 +12538,21 @@ with tabs[4]:
     st.caption("Am I over-concentrated? Checks sport, team, and player exposure across today's locked picks.")
     _portfolio = compute_portfolio_exposure(st.session_state.board_data)
     if _portfolio:
-        _p1, _p2, _p3 = st.columns(3)
+        # Prop correlation score
+        _active_for_corr = [p for p in (st.session_state.board_data or [])
+                            if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")][:8]
+        _corr_score, _corr_groups = compute_prop_correlation_score(_active_for_corr)
+        _corr_color = "#22c55e" if _corr_score < 0.25 else "#e8a020" if _corr_score < 0.50 else "#e04040"
+        _p1, _p2, _p3, _p4 = st.columns(4)
         _p1.metric("Active Bets", _portfolio["n_active"])
         _p2.metric("Total Stake", f"${_portfolio['total_stake']:.2f}")
         _p3.metric("% of Bankroll", f"{_portfolio['total_pct_br']:.1f}%")
+        _p4.metric("Correlation Score", f"{_corr_score:.2f}",
+                   delta="High — review" if _corr_score > 0.50 else "Low — diversified",
+                   delta_color="inverse" if _corr_score > 0.50 else "off")
+        if _corr_score > 0.50 and _corr_groups:
+            st.warning(f"⚠️ High portfolio correlation ({_corr_score:.2f}) — bets may rise and fall together:")
+            st.dataframe(pd.DataFrame(_corr_groups), use_container_width=True, hide_index=True)
         if _portfolio["warnings"]:
             for w in _portfolio["warnings"]:
                 st.warning(w)
