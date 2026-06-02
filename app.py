@@ -6007,11 +6007,27 @@ def fetch_game_lines(sport):
                     provider = "ESPN"
                     for comp in event.get("competitions", []):
                         odds_data = comp.get("odds", [{}])[0] if comp.get("odds") else {}
-                        spread = odds_data.get("details", "N/A")
-                        total = odds_data.get("overUnder", "N/A")
-                        home_ml = odds_data.get("homeTeamOdds", {}).get("moneyLine", "N/A")
-                        away_ml = odds_data.get("awayTeamOdds", {}).get("moneyLine", "N/A")
-                        provider = odds_data.get("provider", {}).get("name", "ESPN")
+                        raw_spread = odds_data.get("details", "N/A")
+                        total      = odds_data.get("overUnder", "N/A")
+                        home_ml    = odds_data.get("homeTeamOdds", {}).get("moneyLine", "N/A")
+                        away_ml    = odds_data.get("awayTeamOdds", {}).get("moneyLine", "N/A")
+                        provider   = odds_data.get("provider", {}).get("name", "ESPN")
+                        # Validate spread — must contain a decimal point spread value (e.g. "TB -1.5")
+                        # ESPN sometimes puts ML odds in the details field for MLB — reject those
+                        spread = "N/A"
+                        if raw_spread and raw_spread != "N/A":
+                            try:
+                                # A real spread has a number with .5 or .0 (e.g. -1.5, +2.5, -3.0)
+                                parts = str(raw_spread).split()
+                                if parts:
+                                    spread_num = float(parts[-1].replace("+",""))
+                                    # ML odds are typically > 100 in absolute value for MLB
+                                    # Spreads in MLB are typically -1.5 or +1.5 (run line)
+                                    if abs(spread_num) <= 30:  # valid spread range
+                                        spread = raw_spread
+                                    # else: it's probably a ML value — leave as N/A for ESPN overlay to fill
+                            except (ValueError, IndexError):
+                                spread = "N/A"
                         for competitor in comp.get("competitors", []):
                             team = competitor.get("team", {}).get("abbreviation", "")
                             home_away = competitor.get("homeAway", "")
