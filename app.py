@@ -6060,16 +6060,32 @@ def fetch_game_lines(sport):
                 for game in today_games:
                     matchup = game.get("Matchup","")
                     home1 = home_teams.get(matchup, "")
+                    away1 = away_teams.get(matchup, "")
                     # Match by team abbreviation (ESPN uses abbrev, OddsAPI uses full name)
+                    # ESPN: "DET @ TB" → home=TB, away=DET
+                    # OddsAPI: "Detroit Tigers @ Tampa Bay Rays"
                     best_match = None
+                    esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
                     for odds_matchup, odds_game in odds_lookup.items():
-                        home2 = odds_home.get(odds_matchup, "")
-                        away2 = odds_away.get(odds_matchup, "")
-                        h1u = home1.upper()[:3]
-                        # Match if any 3-char prefix overlaps
-                        if (h1u and (h1u in home2.upper() or h1u in away2.upper()
-                                     or home2.upper()[:3] in h1u
-                                     or any(t[:3].upper() in home2.upper() for t in matchup.split(" @ ")))):
+                        home2 = odds_home.get(odds_matchup, "").upper()
+                        away2 = odds_away.get(odds_matchup, "").upper()
+                        # Try multiple matching strategies
+                        matched = False
+                        # Strategy 1: any ESPN team abbrev in OddsAPI full name
+                        for esp_abbr in esp_parts:
+                            if len(esp_abbr) >= 2:
+                                if esp_abbr in home2 or esp_abbr in away2:
+                                    matched = True
+                                    break
+                                # Strategy 2: first 3 chars of OddsAPI name in ESPN abbrev
+                                if home2[:3] in esp_abbr or away2[:3] in esp_abbr:
+                                    matched = True
+                                    break
+                        # Strategy 3: home team abbreviation in OddsAPI matchup string
+                        if not matched and home1:
+                            if home1.upper() in odds_matchup.upper():
+                                matched = True
+                        if matched:
                             best_match = odds_game
                             break
                     if best_match:
