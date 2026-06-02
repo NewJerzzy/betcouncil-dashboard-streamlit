@@ -11720,10 +11720,16 @@ with tabs[6]:
             pl_name = pl_name_input
 
         with col_pl2:
-            pl_stat = st.selectbox("Stat", [
-                "Points", "Rebounds", "Assists", "3-PT Made",
-                "Steals", "Blocked Shots", "Turnovers", "Pts+Reb+Ast"
-            ], key="pl_stat")
+            _pl_sport_for_stats = st.session_state.get("pl_sport_sel", "NBA")
+            _stat_options_by_sport = {
+                "NBA":  ["Points", "Rebounds", "Assists", "3-PT Made", "Steals", "Blocked Shots", "Turnovers", "Pts+Reb+Ast"],
+                "WNBA": ["Points", "Rebounds", "Assists", "3-PT Made", "Steals", "Blocked Shots", "Turnovers", "Pts+Reb+Ast"],
+                "MLB":  ["Hits", "Home Runs", "RBI", "Runs", "Strikeouts (Pitcher)", "Walks", "Total Bases", "Stolen Bases"],
+                "NHL":  ["Goals", "Assists", "Points", "Shots on Goal", "Saves", "Goals+Assists"],
+                "NFL":  ["Pass Yards", "Rush Yards", "Receiving Yards", "Touchdowns", "Receptions", "Pass Completions"],
+            }
+            _pl_stat_opts = _stat_options_by_sport.get(_pl_sport_for_stats, _stat_options_by_sport["NBA"])
+            pl_stat = st.selectbox("Stat", _pl_stat_opts, key="pl_stat")
         with col_pl3:
             pl_line = st.number_input("Line (optional — leave 0 to skip)", min_value=0.0, value=0.0, step=0.5, key="pl_line")
 
@@ -11756,14 +11762,33 @@ with tabs[6]:
             logs = st.session_state["pl_logs"]
             pl_name_d = st.session_state.get("pl_name_display", pl_name)
 
+            _pl_sport_used = st.session_state.get("pl_sport_used", "NBA")
             stat_key_map = {
+                # NBA / WNBA
                 "Points": "pts", "Rebounds": "reb", "Assists": "ast",
                 "3-PT Made": "fg3m", "Steals": "stl",
                 "Blocked Shots": "blk", "Turnovers": "turnover",
-                "Pts+Reb+Ast": "pra"
+                "Pts+Reb+Ast": "pra",
+                # MLB
+                "Hits": "H", "Home Runs": "HR", "RBI": "RBI",
+                "Runs": "R", "Strikeouts (Pitcher)": "K",
+                "Walks": "BB", "Total Bases": "TB", "Stolen Bases": "SB",
+                # NHL
+                "Goals": "G", "Assists": "A",
+                "Shots on Goal": "SOG", "Saves": "SV",
+                "Goals+Assists": "pra",   # reuse pra slot for G+A
+                # NFL
+                "Pass Yards": "pass_yds", "Rush Yards": "rush_yds",
+                "Receiving Yards": "rec_yds", "Touchdowns": "td",
+                "Receptions": "rec", "Pass Completions": "cmp",
             }
             sk = stat_key_map.get(pl_stat, "pts")
-            vals = [g.get(sk, 0) or 0 for g in logs]
+            # For Goals+Assists (NHL), compute from G+A
+            _use_ga_sum = (pl_stat == "Goals+Assists")
+            if _use_ga_sum:
+                vals = [float(g.get("G",0) or 0) + float(g.get("A",0) or 0) for g in logs]
+            else:
+                vals = [g.get(sk, 0) or 0 for g in logs]
             avg = sum(vals) / len(vals) if vals else 0
 
             # Hit rates
@@ -11808,8 +11833,10 @@ with tabs[6]:
                 log_html += '</tr>'
                 for i, g in enumerate(logs[:pl_games]):
                     v = g.get(sk, 0) or 0
-                    if sk == "pra":
+                    if sk == "pra" and not _use_ga_sum:
                         v = float(g.get("pts",0) or 0) + float(g.get("reb",0) or 0) + float(g.get("ast",0) or 0)
+                    elif _use_ga_sum:
+                        v = float(g.get("G",0) or 0) + float(g.get("A",0) or 0)
                     hit = v > _effective_line
                     row_bg = "#0a0e14" if i % 2 == 0 else "#080c12"
                     val_color = "#22c55e" if hit else "#e04040"
@@ -11913,6 +11940,78 @@ with tabs[7]:
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
     log_tab1, log_tab2 = st.tabs(["Screenshot / Text", "Bulk Entry"])
+    with log_tab2:
+        st.markdown("### 🎯 Log a PrizePicks Parlay as a Group")
+        st.caption("Enter the parlay as a whole — stake is for the entire entry, not per player.")
+        _pk_col1, _pk_col2, _pk_col3 = st.columns(3)
+        _pk_picks   = _pk_col1.selectbox("# of Picks", [2, 3, 4, 5, 6], index=0, key="pk_picks")
+        _pk_stake   = _pk_col2.number_input("Stake ($)", min_value=1.0, step=5.0, value=10.0, key="pk_stake")
+        _pk_outcome = _pk_col3.selectbox("Outcome", ["WIN", "LOSS", "PUSH", "PENDING"], key="pk_outcome")
+        _pk_source  = st.selectbox("Platform", ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","Other"], key="pk_source")
+        _pk_sport   = st.selectbox("Sport", ["NBA","WNBA","MLB","NHL","NFL"], key="pk_sport")
+        _pk_date    = st.date_input("Date", value=date.today(), key="pk_date")
+        st.markdown("**Players in this parlay:**")
+        _pk_players = []
+        for _pki in range(int(_pk_picks)):
+            _pkc1, _pkc2, _pkc3, _pkc4 = st.columns([2,1,1,1])
+            _pk_pname = _pkc1.text_input(f"Player {_pki+1}", key=f"pk_player_{_pki}", placeholder="Player name")
+            _pk_pstat = _pkc2.text_input(f"Stat", key=f"pk_stat_{_pki}", placeholder="Points")
+            _pk_pline = _pkc3.number_input(f"Line", min_value=0.0, step=0.5, value=0.0, key=f"pk_line_{_pki}")
+            _pk_pside = _pkc4.selectbox(f"Side", ["OVER","UNDER"], key=f"pk_side_{_pki}")
+            if _pk_pname:
+                _pk_players.append({
+                    "player": _pk_pname, "prop": _pk_pstat or "Points",
+                    "line": _pk_pline, "side": _pk_pside,
+                })
+        _mult = PRIZEPICKS_MULTIPLIERS.get(int(_pk_picks), 3.0)
+        _payout = _pk_stake * _mult
+        st.caption(f"Payout if win: ${_payout:.2f} ({_pk_picks}-pick {_mult}x)")
+        if st.button("✅ Log This Parlay", type="primary", key="log_parlay_group_btn"):
+            if _pk_players:
+                _pk_date_str = datetime.combine(_pk_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                _logged_pk = 0
+                for _pkl in _pk_players:
+                    try:
+                        log_manual_bet(
+                            player=_pkl["player"], prop=_pkl["prop"],
+                            line=float(_pkl["line"]), side=_pkl["side"],
+                            sport=_pk_sport, outcome=_pk_outcome,
+                            wager=_pk_stake,          # ← total stake per entry, not per player
+                            pick_count=int(_pk_picks), bet_type="prop",
+                            source=_pk_source, bet_date=_pk_date_str,
+                        )
+                        _logged_pk += 1
+                    except Exception as _e:
+                        st.caption(f"⚠️ {_pkl['player']}: {str(_e)[:50]}")
+                if _logged_pk:
+                    st.success(f"✅ Logged {_logged_pk}-pick parlay (${_pk_stake:.2f} stake) → {_pk_outcome}")
+                    st.rerun()
+            else:
+                st.error("Enter at least one player.")
+        st.markdown("---")
+        st.markdown("### 📝 Quick Single Bet")
+        st.caption("Log a single prop bet quickly.")
+        _sb_c1, _sb_c2, _sb_c3 = st.columns(3)
+        _sb_player  = _sb_c1.text_input("Player", key="sb_player")
+        _sb_prop    = _sb_c1.text_input("Prop", value="Points", key="sb_prop")
+        _sb_line    = _sb_c2.number_input("Line", min_value=0.0, step=0.5, key="sb_line")
+        _sb_side    = _sb_c2.selectbox("Side", ["OVER","UNDER"], key="sb_side")
+        _sb_outcome = _sb_c3.selectbox("Outcome", ["WIN","LOSS","PUSH","PENDING"], key="sb_outcome")
+        _sb_stake   = _sb_c3.number_input("Stake ($)", min_value=1.0, step=5.0, value=10.0, key="sb_stake")
+        _sb_sport   = st.selectbox("Sport", ["NBA","WNBA","MLB","NHL","NFL"], key="sb_sport")
+        _sb_source  = st.selectbox("Book", ["PrizePicks","DraftKings","FanDuel","BetMGM","Caesars","Bovada","Other"], key="sb_source")
+        if st.button("✅ Log Single Bet", key="log_single_btn", type="primary"):
+            if _sb_player:
+                log_manual_bet(
+                    player=_sb_player, prop=_sb_prop, line=_sb_line,
+                    side=_sb_side, sport=_sb_sport, outcome=_sb_outcome,
+                    wager=_sb_stake, pick_count=1, bet_type="prop",
+                    source=_sb_source, bet_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                )
+                st.success(f"✅ Logged {_sb_player} {_sb_side} {_sb_line} — {_sb_outcome}")
+                st.rerun()
+            else:
+                st.error("Enter a player name.")
     with log_tab1:
         st.markdown("### 📸 Upload Screenshot")
         st.caption("Upload one or more screenshots of your bet slip or result.")
