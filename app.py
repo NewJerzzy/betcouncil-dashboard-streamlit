@@ -2100,8 +2100,23 @@ def generate_weekly_model_report(history, signal_performance):
     """
     from datetime import timedelta
     cutoff = datetime.now() - timedelta(days=7)
-    weekly = [h for h in history if h.get("outcome") in ("WIN","LOSS") and
-              datetime.strptime(h.get("timestamp","2000-01-01")[:16], "%Y-%m-%d %H:%M") >= cutoff]
+    weekly = []
+    for h in history:
+        if h.get("outcome") not in ("WIN","LOSS"):
+            continue
+        ts = h.get("timestamp","")
+        try:
+            # Try multiple formats
+            for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d", "%m/%d/%Y"):
+                try:
+                    dt = datetime.strptime(ts[:16], fmt[:len(ts[:16])])
+                    if dt >= cutoff:
+                        weekly.append(h)
+                    break
+                except ValueError:
+                    continue
+        except Exception:
+            pass
     if not weekly:
         return None
     n = len(weekly)
