@@ -8264,6 +8264,65 @@ def _fetch_parallel(fns: list) -> list:
     return results
 
 
+
+@st.cache_data(ttl=600)
+def fetch_mlb_confirmed_lineups():
+    """
+    Fetch confirmed MLB batting lineups for today's games.
+    Uses statsapi.mlb.com — same API as mlb averages, already trusted.
+    
+    Returns dict: {team_abbr: [player1, player2, ...]} in batting order.
+    Lineup is "confirmed" when it comes from today's actual game feed.
+    
+    Why this matters: cleanup hitter scratches move HR/RBI props significantly.
+    A confirmed lineup vs a projected lineup is a real betting edge.
+    """
+    try:
+        today_str = date.today().strftime("%Y-%m-%d")
+        schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}&hydrate=lineups,probablePitcher"
+        r = requests.get(schedule_url, timeout=10)
+        if r.status_code != 200:
+            return {}
+        games = r.json().get("dates", [{}])[0].get("games", [])
+        lineups = {}
+        for game in games:
+            game_id = game.get("gamePk")
+            if not game_id:
+                continue
+            # Get lineups from game feed
+            feed_url = f"https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live?fields=gameData,liveData,boxscore,teams,batters,battingOrder,players,fullName,currentTeam,abbreviation"
+            try:
+                rf = requests.get(feed_url, timeout=8)
+                if rf.status_code != 200:
+                    continue
+                feed = rf.json()
+                # Extract home/away batting orders
+                for side in ("home", "away"):
+                    team_data = feed.get("liveData",{}).get("boxscore",{}).get("teams",{}).get(side,{})
+                    batting_order = team_data.get("battingOrder", [])
+                    players = team_data.get("players", {})
+                    team_abbr = feed.get("gameData",{}).get("teams",{}).get(side,{}).get("abbreviation","")
+                    if batting_order and team_abbr:
+                        lineup = []
+                        for pid in batting_order:
+                            player_key = f"ID{pid}"
+                            pdata = players.get(player_key, {})
+                            pname = pdata.get("person",{}).get("fullName","")
+                            pos = pdata.get("position",{}).get("abbreviation","")
+                            if pname:
+                                lineup.append({"name": pname, "position": pos, "batting_order": len(lineup)+1})
+                        if lineup:
+                            lineups[team_abbr] = {
+                                "players": lineup,
+                                "confirmed": len(lineup) >= 9,
+                                "source": "MLB Stats API",
+                                "fetched_at": datetime.now().strftime("%H:%M"),
+                            }
+            except Exception:
+                continue
+        return lineups
+    except Exception:
+        return {}
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -12020,64 +12079,7 @@ def fetch_wnba_player_game_logs(player_name, last_n=15):
         return []
 
 
-@st.cache_data(ttl=600)
-def fetch_mlb_confirmed_lineups():
-    """
-    Fetch confirmed MLB batting lineups for today's games.
-    Uses statsapi.mlb.com — same API as mlb averages, already trusted.
-    
-    Returns dict: {team_abbr: [player1, player2, ...]} in batting order.
-    Lineup is "confirmed" when it comes from today's actual game feed.
-    
-    Why this matters: cleanup hitter scratches move HR/RBI props significantly.
-    A confirmed lineup vs a projected lineup is a real betting edge.
-    """
-    try:
-        today_str = date.today().strftime("%Y-%m-%d")
-        schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}&hydrate=lineups,probablePitcher"
-        r = requests.get(schedule_url, timeout=10)
-        if r.status_code != 200:
-            return {}
-        games = r.json().get("dates", [{}])[0].get("games", [])
-        lineups = {}
-        for game in games:
-            game_id = game.get("gamePk")
-            if not game_id:
-                continue
-            # Get lineups from game feed
-            feed_url = f"https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live?fields=gameData,liveData,boxscore,teams,batters,battingOrder,players,fullName,currentTeam,abbreviation"
-            try:
-                rf = requests.get(feed_url, timeout=8)
-                if rf.status_code != 200:
-                    continue
-                feed = rf.json()
-                # Extract home/away batting orders
-                for side in ("home", "away"):
-                    team_data = feed.get("liveData",{}).get("boxscore",{}).get("teams",{}).get(side,{})
-                    batting_order = team_data.get("battingOrder", [])
-                    players = team_data.get("players", {})
-                    team_abbr = feed.get("gameData",{}).get("teams",{}).get(side,{}).get("abbreviation","")
-                    if batting_order and team_abbr:
-                        lineup = []
-                        for pid in batting_order:
-                            player_key = f"ID{pid}"
-                            pdata = players.get(player_key, {})
-                            pname = pdata.get("person",{}).get("fullName","")
-                            pos = pdata.get("position",{}).get("abbreviation","")
-                            if pname:
-                                lineup.append({"name": pname, "position": pos, "batting_order": len(lineup)+1})
-                        if lineup:
-                            lineups[team_abbr] = {
-                                "players": lineup,
-                                "confirmed": len(lineup) >= 9,
-                                "source": "MLB Stats API",
-                                "fetched_at": datetime.now().strftime("%H:%M"),
-                            }
-            except Exception:
-                continue
-        return lineups
-    except Exception:
-        return {}
+
 
 
 # ----- TAB 6: PLAYER LOOKUP -----
