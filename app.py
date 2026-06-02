@@ -12096,9 +12096,9 @@ with tabs[2]:
 
         for _gi, _g in enumerate(_fgames):
             _matchup = _g.get("matchup", _g.get("Matchup","—"))
+            _gsport = _g.get("Sport",_sport2)
             _line_movement = get_line_movement_summary(_matchup, _gsport, _g)
             _gtime = _g.get("Time","—")
-            _gsport = _g.get("Sport",_sport2)
             _injury = _g.get("Injury","")
             _alt_line = _g.get("AltLine","")
             _alt_edge = float(_g.get("AltEdge",0) or 0)
