@@ -8323,6 +8323,371 @@ def fetch_mlb_confirmed_lineups():
         return lineups
     except Exception:
         return {}
+# ═══════════════════════════════════════════════════════════════
+# NFL READINESS SUITE
+# Practice participation, inactives, O-line monitoring,
+# depth chart snapshots, market open/close storage,
+# prediction stability audit.
+# ═══════════════════════════════════════════════════════════════
+
+NFL_PRACTICE_PATH   = os.path.join(CACHE_DIR, "nfl_practice.json")
+NFL_INACTIVES_PATH  = os.path.join(CACHE_DIR, "nfl_inactives.json")
+NFL_DEPTH_SNAP_PATH = os.path.join(CACHE_DIR, "nfl_depth_snapshots.json")
+OPENING_LINES_PATH  = os.path.join(CACHE_DIR, "opening_lines.json")
+BOARD_SNAP_PATH     = os.path.join(CACHE_DIR, "board_snapshots.json")
+
+# ── Feature 1: Practice Participation Tracker ──────────────────
+@st.cache_data(ttl=1800)
+def fetch_nfl_practice_participation():
+    """
+    NFL practice participation: DNP / Limited / Full.
+    Pulled from ESPN injuries endpoint — details field contains
+    practice status for NFL players.
+    
+    3-day trend matters most:
+      DNP → DNP → DNP   = likely out
+      DNP → Limited → Full = trending toward playing
+      Full → Full → Full = healthy, no concern
+    
+    Returns dict: {player_name: {date: participation, trend: str}}
+    """
+    try:
+        url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        today_str = date.today().strftime("%Y-%m-%d")
+        participation = {}
+        for team in data.get("injuries", []):
+            team_abbr = team.get("team", {}).get("abbreviation", "")
+            for injury in team.get("injuries", []):
+                athlete = injury.get("athlete", {})
+                player  = athlete.get("displayName", "")
+                detail  = injury.get("details", {})
+                # ESPN practice field
+                practice = detail.get("practiceStatus", "") or detail.get("detail", "")
+                practice_lower = practice.lower()
+                if "did not participate" in practice_lower or "dnp" in practice_lower:
+                    pstatus = "DNP"
+                elif "limited" in practice_lower:
+                    pstatus = "Limited"
+                elif "full" in practice_lower:
+                    pstatus = "Full"
+                else:
+                    pstatus = None
+                if player and pstatus:
+                    if player not in participation:
+                        participation[player] = {"team": team_abbr, "history": {}}
+                    participation[player]["history"][today_str] = pstatus
+        # Load stored history and merge
+        stored = load_json_data(NFL_PRACTICE_PATH, {})
+        for player, data_new in participation.items():
+            if player in stored:
+                stored[player]["history"].update(data_new["history"])
+            else:
+                stored[player] = data_new
+        # Calculate 3-day trend
+        for player, pdata in stored.items():
+            hist = pdata.get("history", {})
+            recent_days = sorted(hist.keys())[-3:]
+            recent = [hist[d] for d in recent_days]
+            if len(recent) >= 2:
+                if recent[-1] == "Full" and recent[-2] in ("Limited", "DNP"):
+                    pdata["trend"] = "↑ Trending UP"
+                elif recent[-1] == "DNP" and all(r == "DNP" for r in recent):
+                    pdata["trend"] = "⛔ DNP all week"
+                elif recent[-1] == "Limited":
+                    pdata["trend"] = "⚠️ Limited"
+                elif recent[-1] == "Full":
+                    pdata["trend"] = "✅ Full practice"
+                else:
+                    pdata["trend"] = recent[-1]
+        save_json_data(NFL_PRACTICE_PATH, stored)
+        return stored
+    except Exception:
+        return load_json_data(NFL_PRACTICE_PATH, {})
+
+
+def get_practice_trend(player_name, participation_data=None):
+    """Return practice trend string for a player, or empty string."""
+    if participation_data is None:
+        participation_data = load_json_data(NFL_PRACTICE_PATH, {})
+    pdata = participation_data.get(player_name, {})
+    return pdata.get("trend", "")
+
+
+# ── Feature 2: NFL Inactives System ────────────────────────────
+@st.cache_data(ttl=300)  # Check every 5 min on game day
+def fetch_nfl_inactives():
+    """
+    NFL official inactives — published 90 min before kickoff.
+    Uses ESPN gamecenter endpoint which surfaces inactives
+    once the official list is released.
+    
+    Returns dict: {team_abbr: [inactive_player_names]}
+    """
+    try:
+        today_str = date.today().strftime("%Y%m%d")
+        url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={today_str}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return {}
+        events = r.json().get("events", [])
+        inactives = {}
+        for event in events:
+            for comp in event.get("competitions", []):
+                for team_data in comp.get("competitors", []):
+                    team_abbr = team_data.get("team", {}).get("abbreviation", "")
+                    roster    = team_data.get("roster", [])
+                    team_inactives = []
+                    for player in roster:
+                        if player.get("active") is False or player.get("status","").upper() == "INACTIVE":
+                            pname = player.get("athlete", {}).get("displayName", "")
+                            if pname:
+                                team_inactives.append(pname)
+                    if team_inactives and team_abbr:
+                        inactives[team_abbr] = team_inactives
+        # Persist with timestamp
+        if inactives:
+            stamped = {"inactives": inactives, "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+            save_json_data(NFL_INACTIVES_PATH, stamped)
+            return inactives
+        # Fall back to stored
+        stored = load_json_data(NFL_INACTIVES_PATH, {})
+        return stored.get("inactives", {})
+    except Exception:
+        return load_json_data(NFL_INACTIVES_PATH, {}).get("inactives", {})
+
+
+# ── Feature 3: Offensive Line Monitoring ───────────────────────
+def get_oline_status(team_abbr, depth_charts=None):
+    """
+    Extract offensive line starter status from ESPN depth charts.
+    Returns dict with each OL position and starter name/status.
+    
+    OL positions: LT, LG, C, RG, RT
+    """
+    if depth_charts is None:
+        depth_charts = st.session_state.get("espn_depth_charts", {})
+    team_dc = depth_charts.get(team_abbr, {})
+    positions = team_dc.get("positions", {})
+    oline = {}
+    for pos in ("LT", "LG", "C", "RG", "RT", "OT", "OG", "OC"):
+        if pos in positions:
+            starters = positions[pos]
+            if starters:
+                starter = starters[0]
+                oline[pos] = {
+                    "name":  starter["name"],
+                    "depth": starter["depth"],
+                    "status": "Starter",
+                }
+                # Check if starter is injured
+                injuries = st.session_state.get("injuries_combined", {})
+                if normalize_name(starter["name"]) in injuries:
+                    oline[pos]["status"] = injuries[normalize_name(starter["name"])].get("status","?")
+    n_oline_out = sum(1 for p in oline.values() if p.get("status") in ("OUT","DOUBTFUL"))
+    return {
+        "positions": oline,
+        "starters_out": n_oline_out,
+        "integrity": "🔴 POOR" if n_oline_out >= 3 else "🟡 DEGRADED" if n_oline_out >= 2 else "🟡 CONCERN" if n_oline_out == 1 else "✅ INTACT",
+    }
+
+
+# ── Feature 4: Depth Chart Daily Snapshots ─────────────────────
+def save_depth_chart_snapshot(sport, depth_charts):
+    """
+    Store a daily snapshot of depth charts.
+    Enables change detection: who moved from RB2 to RB1?
+    """
+    if not depth_charts:
+        return
+    try:
+        stored = load_json_data(NFL_DEPTH_SNAP_PATH, {})
+        today_str = date.today().strftime("%Y-%m-%d")
+        stored[today_str] = {
+            "sport":  sport,
+            "teams":  depth_charts,
+            "saved_at": datetime.now().strftime("%H:%M"),
+        }
+        # Keep last 14 days only
+        if len(stored) > 14:
+            oldest = sorted(stored.keys())[0]
+            del stored[oldest]
+        save_json_data(NFL_DEPTH_SNAP_PATH, stored)
+    except Exception:
+        pass
+
+
+def detect_depth_chart_changes(sport, current_charts=None):
+    """
+    Compare today's depth charts vs yesterday's snapshot.
+    Returns list of changes: player moved up/down the depth chart.
+    """
+    if current_charts is None:
+        current_charts = st.session_state.get("espn_depth_charts", {})
+    try:
+        stored = load_json_data(NFL_DEPTH_SNAP_PATH, {})
+        dates = sorted(stored.keys())
+        if len(dates) < 2:
+            return []
+        yesterday = stored[dates[-2]]
+        if yesterday.get("sport") != sport:
+            return []
+        changes = []
+        for team_abbr, curr_team in current_charts.items():
+            prev_team = yesterday.get("teams", {}).get(team_abbr, {})
+            for pos, curr_players in curr_team.get("positions", {}).items():
+                prev_players = prev_team.get("positions", {}).get(pos, [])
+                if not curr_players or not prev_players:
+                    continue
+                curr_starter = curr_players[0]["name"] if curr_players else ""
+                prev_starter = prev_players[0]["name"] if prev_players else ""
+                if curr_starter and prev_starter and curr_starter != prev_starter:
+                    changes.append({
+                        "team":     team_abbr,
+                        "position": pos,
+                        "old":      prev_starter,
+                        "new":      curr_starter,
+                        "type":     "Starter Change",
+                    })
+        return changes
+    except Exception:
+        return []
+
+
+# ── Feature 5: Market Open/Close Storage ───────────────────────
+def store_opening_lines(game_analysis, sport):
+    """
+    Store the first line seen as the opening line.
+    Enables market movement tracking: opening spread vs current spread.
+    """
+    if not game_analysis:
+        return
+    try:
+        stored = load_json_data(OPENING_LINES_PATH, {})
+        today_str = date.today().strftime("%Y-%m-%d")
+        for game in game_analysis:
+            matchup = game.get("matchup", "")
+            key = f"{today_str}_{matchup}_{sport}"
+            if key not in stored:
+                # First time seeing this game today — store as opening line
+                stored[key] = {
+                    "matchup":       matchup,
+                    "sport":         sport,
+                    "date":          today_str,
+                    "open_spread":   game.get("Spread", "N/A"),
+                    "open_total":    game.get("Total", "N/A"),
+                    "open_home_ml":  game.get("HomeML", "N/A"),
+                    "open_edge":     game.get("best_edge", 0),
+                    "stored_at":     datetime.now().strftime("%H:%M"),
+                }
+        save_json_data(OPENING_LINES_PATH, stored)
+    except Exception:
+        pass
+
+
+def get_line_movement_summary(matchup, sport, current_game):
+    """
+    Compare current line vs opening line for a game.
+    Returns movement string, e.g. "Total: 8.5 → 9.0 (+0.5)"
+    """
+    try:
+        stored = load_json_data(OPENING_LINES_PATH, {})
+        today_str = date.today().strftime("%Y-%m-%d")
+        key = f"{today_str}_{matchup}_{sport}"
+        opening = stored.get(key, {})
+        if not opening:
+            return ""
+        movements = []
+        curr_total = safe_float(current_game.get("Total") or 0)
+        open_total = safe_float(opening.get("open_total") or 0)
+        curr_spr   = current_game.get("Spread","")
+        open_spr   = opening.get("open_spread","")
+        if curr_total and open_total and abs(curr_total - open_total) >= 0.5:
+            movements.append(f"Total: {open_total} → {curr_total} ({curr_total-open_total:+.1f})")
+        if curr_spr and open_spr and curr_spr != open_spr:
+            movements.append(f"Spread: {open_spr} → {curr_spr}")
+        return " | ".join(movements)
+    except Exception:
+        return ""
+
+
+# ── Feature 6: Prediction Stability Audit ──────────────────────
+def store_board_snapshot(board, sport):
+    """
+    Store a snapshot of current board edges.
+    Used by prediction stability audit to detect unexplained edge drift.
+    """
+    if not board:
+        return
+    try:
+        stored = load_json_data(BOARD_SNAP_PATH, {})
+        snap_key = f"{date.today().strftime('%Y-%m-%d')}_{sport}_{datetime.now().strftime('%H:%M')}"
+        stored[snap_key] = {
+            "sport": sport,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "props": [
+                {
+                    "player": p.get("Player",""),
+                    "prop":   p.get("Prop",""),
+                    "line":   p.get("Line",0),
+                    "edge":   p.get("Edge",0),
+                    "tier":   p.get("Tier",""),
+                }
+                for p in board[:50]
+            ]
+        }
+        # Keep last 10 snapshots only
+        if len(stored) > 10:
+            oldest = sorted(stored.keys())[0]
+            del stored[oldest]
+        save_json_data(BOARD_SNAP_PATH, stored)
+    except Exception:
+        pass
+
+
+def check_prediction_stability(board, sport):
+    """
+    Compare current board vs most recent snapshot.
+    Flags if edge moved >5% with no injury/line change detected.
+    
+    Returns list of unstable props.
+    """
+    if not board:
+        return []
+    try:
+        stored = load_json_data(BOARD_SNAP_PATH, {})
+        today_snapshots = {k: v for k, v in stored.items()
+                          if k.startswith(date.today().strftime("%Y-%m-%d")) and v.get("sport") == sport}
+        if len(today_snapshots) < 2:
+            return []
+        # Get the most recent prior snapshot (not the current one)
+        sorted_keys = sorted(today_snapshots.keys())
+        prev_snap = today_snapshots[sorted_keys[-2]]
+        prev_lookup = {
+            (p["player"], p["prop"]): p["edge"]
+            for p in prev_snap.get("props", [])
+        }
+        unstable = []
+        for p in board[:30]:
+            key = (p.get("Player",""), p.get("Prop",""))
+            prev_edge = prev_lookup.get(key)
+            curr_edge = p.get("Edge", 0)
+            if prev_edge is not None and abs(curr_edge - prev_edge) > 0.05:
+                unstable.append({
+                    "player": p.get("Player",""),
+                    "prop":   p.get("Prop",""),
+                    "prev":   prev_edge,
+                    "curr":   curr_edge,
+                    "delta":  curr_edge - prev_edge,
+                })
+        return unstable
+    except Exception:
+        return []
+
+
 def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
@@ -9094,6 +9459,12 @@ def load_sport_data(sport):
             continue
         tier = get_tier(final_edge, sport)
         injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
+        # NFL: add practice trend to injury flag
+        if sport == "NFL" and not injury_flag:
+            _practice = st.session_state.get("nfl_practice", {})
+            _trend = get_practice_trend(player, _practice)
+            if _trend and "DNP" in _trend:
+                injury_flag = f"Practice: {_trend}"
         sem_display, sem_n = compute_sem_for_tier(tier_stats, tier)
         ev_2pick = calculate_prizepicks_ev(best_prob, 2)
         ev_3pick = calculate_prizepicks_ev(best_prob, 3)
@@ -9518,6 +9889,21 @@ def load_sport_data(sport):
         key = f"{prop['Player']}_{prop['Prop']}"
         move = line_movement.get(key, {})
         prop["Movement"] = (move.get("direction", "") + str(abs(move.get("diff", 0))) if move else "")
+    # ── Store snapshots and opening lines ────────────────────
+    store_board_snapshot(enriched, sport)
+    if games:
+        store_opening_lines(game_analysis, sport)
+    _curr_depth = st.session_state.get("espn_depth_charts", {})
+    if _curr_depth:
+        _depth_changes = detect_depth_chart_changes(sport, _curr_depth)
+        st.session_state["depth_chart_changes"] = _depth_changes
+        save_depth_chart_snapshot(sport, _curr_depth)
+    if sport == "NFL":
+        _practice_data = fetch_nfl_practice_participation()
+        st.session_state["nfl_practice"] = _practice_data
+        _nfl_inactives = fetch_nfl_inactives()
+        st.session_state["nfl_inactives"] = _nfl_inactives
+
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
 # =========================
@@ -9865,6 +10251,17 @@ with tabs[0]:
         # Combine all supplemental injury sources
         _all_supp_inj = rw_inj_today + cbs_inj_today + espn_inj_today
         rw_inj_serious = [i for i in _all_supp_inj if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")]
+        # NFL practice participation trends
+        _nfl_practice_alerts = []
+        if _audit_sport == "NFL":
+            _practice_data = st.session_state.get("nfl_practice", {})
+            for _pname, _pdata in _practice_data.items():
+                if "DNP" in _pdata.get("trend","") or "Limited" in _pdata.get("trend",""):
+                    _nfl_practice_alerts.append({
+                        "player": _pname, "status": _pdata.get("trend",""),
+                        "note": f"Practice: {_pdata.get('trend','')}",
+                        "source": "ESPN Practice"
+                    })
         if injury_props or rw_inj_serious:
             st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Injury Alerts</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
             inj_html = '<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">'
@@ -10662,7 +11059,8 @@ with tabs[2]:
         _tc2 = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
 
         for _gi, _g in enumerate(_fgames):
-            _matchup = _g.get("Matchup","—")
+            _matchup = _g.get("matchup", _g.get("Matchup","—"))
+            _line_movement = get_line_movement_summary(_matchup, _gsport, _g)
             _gtime = _g.get("Time","—")
             _gsport = _g.get("Sport",_sport2)
             _injury = _g.get("Injury","")
@@ -11520,6 +11918,57 @@ with tabs[4]:
         for pattern in _lp:
             st.markdown(f"- {pattern}")
         st.caption("These patterns auto-update every time you load the board. Weight optimizer will incorporate them at 50 bets.")
+    # ── NFL Prop ROI by Position ──────────────────────────────
+    if st.session_state.get("last_sport") == "NFL" or any(h.get("sport") == "NFL" for h in st.session_state.history):
+        st.markdown("---")
+        st.markdown("### 🏈 NFL Prop ROI by Position")
+        st.caption("Tracks win rate and ROI separately for QB/RB/WR/TE/K props. Activates after 10 NFL bets.")
+        _nfl_bets = [h for h in st.session_state.history if h.get("sport") == "NFL" and h.get("outcome") in ("WIN","LOSS")]
+        if len(_nfl_bets) >= 10:
+            # Classify prop by position
+            _pos_groups = {
+                "QB":  ["pass", "completion", "interception", "qb", "touchdown pass"],
+                "RB":  ["rush", "carry", "rb", "running back"],
+                "WR":  ["receiv", "target", "catch", "wr", "wide"],
+                "TE":  ["tight", "te "],
+                "DEF": ["sack", "tackle", "defense"],
+            }
+            _pos_stats = {}
+            for _nb in _nfl_bets:
+                _prop_lower = (_nb.get("prop","") + " " + _nb.get("player","")).lower()
+                _pos = "Other"
+                for _pg, _keywords in _pos_groups.items():
+                    if any(kw in _prop_lower for kw in _keywords):
+                        _pos = _pg
+                        break
+                if _pos not in _pos_stats:
+                    _pos_stats[_pos] = {"wins":0,"losses":0,"stake":0,"payout":0}
+                _ps = _pos_stats[_pos]
+                _stake = float(_nb.get("wager",0) or 0)
+                _ps["stake"] += _stake
+                if _nb["outcome"] == "WIN":
+                    _ps["wins"] += 1
+                    _mult = PRIZEPICKS_MULTIPLIERS.get(_nb.get("pick_count",2), 3.0)
+                    _ps["payout"] += _stake * _mult
+                else:
+                    _ps["losses"] += 1
+            _nfl_pos_rows = []
+            for _pos, _ps in sorted(_pos_stats.items()):
+                _total = _ps["wins"] + _ps["losses"]
+                _wr = _ps["wins"] / _total if _total else 0
+                _roi = (_ps["payout"] - _ps["stake"]) / _ps["stake"] if _ps["stake"] else 0
+                _nfl_pos_rows.append({
+                    "Position":  _pos,
+                    "Bets":      _total,
+                    "Win Rate":  f"{_wr:.1%}",
+                    "ROI":       f"{_roi:+.1%}",
+                    "Net Units": f"{(_ps['payout']-_ps['stake']):.1f}u",
+                })
+            if _nfl_pos_rows:
+                st.dataframe(pd.DataFrame(_nfl_pos_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info(f"NFL position ROI activates after 10 NFL bets. Current: {len(_nfl_bets)}.")
+
     st.markdown("---")
     st.markdown("### 🎯 Probability Calibration")
     st.caption("Are your predicted probabilities accurate? Compares model prediction vs actual hit rate per probability bucket. Activates at 30 resolved bets.")
@@ -13019,6 +13468,63 @@ with tabs[9]:
                 ))
         else:
             _audit_results.append(_audit_warn("Audit 10 — Sharp Consensus", "No game analysis data"))
+
+        # ── Audit 11: Prediction Stability ─────────────────────
+        _unstable = check_prediction_stability(_audit_board, _audit_sport)
+        if _unstable:
+            _audit_results.append(_audit_warn(
+                "Audit 11 — Prediction Stability",
+                f"{len(_unstable)} prop(s) edge drifted >5% unexplained: " +
+                " | ".join(f"{u['player']} {u['prop']} {u['prev']:.1%}→{u['curr']:.1%}" for u in _unstable[:2])
+            ))
+        else:
+            _snap_count = len(load_json_data(BOARD_SNAP_PATH, {}))
+            _audit_results.append(_audit_pass(
+                "Audit 11 — Prediction Stability",
+                f"No unexplained edge drift detected ({_snap_count} snapshot(s) on file)"
+            ))
+
+        # ── Audit 12: Depth Chart Changes ───────────────────────
+        _dc_changes = st.session_state.get("depth_chart_changes", [])
+        if _dc_changes:
+            _audit_results.append(_audit_warn(
+                "Audit 12 — Depth Chart Changes",
+                f"{len(_dc_changes)} starter change(s): " +
+                " | ".join(f"{c['team']} {c['position']}: {c['old']}→{c['new']}" for c in _dc_changes[:3])
+            ))
+        else:
+            _snap_dates = len(load_json_data(NFL_DEPTH_SNAP_PATH, {}))
+            _audit_results.append(_audit_pass(
+                "Audit 12 — Depth Chart Changes",
+                f"No depth chart starter changes detected ({_snap_dates} day(s) tracked)"
+            ))
+
+        # ── Audit 13: NFL Inactives Impact ──────────────────────
+        if _audit_sport == "NFL":
+            _inactives = st.session_state.get("nfl_inactives", {})
+            if _inactives:
+                # Check if any inactive player has active props on board
+                _inactive_names = set()
+                for team_list in _inactives.values():
+                    _inactive_names.update(normalize_name(n) for n in team_list)
+                _inactive_props = [p for p in _audit_board
+                                   if normalize_name(p.get("Player","")) in _inactive_names]
+                if _inactive_props:
+                    _audit_results.append(_audit_fail(
+                        "Audit 13 — NFL Inactives Impact",
+                        f"🚨 {len(_inactive_props)} active prop(s) for inactive player(s): " +
+                        ", ".join(p.get("Player","") for p in _inactive_props[:3])
+                    ))
+                else:
+                    _audit_results.append(_audit_pass(
+                        "Audit 13 — NFL Inactives Impact",
+                        f"All {len(_inactive_names)} inactive player(s) cleared from board"
+                    ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 13 — NFL Inactives Impact",
+                    "Inactives not yet posted (typically 90 min before kickoff)"
+                ))
 
         # ── Display audit results ───────────────────────────────
         _fails  = [r for r in _audit_results if r["status"] == "FAIL"]
