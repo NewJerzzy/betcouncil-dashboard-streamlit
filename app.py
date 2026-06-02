@@ -10918,10 +10918,6 @@ def load_sport_data(sport):
                                         if normalize_name(pl["name"]) == normalize_name(_pname)), None)
                         _ep["LineupStatus"] = f"✅ Batting #{_bat_pos}" if _bat_pos else "✅ In lineup"
     store_board_snapshot(enriched, sport)
-    if games:
-        store_opening_lines(game_analysis, sport)
-        _line_origins = track_line_origin(game_analysis, sport)
-        st.session_state["line_origins"] = _line_origins
     _curr_depth = st.session_state.get("espn_depth_charts", {})
     if _curr_depth:
         _depth_changes = detect_depth_chart_changes(sport, _curr_depth)
@@ -11095,6 +11091,10 @@ with st.sidebar:
             if games and home_teams and away_teams:
                 game_analysis = analyze_all_games(games, sport_sel, home_teams, away_teams)
                 st.session_state["game_analysis"] = game_analysis
+                # Store opening lines + line origins now that game_analysis exists
+                if game_analysis:
+                    store_opening_lines(game_analysis, sport_sel)
+                    st.session_state["line_origins"] = track_line_origin(game_analysis, sport_sel)
             else:
                 st.session_state["game_analysis"] = []
         if board:
