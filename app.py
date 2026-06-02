@@ -3693,6 +3693,7 @@ def detect_game_script_contradictions(parlay_props, games):
 def track_line_movement(props):
     existing = load_json_data(LINE_MOVEMENT_PATH, {})
     movement = {}
+    _locks_snapshot = list(st.session_state.get("locks", []))
     updated = {}
     for p in props:
         key = f"{p['Player']}_{p['Prop']}"
