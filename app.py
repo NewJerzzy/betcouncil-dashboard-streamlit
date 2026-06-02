@@ -9774,18 +9774,6 @@ def load_sport_data(sport):
         _mlb_lineups = fetch_mlb_confirmed_lineups()
         if _mlb_lineups:
             st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
-            for _p in props:
-                _pname = _p.get("Player","")
-                _pteam = _p.get("Team","")
-                _team_lineup = _mlb_lineups.get(_pteam, {})
-                if _team_lineup.get("confirmed"):
-                    _lineup_names = [normalize_name(pl["name"]) for pl in _team_lineup.get("players",[])]
-                    if normalize_name(_pname) not in _lineup_names:
-                        _p["LineupStatus"] = "⚠️ Not in confirmed lineup"
-                    else:
-                        _bat_pos = next((pl["batting_order"] for pl in _team_lineup["players"]
-                                        if normalize_name(pl["name"]) == normalize_name(_pname)), None)
-                        _p["LineupStatus"] = f"✅ Batting #{_bat_pos}" if _bat_pos else "✅ In lineup"
         st.session_state["mlb_pitchers"] = mlb_pitchers
     elif sport == "NHL":
         nhl_rolling = fetch_nhl_rolling_averages()
@@ -10912,6 +10900,22 @@ def load_sport_data(sport):
         move = line_movement.get(key, {})
         prop["Movement"] = (move.get("direction", "") + str(abs(move.get("diff", 0))) if move else "")
     # ── Store snapshots and opening lines ────────────────────
+    # MLB lineup status applied to enriched props
+    if sport == "MLB":
+        _mlb_lineups_enriched = st.session_state.get("mlb_confirmed_lineups", {})
+        if _mlb_lineups_enriched:
+            for _ep in enriched:
+                _pname = _ep.get("Player","")
+                _pteam = _ep.get("Team","")
+                _team_lineup = _mlb_lineups_enriched.get(_pteam, {})
+                if _team_lineup.get("confirmed"):
+                    _lineup_names = [normalize_name(pl["name"]) for pl in _team_lineup.get("players",[])]
+                    if normalize_name(_pname) not in _lineup_names:
+                        _ep["LineupStatus"] = "⚠️ Not in confirmed lineup"
+                    else:
+                        _bat_pos = next((pl["batting_order"] for pl in _team_lineup["players"]
+                                        if normalize_name(pl["name"]) == normalize_name(_pname)), None)
+                        _ep["LineupStatus"] = f"✅ Batting #{_bat_pos}" if _bat_pos else "✅ In lineup"
     store_board_snapshot(enriched, sport)
     if games:
         store_opening_lines(game_analysis, sport)
