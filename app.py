@@ -12273,7 +12273,7 @@ with tabs[2]:
                            else ("" if any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
                  "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
-                {"label":"ALT LINE",
+                {"label": "ALT LINE" if _gsport not in ("MLB","NHL") else "RUN LINE",
                  "pick":_alt_line or ("—" if not _g.get("OddsAPI Spread") else
                         (_g.get("FavoriteTeam","") + " " + str(_g.get("OddsAPI Spread",""))).strip()),
                  "line":_alt_line or _g.get("OddsAPI Spread","—"),
