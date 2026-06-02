@@ -4156,6 +4156,23 @@ def scrape_prizepicks(sport):
     if not league:
         return []
     state_code = st.secrets.get("PP_STATE_CODE", "CA")
+
+    # ── Session cookie injection ─────────────────────────────
+    # Store critical PP session cookies in Streamlit secrets as PP_SESSION_COOKIES
+    # Format: paste the full cookie string from DevTools Network tab
+    # These expire in ~24-48hrs — refresh by re-capturing from browser
+    # Key cookies: _prizepicks_session, remember_user_token, cf_clearance,
+    #              datadome, _px3, CSRF-TOKEN
+    _pp_session_cookies = st.secrets.get("PP_SESSION_COOKIES", "")
+    _pp_x_device_id     = st.secrets.get("PP_X_DEVICE_ID", "betcouncil-v46")
+
+    # Extract the most important cookies for session replay
+    # These are the anti-bot + auth tokens that make the request trusted
+    _critical_cookie_keys = [
+        "_prizepicks_session", "remember_user_token", "cf_clearance",
+        "datadome", "_px3", "CSRF-TOKEN", "__cf_bm", "_cfuvid",
+        "pxcts", "pp_uuid",
+    ]
     urls = [
         # Primary: CDN endpoint — CloudFront, no Akamai protection
         "https://static.prizepicks.com/projections.json",
@@ -4214,21 +4231,32 @@ def scrape_prizepicks(sport):
                 try:
                     from curl_cffi import requests as cffi_requests
                     _cffi_headers = {
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
                         "accept": "application/json, text/plain, */*",
                         "accept-language": "en-US,en;q=0.9",
-                        "sec-ch-ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+                        "accept-encoding": "gzip, deflate, br, zstd",
+                        "content-type": "application/json",
+                        "origin": "https://app.prizepicks.com",
+                        "referer": "https://app.prizepicks.com/",
+                        "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
                         "sec-ch-ua-mobile": "?0",
-                        "sec-ch-ua-platform": '"macOS"',
+                        "sec-ch-ua-platform": '"Windows"',
                         "sec-fetch-dest": "empty",
                         "sec-fetch-mode": "cors",
                         "sec-fetch-site": "same-site",
-                        "Origin": "https://app.prizepicks.com",
-                        "Referer": "https://app.prizepicks.com/",
+                        "x-device-id": _pp_x_device_id or "19458434-a345-4d1e-85c1-c100d5df600b",
+                        "x-device-info": f"name=,os=windows,osVersion=Windows NT 10.0; Win64; x64,platform=web,gameMode=prizepools,stateCode={state_code}",
                     }
-                    _cffi_resp = cffi_requests.get(
-                        url, headers=_cffi_headers,
-                        impersonate="chrome124", timeout=15
+                    _cffi_session = cffi_requests.Session()
+                    _cffi_session.headers.update(_cffi_headers)
+                    # Inject session cookies if available in secrets
+                    if _pp_session_cookies:
+                        for _ck in _pp_session_cookies.split("; "):
+                            if "=" in _ck:
+                                _cn, _cv = _ck.split("=", 1)
+                                _cffi_session.cookies.set(_cn.strip(), _cv.strip(), domain=".prizepicks.com")
+                    _cffi_resp = _cffi_session.get(
+                        url, impersonate="chrome124", timeout=15
                     )
                     if _cffi_resp.status_code == 200:
                         content_type = _cffi_resp.headers.get("content-type","")
