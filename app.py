@@ -6057,6 +6057,15 @@ def fetch_game_lines(sport):
             odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
             if odds_games:
                 odds_lookup = {g["Matchup"]: g for g in odds_games}
+                # MLB abbreviation → keyword map for teams with non-obvious abbrevs
+                MLB_ABBREV_KEYWORDS = {
+                    "TB": "TAMPA", "NYY": "YANKEE", "NYM": "METS",
+                    "CWS": "WHITE SOX", "KC": "ROYAL", "WSH": "NATIONAL",
+                    "SF": "GIANTS", "SD": "PADRE", "LAD": "DODGER",
+                    "LAA": "ANGEL", "STL": "CARDINAL", "COL": "ROCKI",
+                    "MIL": "BREWER", "CLE": "GUARDIAN", "MIN": "TWIN",
+                    "BAL": "ORIOL", "OAK": "ATHLET",
+                }
                 for game in today_games:
                     matchup = game.get("Matchup","")
                     home1 = home_teams.get(matchup, "")
@@ -6069,21 +6078,25 @@ def fetch_game_lines(sport):
                     for odds_matchup, odds_game in odds_lookup.items():
                         home2 = odds_home.get(odds_matchup, "").upper()
                         away2 = odds_away.get(odds_matchup, "").upper()
-                        # Try multiple matching strategies
                         matched = False
-                        # Strategy 1: any ESPN team abbrev in OddsAPI full name
                         for esp_abbr in esp_parts:
-                            if len(esp_abbr) >= 2:
-                                if esp_abbr in home2 or esp_abbr in away2:
-                                    matched = True
-                                    break
-                                # Strategy 2: first 3 chars of OddsAPI name in ESPN abbrev
-                                if home2[:3] in esp_abbr or away2[:3] in esp_abbr:
-                                    matched = True
-                                    break
-                        # Strategy 3: home team abbreviation in OddsAPI matchup string
+                            if len(esp_abbr) < 2:
+                                continue
+                            # Direct substring match
+                            if esp_abbr in home2 or esp_abbr in away2:
+                                matched = True; break
+                            # OddsAPI first 3 chars in abbrev
+                            if home2[:3] in esp_abbr or away2[:3] in esp_abbr:
+                                matched = True; break
+                            # Abbreviation keyword lookup
+                            keyword = MLB_ABBREV_KEYWORDS.get(esp_abbr)
+                            if keyword and (keyword in home2 or keyword in away2):
+                                matched = True; break
                         if not matched and home1:
                             if home1.upper() in odds_matchup.upper():
+                                matched = True
+                            kw = MLB_ABBREV_KEYWORDS.get(home1.upper())
+                            if kw and kw in odds_matchup.upper():
                                 matched = True
                         if matched:
                             best_match = odds_game
