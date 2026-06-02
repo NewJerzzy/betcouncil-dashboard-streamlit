@@ -4207,22 +4207,56 @@ def scrape_prizepicks(sport):
                     except: pass
         if data is None:
             try:
-                resp = scrapeops_get(url, headers=pp_headers, timeout=20)
-                if resp.status_code == 200:
-                    # Check for captcha response (returns HTML not JSON)
-                    content_type = resp.headers.get("content-type", "")
-                    if "html" in content_type or resp.text.strip().startswith("<"):
-                        # Got captcha page — skip to next URL
-                        st.session_state.setdefault("errors", []).append({
-                            "time": datetime.now().strftime("%H:%M:%S"),
-                            "source": "scrape_prizepicks",
-                            "error": f"Captcha detected on {url[:60]} — trying next source"
-                        })
-                        continue
-                    data = resp.json()
-                    if data and data.get("data"):
-                        with open(cache_path, "wb") as f:
-                            pickle.dump(data, f)
+                # ── Attempt 1: curl_cffi with Chrome TLS fingerprint ──
+                # Bypasses Akamai by mimicking real Chrome at the TLS layer.
+                # Falls back to ScrapeOps if curl_cffi not installed or fails.
+                _cffi_success = False
+                try:
+                    from curl_cffi import requests as cffi_requests
+                    _cffi_headers = {
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                        "accept": "application/json, text/plain, */*",
+                        "accept-language": "en-US,en;q=0.9",
+                        "sec-ch-ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+                        "sec-ch-ua-mobile": "?0",
+                        "sec-ch-ua-platform": '"macOS"',
+                        "sec-fetch-dest": "empty",
+                        "sec-fetch-mode": "cors",
+                        "sec-fetch-site": "same-site",
+                        "Origin": "https://app.prizepicks.com",
+                        "Referer": "https://app.prizepicks.com/",
+                    }
+                    _cffi_resp = cffi_requests.get(
+                        url, headers=_cffi_headers,
+                        impersonate="chrome124", timeout=15
+                    )
+                    if _cffi_resp.status_code == 200:
+                        content_type = _cffi_resp.headers.get("content-type","")
+                        if "html" not in content_type and not _cffi_resp.text.strip().startswith("<"):
+                            data = _cffi_resp.json()
+                            _cffi_success = True
+                except ImportError:
+                    pass  # curl_cffi not installed — fall through to ScrapeOps
+                except Exception:
+                    pass  # curl_cffi failed — fall through to ScrapeOps
+
+                # ── Attempt 2: ScrapeOps residential proxy ──
+                if not _cffi_success:
+                    resp = scrapeops_get(url, headers=pp_headers, timeout=20)
+                    if resp.status_code == 200:
+                        # Check for captcha response (returns HTML not JSON)
+                        content_type = resp.headers.get("content-type", "")
+                        if "html" in content_type or resp.text.strip().startswith("<"):
+                            st.session_state.setdefault("errors", []).append({
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "source": "scrape_prizepicks",
+                                "error": f"Captcha detected on {url[:60]} — trying next source"
+                            })
+                            continue
+                        data = resp.json()
+                        if data and data.get("data"):
+                            with open(cache_path, "wb") as f:
+                                pickle.dump(data, f)
                 elif resp.status_code == 429:
                     time.sleep(2)
                     continue
