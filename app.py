@@ -11262,7 +11262,8 @@ with tabs[0]:
         rw_inj_serious = [i for i in _all_supp_inj if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")]
         # NFL practice participation trends
         _nfl_practice_alerts = []
-        if _audit_sport == "NFL":
+        _summary_sport = st.session_state.get("last_sport", "NBA")
+        if _summary_sport == "NFL":
             _practice_data = st.session_state.get("nfl_practice", {})
             for _pname, _pdata in _practice_data.items():
                 if "DNP" in _pdata.get("trend","") or "Limited" in _pdata.get("trend",""):
