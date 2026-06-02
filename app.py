@@ -4438,6 +4438,138 @@ def fetch_injury_news(sport):
     return fetch_underdog_injuries(sport) or {}
 
 
+# ═══════════════════════════════════════════════════════════════
+# ESPN INJURY + DEPTH CHART FEEDS
+# Uses same ESPN infrastructure already trusted by the app.
+# Tier 4 injury source + depth chart movement for NFL/NBA/MLB.
+# ═══════════════════════════════════════════════════════════════
+
+ESPN_SLUG_MAP = {
+    "NBA":  "basketball/nba",
+    "NFL":  "football/nfl",
+    "MLB":  "baseball/mlb",
+    "NHL":  "hockey/nhl",
+    "WNBA": "basketball/wnba",
+}
+
+@st.cache_data(ttl=900)
+def fetch_espn_injuries(sport):
+    """
+    ESPN injury report — Tier 4 injury source (after Underdog/CBS/RotoWire).
+    Uses the same ESPN API infrastructure already trusted by the app.
+    Returns list of {player, status, note, sport, source} dicts.
+    
+    Endpoint: site.api.espn.com/apis/site/v2/sports/{path}/injuries
+    Free, no key, no auth — same as all other ESPN endpoints.
+    """
+    slug = ESPN_SLUG_MAP.get(sport)
+    if not slug:
+        return []
+    try:
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/injuries"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        results = []
+        # ESPN returns injuries grouped by team
+        for team in data.get("injuries", []):
+            team_abbr = team.get("team", {}).get("abbreviation", "")
+            for injury in team.get("injuries", []):
+                athlete = injury.get("athlete", {})
+                player_name = athlete.get("displayName", "")
+                status_obj  = injury.get("status", "")
+                detail      = injury.get("details", {})
+                # Normalize status
+                raw_status  = (detail.get("type") or status_obj or "").upper()
+                if "OUT" in raw_status or "DOUBTFUL" in raw_status:
+                    status = "OUT" if "OUT" in raw_status else "DOUBTFUL"
+                elif "QUEST" in raw_status:
+                    status = "QUESTIONABLE"
+                elif "PROB" in raw_status:
+                    status = "PROBABLE"
+                elif raw_status in ("", "ACTIVE"):
+                    continue  # Skip healthy players
+                else:
+                    status = "QUESTIONABLE"
+                note = detail.get("detail", "") or injury.get("longComment", "")[:150]
+                if player_name:
+                    results.append({
+                        "player": player_name,
+                        "status": status,
+                        "note":   note[:150],
+                        "team":   team_abbr,
+                        "sport":  sport,
+                        "source": "ESPN",
+                    })
+        return results
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800)
+def fetch_espn_depth_charts(sport):
+    """
+    ESPN depth charts — exposes RB/WR/QB depth for NFL,
+    starting lineup depth for NBA, rotation for MLB.
+    
+    Key use case: if RB1 is questionable, is RB2 worth a prop?
+    If cleanup hitter is scratched, who moves up?
+    
+    Returns dict: {team_abbr: {position: [player1, player2, ...]}}
+    Endpoint: site.api.espn.com/apis/site/v2/sports/{path}/teams/{id}/depthcharts
+    """
+    slug = ESPN_SLUG_MAP.get(sport)
+    if not slug:
+        return {}
+    # High value sports for depth charts
+    if sport not in ("NFL", "NBA", "MLB", "WNBA"):
+        return {}
+    try:
+        # First get team list
+        teams_url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/teams?limit=50"
+        r = requests.get(teams_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return {}
+        teams = r.json().get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", [])
+        depth_charts = {}
+        # Fetch depth chart for each team (limit to avoid rate limiting)
+        for team_data in teams[:32]:
+            team = team_data.get("team", {})
+            team_id   = team.get("id")
+            team_abbr = team.get("abbreviation", "")
+            if not team_id:
+                continue
+            try:
+                dc_url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/teams/{team_id}/depthcharts"
+                rd = requests.get(dc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+                if rd.status_code != 200:
+                    continue
+                dc_data = rd.json()
+                positions = {}
+                for pos_group in dc_data.get("positionGroups", []):
+                    pos_name = pos_group.get("position", {}).get("abbreviation", "")
+                    players = []
+                    for slot in pos_group.get("athletes", []):
+                        pname = slot.get("athlete", {}).get("displayName", "")
+                        depth = slot.get("rank", 99)
+                        if pname:
+                            players.append({"name": pname, "depth": depth})
+                    players.sort(key=lambda x: x["depth"])
+                    if players and pos_name:
+                        positions[pos_name] = players
+                if positions:
+                    depth_charts[team_abbr] = {
+                        "positions": positions,
+                        "fetched_at": datetime.now().strftime("%H:%M"),
+                    }
+            except Exception:
+                continue
+        return depth_charts
+    except Exception:
+        return {}
+
+
 @st.cache_data(ttl=900)
 def fetch_cbs_injuries(sport):
     """
@@ -8273,6 +8405,11 @@ def load_sport_data(sport):
             return fetch_cbs_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
         except Exception:
             return []
+    def _pf_espn_injuries():
+        try:
+            return fetch_espn_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
+        except Exception:
+            return []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
@@ -8282,13 +8419,13 @@ def load_sport_data(sport):
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
-        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_public,
+        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
-     bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, public_betting,
+     bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw) = _results
 
     # Unpack game_lines tuple safely
@@ -8333,9 +8470,27 @@ def load_sport_data(sport):
                     "note":   ci.get("note",""),
                     "source": "CBS Sports",
                 }
+    # Merge ESPN injuries — Tier 4 (dedicated endpoint, same ESPN infra)
+    espn_injuries = espn_injuries_raw or []
+    if espn_injuries and isinstance(injuries, dict):
+        for ei in espn_injuries:
+            pname = normalize_name(ei.get("player",""))
+            if pname and ei.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE") and pname not in injuries:
+                injuries[pname] = {
+                    "status": ei["status"],
+                    "note":   ei.get("note",""),
+                    "source": "ESPN",
+                }
+    st.session_state["espn_injuries"] = espn_injuries
     st.session_state["cbs_injuries"] = cbs_injuries
     st.session_state["rw_injuries"] = rw_injuries
     st.session_state["injuries_combined"] = injuries
+
+    # ── Depth charts (NFL/NBA/MLB — store for prop enrichment) ──
+    if sport in ("NFL","NBA","MLB","WNBA"):
+        _depth = fetch_espn_depth_charts(sport)
+        if _depth:
+            st.session_state["espn_depth_charts"] = _depth
 
     # Build action network lookup
     an_lookup = {}
@@ -9645,8 +9800,12 @@ with tabs[0]:
 
         # ── INJURY ALERTS ───────────────────────────────────
         injury_props = [p for p in board if p.get("Injury")]
-        rw_inj_today = st.session_state.get("rw_injuries", [])
-        rw_inj_serious = [i for i in rw_inj_today if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")]
+        rw_inj_today  = st.session_state.get("rw_injuries", [])
+        cbs_inj_today = st.session_state.get("cbs_injuries", [])
+        espn_inj_today= st.session_state.get("espn_injuries", [])
+        # Combine all supplemental injury sources
+        _all_supp_inj = rw_inj_today + cbs_inj_today + espn_inj_today
+        rw_inj_serious = [i for i in _all_supp_inj if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")]
         if injury_props or rw_inj_serious:
             st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#6a7a8a;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Injury Alerts</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
             inj_html = '<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">'
@@ -12769,6 +12928,21 @@ with tabs[9]:
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
 
+    # ── Depth Chart Status ──────────────────────────────────
+    _depth_charts = st.session_state.get("espn_depth_charts", {})
+    if _depth_charts:
+        st.markdown("---")
+        st.markdown("### 🏈 Depth Chart Snapshot")
+        st.caption(f"ESPN depth charts for {len(_depth_charts)} teams. Useful for injury impact on snap/usage share.")
+        _dc_team = st.selectbox("Team", sorted(_depth_charts.keys()), key="dc_team_sel")
+        if _dc_team and _dc_team in _depth_charts:
+            _dc_data = _depth_charts[_dc_team]
+            _dc_rows = []
+            for pos, players in _dc_data.get("positions", {}).items():
+                for pl in players[:3]:  # show top 3 per position
+                    _dc_rows.append({"Position": pos, "Player": pl["name"], "Depth": pl["depth"]})
+            if _dc_rows:
+                st.dataframe(pd.DataFrame(_dc_rows), use_container_width=True, hide_index=True)
     st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
     st.caption("Quick health check on signal quality. Full details in History tab.")
