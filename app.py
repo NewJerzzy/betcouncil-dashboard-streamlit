@@ -2401,6 +2401,193 @@ def compute_bankroll_multiplier(history=None, clv_data=None):
     }
 
 
+def generate_post_mortem(history, target_date=None):
+    """
+    Post-mortem analysis for a specific date (default: yesterday).
+    Answers: why did we win/lose that day?
+    
+    Top failing signals, top succeeding signals,
+    which tier underperformed, what to watch next time.
+    """
+    from datetime import timedelta
+    if target_date is None:
+        target_date = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    day_bets = [h for h in history
+                if h.get("timestamp","").startswith(target_date)
+                and h.get("outcome") in ("WIN","LOSS")]
+
+    if not day_bets:
+        return None
+
+    n = len(day_bets)
+    wins = sum(1 for h in day_bets if h.get("outcome") == "WIN")
+    total_net = sum(h.get("net", 0) for h in day_bets)
+    wr = wins / n
+
+    # Signal performance for the day
+    SIGNAL_KEYS = {
+        "base":     "Base",
+        "defense":  "Defense",
+        "location": "Location",
+        "rest":     "Rest",
+        "usage":    "Usage",
+        "blowout":  "Blowout",
+        "weather":  "Weather",
+        "sharp":    "Sharp",
+    }
+    signal_day = {}
+    for h in day_bets:
+        sig_vals = h.get("signal_values", {})
+        for sk, sl in SIGNAL_KEYS.items():
+            val = sig_vals.get(sk, 0)
+            if abs(val) < 0.005:
+                continue
+            if sl not in signal_day:
+                signal_day[sl] = {"wins": 0, "losses": 0, "net": 0}
+            signal_day[sl]["net"] += h.get("net", 0)
+            if h.get("outcome") == "WIN":
+                signal_day[sl]["wins"] += 1
+            else:
+                signal_day[sl]["losses"] += 1
+
+    failing  = sorted([(k,v) for k,v in signal_day.items() if v["net"] < 0],
+                       key=lambda x: x[1]["net"])
+    succeeding = sorted([(k,v) for k,v in signal_day.items() if v["net"] > 0],
+                         key=lambda x: -x[1]["net"])
+
+    # Tier breakdown
+    tier_day = {}
+    for h in day_bets:
+        t = h.get("tier","?")
+        if t not in tier_day:
+            tier_day[t] = {"wins":0,"losses":0,"net":0}
+        tier_day[t]["net"] += h.get("net",0)
+        if h.get("outcome") == "WIN":
+            tier_day[t]["wins"] += 1
+        else:
+            tier_day[t]["losses"] += 1
+
+    # Verdict
+    if total_net > 0:
+        verdict = f"✅ Winning day: +{total_net:.1f}u ({wr:.0%} WR)"
+    elif total_net == 0:
+        verdict = f"⚪ Break-even day: {wr:.0%} WR"
+    else:
+        verdict = f"🔴 Losing day: {total_net:.1f}u ({wr:.0%} WR)"
+
+    # Primary cause
+    if failing:
+        top_fail = failing[0]
+        cause = f"{top_fail[0]} signal underperformed ({top_fail[1]['net']:+.1f}u)"
+    elif wins == 0:
+        cause = "No winning picks — review tier thresholds"
+    else:
+        cause = "Normal variance — no structural issues"
+
+    return {
+        "date":        target_date,
+        "verdict":     verdict,
+        "n":           n,
+        "wins":        wins,
+        "net":         round(total_net, 2),
+        "win_rate":    f"{wr:.1%}",
+        "cause":       cause,
+        "failing":     [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in failing[:3]],
+        "succeeding":  [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in succeeding[:3]],
+        "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—"}
+                           for k,v in tier_day.items()},
+        "watch_next":  [k for k,v in failing[:2]] if failing else [],
+    }
+
+
+def compute_signal_interactions(performance_data=None):
+    """
+    Signal Interaction Analysis — the next level beyond signal lift.
+    
+    Tests pairs of signals together vs each signal alone.
+    Discovers synergistic combinations:
+      Defense + Away (travel fatigue against weak D): +8.2%
+      Rest (B2B) + Sharp Money: -12.1% (sharps fade fatigued players)
+    
+    Activates at 50+ resolved bets.
+    """
+    if performance_data is None:
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 50:
+        return None, len(resolved)
+
+    PAIRS_TO_TEST = [
+        ("signal_defense_positive", "signal_back_to_back"),
+        ("signal_defense_positive", "signal_location_home"),
+        ("signal_base_positive",    "signal_defense_positive"),
+        ("signal_base_positive",    "signal_sharp_flag"),
+        ("signal_sharp_flag",       "signal_back_to_back"),
+        ("signal_usage_boost",      "signal_defense_positive"),
+        ("signal_back_to_back",     "signal_blowout_risk"),
+        ("signal_base_positive",    "signal_back_to_back"),
+    ]
+
+    SIGNAL_SHORT = {
+        "signal_defense_positive": "Defense",
+        "signal_back_to_back":     "Rest(B2B)",
+        "signal_location_home":    "Home",
+        "signal_base_positive":    "Base",
+        "signal_sharp_flag":       "Sharp",
+        "signal_usage_boost":      "Usage",
+        "signal_blowout_risk":     "Blowout",
+    }
+
+    overall_wr = sum(r["win"] for r in resolved) / len(resolved)
+    results = []
+
+    for sig_a, sig_b in PAIRS_TO_TEST:
+        # Both active
+        both   = [r for r in resolved if r.get(sig_a,0)==1 and r.get(sig_b,0)==1]
+        # Only A
+        only_a = [r for r in resolved if r.get(sig_a,0)==1 and r.get(sig_b,0)==0]
+        # Only B
+        only_b = [r for r in resolved if r.get(sig_a,0)==0 and r.get(sig_b,0)==1]
+
+        if len(both) < 5:
+            continue
+
+        wr_both   = sum(r["win"] for r in both)   / len(both)
+        wr_only_a = sum(r["win"] for r in only_a) / len(only_a) if only_a else overall_wr
+        wr_only_b = sum(r["win"] for r in only_b) / len(only_b) if only_b else overall_wr
+
+        # Synergy = both together vs best of each alone
+        expected_if_independent = max(wr_only_a, wr_only_b)
+        synergy = wr_both - expected_if_independent
+
+        if synergy > 0.03:
+            interaction = "🟢 Synergistic"
+        elif synergy > 0:
+            interaction = "🟡 Mild synergy"
+        elif synergy > -0.03:
+            interaction = "⚪ Neutral"
+        else:
+            interaction = "🔴 Conflicting"
+
+        label_a = SIGNAL_SHORT.get(sig_a, sig_a)
+        label_b = SIGNAL_SHORT.get(sig_b, sig_b)
+
+        results.append({
+            "Signal A":         label_a,
+            "Signal B":         label_b,
+            "WR (Both)":        f"{wr_both:.1%}",
+            "WR (A only)":      f"{wr_only_a:.1%}",
+            "WR (B only)":      f"{wr_only_b:.1%}",
+            "Synergy":          f"{synergy:+.1%}",
+            "n (both)":         len(both),
+            "Interaction":      interaction,
+        })
+
+    results.sort(key=lambda x: float(x["Synergy"].replace("%","").replace("+","")), reverse=True)
+    return results, len(resolved)
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -12922,6 +13109,65 @@ with tabs[4]:
         st.caption(f"Calibration: {_weekly['calibration']}")
     else:
         st.info("No resolved bets in the last 7 days. Weekly report will generate automatically.")
+
+    # ── Post-Mortem Reports ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔍 Daily Post-Mortem")
+    st.caption("Why did we win or lose? Breaks down signal performance by day.")
+    _pm_col1, _pm_col2 = st.columns([2,1])
+    with _pm_col1:
+        _pm_date = st.date_input("Analyze date",
+                                  value=date.today() - __import__("datetime").timedelta(days=1),
+                                  key="pm_date")
+    _pm = generate_post_mortem(st.session_state.history, _pm_date.strftime("%Y-%m-%d"))
+    if _pm:
+        _pm_color = "#22c55e" if _pm["net"] > 0 else "#e04040" if _pm["net"] < 0 else "#8a9ab0"
+        st.markdown(
+            f'<div style="background:#0a0e14;border:1px solid {_pm_color}44;border-radius:8px;padding:0.8rem;">'
+            f'<div style="color:{_pm_color};font-size:1.1rem;font-weight:700;">{_pm["verdict"]}</div>'
+            f'<div style="color:#8a9ab0;font-size:0.9rem;margin-top:4px;">Primary cause: {_pm["cause"]}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        _pm_c1, _pm_c2 = st.columns(2)
+        with _pm_c1:
+            if _pm["failing"]:
+                st.markdown("**⚠️ Failing Signals:**")
+                for sig, net, w, l in _pm["failing"]:
+                    st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
+            if _pm["watch_next"]:
+                st.caption(f"Watch next session: {', '.join(_pm['watch_next'])}")
+        with _pm_c2:
+            if _pm["succeeding"]:
+                st.markdown("**✅ Succeeding Signals:**")
+                for sig, net, w, l in _pm["succeeding"]:
+                    st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
+            if _pm["tier_breakdown"]:
+                st.markdown("**Tier breakdown:**")
+                for t, td in _pm["tier_breakdown"].items():
+                    st.caption(f"{t}: {td['net']:+.1f}u ({td['wr']} WR)")
+    else:
+        st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
+
+    # ── Signal Interaction Analysis ──────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔗 Signal Interaction Analysis")
+    st.caption("Which signal combinations are stronger than either signal alone? Activates at 50 resolved bets.")
+    _perf_data_int = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _int_rows, _int_n = compute_signal_interactions(_perf_data_int)
+    if _int_rows is None:
+        st.info(f"Signal interaction analysis activates at 50 resolved bets. Current: {_int_n}.")
+    else:
+        _synergistic = [r for r in _int_rows if "Synergistic" in r["Interaction"]]
+        _conflicting = [r for r in _int_rows if "Conflicting" in r["Interaction"]]
+        if _synergistic:
+            st.success(f"✅ {len(_synergistic)} synergistic pair(s): " +
+                       ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _synergistic[:2]))
+        if _conflicting:
+            st.warning(f"⚠️ {len(_conflicting)} conflicting pair(s): " +
+                       ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _conflicting[:2]))
+        st.dataframe(pd.DataFrame(_int_rows), use_container_width=True, hide_index=True)
+        st.caption("Synergy = WR(both active) minus WR(best signal alone). Positive = combination is stronger.")
 
     # ── Weight Recommendations ───────────────────────────────
     st.markdown("---")
