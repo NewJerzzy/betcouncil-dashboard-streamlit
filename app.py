@@ -4378,13 +4378,26 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     total_available  = total_str  not in ("N/A", None, "")
     ml_available     = home_ml    not in ("N/A", None, "")
 
-    # Determine favorite for display
+    # Determine favorite for display — negative ML = favorite
     try:
         _fav_team = ""
+        _fav_ml   = ""
         if home_ml not in ("N/A", None, "") and away_ml not in ("N/A", None, ""):
-            _fav_team = home_team if float(str(home_ml).replace("+","")) < float(str(away_ml).replace("+","")) else away_team
+            _home_ml_val = float(str(home_ml).replace("+","").strip())
+            _away_ml_val = float(str(away_ml).replace("+","").strip())
+            # Favorite = more negative ML (lower value)
+            if _home_ml_val <= _away_ml_val:
+                _fav_team = home_team
+                _fav_ml   = str(home_ml)
+            else:
+                _fav_team = away_team
+                _fav_ml   = str(away_ml)
+        elif home_ml not in ("N/A", None, ""):
+            _fav_team = home_team
+            _fav_ml   = str(home_ml)
     except Exception:
         _fav_team = home_team
+        _fav_ml   = str(home_ml) if home_ml not in ("N/A", None, "") else ""
 
     return {
         "matchup": matchup, "home": home_team, "away": away_team,
@@ -4394,6 +4407,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         "HomeML": home_ml, "AwayML": away_ml,
         "Spread": spread_str, "Total": total_str,
         "FavoriteTeam": _fav_team,
+        "FavoriteML":   _fav_ml,
         "market_flags": {
             "spread": "available" if spread_available else "no_market",
             "total":  "available" if total_available  else "no_market",
@@ -12252,13 +12266,18 @@ with tabs[2]:
                 {"label":"ML",
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
-                          else (_g.get("FavoriteTeam") or _g.get("home","") + " " + str(_g.get("HomeML",""))))),
+                          else ((_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
+                                or _g.get("home","") + " " + str(_g.get("HomeML",""))))),
                  "note": ("" if _g.get("MLPick") else
                           ("" if _g.get("HomeML","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
                  "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
-                {"label":"ALT LINE","pick":_alt_line or "—","line":_alt_line or "—","edge":_alt_edge,"tier":_alt_tier},
+                {"label":"ALT LINE",
+                 "pick":_alt_line or ("—" if not _g.get("OddsAPI Spread") else
+                        (_g.get("FavoriteTeam","") + " " + str(_g.get("OddsAPI Spread",""))).strip()),
+                 "line":_alt_line or _g.get("OddsAPI Spread","—"),
+                 "edge":_alt_edge,"tier":_alt_tier},
             ]
             # Game card header
             st.markdown(
