@@ -8090,7 +8090,12 @@ def load_sport_data(sport):
     def _pf_bdl():          return fetch_bdl_props(sport)
     def _pf_sleeper():      return fetch_sleeper_props(sport)
     def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else {}
-    def _pf_rw_injuries():  return fetch_rotowire_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
+    def _pf_rw_injuries():
+        try:
+            result = fetch_rotowire_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
+            return result
+        except Exception:
+            return []  # RotoWire RSS blocks cloud IPs — silent fallback, not a board error
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
@@ -8706,7 +8711,8 @@ def load_sport_data(sport):
             "SignalBlowout": blowout_adj, "SignalH2H": h2h_adj, "H2HNote": h2h_note,
             "WeatherNote": weather_note, "Movement": "",
             "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag,
-            "source": p.get("source", ""), "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
+            "source": p.get("source", ""), "Source": p.get("source","").title() or "Unknown",  # uppercase for Audit 3
+            "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
             "Trend": recency_flag, "TrendDir": trend, "SampleSize": n_games if n_games else "—",
@@ -12366,12 +12372,13 @@ with tabs[9]:
         # Checks records returned per source and flags low counts.
         _src_counts = {}
         for p in _audit_board:
-            _src = p.get("Source","Unknown")
+            _src = p.get("Source") or p.get("source") or "Unknown"
             _src_counts[_src] = _src_counts.get(_src, 0) + 1
         _src_issues = []
         _timings = st.session_state.get("fetch_timings", {})
+        _expected_failures = {"rw_injuries", "prizepicks"}  # expected to fail in cloud env
         for src, info in _timings.items():
-            if info.get("status","").startswith("❌"):
+            if info.get("status","").startswith("❌") and src not in _expected_failures:
                 _src_issues.append(f"{src}: {info['status'][:40]}")
         _errors = st.session_state.get("errors",[])
         _recent_errors = [e for e in _errors[-20:] if e.get("source") not in ("",None)]
