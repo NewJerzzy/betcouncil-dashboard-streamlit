@@ -8065,7 +8065,17 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     save_json_data(BANKROLL_PATH, st.session_state.bankroll)
     save_to_gist("bankroll", st.session_state.bankroll)
     record_signal_performance(record, outcome)
-    compute_optimized_weights(sport)
+    # ── Optimizer guard — only run when bet count changes ──
+    # Prevents running 10x per session when board reloads.
+    # Key: {sport}_{n_resolved_bets} — changes only when a
+    # new resolved bet (WIN/LOSS) is logged.
+    _n_resolved = sum(1 for h in st.session_state.history
+                      if h.get("outcome") in ("WIN","LOSS"))
+    _opt_key = f"_opt_last_run_{sport}"
+    _last_run = st.session_state.get(_opt_key, -1)
+    if _n_resolved != _last_run and _n_resolved >= WEIGHT_OPTIMIZER_MIN_BETS:
+        compute_optimized_weights(sport)
+        st.session_state[_opt_key] = _n_resolved
     return record
 
 # ═══════════════════════════════════════════════════════════
