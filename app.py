@@ -66,6 +66,11 @@ MIN_EDGE_DEFAULT = 0.02
 REQUEST_TIMEOUT = 10
 CACHE_DIR = "/tmp/betcouncil_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
+# Clear stale game line caches on startup to force fresh OddsAPI fetch
+import glob as _glob_startup
+for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "odds_api_games_*.pkl")):
+    try: os.remove(_stale)
+    except: pass
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
 
@@ -6498,7 +6503,7 @@ def fetch_odds_api_game_lines(sport):
     cache_path = os.path.join(CACHE_DIR, f"odds_api_games_{sport}.pkl")
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 30:
+        if age_mins < 20:
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
