@@ -6059,50 +6059,72 @@ def fetch_game_lines(sport):
             odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
             if odds_games:
                 odds_lookup = {g["Matchup"]: g for g in odds_games}
-                # MLB abbreviation → keyword map for teams with non-obvious abbrevs
-                MLB_ABBREV_KEYWORDS = {
-                    "TB":  "TAMPA",    "NYY": "YANKEE",   "NYM": "METS",
-                    "CWS": "WHITE SOX","KC":  "ROYAL",    "WSH": "NATIONAL",
-                    "SF":  "GIANTS",   "SD":  "SAN DIEGO","LAD": "DODGER",
-                    "LAA": "ANGEL",    "STL": "CARDINAL", "COL": "ROCKI",
-                    "MIL": "BREWER",   "CLE": "GUARDIAN", "MIN": "TWIN",
-                    "BAL": "ORIOL",    "OAK": "ATHLET",   "ATH": "ATHLET",
-                    "TOR": "TORONTO",  "HOU": "HOUSTON",  "SEA": "SEATTLE",
-                    "CHC": "CUBS",     "CIN": "REDS",     "PIT": "PIRATE",
-                    "ARI": "ARIZONA",  "MIA": "MARLINS",  "ATL": "BRAVES",
+
+                # Definitive ESPN abbrev → OddsAPI full name fragment mapping
+                # Covers every MLB team + all major sports
+                TEAM_ABBREV_TO_FRAGMENT = {
+                    # MLB
+                    "ARI":"Arizona","ATL":"Atlanta Braves","BAL":"Baltimore",
+                    "BOS":"Boston Red","CHC":"Chicago Cubs","CWS":"Chicago White",
+                    "CIN":"Cincinnati","CLE":"Cleveland","COL":"Colorado",
+                    "DET":"Detroit","HOU":"Houston Astros","KC":"Kansas City",
+                    "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
+                    "MIA":"Miami","MIL":"Milwaukee","MIN":"Minnesota",
+                    "NYM":"New York Mets","NYY":"New York Yankees",
+                    "OAK":"Oakland","ATH":"Athletics",
+                    "PHI":"Philadelphia","PIT":"Pittsburgh",
+                    "SD":"San Diego","SEA":"Seattle","SF":"San Francisco",
+                    "STL":"St. Louis","TB":"Tampa Bay","TEX":"Texas",
+                    "TOR":"Toronto","WSH":"Washington Nationals",
+                    # NBA
+                    "GSW":"Golden State","LAL":"Los Angeles Lakers",
+                    "LAC":"Los Angeles Clippers","NYK":"New York Knicks",
+                    "NOP":"New Orleans","SAS":"San Antonio",
+                    "OKC":"Oklahoma","UTA":"Utah","MEM":"Memphis",
+                    # NFL
+                    "NE":"New England","NO":"New Orleans Saints",
+                    "GB":"Green Bay","KC":"Kansas City Chiefs",
+                    "LAR":"Los Angeles Rams","LAC":"Los Angeles Chargers",
+                    "NYG":"New York Giants","NYJ":"New York Jets",
+                    "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers",
+                    # NHL
+                    "TBL":"Tampa Bay Lightning","TOR":"Toronto",
+                    "WSH":"Washington Capitals","NJD":"New Jersey",
+                    "LAK":"Los Angeles Kings","SJS":"San Jose",
+                    "CBJ":"Columbus","VGK":"Vegas Golden",
                 }
+
                 for game in today_games:
                     matchup = game.get("Matchup","")
                     home1 = home_teams.get(matchup, "")
                     away1 = away_teams.get(matchup, "")
-                    # Match by team abbreviation (ESPN uses abbrev, OddsAPI uses full name)
-                    # ESPN: "DET @ TB" → home=TB, away=DET
-                    # OddsAPI: "Detroit Tigers @ Tampa Bay Rays"
                     best_match = None
+
+                    # Get both team abbrevs from matchup "AWAY @ HOME"
                     esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
+
                     for odds_matchup, odds_game in odds_lookup.items():
                         home2 = odds_home.get(odds_matchup, "").upper()
                         away2 = odds_away.get(odds_matchup, "").upper()
+                        both  = home2 + " " + away2
+
                         matched = False
-                        for esp_abbr in esp_parts:
-                            if len(esp_abbr) < 2:
+                        for abbr in esp_parts:
+                            if not abbr or len(abbr) < 2:
                                 continue
-                            # Direct substring match
-                            if esp_abbr in home2 or esp_abbr in away2:
+                            # Direct: abbrev appears in full team name
+                            if abbr in home2 or abbr in away2:
                                 matched = True; break
-                            # OddsAPI first 3 chars in abbrev
-                            if home2[:3] in esp_abbr or away2[:3] in esp_abbr:
+                            # Fragment lookup: known mapping
+                            frag = TEAM_ABBREV_TO_FRAGMENT.get(abbr,"").upper()
+                            if frag and frag in both:
                                 matched = True; break
-                            # Abbreviation keyword lookup
-                            keyword = MLB_ABBREV_KEYWORDS.get(esp_abbr)
-                            if keyword and (keyword in home2 or keyword in away2):
+                            # Fallback: first 3 chars of OddsAPI name in abbrev
+                            if len(home2) >= 3 and home2[:3] in abbr:
                                 matched = True; break
-                        if not matched and home1:
-                            if home1.upper() in odds_matchup.upper():
-                                matched = True
-                            kw = MLB_ABBREV_KEYWORDS.get(home1.upper())
-                            if kw and kw in odds_matchup.upper():
-                                matched = True
+                            if len(away2) >= 3 and away2[:3] in abbr:
+                                matched = True; break
+
                         if matched:
                             best_match = odds_game
                             break
