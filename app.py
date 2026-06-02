@@ -1608,6 +1608,368 @@ def api_budget_status(budget_key):
         return f"📊 {daily_used} calls today"
     return " | ".join(parts)
 
+# ─────────────────────────────────────────────────────────────
+# SIGNAL ATTRIBUTION ENGINE
+# Answers: which signals actually created profit?
+# ─────────────────────────────────────────────────────────────
+
+def track_line_origin(game_analysis, sport):
+    """
+    Track which book moved the line first — sharp origin vs public noise.
+    
+    Sharp origin: Pinnacle or Circa moved first → strong signal
+    Public noise: FanDuel/DraftKings moved, sharp books static → fade
+    
+    Compares current OddsAPI lines vs stored opening lines.
+    """
+    if not game_analysis:
+        return {}
+    try:
+        stored = load_json_data(OPENING_LINES_PATH, {})
+        today_str = date.today().strftime("%Y-%m-%d")
+        origins = {}
+        for game in game_analysis:
+            matchup = game.get("matchup","")
+            key = f"{today_str}_{matchup}_{sport}"
+            opening = stored.get(key, {})
+            if not opening:
+                continue
+            curr_total  = safe_float(game.get("Total") or 0)
+            open_total  = safe_float(opening.get("open_total") or 0)
+            oddsapi_tot = safe_float(game.get("OddsAPI Total") or 0)
+            if not (curr_total and open_total):
+                continue
+            movement = curr_total - open_total
+            if abs(movement) < 0.5:
+                continue
+            # Determine likely origin
+            # If OddsAPI (which includes Pinnacle) moved same direction → sharp origin
+            sharp_moved  = oddsapi_tot and abs(oddsapi_tot - open_total) >= abs(movement) * 0.7
+            origin_type  = "📌 Sharp Origin" if sharp_moved else "📢 Public Origin"
+            direction    = "↑" if movement > 0 else "↓"
+            origins[matchup] = {
+                "movement":    round(movement, 1),
+                "direction":   direction,
+                "origin":      origin_type,
+                "open":        open_total,
+                "current":     curr_total,
+                "note":        f"{origin_type}: Total moved {direction}{abs(movement):.1f}"
+            }
+        return origins
+    except Exception:
+        return {}
+
+
+def compute_portfolio_exposure(board, locks=None):
+    """
+    Portfolio-level exposure analysis.
+    Answers: am I over-concentrated in one team/sport/player?
+    
+    Returns exposure breakdown by sport, team, and player,
+    plus correlation warnings and stake recommendations.
+    """
+    if locks is None:
+        locks = st.session_state.get("locks", [])
+    today_str = date.today().strftime("%Y-%m-%d")
+    today_locks = [l for l in locks if l.get("timestamp","").startswith(today_str)]
+
+    if not today_locks and not board:
+        return None
+
+    # Use today's locked picks + top approved props
+    active_props = today_locks if today_locks else [
+        p for p in (board or []) if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")
+    ][:8]
+
+    # Total exposure
+    total_stake = sum(float(p.get("wager", p.get("Kelly", 0.5)) or 0.5) for p in active_props)
+    bankroll = st.session_state.get("bankroll", 100)
+
+    # Sport breakdown
+    sport_exp = {}
+    for p in active_props:
+        sp = p.get("sport", p.get("Sport","?"))
+        sport_exp[sp] = sport_exp.get(sp, 0) + float(p.get("wager", p.get("Kelly", 0.5)) or 0.5)
+
+    # Player exposure (same player multiple props)
+    player_exp = {}
+    for p in active_props:
+        pl = p.get("player", p.get("Player",""))
+        player_exp[pl] = player_exp.get(pl, 0) + float(p.get("wager", p.get("Kelly", 0.5)) or 0.5)
+
+    # Team exposure
+    team_exp = {}
+    for p in active_props:
+        team = p.get("Team", p.get("team",""))
+        if team:
+            team_exp[team] = team_exp.get(team, 0) + float(p.get("wager", p.get("Kelly", 0.5)) or 0.5)
+
+    # Concentration warnings
+    warnings = []
+    for sp, stake in sport_exp.items():
+        pct = stake / max(total_stake, 0.01)
+        if pct > 0.70:
+            warnings.append(f"⚠️ {sp} concentration: {pct:.0%} of total exposure")
+    for pl, stake in player_exp.items():
+        if stake > 0 and len([p for p in active_props if p.get("player",p.get("Player","")) == pl]) > 1:
+            warnings.append(f"⚠️ {pl}: multiple props — correlated exposure")
+    for team, stake in team_exp.items():
+        pct = stake / max(total_stake, 0.01)
+        if pct > 0.50:
+            warnings.append(f"⚠️ {team} team exposure: {pct:.0%} — game script risk")
+
+    # Stake recommendations
+    recommendations = []
+    for sp, stake in sport_exp.items():
+        pct = stake / max(total_stake, 0.01)
+        if pct > 0.65:
+            recommendations.append(f"Reduce {sp} stake by ~{int((pct-0.50)*100)}%")
+
+    return {
+        "total_stake":      round(total_stake, 2),
+        "total_pct_br":     round(total_stake / max(bankroll, 1) * 100, 1),
+        "n_active":         len(active_props),
+        "sport_breakdown":  {k: round(v/max(total_stake,0.01)*100,1) for k,v in sport_exp.items()},
+        "player_breakdown": {k: round(v/max(total_stake,0.01)*100,1) for k,v in player_exp.items()},
+        "team_breakdown":   {k: round(v/max(total_stake,0.01)*100,1) for k,v in team_exp.items()},
+        "warnings":         warnings,
+        "recommendations":  recommendations,
+    }
+
+
+def generate_weight_recommendations(history, sport="NBA"):
+    """
+    Every 100 bets: compare expected signal ROI vs actual.
+    Generate weight adjustment recommendations (human approval required).
+    
+    Never auto-changes weights — only recommends.
+    Prevents model drift while enabling data-driven improvement.
+    """
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")
+                and h.get("sport") == sport]
+    if len(resolved) < 100:
+        return None, len(resolved)
+
+    attr, n = compute_signal_attribution(resolved)
+    if not attr:
+        return None, n
+
+    current_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+    recommendations = []
+
+    for row in attr:
+        signal_label = row["Signal"]
+        net_str = row["Net Units"].replace("u","").replace("+","")
+        try:
+            net = float(net_str)
+        except Exception:
+            continue
+        roi = net / max(1, row["Bets"])
+
+        # Map signal label to weight key
+        weight_map = {
+            "Base (avg>line)":   "base",
+            "Defense":           "defense",
+            "Location (home)":   "location",
+            "Rest":              "rest",
+            "Usage Boost":       "usage",
+            "Sharp Money":       "pace",
+        }
+        wkey = weight_map.get(signal_label)
+        if not wkey or wkey not in current_weights:
+            continue
+
+        current_w = current_weights[wkey]
+
+        if roi > 0.5 and current_w < 0.50:
+            recommendations.append({
+                "Signal":      signal_label,
+                "Current W":   f"{current_w:.3f}",
+                "Suggested W": f"{min(0.55, current_w * 1.05):.3f}",
+                "ROI/bet":     f"{roi:+.2f}u",
+                "Action":      "↑ Increase 5%",
+                "Reason":      f"Strong ROI {roi:+.2f}u/bet over {row['Bets']} bets",
+                "Approved":    False,
+            })
+        elif roi < -0.3 and current_w > 0.05:
+            recommendations.append({
+                "Signal":      signal_label,
+                "Current W":   f"{current_w:.3f}",
+                "Suggested W": f"{max(0.01, current_w * 0.95):.3f}",
+                "ROI/bet":     f"{roi:+.2f}u",
+                "Action":      "↓ Reduce 5%",
+                "Reason":      f"Negative ROI {roi:+.2f}u/bet over {row['Bets']} bets",
+                "Approved":    False,
+            })
+
+    return recommendations, n
+
+
+def compute_signal_attribution(history):
+    """
+    For each resolved bet, break down the contribution of each signal.
+    Then aggregate: which signals led to wins vs losses?
+    
+    Returns per-signal stats: {signal: {wins, losses, total_edge, avg_edge, roi}}
+    Activates at 20+ resolved bets.
+    """
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 20:
+        return None, len(resolved)
+
+    SIGNAL_LABELS = {
+        "base":     "Base (avg>line)",
+        "defense":  "Defense",
+        "location": "Location (home)",
+        "rest":     "Rest",
+        "usage":    "Usage Boost",
+        "blowout":  "Blowout Risk",
+        "weather":  "Weather",
+        "sharp":    "Sharp Money",
+    }
+
+    signal_stats = {}
+    for h in resolved:
+        sig_vals = h.get("signal_values", {})
+        outcome = h.get("outcome")
+        edge    = abs(float(h.get("edge", 0) or 0))
+        wager   = float(h.get("wager", 0) or 0)
+        net     = float(h.get("net", 0) or 0)
+
+        for sig_key, sig_label in SIGNAL_LABELS.items():
+            sig_val = sig_vals.get(sig_key, 0)
+            if abs(sig_val) < 0.005:
+                continue  # Signal not meaningfully active
+            if sig_label not in signal_stats:
+                signal_stats[sig_label] = {
+                    "wins": 0, "losses": 0,
+                    "total_contribution": 0.0,
+                    "total_net": 0.0,
+                    "n": 0,
+                }
+            ss = signal_stats[sig_label]
+            ss["n"] += 1
+            ss["total_contribution"] += abs(sig_val)
+            ss["total_net"] += net
+            if outcome == "WIN":
+                ss["wins"] += 1
+            else:
+                ss["losses"] += 1
+
+    results = []
+    for label, ss in signal_stats.items():
+        total = ss["wins"] + ss["losses"]
+        if total < 3:
+            continue
+        wr   = ss["wins"] / total
+        roi  = ss["total_net"] / max(1, total)
+        avg_contrib = ss["total_contribution"] / total
+        if roi > 0.5:
+            grade = "🟢 Strong"
+        elif roi > 0:
+            grade = "🟡 Positive"
+        elif roi > -0.5:
+            grade = "🟠 Weak"
+        else:
+            grade = "🔴 Drag"
+        results.append({
+            "Signal":        label,
+            "Bets":          total,
+            "Win Rate":      f"{wr:.1%}",
+            "Net Units":     f"{ss['total_net']:+.1f}u",
+            "ROI/bet":       f"{roi:+.2f}u",
+            "Avg Contribution": f"{avg_contrib:.1%}",
+            "Grade":         grade,
+        })
+    results.sort(key=lambda x: float(x["Net Units"].replace("u","").replace("+","")), reverse=True)
+    return results, len(resolved)
+
+
+def compute_model_drift(history, window=50):
+    """
+    Detects model drift: compares recent ROI vs historical ROI.
+    Fires alert if recent performance diverges significantly.
+    
+    window: number of recent bets to compare vs all-time
+    """
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < window + 10:
+        return None
+    all_time_roi = sum(h.get("net", 0) for h in resolved) / len(resolved)
+    recent = resolved[-window:]
+    recent_roi  = sum(h.get("net", 0) for h in recent) / len(recent)
+    drift = recent_roi - all_time_roi
+    status = "STABLE"
+    if drift < -1.5:
+        status = "🚨 DRIFT ALERT — Recent ROI significantly below historical"
+    elif drift < -0.5:
+        status = "⚠️ MILD DRIFT — Recent performance below average"
+    elif drift > 1.5:
+        status = "📈 HOT STREAK — Recent ROI above historical (stay disciplined)"
+    return {
+        "all_time_roi":  round(all_time_roi, 3),
+        "recent_roi":    round(recent_roi, 3),
+        "drift":         round(drift, 3),
+        "window":        window,
+        "n_total":       len(resolved),
+        "status":        status,
+        "alert":         drift < -1.0,
+    }
+
+
+def generate_weekly_model_report(history, signal_performance):
+    """
+    Auto-generates weekly performance summary.
+    Covers: bets, ROI, best/worst signal, best/worst sport, CLV, calibration.
+    """
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(days=7)
+    weekly = [h for h in history if h.get("outcome") in ("WIN","LOSS") and
+              datetime.strptime(h.get("timestamp","2000-01-01")[:16], "%Y-%m-%d %H:%M") >= cutoff]
+    if not weekly:
+        return None
+    n = len(weekly)
+    wins = sum(1 for h in weekly if h.get("outcome") == "WIN")
+    total_net = sum(h.get("net", 0) for h in weekly)
+    wr = wins / n
+    roi_per_bet = total_net / n
+
+    # Best/worst sport
+    sport_net = {}
+    for h in weekly:
+        sp = h.get("sport","?")
+        sport_net[sp] = sport_net.get(sp, 0) + h.get("net", 0)
+    best_sport  = max(sport_net, key=sport_net.get) if sport_net else "—"
+    worst_sport = min(sport_net, key=sport_net.get) if sport_net else "—"
+
+    # Signal attribution for the week
+    attr, _ = compute_signal_attribution(weekly)
+    best_signal  = attr[0]["Signal"]  if attr else "—"
+    worst_signal = attr[-1]["Signal"] if attr and len(attr) > 1 else "—"
+
+    # CLV
+    clv = get_clv_summary()
+    avg_clv = clv.get("avg_clv", 0) if clv else 0
+
+    # Calibration
+    cal_summary = get_calibration_summary(history)
+
+    return {
+        "period":        "Last 7 Days",
+        "bets":          n,
+        "wins":          wins,
+        "win_rate":      f"{wr:.1%}",
+        "net_units":     f"{total_net:+.1f}u",
+        "roi_per_bet":   f"{roi_per_bet:+.2f}u",
+        "best_sport":    f"{best_sport} ({sport_net.get(best_sport,0):+.1f}u)",
+        "worst_sport":   f"{worst_sport} ({sport_net.get(worst_sport,0):+.1f}u)",
+        "best_signal":   best_signal,
+        "worst_signal":  worst_signal,
+        "avg_clv":       f"{avg_clv:+.2f}",
+        "calibration":   cal_summary,
+    }
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -7038,7 +7400,9 @@ def track_bet_dialog(prop):
         st.rerun()
 
 
-def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes=""):
+def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None):
+    # signals = dict of {signal_name: float_value} from compute_multi_signal_edge
+    # e.g. {"base": 0.08, "defense": 0.06, "location": 0.05, "rest": -0.08, ...}
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
         if bet_type == "prop":
@@ -7062,10 +7426,17 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
         "net": net, "pick_count": pick_count, "bet_type": bet_type, "source": source,
         "tier": tier, "edge": edge or 0, "prob": prob, "stat_type": prop,
         "timestamp": bet_date, "resolved_date": bet_date, "manual_entry": True, "notes": notes,
+        # Signal values at time of bet — foundation for attribution analysis
+        "signal_values": signals or {},
         "signals_active": {
-            "base_positive": True, "defense_positive": False, "location_home": False,
-            "back_to_back": False, "sharp_flag": False, "weather_active": False,
-            "blowout_risk": False, "usage_boost": False,
+            "base_positive":    bool((signals or {}).get("base", 0) > 0.02),
+            "defense_positive": bool((signals or {}).get("defense", 0) > 0.01),
+            "location_home":    bool((signals or {}).get("location", 0) > 0.01),
+            "back_to_back":     bool((signals or {}).get("rest", 0) < -0.05),
+            "sharp_flag":       bool((signals or {}).get("sharp", 0) > 0),
+            "weather_active":   bool((signals or {}).get("weather", 0) != 0),
+            "blowout_risk":     bool((signals or {}).get("blowout", 0) < -0.02),
+            "usage_boost":      bool((signals or {}).get("usage", 0) > 0.01),
         }
     }
     st.session_state.history.append(record)
@@ -9893,6 +10264,8 @@ def load_sport_data(sport):
     store_board_snapshot(enriched, sport)
     if games:
         store_opening_lines(game_analysis, sport)
+        _line_origins = track_line_origin(game_analysis, sport)
+        st.session_state["line_origins"] = _line_origins
     _curr_depth = st.session_state.get("espn_depth_charts", {})
     if _curr_depth:
         _depth_changes = detect_depth_chart_changes(sport, _curr_depth)
@@ -11968,6 +12341,113 @@ with tabs[4]:
                 st.dataframe(pd.DataFrame(_nfl_pos_rows), use_container_width=True, hide_index=True)
         else:
             st.info(f"NFL position ROI activates after 10 NFL bets. Current: {len(_nfl_bets)}.")
+
+    # ── Signal Attribution ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔬 Signal Attribution Engine")
+    st.caption("Which signals actually created profit? Activates at 20 resolved bets.")
+    _attr_rows, _attr_n = compute_signal_attribution(st.session_state.history)
+    if _attr_rows is None:
+        st.info(f"Signal attribution activates at 20 resolved bets. Current: {_attr_n}.")
+    else:
+        _drag = [r for r in _attr_rows if "Drag" in r["Grade"]]
+        if _drag:
+            st.warning(f"⚠️ Signals with negative ROI: {', '.join(r['Signal'] for r in _drag)} — consider reducing weight")
+        st.dataframe(pd.DataFrame(_attr_rows), use_container_width=True, hide_index=True)
+        st.caption("Net Units = total P&L generated when this signal was active. Grade = signal contribution quality.")
+
+    # ── Portfolio Exposure ───────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🎯 Portfolio Exposure")
+    st.caption("Am I over-concentrated? Checks sport, team, and player exposure across today's locked picks.")
+    _portfolio = compute_portfolio_exposure(st.session_state.board_data)
+    if _portfolio:
+        _p1, _p2, _p3 = st.columns(3)
+        _p1.metric("Active Bets", _portfolio["n_active"])
+        _p2.metric("Total Stake", f"${_portfolio['total_stake']:.2f}")
+        _p3.metric("% of Bankroll", f"{_portfolio['total_pct_br']:.1f}%")
+        if _portfolio["warnings"]:
+            for w in _portfolio["warnings"]:
+                st.warning(w)
+        if _portfolio["recommendations"]:
+            for rec in _portfolio["recommendations"]:
+                st.info(f"💡 {rec}")
+        if _portfolio["sport_breakdown"]:
+            _sport_rows = [{"Sport": k, "Exposure %": f"{v:.1f}%"} for k,v in sorted(_portfolio["sport_breakdown"].items(), key=lambda x:-x[1])]
+            st.dataframe(pd.DataFrame(_sport_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("Load the board and lock picks to see portfolio exposure.")
+
+    # ── Model Drift Detection ────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📡 Model Drift Detection")
+    st.caption("Compares recent 50-bet ROI vs all-time. Fires alert if model performance diverges.")
+    _drift = compute_model_drift(st.session_state.history)
+    if _drift is None:
+        _total_res = len([h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")])
+        st.info(f"Model drift detection activates at 60+ resolved bets. Current: {_total_res}.")
+    else:
+        _dc = "#22c55e" if not _drift["alert"] else "#e04040"
+        st.markdown(
+            f'<div style="background:#0a0e14;border:1px solid {"#e04040" if _drift["alert"] else "#1e2d3d"};border-radius:8px;padding:0.8rem;">'
+            f'<div style="color:{_dc};font-size:1.1rem;font-weight:700;">{_drift["status"]}</div>'
+            f'<div style="display:flex;gap:2rem;margin-top:0.5rem;">'
+            f'<span style="color:#8a9ab0;">All-time ROI/bet: <b>{_drift["all_time_roi"]:+.3f}u</b></span>'
+            f'<span style="color:#8a9ab0;">Recent L{_drift["window"]} ROI/bet: <b style="color:{_dc};">{_drift["recent_roi"]:+.3f}u</b></span>'
+            f'<span style="color:#8a9ab0;">Drift: <b style="color:{_dc};">{_drift["drift"]:+.3f}u</b></span>'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Weekly Model Report ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Weekly Model Report")
+    st.caption("Auto-generated weekly performance summary. No manual analysis needed.")
+    _perf_data_wr = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _weekly = generate_weekly_model_report(st.session_state.history, _perf_data_wr)
+    if _weekly:
+        _wr1, _wr2 = st.columns(2)
+        with _wr1:
+            st.markdown(f"""
+| Metric | Value |
+|--------|-------|
+| Period | {_weekly['period']} |
+| Bets | {_weekly['bets']} ({_weekly['wins']} W) |
+| Win Rate | {_weekly['win_rate']} |
+| Net Units | {_weekly['net_units']} |
+| ROI/bet | {_weekly['roi_per_bet']} |
+""")
+        with _wr2:
+            st.markdown(f"""
+| Metric | Value |
+|--------|-------|
+| Best Sport | {_weekly['best_sport']} |
+| Worst Sport | {_weekly['worst_sport']} |
+| Best Signal | {_weekly['best_signal']} |
+| Worst Signal | {_weekly['worst_signal']} |
+| Avg CLV | {_weekly['avg_clv']} |
+""")
+        st.caption(f"Calibration: {_weekly['calibration']}")
+    else:
+        st.info("No resolved bets in the last 7 days. Weekly report will generate automatically.")
+
+    # ── Weight Recommendations ───────────────────────────────
+    st.markdown("---")
+    st.markdown("### ⚖️ Weight Adjustment Recommendations")
+    st.caption("Data-driven suggestions after 100+ bets. Human approval required — never auto-applies.")
+    _sport_wr = st.session_state.get("last_sport","NBA")
+    _recs, _recs_n = generate_weight_recommendations(st.session_state.history, _sport_wr)
+    if _recs is None:
+        st.info(f"Weight recommendations activate after 100 {_sport_wr} bets. Current: {_recs_n}.")
+    elif _recs:
+        st.warning(f"⚠️ {len(_recs)} weight adjustment(s) suggested based on {_recs_n} bets:")
+        for rec in _recs:
+            col1, col2 = st.columns([3,1])
+            col1.markdown(f"**{rec['Signal']}**: {rec['Current W']} → {rec['Suggested W']} ({rec['Action']}) — {rec['Reason']}")
+            if col2.button("Apply", key=f"wrec_{rec['Signal']}"):
+                st.info(f"Manual step: update SPORT_SIGNAL_WEIGHTS['{_sport_wr}']['{rec['Signal'].lower()[:6]}'] to {rec['Suggested W']}")
+    else:
+        st.success("✅ All signal weights appear well-calibrated for current data.")
 
     st.markdown("---")
     st.markdown("### 🎯 Probability Calibration")
