@@ -4193,7 +4193,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
     if total_str in ("N/A", None, ""):
         total_str = game.get("OddsAPI Total", "N/A")
     if home_ml in ("N/A", None, ""):
-        home_ml = game.get("OddsAPI ML Home", game.get("Bovada ML Home", "N/A"))
+        # Try HomeML (no space), then OddsAPI backup fields
+        home_ml = game.get("HomeML", game.get("OddsAPI ML Home", game.get("Bovada ML Home", "N/A")))
+        away_ml = game.get("AwayML", game.get("OddsAPI ML Away", game.get("Bovada ML Away", "N/A")))
     if away_ml in ("N/A", None, ""):
         away_ml = game.get("OddsAPI ML Away", game.get("Bovada ML Away", "N/A"))
     home_team = home_teams.get(matchup, "")
@@ -6059,12 +6061,15 @@ def fetch_game_lines(sport):
                 odds_lookup = {g["Matchup"]: g for g in odds_games}
                 # MLB abbreviation → keyword map for teams with non-obvious abbrevs
                 MLB_ABBREV_KEYWORDS = {
-                    "TB": "TAMPA", "NYY": "YANKEE", "NYM": "METS",
-                    "CWS": "WHITE SOX", "KC": "ROYAL", "WSH": "NATIONAL",
-                    "SF": "GIANTS", "SD": "PADRE", "LAD": "DODGER",
-                    "LAA": "ANGEL", "STL": "CARDINAL", "COL": "ROCKI",
-                    "MIL": "BREWER", "CLE": "GUARDIAN", "MIN": "TWIN",
-                    "BAL": "ORIOL", "OAK": "ATHLET",
+                    "TB":  "TAMPA",    "NYY": "YANKEE",   "NYM": "METS",
+                    "CWS": "WHITE SOX","KC":  "ROYAL",    "WSH": "NATIONAL",
+                    "SF":  "GIANTS",   "SD":  "SAN DIEGO","LAD": "DODGER",
+                    "LAA": "ANGEL",    "STL": "CARDINAL", "COL": "ROCKI",
+                    "MIL": "BREWER",   "CLE": "GUARDIAN", "MIN": "TWIN",
+                    "BAL": "ORIOL",    "OAK": "ATHLET",   "ATH": "ATHLET",
+                    "TOR": "TORONTO",  "HOU": "HOUSTON",  "SEA": "SEATTLE",
+                    "CHC": "CUBS",     "CIN": "REDS",     "PIT": "PIRATE",
+                    "ARI": "ARIZONA",  "MIA": "MARLINS",  "ATL": "BRAVES",
                 }
                 for game in today_games:
                     matchup = game.get("Matchup","")
@@ -6114,10 +6119,18 @@ def fetch_game_lines(sport):
                         game["Bovada Spread"]   = best_match.get("Spread", "N/A")
                         game["Bovada Total"]    = best_match.get("Total", "N/A")
                         # ── Fill in ESPN N/A gaps with OddsAPI data ──
+                        # Set both "Home ML" (ESPN key) and "HomeML" (analysis key)
+                        _oddsapi_home_ml = best_match.get("Home ML", "N/A")
+                        _oddsapi_away_ml = best_match.get("Away ML", "N/A")
                         if game.get("Home ML") in ("N/A", None, ""):
-                            game["Home ML"] = best_match.get("Home ML", "N/A")
+                            game["Home ML"] = _oddsapi_home_ml
                         if game.get("Away ML") in ("N/A", None, ""):
-                            game["Away ML"] = best_match.get("Away ML", "N/A")
+                            game["Away ML"] = _oddsapi_away_ml
+                        # Also set HomeML/AwayML (no space) for analyze_game_edge compatibility
+                        if game.get("HomeML","N/A") in ("N/A", None, ""):
+                            game["HomeML"] = game.get("Home ML", "N/A")
+                        if game.get("AwayML","N/A") in ("N/A", None, ""):
+                            game["AwayML"] = game.get("Away ML", "N/A")
                         if game.get("Spread") in ("N/A", None, ""):
                             game["Spread"] = best_match.get("Spread", "N/A")
                         if game.get("Total") in ("N/A", None, ""):
