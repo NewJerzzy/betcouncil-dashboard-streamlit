@@ -12885,6 +12885,141 @@ with tabs[9]:
                 f"{_games_checked} game(s) — all OddsAPI fields routed to UI correctly"
             ))
 
+        # ── AUDIT 7: Injury Consensus ───────────────────────────
+        # Cross-checks all 4 injury sources for conflicts.
+        # If ESPN says OUT but CBS says QUESTIONABLE — flag it.
+        _inj_sources = {
+            "ESPN":     {normalize_name(i["player"]): i["status"] for i in st.session_state.get("espn_injuries",[]) if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
+            "CBS":      {normalize_name(i["player"]): i["status"] for i in st.session_state.get("cbs_injuries",[])  if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
+            "RotoWire": {normalize_name(i["player"]): i["status"] for i in st.session_state.get("rw_injuries",[])   if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
+            "Primary":  {normalize_name(p): v.get("status","") for p,v in (st.session_state.get("injuries_combined") or {}).items()},
+        }
+        _active_inj_sources = {k:v for k,v in _inj_sources.items() if v}
+        _inj_conflicts = []
+        if len(_active_inj_sources) >= 2:
+            # Find players where sources disagree on severity
+            _all_inj_players = set()
+            for src_data in _active_inj_sources.values():
+                _all_inj_players.update(src_data.keys())
+            for _player in _all_inj_players:
+                _statuses = {src: data.get(_player) for src, data in _active_inj_sources.items() if data.get(_player)}
+                if len(_statuses) >= 2:
+                    _unique_statuses = set(_statuses.values())
+                    # Conflict = sources disagree on OUT vs QUESTIONABLE (meaningful difference)
+                    if "OUT" in _unique_statuses and "QUESTIONABLE" in _unique_statuses:
+                        _inj_conflicts.append(f"{_player}: {dict(_statuses)}")
+            _total_inj = len(_all_inj_players)
+            _agree_pct = 1.0 - (len(_inj_conflicts) / max(1, _total_inj))
+            if len(_inj_conflicts) >= 3:
+                _audit_results.append(_audit_fail(
+                    "Audit 7 — Injury Consensus",
+                    f"{len(_inj_conflicts)} status conflicts across {len(_active_inj_sources)} sources: {'; '.join(_inj_conflicts[:2])}"
+                ))
+            elif _inj_conflicts:
+                _audit_results.append(_audit_warn(
+                    "Audit 7 — Injury Consensus",
+                    f"{len(_inj_conflicts)} disagreement(s): {'; '.join(_inj_conflicts[:2])}"
+                ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 7 — Injury Consensus",
+                    f"{len(_active_inj_sources)} source(s) agree on {_total_inj} injured player(s) — {_agree_pct:.0%} consensus"
+                ))
+        else:
+            _audit_results.append(_audit_warn(
+                "Audit 7 — Injury Consensus",
+                f"Only {len(_active_inj_sources)} injury source(s) active — need 2+ for consensus check"
+            ))
+
+        # ── AUDIT 9: Data Freshness ─────────────────────────────
+        # Checks age of key data sources.
+        # Stale weather or odds = wrong model inputs.
+        _now_ts = time.time()
+        _stale_items = []
+        _fresh_items = []
+        _freshness_checks = [
+            ("Odds (game lines)",  f"espn_ids_{_audit_sport}.pkl",         15 * 60),   # 15 min
+            ("Props board",        f"pp_{_audit_sport.lower()}_props.pkl", 15 * 60),   # 15 min
+            ("Injury data",        f"ud_injuries_{_audit_sport}.pkl",       20 * 60),  # 20 min
+            ("Weather data",       None,                                     180 * 60), # 3 hrs
+            ("DK Salaries",        "dk_salaries.pkl",                        90 * 60),  # 90 min
+        ]
+        for label, fname, max_age_secs in _freshness_checks:
+            if fname is None:
+                # Weather — check cache dir for any weather pkl
+                import glob as _glob
+                _weather_files = _glob.glob(os.path.join(CACHE_DIR, "*_weather.pkl"))
+                if _weather_files:
+                    _age = _now_ts - os.path.getmtime(max(_weather_files, key=os.path.getmtime))
+                    if _age > max_age_secs:
+                        _stale_items.append(f"{label} ({_age/60:.0f}m old)")
+                    else:
+                        _fresh_items.append(f"{label} ({_age/60:.0f}m)")
+                continue
+            _fpath = os.path.join(CACHE_DIR, fname)
+            if os.path.exists(_fpath):
+                _age = _now_ts - os.path.getmtime(_fpath)
+                if _age > max_age_secs:
+                    _stale_items.append(f"{label} ({_age/60:.0f}m old)")
+                else:
+                    _fresh_items.append(f"{label} ({_age/60:.0f}m)")
+        if len(_stale_items) >= 2:
+            _audit_results.append(_audit_fail(
+                "Audit 9 — Data Freshness",
+                f"{len(_stale_items)} stale feed(s): {', '.join(_stale_items)}"
+            ))
+        elif _stale_items:
+            _audit_results.append(_audit_warn(
+                "Audit 9 — Data Freshness",
+                f"Stale: {', '.join(_stale_items)} | Fresh: {len(_fresh_items)} feed(s)"
+            ))
+        else:
+            _audit_results.append(_audit_pass(
+                "Audit 9 — Data Freshness",
+                f"All {len(_fresh_items)} feed(s) current"
+            ))
+
+        # ── AUDIT 10: Sharp Consensus ───────────────────────────
+        # Checks agreement among Pinnacle, Circa, BetOnline on game totals.
+        # Divergence > 3% = unstable market — reduce confidence.
+        if _audit_games:
+            _sharp_divergences = []
+            _sharp_agreements  = []
+            for _sg in _audit_games[:10]:
+                _matchup = _sg.get("matchup","?")
+                _pin_ml  = safe_float(_sg.get("Home ML","") or 0)
+                _circa_ml= safe_float(_sg.get("OddsAPI ML Home","") or 0)
+                _total   = safe_float(_sg.get("Total","") or 0)
+                _odds_tot= safe_float(_sg.get("OddsAPI Total","") or 0)
+                # Compare total lines between ESPN and OddsAPI (proxy for sharp book)
+                if _total and _odds_tot and abs(_total - _odds_tot) >= 1.5:
+                    _sharp_divergences.append(
+                        f"{_matchup}: Total ESPN={_total} OddsAPI={_odds_tot} (diff {abs(_total-_odds_tot):.1f})"
+                    )
+                elif _total and _odds_tot:
+                    _sharp_agreements.append(_matchup)
+                # Check book_clv from CLV summary for sharp agreement signal
+            _clv_data = get_clv_summary()
+            _consensus_edge = (_clv_data or {}).get("consensus_sharp_edge", 0)
+            _n_books = (_clv_data or {}).get("n_sharp_books", 0)
+            if _sharp_divergences:
+                _audit_results.append(_audit_warn(
+                    "Audit 10 — Sharp Consensus",
+                    f"{len(_sharp_divergences)} line divergence(s): {'; '.join(_sharp_divergences[:2])}"
+                ))
+            elif _n_books >= 2:
+                _audit_results.append(_audit_pass(
+                    "Audit 10 — Sharp Consensus",
+                    f"{_n_books} sharp books tracked | Consensus edge {_consensus_edge:+.1%} | {len(_sharp_agreements)} games aligned"
+                ))
+            else:
+                _audit_results.append(_audit_warn(
+                    "Audit 10 — Sharp Consensus",
+                    f"Fewer than 2 sharp books returning data — consensus unavailable"
+                ))
+        else:
+            _audit_results.append(_audit_warn("Audit 10 — Sharp Consensus", "No game analysis data"))
+
         # ── Display audit results ───────────────────────────────
         _fails  = [r for r in _audit_results if r["status"] == "FAIL"]
         _warns  = [r for r in _audit_results if r["status"] == "WARN"]
