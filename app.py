@@ -14115,7 +14115,46 @@ with tabs[4]:
         p2.metric("Positive Rate", f"{pos_rate:.1%}")
         p3.metric("Bets Tracked", len(pinnacle_data))
     else:
-        st.info(f"Pinnacle CLV activates after 5 resolved bets. Need {5 - len(pinnacle_data)} more.")
+        st.info(f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.")
+        if st.button("🔄 Backfill CLV from History", key="backfill_clv_btn"):
+            _history_all = st.session_state.get("history", [])
+            _clv_existing = load_json_data(CLV_PATH, [])
+            _existing_keys = set(
+                f"{normalize_name(c.get('player',''))}_{c.get('prop','')}_{c.get('timestamp','')[:10]}"
+                for c in _clv_existing
+            )
+            _added = 0
+            for _h in _history_all:
+                if _h.get("outcome") not in ("WIN","LOSS"):
+                    continue
+                _line = _h.get("line")
+                if not _line:
+                    continue
+                _key = f"{normalize_name(_h.get('player',''))}_{_h.get('prop','')}_{str(_h.get('timestamp',''))[:10]}"
+                if _key in _existing_keys:
+                    continue
+                _clv_existing.append({
+                    "player":       _h.get("player",""),
+                    "prop":         _h.get("prop",""),
+                    "locked_line":  float(_line),
+                    "closing_line": float(_line),
+                    "side":         _h.get("side","OVER"),
+                    "clv":          0.0,
+                    "outcome":      _h.get("outcome",""),
+                    "timestamp":    _h.get("timestamp",""),
+                    "sport":        _h.get("sport",""),
+                    "tier":         _h.get("tier",""),
+                    "edge":         _h.get("edge",0),
+                    "prob":         _h.get("prob",0.5),
+                    "backfilled":   True,
+                })
+                _added += 1
+            if _added > 0:
+                save_json_data(CLV_PATH, _clv_existing)
+                st.success(f"✅ Backfilled {_added} CLV entries from history. CLV tracker is now active.")
+                st.rerun()
+            else:
+                st.info("No new entries to backfill.")
 
 # ----- TAB 5: LOG BET -----
 
