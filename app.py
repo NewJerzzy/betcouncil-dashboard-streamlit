@@ -4057,6 +4057,21 @@ def calculate_lock_quality_score(prop):
     clv_adj = prop.get("CLVAdj", "")
     if clv_adj and "Boosted" in str(clv_adj):
         score += 3
+    # ── Projection confidence adjustment (new) ──────────────
+    conf = prop.get("ProjConfidence", 50)
+    if isinstance(conf, (int, float)):
+        if conf >= 80:
+            score += 5    # High confidence boost
+        elif conf < 40:
+            score -= 8    # Low confidence penalty
+        elif conf < 60:
+            score -= 3    # Moderate confidence minor penalty
+    # ── Role change boost ────────────────────────────────────
+    rc = prop.get("RoleChange")
+    if rc and rc.get("direction") == "UP":
+        score += 4    # Role increasing = more upside
+    elif rc and rc.get("direction") == "DOWN":
+        score -= 6    # Role decreasing = risky
     return round(min(100, max(0, score)), 1)
 
 def detect_correlations(parlay_props):
@@ -11191,7 +11206,18 @@ def load_sport_data(sport):
             continue
         tier = get_tier(final_edge, sport)
 
-        # Projection confidence score
+        # ── Role change detection — applied to final_edge ──────
+        _role_change = detect_role_changes(player, sport, {}, st.session_state.history)
+        if not _role_change:
+            _rc_team = p.get("Team","")
+            _role_change = check_depth_chart_role_change(player, _rc_team, sport)
+        if _role_change:
+            _rc_adj = _role_change.get("edge_adj", 0)
+            if abs(_rc_adj) > 0:
+                final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _rc_adj)), 4)
+                tier = get_tier(final_edge, sport)  # re-tier after role change
+
+        # ── Projection confidence score ─────────────────────────
         _sample_n = len([h for h in st.session_state.history
                          if normalize_name(h.get("player","")) == normalize_name(player)])
         _inj_status = injuries.get(normalize_name(player), {}).get("status","") if isinstance(injuries, dict) else ""
@@ -11202,11 +11228,16 @@ def load_sport_data(sport):
             lineup_confirmed=_lineup_conf,
             market_edge=final_edge,
         )
+        # Confidence affects final tier — LOW confidence can downgrade
+        if _proj_conf["score"] < 40 and tier in ("SOVEREIGN","ELITE"):
+            tier = "APPROVED"  # downgrade very low confidence high-edge picks
+        elif _proj_conf["score"] < 60 and tier == "SOVEREIGN":
+            tier = "ELITE"     # downgrade sovereign to elite if low confidence
 
-        # Model vs market comparison
+        # ── Model vs market comparison ──────────────────────────
         _mkt_vs_model = compute_model_vs_market(avg, line, stat_norm)
 
-        # NFL usage edge (activates when season data available)
+        # ── NFL usage edge (activates when season data available)
         if sport == "NFL":
             _usage = get_nfl_usage(player)
             if _usage:
@@ -11245,7 +11276,7 @@ def load_sport_data(sport):
             "ProjConfidence": _proj_conf.get("score", 50),
             "ProjConfLabel":  _proj_conf.get("label","MODERATE"),
             "MarketVsModel":  _mkt_vs_model,
-            "RoleChange":     p.get("RoleChange"),
+            "RoleChange":     _role_change,
             "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
@@ -11396,7 +11427,11 @@ def load_sport_data(sport):
             prop["BestAltLine"] = None
             prop["BestAltEV"] = None
     st.session_state["alt_line_upgrades"] = alt_line_upgrades
-    enriched.sort(key=lambda x: x["Edge"], reverse=True)
+    # Sort by LockScore first, then ProjConfidence as tiebreaker
+    enriched.sort(key=lambda x: (
+        x.get("LockScore", 0) * 1.0 +
+        x.get("ProjConfidence", 50) * 0.05  # confidence as 5% tiebreaker
+    ), reverse=True)
     for prop in enriched:
         prop["LockScore"] = calculate_lock_quality_score(prop)
 
