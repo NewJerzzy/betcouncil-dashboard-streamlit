@@ -5051,8 +5051,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     _alt_rec    = next((r for r in recommendations if r.get("type") == "ALT_SPREAD"), None)
 
     return {
-        "matchup": matchup, "home": home_team, "away": away_team,
-        "Matchup": matchup,
+        "matchup": matchup, "Matchup": matchup,
+        "home": home_team, "away": away_team,
+        "Sport": sport,  # uppercase for UI filter compatibility
+        "sport": sport,  # lowercase for internal use
         "recommendations": recommendations, "best_bet": best_bet,
         "best_edge": best_edge, "sport": sport,
         "public_signals": public_sharp_signals, "public_data": game_public,
