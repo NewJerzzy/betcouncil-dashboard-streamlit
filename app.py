@@ -4782,7 +4782,7 @@ def get_game_tier(edge, sport="NBA") -> str:
     return "PASS"
 
 
-def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
+def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, mlb_pitchers=None):
     if power_ratings is None:
         power_ratings = NBA_POWER_RATINGS
     matchup = game.get("Matchup", "")
@@ -4906,9 +4906,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 fair_total = base_total + off_adj
             elif sport == "MLB":
                 base_total = 8.5
-                mlb_pitchers = _mlb_pitchers
-                # mlb_pitchers keys are full team names; home_team/away_team are abbrevs
-                # Map abbreviation → full name for pitcher lookup
+                # Use passed pitchers dict (not undefined outer scope variable)
+                _pitchers = mlb_pitchers or {}
                 MLB_ABBREV_TO_FULL = {
                     "ARI":"Arizona Diamondbacks","ATL":"Atlanta Braves",
                     "BAL":"Baltimore Orioles","BOS":"Boston Red Sox",
@@ -4927,17 +4926,17 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                     "TEX":"Texas Rangers","TOR":"Toronto Blue Jays",
                     "WSH":"Washington Nationals",
                 }
-                h_full = MLB_ABBREV_TO_FULL.get(home_team, home_team)
-                a_full = MLB_ABBREV_TO_FULL.get(away_team, away_team)
-                h_data = mlb_pitchers.get(h_full, mlb_pitchers.get(home_team, {}))
-                a_data = mlb_pitchers.get(a_full, mlb_pitchers.get(away_team, {}))
+                h_full2 = MLB_ABBREV_TO_FULL.get(home_team, home_full)
+                a_full2 = MLB_ABBREV_TO_FULL.get(away_team, away_full)
+                h_data = _pitchers.get(h_full2, _pitchers.get(home_team, {}))
+                a_data = _pitchers.get(a_full2, _pitchers.get(away_team, {}))
                 h_pitcher = h_data.get("pitcher","")
                 a_pitcher = a_data.get("pitcher","")
                 h_era = MLB_PITCHER_ERA.get(h_pitcher, LEAGUE_AVG_ERA)
                 a_era = MLB_PITCHER_ERA.get(a_pitcher, LEAGUE_AVG_ERA)
                 avg_era = (h_era + a_era) / 2
                 era_adj = (avg_era - LEAGUE_AVG_ERA) * 0.4
-                park_mult = MLB_PARK_FACTORS.get(h_full, MLB_PARK_FACTORS.get(home_team, MLB_PARK_DEFAULT))
+                park_mult = MLB_PARK_FACTORS.get(h_full2, MLB_PARK_FACTORS.get(home_team, MLB_PARK_DEFAULT))
                 park_adj = (park_mult - 1.0) * 2.0
                 fair_total = base_total + era_adj + park_adj
             elif sport == "NHL":
@@ -5115,7 +5114,7 @@ def fetch_alternate_lines(sport, matchup):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_alternate_lines", "error": str(e)[:100]})
     return alternates
 
-def analyze_all_games(games, sport, home_teams, away_teams):
+def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     # Power ratings for all sports
     WNBA_POWER_RATINGS = {
@@ -5161,7 +5160,7 @@ def analyze_all_games(games, sport, home_teams, away_teams):
         return all_game_analysis
     power_ratings = power_map.get(sport, {})
     for game in games:
-        analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings)
+        analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings, mlb_pitchers=mlb_pitchers)
         # Append all games — not just those with best_bet
         # Games without edge still needed for coverage audit + display
         all_game_analysis.append(analysis)
@@ -12128,7 +12127,8 @@ with st.sidebar:
             st.session_state.n_skipped_def = n_def
             st.session_state.n_skipped_edge = n_edge
             if games and home_teams and away_teams:
-                game_analysis = analyze_all_games(games, sport_sel, home_teams, away_teams)
+                game_analysis = analyze_all_games(games, sport_sel, home_teams, away_teams,
+                                                   mlb_pitchers=st.session_state.get("mlb_pitchers",{}))
                 st.session_state["game_analysis"] = game_analysis
                 # Store opening lines + line origins now that game_analysis exists
                 if game_analysis:
