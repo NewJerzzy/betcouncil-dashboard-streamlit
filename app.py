@@ -4794,6 +4794,22 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         away_ml = game.get("OddsAPI ML Away", game.get("Bovada ML Away", "N/A"))
     home_team = home_teams.get(matchup, "")
     away_team = away_teams.get(matchup, "")
+    # Normalize abbreviations to full names for power rating lookups
+    _PR_MAP = {
+        "ARI":"Arizona Diamondbacks","ATL":"Atlanta Braves","BAL":"Baltimore Orioles",
+        "BOS":"Boston Red Sox","CHC":"Chicago Cubs","CWS":"Chicago White Sox",
+        "CIN":"Cincinnati Reds","CLE":"Cleveland Guardians","COL":"Colorado Rockies",
+        "DET":"Detroit Tigers","HOU":"Houston Astros","KC":"Kansas City Royals",
+        "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers","MIA":"Miami Marlins",
+        "MIL":"Milwaukee Brewers","MIN":"Minnesota Twins","NYM":"New York Mets",
+        "NYY":"New York Yankees","OAK":"Oakland Athletics","ATH":"Athletics",
+        "PHI":"Philadelphia Phillies","PIT":"Pittsburgh Pirates","SD":"San Diego Padres",
+        "SEA":"Seattle Mariners","SF":"San Francisco Giants","STL":"St. Louis Cardinals",
+        "TB":"Tampa Bay Rays","TEX":"Texas Rangers","TOR":"Toronto Blue Jays",
+        "WSH":"Washington Nationals",
+    }
+    home_full = _PR_MAP.get(home_team, home_team)
+    away_full = _PR_MAP.get(away_team, away_team)
     recommendations = []
     best_bet = None
     best_edge = 0
@@ -4827,9 +4843,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         if spread_str and spread_str != "N/A":
             spread_val = float(str(spread_str).split()[-1].replace("+",""))
             favored_team = str(spread_str).split()[0] if len(str(spread_str).split()) > 1 else home_team
-            if home_team in power_ratings and away_team in power_ratings:
-                home_power = power_ratings[home_team]
-                away_power = power_ratings[away_team]
+            if home_full in power_ratings and away_full in power_ratings:
+                home_power = power_ratings[home_full]
+                away_power = power_ratings[away_full]
                 power_diff = home_power - away_power
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
@@ -4851,10 +4867,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
             total_val = float(total_str)
             fair_total = None
             if sport == "NBA":
-                h_pace = NBA_TEAM_PACE.get(home_team, 99.5)
-                a_pace = NBA_TEAM_PACE.get(away_team, 99.5)
-                h_power = power_ratings.get(home_team, 112.0)
-                a_power = power_ratings.get(away_team, 112.0)
+                h_pace = NBA_TEAM_PACE.get(home_full, NBA_TEAM_PACE.get(home_team, 99.5))
+                a_pace = NBA_TEAM_PACE.get(away_full, NBA_TEAM_PACE.get(away_team, 99.5))
+                h_power = power_ratings.get(home_full, power_ratings.get(home_team, 112.0))
+                a_power = power_ratings.get(away_full, power_ratings.get(away_team, 112.0))
                 avg_pace = (h_pace + a_pace) / 2
                 base_total = 227.0  # updated 2025-26 season baseline
                 pace_adj = (avg_pace - 99.5) * 1.5
@@ -4870,15 +4886,37 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
             elif sport == "MLB":
                 base_total = 8.5
                 mlb_pitchers = _mlb_pitchers
-                h_data = mlb_pitchers.get(home_team, {})
-                a_data = mlb_pitchers.get(away_team, {})
+                # mlb_pitchers keys are full team names; home_team/away_team are abbrevs
+                # Map abbreviation → full name for pitcher lookup
+                MLB_ABBREV_TO_FULL = {
+                    "ARI":"Arizona Diamondbacks","ATL":"Atlanta Braves",
+                    "BAL":"Baltimore Orioles","BOS":"Boston Red Sox",
+                    "CHC":"Chicago Cubs","CWS":"Chicago White Sox",
+                    "CIN":"Cincinnati Reds","CLE":"Cleveland Guardians",
+                    "COL":"Colorado Rockies","DET":"Detroit Tigers",
+                    "HOU":"Houston Astros","KC":"Kansas City Royals",
+                    "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
+                    "MIA":"Miami Marlins","MIL":"Milwaukee Brewers",
+                    "MIN":"Minnesota Twins","NYM":"New York Mets",
+                    "NYY":"New York Yankees","OAK":"Oakland Athletics",
+                    "ATH":"Athletics","PHI":"Philadelphia Phillies",
+                    "PIT":"Pittsburgh Pirates","SD":"San Diego Padres",
+                    "SEA":"Seattle Mariners","SF":"San Francisco Giants",
+                    "STL":"St. Louis Cardinals","TB":"Tampa Bay Rays",
+                    "TEX":"Texas Rangers","TOR":"Toronto Blue Jays",
+                    "WSH":"Washington Nationals",
+                }
+                h_full = MLB_ABBREV_TO_FULL.get(home_team, home_team)
+                a_full = MLB_ABBREV_TO_FULL.get(away_team, away_team)
+                h_data = mlb_pitchers.get(h_full, mlb_pitchers.get(home_team, {}))
+                a_data = mlb_pitchers.get(a_full, mlb_pitchers.get(away_team, {}))
                 h_pitcher = h_data.get("pitcher","")
                 a_pitcher = a_data.get("pitcher","")
                 h_era = MLB_PITCHER_ERA.get(h_pitcher, LEAGUE_AVG_ERA)
                 a_era = MLB_PITCHER_ERA.get(a_pitcher, LEAGUE_AVG_ERA)
                 avg_era = (h_era + a_era) / 2
                 era_adj = (avg_era - LEAGUE_AVG_ERA) * 0.4
-                park_mult = MLB_PARK_FACTORS.get(home_team, MLB_PARK_DEFAULT)
+                park_mult = MLB_PARK_FACTORS.get(h_full, MLB_PARK_FACTORS.get(home_team, MLB_PARK_DEFAULT))
                 park_adj = (park_mult - 1.0) * 2.0
                 fair_total = base_total + era_adj + park_adj
             elif sport == "NHL":
