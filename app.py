@@ -5722,7 +5722,8 @@ def fetch_rotowire_injuries(sport):
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
             "Accept": "application/rss+xml, application/xml, text/xml, */*",
         }
-        r = requests.get(url, headers=headers, timeout=10)
+        # Route through residential proxy — RotoWire blocks datacenter IPs directly
+        r = scrapeops_get(url, headers=headers, timeout=15)
         if r.status_code != 200:
             return []
 
@@ -14634,7 +14635,7 @@ with tabs[9]:
             _src_counts[_src] = _src_counts.get(_src, 0) + 1
         _src_issues = []
         _timings = st.session_state.get("fetch_timings", {})
-        _expected_failures = {"rw_injuries", "prizepicks"}  # expected to fail in cloud env
+        _expected_failures = {"prizepicks"}  # expected to fail only when PP proxy quota exhausted
         for src, info in _timings.items():
             if info.get("status","").startswith("❌") and src not in _expected_failures:
                 _src_issues.append(f"{src}: {info['status'][:40]}")
