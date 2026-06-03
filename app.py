@@ -13019,7 +13019,7 @@ with tabs[2]:
                            else ("" if any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
                  "line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
-                {\"label\":\"ML\",
+                {"label":"ML",
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
                           else (
