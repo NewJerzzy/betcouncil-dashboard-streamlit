@@ -8765,8 +8765,6 @@ def track_bet_dialog(prop):
 
 
 def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None):
-    # signals = dict of {signal_name: float_value} from compute_multi_signal_edge
-    # e.g. {"base": 0.08, "defense": 0.06, "location": 0.05, "rest": -0.08, ...}
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
         if bet_type == "prop":
@@ -8810,6 +8808,47 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     save_json_data(BANKROLL_PATH, st.session_state.bankroll)
     save_to_gist("bankroll", st.session_state.bankroll)
     record_signal_performance(record, outcome)
+    # ── Auto-record CLV from history bet ───────────────────────
+    # Don't require Track This Bet — if we have a line and outcome,
+    # record CLV using the board's current line as "closing line"
+    if outcome in ("WIN", "LOSS") and line:
+        try:
+            _board = st.session_state.get("board_data", [])
+            _current_line = None
+            for _bp in _board:
+                if (normalize_name(_bp.get("Player","")) == normalize_name(player) and
+                    _bp.get("Prop","") == prop):
+                    _current_line = _bp.get("Line")
+                    break
+            # If board not loaded, use the locked line as both (CLV = 0 but entry exists)
+            if _current_line is None:
+                _current_line = line
+            _clv_val = (float(line) - float(_current_line)) if side == "OVER" else (float(_current_line) - float(line))
+            _clv_data = load_json_data(CLV_PATH, [])
+            # Avoid duplicates
+            _already = any(
+                normalize_name(c.get("player","")) == normalize_name(player) and
+                c.get("prop") == prop and
+                c.get("timestamp","")[:10] == bet_date[:10]
+                for c in _clv_data
+            )
+            if not _already:
+                _clv_data.append({
+                    "player":      player, "prop": prop,
+                    "locked_line": float(line),
+                    "closing_line": float(_current_line),
+                    "side":        side,
+                    "clv":         round(_clv_val, 1),
+                    "outcome":     outcome,
+                    "timestamp":   bet_date,
+                    "sport":       sport,
+                    "tier":        tier or "",
+                    "edge":        edge or 0,
+                    "prob":        prob or 0.5,
+                })
+                save_json_data(CLV_PATH, _clv_data)
+        except Exception:
+            pass
     # ── Optimizer guard — only run when bet count changes ──
     # Prevents running 10x per session when board reloads.
     # Key: {sport}_{n_resolved_bets} — changes only when a
