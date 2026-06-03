@@ -3080,6 +3080,345 @@ def get_nfl_team_context(team, last_n=4):
         return None
 
 
+# ═══════════════════════════════════════════════════════════════
+# MARKET INTELLIGENCE — KALSHI + POLYMARKET + COVERS
+# Adds crowd/market probability as third dimension:
+#   Model opinion vs Sportsbook opinion vs Public opinion
+# ═══════════════════════════════════════════════════════════════
+
+KALSHI_PATH     = os.path.join(CACHE_DIR, "kalshi_markets.json")
+POLYMARKET_PATH = os.path.join(CACHE_DIR, "polymarket_markets.json")
+COVERS_PATH     = os.path.join(CACHE_DIR, "covers_consensus.json")
+
+# ── Kalshi ──────────────────────────────────────────────────────
+KALSHI_SPORT_SERIES = {
+    "NBA":  ["KXNBA", "NBA"],
+    "MLB":  ["KXMLB", "MLB"],
+    "NFL":  ["KXNFL", "NFL"],
+    "NHL":  ["KXNHL", "NHL"],
+    "WNBA": ["KXWNBA", "WNBA"],
+}
+
+@st.cache_data(ttl=900)
+def fetch_kalshi_markets(sport="NBA"):
+    """
+    Fetch Kalshi prediction market probabilities for sports events.
+    Kalshi = regulated prediction market, institutional money.
+    
+    Implied probability divergence from model = real edge signal.
+    High volume Kalshi market + model disagreement = actionable.
+    
+    Uses ScrapeOps proxy (already integrated).
+    Returns list of {event, ticker, implied_prob, volume, sport}
+    """
+    series = KALSHI_SPORT_SERIES.get(sport, [sport])
+    results = []
+    
+    for series_ticker in series:
+        try:
+            url = f"https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker={series_ticker}&limit=50&status=open"
+            # Try direct first (Kalshi is less protected than Covers)
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
+            if r.status_code != 200 and SCRAPEOPS_KEY:
+                # Fallback to proxy
+                r = scrapeops_get(url, timeout=15)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            markets = data.get("markets", data if isinstance(data, list) else [])
+            for mkt in markets:
+                yes_price = float(mkt.get("yes_bid", mkt.get("last_price", 50)) or 50)
+                no_price  = 100 - yes_price
+                volume    = int(mkt.get("volume", 0) or 0)
+                if volume < 100:  # Skip illiquid markets
+                    continue
+                results.append({
+                    "event":        mkt.get("title", mkt.get("subtitle","")),
+                    "ticker":       mkt.get("ticker",""),
+                    "yes_price":    yes_price,
+                    "no_price":     no_price,
+                    "implied_prob": round(yes_price / 100, 3),
+                    "volume":       volume,
+                    "sport":        sport,
+                    "source":       "Kalshi",
+                    "fetched_at":   datetime.now().strftime("%H:%M"),
+                })
+        except Exception:
+            continue
+
+    if results:
+        save_json_data(KALSHI_PATH, results)
+    else:
+        results = load_json_data(KALSHI_PATH, [])
+    return results
+
+
+# ── Polymarket ───────────────────────────────────────────────────
+@st.cache_data(ttl=900)
+def fetch_polymarket_markets(sport="NBA"):
+    """
+    Fetch Polymarket prediction market probabilities.
+    Polymarket = decentralized, high liquidity, sophisticated traders.
+    
+    Returns list of {question, implied_prob, volume, sport}
+    """
+    sport_tags = {
+        "NBA": "nba", "MLB": "mlb", "NFL": "nfl",
+        "NHL": "nhl", "WNBA": "wnba",
+    }
+    tag = sport_tags.get(sport, sport.lower())
+    
+    try:
+        url = f"https://gamma-api.polymarket.com/markets?active=true&tag={tag}&limit=50&order=volume&ascending=false"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
+        if r.status_code != 200:
+            url2 = f"https://gamma-api.polymarket.com/markets?active=true&limit=50&tag=sports"
+            r = requests.get(url2, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return load_json_data(POLYMARKET_PATH, [])
+        
+        markets = r.json()
+        if isinstance(markets, dict):
+            markets = markets.get("markets", markets.get("data", []))
+        
+        results = []
+        for mkt in markets:
+            # Filter for relevant sport
+            tags_list = [t.lower() for t in mkt.get("tags", [])]
+            if tag not in tags_list and "sports" not in tags_list:
+                continue
+            
+            best_ask   = float(mkt.get("bestAsk", mkt.get("outcomePrices","0.5").split(",")[0].strip('" ') if "," in str(mkt.get("outcomePrices","")) else 0.5) or 0.5)
+            volume     = float(mkt.get("volume", mkt.get("volumeNum", 0)) or 0)
+            
+            if volume < 1000:
+                continue
+            
+            results.append({
+                "question":     mkt.get("question", mkt.get("title","")),
+                "slug":         mkt.get("slug",""),
+                "implied_prob": round(min(0.99, max(0.01, best_ask)), 3),
+                "volume":       int(volume),
+                "sport":        sport,
+                "source":       "Polymarket",
+                "fetched_at":   datetime.now().strftime("%H:%M"),
+            })
+        
+        results.sort(key=lambda x: -x["volume"])
+        if results:
+            save_json_data(POLYMARKET_PATH, results)
+        return results
+    except Exception:
+        return load_json_data(POLYMARKET_PATH, [])
+
+
+# ── Covers Consensus ─────────────────────────────────────────────
+@st.cache_data(ttl=600)
+def fetch_covers_consensus(sport="MLB", covers_cookie=""):
+    """
+    Fetch Covers.com public betting consensus.
+    Requires browser session cookie (Cloudflare protected).
+    
+    Returns list of {matchup, public_pct, side, picks, sport}
+    Falls back to cached data if request fails.
+    
+    covers_cookie: from DevTools → Network → Request Headers → Cookie
+    Store as COVERS_COOKIE in Streamlit secrets.
+    """
+    if not covers_cookie:
+        covers_cookie = st.secrets.get("COVERS_COOKIE", "")
+    
+    sport_map = {
+        "MLB": "mlb", "NBA": "nba", "NFL": "nfl",
+        "NHL": "nhl", "WNBA": "wnba",
+    }
+    sport_slug = sport_map.get(sport, sport.lower())
+    
+    headers = {
+        "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+        "Accept":          "application/json, text/html, */*",
+        "Referer":         "https://contests.covers.com/consensus",
+        "Cookie":          covers_cookie,
+    }
+    
+    # Try known Covers consensus endpoints
+    endpoints = [
+        f"https://contests.covers.com/Consensus/GetConsensusMatchups?sport={sport_slug}",
+        f"https://contests.covers.com/consensus/{sport_slug}",
+        f"https://www.covers.com/consensus/{sport_slug}",
+    ]
+    
+    for url in endpoints:
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200 and len(r.text) > 100:
+                ct = r.headers.get("content-type","")
+                if "json" in ct:
+                    data = r.json()
+                    results = []
+                    items = data if isinstance(data, list) else data.get("matchups", data.get("data",[]))
+                    for item in items:
+                        matchup    = item.get("matchup", item.get("game",""))
+                        public_pct = int(item.get("consensusPct", item.get("publicPct", 50)) or 50)
+                        side       = item.get("side", item.get("team",""))
+                        picks      = int(item.get("picks", item.get("pickCount", 0)) or 0)
+                        if matchup:
+                            results.append({
+                                "matchup":    matchup,
+                                "public_pct": public_pct,
+                                "side":       side,
+                                "picks":      picks,
+                                "sport":      sport,
+                                "source":     "Covers",
+                                "fetched_at": datetime.now().strftime("%H:%M"),
+                            })
+                    if results:
+                        save_json_data(COVERS_PATH, results)
+                        return results
+                elif "html" in ct:
+                    # Try to parse HTML for consensus data
+                    import re
+                    # Look for JSON embedded in page
+                    json_match = re.search(r'consensus[Dd]ata\s*=\s*(\[.*?\]);', r.text, re.DOTALL)
+                    if json_match:
+                        import json
+                        try:
+                            data = json.loads(json_match.group(1))
+                            if data:
+                                save_json_data(COVERS_PATH, data)
+                                return data
+                        except Exception:
+                            pass
+        except Exception:
+            continue
+    
+    return load_json_data(COVERS_PATH, [])
+
+
+# ── Market Consensus Engine ──────────────────────────────────────
+def compute_market_consensus(model_prob, player, prop, sport, game_analysis=None):
+    """
+    Compare model probability vs prediction market probabilities.
+    
+    Divergence signal:
+      Model > Markets by 5%+  → Model bullish, markets disagree → value
+      Model < Markets by 5%+  → Model bearish, markets disagree → fade
+      Agreement               → Market efficient, lower confidence
+
+    Returns dict with consensus, divergence, signal, source breakdown.
+    """
+    market_probs = []
+    sources = []
+    
+    # Pull from session state (already fetched)
+    kalshi_data   = st.session_state.get("kalshi_markets", [])
+    poly_data     = st.session_state.get("polymarket_markets", [])
+    covers_data   = st.session_state.get("covers_consensus", [])
+    
+    player_lower = normalize_name(player)
+    
+    # Match Kalshi markets to player/prop
+    for mkt in kalshi_data:
+        event = mkt.get("event","").lower()
+        if player_lower in event or any(w in event for w in player_lower.split()[:2]):
+            market_probs.append(mkt["implied_prob"])
+            sources.append(f"Kalshi({mkt['implied_prob']:.0%})")
+    
+    # Match Polymarket
+    for mkt in poly_data:
+        question = mkt.get("question","").lower()
+        if player_lower in question or any(w in question for w in player_lower.split()[:2]):
+            market_probs.append(mkt["implied_prob"])
+            sources.append(f"Polymarket({mkt['implied_prob']:.0%})")
+    
+    if not market_probs:
+        return None
+    
+    consensus_prob = sum(market_probs) / len(market_probs)
+    divergence     = model_prob - consensus_prob
+    
+    if divergence >= 0.08:
+        signal = "MODEL_BULLISH"
+        note   = f"📈 Model {model_prob:.0%} vs Markets {consensus_prob:.0%} — strong value"
+        adj    = min(0.04, divergence * 0.40)  # up to +4% edge boost
+    elif divergence >= 0.04:
+        signal = "MODEL_LEAN_BULLISH"
+        note   = f"📊 Model {model_prob:.0%} vs Markets {consensus_prob:.0%} — mild value"
+        adj    = min(0.02, divergence * 0.30)
+    elif divergence <= -0.08:
+        signal = "MARKET_BULLISH"
+        note   = f"📉 Markets {consensus_prob:.0%} vs Model {model_prob:.0%} — fade signal"
+        adj    = max(-0.04, divergence * 0.40)
+    else:
+        signal = "AGREEMENT"
+        note   = f"✅ Model ≈ Markets ({consensus_prob:.0%}) — efficient"
+        adj    = 0.0
+    
+    return {
+        "consensus_prob":  round(consensus_prob, 3),
+        "model_prob":      round(model_prob, 3),
+        "divergence":      round(divergence, 3),
+        "signal":          signal,
+        "note":            note,
+        "edge_adj":        round(adj, 3),
+        "sources":         sources,
+    }
+
+
+# ── Covers Public Fade Signal ────────────────────────────────────
+def compute_public_fade_signal(matchup, sport, model_pick_side):
+    """
+    Public Fade: when 70%+ of public bets on one side,
+    sharps are often on the other side.
+    
+    Strong signal when:
+      public_pct >= 75% AND model agrees with MINORITY → contrarian bet
+      public_pct >= 75% AND model agrees with MAJORITY → proceed with caution
+    
+    Returns: {public_pct, side, fade_signal, note}
+    """
+    covers_data = st.session_state.get("covers_consensus", [])
+    if not covers_data:
+        return None
+    
+    matchup_lower = matchup.lower()
+    for item in covers_data:
+        item_matchup = item.get("matchup","").lower()
+        # Fuzzy match
+        if any(w in item_matchup for w in matchup_lower.split(" @ ")):
+            public_pct = item.get("public_pct", 50)
+            public_side = item.get("side","")
+            
+            if public_pct >= 75:
+                if public_side.lower() not in str(model_pick_side).lower():
+                    # Model agrees with MINORITY → contrarian signal
+                    return {
+                        "public_pct":  public_pct,
+                        "side":        public_side,
+                        "fade_signal": "CONTRARIAN",
+                        "note":        f"🎯 Fade: {public_pct}% public on {public_side}, model takes minority",
+                        "edge_adj":    0.02,  # +2% contrarian boost
+                    }
+                else:
+                    # Model with the public → fade warning
+                    return {
+                        "public_pct":  public_pct,
+                        "side":        public_side,
+                        "fade_signal": "WITH_PUBLIC",
+                        "note":        f"⚠️ {public_pct}% public on {public_side} — is this a trap?",
+                        "edge_adj":    -0.01,  # -1% public side penalty
+                    }
+            elif public_pct >= 60:
+                return {
+                    "public_pct":  public_pct,
+                    "side":        public_side,
+                    "fade_signal": "MILD_PUBLIC",
+                    "note":        f"📊 {public_pct}% public on {public_side}",
+                    "edge_adj":    0.0,
+                }
+    return None
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -10826,6 +11165,21 @@ def load_sport_data(sport):
             return fetch_espn_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
         except Exception:
             return []
+    def _pf_kalshi():
+        try:
+            return fetch_kalshi_markets(sport)
+        except Exception:
+            return []
+    def _pf_polymarket():
+        try:
+            return fetch_polymarket_markets(sport)
+        except Exception:
+            return []
+    def _pf_covers():
+        try:
+            return fetch_covers_consensus(sport)
+        except Exception:
+            return []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
@@ -10837,12 +11191,14 @@ def load_sport_data(sport):
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
+        _pf_kalshi, _pf_polymarket, _pf_covers,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
-     an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw) = _results
+     an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
+     kalshi_raw, polymarket_raw, covers_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10898,6 +11254,13 @@ def load_sport_data(sport):
                     "source": "ESPN",
                 }
     st.session_state["espn_injuries"] = espn_injuries
+    # Market intelligence data
+    if kalshi_raw:
+        st.session_state["kalshi_markets"] = kalshi_raw
+    if polymarket_raw:
+        st.session_state["polymarket_markets"] = polymarket_raw
+    if covers_raw:
+        st.session_state["covers_consensus"] = covers_raw
     st.session_state["cbs_injuries"] = cbs_injuries
     st.session_state["rw_injuries"] = rw_injuries
     st.session_state["injuries_combined"] = injuries
@@ -16149,6 +16512,32 @@ with tabs[9]:
                     _dc_rows.append({"Position": pos, "Player": pl["name"], "Depth": pl["depth"]})
             if _dc_rows:
                 st.dataframe(pd.DataFrame(_dc_rows), use_container_width=True, hide_index=True)
+    # ── Market Intelligence Dashboard ──────────────────────
+    st.markdown("---")
+    st.markdown("### 🌐 Market Intelligence")
+    st.caption("Kalshi + Polymarket prediction market probabilities vs model. Public betting consensus from Covers.")
+    _kal  = st.session_state.get("kalshi_markets", [])
+    _poly = st.session_state.get("polymarket_markets", [])
+    _cov  = st.session_state.get("covers_consensus", [])
+    _mi_c1, _mi_c2, _mi_c3 = st.columns(3)
+    _mi_c1.metric("Kalshi Markets", len(_kal), help="Open prediction markets with volume >100")
+    _mi_c2.metric("Polymarket", len(_poly), help="Active markets volume >$1000")
+    _mi_c3.metric("Covers Consensus", len(_cov), help="Public betting % by matchup (needs COVERS_COOKIE)")
+    if _kal:
+        st.markdown("**Kalshi Top Markets:**")
+        _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in sorted(_kal, key=lambda x: -x["volume"])[:5]]
+        st.dataframe(pd.DataFrame(_kal_rows), use_container_width=True, hide_index=True)
+    if _poly:
+        st.markdown("**Polymarket Top Markets:**")
+        _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in sorted(_poly, key=lambda x: -x["volume"])[:5]]
+        st.dataframe(pd.DataFrame(_poly_rows), use_container_width=True, hide_index=True)
+    if _cov:
+        st.markdown("**Public Consensus (Covers):**")
+        _cov_rows = [{"Matchup": c["matchup"][:40], "Public %": f"{c['public_pct']}%", "Side": c["side"], "Picks": c["picks"]} for c in _cov[:8]]
+        st.dataframe(pd.DataFrame(_cov_rows), use_container_width=True, hide_index=True)
+    elif not st.secrets.get("COVERS_COOKIE",""):
+        st.info("Add COVERS_COOKIE to Streamlit secrets to enable public betting consensus data.")
+
     st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
     st.caption("Quick health check on signal quality. Full details in History tab.")
