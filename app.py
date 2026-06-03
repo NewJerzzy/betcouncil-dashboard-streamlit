@@ -12943,7 +12943,14 @@ with tabs[2]:
                 {"label":"TOTAL",
                  "pick":(_g.get("TotalPick") or
                          ("No Market" if _g.get("Total","N/A") in ("N/A","",None)
-                          else ("O/U " + str(_g.get("Total",""))))),
+                          else (
+                              # Show OVER/UNDER direction from recommendations or edge sign
+                              next((r.get("pick","") for r in _g.get("recommendations",[])
+                                    if r.get("type")=="TOTAL"), None) or
+                              (("OVER " if float(_g.get("TotalEdge",0) or 0) > 0 else
+                               "UNDER " if float(_g.get("TotalEdge",0) or 0) < 0 else "O/U ")
+                              + str(_g.get("Total","")))
+                          ))),
                  "note": ("" if _g.get("TotalPick") else
                           ("" if _g.get("Total","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[]))
@@ -12952,8 +12959,12 @@ with tabs[2]:
                 {"label":"ML",
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
-                          else ((_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
-                                or _g.get("home","") + " " + str(_g.get("HomeML",""))))),
+                          else (
+                              # Show favorite team + ML odds clearly
+                              (_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
+                              or (str(_g.get("away","")) + " " + str(_g.get("AwayML",""))
+                                  + " / " + str(_g.get("home","")) + " " + str(_g.get("HomeML","")))
+                          ))),
                  "note": ("" if _g.get("MLPick") else
                           ("" if _g.get("HomeML","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[]))
