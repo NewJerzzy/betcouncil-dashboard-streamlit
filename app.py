@@ -3118,11 +3118,15 @@ def fetch_kalshi_markets(sport="NBA"):
     for series_ticker in series:
         try:
             url = f"https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker={series_ticker}&limit=50&status=open"
-            # Try direct first (Kalshi is less protected than Covers)
+            # Try direct first — Kalshi is less protected than Covers
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
-            if r.status_code != 200 and SCRAPEOPS_KEY:
-                # Fallback to proxy
-                r = scrapeops_get(url, timeout=15)
+            if r.status_code != 200 and SCRAPERAPI_KEY:
+                # Use ScraperAPI (free 1k/mo) not ScrapeOps for Kalshi
+                from urllib.parse import quote as _q
+                r = requests.get(
+                    f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={_q(url,safe='')}",
+                    timeout=15
+                )
             if r.status_code != 200:
                 continue
             data = r.json()
@@ -6293,7 +6297,9 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
         return resp.status_code == 200 and "html" not in ct and not resp.text.strip().startswith("<")
 
     # ── 1. ScrapeOps ────────────────────────────────────────
-    if SCRAPEOPS_KEY:
+    # Skip if quota exhausted (flagged in session state)
+    _so_exhausted = st.session_state.get("scrapeops_exhausted", False)
+    if SCRAPEOPS_KEY and not _so_exhausted:
         try:
             encoded = quote(url, safe='')
             r = requests.get(
@@ -6301,7 +6307,11 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 timeout=timeout
             )
             _log("ScrapeOps", r.status_code, len(r.text))
-            if _is_valid(r):
+            # 403/429 = quota exhausted — flag and skip for rest of session
+            if r.status_code in (403, 429, 402):
+                st.session_state["scrapeops_exhausted"] = True
+                _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}"))
+            elif _is_valid(r):
                 return r
         except Exception as e:
             _log("ScrapeOps", "ERR", error=e)
@@ -13783,8 +13793,18 @@ with tabs[2]:
                         st.caption(f"{_g.get('away','Away')}: 🎟️ {_away_t}% | 💰 {_away_m}%")
                         # Sharp signal: money > tickets = sharp money
                         if abs(_home_m - _home_t) >= 15:
-                            _sharp_side = _g.get('home','Home') if _home_m > _home_t else _g.get('away','Away')
-                            st.markdown(f"⚡ **Sharp:** {_sharp_side}")
+                            _sharp_side = _g.get("home","Home") if _home_m > _home_t else _g.get("away","Away")
+                            _pub_side   = _g.get("home","Home") if _home_t > _away_t else _g.get("away","Away")
+                            if _sharp_side != _pub_side:
+                                st.markdown(f"⚡ **Sharp money on {_sharp_side}**")
+                                st.caption(
+                                    f"Why: Public ({_home_t if _sharp_side==_g.get('home') else _away_t}% tickets) "
+                                    f"vs Sharp ({_home_m if _sharp_side==_g.get('home') else _away_m}% money). "
+                                    f"When money % >> tickets %, institutional/sharp bettors are fading the public."
+                                )
+                            else:
+                                st.markdown(f"✅ **Public + Sharp agree on {_sharp_side}**")
+                                st.caption("Both public tickets and money % point same direction — stronger signal.")
                     else:
                         st.caption("No data")
 
@@ -13814,6 +13834,13 @@ with tabs[2]:
                             st.caption(f"  {_team}: {_tpct}")
                         if _pct >= 75:
                             st.markdown(f"🎯 **Fade candidate:** {_pct}% on {_fav}")
+                            st.caption(
+                                f"Why: {_pct}% of contest players picked {_fav}. "
+                                f"Heavy public sides (75%+) often lose because sharp bettors "
+                                f"take the other side, moving the line against the crowd."
+                            )
+                        elif _pct >= 60:
+                            st.caption(f"📊 Mild public lean ({_pct}% on {_fav}) — not extreme enough to fade.")
                     if not _tot_pcts and not _cov_game:
                         st.caption("No data")
     else:
