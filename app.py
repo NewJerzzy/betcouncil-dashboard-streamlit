@@ -4807,6 +4807,18 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         "SEA":"Seattle Mariners","SF":"San Francisco Giants","STL":"St. Louis Cardinals",
         "TB":"Tampa Bay Rays","TEX":"Texas Rangers","TOR":"Toronto Blue Jays",
         "WSH":"Washington Nationals",
+        # NHL abbreviations
+        "TOR":"Toronto Maple Leafs","BOS":"Boston Bruins","TBL":"Tampa Bay Lightning",
+        "FLA":"Florida Panthers","MTL":"Montreal Canadiens","BUF":"Buffalo Sabres",
+        "OTT":"Ottawa Senators","PIT":"Pittsburgh Penguins","PHI":"Philadelphia Flyers",
+        "WSH":"Washington Capitals","CAR":"Carolina Hurricanes","NYR":"New York Rangers",
+        "NJD":"New Jersey Devils","NYI":"New York Islanders","CBJ":"Columbus Blue Jackets",
+        "CHI":"Chicago Blackhawks","NSH":"Nashville Predators","WPG":"Winnipeg Jets",
+        "MIN":"Minnesota Wild","COL":"Colorado Avalanche","DAL":"Dallas Stars",
+        "VGK":"Vegas Golden Knights","LAK":"Los Angeles Kings","ANA":"Anaheim Ducks",
+        "SJS":"San Jose Sharks","SEA":"Seattle Kraken","VAN":"Vancouver Canucks",
+        "CGY":"Calgary Flames","EDM":"Edmonton Oilers","STL":"St. Louis Blues",
+        "DET":"Detroit Red Wings",
     }
     home_full = _PR_MAP.get(home_team, home_team)
     away_full = _PR_MAP.get(away_team, away_team)
@@ -4920,10 +4932,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
                 park_adj = (park_mult - 1.0) * 2.0
                 fair_total = base_total + era_adj + park_adj
             elif sport == "NHL":
-                h_gf = NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT)
-                h_ga = NHL_TEAM_GOALS_AGAINST.get(home_team, NHL_GOALS_DEFAULT)
-                a_gf = NHL_TEAM_GOALS_FOR.get(away_team, NHL_GOALS_DEFAULT)
-                a_ga = NHL_TEAM_GOALS_AGAINST.get(away_team, NHL_GOALS_DEFAULT)
+                h_gf = NHL_TEAM_GOALS_FOR.get(home_full, NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT))
+                h_ga = NHL_TEAM_GOALS_AGAINST.get(home_full, NHL_TEAM_GOALS_AGAINST.get(home_team, NHL_GOALS_DEFAULT))
+                a_gf = NHL_TEAM_GOALS_FOR.get(away_full, NHL_TEAM_GOALS_FOR.get(away_team, NHL_GOALS_DEFAULT))
+                a_ga = NHL_TEAM_GOALS_AGAINST.get(away_full, NHL_TEAM_GOALS_AGAINST.get(away_team, NHL_GOALS_DEFAULT))
                 home_expected = (h_gf + a_ga) / 2
                 away_expected = (a_gf + h_ga) / 2
                 fair_total = home_expected + away_expected
