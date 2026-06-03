@@ -12157,10 +12157,21 @@ with st.sidebar:
                                 _pr_lookup.update(WNBA_POWER_RATINGS)
                             _h_pr = _pr_lookup.get(_h_full, 100)
                             _a_pr = _pr_lookup.get(_a_full, 100)
+                        # Try matchup string first, then try matching by team names
                         _best_alt = find_best_alt_line(
                             _ga_matchup, sport_sel, _h_pr, _a_pr,
                             _h_full, _a_full, _alt_lines_data
                         )
+                        if not _best_alt:
+                            # Try matching by home team full name
+                            for _alt_key in _alt_lines_data:
+                                if _h_full in _alt_key or _a_full in _alt_key:
+                                    _best_alt = find_best_alt_line(
+                                        _alt_key, sport_sel, _h_pr, _a_pr,
+                                        _h_full, _a_full, _alt_lines_data
+                                    )
+                                    if _best_alt:
+                                        break
                         if _best_alt:
                             _ga["AltLine"]  = _best_alt["pick"]
                             _ga["AltEdge"]  = _best_alt["edge"]
@@ -13140,8 +13151,10 @@ with tabs[2]:
     # Fall back to raw games if game_analysis not loaded yet
     _game_analysis_full = st.session_state.get("game_analysis", [])
     _raw_games = st.session_state.games or []
-    _games = _game_analysis_full if _game_analysis_full else _raw_games
     _sport2 = st.session_state.last_sport or "NBA"
+    # Only use game_analysis if it matches current sport — prevents stale cross-sport data
+    _ga_sport = _game_analysis_full[0].get("Sport", _game_analysis_full[0].get("sport","")) if _game_analysis_full else ""
+    _games = _game_analysis_full if (_game_analysis_full and _ga_sport == _sport2) else _raw_games
     st.markdown(f"## 🏟️ Game Lines — {_sport2}")
 
     # Slip grouping controls
@@ -13211,7 +13224,8 @@ with tabs[2]:
                               # Show favorite team + ML odds
                               (_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
                               or
-                              # Rebuild: more negative ML = favorite
+                              # Rebuild from home/away + ML odds
+                              # home/away may be full names (from game_analysis) or abbrevs (from raw games)
                               ((_g.get("home","") + " " + str(_g.get("HomeML","")))
                                if (str(_g.get("HomeML","0")).replace("+","").lstrip("-").isdigit() and
                                    str(_g.get("AwayML","0")).replace("+","").lstrip("-").isdigit() and
@@ -13256,7 +13270,7 @@ with tabs[2]:
                         f'<span style="font-size:15px;color:#8a9ab0;">{_pk["line"]}</span>'
                         f'</div>'
                         + (f'<div style="font-size:10px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
-                        + f'<span style="font-size:18px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"],1)) if _is_pos else str(round(_pk["edge"],1))}% edge</span>'
+                        + f'<span style="font-size:18px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
