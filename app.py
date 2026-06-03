@@ -631,6 +631,7 @@ API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
 SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
 SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009c00")
 SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "19f5a819c2ec471888ffd80ec807078527e259c1515")
+FIRECRAWL_KEY  = st.secrets.get("FIRECRAWL_KEY",  "fc-296afd1583694440938141e0bc113a38")
 SPORTMONKS_API_KEY = st.secrets.get("SPORTMONKS_API_KEY", "")
 UNIFIED_API_KEY = st.secrets.get("UNIFIED_API_KEY", "")
 RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
@@ -3214,85 +3215,129 @@ def fetch_polymarket_markets(sport="NBA"):
 
 # ── Covers Consensus ─────────────────────────────────────────────
 @st.cache_data(ttl=600)
-def fetch_covers_consensus(sport="MLB", covers_cookie=""):
+def fetch_covers_consensus(sport="MLB"):
     """
-    Fetch Covers.com public betting consensus.
-    Requires browser session cookie (Cloudflare protected).
+    Fetch Covers.com public betting consensus via Firecrawl.
+    Firecrawl handles JavaScript rendering and Cloudflare bypassing.
     
     Returns list of {matchup, public_pct, side, picks, sport}
-    Falls back to cached data if request fails.
+    Confirmed working: returns structured JSON with all consensus data.
     
-    covers_cookie: from DevTools → Network → Request Headers → Cookie
-    Store as COVERS_COOKIE in Streamlit secrets.
+    Requires FIRECRAWL_KEY in Streamlit secrets.
+    Free tier: 500 credits/month (each scrape = 1 credit)
     """
-    if not covers_cookie:
-        covers_cookie = st.secrets.get("COVERS_COOKIE", "")
-    
-    sport_map = {
-        "MLB": "mlb", "NBA": "nba", "NFL": "nfl",
-        "NHL": "nhl", "WNBA": "wnba",
-    }
-    sport_slug = sport_map.get(sport, sport.lower())
-    
-    headers = {
-        "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
-        "Accept":          "application/json, text/html, */*",
-        "Referer":         "https://contests.covers.com/consensus",
-        "Cookie":          covers_cookie,
-    }
-    
-    # Try known Covers consensus endpoints
-    endpoints = [
-        f"https://contests.covers.com/Consensus/GetConsensusMatchups?sport={sport_slug}",
-        f"https://contests.covers.com/consensus/{sport_slug}",
-        f"https://www.covers.com/consensus/{sport_slug}",
-    ]
-    
-    for url in endpoints:
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            if r.status_code == 200 and len(r.text) > 100:
-                ct = r.headers.get("content-type","")
-                if "json" in ct:
-                    data = r.json()
-                    results = []
-                    items = data if isinstance(data, list) else data.get("matchups", data.get("data",[]))
-                    for item in items:
-                        matchup    = item.get("matchup", item.get("game",""))
-                        public_pct = int(item.get("consensusPct", item.get("publicPct", 50)) or 50)
-                        side       = item.get("side", item.get("team",""))
-                        picks      = int(item.get("picks", item.get("pickCount", 0)) or 0)
-                        if matchup:
-                            results.append({
-                                "matchup":    matchup,
-                                "public_pct": public_pct,
-                                "side":       side,
-                                "picks":      picks,
-                                "sport":      sport,
-                                "source":     "Covers",
-                                "fetched_at": datetime.now().strftime("%H:%M"),
-                            })
-                    if results:
-                        save_json_data(COVERS_PATH, results)
-                        return results
-                elif "html" in ct:
-                    # Try to parse HTML for consensus data
-                    import re
-                    # Look for JSON embedded in page
-                    json_match = re.search(r'consensus[Dd]ata\s*=\s*(\[.*?\]);', r.text, re.DOTALL)
-                    if json_match:
-                        import json
-                        try:
-                            data = json.loads(json_match.group(1))
-                            if data:
-                                save_json_data(COVERS_PATH, data)
-                                return data
-                        except Exception:
-                            pass
-        except Exception:
-            continue
-    
-    return load_json_data(COVERS_PATH, [])
+    FIRECRAWL_KEY = st.secrets.get("FIRECRAWL_KEY", "fc-296afd1583694440938141e0bc113a38")
+    if not FIRECRAWL_KEY:
+        return load_json_data(COVERS_PATH, [])
+
+    try:
+        # Firecrawl interact endpoint — handles JS rendering
+        url = "https://api.firecrawl.dev/v1/scrape"
+        payload = {
+            "url": "https://contests.covers.com/consensus",
+            "formats": ["extract"],
+            "extract": {
+                "prompt": (
+                    "Extract all rows from the consensus table. "
+                    "For each row return: matchup (team names), "
+                    "consensus_percentage (favorite team and %), "
+                    "sides_odds (ML odds), pick_counts (number of picks per team). "
+                    "Return as JSON array."
+                )
+            },
+            "waitFor": 3000,
+            "actions": [{"type": "wait", "milliseconds": 2000}],
+        }
+        headers = {
+            "Authorization": f"Bearer {FIRECRAWL_KEY}",
+            "Content-Type": "application/json",
+        }
+        r = requests.post(url, json=payload, headers=headers, timeout=30)
+        if r.status_code != 200:
+            return load_json_data(COVERS_PATH, [])
+
+        data = r.json()
+        raw = data.get("data", {})
+        if isinstance(raw, dict):
+            raw = raw.get("extract", raw.get("content", []))
+        if isinstance(raw, str):
+            import json as _json
+            try:
+                raw = _json.loads(raw)
+            except Exception:
+                return load_json_data(COVERS_PATH, [])
+
+        if not isinstance(raw, list):
+            return load_json_data(COVERS_PATH, [])
+
+        # Normalize Firecrawl response to BetCouncil schema
+        results = []
+        SPORT_KEYWORDS = {
+            "MLB": ["royals","reds","padres","phillies","dodgers","yankees","mets","braves",
+                    "cubs","sox","giants","brewers","cardinals","pirates","astros","rangers",
+                    "mariners","angels","twins","tigers","guardians","orioles","rays","jays",
+                    "nationals","marlins","athletics","rockies","diamondbacks"],
+            "NHL": ["knights","hurricanes","bruins","maple leafs","rangers","oilers",
+                    "avalanche","lightning","panthers","stars","jets","predators","blues",
+                    "canucks","flames","wild","ducks","kings","sharks","sabres","senators",
+                    "canadiens","flyers","penguins","capitals","devils","islanders","blackhawks","red wings","blue jackets","coyotes","kraken"],
+            "NBA": ["lakers","celtics","warriors","bucks","heat","bulls","knicks","nets",
+                    "76ers","suns","clippers","nuggets","jazz","spurs","pistons","pacers"],
+            "WNBA": ["aces","sky","storm","mercury","fever","liberty","lynx","mystics",
+                     "wings","dream","sparks","sun"],
+        }
+
+        for item in raw:
+            matchup = item.get("matchup","")
+            if not matchup:
+                continue
+
+            # Detect sport from team names
+            matchup_lower = matchup.lower()
+            detected_sport = sport  # default to requested sport
+            for sp, keywords in SPORT_KEYWORDS.items():
+                if any(kw in matchup_lower for kw in keywords):
+                    detected_sport = sp
+                    break
+
+            # Extract consensus — find the majority side
+            cons_pct = item.get("consensus_percentage", {})
+            odds     = item.get("sides_odds", {})
+            picks    = item.get("pick_counts", {})
+
+            if isinstance(cons_pct, dict):
+                # Find favorite (highest %)
+                fav_team = max(cons_pct, key=lambda k: int(str(cons_pct[k]).replace("%","") or 0), default="")
+                pub_pct  = int(str(cons_pct.get(fav_team,"50")).replace("%","") or 50)
+                fav_odds = odds.get(fav_team,"")
+                fav_picks= int(picks.get(fav_team, 0) or 0)
+                total_picks = sum(int(v or 0) for v in picks.values())
+            else:
+                fav_team = ""
+                pub_pct  = 50
+                fav_odds = ""
+                fav_picks = 0
+                total_picks = 0
+
+            results.append({
+                "matchup":    matchup,
+                "public_pct": pub_pct,
+                "side":       fav_team,
+                "odds":       fav_odds,
+                "picks":      fav_picks,
+                "total_picks":total_picks,
+                "raw_pcts":   cons_pct,
+                "sport":      detected_sport,
+                "source":     "Covers",
+                "fetched_at": datetime.now().strftime("%H:%M"),
+            })
+
+        if results:
+            save_json_data(COVERS_PATH, results)
+        return results
+
+    except Exception:
+        return load_json_data(COVERS_PATH, [])
 
 
 # ── Market Consensus Engine ──────────────────────────────────────
