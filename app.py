@@ -12951,7 +12951,11 @@ with tabs[1]:
 
 # ----- TAB 2: GAME LINES -----
 with tabs[2]:
-    _games = st.session_state.games or []
+    # Use game_analysis (has FavoriteTeam/FavoriteML/TotalEdge/recommendations)
+    # Fall back to raw games if game_analysis not loaded yet
+    _game_analysis_full = st.session_state.get("game_analysis", [])
+    _raw_games = st.session_state.games or []
+    _games = _game_analysis_full if _game_analysis_full else _raw_games
     _sport2 = st.session_state.last_sport or "NBA"
     st.markdown(f"## 🏟️ Game Lines — {_sport2}")
 
@@ -13021,8 +13025,18 @@ with tabs[2]:
                           else (
                               # Show favorite team + ML odds clearly
                               (_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
-                              or (str(_g.get("away","")) + " " + str(_g.get("AwayML",""))
-                                  + " / " + str(_g.get("home","")) + " " + str(_g.get("HomeML","")))
+                              or
+                              # Rebuild FavoriteTeam from HomeML/AwayML if missing
+                              (lambda hml, aml, ht, at: (
+                                  f"{ht} {hml}" if (hml not in ("N/A","",None) and aml not in ("N/A","",None) and
+                                  float(str(hml).replace("+","").strip() or "0") <= float(str(aml).replace("+","").strip() or "0"))
+                                  else f"{at} {aml}" if aml not in ("N/A","",None)
+                                  else f"{ht} {hml}" if hml not in ("N/A","",None)
+                                  else "No Market"
+                              )(
+                                  _g.get("HomeML","N/A"), _g.get("AwayML","N/A"),
+                                  _g.get("home",""), _g.get("away","")
+                              )
                           ))),
                  "note": ("" if _g.get("MLPick") else
                           ("" if _g.get("HomeML","N/A") in ("N/A","",None)
@@ -15580,7 +15594,13 @@ with tabs[9]:
             _p_sport = p.get("Sport", _audit_sport)
             _p_tier = p.get("Tier","LEAN")
             _expected = get_tier(_p_edge, _p_sport)
-            if _expected != _p_tier and abs(_p_edge) > 0.005:
+            # Allow confidence-based downgrades — not a real mismatch
+            _conf = p.get("ProjConfidence", 100)
+            _conf_downgrade = (
+                (_conf < 40 and _expected in ("SOVEREIGN","ELITE") and _p_tier == "APPROVED") or
+                (_conf < 60 and _expected == "SOVEREIGN" and _p_tier == "ELITE")
+            )
+            if _expected != _p_tier and abs(_p_edge) > 0.005 and not _conf_downgrade:
                 _tier_mismatches.append(
                     f"{p.get('Player','')} {p.get('Prop','')}: edge={_p_edge:.1%} tier={_p_tier} expected={_expected}"
                 )
