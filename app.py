@@ -13019,24 +13019,19 @@ with tabs[2]:
                            else ("" if any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
                  "line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
-                {"label":"ML",
+                {\"label\":\"ML\",
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
                           else (
-                              # Show favorite team + ML odds clearly
+                              # Show favorite team + ML odds
                               (_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
                               or
-                              # Rebuild FavoriteTeam from HomeML/AwayML if missing
-                              (lambda hml, aml, ht, at: (
-                                  f"{ht} {hml}" if (hml not in ("N/A","",None) and aml not in ("N/A","",None) and
-                                  float(str(hml).replace("+","").strip() or "0") <= float(str(aml).replace("+","").strip() or "0"))
-                                  else f"{at} {aml}" if aml not in ("N/A","",None)
-                                  else f"{ht} {hml}" if hml not in ("N/A","",None)
-                                  else "No Market"
-                              )(
-                                  _g.get("HomeML","N/A"), _g.get("AwayML","N/A"),
-                                  _g.get("home",""), _g.get("away","")
-                              )
+                              # Rebuild: more negative ML = favorite
+                              ((_g.get("home","") + " " + str(_g.get("HomeML","")))
+                               if (str(_g.get("HomeML","0")).replace("+","").lstrip("-").isdigit() and
+                                   str(_g.get("AwayML","0")).replace("+","").lstrip("-").isdigit() and
+                                   float(str(_g.get("HomeML","0")).replace("+","")) <= float(str(_g.get("AwayML","0")).replace("+","")))
+                               else (_g.get("away","") + " " + str(_g.get("AwayML",""))))
                           ))),
                  "note": ("" if _g.get("MLPick") else
                           ("" if _g.get("HomeML","N/A") in ("N/A","",None)
