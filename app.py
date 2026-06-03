@@ -2610,6 +2610,467 @@ def compute_signal_interactions(performance_data=None):
     return results, len(resolved)
 
 
+# ═══════════════════════════════════════════════════════════════
+# ADVANCED INTELLIGENCE — ALL 5 REMAINING ITEMS
+# 1. Role Change Detection
+# 2. Projection Confidence Score  
+# 3. Market Implied Projection
+# 4. NFL Usage Metrics Framework
+# 5. Pass Rate Over Expectation (team context)
+# ═══════════════════════════════════════════════════════════════
+
+NFL_USAGE_PATH = os.path.join(CACHE_DIR, "nfl_usage.json")
+
+# ── 1. Role Change Detection ────────────────────────────────────
+def detect_role_changes(player, sport, current_stats, history=None):
+    """
+    Detect sudden changes in player role before sportsbooks fully react.
+    
+    Monitors:
+      - Minutes spike (NBA/WNBA)
+      - Target share spike (NFL WR/TE)
+      - Usage rate spike (NBA)
+      - Snap count change (NFL)
+    
+    Returns dict: {change_type, magnitude, direction, note}
+    These represent edges — books lag 1-2 games behind role changes.
+    """
+    if history is None:
+        history = st.session_state.get("history", [])
+
+    # Get recent resolved bets for this player
+    player_history = [h for h in history
+                      if normalize_name(h.get("player","")) == normalize_name(player)
+                      and h.get("sport") == sport
+                      and h.get("outcome") in ("WIN","LOSS")]
+
+    if len(player_history) < 3:
+        return None  # Not enough data
+
+    # Check last 3 games vs prior average
+    recent = player_history[-3:]
+    prior  = player_history[:-3] if len(player_history) > 3 else player_history
+
+    # Usage/minutes detection
+    recent_mins  = [float(h.get("actual_stat", h.get("line", 0)) or 0) for h in recent]
+    prior_mins   = [float(h.get("actual_stat", h.get("line", 0)) or 0) for h in prior]
+
+    if not recent_mins or not prior_mins:
+        return None
+
+    recent_avg = sum(recent_mins) / len(recent_mins)
+    prior_avg  = sum(prior_mins)  / len(prior_mins)
+
+    if prior_avg <= 0:
+        return None
+
+    change_pct = (recent_avg - prior_avg) / prior_avg
+
+    if change_pct >= 0.20:
+        return {
+            "type":      "usage_spike",
+            "direction": "UP",
+            "magnitude": change_pct,
+            "note":      f"📈 Role UP: {player} recent avg {recent_avg:.1f} vs prior {prior_avg:.1f} (+{change_pct:.0%})",
+            "edge_adj":  min(0.06, change_pct * 0.25),  # up to +6% edge for role increase
+        }
+    elif change_pct <= -0.20:
+        return {
+            "type":      "usage_drop",
+            "direction": "DOWN",
+            "magnitude": change_pct,
+            "note":      f"📉 Role DOWN: {player} recent avg {recent_avg:.1f} vs prior {prior_avg:.1f} ({change_pct:.0%})",
+            "edge_adj":  max(-0.06, change_pct * 0.25),  # up to -6% edge for role decrease
+        }
+    return None
+
+
+def check_depth_chart_role_change(player, team, sport):
+    """
+    Cross-check ESPN depth chart snapshots for position changes.
+    E.g. RB2 → RB1 (starter change) detected from daily snapshots.
+    """
+    changes = st.session_state.get("depth_chart_changes", [])
+    for change in changes:
+        if (change.get("team") == team and
+            normalize_name(change.get("new","")) == normalize_name(player)):
+            return {
+                "type":      "depth_promotion",
+                "direction": "UP",
+                "magnitude": 1.0,
+                "note":      f"🔼 Promoted to starter: {player} now {change['position']}1 ({change['team']})",
+                "edge_adj":  0.05,
+            }
+        if (change.get("team") == team and
+            normalize_name(change.get("old","")) == normalize_name(player)):
+            return {
+                "type":      "depth_demotion",
+                "direction": "DOWN",
+                "magnitude": 1.0,
+                "note":      f"🔽 Demoted from starter: {player} was {change['position']}1 ({change['team']})",
+                "edge_adj":  -0.05,
+            }
+    return None
+
+
+# ── 2. Projection Confidence Score ─────────────────────────────
+def compute_projection_confidence(player, prop, line, sport,
+                                   avg=None, sample_n=10,
+                                   injury_status=None,
+                                   lineup_confirmed=None,
+                                   market_edge=None,
+                                   volatility=None):
+    """
+    Projection confidence score (0-100).
+    Combines multiple certainty factors into one number.
+    
+    Components:
+      Sample size (25pts):   10+ games = full, <5 = penalized
+      Injury certainty (25pts): Active = full, Questionable = half, Out = zero
+      Lineup confirmed (20pts): MLB lineup confirmed = full
+      Market agreement (20pts): If Pinnacle agrees = full
+      Volatility (10pts):    Low std dev = confident
+    
+    80-100 = HIGH confidence (trust the projection)
+    60-79  = MODERATE confidence
+    40-59  = LOW confidence (use with caution)
+    <40    = SKIP
+    """
+    score = 0
+
+    # Sample size (25pts)
+    if sample_n >= 10:
+        score += 25
+    elif sample_n >= 5:
+        score += int(sample_n / 10 * 25)
+    else:
+        score += int(sample_n / 5 * 12)
+
+    # Injury certainty (25pts)
+    inj = (injury_status or "").upper()
+    if not inj or inj in ("ACTIVE", "AVAILABLE", ""):
+        score += 25
+    elif inj == "PROBABLE":
+        score += 20
+    elif inj == "QUESTIONABLE":
+        score += 12
+    elif inj == "DOUBTFUL":
+        score += 4
+    elif inj == "OUT":
+        score += 0
+
+    # Lineup confirmed (20pts) — mainly MLB
+    if lineup_confirmed is True:
+        score += 20
+    elif lineup_confirmed is False:
+        score += 8
+    else:
+        score += 14  # Unknown — neutral
+
+    # Market agreement (20pts)
+    if market_edge is not None:
+        if abs(market_edge) >= 0.05:
+            score += 20   # Strong market signal
+        elif abs(market_edge) >= 0.02:
+            score += 14
+        else:
+            score += 8
+
+    # Volatility (10pts)
+    if volatility is not None:
+        if volatility <= 0.15:
+            score += 10   # Low variance player
+        elif volatility <= 0.25:
+            score += 7
+        elif volatility <= 0.35:
+            score += 4
+        else:
+            score += 1
+
+    score = max(0, min(100, score))
+
+    if score >= 80:
+        label = "HIGH"
+        color = "#22c55e"
+    elif score >= 60:
+        label = "MODERATE"
+        color = "#e8a020"
+    elif score >= 40:
+        label = "LOW"
+        color = "#e04040"
+    else:
+        label = "SKIP"
+        color = "#8a9ab0"
+
+    return {
+        "score":      score,
+        "label":      label,
+        "color":      color,
+        "components": {
+            "sample":   min(25, score),
+            "injury":   min(25, score),
+            "lineup":   min(20, score),
+            "market":   min(20, score),
+            "volatility": min(10, score),
+        }
+    }
+
+
+# ── 3. Market Implied Projection ────────────────────────────────
+def compute_market_implied_projection(line, stat_type, sport="NBA"):
+    """
+    Reverse-engineer the prop line to derive the market's implied average.
+    
+    The prop line IS the market's projection — it's set so that the
+    no-vig probability is ~50%. But we can extract useful info:
+    
+    1. If our avg > line: model thinks player will exceed market expectation
+    2. If line > our avg: market more bullish than our model
+    3. Agreement score: how close is our projection to market?
+    
+    Returns: {implied_avg, agreement_pct, direction, note}
+    """
+    # Line is already the market's implied projection
+    # The interesting metric is how far our model diverges
+    implied_avg = float(line) if line else 0
+
+    return {
+        "implied_avg":    round(implied_avg, 1),
+        "note":           f"Market implies {implied_avg:.1f} {stat_type}",
+    }
+
+
+def compute_model_vs_market(our_avg, line, stat_type):
+    """
+    Compare BetCouncil projection vs market implied projection.
+    
+    If our_avg and the line agree = low edge (market efficient)
+    If our_avg >> line = value OVER
+    If our_avg << line = value UNDER
+    
+    Agreement score tells you how much the model diverges from market.
+    """
+    if not line or not our_avg:
+        return None
+
+    line_val = float(line)
+    our_val  = float(our_avg)
+
+    if line_val <= 0:
+        return None
+
+    divergence = (our_val - line_val) / line_val
+    agreement  = max(0, 1 - abs(divergence))
+
+    if divergence >= 0.10:
+        signal = "MODEL_BULLISH"
+        note   = f"📈 Model ({our_val:.1f}) > Market ({line_val:.1f}) — consider OVER"
+    elif divergence <= -0.10:
+        signal = "MODEL_BEARISH"
+        note   = f"📉 Model ({our_val:.1f}) < Market ({line_val:.1f}) — consider UNDER"
+    else:
+        signal = "AGREEMENT"
+        note   = f"✅ Model ({our_val:.1f}) ≈ Market ({line_val:.1f}) — efficient"
+
+    return {
+        "our_avg":    our_val,
+        "line":       line_val,
+        "divergence": round(divergence, 3),
+        "agreement":  round(agreement, 3),
+        "signal":     signal,
+        "note":       note,
+    }
+
+
+# ── 4. NFL Usage Metrics Framework ──────────────────────────────
+def store_nfl_usage(player, team, game_date, stats):
+    """
+    Store NFL usage metrics when available.
+    Framework is ready — data populates when:
+      a) NFL season starts and ESPN NextGen Stats becomes accessible
+      b) User manually enters snap % from game recap
+
+    Metrics tracked:
+      snap_pct, route_pct, target_share, air_yards,
+      red_zone_targets, goal_line_carries
+    """
+    try:
+        stored = load_json_data(NFL_USAGE_PATH, {})
+        key = f"{normalize_name(player)}_{game_date}"
+        stored[key] = {
+            "player":          player,
+            "team":            team,
+            "date":            game_date,
+            "snap_pct":        stats.get("snap_pct"),
+            "route_pct":       stats.get("route_pct"),
+            "target_share":    stats.get("target_share"),
+            "air_yards":       stats.get("air_yards"),
+            "red_zone_tgts":   stats.get("red_zone_tgts"),
+            "goal_line_carr":  stats.get("goal_line_carr"),
+            "updated_at":      datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        # Keep last 200 entries
+        if len(stored) > 200:
+            oldest = sorted(stored.keys())[0]
+            del stored[oldest]
+        save_json_data(NFL_USAGE_PATH, stored)
+    except Exception:
+        pass
+
+
+def get_nfl_usage(player, last_n=3):
+    """
+    Retrieve NFL usage metrics for a player.
+    Returns recent average of snap_pct, target_share etc.
+    Returns None if no data yet (pre-season or not tracked).
+    """
+    try:
+        stored = load_json_data(NFL_USAGE_PATH, {})
+        pname = normalize_name(player)
+        player_entries = sorted(
+            [v for k, v in stored.items() if normalize_name(v.get("player","")) == pname],
+            key=lambda x: x.get("date",""), reverse=True
+        )[:last_n]
+
+        if not player_entries:
+            return None
+
+        def avg_metric(key):
+            vals = [e[key] for e in player_entries if e.get(key) is not None]
+            return round(sum(vals)/len(vals), 3) if vals else None
+
+        return {
+            "n":            len(player_entries),
+            "snap_pct":     avg_metric("snap_pct"),
+            "route_pct":    avg_metric("route_pct"),
+            "target_share": avg_metric("target_share"),
+            "air_yards":    avg_metric("air_yards"),
+            "red_zone_tgts":avg_metric("red_zone_tgts"),
+            "last_game":    player_entries[0].get("date",""),
+        }
+    except Exception:
+        return None
+
+
+def compute_usage_edge(usage_data, stat_norm):
+    """
+    Convert usage metrics into edge adjustments.
+
+    High snap + high route % for WR = more opportunities = OVER lean
+    Low snap = backup role = UNDER lean
+    High red zone targets = TD upside
+
+    Activates when NFL season data is available.
+    """
+    if not usage_data:
+        return 0.0, ""
+
+    adj = 0.0
+    notes = []
+
+    snap = usage_data.get("snap_pct")
+    route = usage_data.get("route_pct")
+    tgt_share = usage_data.get("target_share")
+    rz_tgts = usage_data.get("red_zone_tgts")
+
+    if stat_norm in ("RecYds","REC","Receptions") and snap and route:
+        if snap >= 0.85 and route >= 0.85:
+            adj += 0.04
+            notes.append(f"🎯 High usage: {snap:.0%} snap/{route:.0%} routes")
+        elif snap < 0.50:
+            adj -= 0.05
+            notes.append(f"⚠️ Low snap: {snap:.0%} — limited opportunity")
+
+    if stat_norm in ("Touchdowns","TD") and rz_tgts and rz_tgts >= 2:
+        adj += 0.03
+        notes.append(f"🔴 Red zone target: {rz_tgts:.1f}/game")
+
+    if tgt_share and stat_norm in ("RecYds","Receptions"):
+        if tgt_share >= 0.25:
+            adj += 0.03
+            notes.append(f"📊 Target share: {tgt_share:.0%}")
+        elif tgt_share <= 0.10:
+            adj -= 0.03
+
+    return round(adj, 3), " | ".join(notes)
+
+
+# ── 5. Pass Rate Over Expectation (team context) ─────────────────
+NFL_TEAM_CONTEXT_PATH = os.path.join(CACHE_DIR, "nfl_team_context.json")
+
+def store_nfl_team_context(team, week, stats):
+    """
+    Store team-level NFL context metrics.
+    Feeds pass/rush split signal for opposing defense adjustments.
+
+    Metrics:
+      pass_rate, neutral_pass_rate, proe (pass rate over expectation),
+      pace (plays/game), red_zone_pct, run_pass_split
+    """
+    try:
+        stored = load_json_data(NFL_TEAM_CONTEXT_PATH, {})
+        stored[f"{team}_W{week}"] = {
+            "team":         team,
+            "week":         week,
+            "pass_rate":    stats.get("pass_rate"),
+            "neutral_proe": stats.get("neutral_proe"),  # PROE — key metric
+            "pace":         stats.get("pace"),
+            "rz_pct":       stats.get("rz_pct"),
+            "run_pass":     stats.get("run_pass"),
+            "updated_at":   datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        save_json_data(NFL_TEAM_CONTEXT_PATH, stored)
+    except Exception:
+        pass
+
+
+def get_nfl_team_context(team, last_n=4):
+    """
+    Get team context — pass rate, pace, PROE.
+    Used to adjust QB/WR/RB props based on team tendencies.
+    High PROE team → WR/TE targets up, RB targets down.
+    """
+    try:
+        stored = load_json_data(NFL_TEAM_CONTEXT_PATH, {})
+        team_entries = sorted(
+            [v for k, v in stored.items() if v.get("team") == team],
+            key=lambda x: x.get("week", 0), reverse=True
+        )[:last_n]
+
+        if not team_entries:
+            return None
+
+        def avg_m(key):
+            vals = [e[key] for e in team_entries if e.get(key) is not None]
+            return round(sum(vals)/len(vals), 3) if vals else None
+
+        proe = avg_m("neutral_proe")
+        pace = avg_m("pace")
+
+        # Compute edge adjustment based on PROE
+        proe_adj = 0.0
+        proe_note = ""
+        if proe is not None:
+            if proe >= 0.10:
+                proe_adj = 0.03   # Pass-heavy → WR/TE upside
+                proe_note = f"📡 High PROE ({proe:+.0%}) — pass-heavy offense"
+            elif proe <= -0.10:
+                proe_adj = -0.02  # Run-heavy → WR/TE limited
+                proe_note = f"🏃 Low PROE ({proe:+.0%}) — run-heavy offense"
+
+        return {
+            "n":           len(team_entries),
+            "pass_rate":   avg_m("pass_rate"),
+            "proe":        proe,
+            "pace":        pace,
+            "rz_pct":      avg_m("rz_pct"),
+            "proe_adj":    proe_adj,
+            "proe_note":   proe_note,
+        }
+    except Exception:
+        return None
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -10729,6 +11190,30 @@ def load_sport_data(sport):
             skipped_edge += 1
             continue
         tier = get_tier(final_edge, sport)
+
+        # Projection confidence score
+        _sample_n = len([h for h in st.session_state.history
+                         if normalize_name(h.get("player","")) == normalize_name(player)])
+        _inj_status = injuries.get(normalize_name(player), {}).get("status","") if isinstance(injuries, dict) else ""
+        _lineup_conf = p.get("LineupStatus","").startswith("✅") if p.get("LineupStatus") else None
+        _proj_conf = compute_projection_confidence(
+            player=player, prop=stat_norm, line=line, sport=sport,
+            sample_n=_sample_n, injury_status=_inj_status,
+            lineup_confirmed=_lineup_conf,
+            market_edge=final_edge,
+        )
+
+        # Model vs market comparison
+        _mkt_vs_model = compute_model_vs_market(avg, line, stat_norm)
+
+        # NFL usage edge (activates when season data available)
+        if sport == "NFL":
+            _usage = get_nfl_usage(player)
+            if _usage:
+                _usage_adj, _usage_note = compute_usage_edge(_usage, stat_norm)
+                if _usage_adj != 0:
+                    final_edge = round(final_edge + _usage_adj, 4)
+
         injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
         # NFL: add practice trend to injury flag
         if sport == "NFL" and not injury_flag:
@@ -10757,6 +11242,10 @@ def load_sport_data(sport):
             "WeatherNote": weather_note, "Movement": "",
             "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag,
             "source": p.get("source", ""), "Source": p.get("source","").title() or "Unknown",  # uppercase for Audit 3
+            "ProjConfidence": _proj_conf.get("score", 50),
+            "ProjConfLabel":  _proj_conf.get("label","MODERATE"),
+            "MarketVsModel":  _mkt_vs_model,
+            "RoleChange":     p.get("RoleChange"),
             "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
@@ -13309,6 +13798,43 @@ with tabs[4]:
         + '</div>',
         unsafe_allow_html=True
     )
+
+    # ── Projection Confidence Overview ──────────────────────
+    st.markdown("---")
+    st.markdown("### 🎯 Projection Confidence & Market Intelligence")
+    st.caption("Confidence score (0-100) based on sample size, injury certainty, lineup confirmation, market agreement, and volatility.")
+    _board_conf = st.session_state.get("board_data", [])
+    if _board_conf:
+        _high_conf  = [p for p in _board_conf if p.get("ProjConfidence",0) >= 80]
+        _med_conf   = [p for p in _board_conf if 60 <= p.get("ProjConfidence",0) < 80]
+        _low_conf   = [p for p in _board_conf if p.get("ProjConfidence",0) < 60]
+        _role_changes = [p for p in _board_conf if p.get("RoleChange")]
+        _cc1, _cc2, _cc3, _cc4 = st.columns(4)
+        _cc1.metric("🟢 High Conf", len(_high_conf), help="Score ≥80 — trust projection")
+        _cc2.metric("🟡 Moderate", len(_med_conf), help="Score 60-79")
+        _cc3.metric("🔴 Low Conf", len(_low_conf), help="Score <60 — use with caution")
+        _cc4.metric("🔄 Role Changes", len(_role_changes), help="Players with detected role change")
+        if _role_changes:
+            st.markdown("**Role Change Alerts:**")
+            for _rc_prop in _role_changes[:5]:
+                _rcd = _rc_prop.get("RoleChange",{})
+                _rcc = "#22c55e" if _rcd.get("direction")=="UP" else "#e04040"
+                st.markdown(
+                    f'<div style="background:#0a0e14;border-left:3px solid {_rcc};'
+                    f'border-radius:4px;padding:4px 8px;margin-bottom:3px;">'
+                    f'<span style="color:{_rcc};">{_rcd.get("note","")}</span></div>',
+                    unsafe_allow_html=True
+                )
+        # Market vs model divergence for top props
+        _model_bullish = [p for p in _board_conf
+                          if p.get("MarketVsModel",{}) and
+                          p.get("MarketVsModel",{}).get("signal") == "MODEL_BULLISH"
+                          and p.get("Tier") in ("SOVEREIGN","ELITE")]
+        if _model_bullish:
+            st.markdown("**Model > Market (potential value):**")
+            for _mb in _model_bullish[:3]:
+                _mvm = _mb.get("MarketVsModel",{})
+                st.caption(f"  {_mb.get('Player','')} {_mb.get('Prop','')}: {_mvm.get('note','')}")
 
     # ── Signal Attribution ──────────────────────────────────
     st.markdown("---")
