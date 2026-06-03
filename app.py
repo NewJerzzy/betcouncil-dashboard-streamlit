@@ -13745,6 +13745,77 @@ with tabs[2]:
                         st.caption(f"Source: {m.get('provider','ESPN')}")
         else:
             st.caption("Line movement loads with the board. If empty, ESPN odds data wasn't available for this game.")
+
+        # ── Public vs Money Row ─────────────────────────────────
+        # Shows public betting % vs money % from Action Network
+        # + Covers consensus if available
+        _pub_data = _g.get("public_data", {})
+        _cov_data = st.session_state.get("covers_consensus", [])
+
+        # Match Covers data to this game
+        _cov_game = None
+        for _cd in _cov_data:
+            _cd_matchup = _cd.get("matchup","").lower()
+            if any(t.lower() in _cd_matchup for t in [_g.get("home",""), _g.get("away","")] if t):
+                _cov_game = _cd
+                break
+
+        _has_pub = (_pub_data and any(
+            _pub_data.get(k) for k in ["ml_pcts","spread_pcts","total_pcts"]
+        )) or _cov_game
+
+        if _has_pub:
+            with st.expander("📊 Public vs Money", expanded=False):
+                _pcol1, _pcol2, _pcol3 = st.columns(3)
+
+                # ML public vs money
+                _ml_pcts = _pub_data.get("ml_pcts", {}) if _pub_data else {}
+                _home_ml_pub = _ml_pcts.get("home", {})
+                _away_ml_pub = _ml_pcts.get("away", {})
+                with _pcol1:
+                    st.markdown("**Moneyline**")
+                    if _home_ml_pub or _away_ml_pub:
+                        _home_t = _home_ml_pub.get("tickets",0)
+                        _home_m = _home_ml_pub.get("money",0)
+                        _away_t = _away_ml_pub.get("tickets",0)
+                        _away_m = _away_ml_pub.get("money",0)
+                        st.caption(f"{_g.get('home','Home')}: 🎟️ {_home_t}% | 💰 {_home_m}%")
+                        st.caption(f"{_g.get('away','Away')}: 🎟️ {_away_t}% | 💰 {_away_m}%")
+                        # Sharp signal: money > tickets = sharp money
+                        if abs(_home_m - _home_t) >= 15:
+                            _sharp_side = _g.get('home','Home') if _home_m > _home_t else _g.get('away','Away')
+                            st.markdown(f"⚡ **Sharp:** {_sharp_side}")
+                    else:
+                        st.caption("No data")
+
+                # Spread public vs money
+                _sp_pcts = _pub_data.get("spread_pcts", {}) if _pub_data else {}
+                with _pcol2:
+                    st.markdown("**Spread**")
+                    if _sp_pcts:
+                        for _side, _sd in _sp_pcts.items():
+                            st.caption(f"{_side}: 🎟️ {_sd.get('tickets',0)}% | 💰 {_sd.get('money',0)}%")
+                    else:
+                        st.caption("No data")
+
+                # Total public vs money + Covers
+                _tot_pcts = _pub_data.get("total_pcts", {}) if _pub_data else {}
+                with _pcol3:
+                    st.markdown("**Total / Covers**")
+                    if _tot_pcts:
+                        for _side, _td in _tot_pcts.items():
+                            st.caption(f"{_side}: 🎟️ {_td.get('tickets',0)}% | 💰 {_td.get('money',0)}%")
+                    if _cov_game:
+                        _fav  = _cov_game.get("side","")
+                        _pct  = _cov_game.get("public_pct",50)
+                        _raw  = _cov_game.get("raw_pcts",{})
+                        st.caption(f"**Covers Public:**")
+                        for _team, _tpct in _raw.items():
+                            st.caption(f"  {_team}: {_tpct}")
+                        if _pct >= 75:
+                            st.markdown(f"🎯 **Fade candidate:** {_pct}% on {_fav}")
+                    if not _tot_pcts and not _cov_game:
+                        st.caption("No data")
     else:
         st.info("No games found. Load the board first.")
 
