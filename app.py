@@ -5045,8 +5045,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         _fav_team = home_team
         _fav_ml   = str(home_ml) if home_ml not in ("N/A", None, "") else ""
 
+    # Extract edge/tier/pick from recommendations to top-level fields
+    _spread_rec = next((r for r in recommendations if r.get("type") == "SPREAD"), None)
+    _total_rec  = next((r for r in recommendations if r.get("type") == "TOTAL"),  None)
+    _ml_rec     = next((r for r in recommendations if r.get("type") in ("MONEYLINE","ML")), None)
+    _alt_rec    = next((r for r in recommendations if r.get("type") == "ALT_SPREAD"), None)
+
     return {
         "matchup": matchup, "home": home_team, "away": away_team,
+        "Matchup": matchup,
         "recommendations": recommendations, "best_bet": best_bet,
         "best_edge": best_edge, "sport": sport,
         "public_signals": public_sharp_signals, "public_data": game_public,
@@ -5054,6 +5061,19 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None):
         "Spread": spread_str, "Total": total_str,
         "FavoriteTeam": _fav_team,
         "FavoriteML":   _fav_ml,
+        # Top-level edge/tier/pick fields for game card display
+        "SpreadEdge":  _spread_rec["edge"] if _spread_rec else 0,
+        "SpreadTier":  _spread_rec["tier"] if _spread_rec else "LEAN",
+        "SpreadPick":  _spread_rec["pick"] if _spread_rec else "",
+        "TotalEdge":   _total_rec["edge"]  if _total_rec  else 0,
+        "TotalTier":   _total_rec["tier"]  if _total_rec  else "LEAN",
+        "TotalPick":   _total_rec["pick"]  if _total_rec  else "",
+        "MLEdge":      _ml_rec["edge"]     if _ml_rec     else 0,
+        "MLTier":      _ml_rec["tier"]     if _ml_rec     else "LEAN",
+        "MLPick":      _ml_rec["pick"]     if _ml_rec     else "",
+        "AltLine":     _alt_rec["pick"]    if _alt_rec    else "",
+        "AltEdge":     _alt_rec["edge"]    if _alt_rec    else 0,
+        "AltTier":     _alt_rec["tier"]    if _alt_rec    else "LEAN",
         "market_flags": {
             "spread": "available" if spread_available else "no_market",
             "total":  "available" if total_available  else "no_market",
@@ -13002,7 +13022,7 @@ with tabs[2]:
                           ("" if _g.get("Spread","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="SPREAD" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
-                 "line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","LEAN")},
+                 "line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","—") if _g.get("SpreadPick") or float(_g.get("SpreadEdge",0) or 0) != 0 else "—"},
                 {"label":"TOTAL",
                  "pick":(_g.get("TotalPick") or
                          ("No Market" if _g.get("Total","N/A") in ("N/A","",None)
@@ -13018,7 +13038,7 @@ with tabs[2]:
                           ("" if _g.get("Total","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="TOTAL" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
-                 "line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","LEAN")},
+                 "line":_g.get("Total",_g.get("OverUnder","—")),"edge":float(_g.get("TotalEdge",0) or 0),"tier":_g.get("TotalTier","—") if _g.get("TotalPick") or float(_g.get("TotalEdge",0) or 0) != 0 else "—"},
                 {"label":"ML",
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
@@ -13037,7 +13057,7 @@ with tabs[2]:
                           ("" if _g.get("HomeML","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
-                 "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","LEAN")},
+                 "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","—") if _g.get("MLPick") or float(_g.get("MLEdge",0) or 0) != 0 else "—"},
                 {"label": "ALT LINE" if _gsport not in ("MLB","NHL") else "RUN LINE",
                  "pick":_alt_line or ("—" if not _g.get("OddsAPI Spread") else
                         (_g.get("FavoriteTeam","") + " " + str(_g.get("OddsAPI Spread",""))).strip()),
