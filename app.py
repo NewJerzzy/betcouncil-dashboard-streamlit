@@ -3148,7 +3148,8 @@ def fetch_kalshi_markets(sport="NBA"):
                     "source":       "Kalshi",
                     "fetched_at":   datetime.now().strftime("%H:%M"),
                 })
-        except Exception:
+        except Exception as _ke:
+            st.session_state.setdefault("errors",[]).append({"source":"Kalshi","error":str(_ke)[:80],"time":datetime.now().strftime("%H:%M")})
             continue
 
     if results:
@@ -3213,12 +3214,13 @@ def fetch_polymarket_markets(sport="NBA"):
         if results:
             save_json_data(POLYMARKET_PATH, results)
         return results
-    except Exception:
+    except Exception as _pe:
+        st.session_state.setdefault("errors",[]).append({"source":"Polymarket","error":str(_pe)[:80],"time":datetime.now().strftime("%H:%M")})
         return load_json_data(POLYMARKET_PATH, [])
 
 
 # ── Covers Consensus ─────────────────────────────────────────────
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)  # 1 hour — Firecrawl credits are valuable
 def fetch_covers_consensus(sport="MLB"):
     """
     Fetch Covers.com public betting consensus via Firecrawl.
@@ -3340,7 +3342,8 @@ def fetch_covers_consensus(sport="MLB"):
             save_json_data(COVERS_PATH, results)
         return results
 
-    except Exception:
+    except Exception as _ce:
+        st.session_state.setdefault("errors",[]).append({"source":"Covers","error":str(_ce)[:80],"time":datetime.now().strftime("%H:%M")})
         return load_json_data(COVERS_PATH, [])
 
 
@@ -3366,24 +3369,54 @@ def compute_market_consensus(model_prob, player, prop, sport, game_analysis=None
     
     player_lower = normalize_name(player)
     
-    # Match Kalshi markets to player/prop
+    # Build normalized name tokens for exact matching (prevents Smith matching Will Smith)
+    player_tokens = set(normalize_name(player).split())
+    
+    # Match Kalshi markets — require ALL first+last name tokens to match
     for mkt in kalshi_data:
-        event = mkt.get("event","").lower()
-        if player_lower in event or any(w in event for w in player_lower.split()[:2]):
+        event_tokens = set(normalize_name(mkt.get("event","")).split())
+        if len(player_tokens) >= 2 and player_tokens.issubset(event_tokens):
+            market_probs.append(mkt["implied_prob"])
+            sources.append(f"Kalshi({mkt['implied_prob']:.0%})")
+        elif len(player_tokens) == 1 and player_tokens.issubset(event_tokens):
             market_probs.append(mkt["implied_prob"])
             sources.append(f"Kalshi({mkt['implied_prob']:.0%})")
     
     # Match Polymarket
     for mkt in poly_data:
-        question = mkt.get("question","").lower()
-        if player_lower in question or any(w in question for w in player_lower.split()[:2]):
+        q_tokens = set(normalize_name(mkt.get("question","")).split())
+        if len(player_tokens) >= 2 and player_tokens.issubset(q_tokens):
             market_probs.append(mkt["implied_prob"])
             sources.append(f"Polymarket({mkt['implied_prob']:.0%})")
+    
+    # Match Covers consensus (game-level, not player-level)
+    covers_game = None
+    if covers_data and game_analysis:
+        for _cd in covers_data:
+            _cd_lower = _cd.get("matchup","").lower()
+            if any(t.lower() in _cd_lower for t in [sport] if t):
+                covers_game = _cd
+                break
     
     if not market_probs:
         return None
     
-    consensus_prob = sum(market_probs) / len(market_probs)
+    # Volume-weighted average — Polymarket $500k > Kalshi $500 in weight
+    market_volumes = []
+    for mkt in kalshi_data:
+        event = mkt.get("event","").lower()
+        if normalize_name(player) in event or any(w in event for w in normalize_name(player).split()[:2]):
+            market_volumes.append(float(mkt.get("volume", 1000)))
+    for mkt in poly_data:
+        question = mkt.get("question","").lower()
+        if normalize_name(player) in question or any(w in question for w in normalize_name(player).split()[:2]):
+            market_volumes.append(float(mkt.get("volume", 1000)))
+    
+    if market_volumes and len(market_volumes) == len(market_probs):
+        total_vol = sum(market_volumes)
+        consensus_prob = sum(p * v for p, v in zip(market_probs, market_volumes)) / total_vol if total_vol > 0 else sum(market_probs) / len(market_probs)
+    else:
+        consensus_prob = sum(market_probs) / len(market_probs)
     divergence     = model_prob - consensus_prob
     
     if divergence >= 0.08:
@@ -16668,18 +16701,20 @@ with tabs[9]:
     _mi_c3.metric("Covers Consensus", len(_cov), help="Public betting % by matchup (needs COVERS_COOKIE)")
     if _kal:
         st.markdown("**Kalshi Top Markets:**")
-        _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in sorted(_kal, key=lambda x: -x["volume"])[:5]]
+        _kal_sorted = sorted(_kal, key=lambda x: -x.get("volume",0))
+        _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in _kal_sorted[:5]]
         st.dataframe(pd.DataFrame(_kal_rows), use_container_width=True, hide_index=True)
     if _poly:
         st.markdown("**Polymarket Top Markets:**")
-        _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in sorted(_poly, key=lambda x: -x["volume"])[:5]]
+        _poly_sorted = sorted(_poly, key=lambda x: -x.get("volume",0))
+        _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in _poly_sorted[:5]]
         st.dataframe(pd.DataFrame(_poly_rows), use_container_width=True, hide_index=True)
     if _cov:
         st.markdown("**Public Consensus (Covers):**")
         _cov_rows = [{"Matchup": c["matchup"][:40], "Public %": f"{c['public_pct']}%", "Side": c["side"], "Picks": c["picks"]} for c in _cov[:8]]
         st.dataframe(pd.DataFrame(_cov_rows), use_container_width=True, hide_index=True)
-    elif not st.secrets.get("COVERS_COOKIE",""):
-        st.info("Add COVERS_COOKIE to Streamlit secrets to enable public betting consensus data.")
+    elif not st.secrets.get("FIRECRAWL_KEY",""):
+        st.info("Add FIRECRAWL_KEY to Streamlit secrets to enable Covers public betting consensus data.")
 
     st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
