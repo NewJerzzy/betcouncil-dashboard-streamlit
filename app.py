@@ -7214,6 +7214,139 @@ def fetch_odds_api_props(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": str(e)[:100]})
         return []
 
+@st.cache_data(ttl=1200)
+def fetch_alt_lines(sport):
+    """
+    Fetch alternate spread lines from OddsAPI.
+    Used to find playable lines when the standard spread has no edge.
+    
+    Example: PHI -1.5 (run line) → no edge
+             PHI -0.5 → APPROVED edge (adjusted for easier cover)
+             PHI +1.5 → ELITE edge (can lose by 1 and still win)
+    
+    Returns dict: {matchup: {team: [{line, home_odds, away_odds}]}}
+    """
+    if not ODDS_API_KEY:
+        return {}
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return {}
+    # Only fetch for sports where alt lines matter
+    if sport not in ("MLB","WNBA","NBA","NFL","NHL"):
+        return {}
+    cache_path = os.path.join(CACHE_DIR, f"alt_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 30:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    try:
+        url = (f"{ODDS_API_BASE}/sports/{sport_key}/odds"
+               f"?apiKey={ODDS_API_KEY}&regions=us,us2"
+               f"&markets=alternate_spreads"
+               f"&oddsFormat=american"
+               f"&bookmakers=draftkings,fanduel,betmgm")
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API")
+        if resp.status_code != 200:
+            return {}
+        events = resp.json()
+        alt_data = {}
+        for event in events:
+            home = event.get("home_team","")
+            away = event.get("away_team","")
+            matchup = f"{away} @ {home}"
+            lines = []
+            for bm in event.get("bookmakers",[])[:2]:
+                for mkt in bm.get("markets",[]):
+                    if mkt.get("key") != "alternate_spreads":
+                        continue
+                    outcomes = mkt.get("outcomes",[])
+                    # Group by point spread
+                    for o in outcomes:
+                        lines.append({
+                            "team":  o.get("name",""),
+                            "point": o.get("point",0),
+                            "price": o.get("price",0),
+                            "book":  bm.get("key",""),
+                        })
+            if lines:
+                alt_data[matchup] = {
+                    "home": home, "away": away,
+                    "lines": lines,
+                }
+        if alt_data:
+            with open(cache_path, "wb") as f:
+                pickle.dump(alt_data, f)
+        return alt_data
+    except Exception:
+        return {}
+
+
+def find_best_alt_line(matchup, sport, home_power, away_power, home_full, away_full, alt_data=None):
+    """
+    Find the best alternate spread line that creates a playable edge.
+    
+    Compares model power rating diff against alternate spread numbers.
+    Returns the alternate line with the best edge above APPROVED threshold.
+    
+    MLB: Run line is always -1.5/+1.5. Best alt = best non-standard number.
+    WNBA/NBA: Alternate spreads give options like -3.5 instead of -7.5
+    """
+    if alt_data is None:
+        return None
+    game = alt_data.get(matchup, {})
+    if not game:
+        return None
+    
+    power_diff = home_power - away_power  # positive = home favored
+    APPROVED_THRESHOLD = 0.015 if sport == "MLB" else 0.02
+    
+    best = None
+    best_edge = APPROVED_THRESHOLD  # minimum to surface
+    
+    for line in game.get("lines", []):
+        team  = line.get("team","")
+        point = float(line.get("point",0) or 0)
+        price = int(line.get("price",0) or 0)
+        
+        # Determine if this is home or away team line
+        is_home = (team == game.get("home",""))
+        
+        # Model's implied spread: positive power_diff = home favored
+        model_spread = power_diff / 10.0  # normalize to spread scale
+        
+        # Edge = model spread vs this alternate line
+        if is_home:
+            line_edge = model_spread - point  # positive = home covers this spread
+        else:
+            line_edge = -model_spread - point  # negative = away covers spread
+        
+        edge_pct = abs(line_edge) / (10.0 if sport in ("MLB","NHL") else 30.0)
+        edge_pct = min(0.20, edge_pct)
+        
+        if edge_pct > best_edge:
+            best_edge = edge_pct
+            # Determine tier
+            if sport == "MLB":
+                tier = "SOVEREIGN" if edge_pct >= 0.06 else "ELITE" if edge_pct >= 0.03 else "APPROVED"
+            else:
+                tier = "SOVEREIGN" if edge_pct >= 0.12 else "ELITE" if edge_pct >= 0.08 else "APPROVED"
+            
+            # Format odds
+            odds_str = f"+{price}" if price > 0 else str(price)
+            best = {
+                "team":    team,
+                "point":   point,
+                "price":   price,
+                "pick":    f"{team} {'+' if point > 0 else ''}{point} ({odds_str})",
+                "edge":    round(edge_pct, 3),
+                "tier":    tier,
+                "book":    line.get("book",""),
+            }
+    return best
+
+
 def fetch_odds_api_game_lines(sport):
     if not ODDS_API_KEY:
         return [], {}, {}
@@ -12001,6 +12134,30 @@ with st.sidebar:
                 if game_analysis:
                     store_opening_lines(game_analysis, sport_sel)
                     st.session_state["line_origins"] = track_line_origin(game_analysis, sport_sel)
+                # Fetch alt lines and enrich game_analysis
+                _alt_lines_data = fetch_alt_lines(sport_sel)
+                if _alt_lines_data and game_analysis:
+                    st.session_state["alt_lines_data"] = _alt_lines_data
+                    for _ga in game_analysis:
+                        _ga_matchup = _ga.get("matchup","")
+                        _h_full = _ga.get("home","")
+                        _a_full = _ga.get("away","")
+                        _h_pr = _ga.get("home_power", 0)
+                        _a_pr = _ga.get("away_power", 0)
+                        if not _h_pr:
+                            # Get from power ratings
+                            _pr = {**NBA_POWER_RATINGS, **MLB_POWER_RATINGS if sport_sel=="MLB" else {}}
+                            _h_pr = _pr.get(_h_full, 100)
+                            _a_pr = _pr.get(_a_full, 100)
+                        _best_alt = find_best_alt_line(
+                            _ga_matchup, sport_sel, _h_pr, _a_pr,
+                            _h_full, _a_full, _alt_lines_data
+                        )
+                        if _best_alt:
+                            _ga["AltLine"]  = _best_alt["pick"]
+                            _ga["AltEdge"]  = _best_alt["edge"]
+                            _ga["AltTier"]  = _best_alt["tier"]
+                            _ga["AltBook"]  = _best_alt.get("book","")
             else:
                 st.session_state["game_analysis"] = []
         if board:
