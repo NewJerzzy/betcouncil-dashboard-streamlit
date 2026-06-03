@@ -12146,9 +12146,15 @@ with st.sidebar:
                         _a_pr = _ga.get("away_power", 0)
                         if not _h_pr:
                             # Get from power ratings
-                            _pr = {**NBA_POWER_RATINGS, **MLB_POWER_RATINGS if sport_sel=="MLB" else {}}
-                            _h_pr = _pr.get(_h_full, 100)
-                            _a_pr = _pr.get(_a_full, 100)
+                            _pr_lookup = dict(NBA_POWER_RATINGS)
+                            if sport_sel == "MLB":
+                                _pr_lookup.update(MLB_POWER_RATINGS)
+                            elif sport_sel == "NHL":
+                                _pr_lookup.update(NHL_POWER_RATINGS)
+                            elif sport_sel == "WNBA":
+                                _pr_lookup.update(WNBA_POWER_RATINGS)
+                            _h_pr = _pr_lookup.get(_h_full, 100)
+                            _a_pr = _pr_lookup.get(_a_full, 100)
                         _best_alt = find_best_alt_line(
                             _ga_matchup, sport_sel, _h_pr, _a_pr,
                             _h_full, _a_full, _alt_lines_data
