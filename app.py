@@ -3760,6 +3760,53 @@ MLB_STADIUM_COORDS = {
     "BAL": (39.2838, -76.6218), "TOR": (43.6414, -79.3894),
 }
 
+# NFL stadium coordinates — outdoor only (domes excluded)
+NFL_OUTDOOR_STADIUMS = {
+    "BUF": (42.7738, -78.7870, True),   # Highmark Stadium — very weather-affected
+    "NE":  (42.0909, -71.2643, True),   # Gillette Stadium
+    "NYG": (40.8135, -74.0745, True),   # MetLife (open air)
+    "NYJ": (40.8135, -74.0745, True),   # MetLife (open air)
+    "BAL": (39.2780, -76.6227, True),   # M&T Bank Stadium
+    "CLE": (41.5061, -81.6995, True),   # Cleveland Browns Stadium
+    "PIT": (40.4468, -80.0158, True),   # Acrisure Stadium
+    "CIN": (39.0955, -84.5160, True),   # Paycor Stadium
+    "TEN": (36.1665, -86.7713, True),   # Nissan Stadium
+    "JAC": (30.3239, -81.6373, True),   # EverBank Stadium
+    "MIA": (25.9580, -80.2389, True),   # Hard Rock (open)
+    "KC":  (39.0489, -94.4839, True),   # Arrowhead Stadium
+    "DEN": (39.7439, -105.0201, True),  # Empower Field — high altitude
+    "LV":  (36.0909, -115.1833, False), # Allegiant — dome
+    "LAC": (33.9535, -118.3392, False), # SoFi — open but LA weather mild
+    "LAR": (33.9535, -118.3392, False), # SoFi
+    "SEA": (47.5952, -122.3316, True),  # Lumen Field — rain-affected
+    "SF":  (37.4032, -121.9698, True),  # Levi's Stadium
+    "ARI": (33.5277, -112.2626, False), # State Farm — dome
+    "DAL": (32.7473, -97.0945, False),  # AT&T — dome
+    "HOU": (29.6847, -95.4107, False),  # NRG — dome
+    "IND": (39.7601, -86.1639, False),  # Lucas Oil — dome
+    "MIN": (44.9736, -93.2575, False),  # US Bank — dome
+    "NO":  (29.9511, -90.0812, False),  # Caesars — dome
+    "ATL": (33.7554, -84.4008, False),  # Mercedes-Benz — dome
+    "DET": (42.3400, -83.0456, False),  # Ford Field — dome
+    "CHI": (41.8623, -87.6167, True),   # Soldier Field — weather-affected
+    "GB":  (44.5013, -88.0622, True),   # Lambeau Field — most weather-affected
+    "PHI": (39.9008, -75.1675, True),   # Lincoln Financial
+    "WAS": (38.9077, -76.8645, True),   # FedEx Field
+    "CAR": (35.2258, -80.8528, True),   # Bank of America
+    "TB":  (27.9759, -82.5033, False),  # Raymond James — open but warm
+}
+
+def get_nfl_weather(team_abbr):
+    """Get weather for an NFL game based on stadium location."""
+    stadium = NFL_OUTDOOR_STADIUMS.get(team_abbr)
+    if not stadium:
+        return None
+    lat, lon, is_outdoor = stadium
+    if not is_outdoor:
+        return None  # Dome — weather irrelevant
+    city = f"{lat},{lon}"
+    return fetch_weather_for_game(city, is_outdoor=True)
+
 def _fetch_nws_weather(city):
     """National Weather Service fallback — free, no key, US only."""
     try:
@@ -3842,16 +3889,19 @@ def fetch_weather_for_game(city, is_outdoor=True):
             pass
     return weather
 
-def weather_edge_adjustment(weather, stat_norm, side="OVER"):
+def weather_edge_adjustment(weather, stat_norm, side="OVER", sport="MLB"):
     if not weather:
         return 0.0, ""
     adjustment = 0.0
     notes = []
     wind_speed = weather.get("wind_speed_mph", 0)
-    wind_dir = weather.get("wind_dir", "N")
-    temp = weather.get("temp_f", 70)
-    out_winds = ["SW", "WSW", "W", "WNW", "NW", "S", "SSW"]
-    in_winds = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE"]
+    wind_dir   = weather.get("wind_dir", "N")
+    temp       = weather.get("temp_f", 70)
+    humidity   = weather.get("humidity", 50)
+    out_winds  = ["SW", "WSW", "W", "WNW", "NW", "S", "SSW"]
+    in_winds   = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE"]
+
+    # ── MLB adjustments (existing) ────────────────────────────
     if stat_norm == "HR":
         if wind_dir in out_winds and wind_speed >= 15:
             adj = min(0.08, wind_speed / 100)
@@ -3878,6 +3928,67 @@ def weather_edge_adjustment(weather, stat_norm, side="OVER"):
             notes.append("💨 Wind in — hits penalty")
         if temp < 45:
             adjustment -= 0.03 if side == "OVER" else -0.03
+
+    # ── NFL adjustments (new) ─────────────────────────────────
+    # Source: academic research on weather impact on NFL scoring
+    # Wind is most significant factor; rain/snow secondary
+    elif sport == "NFL":
+        if stat_norm in ("PassYds", "pass_yds", "PASS", "PassingYards"):
+            # Passing yards hurt most by wind
+            if wind_speed >= 25:
+                adj = min(0.15, (wind_speed - 25) * 0.006 + 0.10)
+                adjustment -= adj if side == "OVER" else -adj
+                notes.append(f"💨 High wind ({wind_speed}mph) — passing yards -{adj:.0%}")
+            elif wind_speed >= 15:
+                adj = 0.08
+                adjustment -= adj if side == "OVER" else -adj
+                notes.append(f"💨 Wind {wind_speed}mph — passing yards -{adj:.0%}")
+            if temp < 20:
+                adjustment -= 0.06 if side == "OVER" else -0.06
+                notes.append(f"🥶 Extreme cold ({temp}°F) — passing penalty")
+            elif temp < 35:
+                adjustment -= 0.03 if side == "OVER" else -0.03
+                notes.append(f"🥶 Cold ({temp}°F) — passing penalty")
+
+        elif stat_norm in ("RecYds", "rec_yds", "REC", "ReceivingYards"):
+            # Receiving yards correlate with passing yards
+            if wind_speed >= 25:
+                adj = min(0.12, (wind_speed - 25) * 0.005 + 0.08)
+                adjustment -= adj if side == "OVER" else -adj
+                notes.append(f"💨 High wind ({wind_speed}mph) — rec yards -{adj:.0%}")
+            elif wind_speed >= 15:
+                adjustment -= 0.06 if side == "OVER" else -0.06
+                notes.append(f"💨 Wind {wind_speed}mph — rec yards -6%")
+            if temp < 20:
+                adjustment -= 0.04 if side == "OVER" else -0.04
+
+        elif stat_norm in ("RushYds", "rush_yds", "RUSH", "RushingYards"):
+            # Rushing yards slightly boosted by bad weather (teams run more)
+            if wind_speed >= 20 or temp < 30:
+                adjustment += 0.04 if side == "OVER" else -0.04
+                notes.append(f"🌧️ Bad weather — rushing boost +4%")
+
+        elif stat_norm in ("Receptions", "rec", "REC_COUNT"):
+            # Receptions (catches) hurt by wind/rain
+            if wind_speed >= 20:
+                adjustment -= 0.05 if side == "OVER" else -0.05
+                notes.append(f"💨 Wind {wind_speed}mph — reception count -5%")
+
+        elif stat_norm in ("Touchdowns", "td", "TD"):
+            # TDs correlate with total scoring — hurt by bad weather
+            if wind_speed >= 20:
+                adjustment -= 0.04 if side == "OVER" else -0.04
+            if temp < 20:
+                adjustment -= 0.03 if side == "OVER" else -0.03
+            if notes or adjustment != 0:
+                notes.append(f"🌧️ Weather reducing TD probability")
+
+        elif stat_norm in ("Completions", "cmp", "PassCompletions"):
+            if wind_speed >= 15:
+                adj = min(0.10, wind_speed * 0.004)
+                adjustment -= adj if side == "OVER" else -adj
+                notes.append(f"💨 Wind {wind_speed}mph — completion % -{adj:.0%}")
+
     return round(adjustment, 3), " | ".join(notes)
 
 def get_weighted_average(player_name, season_avg, last10_avg, is_playoff=False):
@@ -10514,7 +10625,14 @@ def load_sport_data(sport):
                 is_outdoor = park.get("outdoor", True)
                 if city and is_outdoor:
                     weather = fetch_weather_for_game(city, is_outdoor)
-                    weather_adj, weather_note = weather_edge_adjustment(weather, stat_norm, "OVER")
+                    weather_adj, weather_note = weather_edge_adjustment(weather, stat_norm, "OVER", sport)
+        elif sport == "NFL":
+            # NFL weather — use team's stadium coords, skip domes
+            _nfl_team = p.get("Team","")
+            if _nfl_team:
+                weather = get_nfl_weather(_nfl_team)
+                if weather:
+                    weather_adj, weather_note = weather_edge_adjustment(weather, stat_norm, side, sport)
         pitcher_adj = 0.0
         pitcher_name = ""
         if sport == "MLB":
