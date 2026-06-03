@@ -11070,6 +11070,10 @@ def load_sport_data(sport):
         st.session_state["nfl_practice"] = _practice_data
         _nfl_inactives = fetch_nfl_inactives()
         st.session_state["nfl_inactives"] = _nfl_inactives
+    if sport == "NHL":
+        _nhl_goalies = fetch_nhl_starting_goalies()
+        if _nhl_goalies:
+            st.session_state["nhl_starting_goalies"] = _nhl_goalies
 
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
@@ -13839,6 +13843,94 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
         return []
 
 
+@st.cache_data(ttl=900)
+def fetch_nhl_starting_goalies():
+    """
+    Fetch confirmed NHL starting goalies for today's games.
+    Uses NHL official API — no bot protection, completely free.
+    
+    Starting goalie is the #1 factor in NHL props:
+      - Opponent's shooter props affected by goalie quality
+      - Team's scorer props affected by opposing goalie
+      - Goalie saves/goals-against props directly
+    
+    Returns dict: {team_abbr: {"goalie": name, "confirmed": bool, "stats": {...}}}
+    """
+    try:
+        today_str = date.today().strftime("%Y-%m-%d")
+        # NHL schedule with goalie info
+        url = f"https://api-web.nhle.com/v1/schedule/{today_str}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 BetCouncil/1.0"}, timeout=10)
+        if r.status_code != 200:
+            return {}
+
+        data = r.json()
+        goalies = {}
+
+        # Navigate NHL schedule structure
+        game_week = data.get("gameWeek", [])
+        for day in game_week:
+            for game in day.get("games", []):
+                game_id = game.get("id")
+                if not game_id:
+                    continue
+                for side in ("homeTeam", "awayTeam"):
+                    team_data = game.get(side, {})
+                    team_abbr = team_data.get("abbrev","")
+                    # Check for goalie data in game object
+                    goalie = team_data.get("goalieInNet", {}) or {}
+                    goalie_name = ""
+                    confirmed = False
+                    if goalie:
+                        first = goalie.get("firstName", {}).get("default","")
+                        last  = goalie.get("lastName", {}).get("default","")
+                        goalie_name = f"{first} {last}".strip()
+                        confirmed = True
+
+                    if team_abbr:
+                        goalies[team_abbr] = {
+                            "goalie":    goalie_name or "TBD",
+                            "confirmed": confirmed,
+                            "game_id":   game_id,
+                            "opponent":  game.get("awayTeam" if side == "homeTeam" else "homeTeam", {}).get("abbrev",""),
+                            "home":      side == "homeTeam",
+                        }
+
+        # If no goalies in schedule, try game center for confirmed starters
+        if not any(g["confirmed"] for g in goalies.values()):
+            for team_abbr, gdata in goalies.items():
+                try:
+                    gc_url = f"https://api-web.nhle.com/v1/gamecenter/{gdata['game_id']}/landing"
+                    rg = requests.get(gc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+                    if rg.status_code == 200:
+                        gc = rg.json()
+                        side = "homeTeam" if gdata["home"] else "awayTeam"
+                        starters = gc.get(side, {}).get("goalies", [])
+                        for g in starters:
+                            if g.get("starter"):
+                                fn = g.get("firstName", {}).get("default","")
+                                ln = g.get("lastName", {}).get("default","")
+                                goalies[team_abbr]["goalie"]    = f"{fn} {ln}".strip()
+                                goalies[team_abbr]["confirmed"] = True
+                                break
+                except Exception:
+                    pass
+
+        return goalies
+    except Exception:
+        return {}
+
+
+def get_goalie_for_team(team_abbr, goalies=None):
+    """Return goalie name and confirmed status for a team."""
+    if goalies is None:
+        goalies = st.session_state.get("nhl_starting_goalies", {})
+    g = goalies.get(team_abbr, {})
+    name      = g.get("goalie","Unknown")
+    confirmed = g.get("confirmed", False)
+    return name, confirmed
+
+
 @st.cache_data(ttl=1800)
 def fetch_nhl_player_game_logs(player_name, last_n=15):
     """Fetch NHL player recent game logs via NHL API."""
@@ -14982,6 +15074,24 @@ with tabs[9]:
 
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
+
+    # ── NHL Starting Goalies ────────────────────────────────
+    _nhl_goalies_sys = st.session_state.get("nhl_starting_goalies", {})
+    if _nhl_goalies_sys:
+        st.markdown("---")
+        st.markdown("### 🥅 NHL Starting Goalies")
+        st.caption("Confirmed starters from NHL official API. Goalie is the #1 factor in NHL props.")
+        _goalie_rows = []
+        for team, gdata in sorted(_nhl_goalies_sys.items()):
+            _goalie_rows.append({
+                "Team":      team,
+                "Goalie":    gdata.get("goalie","TBD"),
+                "Confirmed": "✅ Yes" if gdata.get("confirmed") else "⚠️ TBD",
+                "Opponent":  gdata.get("opponent",""),
+                "Home/Away": "Home" if gdata.get("home") else "Away",
+            })
+        if _goalie_rows:
+            st.dataframe(pd.DataFrame(_goalie_rows), use_container_width=True, hide_index=True)
 
     # ── Depth Chart Status ──────────────────────────────────
     _depth_charts = st.session_state.get("espn_depth_charts", {})
