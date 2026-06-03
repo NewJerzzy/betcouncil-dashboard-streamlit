@@ -66,9 +66,18 @@ MIN_EDGE_DEFAULT = 0.02
 REQUEST_TIMEOUT = 10
 CACHE_DIR = "/tmp/betcouncil_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
-# Clear stale game line caches on startup to force fresh OddsAPI fetch
+# Clear ALL game line caches on startup — forces fresh fetch with fixed abbrev mapping
 import glob as _glob_startup
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "odds_api_games_*.pkl")):
+    try: os.remove(_stale)
+    except: pass
+for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "espn_games_*.pkl")):
+    try: os.remove(_stale)
+    except: pass
+for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "game_lines_*.pkl")):
+    try: os.remove(_stale)
+    except: pass
+for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "mlb_pitchers.pkl")):
     try: os.remove(_stale)
     except: pass
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
