@@ -4556,6 +4556,256 @@ def get_closing_line_hit_rate(history=None):
     return round(clv_beats / clv_total, 3), clv_total
 
 
+# ═══════════════════════════════════════════════════════════════
+# EXPLAINABILITY LAYER
+# 1. Conflict Detection (Aligned/Mixed/Conflicted)
+# 2. Market Agreement Score (0-100)
+# 3. Per-Signal Historical ROI Audit
+# ═══════════════════════════════════════════════════════════════
+
+# ── 1. Conflict Detection ───────────────────────────────────────
+def compute_signal_conflict(prop):
+    """
+    Detect when strong positive and negative signals oppose each other.
+    
+    Conflicted bet example:
+      DFF +2%, Pinnacle +2%, RLM +2%
+      Volatility -2%, Minutes risk -2%
+      Net = +2% but signals are fighting
+    
+    Returns (status, score, note) where:
+      status = "ALIGNED" | "MIXED" | "CONFLICTED"
+      score  = net signal alignment -100 to +100
+    """
+    drivers, risks = generate_why_drivers(prop)
+    
+    # Parse contribution values
+    def parse_pct(val_str):
+        try:
+            return float(str(val_str).replace("%","").replace("+","").strip())
+        except:
+            return 0.0
+    
+    pos_total = sum(parse_pct(v) for _, v, _ in drivers if parse_pct(v) > 0)
+    neg_total = sum(abs(parse_pct(v)) for _, v, _ in risks if parse_pct(v) < 0)
+    
+    pos_count = len([d for d in drivers if parse_pct(d[1]) >= 1.0])
+    neg_count = len([r for r in risks   if abs(parse_pct(r[1])) >= 1.0])
+    
+    if pos_count == 0 and neg_count == 0:
+        return "UNKNOWN", 0, ""
+    
+    # Alignment score: positive = aligned, negative = conflicted
+    if pos_total + neg_total > 0:
+        alignment = round((pos_total - neg_total) / (pos_total + neg_total) * 100)
+    else:
+        alignment = 0
+    
+    # Status thresholds
+    if neg_count == 0 or (pos_count >= 2 and neg_count == 0):
+        status = "ALIGNED"
+        color  = "#22c55e"
+        note   = f"🟢 Aligned — {pos_count} positive signal{'s' if pos_count>1 else ''}, no conflicts"
+    elif pos_count >= 2 and neg_count >= 2 and neg_total >= pos_total * 0.5:
+        status = "CONFLICTED"
+        color  = "#e04040"
+        note   = (f"🔴 Conflicted — {pos_count} positive (+{pos_total:.0f}%) "
+                  f"vs {neg_count} negative (-{neg_total:.0f}%)
+"
+                  f"   Strong signals opposing each other — reduce size")
+    elif neg_count >= 1:
+        status = "MIXED"
+        color  = "#e8a020"
+        note   = f"🟡 Mixed — {pos_count}↑ {neg_count}↓ signals"
+    else:
+        status = "ALIGNED"
+        color  = "#22c55e"
+        note   = f"🟢 Aligned — {pos_count} positive signals"
+    
+    return status, alignment, note
+
+
+# ── 2. Market Agreement Score (0-100) ──────────────────────────
+def compute_market_agreement_score(prop, public_betting=None):
+    """
+    Score how consistently the market agrees on direction (0-100).
+    
+    High score (>80): All books moving same direction → strong signal
+    Low score (<40):  Books disagreeing → fragmented market, lower confidence
+    
+    Sources checked: Pinnacle, line movement history, sharp signals
+    """
+    score = 50  # neutral start
+    notes = []
+    
+    # Pinnacle confirmation
+    if prop.get("PinnacleConfirms") is True:
+        score += 15
+        notes.append("Pinnacle ✅")
+    
+    # Sharp flag
+    sharp = str(prop.get("SharpFlag",""))
+    if "↑" in sharp:
+        score += 10
+        notes.append("Sharp ↑")
+    elif "↓" in sharp:
+        score -= 10
+    
+    # Market move quality
+    mmq = int(prop.get("MarketMoveQuality", 0) or 0)
+    if mmq >= 2:
+        score += 15
+        notes.append("Sharp lead ⚡")
+    elif mmq == 1:
+        score += 8
+    elif mmq <= -1:
+        score -= 10
+        notes.append("Soft move ⚠️")
+    
+    # RLM signal
+    matchup = prop.get("Matchup", prop.get("matchup",""))
+    if matchup:
+        pb = st.session_state.get("public_betting",{})
+        rlm = compute_sharp_public_divergence(matchup, pb)
+        if rlm.get("has_rlm"):
+            strength = rlm.get("max_strength",0)
+            score += strength * 8
+            notes.append(f"RLM s{strength}")
+        elif rlm.get("has_sharp"):
+            score += 5
+    
+    # Kalshi/Polymarket agreement
+    mkt = prop.get("MarketVsModel")
+    if isinstance(mkt, dict):
+        if mkt.get("signal") == "AGREEMENT":
+            score += 10
+            notes.append("Markets agree")
+        elif mkt.get("signal") == "MODEL_BULLISH":
+            score += 5
+        elif mkt.get("signal") == "MARKET_BULLISH":
+            score -= 5
+    
+    score = max(0, min(100, score))
+    
+    if score >= 80:
+        label = "Strong Consensus"
+        color = "#22c55e"
+    elif score >= 60:
+        label = "Moderate Agreement"
+        color = "#22c55e"
+    elif score >= 40:
+        label = "Fragmented"
+        color = "#e8a020"
+    else:
+        label = "Disagreement"
+        color = "#e04040"
+    
+    return {
+        "score":  score,
+        "label":  label,
+        "color":  color,
+        "notes":  notes,
+        "display": f"{score}/100 {label}",
+    }
+
+
+# ── 3. Per-Signal Historical ROI Audit ─────────────────────────
+def compute_signal_roi_audit(history=None):
+    """
+    For each signal type, compute:
+      win_rate, roi, clv_rate, sample_size
+    
+    This answers: which signals actually matter?
+    
+    Activates at 20+ resolved bets.
+    Becomes reliable at 100+ bets.
+    """
+    if history is None:
+        history = st.session_state.get("history", [])
+    
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 20:
+        return {}
+    
+    # Signal presence in each bet
+    SIGNAL_KEYS = {
+        "Base model":        "SignalBase",
+        "Defense":           "SignalDefense",
+        "Location":          "SignalLocation",
+        "Rest":              "SignalRest",
+        "Pinnacle":          "PinnacleConfirms",
+        "Sharp money":       "SharpFlag",
+        "Minutes stable":    "MinutesStability",
+        "Low volatility":    "RiskLevel",
+        "DFF hit rate":      "DFFHitRateL10",
+        "Market move":       "MarketMoveQuality",
+        "RLM":               "rlm_present",
+        "Lineup confirmed":  "LineupConfirmed",
+    }
+    
+    audit = {}
+    
+    for signal_name, key in SIGNAL_KEYS.items():
+        signal_bets = []
+        for bet in resolved:
+            sv = bet.get("signal_values", {})
+            val = sv.get(key, bet.get(key))
+            
+            # Determine if signal was present/positive
+            present = False
+            if key == "PinnacleConfirms":
+                present = val is True
+            elif key == "SharpFlag":
+                present = "↑" in str(val or "")
+            elif key == "MinutesStability":
+                present = val in ("STABLE",)
+            elif key == "RiskLevel":
+                present = val in ("LOW",)
+            elif key == "DFFHitRateL10":
+                present = float(val or 0) >= 0.60
+            elif key == "MarketMoveQuality":
+                present = int(val or 0) >= 1
+            elif key == "rlm_present":
+                present = bool(bet.get("rlm_present", False))
+            elif key == "LineupConfirmed":
+                present = val is True
+            else:
+                present = float(val or 0) >= 0.01
+            
+            if present:
+                signal_bets.append(bet)
+        
+        if len(signal_bets) < 5:
+            continue
+        
+        wins    = sum(1 for b in signal_bets if b.get("outcome") == "WIN")
+        losses  = len(signal_bets) - wins
+        win_rate = wins / len(signal_bets)
+        
+        # ROI calculation (simplified: units won/lost)
+        total_wager = sum(float(b.get("wager", 1) or 1) for b in signal_bets)
+        total_won   = sum(
+            float(b.get("wager",1) or 1) * 0.9  # -110 odds
+            if b.get("outcome") == "WIN" else
+            -float(b.get("wager",1) or 1)
+            for b in signal_bets
+        )
+        roi = round(total_won / total_wager, 3) if total_wager > 0 else 0
+        
+        audit[signal_name] = {
+            "signal":      signal_name,
+            "sample":      len(signal_bets),
+            "wins":        wins,
+            "losses":      losses,
+            "win_rate":    round(win_rate, 3),
+            "roi":         roi,
+            "roi_pct":     f"{roi*100:+.1f}%",
+            "verdict":     "✅ KEEP" if roi > 0.02 else "⚠️ WATCH" if roi >= -0.02 else "❌ REVIEW",
+        }
+    
+    return dict(sorted(audit.items(), key=lambda x: -x[1]["roi"]))
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -10481,6 +10731,18 @@ def generate_why_drivers(prop):
             c = "#22c55e" if ra > 0 else "#e04040"
             (drivers if ra > 0 else risks).append(("Role change", f"{'+' if ra>0 else ''}{ra*100:.0f}%", c))
 
+    # ── Conflict status ────────────────────────────────────
+    _conflict_note = prop.get("ConflictNote","")
+    _mkt_agree     = prop.get("MarketAgreement", 50)
+    _mkt_lbl       = prop.get("MarketAgreementLabel","")
+    if _conflict_note and prop.get("ConflictStatus") in ("CONFLICTED","MIXED"):
+        _cc = "#e04040" if prop.get("ConflictStatus") == "CONFLICTED" else "#e8a020"
+        risks.append((_conflict_note[:50], "", _cc))
+    if _mkt_agree >= 70:
+        drivers.append((f"Market agree {_mkt_lbl}", f"{_mkt_agree}/100", "#22c55e"))
+    elif _mkt_agree < 40:
+        risks.append((f"Fragmented market", f"{_mkt_agree}/100", "#e8a020"))
+
     # ── Risks ───────────────────────────────────────────────
     if prop.get("Injury"):
         risks.append(("Injury flag", str(prop.get("Injury",""))[:20], "#e04040"))
@@ -13637,6 +13899,14 @@ def load_sport_data(sport):
     ), reverse=True)
     for prop in enriched:
         prop["LockScore"] = calculate_lock_quality_score(prop)
+        # Conflict + market agreement (post-enrichment)
+        _conflict_status, _conflict_score, _conflict_note = compute_signal_conflict(prop)
+        _mkt_agree = compute_market_agreement_score(prop)
+        prop["ConflictStatus"]   = _conflict_status
+        prop["ConflictScore"]    = _conflict_score
+        prop["ConflictNote"]     = _conflict_note
+        prop["MarketAgreement"]  = _mkt_agree.get("score", 50)
+        prop["MarketAgreementLabel"] = _mkt_agree.get("label","")
 
     # ═══════════════════════════════════════════════════════════
     # ENGINE 1 — NARRATIVE REASONING
@@ -16395,6 +16665,30 @@ with tabs[4]:
             for _mb in _model_bullish[:3]:
                 _mvm = _mb.get("MarketVsModel",{})
                 st.caption(f"  {_mb.get('Player','')} {_mb.get('Prop','')}: {_mvm.get('note','')}")
+
+    # ── Signal ROI Audit ─────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📊 Per-Signal ROI Audit")
+    st.caption("Which signals actually predict wins? Updates as resolved bets accumulate.")
+    _sig_audit = compute_signal_roi_audit(st.session_state.history)
+    _resolved_count = len([h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")])
+    if _sig_audit:
+        _audit_rows = []
+        for _sn, _sd in _sig_audit.items():
+            _audit_rows.append({
+                "Signal":   _sn,
+                "Sample":   _sd["sample"],
+                "Win Rate": f"{_sd['win_rate']:.0%}",
+                "ROI":      _sd["roi_pct"],
+                "Verdict":  _sd["verdict"],
+            })
+        import pandas as _pd
+        _audit_df = _pd.DataFrame(_audit_rows)
+        st.dataframe(_audit_df, use_container_width=True, hide_index=True)
+    elif _resolved_count < 20:
+        st.info(f"Signal ROI audit activates at 20 resolved bets. ({_resolved_count}/20)")
+    else:
+        st.info("No signals with 5+ samples yet.")
 
     # ── Signal Attribution ──────────────────────────────────
     st.markdown("---")
