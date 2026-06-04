@@ -3975,6 +3975,244 @@ def register_dff_player_id(player_name, player_id):
     cache[normalize_name(player_name)] = player_id
     st.session_state["dff_player_ids"] = cache
 
+# ── DFF PropStats ────────────────────────────────────────────
+# Endpoint: dailyfantasyfuel.com/propstats/{SPORT}/
+# Returns: per-game hit rate, avg minutes, usage, potentials
+# Worst case: games=[] → logs "no data"
+# Best case:  L10 hit rate, avg minutes, contextual splits
+
+DFF_PROPSTATS_URL = "https://www.dailyfantasyfuel.com/propstats/{sport}/"
+
+DFF_METRIC_MAP = {
+    # NBA/WNBA
+    "Points":        "pts",
+    "Rebounds":      "reb",
+    "Assists":       "ast",
+    "PRA":           "pra",
+    "PR":            "pr",
+    "PA":            "pa",
+    "RA":            "ra",
+    "Threes":        "three",
+    "Steals":        "stl",
+    "Blocks":        "blk",
+    "Turnovers":     "to",
+    "FTM":           "ftm",
+    # MLB
+    "Hits":          "hits",
+    "Total Bases":   "tb",
+    "RBI":           "rbi",
+    "Runs":          "runs",
+    "Strikeouts":    "k",
+    "Pitching Ks":   "k",
+    "Walks":         "bb",
+    "HR":            "hr",
+    # NHL
+    "Goals":         "goals",
+    "Shots":         "shots",
+    "Saves":         "saves",
+    # NFL
+    "PassYds":       "passyds",
+    "RushYds":       "rushyds",
+    "RecYds":        "recyds",
+    "Receptions":    "rec",
+    "TDs":           "td",
+}
+
+@st.cache_data(ttl=1800)
+def fetch_dff_propstats(player_id, sport, metric, line, team="",
+                         opponent="", position="", direction="over",
+                         location="ALL", last_n=10,
+                         wplayer="", woplayer=""):
+    """
+    Fetch DFF PropStats for a player/metric combination.
+    
+    Endpoint: dailyfantasyfuel.com/propstats/{SPORT}/
+    Returns per-game hit rate against the line + contextual stats.
+    
+    Params:
+      wplayer/woplayer: optional teammate filter (with/without)
+      last_n:           L5, L10, L20, or Season
+      direction:        "over" or "under"
+    
+    Returns dict:
+      hit_rate, hits, total_games, avg_val,
+      avg_minutes, avg_usage, avg_potentials,
+      games (raw list)
+    """
+    sport_key = DFF_SPORT_MAP.get(sport, sport.upper())
+    metric_key = DFF_METRIC_MAP.get(metric, metric.lower().replace(" ",""))
+    range_str  = f"L{last_n}" if last_n in (5,10,20) else "Season"
+    
+    params = {
+        "playerID":  player_id,
+        "metric":    metric_key,
+        "loc":       location,       # ALL, Home, Away
+        "playoffs":  "ALL",
+        "pos":       position or "ALL",
+        "team":      team or "ALL",
+        "opp":       opponent or "ALL",
+        "range":     range_str,
+        "line":      str(line),
+        "starter":   "ALL",
+        "minutes":   1,
+        "rest":      "ALL",
+        "direction": direction,
+        "win":       "ALL",
+    }
+    
+    # Optional teammate filters
+    if wplayer:
+        params["wplayer"] = wplayer
+    if woplayer:
+        params["woplayer"] = woplayer
+    
+    url = DFF_PROPSTATS_URL.format(sport=sport_key)
+    
+    try:
+        r = requests.get(url, headers=DFF_HEADERS, params=params, timeout=15)
+        if r.status_code not in (200, 304):
+            st.session_state.setdefault("errors",[]).append({
+                "source": "DFF PropStats",
+                "error":  f"HTTP {r.status_code}",
+                "time":   datetime.now().strftime("%H:%M"),
+            })
+            return {}
+        
+        data  = r.json() if r.text else {}
+        games = data.get("stats", data.get("games", data.get("data", [])))
+        
+        if not games:
+            # Log but don't error — endpoint may return empty for some combos
+            st.session_state.setdefault("dff_propstats_log",[]).append({
+                "player_id": player_id, "metric": metric_key,
+                "result": "no_data", "time": datetime.now().strftime("%H:%M"),
+            })
+            return {}
+        
+        # Parse per-game stats
+        hits         = 0
+        total        = len(games)
+        vals         = []
+        mins_list    = []
+        usage_list   = []
+        potentials_list = []
+        
+        line_f = float(line)
+        
+        for g in games:
+            val       = float(g.get("metric", g.get("value", g.get("stat", 0))) or 0)
+            mins      = float(g.get("mins",   g.get("minutes", 0)) or 0)
+            usage     = float(g.get("usage",  0) or 0)
+            potential = float(g.get("potentials", g.get("potential", 0)) or 0)
+            
+            vals.append(val)
+            if mins > 0:     mins_list.append(mins)
+            if usage > 0:    usage_list.append(usage)
+            if potential > 0:potentials_list.append(potential)
+            
+            # Hit check
+            if direction == "over" and val > line_f:
+                hits += 1
+            elif direction == "under" and val < line_f:
+                hits += 1
+        
+        hit_rate  = round(hits / total, 3) if total > 0 else 0
+        avg_val   = round(sum(vals) / len(vals), 2) if vals else 0
+        avg_mins  = round(sum(mins_list) / len(mins_list), 1) if mins_list else 0
+        avg_usage = round(sum(usage_list) / len(usage_list), 3) if usage_list else 0
+        avg_pot   = round(sum(potentials_list) / len(potentials_list), 1) if potentials_list else 0
+        
+        result = {
+            "hit_rate":       hit_rate,
+            "hits":           hits,
+            "total_games":    total,
+            "avg_val":        avg_val,
+            "avg_minutes":    avg_mins,
+            "avg_usage":      avg_usage,
+            "avg_potentials": avg_pot,
+            "line":           line_f,
+            "direction":      direction,
+            "metric":         metric_key,
+            "range":          range_str,
+            "games":          games[:20],  # cap stored games
+        }
+        
+        # Log success
+        st.session_state.setdefault("dff_propstats_log",[]).append({
+            "player_id": player_id, "metric": metric_key,
+            "hit_rate": hit_rate, "games": total,
+            "result": "success", "time": datetime.now().strftime("%H:%M"),
+        })
+        
+        return result
+    
+    except (requests.RequestException, ValueError, KeyError) as e:
+        st.session_state.setdefault("errors",[]).append({
+            "source": "DFF PropStats", "error": str(e)[:80],
+            "time": datetime.now().strftime("%H:%M"),
+        })
+        return {}
+
+
+def compute_dff_propstats_edge(propstats_data, model_edge):
+    """
+    Convert DFF hit rate into a small confirmation edge adjustment.
+    
+    Weight: +1% to +2% max — confirmation only.
+    Never overrides Pinnacle EV.
+    
+    Logic:
+      L10 hit rate ≥ 70%: +2% (strong historical confirmation)
+      L10 hit rate ≥ 60%: +1% (mild confirmation)
+      L10 hit rate ≤ 30%: -2% (historical fade signal)
+      L10 hit rate ≤ 40%: -1% (mild fade)
+    """
+    if not propstats_data:
+        return 0.0, ""
+    
+    hit_rate   = propstats_data.get("hit_rate", 0.5)
+    total      = propstats_data.get("total_games", 0)
+    avg_val    = propstats_data.get("avg_val", 0)
+    avg_mins   = propstats_data.get("avg_minutes", 0)
+    avg_pot    = propstats_data.get("avg_potentials", 0)
+    line       = propstats_data.get("line", 0)
+    
+    # Need at least 5 games for signal
+    if total < 5:
+        return 0.0, f"DFF: {total} games (need 5+)"
+    
+    notes = []
+    adj   = 0.0
+    
+    # Hit rate signal
+    if hit_rate >= 0.70:
+        adj += 0.02
+        notes.append(f"📈 DFF L{total}: {hit_rate:.0%} hit rate")
+    elif hit_rate >= 0.60:
+        adj += 0.01
+        notes.append(f"✅ DFF L{total}: {hit_rate:.0%} hit rate")
+    elif hit_rate <= 0.30:
+        adj -= 0.02
+        notes.append(f"📉 DFF L{total}: {hit_rate:.0%} hit rate")
+    elif hit_rate <= 0.40:
+        adj -= 0.01
+        notes.append(f"⚠️ DFF L{total}: {hit_rate:.0%} hit rate")
+    
+    # Avg value vs line
+    if avg_val > 0 and line > 0:
+        avg_vs_line = (avg_val - line) / line
+        if abs(avg_vs_line) >= 0.10:
+            dir_str = f"+{avg_vs_line:.0%}" if avg_vs_line > 0 else f"{avg_vs_line:.0%}"
+            notes.append(f"avg {avg_val:.1f} vs line {line} ({dir_str})")
+    
+    # Minutes stability (NBA)
+    if avg_mins > 0:
+        notes.append(f"{avg_mins:.0f} min avg")
+    
+    adj = round(max(-0.02, min(0.02, adj)), 3)
+    return adj, " | ".join(notes)
+
+
 
 def compute_tier_stats(history):
     stats = {}
@@ -12625,6 +12863,33 @@ def load_sport_data(sport):
                 if _dff_signals:
                     p["DFFRosterContext"] = _dff_signals
 
+        # DFF PropStats — hit rate confirmation signal
+        _dff_pid = get_dff_player_id(player, sport)
+        if _dff_pid:
+            _dff_ps = fetch_dff_propstats(
+                player_id  = _dff_pid,
+                sport      = sport,
+                metric     = stat_norm,
+                line       = line,
+                team       = p.get("Team",""),
+                opponent   = p.get("Opponent",""),
+                direction  = "over" if pick_dir == "OVER" else "under",
+                last_n     = 10,
+            )
+            if _dff_ps:
+                _ps_adj, _ps_note = compute_dff_propstats_edge(_dff_ps, final_edge)
+                if _ps_adj != 0:
+                    final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _ps_adj)), 4)
+                    tier = get_tier(final_edge, sport)
+                p["DFFHitRateL10"]    = _dff_ps.get("hit_rate", 0)
+                p["DFFAvgVal"]        = _dff_ps.get("avg_val", 0)
+                p["DFFAvgMins"]       = _dff_ps.get("avg_minutes", 0)
+                p["DFFAvgUsage"]      = _dff_ps.get("avg_usage", 0)
+                p["DFFAvgPotentials"] = _dff_ps.get("avg_potentials", 0)
+                p["DFFGamesTotal"]    = _dff_ps.get("total_games", 0)
+                if _ps_note:
+                    p["DFFPropNote"]  = _ps_note
+
         # All sports: apply FantasyLabs lineup bonus
         # MLB: batting order bonus (leadoff +6%, etc.)
         # NBA/WNBA: starter confirmation (+3%)
@@ -12678,8 +12943,15 @@ def load_sport_data(sport):
             "ProjConfLabel":  _proj_conf.get("label","MODERATE"),
             "MarketVsModel":  _mkt_vs_model,
             "RoleChange":     _role_change,
-            "DFFSignal":      p.get("DFFSignal",""),
-            "DFFRosterContext": p.get("DFFRosterContext",[]),
+            "DFFSignal":        p.get("DFFSignal",""),
+            "DFFRosterContext":  p.get("DFFRosterContext",[]),
+            "DFFHitRateL10":    p.get("DFFHitRateL10", 0),
+            "DFFAvgVal":        p.get("DFFAvgVal", 0),
+            "DFFAvgMins":       p.get("DFFAvgMins", 0),
+            "DFFAvgUsage":      p.get("DFFAvgUsage", 0),
+            "DFFAvgPotentials": p.get("DFFAvgPotentials", 0),
+            "DFFGamesTotal":    p.get("DFFGamesTotal", 0),
+            "DFFPropNote":      p.get("DFFPropNote",""),
             "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
@@ -14331,6 +14603,8 @@ with tabs[1]:
                 "_rel":        _rel or "—",
                 "_source":     _p.get("Source",""),
                 "_dff_signal": _p.get("DFFSignal",""),
+                "_dff_hr":     f"{_p.get('DFFHitRateL10',0):.0%}" if _p.get("DFFHitRateL10") else "",
+                "_dff_note":   _p.get("DFFPropNote",""),
             })
 
         # Sort
@@ -17539,6 +17813,16 @@ with tabs[9]:
                     st.caption(f"**{_ck}** — {len(_high_dep)} high-dependency teammates")
                     for _hd in _high_dep[:2]:
                         st.caption(f"  {_hd['player']}: WITH {_hd['with_val']:.1f} / WITHOUT {_hd['without_val']:.1f} PRA")
+        # PropStats log
+        _ps_log = st.session_state.get("dff_propstats_log", [])
+        if _ps_log:
+            _ps_success = [l for l in _ps_log if l.get("result") == "success"]
+            _ps_empty   = [l for l in _ps_log if l.get("result") == "no_data"]
+            st.caption(f"PropStats: {len(_ps_success)} successful / {len(_ps_empty)} empty this session")
+            if _ps_success:
+                for _psl in _ps_success[-3:]:
+                    st.caption(f"  ✅ {_psl.get('metric','')} | hit rate: {_psl.get('hit_rate',0):.0%} | {_psl.get('games',0)} games")
+
         # Player ID registration
         with st.expander("➕ Register DFF Player ID"):
             _reg_player = st.text_input("Player Name", key="dff_reg_player")
