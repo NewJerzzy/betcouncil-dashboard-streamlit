@@ -13878,132 +13878,292 @@ with tabs[0]:
             st.markdown('<div style="color:#6a7a8a;font-size:1.0rem;padding:0.5rem;">No alerts — load board to scan for sharp activity.</div>', unsafe_allow_html=True)
 
 
-# ----- TAB 1: FULL BOARD -----
+# ----- TAB 1: EV OPTIMIZER (DFF-style) -----
 with tabs[1]:
-    _board = st.session_state.board_data or []
-    _sport = st.session_state.last_sport or "NBA"
-    st.markdown(f"## 📊 Full Board — {_sport}")
-    if _board:
-        _tc = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
-        # Filters
-        _fcol1, _fcol2, _fcol3 = st.columns([3,2,1])
-        with _fcol1:
-            _tf = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"], default=["SOVEREIGN","ELITE","APPROVED","LEAN"], key="fb_tier")
-        with _fcol2:
-            _all_sports = list(set(p.get("Sport","") for p in _board if p.get("Sport","")))
-            _sf = st.multiselect("Sport", _all_sports, default=_all_sports, key="fb_sport")
-        with _fcol3:
-            if st.button("🔒 Lock All SOVEREIGN/ELITE", key="fb_lock_all"):
+    _board  = st.session_state.board_data or []
+    _sport  = st.session_state.last_sport or "NBA"
+    _kalshi = st.session_state.get("kalshi_markets", [])
+    _poly   = st.session_state.get("polymarket_markets", [])
+    _covers = st.session_state.get("covers_consensus", [])
+
+    st.markdown(f"## 📊 EV Optimizer — {_sport}")
+
+    if not _board:
+        st.info("Load the board first to populate the EV Optimizer.")
+    else:
+        # ── Filter bar ──────────────────────────────────────────
+        _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns([3,2,2,2,2])
+        with _fc1:
+            _search = st.text_input("🔍 Search player", "", key="ev_search", placeholder="e.g. LeBron, Strider...")
+        with _fc2:
+            _tier_f = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN"],
+                                      default=["SOVEREIGN","ELITE","APPROVED"], key="ev_tier")
+        with _fc3:
+            _all_props = sorted(set(p.get("Prop","") for p in _board if p.get("Prop","")))
+            _prop_f = st.multiselect("Prop type", _all_props, key="ev_prop")
+        with _fc4:
+            _min_edge = st.number_input("Min edge %", min_value=0.0, max_value=20.0,
+                                         value=0.0, step=0.5, key="ev_min_edge")
+        with _fc5:
+            _sort_col = st.selectbox("Sort by", ["Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
+
+        # ── Build rows ──────────────────────────────────────────
+        _rows = []
+        for _p in _board:
+            if _p.get("Tier","") not in (_tier_f or ["SOVEREIGN","ELITE","APPROVED","LEAN"]):
+                continue
+            _edge_pct = round(float(_p.get("Edge",0) or 0) * 100, 1)
+            if _edge_pct < _min_edge:
+                continue
+            _player = _p.get("Player","")
+            if _search and _search.lower() not in _player.lower():
+                continue
+            if _prop_f and _p.get("Prop","") not in _prop_f:
+                continue
+
+            # L5 / L10 / Season hit rates
+            _l5  = _p.get("L5","")
+            _l10 = _p.get("L10","")
+            _szn = _p.get("Season","")
+
+            # Book odds
+            _pinn = _p.get("PinnacleOdds","")
+            _dk   = _p.get("DKOdds","")
+            _fd   = _p.get("FDOdds","")
+
+            # Market intelligence
+            _model_prob  = round(float(_p.get("Prob",0.5) or 0.5) * 100, 1)
+            _mkt_signal  = ""
+            _kalshi_prob = ""
+            _poly_prob   = ""
+
+            _pname_lower = normalize_name(_player)
+            for _km in _kalshi:
+                _kt = set(normalize_name(_km.get("event","")).split())
+                _pt = set(_pname_lower.split())
+                if len(_pt) >= 2 and _pt.issubset(_kt):
+                    _kalshi_prob = f"{_km['implied_prob']:.0%}"
+                    break
+            for _pm in _poly:
+                _qt = set(normalize_name(_pm.get("question","")).split())
+                if len(set(_pname_lower.split())) >= 2 and set(_pname_lower.split()).issubset(_qt):
+                    _poly_prob = f"{_pm['implied_prob']:.0%}"
+                    break
+
+            _market_vals = [float(_km["implied_prob"]) for _km in _kalshi
+                            if set(_pname_lower.split()).issubset(set(normalize_name(_km.get("event","")).split()))]
+            _market_vals += [float(_pm["implied_prob"]) for _pm in _poly
+                             if set(_pname_lower.split()).issubset(set(normalize_name(_pm.get("question","")).split()))]
+            if _market_vals:
+                _mkt_avg = sum(_market_vals) / len(_market_vals)
+                _div = _model_prob/100 - _mkt_avg
+                if _div >= 0.08:
+                    _mkt_signal = "📈 MODEL+"
+                elif _div <= -0.08:
+                    _mkt_signal = "📉 MKT+"
+                else:
+                    _mkt_signal = "✅ AGREE"
+
+            # Public betting from Covers
+            _pub_pct = ""
+            for _cd in _covers:
+                _cdm = _cd.get("matchup","").lower()
+                if any(t in _cdm for t in [_p.get("Team","").lower()[:4]] if t):
+                    _pub_pct = f"{_cd.get('public_pct','')}%"
+                    break
+
+            # Reliability from FantasyLabs
+            _fl_data = st.session_state.get("fantasylabs_lineups",{})
+            _fl      = _fl_data.get(_pname_lower, {})
+            _rel     = ""
+            if _fl:
+                _rel_score = sum([
+                    1 if _fl.get("in_lineup") else 0,
+                    1 if _fl.get("active") else 0,
+                    1 if _fl.get("injury_status","").lower() in ("active","","healthy") else 0,
+                    1 if _fl.get("lineup_order",0) > 0 and _fl.get("lineup_order",0) <= 4 else 0,
+                ])
+                _rel = f"{_rel_score}/4"
+
+            # EV grade
+            if _edge_pct >= 8.0:
+                _grade, _grade_color = "A+", "#22c55e"
+            elif _edge_pct >= 6.0:
+                _grade, _grade_color = "A",  "#22c55e"
+            elif _edge_pct >= 4.0:
+                _grade, _grade_color = "B+", "#e8a020"
+            elif _edge_pct >= 2.0:
+                _grade, _grade_color = "B",  "#e8a020"
+            else:
+                _grade, _grade_color = "C",  "#6a7a8a"
+
+            # Row background color
+            if _edge_pct >= 8.0:
+                _row_bg = "rgba(34,197,94,0.12)"
+            elif _edge_pct >= 5.0:
+                _row_bg = "rgba(34,197,94,0.06)"
+            elif _edge_pct >= 3.0:
+                _row_bg = "rgba(232,160,32,0.08)"
+            else:
+                _row_bg = "transparent"
+
+            _rows.append({
+                "_player":     _player,
+                "_team":       _p.get("Team",""),
+                "_prop":       _p.get("Prop",""),
+                "_line":       _p.get("Line",""),
+                "_side":       _p.get("Side","OVER"),
+                "_tier":       _p.get("Tier",""),
+                "_edge_pct":   _edge_pct,
+                "_grade":      _grade,
+                "_grade_color":_grade_color,
+                "_row_bg":     _row_bg,
+                "_model_prob": _model_prob,
+                "_kalshi":     _kalshi_prob,
+                "_poly":       _poly_prob,
+                "_mkt_signal": _mkt_signal,
+                "_pub_pct":    _pub_pct,
+                "_pinn":       str(_pinn) if _pinn else "—",
+                "_dk":         str(_dk)   if _dk   else "—",
+                "_fd":         str(_fd)   if _fd   else "—",
+                "_l5":         str(_l5)   if _l5   else "—",
+                "_l10":        str(_l10)  if _l10  else "—",
+                "_szn":        str(_szn)  if _szn  else "—",
+                "_rel":        _rel or "—",
+                "_source":     _p.get("Source",""),
+            })
+
+        # Sort
+        _sort_map = {
+            "Edge %":      ("_edge_pct",   True),
+            "L5 Hit %":    ("_l5",         True),
+            "Line":        ("_line",        False),
+            "Reliability": ("_rel",         True),
+        }
+        _sk, _sr = _sort_map.get(_sort_col, ("_edge_pct", True))
+        try:
+            _rows.sort(key=lambda x: float(str(x.get(_sk,"0")).replace("%","").replace("—","0") or 0), reverse=_sr)
+        except:
+            _rows.sort(key=lambda x: str(x.get(_sk,"")), reverse=_sr)
+
+        st.caption(f"Showing {len(_rows)} props | Sorted by {_sort_col}")
+
+        # ── Render table ────────────────────────────────────────
+        # Header
+        _tier_colors = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a"}
+
+        _header = (
+            '<div style="display:grid;grid-template-columns:'
+            '180px 60px 100px 55px 50px 55px 45px 55px 55px 55px 50px 50px 50px 70px 60px;'
+            'gap:4px;padding:6px 8px;background:#0d1117;border-radius:6px 6px 0 0;'
+            'font-size:11px;font-weight:700;color:#6a7a8a;text-transform:uppercase;'
+            'letter-spacing:0.05em;position:sticky;top:0;z-index:10;">'
+            '<span>Player</span>'
+            '<span>Team</span>'
+            '<span>Prop</span>'
+            '<span style="text-align:center">Line</span>'
+            '<span style="text-align:center">Grade</span>'
+            '<span style="text-align:center">Edge %</span>'
+            '<span style="text-align:center">Model</span>'
+            '<span style="text-align:center">Kalshi</span>'
+            '<span style="text-align:center">Poly</span>'
+            '<span style="text-align:center">Public</span>'
+            '<span style="text-align:center">L5</span>'
+            '<span style="text-align:center">L10</span>'
+            '<span style="text-align:center">Szn</span>'
+            '<span style="text-align:center">Signal</span>'
+            '<span style="text-align:center">Rely</span>'
+            '</div>'
+        )
+        st.markdown(_header, unsafe_allow_html=True)
+
+        # Rows
+        _html_rows = []
+        for _r in _rows:
+            _tc    = _tier_colors.get(_r["_tier"],"#6a7a8a")
+            _gc    = _r["_grade_color"]
+            _bg    = _r["_row_bg"]
+            _e_str = f"+{_r['_edge_pct']}%" if _r["_edge_pct"] > 0 else f"{_r['_edge_pct']}%"
+            _html_rows.append(
+                f'<div style="display:grid;grid-template-columns:'
+                f'180px 60px 100px 55px 50px 55px 45px 55px 55px 55px 50px 50px 50px 70px 60px;'
+                f'gap:4px;padding:5px 8px;background:{_bg};border-bottom:1px solid #1a2030;'
+                f'font-size:12px;align-items:center;cursor:pointer;" '
+                f'onmouseover="this.style.background='rgba(55,138,221,0.08)'" '
+                f'onmouseout="this.style.background='{_bg}'">'
+                f'<span style="font-weight:600;color:#e8eaf0;">{_r["_player"][:22]}</span>'
+                f'<span style="color:#6a7a8a;">{_r["_team"][:5]}</span>'
+                f'<span style="color:#b0b8c8;">{_r["_prop"][:14]} {_r["_side"]}</span>'
+                f'<span style="text-align:center;color:#e8eaf0;font-weight:600;">{_r["_line"]}</span>'
+                f'<span style="text-align:center;font-weight:700;color:{_gc};">{_r["_grade"]}</span>'
+                f'<span style="text-align:center;font-weight:700;color:{_gc};">{_e_str}</span>'
+                f'<span style="text-align:center;color:#b0b8c8;">{_r["_model_prob"]}%</span>'
+                f'<span style="text-align:center;color:#7c8fa8;">{_r["_kalshi"] or "—"}</span>'
+                f'<span style="text-align:center;color:#7c8fa8;">{_r["_poly"] or "—"}</span>'
+                f'<span style="text-align:center;color:#7c8fa8;">{_r["_pub_pct"] or "—"}</span>'
+                f'<span style="text-align:center;color:#b0b8c8;">{_r["_l5"]}</span>'
+                f'<span style="text-align:center;color:#b0b8c8;">{_r["_l10"]}</span>'
+                f'<span style="text-align:center;color:#b0b8c8;">{_r["_szn"]}</span>'
+                f'<span style="text-align:center;font-size:10px;color:{"#22c55e" if "MODEL+" in _r["_mkt_signal"] else "#6a7a8a"};">{_r["_mkt_signal"] or "—"}</span>'
+                f'<span style="text-align:center;color:{"#22c55e" if _r["_rel"] in ("4/4","3/4") else "#6a7a8a"};">{_r["_rel"]}</span>'
+                f'</div>'
+            )
+
+        # Render in chunks to avoid hitting Streamlit limits
+        _chunk = 50
+        for _i in range(0, len(_html_rows), _chunk):
+            st.markdown(
+                '<div style="border-radius:0 0 6px 6px;overflow:hidden;">'
+                + "".join(_html_rows[_i:_i+_chunk])
+                + '</div>',
+                unsafe_allow_html=True
+            )
+
+        if not _rows:
+            st.info("No props match current filters.")
+
+        # ── Quick action bar ─────────────────────────────────────
+        st.markdown("---")
+        _qa1, _qa2, _qa3 = st.columns(3)
+        with _qa1:
+            if st.button("🔒 Lock all SOVEREIGN/ELITE", key="ev_lock_all"):
                 for _p in _board:
                     if _p.get("Tier") in ("SOVEREIGN","ELITE"):
-                        _already = any(normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and str(l.get("line",""))==str(_p.get("Line","")) for l in st.session_state.locks)
+                        _already = any(
+                            normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and
+                            str(l.get("line",""))==str(_p.get("Line",""))
+                            for l in st.session_state.locks
+                        )
                         if not _already:
-                            st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
+                            st.session_state.locks.append({
+                                "player": _p.get("Player",""), "prop": _p.get("Prop",""),
+                                "line": _p.get("Line",0), "side": _p.get("Side","OVER"),
+                                "tier": _p.get("Tier",""), "edge": _p.get("Edge",0),
+                                "sport": _sport, "source": "EV Optimizer",
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "prob": _p.get("Prob",0.5),
+                            })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)
+                st.success(f"Locked {len([p for p in _board if p.get('Tier') in ('SOVEREIGN','ELITE')])} plays")
                 st.rerun()
-
-        _filtered = [p for p in _board if p.get("Tier","") in (_tf or ["SOVEREIGN","ELITE","APPROVED","LEAN"]) and p.get("Sport","") in (_sf or _all_sports)]
-
-        if _filtered:
-            # Group by sport+game
-            _groups = {}
-            for _p in _filtered:
-                _gkey = f"{_p.get('Sport','')}|{_p.get('GameID',_p.get('Game',_sport))}"
-                if _gkey not in _groups:
-                    _groups[_gkey] = {"sport":_p.get("Sport",_sport),"game":_p.get("Game",_sport),"players":[]}
-                _groups[_gkey]["players"].append(_p)
-
-            for _gk, _grp in _groups.items():
-                _bc = "#378add"
-                # Sport header
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;margin-top:12px;">'
-                    f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_grp["sport"]}</span>'
-                    f'<span style="font-size:18px;font-weight:700;color:#e8f0f8;">{_grp["game"]}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-                # Column header
-                st.markdown(
-                    '<div style="display:grid;grid-template-columns:2fr 50px 90px 80px 60px 70px 70px 60px;gap:0;padding:5px 12px;background:#08111a;border:0.5px solid #1e2d3d;border-top:none;border-bottom:0.5px solid #1e2d3d;">'
-                    + "".join(f'<span style="font-size:18px;font-weight:700;color:#4a6a8a;letter-spacing:0.6px;">{h}</span>' for h in ["PLAYER","POS","MATCHUP","STAT","PROJ","LINE","EDGE","TIER"])
-                    + '</div>',
-                    unsafe_allow_html=True
-                )
-
-                for _pi, _p in enumerate(_grp["players"]):
-                    _c = _tc.get(_p.get("Tier",""),"#6a7a8a")
-                    _arrow = "↑" if _p.get("Side","OVER")=="OVER" else "↓"
-                    _arrow_color = "#22c55e" if _p.get("Side","OVER")=="OVER" else "#378add"
-                    _pinn = "📌" if _p.get("PinnacleConfirms") else ""
-                    _avg = float(_p.get("Avg",0) or 0)
-                    _ev2 = _p.get("EV_2pick","—") or "—"
-                    _edge_pct = _p.get("EdgePct","—") or "—"
-                    _already_locked = any(normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and str(l.get("line",""))==str(_p.get("Line","")) for l in st.session_state.locks)
-                    _row_bg = "#0a0e14" if _pi % 2 == 0 else "#080c12"
-                    _col_main, _col_lock = st.columns([9,1])
-                    with _col_main:
-                        st.markdown(
-                            f'<div style="display:grid;grid-template-columns:2fr 50px 90px 80px 60px 70px 70px 60px;gap:0;padding:9px 12px;align-items:center;background:{_row_bg};border-left:3px solid {_c};border:0.5px solid #1e2d3d;border-left:3px solid {_c};border-top:none;">'
-                            f'<div><span style="font-size:17px;font-weight:700;color:#e8f0f8;">{_p.get("Player","")}</span>'
-                            f'{"<br><span style=\"font-size:16px;color:#7f77dd;\">"+_pinn+" Pinnacle</span>" if _pinn else ""}</div>'
-                            f'<span style="font-size:15px;color:#6a7a8a;">{_p.get("Pos","—")}</span>'
-                            f'<span style="font-size:14px;color:#8a9ab0;">{_p.get("Opponent","—")}</span>'
-                            f'<span style="font-size:15px;color:#b8c6d6;">{_p.get("Prop","")}</span>'
-                            f'<span style="font-size:18px;font-weight:700;color:#e8f0f8;">{_avg:.1f}</span>'
-                            f'<div style="display:flex;align-items:center;gap:3px;"><span style="color:{_arrow_color};font-size:14px;">{_arrow}</span><span style="font-size:18px;font-weight:700;color:#e8f0f8;">{_p.get("Line","")}</span></div>'
-                            f'<span style="font-size:18px;font-weight:700;color:{_c};">{_edge_pct}</span>'
-                            f'<span style="font-size:18px;font-weight:700;padding:2px 6px;border-radius:3px;background:{_c}22;color:{_c};border:0.5px solid {_c}44;">{_p.get("Tier","")}</span>'
-                            f'</div>'
-                            f'<div style="display:flex;gap:16px;padding:3px 12px 5px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
-                            f'<span style="font-size:14px;color:#4a6a8a;">Avg <span style="color:#9aa8b8;font-weight:500;">{_avg:.1f}</span></span>'
-                            f'<span style="font-size:14px;color:#4a6a8a;">2-pick EV <span style="color:#9aa8b8;font-weight:500;">{_ev2}</span></span>'
-                            f'<span style="font-size:14px;color:#4a6a8a;">Pinnacle <span style="color:#9aa8b8;font-weight:500;">{_p.get("PinnacleProb","—")}</span></span>'
-                            f'{"<span style=\"font-size:14px;color:#22c55e;\">⚡ " + str(_p.get("BetterLineNote",""))[:35] + "</span>" if _p.get("BetterLineNote") else ""}'
-                            f'</div>'
-                            f'<div style="padding:2px 12px 6px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
-                            f'<span style="font-size:13px;color:#5a6a7a;font-style:italic;">→ Season avg {_avg:.1f} vs line {_p.get("Line","")} {"· "+_p.get("H2HNote","") if _p.get("H2HNote") else ""}{" · 📌 Pinnacle" if _p.get("PinnacleConfirms") else ""}{" · ⚠️ Blowout" if float(_p.get("SignalBlowout",0) or 0)<0 else ""}</span>'
-                            f'</div>',
-                            unsafe_allow_html=True
-                        )
-                        # ── Engine 1: Narrative reasoning ──
-                        if _p.get('Narrative'):
-                            st.markdown(
-                                f'<div style="padding:4px 12px 4px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'  
-                                f'<span style="font-size:13px;color:#9ab8d0;">💡 {_p.get("Narrative","")}</span>'
-                                f'</div>'
-                                f'<div style="padding:2px 12px 6px 52px;background:{_row_bg};border:0.5px solid #1e2d3d;border-top:none;border-left:3px solid {_c};">'
-                                f'<span style="font-size:12px;color:#c0734a;">{_p.get("NarrativeRisk","")}</span>'
-                                f'</div>',
-                                unsafe_allow_html=True
-                            )
-                        # ── Engine 3: Contextual override warning ──
-                        if _p.get('OverrideActive'):
-                            _ov_html = '<div style="padding:5px 12px 6px 52px;background:#1a0d08;border:1px solid #e04040aa;border-top:none;border-left:3px solid #e04040;">'
-                            for _ov in _p.get('ContextOverrides', []):
-                                _ov_html += f'<div style="font-size:12px;color:#e04040;margin-bottom:2px;">⚠️ {_ov}</div>'
-                            _ov_html += f'<div style="font-size:11px;color:#8a9ab0;margin-top:3px;">Downgraded: <b style="color:#e8a020;">{_p.get("OriginalTier","")}</b> → <b style="color:#22c55e;">{_p.get("Tier","")}</b> · Lock to manually override</div></div>'
-                            st.markdown(_ov_html, unsafe_allow_html=True)
-                    with _col_lock:
-                        _lk = f"fblk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
-                        if _already_locked:
-                            st.markdown('<div style="text-align:center;padding-top:8px;color:#22c55e;font-size:16px;">✅</div>', unsafe_allow_html=True)
-                        elif st.button("🔒", key=_lk, use_container_width=True):
-                            st.session_state.locks.append({"player":_p.get("Player",""),"prop":_p.get("Prop",""),"line":_p.get("Line",0),"side":_p.get("Side","OVER"),"tier":_p.get("Tier",""),"edge":_p.get("Edge",0),"sport":_sport,"source":"Full Board","timestamp":datetime.now().strftime("%Y-%m-%d %H:%M"),"prob":_p.get("Prob",0.5)})
-                            save_json_data(LOCKS_PATH, st.session_state.locks)
-                            save_to_gist("locks", st.session_state.locks)
-                            st.rerun()
-                        # Track button — opens inline modal
-                        _tk = f"fbtk_{_pi}_{_p.get('Player','').replace(' ','_')[:10]}"
-                        if st.button("📝", key=_tk, use_container_width=True,
-                                     help="Track this bet with stake + odds"):
-                            track_bet_dialog(_p)
-        else:
-            st.info("No props match the selected filters.")
-    else:
-        st.info("Select a sport and click Load Board.")
-
+        with _qa2:
+            if st.button("📥 Export CSV", key="ev_export"):
+                import pandas as _pd
+                _export = [{
+                    "Player": r["_player"], "Team": r["_team"],
+                    "Prop": r["_prop"], "Line": r["_line"],
+                    "Side": r["_side"], "Grade": r["_grade"],
+                    "Edge%": r["_edge_pct"], "Model%": r["_model_prob"],
+                    "L5": r["_l5"], "L10": r["_l10"], "Season": r["_szn"],
+                    "Pinnacle": r["_pinn"], "DK": r["_dk"], "FD": r["_fd"],
+                    "Signal": r["_mkt_signal"], "Reliability": r["_rel"],
+                } for r in _rows]
+                _csv = _pd.DataFrame(_export).to_csv(index=False)
+                st.download_button("Download", _csv, "betcouncil_ev.csv", "text/csv", key="ev_dl")
+        with _qa3:
+            st.metric("Total Props", len(_rows),
+                      delta=f"{len([r for r in _rows if r['_edge_pct'] >= 5])} above 5%")
 # ----- TAB 2: GAME LINES -----
 with tabs[2]:
     # Use game_analysis (has FavoriteTeam/FavoriteML/TotalEdge/recommendations)
