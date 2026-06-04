@@ -5023,8 +5023,6 @@ def get_clv_edge_adjustment(sport, tier):
     except Exception as e:
         return 1.0, f"CLV calc error: {str(e)[:50]}"
 
-@st.cache_data(ttl=1800)
-
 FANTASYLABS_PATH = os.path.join(CACHE_DIR, "fantasylabs_lineups.json")
 
 @st.cache_data(ttl=900)
