@@ -4609,10 +4609,7 @@ def compute_signal_conflict(prop):
     elif pos_count >= 2 and neg_count >= 2 and neg_total >= pos_total * 0.5:
         status = "CONFLICTED"
         color  = "#e04040"
-        note   = (f"🔴 Conflicted — {pos_count} positive (+{pos_total:.0f}%) "
-                  f"vs {neg_count} negative (-{neg_total:.0f}%)
-"
-                  f"   Strong signals opposing each other — reduce size")
+        note   = f"Conflicted: {pos_count} positive (+{pos_total:.0f}%) vs {neg_count} negative (-{neg_total:.0f}%) - reduce size"
     elif neg_count >= 1:
         status = "MIXED"
         color  = "#e8a020"
