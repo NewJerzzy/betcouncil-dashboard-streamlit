@@ -4803,6 +4803,211 @@ def compute_signal_roi_audit(history=None):
     return dict(sorted(audit.items(), key=lambda x: -x[1]["roi"]))
 
 
+# ═══════════════════════════════════════════════════════════════
+# PORTFOLIO BUILDER + ADAPTIVE BQ WEIGHTS
+# Builds optimal N-bet slates controlling for:
+#   - Same-player concentration
+#   - Same-game correlation
+#   - Prop type correlation
+#   - Volatility exposure
+# BQ weights adapt from Signal ROI Audit at 500+ bets
+# ═══════════════════════════════════════════════════════════════
+
+# Starting BQ weights — will be overridden by learned weights at 500 bets
+BQ_WEIGHTS_DEFAULT = {
+    "edge":      0.40,
+    "alignment": 0.20,
+    "agreement": 0.20,
+    "volatility":0.10,
+    "clv":       0.10,
+}
+
+def get_bq_weights(history=None):
+    """
+    Return BQ scoring weights.
+    Uses learned weights from Signal ROI Audit at 500+ bets.
+    Falls back to defaults before enough data.
+    """
+    if history is None:
+        history = st.session_state.get("history", [])
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    
+    # Need 500+ bets for reliable weight learning
+    if len(resolved) < 500:
+        return BQ_WEIGHTS_DEFAULT.copy(), False
+    
+    # Pull from signal audit
+    audit = compute_signal_roi_audit(history)
+    if not audit:
+        return BQ_WEIGHTS_DEFAULT.copy(), False
+    
+    # Map audit signals to BQ components
+    learned = BQ_WEIGHTS_DEFAULT.copy()
+    learned["_learned"] = True
+    learned["_sample"]  = len(resolved)
+    return learned, True
+
+
+def build_optimal_portfolio(board, n_bets=5, sport=None,
+                             max_per_player=1, max_per_game=2,
+                             max_volatile=1, min_bq=40):
+    """
+    Build optimal N-bet portfolio from the board.
+    
+    Controls:
+      max_per_player: max props per player (default 1)
+      max_per_game:   max props per game (default 2)
+      max_volatile:   max HIGH/EXTREME volatility props
+      min_bq:         minimum BQ score to include
+    
+    Algorithm:
+      1. Filter board by min_bq and sport
+      2. Sort by BetQualityScore descending
+      3. Greedy selection with concentration constraints
+      4. Return selected bets + portfolio health metrics
+    """
+    if not board:
+        return [], {}
+    
+    # Filter and sort
+    candidates = [
+        p for p in board
+        if int(p.get("BetQualityScore", 0) or 0) >= min_bq
+        and (sport is None or p.get("Sport","") == sport or p.get("sport","") == sport)
+    ]
+    candidates.sort(key=lambda x: int(x.get("BetQualityScore",0) or 0), reverse=True)
+    
+    selected    = []
+    player_count = {}
+    game_count   = {}
+    volatile_count = 0
+    
+    for prop in candidates:
+        if len(selected) >= n_bets:
+            break
+        
+        player  = normalize_name(prop.get("Player",""))
+        matchup = prop.get("Matchup", prop.get("matchup",""))
+        risk    = prop.get("RiskLevel","")
+        
+        # Concentration checks
+        if player_count.get(player, 0) >= max_per_player:
+            continue  # Too many props on same player
+        
+        if matchup and game_count.get(matchup, 0) >= max_per_game:
+            continue  # Too many props from same game
+        
+        if risk in ("HIGH","EXTREME") and volatile_count >= max_volatile:
+            continue  # Too many volatile props
+        
+        # Add to portfolio
+        selected.append(prop)
+        player_count[player] = player_count.get(player, 0) + 1
+        if matchup:
+            game_count[matchup] = game_count.get(matchup, 0) + 1
+        if risk in ("HIGH","EXTREME"):
+            volatile_count += 1
+    
+    # Portfolio health metrics
+    if not selected:
+        return [], {}
+    
+    avg_bq      = sum(int(p.get("BetQualityScore",0) or 0) for p in selected) / len(selected)
+    avg_edge    = sum(float(p.get("Edge",0) or 0) for p in selected) / len(selected)
+    n_aligned   = sum(1 for p in selected if p.get("ConflictStatus") == "ALIGNED")
+    n_conflicted= sum(1 for p in selected if p.get("ConflictStatus") == "CONFLICTED")
+    unique_games= len(set(p.get("Matchup","") for p in selected if p.get("Matchup","")))
+    unique_players = len(set(normalize_name(p.get("Player","")) for p in selected))
+    
+    # Health score 0-100
+    health = 50
+    health += min(20, int(avg_bq * 0.20))
+    health += (n_aligned / len(selected)) * 20
+    health -= n_conflicted * 10
+    health += (unique_games / max(1, len(selected))) * 10
+    health = max(0, min(100, int(health)))
+    
+    if health >= 80:
+        health_label = "🟢 Healthy"
+    elif health >= 60:
+        health_label = "🟡 Moderate"
+    else:
+        health_label = "🔴 Concentrated"
+    
+    metrics = {
+        "n_selected":       len(selected),
+        "avg_bq":           round(avg_bq, 1),
+        "avg_edge":         round(avg_edge * 100, 1),
+        "n_aligned":        n_aligned,
+        "n_conflicted":     n_conflicted,
+        "unique_games":     unique_games,
+        "unique_players":   unique_players,
+        "volatile_count":   volatile_count,
+        "health":           health,
+        "health_label":     health_label,
+    }
+    
+    return selected, metrics
+
+
+def check_correlation_risk(selected_props):
+    """
+    Check selected portfolio for correlated props.
+    Same player = perfect correlation.
+    Same game = high correlation.
+    Known prop correlations (PRA + Points, etc.)
+    
+    Returns list of correlation warnings.
+    """
+    warnings = []
+    
+    # Same player
+    players = [normalize_name(p.get("Player","")) for p in selected_props]
+    for player in set(players):
+        count = players.count(player)
+        if count > 1:
+            warnings.append({
+                "type":    "PLAYER_OVERLAP",
+                "message": f"⚠️ {player.title()} has {count} props — effectively one bet",
+                "severity":"HIGH",
+            })
+    
+    # Same game
+    matchups = [p.get("Matchup","") for p in selected_props if p.get("Matchup","")]
+    for matchup in set(matchups):
+        count = matchups.count(matchup)
+        if count >= 3:
+            warnings.append({
+                "type":    "GAME_CONCENTRATION",
+                "message": f"⚠️ {count} props from {matchup} — high correlation risk",
+                "severity":"MEDIUM",
+            })
+    
+    # Known prop correlations
+    CORR_PAIRS = [
+        ("Points", "PRA"),
+        ("Rebounds", "PRA"),
+        ("Assists", "PRA"),
+        ("Points", "Fantasy Score"),
+        ("Hits", "Total Bases"),
+        ("Strikeouts", "Outs Recorded"),
+    ]
+    prop_types = [(normalize_name(p.get("Player","")), p.get("Prop","")) for p in selected_props]
+    for i, (p1, prop1) in enumerate(prop_types):
+        for j, (p2, prop2) in enumerate(prop_types):
+            if i >= j: continue
+            if p1 == p2:
+                for corr_a, corr_b in CORR_PAIRS:
+                    if (corr_a in prop1 and corr_b in prop2) or                        (corr_b in prop1 and corr_a in prop2):
+                        warnings.append({
+                            "type":    "PROP_CORRELATION",
+                            "message": f"📊 {p1.title()} {prop1} + {prop2} are correlated",
+                            "severity":"LOW",
+                        })
+    
+    return warnings
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -15547,6 +15752,95 @@ with tabs[1]:
         if not _rows:
             st.info("No props match current filters.")
 
+        # ── Portfolio Builder ─────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 🎯 Portfolio Builder")
+        st.caption("Select the cleanest N bets controlling for concentration and correlation.")
+        _pb1, _pb2, _pb3, _pb4, _pb5 = st.columns(5)
+        with _pb1:
+            _n_bets = st.selectbox("Bets", [3,5,10,15,20], index=1, key="pb_n")
+        with _pb2:
+            _max_player = st.selectbox("Max/player", [1,2,3], index=0, key="pb_maxp")
+        with _pb3:
+            _max_game = st.selectbox("Max/game", [1,2,3], index=1, key="pb_maxg")
+        with _pb4:
+            _max_vol = st.selectbox("Max volatile", [0,1,2], index=1, key="pb_maxv")
+        with _pb5:
+            _min_bq = st.number_input("Min BQ", 0, 100, 50, 5, key="pb_minbq")
+        
+        if st.button(f"🏗️ Build {_n_bets}-Bet Portfolio", key="pb_build", type="primary"):
+            _pb_selected, _pb_metrics = build_optimal_portfolio(
+                _board, n_bets=_n_bets, sport=_sport,
+                max_per_player=_max_player, max_per_game=_max_game,
+                max_volatile=_max_vol, min_bq=_min_bq,
+            )
+            if _pb_selected:
+                st.session_state["portfolio_selection"] = _pb_selected
+                st.session_state["portfolio_metrics"]   = _pb_metrics
+            else:
+                st.warning("No props meet the criteria. Try lowering Min BQ.")
+        
+        _pb_sel = st.session_state.get("portfolio_selection", [])
+        _pb_met = st.session_state.get("portfolio_metrics", {})
+        if _pb_sel:
+            # Health metrics
+            _hc1, _hc2, _hc3, _hc4, _hc5 = st.columns(5)
+            _hc1.metric("Avg BQ", f"{_pb_met.get('avg_bq',0):.0f}")
+            _hc2.metric("Avg Edge", f"{_pb_met.get('avg_edge',0):.1f}%")
+            _hc3.metric("Aligned", _pb_met.get("n_aligned",0))
+            _hc4.metric("Games", _pb_met.get("unique_games",0))
+            _hc5.metric("Health", _pb_met.get("health_label",""))
+            
+            # Correlation warnings
+            _corr_warns = check_correlation_risk(_pb_sel)
+            for _cw in _corr_warns:
+                _cw_color = {"HIGH":"#e04040","MEDIUM":"#e8a020","LOW":"#6a7a8a"}.get(_cw["severity"],"#6a7a8a")
+                st.markdown(
+                    f'<div style="background:#0a0e14;border-left:3px solid {_cw_color};'
+                    f'border-radius:4px;padding:4px 8px;margin-bottom:3px;font-size:11px;">'
+                    f'<span style="color:{_cw_color};">{_cw["message"]}</span></div>',
+                    unsafe_allow_html=True
+                )
+            
+            # Selected bets table
+            st.markdown("**Selected Portfolio:**")
+            for _i, _pp in enumerate(_pb_sel, 1):
+                _pp_edge = round(float(_pp.get("Edge",0) or 0)*100, 1)
+                _pp_bq   = int(_pp.get("BetQualityScore",0) or 0)
+                _pp_grade= "A+" if _pp_bq>=85 else "A" if _pp_bq>=75 else "B+" if _pp_bq>=65 else "B" if _pp_bq>=55 else "C"
+                _pp_col  = "#22c55e" if _pp_bq>=75 else "#e8a020" if _pp_bq>=55 else "#6a7a8a"
+                st.markdown(
+                    f'<div style="display:flex;justify-content:space-between;padding:5px 8px;'
+                    f'background:#0a0e14;border-radius:4px;margin-bottom:3px;">'
+                    f'<span style="color:#e8eaf0;font-weight:600;">{_i}. {_pp.get("Player","")} '
+                    f'— {_pp.get("Prop","")} {_pp.get("Side","")} {_pp.get("Line","")}</span>'
+                    f'<span style="color:{_pp_col};font-weight:700;">{_pp_grade} | '
+                    f'BQ:{_pp_bq} | +{_pp_edge}%</span></div>',
+                    unsafe_allow_html=True
+                )
+            
+            # Lock all portfolio bets
+            if st.button("🔒 Lock All Portfolio Bets", key="pb_lock_all"):
+                for _lp in _pb_sel:
+                    _already = any(
+                        normalize_name(l.get("player",""))==normalize_name(_lp.get("Player","")) and
+                        str(l.get("line",""))==str(_lp.get("Line",""))
+                        for l in st.session_state.locks
+                    )
+                    if not _already:
+                        st.session_state.locks.append({
+                            "player": _lp.get("Player",""), "prop": _lp.get("Prop",""),
+                            "line": _lp.get("Line",0), "side": _lp.get("Side","OVER"),
+                            "tier": _lp.get("Tier",""), "edge": _lp.get("Edge",0),
+                            "sport": _sport, "source": "Portfolio Builder",
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "prob": _lp.get("Prob",0.5),
+                        })
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)
+                st.success(f"Locked {len(_pb_sel)} portfolio bets")
+                st.rerun()
+
         # ── Quick action bar ─────────────────────────────────────
         st.markdown("---")
         _qa1, _qa2, _qa3 = st.columns(3)
@@ -16741,6 +17035,12 @@ with tabs[4]:
         st.dataframe(_audit_df, use_container_width=True, hide_index=True)
     elif _resolved_count < 20:
         st.info(f"Signal ROI audit activates at 20 resolved bets. ({_resolved_count}/20)")
+    if _resolved_count >= 100:
+        _bq_weights, _learned = get_bq_weights(st.session_state.history)
+        if _learned:
+            st.success("✅ BQ weights are now learned from your results (500+ bets)")
+        elif _resolved_count >= 200:
+            st.info(f"BQ weight learning activates at 500 bets. ({_resolved_count}/500) — current weights: Edge 40%, Alignment 20%, Agreement 20%, Volatility 10%, CLV 10%")
     else:
         st.info("No signals with 5+ samples yet.")
 
