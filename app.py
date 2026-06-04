@@ -16389,6 +16389,23 @@ with tabs[4]:
         st.dataframe(pd.DataFrame(_cal_buckets), use_container_width=True, hide_index=True)
         st.caption("Error = Actual hit rate − Predicted probability. Negative = model over-confident. Positive = model under-confident.")
     st.markdown("---")
+    # ── Closing Line Beat Rate ──────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📐 Closing Line Beat Rate")
+    st.caption("Does the model project correctly vs where the closing line ends up? Higher = genuine market edge.")
+    _clb_rate, _clb_total = get_closing_line_hit_rate(st.session_state.history)
+    if _clb_rate is not None:
+        _clb1, _clb2, _clb3 = st.columns(3)
+        _clb1.metric("Beat Closing Line", f"{_clb_rate:.1%}")
+        _clb2.metric("Sample Size", _clb_total)
+        _clb3.metric("Status", "✅ Edge" if _clb_rate >= 0.55 else "⚠️ Watch" if _clb_rate >= 0.50 else "❌ Review")
+        if _clb_rate >= 0.55:
+            st.success(f"Model beats closing line {_clb_rate:.1%} — genuine edge confirmed.")
+        elif _clb_rate < 0.50:
+            st.warning(f"Model below 50% closing line beat rate — review signal weights.")
+    else:
+        st.info(f"Activates after 10 resolved bets with CLV data. ({_clb_total} tracked so far)")
+
     st.markdown("### 📍 Pinnacle CLV Tracker")
     pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
     if len(pinnacle_data) >= 5:
