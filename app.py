@@ -5270,28 +5270,95 @@ def fetch_fantasylabs_lineups(sport="MLB"):
         return load_json_data(FANTASYLABS_PATH, {})
 
 
-def get_fantasylabs_lineup_bonus(player, lineups=None):
+def get_fantasylabs_lineup_bonus(player, lineups=None, sport="MLB"):
     """
-    Batting order bonus — only when lineups are confirmed (data exists).
-    Returns (edge_adj, order, note).
+    Lineup confirmation signal — proportional, sport-specific.
+    
+    Returns (edge_adj, lineup_score, note) where:
+      lineup_score = 0-4 reliability score
+      edge_adj     = proportional adjustment based on sport + order
+    
+    MLB:  batting order matters — proportional bonus by slot
+    NBA/WNBA: starter confirmation flag — avoid dead props
+    NHL:  line + PP assignment — stronger signal than generic +3%
+    NFL:  active/inactive catch — react before books adjust
     """
     if lineups is None:
         lineups = st.session_state.get("fantasylabs_lineups", {})
     if not lineups:
         return 0.0, 0, ""
+
     data = lineups.get(normalize_name(player))
     if data is None:
         return 0.0, 0, ""
-    if not data.get("in_lineup"):
-        return -0.05, 0, "⚠️ Not in confirmed lineup"
-    if not data.get("active"):
-        return -0.05, 0, f"⚠️ {data.get('injury_status','Injured')}"
+
+    # ── Lineup Reliability Score (0-4) ─────────────────────────
+    lineup_score = 0
+    if data.get("in_lineup"):          lineup_score += 1
+    if data.get("active"):             lineup_score += 1
+    if not data.get("injury_status","").lower() in ("questionable","doubtful","out","dtd"):
+        lineup_score += 1
     order = data.get("lineup_order", 0)
-    bonus_map = {1: (0.06, "✅ Leadoff #1 +6%"), 2: (0.05, "✅ Batting #2 +5%"),
-                 3: (0.05, "✅ Batting #3 +5%"), 4: (0.04, "✅ Cleanup #4 +4%"),
-                 5: (0.03, "✅ Batting #5 +3%")}
-    adj, note = bonus_map.get(order, (0.03, f"✅ In lineup #{order} +3%"))
-    return round(adj, 3), order, note
+    if order > 0 and order <= 4:       lineup_score += 1
+
+    # ── Not in lineup → negative signal ────────────────────────
+    if not data.get("in_lineup"):
+        note = f"⚠️ Not in confirmed lineup (score 0/4)"
+        return -0.05, 0, note
+
+    if not data.get("active"):
+        inj = data.get("injury_status","Injured")
+        return -0.05, lineup_score, f"⚠️ {inj} — not active"
+
+    # ── Sport-specific adjustments ──────────────────────────────
+    if sport == "MLB":
+        # Proportional batting order bonus
+        order_bonus = {1: 0.04, 2: 0.03, 3: 0.02, 4: 0.01,
+                       5: 0.0,  6: 0.0,  7: -0.01, 8: -0.01, 9: -0.01}
+        adj  = order_bonus.get(order, 0.0)
+        conf = f"✅ Batting #{order} | Lineup {lineup_score}/4"
+        note = f"{conf} | {'+' if adj>=0 else ''}{adj*100:.0f}%"
+
+    elif sport in ("NBA","WNBA"):
+        # Starter = confidence flag, not flat edge
+        # Value is AVOIDING dead props on benched players
+        adj  = 0.02  # small boost for confirmed starter
+        note = f"✅ Confirmed starter ({lineup_score}/4 confidence)"
+
+    elif sport == "NHL":
+        # Check for line assignment and PP info if available
+        position = data.get("position","")
+        adj = 0.02
+        note = f"✅ In lineup | {lineup_score}/4"
+        # If we can determine line number from lineup_order
+        if order == 1:
+            adj  = 0.04
+            note = f"✅ Line 1 player | {lineup_score}/4 +4%"
+        elif order == 2:
+            adj  = 0.03
+            note = f"✅ Line 2 player | {lineup_score}/4 +3%"
+        elif order >= 4:
+            adj  = -0.01
+            note = f"⚠️ Line 4 player | {lineup_score}/4 -1%"
+
+    elif sport == "NFL":
+        # Catch Q→Active or Q→Inactive before books react
+        inj_status = data.get("injury_status","").lower()
+        if inj_status in ("active",""):
+            adj  = 0.03
+            note = f"✅ Active (confirmed) | {lineup_score}/4 +3%"
+        elif inj_status == "questionable":
+            adj  = 0.0
+            note = f"⚠️ Questionable — monitor | {lineup_score}/4"
+        else:
+            adj  = -0.05
+            note = f"❌ {data.get('injury_status','')} — avoid"
+
+    else:
+        adj  = 0.02 if data.get("in_lineup") else 0.0
+        note = f"✅ In lineup | {lineup_score}/4"
+
+    return round(adj, 3), lineup_score, note
 
 
 def fetch_mlb_probable_pitchers():
@@ -12255,8 +12322,11 @@ def load_sport_data(sport):
                 if _fl_adj != 0:
                     final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _fl_adj)), 4)
                     tier = get_tier(final_edge, sport)
-                    if _fl_note:
-                        p["LineupStatus"] = _fl_note
+                if _fl_note:
+                    p["LineupStatus"]    = _fl_note
+                if _fl_order > 0:
+                    p["LineupScore"]     = _fl_order  # reliability score 0-4
+                    p["LineupConfirmed"] = _fl_order >= 3  # 3/4 = confirmed
 
         # NFL: add practice trend to injury flag
         if sport == "NFL" and not injury_flag:
