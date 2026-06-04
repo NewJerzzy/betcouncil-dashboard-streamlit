@@ -4226,6 +4226,289 @@ def compute_dff_propstats_edge(propstats_data, model_edge):
 
 
 
+# ═══════════════════════════════════════════════════════════════
+# TIER 1 HIGH-VALUE FEATURES
+# 1. Market Move Quality (sharp attribution)
+# 2. Minutes Stability Score (CV)
+# 3. Volatility Flag
+# 4. Closing Line Hit Rate tracking
+# ═══════════════════════════════════════════════════════════════
+
+# ── 1. Market Move Quality ──────────────────────────────────────
+def compute_market_move_quality(matchup, prop, sport, current_props=None):
+    """
+    Determine WHY a line moved — sharp vs soft attribution.
+    
+    Quality scale:
+      +2 = Pinnacle/Circa leads move (strongest signal)
+      +1 = Consensus across multiple sharp books
+       0 = Mixed — no clear leader
+      -1 = Only fantasy books moved (PrizePicks/Underdog)
+      -2 = Reverse — line moved against sharp money
+    
+    Method: compare opening line to current line across books.
+    If Pinnacle moved first → sharp-led.
+    If only prop sites moved → market noise.
+    """
+    line_movements = load_json_data(LINE_MOVEMENT_PATH, {})
+    pinnacle_lines  = load_json_data(PINNACLE_LINES_PATH, {})
+    
+    key = f"{matchup}_{prop}"
+    movements = line_movements.get(key, {})
+    
+    if not movements:
+        return 0, "No line movement data"
+    
+    opening  = movements.get("opening_line")
+    current  = movements.get("current_line")
+    
+    if opening is None or current is None:
+        return 0, "Incomplete movement data"
+    
+    try:
+        move_size = float(current) - float(opening)
+    except (ValueError, TypeError):
+        return 0, "Invalid line values"
+    
+    if abs(move_size) < 0.2:
+        return 0, f"No significant move ({move_size:+.1f})"
+    
+    # Check which books moved
+    pinn_opening = pinnacle_lines.get(f"{key}_open")
+    pinn_current = pinnacle_lines.get(f"{key}_current")
+    
+    if pinn_opening and pinn_current:
+        try:
+            pinn_move = float(pinn_current) - float(pinn_opening)
+            if abs(pinn_move) >= abs(move_size) * 0.8:
+                # Pinnacle moved proportionally → sharp-led
+                quality = 2
+                note    = f"⚡ Sharp-led move: Pinnacle {pinn_move:+.1f} | {move_size:+.1f} total"
+            elif abs(pinn_move) < 0.1:
+                # Pinnacle didn't move → soft money only
+                quality = -1
+                note    = f"⚠️ Soft move: Pinnacle flat, market {move_size:+.1f}"
+            else:
+                quality = 1
+                note    = f"📊 Mixed move: Pinnacle {pinn_move:+.1f} | market {move_size:+.1f}"
+        except (ValueError, TypeError):
+            quality = 0
+            note    = f"Line moved {move_size:+.1f} (source unknown)"
+    else:
+        # No Pinnacle data — use move size as proxy
+        if abs(move_size) >= 1.5:
+            quality = 1
+            note    = f"📈 Large move: {move_size:+.1f} (no Pinnacle data)"
+        else:
+            quality = 0
+            note    = f"Small move: {move_size:+.1f}"
+    
+    return quality, note
+
+
+# ── 2. Minutes Stability Score (CV) ────────────────────────────
+def compute_minutes_cv(player, sport, game_logs=None, n=10):
+    """
+    Coefficient of variation for minutes played.
+    
+    CV = std_dev / mean
+    Low CV = stable minutes = more predictable props
+    High CV = volatile minutes = risky props
+    
+    Example:
+      Player A: [32,33,34,35,34] → CV = 0.03 (STABLE)
+      Player B: [18,40,21,39,28] → CV = 0.35 (VOLATILE)
+    
+    Returns (cv, stability_label, edge_adj)
+    """
+    if game_logs is None:
+        game_logs = st.session_state.get("player_game_logs", {})
+    
+    logs = game_logs.get(normalize_name(player), [])
+    if not logs:
+        return None, "UNKNOWN", 0.0
+    
+    # Get recent minutes
+    recent = logs[-n:] if len(logs) >= n else logs
+    mins_list = []
+    for g in recent:
+        m = float(g.get("min", g.get("minutes", g.get("mins", 0))) or 0)
+        if m > 0:
+            mins_list.append(m)
+    
+    if len(mins_list) < 4:
+        return None, "INSUFFICIENT", 0.0
+    
+    mean_m = sum(mins_list) / len(mins_list)
+    if mean_m <= 0:
+        return None, "UNKNOWN", 0.0
+    
+    variance = sum((m - mean_m) ** 2 for m in mins_list) / len(mins_list)
+    std_dev  = variance ** 0.5
+    cv       = round(std_dev / mean_m, 3)
+    
+    # Stability classification
+    if cv <= 0.08:
+        label = "STABLE"
+        adj   = 0.01      # +1% confidence for stable minutes
+    elif cv <= 0.15:
+        label = "MODERATE"
+        adj   = 0.0
+    elif cv <= 0.25:
+        label = "VOLATILE"
+        adj   = -0.01     # -1% for volatile minutes
+    else:
+        label = "HIGH_RISK"
+        adj   = -0.02     # -2% for very volatile
+    
+    return cv, label, round(adj, 3)
+
+
+# ── 3. Volatility Flag ───────────────────────────────────────────
+def compute_volatility_flag(player, sport, stat_norm, game_logs=None, n=10):
+    """
+    Compute stat volatility — std dev of the specific prop stat.
+    
+    High volatility = wide range of outcomes = risky prop.
+    Display as risk flag on prop card.
+    
+    Returns (std_dev, risk_level, note)
+    """
+    if game_logs is None:
+        game_logs = st.session_state.get("player_game_logs", {})
+    
+    logs = game_logs.get(normalize_name(player), [])
+    if not logs:
+        return None, "UNKNOWN", ""
+    
+    recent = logs[-n:] if len(logs) >= n else logs
+    
+    # Map stat_norm to game log field
+    stat_field_map = {
+        "Points":    ["pts","points"],
+        "Rebounds":  ["reb","rebounds","total_reb"],
+        "Assists":   ["ast","assists"],
+        "PRA":       ["pts","reb","ast"],  # sum
+        "Threes":    ["fg3m","threes","three_pointers_made"],
+        "Steals":    ["stl","steals"],
+        "Blocks":    ["blk","blocks"],
+        "Hits":      ["hits","h"],
+        "Total Bases":["total_bases","tb"],
+        "Strikeouts":["strikeouts","k"],
+    }
+    
+    fields = stat_field_map.get(stat_norm, [stat_norm.lower()])
+    vals   = []
+    
+    for g in recent:
+        if len(fields) > 1 and stat_norm == "PRA":
+            # Sum for combo stats
+            val = sum(float(g.get(f, 0) or 0) for f in fields)
+        else:
+            val = next((float(g.get(f, 0) or 0) for f in fields if g.get(f) is not None), 0)
+        if val > 0 or len(vals) > 0:
+            vals.append(val)
+    
+    if len(vals) < 4:
+        return None, "INSUFFICIENT", ""
+    
+    mean_v   = sum(vals) / len(vals)
+    variance = sum((v - mean_v) ** 2 for v in vals) / len(vals)
+    std_dev  = round(variance ** 0.5, 2)
+    
+    if mean_v <= 0:
+        return std_dev, "UNKNOWN", ""
+    
+    cv = std_dev / mean_v
+    
+    if cv <= 0.15:
+        risk  = "LOW"
+        note  = f"✅ Low variance ({std_dev:.1f} std dev)"
+        adj   = 0.01
+    elif cv <= 0.30:
+        risk  = "MEDIUM"
+        note  = f"📊 Medium variance ({std_dev:.1f} std dev)"
+        adj   = 0.0
+    elif cv <= 0.45:
+        risk  = "HIGH"
+        note  = f"⚠️ High variance ({std_dev:.1f} std dev)"
+        adj   = -0.01
+    else:
+        risk  = "EXTREME"
+        note  = f"🚨 Extreme variance ({std_dev:.1f} std dev) — risky prop"
+        adj   = -0.02
+    
+    return std_dev, risk, note
+
+
+# ── 4. Closing Line Hit Rate ────────────────────────────────────
+def track_closing_line_beat(bet_record, current_line):
+    """
+    Track whether model projection beat the closing line.
+    
+    This is more valuable than win/loss tracking:
+    - Model projected 26.4, closing line was 24.5 → model correct
+    - Actual was 25 (loss) but model beat the market
+    
+    Over thousands of bets this tells you:
+    - True model edge vs the market
+    - Separate from variance-driven wins/losses
+    """
+    model_proj = float(bet_record.get("model_proj", 0) or 0)
+    locked_line = float(bet_record.get("line", 0) or 0)
+    side        = bet_record.get("side","OVER")
+    
+    if model_proj <= 0 or locked_line <= 0 or not current_line:
+        return None
+    
+    try:
+        closing = float(current_line)
+    except (ValueError, TypeError):
+        return None
+    
+    # Did model correctly predict line direction?
+    if side == "OVER":
+        model_beat_close = model_proj > closing   # model higher than closing = OVER value
+        line_moved_with  = closing > locked_line  # line moved up = confirmed OVER
+    else:
+        model_beat_close = model_proj < closing
+        line_moved_with  = closing < locked_line
+    
+    return {
+        "model_proj":       model_proj,
+        "locked_line":      locked_line,
+        "closing_line":     closing,
+        "model_beat_close": model_beat_close,
+        "line_moved_with":  line_moved_with,
+        "clv_direction":    "correct" if model_beat_close else "wrong",
+    }
+
+
+def get_closing_line_hit_rate(history=None):
+    """
+    Compute what % of model projections beat the closing line.
+    High rate = model has genuine edge vs market.
+    """
+    if history is None:
+        history = st.session_state.get("history", [])
+    
+    clv_beats = 0
+    clv_total = 0
+    
+    for bet in history:
+        clv_data = bet.get("clv_direction","")
+        if clv_data == "correct":
+            clv_beats += 1
+            clv_total += 1
+        elif clv_data == "wrong":
+            clv_total += 1
+    
+    if clv_total < 10:
+        return None, clv_total
+    
+    return round(clv_beats / clv_total, 3), clv_total
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -12827,6 +13110,28 @@ def load_sport_data(sport):
                 final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _rc_adj)), 4)
                 tier = get_tier(final_edge, sport)  # re-tier after role change
 
+        # ── Market Move Quality ────────────────────────────────
+        _matchup_str = p.get("Matchup", p.get("matchup",""))
+        _move_quality, _move_note = compute_market_move_quality(
+            _matchup_str, stat_norm, sport
+        )
+        if _move_quality >= 2:
+            final_edge = round(min(EDGE_CAP, final_edge + 0.02), 4)
+        elif _move_quality == -1:
+            final_edge = round(final_edge - 0.01, 4)
+        elif _move_quality == -2:
+            final_edge = round(final_edge - 0.02, 4)
+
+        # ── Minutes CV + Volatility ─────────────────────────────
+        _game_logs  = st.session_state.get("player_game_logs", {})
+        _mins_cv, _mins_stability, _mins_adj = compute_minutes_cv(player, sport, _game_logs)
+        _stat_std, _risk_level, _risk_note   = compute_volatility_flag(player, sport, stat_norm, _game_logs)
+        if _mins_adj != 0:
+            final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _mins_adj)), 4)
+        if isinstance(_stat_std, float) and _risk_level in ("HIGH","EXTREME"):
+            _stat_adj = -0.01 if _risk_level == "HIGH" else -0.02
+            final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _stat_adj)), 4)
+
         # ── Projection confidence score ─────────────────────────
         _sample_n = len([h for h in st.session_state.history
                          if normalize_name(h.get("player","")) == normalize_name(player)])
@@ -12955,6 +13260,13 @@ def load_sport_data(sport):
             "ProjConfLabel":  _proj_conf.get("label","MODERATE"),
             "MarketVsModel":  _mkt_vs_model,
             "RoleChange":     _role_change,
+            "MarketMoveQuality":_move_quality,
+            "MarketMoveNote":   _move_note,
+            "MinutesCV":        _mins_cv,
+            "MinutesStability": _mins_stability,
+            "VolatilityStd":    _stat_std,
+            "RiskLevel":        _risk_level,
+            "RiskNote":         _risk_note,
             "DFFSignal":        p.get("DFFSignal",""),
             "DFFRosterContext":  p.get("DFFRosterContext",[]),
             "DFFHitRateL10":    p.get("DFFHitRateL10", 0),
@@ -14617,6 +14929,9 @@ with tabs[1]:
                 "_dff_signal": _p.get("DFFSignal",""),
                 "_dff_hr":     f"{_p.get('DFFHitRateL10',0):.0%}" if _p.get("DFFHitRateL10") else "",
                 "_dff_note":   _p.get("DFFPropNote",""),
+                "_risk":       _p.get("RiskLevel",""),
+                "_mmq":        _p.get("MarketMoveQuality",0),
+                "_mins_stab":  _p.get("MinutesStability",""),
             })
 
         # Sort
