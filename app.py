@@ -5024,6 +5024,81 @@ def get_clv_edge_adjustment(sport, tier):
         return 1.0, f"CLV calc error: {str(e)[:50]}"
 
 @st.cache_data(ttl=1800)
+
+FANTASYLABS_PATH = os.path.join(CACHE_DIR, "fantasylabs_lineups.json")
+
+@st.cache_data(ttl=900)
+def fetch_fantasylabs_lineups():
+    """
+    Fetch FantasyLabs MLB confirmed lineups from public CloudFront endpoint.
+    URL: d3ttxfuywgi7br.cloudfront.net/fantasy/mlb/lineups/{M}_{D}_{YYYY}/default.json
+    No auth, no proxy needed. Returns batting order + injury status per player.
+    Use STRICTLY for lineup confirmation — not projections.
+    """
+    today = date.today()
+    m, d, y = today.month, today.day, today.year
+    url = f"https://d3ttxfuywgi7br.cloudfront.net/fantasy/mlb/lineups/{m}_{d}_{y}/default.json"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 BetCouncil/1.0"}, timeout=10)
+        if r.status_code != 200:
+            return load_json_data(FANTASYLABS_PATH, {})
+        data = r.json()
+        if not isinstance(data, list):
+            return load_json_data(FANTASYLABS_PATH, {})
+        lineups = {}
+        for player in data:
+            pname = player.get("PlayerName","") or player.get("Name","")
+            if not pname:
+                continue
+            team    = player.get("TeamName","") or player.get("Team","")
+            order   = int(player.get("LineupOrder", player.get("BattingOrder", 0)) or 0)
+            injury  = player.get("InjuryStatus","") or player.get("Injury","") or "Active"
+            active  = injury.strip().lower() in ("active","","none","healthy")
+            salaries = {
+                "dk": player.get("DraftKingsSalary", player.get("DKSalary", 0)),
+                "fd": player.get("FanDuelSalary",    player.get("FDSalary",  0)),
+            }
+            lineups[normalize_name(pname)] = {
+                "player": pname, "team": team,
+                "lineup_order": order, "active": active,
+                "injury_status": injury, "in_lineup": order > 0,
+                "salaries": salaries,
+                "fetched_at": datetime.now().strftime("%H:%M"),
+            }
+        if lineups:
+            save_json_data(FANTASYLABS_PATH, lineups)
+        return lineups
+    except (requests.RequestException, ValueError, KeyError) as e:
+        st.session_state.setdefault("errors",[]).append({
+            "source":"FantasyLabs","error":str(e)[:80],"time":datetime.now().strftime("%H:%M")
+        })
+        return load_json_data(FANTASYLABS_PATH, {})
+
+
+def get_fantasylabs_lineup_bonus(player, lineups=None):
+    """
+    Batting order bonus — only when lineups are confirmed (data exists).
+    Returns (edge_adj, order, note).
+    """
+    if lineups is None:
+        lineups = st.session_state.get("fantasylabs_lineups", {})
+    if not lineups:
+        return 0.0, 0, ""
+    data = lineups.get(normalize_name(player))
+    if data is None:
+        return 0.0, 0, ""
+    if not data.get("in_lineup"):
+        return -0.05, 0, "⚠️ Not in confirmed lineup"
+    if not data.get("active"):
+        return -0.05, 0, f"⚠️ {data.get('injury_status','Injured')}"
+    order = data.get("lineup_order", 0)
+    bonus_map = {1: (0.06, "✅ Leadoff #1 +6%"), 2: (0.05, "✅ Batting #2 +5%"),
+                 3: (0.05, "✅ Batting #3 +5%"), 4: (0.04, "✅ Cleanup #4 +4%"),
+                 5: (0.03, "✅ Batting #5 +3%")}
+    adj, note = bonus_map.get(order, (0.03, f"✅ In lineup #{order} +3%"))
+    return round(adj, 3), order, note
+
+
 def fetch_mlb_probable_pitchers():
     cache_path = os.path.join(CACHE_DIR, "mlb_pitchers.pkl")
     if os.path.exists(cache_path):
@@ -11202,6 +11277,10 @@ def load_sport_data(sport):
         _mlb_lineups = fetch_mlb_confirmed_lineups()
         if _mlb_lineups:
             st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
+        # FantasyLabs lineup feed — batting order + starter confirmation
+        _fl_lineups = fetch_fantasylabs_lineups()
+        if _fl_lineups:
+            st.session_state["fantasylabs_lineups"] = _fl_lineups
         st.session_state["mlb_pitchers"] = mlb_pitchers
     elif sport == "NHL":
         nhl_rolling = fetch_nhl_rolling_averages()
@@ -11968,6 +12047,17 @@ def load_sport_data(sport):
                     final_edge = round(final_edge + _usage_adj, 4)
 
         injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
+        # MLB: apply FantasyLabs batting order bonus
+        if sport == "MLB":
+            _fl_data = st.session_state.get("fantasylabs_lineups", {})
+            if _fl_data:
+                _fl_adj, _fl_order, _fl_note = get_fantasylabs_lineup_bonus(player, _fl_data)
+                if _fl_adj != 0:
+                    final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _fl_adj)), 4)
+                    tier = get_tier(final_edge, sport)
+                    if _fl_note:
+                        p["LineupStatus"] = _fl_note
+
         # NFL: add practice trend to injury flag
         if sport == "NFL" and not injury_flag:
             _practice = st.session_state.get("nfl_practice", {})
@@ -16673,6 +16763,33 @@ with tabs[9]:
 
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
+
+    # ── FantasyLabs MLB Lineups ──────────────────────────────
+    _fl_sys = st.session_state.get("fantasylabs_lineups", {})
+    if _fl_sys or st.session_state.get("last_sport") == "MLB":
+        st.markdown("---")
+        st.markdown("### ⚾ FantasyLabs MLB Lineups")
+        if _fl_sys:
+            _fl_in_lineup   = [v for v in _fl_sys.values() if v.get("in_lineup") and v.get("active")]
+            _fl_injured     = [v for v in _fl_sys.values() if not v.get("active")]
+            _fl_scratched   = [v for v in _fl_sys.values() if v.get("active") and not v.get("in_lineup")]
+            _fls1, _fls2, _fls3, _fls4 = st.columns(4)
+            _fls1.metric("Total Players", len(_fl_sys))
+            _fls2.metric("✅ In Lineup", len(_fl_in_lineup))
+            _fls3.metric("⚠️ Injured", len(_fl_injured))
+            _fls4.metric("❌ Scratched", len(_fl_scratched))
+            # Show leadoff hitters
+            _leadoffs = sorted([v for v in _fl_in_lineup if v.get("lineup_order") == 1],
+                               key=lambda x: x.get("team",""))
+            if _leadoffs:
+                st.caption(f"Leadoff hitters: {', '.join(f'{v[chr(34)+chr(112)+chr(108)+chr(97)+chr(121)+chr(101)+chr(114)+chr(34)]} ({v[chr(34)+chr(116)+chr(101)+chr(97)+chr(109)+chr(34)]})' for v in _leadoffs[:6])}")
+            # Show injured
+            if _fl_injured:
+                st.warning(f"⚠️ Injured players: {', '.join(v.get('player','') for v in _fl_injured[:5])}")
+            fetched = next((v.get("fetched_at","") for v in _fl_sys.values()), "")
+            st.caption(f"Last refresh: {fetched}")
+        else:
+            st.info("FantasyLabs lineups load with the MLB board. Typically posted 3-4h before first pitch.")
 
     # ── NHL Starting Goalies ────────────────────────────────
     _nhl_goalies_sys = st.session_state.get("nhl_starting_goalies", {})
