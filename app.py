@@ -14085,12 +14085,10 @@ with tabs[1]:
             _bg    = _r["_row_bg"]
             _e_str = f"+{_r['_edge_pct']}%" if _r["_edge_pct"] > 0 else f"{_r['_edge_pct']}%"
             _html_rows.append(
-                f'<div style="display:grid;grid-template-columns:'
-                f'180px 60px 100px 55px 50px 55px 45px 55px 55px 55px 50px 50px 50px 70px 60px;'
+                '<div style="display:grid;grid-template-columns:'
+                '180px 60px 100px 55px 50px 55px 45px 55px 55px 55px 50px 50px 50px 70px 60px;'
                 f'gap:4px;padding:5px 8px;background:{_bg};border-bottom:1px solid #1a2030;'
-                f'font-size:12px;align-items:center;cursor:pointer;" '
-                f'onmouseover="this.style.background='rgba(55,138,221,0.08)'" '
-                f'onmouseout="this.style.background='{_bg}'">'
+                'font-size:12px;align-items:center;">'
                 f'<span style="font-weight:600;color:#e8eaf0;">{_r["_player"][:22]}</span>'
                 f'<span style="color:#6a7a8a;">{_r["_team"][:5]}</span>'
                 f'<span style="color:#b0b8c8;">{_r["_prop"][:14]} {_r["_side"]}</span>'
