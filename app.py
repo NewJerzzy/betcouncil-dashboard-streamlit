@@ -17571,7 +17571,11 @@ with tabs[9]:
             _leadoffs = sorted([v for v in _fl_in_lineup if v.get("lineup_order") == 1],
                                key=lambda x: x.get("team",""))
             if _leadoffs:
-                st.caption(f"Leadoff hitters: {', '.join(f'{v[chr(34)+chr(112)+chr(108)+chr(97)+chr(121)+chr(101)+chr(114)+chr(34)]} ({v[chr(34)+chr(116)+chr(101)+chr(97)+chr(109)+chr(34)]})' for v in _leadoffs[:6])}")
+                _leadoff_names = ", ".join(
+                    f"{v.get('player','?')} ({v.get('team','?')})"
+                    for v in _leadoffs[:6]
+                )
+                st.caption(f"Leadoff hitters: {_leadoff_names}")
             # Show injured
             if _fl_injured:
                 st.warning(f"⚠️ Injured players: {', '.join(v.get('player','') for v in _fl_injured[:5])}")
