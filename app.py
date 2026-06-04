@@ -10261,54 +10261,125 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
 
 def generate_why_drivers(prop):
     """
-    Generates top 3 positive signal drivers and top downgrade risk
-    for a prop card. Used in Summary and Full Board lock cards.
-    Format: [(label, value_str, color), ...]
+    Full signal contribution table — every component of final edge.
+    Returns: [(label, value_str, color), ...] for drivers and risks.
     """
     drivers = []
-    risks = []
+    risks   = []
+    edge    = float(prop.get("Edge", 0) or 0)
 
-    edge = prop.get("Edge", 0)
-    sig_base    = prop.get("SignalBase", 0)
-    sig_def     = prop.get("SignalDefense", 0)
-    sig_loc     = prop.get("SignalLocation", 0)
-    sig_rest    = prop.get("SignalRest", 0)
-    sig_pace    = prop.get("SignalPace", 0)
-    sig_usage   = prop.get("SignalUsage", 0)
-    h2h_note    = prop.get("H2HNote", "")
-    pinnacle    = prop.get("PinnacleConfirms")
-    sharp       = prop.get("SharpFlag", "")
-    injury      = prop.get("Injury", "")
-    blowout     = prop.get("SignalBlowout", 0)
-    b2b         = prop.get("SignalRest", 0) < -0.05
-
-    signal_pairs = [
-        ("Base (avg>line)",   sig_base,   sig_base > 0.02),
-        ("Defense (weak opp)",sig_def,    sig_def > 0.01),
-        ("Home court",        sig_loc,    sig_loc > 0.01),
-        ("Usage boost",       sig_usage,  sig_usage > 0.01),
-        ("Fast pace",         sig_pace,   sig_pace > 0.01),
+    # ── Core model signals ──────────────────────────────────
+    core = [
+        ("Base (avg vs line)",   float(prop.get("SignalBase",     0) or 0)),
+        ("Defense matchup",      float(prop.get("SignalDefense",  0) or 0)),
+        ("Home/Away split",      float(prop.get("SignalLocation", 0) or 0)),
+        ("Rest advantage",       float(prop.get("SignalRest",     0) or 0)),
+        ("Pace factor",          float(prop.get("SignalPace",     0) or 0)),
+        ("Usage rate",           float(prop.get("SignalUsage",    0) or 0)),
+        ("Weather",              float(prop.get("SignalWeather",  0) or 0)),
+        ("H2H history",          float(prop.get("SignalH2H",      0) or 0)),
     ]
-    for label, val, positive in signal_pairs:
-        if positive and val > 0.005:
-            drivers.append((label, f"+{val:.1%}", "#22c55e"))
-        elif not positive and val < -0.005:
-            risks.append((label, f"{val:.1%}", "#e04040"))
+    for label, val in core:
+        if abs(val) >= 0.005:
+            c = "#22c55e" if val > 0 else "#e04040"
+            s = "+" if val > 0 else ""
+            (drivers if val > 0 else risks).append((label, f"{s}{val*100:.1f}%", c))
 
-    if h2h_note and "%" in h2h_note:
-        drivers.append(("H2H history", h2h_note, "#22c55e"))
-    if pinnacle is True:
-        drivers.append(("Pinnacle confirms", "📌", "#22c55e"))
-    if sharp and "↑" in sharp:
-        drivers.append(("Sharp money", "aligned", "#22c55e"))
-    if injury:
-        risks.append(("Injury flag", injury[:20], "#e04040"))
-    if blowout < -0.02:
-        risks.append(("Blowout risk", f"{blowout:.1%}", "#e8a020"))
-    if b2b:
-        risks.append(("B2B fatigue", "-8%", "#e8a020"))
+    # ── Market move quality ─────────────────────────────────
+    mmq = int(prop.get("MarketMoveQuality", 0) or 0)
+    mmq_adj = {2:0.02, 1:0.01, 0:0.0, -1:-0.01, -2:-0.02}.get(mmq, 0)
+    if abs(mmq_adj) >= 0.01:
+        c = "#22c55e" if mmq_adj > 0 else "#e04040"
+        lbl = "Sharp market move" if mmq >= 2 else "Soft market move"
+        (drivers if mmq_adj > 0 else risks).append((lbl, f"{'+' if mmq_adj>0 else ''}{mmq_adj*100:.0f}%", c))
+    if prop.get("PinnacleConfirms") is True:
+        drivers.append(("Pinnacle confirms", "+📌", "#22c55e"))
+    if "↑" in str(prop.get("SharpFlag","")):
+        drivers.append(("Sharp money aligned", "+✅", "#22c55e"))
 
-    return drivers[:3], risks[:1]
+    # ── Minutes stability ───────────────────────────────────
+    mins_adj = {"STABLE":0.01,"MODERATE":0.0,"VOLATILE":-0.01,"HIGH_RISK":-0.02}.get(prop.get("MinutesStability",""),0)
+    if abs(mins_adj) >= 0.01:
+        c = "#22c55e" if mins_adj > 0 else "#e04040"
+        lbl = f"Minutes {'stable' if mins_adj>0 else 'volatile'}"
+        (drivers if mins_adj > 0 else risks).append((lbl, f"{'+' if mins_adj>0 else ''}{mins_adj*100:.0f}%", c))
+
+    # ── Volatility ──────────────────────────────────────────
+    risk_adj = {"LOW":0.01,"MEDIUM":0.0,"HIGH":-0.01,"EXTREME":-0.02}.get(prop.get("RiskLevel",""),0)
+    if abs(risk_adj) >= 0.01:
+        c = "#22c55e" if risk_adj > 0 else "#e04040"
+        lbl = f"Stat volatility ({prop.get('RiskLevel','').lower()})"
+        (drivers if risk_adj > 0 else risks).append((lbl, f"{'+' if risk_adj>0 else ''}{risk_adj*100:.0f}%", c))
+
+    # ── FantasyLabs ─────────────────────────────────────────
+    batting = int(prop.get("BattingOrder",0) or 0)
+    lineup  = str(prop.get("LineupStatus",""))
+    if batting > 0 and lineup:
+        import re as _re
+        m = _re.search(r'([+-]?\d+)%', lineup)
+        lfl = int(m.group(1)) if m else 0
+        if abs(lfl) >= 1:
+            c = "#22c55e" if lfl > 0 else "#e04040"
+            (drivers if lfl > 0 else risks).append((f"Batting #{batting} (FL)", f"{'+' if lfl>0 else ''}{lfl}%", c))
+    elif "Not in lineup" in lineup:
+        risks.append(("Not in lineup (FL)", "-5.0%", "#e04040"))
+
+    # ── DFF PropStats ───────────────────────────────────────
+    dff_hr = float(prop.get("DFFHitRateL10",0) or 0)
+    dff_n  = int(prop.get("DFFGamesTotal",0) or 0)
+    if dff_n >= 5:
+        da = 0.02 if dff_hr>=0.70 else 0.01 if dff_hr>=0.60 else -0.02 if dff_hr<=0.30 else -0.01 if dff_hr<=0.40 else 0
+        if abs(da) >= 0.01:
+            c = "#22c55e" if da > 0 else "#e04040"
+            (drivers if da > 0 else risks).append((f"DFF L{dff_n} ({dff_hr:.0%} hit rate)", f"{'+' if da>0 else ''}{da*100:.0f}%", c))
+
+    # ── DFF Teammate ────────────────────────────────────────
+    dff_sig = str(prop.get("DFFSignal",""))
+    if "📈" in dff_sig:
+        drivers.append(("DFF teammate OUT (boost)", "+3.0%", "#22c55e"))
+    elif "📉" in dff_sig:
+        risks.append(("DFF teammate OUT (fade)", "-3.0%", "#e04040"))
+
+    # ── Role change ─────────────────────────────────────────
+    rc = prop.get("RoleChange")
+    if isinstance(rc, dict):
+        ra = float(rc.get("edge_adj",0) or 0)
+        if abs(ra) >= 0.01:
+            c = "#22c55e" if ra > 0 else "#e04040"
+            (drivers if ra > 0 else risks).append(("Role change", f"{'+' if ra>0 else ''}{ra*100:.0f}%", c))
+
+    # ── Risks ───────────────────────────────────────────────
+    if prop.get("Injury"):
+        risks.append(("Injury flag", str(prop.get("Injury",""))[:20], "#e04040"))
+    if float(prop.get("SignalBlowout",0) or 0) < -0.02:
+        risks.append(("Blowout risk", f"{float(prop.get('SignalBlowout',0))*100:.1f}%", "#e8a020"))
+    if float(prop.get("SignalRest",0) or 0) < -0.05:
+        risks.append(("B2B fatigue", "-8.0%", "#e8a020"))
+
+    return drivers[:6], risks[:4]
+
+
+def render_signal_contribution_table(prop):
+    """Render signal contribution as HTML table with final edge total."""
+    drivers, risks = generate_why_drivers(prop)
+    final_pct = round(float(prop.get("Edge",0) or 0) * 100, 1)
+    all_rows  = drivers + risks
+    if not all_rows:
+        return ""
+    rows_html = "".join(
+        f'<tr><td style="padding:3px 8px;color:#b0b8c8;font-size:11px;">{lbl}</td>'
+        f'<td style="padding:3px 8px;text-align:right;font-weight:700;color:{col};font-size:11px;">{val}</td></tr>'
+        for lbl, val, col in all_rows
+    )
+    sign  = "+" if final_pct > 0 else ""
+    fcol  = "#22c55e" if final_pct >= 5 else "#e8a020" if final_pct >= 2 else "#6a7a8a"
+    return (
+        f'<table style="width:100%;border-collapse:collapse;">{rows_html}'
+        f'<tr style="border-top:1px solid #2a3a50;">'
+        f'<td style="padding:4px 8px;color:#e8eaf0;font-weight:700;font-size:12px;">Final Edge</td>'
+        f'<td style="padding:4px 8px;text-align:right;font-weight:700;color:{fcol};font-size:13px;">{sign}{final_pct}%</td>'
+        f'</tr></table>'
+    )
 
 
 def generate_gem_summary():
@@ -14283,18 +14354,16 @@ with tabs[0]:
                 </div>
             </div>"""
             components.html(_lock_html, height=220, scrolling=False)
-            # ── Why This Is A Play ──
-            _why_drivers, _why_risks = generate_why_drivers(lock_prop)
-            if _why_drivers or _why_risks:
-                _why_html = '<div style="background:#060a10;border:1px solid #1e2d3d;border-top:none;border-radius:0 0 8px 8px;padding:0.5rem 1rem;margin-top:-4px;margin-bottom:8px;">'
-                if _why_drivers:
-                    _why_html += '<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Top Drivers: </span>'
-                    _why_html += " &nbsp;·&nbsp; ".join(f'<span style="color:{c};font-size:11px;">{l} <b>{v}</b></span>' for l,v,c in _why_drivers)
-                if _why_risks:
-                    _why_html += '&nbsp;&nbsp;<span style="color:#6a7a8a;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Risk: </span>'
-                    _why_html += " · ".join(f'<span style="color:{c};font-size:11px;">{l} {v}</span>' for l,v,c in _why_risks)
-                _why_html += '</div>'
-                st.markdown(_why_html, unsafe_allow_html=True)
+            # ── Why This Is A Play — Signal Contribution Table ──
+            _sig_table = render_signal_contribution_table(lock_prop)
+            if _sig_table:
+                st.markdown(
+                    f'<div style="background:#060a10;border:1px solid #1e2d3d;'
+                    f'border-top:none;border-radius:0 0 8px 8px;'
+                    f'padding:0.5rem 1rem;margin-top:-4px;margin-bottom:8px;">'
+                    f'{_sig_table}</div>',
+                    unsafe_allow_html=True
+                )
             # Track from Summary tab lock card
             _tlk_key = f"sum_track_{lock_prop.get('Player','').replace(' ','_')[:15]}"
             if st.button("📝 Track This Bet", key=_tlk_key, type="secondary"):
