@@ -4070,6 +4070,18 @@ def fetch_dff_propstats(player_id, sport, metric, line, team="",
     
     try:
         r = requests.get(url, headers=DFF_HEADERS, params=params, timeout=15)
+        
+        # Log actual URL once per session for diagnostics
+        _req_url = r.url if hasattr(r, 'url') else url
+        _url_log = st.session_state.get("dff_url_log", [])
+        if not any(l.get("player_id") == player_id and l.get("metric") == metric_key 
+                   for l in _url_log):
+            _url_log.append({
+                "player_id": player_id, "metric": metric_key,
+                "url": _req_url, "status": r.status_code,
+                "time": datetime.now().strftime("%H:%M"),
+            })
+            st.session_state["dff_url_log"] = _url_log[-20:]  # keep last 20
         if r.status_code not in (200, 304):
             st.session_state.setdefault("errors",[]).append({
                 "source": "DFF PropStats",
@@ -17815,6 +17827,7 @@ with tabs[9]:
                         st.caption(f"  {_hd['player']}: WITH {_hd['with_val']:.1f} / WITHOUT {_hd['without_val']:.1f} PRA")
         # PropStats log
         _ps_log = st.session_state.get("dff_propstats_log", [])
+        _url_log = st.session_state.get("dff_url_log", [])
         if _ps_log:
             _ps_success = [l for l in _ps_log if l.get("result") == "success"]
             _ps_empty   = [l for l in _ps_log if l.get("result") == "no_data"]
@@ -17822,6 +17835,10 @@ with tabs[9]:
             if _ps_success:
                 for _psl in _ps_success[-3:]:
                     st.caption(f"  ✅ {_psl.get('metric','')} | hit rate: {_psl.get('hit_rate',0):.0%} | {_psl.get('games',0)} games")
+        if _url_log:
+            with st.expander("🔗 DFF Request URLs (diagnostics)"):
+                for _ul in _url_log[-10:]:
+                    st.code(f"{_ul.get('time','')} [{_ul.get('status','')}] {_ul.get('url','')}", language=None)
 
         # Player ID registration
         with st.expander("➕ Register DFF Player ID"):
