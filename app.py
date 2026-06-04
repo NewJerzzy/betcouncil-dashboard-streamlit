@@ -3698,6 +3698,284 @@ def get_golf_player_edge(player_name, leaderboard=None, odds=None):
     return round(adj, 3), " | ".join(notes)
 
 
+# ═══════════════════════════════════════════════════════════════
+# DFF (DAILYFANTASYFUEL) TEAMMATE IMPACT MODULE
+# Confirmed endpoint: /rosterfilter/{SPORT}/{TEAM}/{DATE}/{PLAYERID}/ALL
+# Example: dailyfantasyfuel.com/rosterfilter/NBA/SA/2026-06-05/164B7E/ALL
+#
+# Returns: teammate roster with AVG Mins, AVG PRA, with/without data
+# Use as CONFIRMATION SIGNAL ONLY — never overrides Pinnacle EV
+# Weight: +1% to +3% max
+# ═══════════════════════════════════════════════════════════════
+
+DFF_PATH      = os.path.join(CACHE_DIR, "dff_rosterfilter.json")
+DFF_HEADERS   = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+    "Accept":     "application/json, */*",
+    "Referer":    "https://www.dailyfantasyfuel.com/",
+    "Origin":     "https://www.dailyfantasyfuel.com",
+}
+
+DFF_SPORT_MAP = {
+    "NBA":  "NBA",
+    "NFL":  "NFL",
+    "MLB":  "MLB",
+    "NHL":  "NHL",
+    "WNBA": "WNBA",
+}
+
+DFF_TEAM_MAP = {
+    # NBA
+    "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
+    "Golden State Warriors": "GSW", "Houston Rockets": "HOU", "Indiana Pacers": "IND",
+    "LA Clippers": "LAC", "Los Angeles Clippers": "LAC", "Los Angeles Lakers": "LAL",
+    "Memphis Grizzlies": "MEM", "Miami Heat": "MIA", "Milwaukee Bucks": "MIL",
+    "Minnesota Timberwolves": "MIN", "New Orleans Pelicans": "NOP",
+    "New York Knicks": "NYK", "Oklahoma City Thunder": "OKC", "Orlando Magic": "ORL",
+    "Philadelphia 76ers": "PHI", "Phoenix Suns": "PHX", "Portland Trail Blazers": "POR",
+    "Sacramento Kings": "SAC", "San Antonio Spurs": "SA", "Toronto Raptors": "TOR",
+    "Utah Jazz": "UTA", "Washington Wizards": "WAS",
+    # WNBA
+    "Las Vegas Aces": "LV", "New York Liberty": "NY", "Seattle Storm": "SEA",
+    "Chicago Sky": "CHI", "Connecticut Sun": "CON", "Dallas Wings": "DAL",
+    "Indiana Fever": "IND", "Los Angeles Sparks": "LA", "Minnesota Lynx": "MIN",
+    "Phoenix Mercury": "PHX", "Washington Mystics": "WAS", "Atlanta Dream": "ATL",
+}
+
+
+@st.cache_data(ttl=1800)
+def fetch_dff_rosterfilter(sport, team, player_id, date_str=None):
+    """
+    Fetch DFF teammate roster context for a player.
+    
+    Endpoint: dailyfantasyfuel.com/rosterfilter/{SPORT}/{TEAM}/{DATE}/{PLAYERID}/ALL
+    Confirmed via DevTools — returns teammate AVG Mins, AVG PRA, with/without data.
+    
+    Returns dict with:
+      roster:      list of {player, avg_mins, avg_pra, with_val, without_val}
+      dependency:  HIGH/MEDIUM/LOW for each key teammate
+    """
+    if not date_str:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    sport_key = DFF_SPORT_MAP.get(sport, sport)
+    team_abbr  = DFF_TEAM_MAP.get(team, team)
+    
+    cache_key = f"{sport_key}_{team_abbr}_{player_id}_{date_str}"
+    
+    # Check memory cache first
+    cached = st.session_state.get("dff_cache", {})
+    if cache_key in cached:
+        return cached[cache_key]
+    
+    url = f"https://www.dailyfantasyfuel.com/rosterfilter/{sport_key}/{team_abbr}/{date_str}/{player_id}/ALL"
+    
+    try:
+        r = requests.get(url, headers=DFF_HEADERS, timeout=10)
+        if r.status_code not in (200, 304):
+            return {}
+        
+        data = r.json() if r.text else {}
+        if not data:
+            return {}
+        
+        # Parse roster — DFF returns "Current Roster" list
+        roster_raw = data.get("Current Roster", data.get("roster", data.get("teammates", [])))
+        
+        parsed_roster = []
+        for entry in roster_raw:
+            pname    = entry.get("player", entry.get("name", ""))
+            avg_mins = float(entry.get("AVG Mins", entry.get("avg_mins", 0)) or 0)
+            avg_pra  = float(entry.get("AVG PRA",  entry.get("avg_pra",  0)) or 0)
+            # With/without if available
+            with_val    = float(entry.get("With",    entry.get("with",    0)) or 0)
+            without_val = float(entry.get("Without", entry.get("without", 0)) or 0)
+            
+            if not pname:
+                continue
+            
+            # Compute dependency
+            if with_val > 0 and without_val > 0:
+                diff_pct = abs(with_val - without_val) / max(with_val, without_val)
+                if diff_pct >= 0.15:
+                    dependency = "HIGH"
+                elif diff_pct >= 0.07:
+                    dependency = "MEDIUM"
+                else:
+                    dependency = "LOW"
+            else:
+                dependency = "UNKNOWN"
+            
+            parsed_roster.append({
+                "player":      pname,
+                "avg_mins":    avg_mins,
+                "avg_pra":     avg_pra,
+                "with_val":    with_val,
+                "without_val": without_val,
+                "dependency":  dependency,
+            })
+        
+        result = {
+            "roster":     parsed_roster,
+            "player_id":  player_id,
+            "team":       team_abbr,
+            "date":       date_str,
+            "raw":        data,
+        }
+        
+        # Cache in session state
+        cached[cache_key] = result
+        st.session_state["dff_cache"] = cached
+        
+        # Persist to disk
+        all_cached = load_json_data(DFF_PATH, {})
+        all_cached[cache_key] = result
+        if len(all_cached) > 500:
+            oldest = sorted(all_cached.keys())[0]
+            del all_cached[oldest]
+        save_json_data(DFF_PATH, all_cached)
+        
+        return result
+    
+    except (requests.RequestException, ValueError, KeyError) as e:
+        st.session_state.setdefault("errors", []).append({
+            "source": "DFF", "error": str(e)[:80],
+            "time": datetime.now().strftime("%H:%M")
+        })
+        return {}
+
+
+def compute_dff_teammate_impact(player, team, sport, prop_type, stat_line,
+                                 dff_data=None, injury_data=None):
+    """
+    Compute DFF teammate impact signal for a prop.
+    
+    Checks if key teammates are injured/out and adjusts edge.
+    
+    Example:
+      Castle PRA prop
+      Wembanyama OUT
+      DFF: Castle PRA +22% without Wembanyama
+      → edge boost +2%
+    
+    Weight: +1% to +3% max — confirmation only, never overrides Pinnacle EV.
+    Returns (edge_adj, signal_dict, display_note)
+    """
+    if dff_data is None:
+        # Try to get from cache
+        cache = st.session_state.get("dff_cache", {})
+        dff_data = next(
+            (v for k, v in cache.items()
+             if k.startswith(f"{sport}_{DFF_TEAM_MAP.get(team,team)}")),
+            {}
+        )
+    
+    if not dff_data or not dff_data.get("roster"):
+        return 0.0, {}, ""
+    
+    roster  = dff_data["roster"]
+    injuries = injury_data or st.session_state.get("injuries", {})
+    
+    adj         = 0.0
+    signals     = []
+    top_impacts = []
+    
+    for teammate in roster:
+        tname     = teammate["player"]
+        with_val  = teammate.get("with_val", 0)
+        wo_val    = teammate.get("without_val", 0)
+        dep       = teammate.get("dependency", "UNKNOWN")
+        avg_pra   = teammate.get("avg_pra", 0)
+        
+        # Skip if no with/without data
+        if with_val <= 0 or wo_val <= 0:
+            continue
+        
+        # Check if teammate is out/injured
+        tname_norm = normalize_name(tname)
+        inj_status = ""
+        if isinstance(injuries, dict):
+            inj_entry = injuries.get(tname_norm, injuries.get(tname, {}))
+            if isinstance(inj_entry, dict):
+                inj_status = inj_entry.get("status","").lower()
+            elif isinstance(inj_entry, str):
+                inj_status = inj_entry.lower()
+        
+        teammate_out = inj_status in ("out","doubtful","dtd","ir","inactive")
+        
+        if dep == "HIGH":
+            if teammate_out:
+                # Key teammate out — use WITHOUT value
+                pct_change = (wo_val - with_val) / max(with_val, 1)
+                if pct_change > 0.10:
+                    # Player improves without this teammate
+                    edge_boost = min(0.03, pct_change * 0.15)
+                    adj += edge_boost
+                    signals.append({
+                        "teammate": tname,
+                        "status":   "OUT",
+                        "with":     round(with_val,1),
+                        "without":  round(wo_val,1),
+                        "change":   f"+{pct_change:.0%}",
+                        "direction":"BOOST",
+                    })
+                    top_impacts.append(
+                        f"📈 {tname} OUT: {round(wo_val,1)} vs {round(with_val,1)} PRA ({pct_change:+.0%})"
+                    )
+                elif pct_change < -0.10:
+                    # Player regresses without this teammate
+                    edge_cut = max(-0.03, pct_change * 0.15)
+                    adj += edge_cut
+                    signals.append({
+                        "teammate": tname,
+                        "status":   "OUT",
+                        "with":     round(with_val,1),
+                        "without":  round(wo_val,1),
+                        "change":   f"{pct_change:.0%}",
+                        "direction":"FADE",
+                    })
+                    top_impacts.append(
+                        f"📉 {tname} OUT: {round(wo_val,1)} vs {round(with_val,1)} PRA ({pct_change:+.0%})"
+                    )
+            else:
+                # Key teammate IN — use WITH value (normal)
+                signals.append({
+                    "teammate": tname,
+                    "status":   "IN",
+                    "with":     round(with_val,1),
+                    "without":  round(wo_val,1),
+                    "change":   "—",
+                    "direction":"NORMAL",
+                })
+    
+    # Cap total adjustment
+    adj = round(max(-0.03, min(0.03, adj)), 3)
+    
+    display = " | ".join(top_impacts[:2]) if top_impacts else ""
+    
+    return adj, signals, display
+
+
+def get_dff_player_id(player_name, sport="NBA"):
+    """
+    Get DFF player ID from session cache or pre-built lookup.
+    DFF uses hex IDs (e.g. 164B7E for Wembanyama).
+    These need to be discovered from DevTools or a player list endpoint.
+    """
+    # Session cache of discovered IDs
+    id_cache = st.session_state.get("dff_player_ids", {})
+    return id_cache.get(normalize_name(player_name), "")
+
+
+def register_dff_player_id(player_name, player_id):
+    """Store a discovered DFF player ID for future lookups."""
+    cache = st.session_state.get("dff_player_ids", {})
+    cache[normalize_name(player_name)] = player_id
+    st.session_state["dff_player_ids"] = cache
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -12328,6 +12606,25 @@ def load_sport_data(sport):
                     final_edge = round(final_edge + _usage_adj, 4)
 
         injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
+        # DFF Teammate Impact — NBA/WNBA primarily
+        if sport in ("NBA","WNBA"):
+            _dff_cache = st.session_state.get("dff_cache", {})
+            if _dff_cache:
+                _dff_team = p.get("Team","")
+                _dff_adj, _dff_signals, _dff_note = compute_dff_teammate_impact(
+                    player, _dff_team, sport,
+                    stat_norm, line,
+                    dff_data=None,
+                    injury_data=injuries,
+                )
+                if _dff_adj != 0:
+                    final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _dff_adj)), 4)
+                    tier = get_tier(final_edge, sport)
+                if _dff_note:
+                    p["DFFSignal"] = _dff_note
+                if _dff_signals:
+                    p["DFFRosterContext"] = _dff_signals
+
         # All sports: apply FantasyLabs lineup bonus
         # MLB: batting order bonus (leadoff +6%, etc.)
         # NBA/WNBA: starter confirmation (+3%)
@@ -12381,6 +12678,8 @@ def load_sport_data(sport):
             "ProjConfLabel":  _proj_conf.get("label","MODERATE"),
             "MarketVsModel":  _mkt_vs_model,
             "RoleChange":     _role_change,
+            "DFFSignal":      p.get("DFFSignal",""),
+            "DFFRosterContext": p.get("DFFRosterContext",[]),
             "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
@@ -14031,6 +14330,7 @@ with tabs[1]:
                 "_szn":        str(_szn)  if _szn  else "—",
                 "_rel":        _rel or "—",
                 "_source":     _p.get("Source",""),
+                "_dff_signal": _p.get("DFFSignal",""),
             })
 
         # Sort
@@ -17220,6 +17520,38 @@ with tabs[9]:
 
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
+
+    # ── DFF Teammate Cache ──────────────────────────────────
+    _dff_cache_sys = st.session_state.get("dff_cache", {})
+    _dff_ids_sys   = st.session_state.get("dff_player_ids", {})
+    if _dff_cache_sys or _dff_ids_sys:
+        st.markdown("---")
+        st.markdown("### 🔗 DFF Teammate Impact")
+        st.caption("DailyFantasyFuel rosterfilter — teammate with/without context for NBA/WNBA props.")
+        _dc1, _dc2 = st.columns(2)
+        _dc1.metric("Cached Lookups", len(_dff_cache_sys))
+        _dc2.metric("Known Player IDs", len(_dff_ids_sys))
+        if _dff_cache_sys:
+            for _ck, _cv in list(_dff_cache_sys.items())[:3]:
+                _roster = _cv.get("roster",[])
+                _high_dep = [r for r in _roster if r.get("dependency")=="HIGH"]
+                if _high_dep:
+                    st.caption(f"**{_ck}** — {len(_high_dep)} high-dependency teammates")
+                    for _hd in _high_dep[:2]:
+                        st.caption(f"  {_hd['player']}: WITH {_hd['with_val']:.1f} / WITHOUT {_hd['without_val']:.1f} PRA")
+        # Player ID registration
+        with st.expander("➕ Register DFF Player ID"):
+            _reg_player = st.text_input("Player Name", key="dff_reg_player")
+            _reg_id     = st.text_input("DFF Player ID (from DevTools URL)", key="dff_reg_id")
+            _reg_team   = st.text_input("Team abbreviation (e.g. SA, LAL)", key="dff_reg_team")
+            if st.button("Register", key="dff_reg_btn"):
+                if _reg_player and _reg_id:
+                    register_dff_player_id(_reg_player, _reg_id)
+                    if _reg_team:
+                        _team_map = st.session_state.get("dff_team_map",{})
+                        _team_map[normalize_name(_reg_player)] = _reg_team
+                        st.session_state["dff_team_map"] = _team_map
+                    st.success(f"Registered {_reg_player} → {_reg_id}")
 
     # ── FantasyLabs MLB Lineups ──────────────────────────────
     _fl_sys = st.session_state.get("fantasylabs_lineups", {})
