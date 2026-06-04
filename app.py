@@ -5025,19 +5025,37 @@ def get_clv_edge_adjustment(sport, tier):
 
 FANTASYLABS_PATH = os.path.join(CACHE_DIR, "fantasylabs_lineups.json")
 
+FL_SPORT_MAP = {
+    "MLB":  "mlb",
+    "NBA":  "nba",
+    "NFL":  "nfl",
+    "NHL":  "nhl",
+    "WNBA": "wnba",
+}
+FL_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+    "Referer":    "https://www.fantasylabs.com/",
+    "Origin":     "https://www.fantasylabs.com",
+    "Accept":     "application/json, */*",
+}
+
 @st.cache_data(ttl=900)
-def fetch_fantasylabs_lineups():
+def fetch_fantasylabs_lineups(sport="MLB"):
     """
-    Fetch FantasyLabs MLB confirmed lineups from public CloudFront endpoint.
-    URL: d3ttxfuywgi7br.cloudfront.net/fantasy/mlb/lineups/{M}_{D}_{YYYY}/default.json
-    No auth, no proxy needed. Returns batting order + injury status per player.
+    Fetch FantasyLabs confirmed lineups from public CloudFront endpoint.
+    Requires Referer: https://www.fantasylabs.com/ header — confirmed working.
+    
+    Supports: MLB, NBA, NFL, NHL, WNBA
+    URL: d3ttxfuywgi7br.cloudfront.net/fantasy/{sport}/lineups/{M}_{D}_{YYYY}/default.json
+    
     Use STRICTLY for lineup confirmation — not projections.
     """
+    sport_slug = FL_SPORT_MAP.get(sport, sport.lower())
     today = date.today()
     m, d, y = today.month, today.day, today.year
-    url = f"https://d3ttxfuywgi7br.cloudfront.net/fantasy/mlb/lineups/{m}_{d}_{y}/default.json"
+    url = f"https://d3ttxfuywgi7br.cloudfront.net/fantasy/{sport_slug}/lineups/{m}_{d}_{y}/default.json"
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 BetCouncil/1.0"}, timeout=10)
+        r = requests.get(url, headers=FL_HEADERS, timeout=10)
         if r.status_code != 200:
             return load_json_data(FANTASYLABS_PATH, {})
         data = r.json()
@@ -11276,7 +11294,8 @@ def load_sport_data(sport):
         if _mlb_lineups:
             st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
         # FantasyLabs lineup feed — batting order + starter confirmation
-        _fl_lineups = fetch_fantasylabs_lineups()
+        # Works for all 5 sports with Referer header
+        _fl_lineups = fetch_fantasylabs_lineups(sport)
         if _fl_lineups:
             st.session_state["fantasylabs_lineups"] = _fl_lineups
         st.session_state["mlb_pitchers"] = mlb_pitchers
@@ -12045,8 +12064,12 @@ def load_sport_data(sport):
                     final_edge = round(final_edge + _usage_adj, 4)
 
         injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
-        # MLB: apply FantasyLabs batting order bonus
-        if sport == "MLB":
+        # All sports: apply FantasyLabs lineup bonus
+        # MLB: batting order bonus (leadoff +6%, etc.)
+        # NBA/WNBA: starter confirmation (+3%)
+        # NFL: active/inactive status
+        # NHL: skater line confirmation
+        if sport in ("MLB","NBA","WNBA","NFL","NHL"):
             _fl_data = st.session_state.get("fantasylabs_lineups", {})
             if _fl_data:
                 _fl_adj, _fl_order, _fl_note = get_fantasylabs_lineup_bonus(player, _fl_data)
