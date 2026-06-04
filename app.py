@@ -3130,7 +3130,17 @@ def fetch_kalshi_markets(sport="NBA"):
             if r.status_code != 200:
                 continue
             data = r.json()
+            if not isinstance(data, (dict, list)):
+                st.session_state.setdefault("errors",[]).append({
+                    "source":"Kalshi","error":"Unexpected response format","time":datetime.now().strftime("%H:%M")
+                })
+                continue
             markets = data.get("markets", data if isinstance(data, list) else [])
+            if not isinstance(markets, list):
+                st.session_state.setdefault("errors",[]).append({
+                    "source":"Kalshi","error":f"markets field missing or wrong type: {type(markets)}","time":datetime.now().strftime("%H:%M")
+                })
+                continue
             for mkt in markets:
                 yes_price = float(mkt.get("yes_bid", mkt.get("last_price", 50)) or 50)
                 no_price  = 100 - yes_price
@@ -3148,7 +3158,7 @@ def fetch_kalshi_markets(sport="NBA"):
                     "source":       "Kalshi",
                     "fetched_at":   datetime.now().strftime("%H:%M"),
                 })
-        except Exception as _ke:
+        except (requests.RequestException, ValueError, KeyError) as _ke:
             st.session_state.setdefault("errors",[]).append({"source":"Kalshi","error":str(_ke)[:80],"time":datetime.now().strftime("%H:%M")})
             continue
 
@@ -3214,7 +3224,7 @@ def fetch_polymarket_markets(sport="NBA"):
         if results:
             save_json_data(POLYMARKET_PATH, results)
         return results
-    except Exception as _pe:
+    except (requests.RequestException, ValueError, KeyError, json.JSONDecodeError) as _pe:
         st.session_state.setdefault("errors",[]).append({"source":"Polymarket","error":str(_pe)[:80],"time":datetime.now().strftime("%H:%M")})
         return load_json_data(POLYMARKET_PATH, [])
 
@@ -3342,7 +3352,7 @@ def fetch_covers_consensus(sport="MLB"):
             save_json_data(COVERS_PATH, results)
         return results
 
-    except Exception as _ce:
+    except (requests.RequestException, ValueError, KeyError, json.JSONDecodeError) as _ce:
         st.session_state.setdefault("errors",[]).append({"source":"Covers","error":str(_ce)[:80],"time":datetime.now().strftime("%H:%M")})
         return load_json_data(COVERS_PATH, [])
 
@@ -3372,51 +3382,60 @@ def compute_market_consensus(model_prob, player, prop, sport, game_analysis=None
     # Build normalized name tokens for exact matching (prevents Smith matching Will Smith)
     player_tokens = set(normalize_name(player).split())
     
+    # Use single list of {prob, volume} to guarantee alignment
+    market_entries = []
+
     # Match Kalshi markets — require ALL first+last name tokens to match
     for mkt in kalshi_data:
         event_tokens = set(normalize_name(mkt.get("event","")).split())
-        if len(player_tokens) >= 2 and player_tokens.issubset(event_tokens):
-            market_probs.append(mkt["implied_prob"])
-            sources.append(f"Kalshi({mkt['implied_prob']:.0%})")
-        elif len(player_tokens) == 1 and player_tokens.issubset(event_tokens):
-            market_probs.append(mkt["implied_prob"])
-            sources.append(f"Kalshi({mkt['implied_prob']:.0%})")
+        matched = (len(player_tokens) >= 2 and player_tokens.issubset(event_tokens)) or                   (len(player_tokens) == 1 and player_tokens.issubset(event_tokens))
+        if matched:
+            market_entries.append({
+                "prob":   mkt["implied_prob"],
+                "volume": float(mkt.get("volume", 1000)),
+                "source": f"Kalshi({mkt['implied_prob']:.0%})",
+            })
     
-    # Match Polymarket
+    # Match Polymarket — exact token matching
     for mkt in poly_data:
         q_tokens = set(normalize_name(mkt.get("question","")).split())
-        if len(player_tokens) >= 2 and player_tokens.issubset(q_tokens):
-            market_probs.append(mkt["implied_prob"])
-            sources.append(f"Polymarket({mkt['implied_prob']:.0%})")
-    
-    # Match Covers consensus (game-level, not player-level)
+        matched = len(player_tokens) >= 2 and player_tokens.issubset(q_tokens)
+        if matched:
+            market_entries.append({
+                "prob":   mkt["implied_prob"],
+                "volume": float(mkt.get("volume", 1000)),
+                "source": f"Polymarket({mkt['implied_prob']:.0%})",
+            })
+
+    # Match Covers consensus — by team name not sport string
     covers_game = None
-    if covers_data and game_analysis:
+    if covers_data:
+        home_t = (game_analysis or {}).get("home","") if game_analysis else ""
+        away_t = (game_analysis or {}).get("away","") if game_analysis else ""
         for _cd in covers_data:
-            _cd_lower = _cd.get("matchup","").lower()
-            if any(t.lower() in _cd_lower for t in [sport] if t):
+            _cd_matchup = _cd.get("matchup","").lower()
+            # Match by actual team names, not sport code
+            if home_t and away_t:
+                if (home_t.lower()[:4] in _cd_matchup or
+                    away_t.lower()[:4] in _cd_matchup):
+                    covers_game = _cd
+                    break
+            elif home_t and home_t.lower()[:4] in _cd_matchup:
                 covers_game = _cd
                 break
-    
-    if not market_probs:
+
+    if not market_entries:
         return None
-    
-    # Volume-weighted average — Polymarket $500k > Kalshi $500 in weight
-    market_volumes = []
-    for mkt in kalshi_data:
-        event = mkt.get("event","").lower()
-        if normalize_name(player) in event or any(w in event for w in normalize_name(player).split()[:2]):
-            market_volumes.append(float(mkt.get("volume", 1000)))
-    for mkt in poly_data:
-        question = mkt.get("question","").lower()
-        if normalize_name(player) in question or any(w in question for w in normalize_name(player).split()[:2]):
-            market_volumes.append(float(mkt.get("volume", 1000)))
-    
-    if market_volumes and len(market_volumes) == len(market_probs):
-        total_vol = sum(market_volumes)
-        consensus_prob = sum(p * v for p, v in zip(market_probs, market_volumes)) / total_vol if total_vol > 0 else sum(market_probs) / len(market_probs)
-    else:
-        consensus_prob = sum(market_probs) / len(market_probs)
+
+    # Volume-weighted average — guaranteed alignment via single list
+    total_vol = sum(e["volume"] for e in market_entries)
+    sources   = [e["source"] for e in market_entries]
+    consensus_prob = (
+        sum(e["prob"] * e["volume"] for e in market_entries) / total_vol
+        if total_vol > 0
+        else sum(e["prob"] for e in market_entries) / len(market_entries)
+    )
+    market_probs = [e["prob"] for e in market_entries]
     divergence     = model_prob - consensus_prob
     
     if divergence >= 0.08:
