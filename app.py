@@ -3467,6 +3467,53 @@ def compute_market_consensus(model_prob, player, prop, sport, game_analysis=None
 
 
 # ── Covers Public Fade Signal ────────────────────────────────────
+def compute_sharp_public_divergence(matchup, public_betting=None):
+    """
+    Full sharp/public divergence with RLM detection.
+    Replaces the basic sharp signal detection.
+    """
+    if public_betting is None:
+        public_betting = st.session_state.get("public_betting", {})
+    pb_data = None
+    for key, val in public_betting.items():
+        teams = val.get("teams", [])
+        if any(t.lower() in matchup.lower() for t in teams if t):
+            pb_data = val
+            break
+    if not pb_data:
+        return {}
+    sharp_sigs = pb_data.get("sharp_signals", [])
+    rlm_sigs   = pb_data.get("rlm_signals",   [])
+    result = {
+        "sharp_signals": sharp_sigs,
+        "rlm_signals":   rlm_sigs,
+        "has_sharp":     len(sharp_sigs) > 0,
+        "has_rlm":       len(rlm_sigs) > 0,
+        "max_strength":  max((r.get("strength",0) for r in rlm_sigs), default=0),
+        "ml_data":       pb_data.get("ml",{}),
+        "spread_data":   pb_data.get("spread",{}),
+        "total_data":    pb_data.get("total",{}),
+    }
+    strength = result["max_strength"]
+    result["edge_adj"] = round(0.02 if strength >= 3 else 0.01 if strength >= 2 else 0.005 if strength >= 1 else 0, 3)
+    return result
+
+
+def format_rlm_display(rlm_data):
+    """Format RLM/sharp signal for prop card Why section."""
+    if not rlm_data or not rlm_data.get("has_sharp"):
+        return ""
+    lines = []
+    for sig in rlm_data.get("sharp_signals", [])[:2]:
+        lines.append(sig)
+    for rlm in rlm_data.get("rlm_signals", [])[:1]:
+        lines.append(
+            f"↔️ RLM: {rlm.get('public_pct',0)}% tickets on {rlm.get('public_side','')} | "
+            f"{rlm.get('money_pct',0)}% money on {rlm.get('sharp_side','')} — sharp action detected"
+        )
+    return " | ".join(lines)
+
+
 def compute_public_fade_signal(matchup, sport, model_pick_side):
     """
     Public Fade: when 70%+ of public bets on one side,
@@ -8158,39 +8205,103 @@ def fetch_public_betting(sport):
                 money_pct = bet_info.get("money", {}).get("percent", 0)
                 total_pcts[side] = {"tickets": tickets_pct, "money": money_pct, "total": outcome.get("value", 0), "odds": outcome.get("odds", 0)}
             sharp_signals = []
-            home_ml = ml_pcts.get("home", {})
-            away_ml = ml_pcts.get("away", {})
+            rlm_signals   = []
+
+            def _sharp_divergence(tickets, money, side_label, market_type):
+                """
+                Compute sharp/public divergence score.
+                tickets% vs money% tells you who is betting.
+                Large money% vs small tickets% = sharp money.
+                """
+                if not tickets or not money:
+                    return 0, ""
+                diff = money - tickets
+                if diff >= 30:
+                    score = 3
+                    note  = f"💰 Strong sharp: {tickets}% tickets vs {money}% money on {side_label} ({market_type})"
+                elif diff >= 20:
+                    score = 2
+                    note  = f"💰 Sharp: {tickets}% tickets vs {money}% money on {side_label} ({market_type})"
+                elif diff >= 12:
+                    score = 1
+                    note  = f"⚡ Mild sharp: {tickets}% tickets vs {money}% money on {side_label}"
+                elif diff <= -20:
+                    score = -2
+                    note  = f"👥 Public trap: {tickets}% tickets vs {money}% money on {side_label}"
+                else:
+                    score = 0
+                    note  = ""
+                return score, note
+
+            # ML divergence
+            home_ml  = ml_pcts.get("home", {})
+            away_ml  = ml_pcts.get("away", {})
             if home_ml and away_ml:
-                home_ticket = home_ml.get("tickets", 0)
-                home_money = home_ml.get("money", 0)
-                away_ticket = away_ml.get("tickets", 0)
-                away_money = away_ml.get("money", 0)
-                if home_money - home_ticket >= 15:
-                    sharp_signals.append(f"🔥 Sharp ML: {team_abbrs[0]} ({home_money}% money vs {home_ticket}% tickets)")
-                elif home_ticket - home_money >= 15:
-                    sharp_signals.append(f"🔥 Sharp ML fade: {team_abbrs[1]} ({away_money}% money vs {away_ticket}% tickets)")
+                h_t = home_ml.get("tickets", 0)
+                h_m = home_ml.get("money",   0)
+                a_t = away_ml.get("tickets",  0)
+                a_m = away_ml.get("money",    0)
+                h_score, h_note = _sharp_divergence(h_t, h_m, team_abbrs[0] if team_abbrs else "Home", "ML")
+                a_score, a_note = _sharp_divergence(a_t, a_m, team_abbrs[1] if len(team_abbrs)>1 else "Away", "ML")
+                if h_score >= 1 and h_note: sharp_signals.append(h_note)
+                if a_score >= 1 and a_note: sharp_signals.append(a_note)
+                if h_score <= -2 and h_note: sharp_signals.append(h_note)
+
+            # Spread divergence
             home_sprd = spread_pcts.get("home", {})
             away_sprd = spread_pcts.get("away", {})
             if home_sprd and away_sprd:
-                h_t = home_sprd.get("tickets", 0)
-                h_m = home_sprd.get("money", 0)
-                a_t = away_sprd.get("tickets", 0)
-                a_m = away_sprd.get("money", 0)
-                if h_m - h_t >= 15:
-                    sharp_signals.append(f"⚡ Sharp spread: {team_abbrs[0]} ({h_m}% money vs {h_t}% tickets)")
-                elif a_m - a_t >= 15:
-                    sharp_signals.append(f"⚡ Sharp spread: {team_abbrs[1]} ({a_m}% money vs {a_t}% tickets)")
-            over_total = total_pcts.get("over", {})
+                hs_score, hs_note = _sharp_divergence(
+                    home_sprd.get("tickets",0), home_sprd.get("money",0),
+                    team_abbrs[0] if team_abbrs else "Home", "Spread"
+                )
+                as_score, as_note = _sharp_divergence(
+                    away_sprd.get("tickets",0), away_sprd.get("money",0),
+                    team_abbrs[1] if len(team_abbrs)>1 else "Away", "Spread"
+                )
+                if abs(hs_score) >= 1 and hs_note: sharp_signals.append(hs_note)
+                if abs(as_score) >= 1 and as_note: sharp_signals.append(as_note)
+
+            # Total divergence + RLM detection
+            over_total  = total_pcts.get("over",  {})
             under_total = total_pcts.get("under", {})
             if over_total:
-                o_t = over_total.get("tickets", 0)
-                o_m = over_total.get("money", 0)
+                o_t = over_total.get("tickets",  0)
+                o_m = over_total.get("money",    0)
                 u_t = under_total.get("tickets", 0) if under_total else 0
-                u_m = under_total.get("money", 0) if under_total else 0
-                if o_t >= 70 and u_m >= 40:
-                    sharp_signals.append(f"🔥 Sharp UNDER: {o_t}% public tickets OVER but {u_m}% money UNDER")
+                u_m = under_total.get("money",   0) if under_total else 0
+
+                # Sharp divergence on total
+                if o_t >= 65 and u_m >= 50:
+                    sharp_signals.append(
+                        f"🔥 Reverse total: {o_t}% tickets OVER but {u_m}% money UNDER\n"
+                        f"   Large bettors opposing public side"
+                    )
+                    rlm_signals.append({
+                        "type":        "TOTAL",
+                        "public_side": "OVER",
+                        "public_pct":  o_t,
+                        "sharp_side":  "UNDER",
+                        "money_pct":   u_m,
+                        "signal":      "RLM",
+                        "strength":    3 if (o_t >= 75 and u_m >= 55) else 2,
+                    })
+                elif u_t >= 65 and o_m >= 50:
+                    sharp_signals.append(
+                        f"🔥 Reverse total: {u_t}% tickets UNDER but {o_m}% money OVER\n"
+                        f"   Large bettors opposing public side"
+                    )
+                    rlm_signals.append({
+                        "type":        "TOTAL",
+                        "public_side": "UNDER",
+                        "public_pct":  u_t,
+                        "sharp_side":  "OVER",
+                        "money_pct":   o_m,
+                        "signal":      "RLM",
+                        "strength":    3 if (u_t >= 75 and o_m >= 55) else 2,
+                    })
                 elif o_t >= 80 and o_m >= 75:
-                    sharp_signals.append(f"✅ Sharp+Public OVER: {o_t}% tickets {o_m}% money")
+                    sharp_signals.append(f"✅ Sharp+Public OVER: {o_t}% tickets {o_m}% money aligned")
             num_bets = game.get("num_bets", 0)
             game_key = f"{team_abbrs[0]}_{team_abbrs[1]}"
             public_betting[game_key] = {
@@ -8200,6 +8311,7 @@ def fetch_public_betting(sport):
                 "spread": spread_pcts,
                 "total": total_pcts,
                 "sharp_signals": sharp_signals,
+                "rlm_signals":   rlm_signals,
                 "has_sharp": len(sharp_signals) > 0,
             }
         if public_betting:
@@ -10284,6 +10396,27 @@ def generate_why_drivers(prop):
             c = "#22c55e" if val > 0 else "#e04040"
             s = "+" if val > 0 else ""
             (drivers if val > 0 else risks).append((label, f"{s}{val*100:.1f}%", c))
+
+    # ── Sharp/Public Divergence + RLM ──────────────────────
+    _matchup_key = prop.get("Matchup", prop.get("matchup",""))
+    if _matchup_key:
+        _rlm = compute_sharp_public_divergence(_matchup_key)
+        if _rlm.get("has_rlm"):
+            _rlm_strength = _rlm.get("max_strength", 0)
+            _rlm_adj      = _rlm.get("edge_adj", 0)
+            for _rs in _rlm.get("rlm_signals",[])[:1]:
+                _pub  = _rs.get("public_pct",0)
+                _mon  = _rs.get("money_pct",0)
+                _ps   = _rs.get("public_side","")
+                _ss   = _rs.get("sharp_side","")
+                drivers.append((
+                    f"↔️ RLM: {_pub}% public {_ps}, {_mon}% $ {_ss}",
+                    f"+{_rlm_adj*100:.0f}%",
+                    "#22c55e"
+                ))
+        elif _rlm.get("has_sharp"):
+            for _ss in _rlm.get("sharp_signals",[])[:1]:
+                drivers.append(("⚡ Sharp signal", "+1.0%", "#22c55e"))
 
     # ── Market move quality ─────────────────────────────────
     mmq = int(prop.get("MarketMoveQuality", 0) or 0)
