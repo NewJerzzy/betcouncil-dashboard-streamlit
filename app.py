@@ -3520,6 +3520,184 @@ def compute_public_fade_signal(matchup, sport, model_pick_side):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════
+# GOLF MODULE
+# PGA Tour leaderboard + player odds from OddsAPI
+# Sources: ESPN (free) + OddsAPI (existing key)
+# ═══════════════════════════════════════════════════════════════
+
+GOLF_PATH = os.path.join(CACHE_DIR, "golf_data.json")
+
+GOLF_TOURNAMENT_MAP = {
+    "pga_championship":      "golf_pga_championship",
+    "masters":               "golf_masters_tournament",
+    "us_open":               "golf_us_open",
+    "the_open":              "golf_the_open_championship",
+    "players":               "golf_the_players_championship",
+    "fedex_cup":             "golf_fedex_cup_playoff",
+    "default":               "golf_pga_championship",
+}
+
+@st.cache_data(ttl=1800)
+def fetch_golf_leaderboard():
+    """
+    Fetch current PGA Tour leaderboard from ESPN.
+    Returns list of {name, position, score, today, thru, country}
+    """
+    try:
+        url = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        players = []
+        # ESPN golf scoreboard structure
+        events = data.get("events", [])
+        for event in events[:1]:  # current tournament only
+            tournament_name = event.get("name","")
+            competitions = event.get("competitions", [])
+            for comp in competitions[:1]:
+                for competitor in comp.get("competitors", []):
+                    athlete = competitor.get("athlete", {})
+                    stats   = competitor.get("statistics", [])
+                    name    = athlete.get("displayName","")
+                    pos     = competitor.get("status", {}).get("position", {}).get("displayName","")
+                    score   = competitor.get("score","")
+                    country = athlete.get("flag", {}).get("alt","")
+                    # Get score details from statistics
+                    today_score = ""
+                    thru        = ""
+                    for stat in stats:
+                        if stat.get("name") == "today":
+                            today_score = stat.get("displayValue","")
+                        elif stat.get("name") == "thru":
+                            thru = stat.get("displayValue","")
+                    if name:
+                        players.append({
+                            "name":       name,
+                            "position":   pos,
+                            "total":      score,
+                            "today":      today_score,
+                            "thru":       thru,
+                            "country":    country,
+                            "tournament": tournament_name,
+                        })
+        if players:
+            save_json_data(GOLF_PATH, {"leaderboard": players, "fetched": datetime.now().strftime("%H:%M")})
+        return players
+    except Exception as e:
+        st.session_state.setdefault("errors",[]).append({
+            "source":"Golf ESPN","error":str(e)[:80],"time":datetime.now().strftime("%H:%M")
+        })
+        return load_json_data(GOLF_PATH, {}).get("leaderboard", [])
+
+
+@st.cache_data(ttl=1800)
+def fetch_golf_odds(tournament_key="default"):
+    """
+    Fetch golf player odds from OddsAPI.
+    Returns player odds for win / top 5 / top 10 / top 20.
+    Used to:
+      1. Show market-implied win probability per player
+      2. Compare vs model prediction for edge
+      3. Support golf prop recommendations
+    """
+    if not ODDS_API_KEY:
+        return {}
+    sport_key = GOLF_TOURNAMENT_MAP.get(tournament_key, GOLF_TOURNAMENT_MAP["default"])
+    try:
+        url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+        params = {
+            "apiKey":      ODDS_API_KEY,
+            "regions":     "us",
+            "markets":     "outrights",
+            "oddsFormat":  "american",
+            "bookmakers":  "draftkings,fanduel,betmgm,pinnacle",
+        }
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code != 200:
+            return {}
+        events = r.json()
+        players = {}
+        for event in events[:1]:
+            for bm in event.get("bookmakers",[])[:2]:
+                for mkt in bm.get("markets",[]):
+                    if mkt.get("key") != "outrights":
+                        continue
+                    for outcome in mkt.get("outcomes",[]):
+                        name  = outcome.get("name","")
+                        price = outcome.get("price", 0)
+                        if name and price:
+                            # Convert American odds to implied probability
+                            if price > 0:
+                                impl_prob = 100 / (price + 100)
+                            else:
+                                impl_prob = abs(price) / (abs(price) + 100)
+                            if name not in players or impl_prob > players[name].get("implied_prob",0):
+                                players[name] = {
+                                    "name":         name,
+                                    "odds":         price,
+                                    "implied_prob": round(impl_prob, 4),
+                                    "book":         bm.get("key",""),
+                                }
+        return players
+    except Exception as e:
+        st.session_state.setdefault("errors",[]).append({
+            "source":"Golf OddsAPI","error":str(e)[:80],"time":datetime.now().strftime("%H:%M")
+        })
+        return {}
+
+
+def get_golf_player_edge(player_name, leaderboard=None, odds=None):
+    """
+    For a golf prop, compute edge based on:
+    1. Current tournament position (leaderboard)
+    2. Market-implied win probability (odds)
+    3. Position vs par (momentum signal)
+    
+    Returns edge adjustment for golf props.
+    """
+    if leaderboard is None:
+        leaderboard = st.session_state.get("golf_leaderboard", [])
+    if odds is None:
+        odds = st.session_state.get("golf_odds", {})
+    
+    name_lower = normalize_name(player_name)
+    adj = 0.0
+    notes = []
+    
+    # Check leaderboard position
+    for p in leaderboard:
+        if normalize_name(p.get("name","")) == name_lower:
+            pos_str = p.get("position","")
+            total   = p.get("total","E")
+            # Position bonus: top 10 players have momentum
+            try:
+                pos_num = int(pos_str.replace("T","").replace("t","") or 99)
+                if pos_num <= 3:
+                    adj += 0.05
+                    notes.append(f"🏆 T{pos_num} leaderboard +5%")
+                elif pos_num <= 10:
+                    adj += 0.03
+                    notes.append(f"📈 T{pos_num} leaderboard +3%")
+                elif pos_num > 30:
+                    adj -= 0.03
+                    notes.append(f"📉 #{pos_num} leaderboard -3%")
+            except:
+                pass
+            break
+    
+    # Check odds — low odds = market expects them to perform well
+    player_odds = odds.get(player_name, odds.get(normalize_name(player_name),{}))
+    if player_odds:
+        impl_prob = player_odds.get("implied_prob", 0)
+        if impl_prob >= 0.20:  # <400 odds = co-favorite
+            adj += 0.02
+            notes.append(f"⭐ Market fav ({player_odds['odds']:+d}) +2%")
+    
+    return round(adj, 3), " | ".join(notes)
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -5031,6 +5209,7 @@ FL_SPORT_MAP = {
     "NFL":  "nfl",
     "NHL":  "nhl",
     "WNBA": "wnba",
+    "GOLF": "pga",
 }
 FL_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
@@ -12549,6 +12728,13 @@ def load_sport_data(sport):
         _nhl_goalies = fetch_nhl_starting_goalies()
         if _nhl_goalies:
             st.session_state["nhl_starting_goalies"] = _nhl_goalies
+    if sport == "GOLF":
+        _golf_lb = fetch_golf_leaderboard()
+        if _golf_lb:
+            st.session_state["golf_leaderboard"] = _golf_lb
+        _golf_odds = fetch_golf_odds()
+        if _golf_odds:
+            st.session_state["golf_odds"] = _golf_odds
 
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
@@ -16811,6 +16997,28 @@ with tabs[9]:
             st.caption(f"Last refresh: {fetched}")
         else:
             st.info("FantasyLabs lineups load with the MLB board. Typically posted 3-4h before first pitch.")
+
+    # ── Golf Leaderboard ─────────────────────────────────────
+    _golf_lb_sys  = st.session_state.get("golf_leaderboard", [])
+    _golf_odds_sys = st.session_state.get("golf_odds", {})
+    if _golf_lb_sys or st.session_state.get("last_sport") == "GOLF":
+        st.markdown("---")
+        st.markdown("### ⛳ Golf Leaderboard")
+        if _golf_lb_sys:
+            _tournament = _golf_lb_sys[0].get("tournament","Current Tournament") if _golf_lb_sys else ""
+            st.caption(f"**{_tournament}** | {len(_golf_lb_sys)} players")
+            _golf_rows = [{"Pos": p["position"], "Player": p["name"],
+                           "Total": p["total"], "Today": p["today"],
+                           "Thru": p["thru"]} for p in _golf_lb_sys[:15]]
+            st.dataframe(pd.DataFrame(_golf_rows), use_container_width=True, hide_index=True)
+            if _golf_odds_sys:
+                st.markdown("**Tournament Win Odds:**")
+                _odds_rows = sorted(_golf_odds_sys.values(),
+                                    key=lambda x: -x.get("implied_prob",0))[:10]
+                _odds_df = [{"Player": o["name"],
+                             "Odds": f"+{o['odds']}" if o["odds"]>0 else str(o["odds"]),
+                             "Implied": f"{o['implied_prob']:.1%}"} for o in _odds_rows]
+                st.dataframe(pd.DataFrame(_odds_df), use_container_width=True, hide_index=True)
 
     # ── NHL Starting Goalies ────────────────────────────────
     _nhl_goalies_sys = st.session_state.get("nhl_starting_goalies", {})
