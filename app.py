@@ -13904,6 +13904,18 @@ def load_sport_data(sport):
         prop["ConflictNote"]     = _conflict_note
         prop["MarketAgreement"]  = _mkt_agree.get("score", 50)
         prop["MarketAgreementLabel"] = _mkt_agree.get("label","")
+        # Bet Quality Score — stored on prop for persistence
+        _bq_edge    = round(float(prop.get("Edge",0) or 0) * 100, 1)
+        _bq_conf    = _conflict_status
+        _bq_agree   = _mkt_agree.get("score", 50)
+        _bq_risk    = prop.get("RiskLevel","")
+        _bq_score   = 0
+        _bq_score  += min(40, _bq_edge * 4)
+        _bq_score  += (20 if _bq_conf=="ALIGNED" else 10 if _bq_conf=="MIXED" else 0 if _bq_conf=="CONFLICTED" else 12)
+        _bq_score  += int(_bq_agree * 0.20)
+        _bq_score  += (10 if _bq_risk=="LOW" else 7 if _bq_risk=="MEDIUM" else 3 if _bq_risk=="HIGH" else 0 if _bq_risk=="EXTREME" else 5)
+        _bq_score  += 5  # CLV default — updated when CLV data available
+        prop["BetQualityScore"] = max(0, min(100, int(_bq_score)))
 
     # ═══════════════════════════════════════════════════════════
     # ENGINE 1 — NARRATIVE REASONING
@@ -15269,7 +15281,7 @@ with tabs[1]:
             _min_edge = st.number_input("Min edge %", min_value=0.0, max_value=20.0,
                                          value=0.0, step=0.5, key="ev_min_edge")
         with _fc5:
-            _sort_col = st.selectbox("Sort by", ["Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
+            _sort_col = st.selectbox("Sort by", ["BQ Score","Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
 
         # ── Build rows ──────────────────────────────────────────
         _rows = []
@@ -15349,25 +15361,67 @@ with tabs[1]:
                 ])
                 _rel = f"{_rel_score}/4"
 
-            # EV grade
-            if _edge_pct >= 8.0:
-                _grade, _grade_color = "A+", "#22c55e"
-            elif _edge_pct >= 6.0:
-                _grade, _grade_color = "A",  "#22c55e"
-            elif _edge_pct >= 4.0:
-                _grade, _grade_color = "B+", "#e8a020"
-            elif _edge_pct >= 2.0:
-                _grade, _grade_color = "B",  "#e8a020"
-            else:
-                _grade, _grade_color = "C",  "#6a7a8a"
+            # ── Bet Quality Score (A+ to D) ─────────────────────
+            # Incorporates: edge, alignment, agreement, volatility, CLV
+            _conflict   = _p.get("ConflictStatus","")
+            _mkt_agree  = int(_p.get("MarketAgreement", 50) or 50)
+            _risk_lvl   = _p.get("RiskLevel","")
+            _clv_data   = load_json_data(CLV_PATH, [])
+            _clv_beat   = 0.5  # default
+            if _clv_data:
+                _player_clv = [c for c in _clv_data
+                               if normalize_name(c.get("player","")) == normalize_name(_player)]
+                if len(_player_clv) >= 3:
+                    _clv_beat = sum(1 for c in _player_clv
+                                    if c.get("clv",0) > 0) / len(_player_clv)
 
-            # Row background color
-            if _edge_pct >= 8.0:
+            # Score 0-100 across 5 factors
+            _bq = 0
+            # Edge (40 pts)
+            _bq += min(40, _edge_pct * 4)
+            # Alignment (20 pts)
+            if _conflict == "ALIGNED":      _bq += 20
+            elif _conflict == "MIXED":      _bq += 10
+            elif _conflict == "CONFLICTED": _bq += 0
+            else:                           _bq += 12  # unknown = neutral
+            # Market agreement (20 pts)
+            _bq += int(_mkt_agree * 0.20)
+            # Volatility (10 pts)
+            if _risk_lvl == "LOW":          _bq += 10
+            elif _risk_lvl == "MEDIUM":     _bq += 7
+            elif _risk_lvl == "HIGH":       _bq += 3
+            elif _risk_lvl == "EXTREME":    _bq += 0
+            else:                           _bq += 5  # unknown
+            # CLV history (10 pts)
+            _bq += int(_clv_beat * 10)
+
+            _bq = max(0, min(100, int(_bq)))
+
+            # Grade mapping
+            if _bq >= 85 and _conflict == "ALIGNED":
+                _grade, _grade_color = "A+", "#22c55e"
+            elif _bq >= 75:
+                _grade, _grade_color = "A",  "#22c55e"
+            elif _bq >= 65:
+                _grade, _grade_color = "B+", "#4ade80"
+            elif _bq >= 55:
+                _grade, _grade_color = "B",  "#e8a020"
+            elif _bq >= 40:
+                _grade, _grade_color = "C",  "#e8a020"
+            elif _conflict == "CONFLICTED":
+                _grade, _grade_color = "C",  "#e04040"
+            else:
+                _grade, _grade_color = "D",  "#6a7a8a"
+
+            # Row background — based on quality score not just edge
+            if _bq >= 85:
                 _row_bg = "rgba(34,197,94,0.12)"
-            elif _edge_pct >= 5.0:
+            elif _bq >= 70:
                 _row_bg = "rgba(34,197,94,0.06)"
-            elif _edge_pct >= 3.0:
-                _row_bg = "rgba(232,160,32,0.08)"
+            elif _bq >= 55:
+                _row_bg = "rgba(232,160,32,0.06)"
+            elif _conflict == "CONFLICTED":
+                _row_bg = "rgba(224,64,64,0.04)"
             else:
                 _row_bg = "transparent"
 
@@ -15401,10 +15455,13 @@ with tabs[1]:
                 "_risk":       _p.get("RiskLevel",""),
                 "_mmq":        _p.get("MarketMoveQuality",0),
                 "_mins_stab":  _p.get("MinutesStability",""),
+                "_bq_score":   _bq,
+                "_conflict":   _conflict,
             })
 
         # Sort
         _sort_map = {
+            "BQ Score":    ("_bq_score",   True),
             "Edge %":      ("_edge_pct",   True),
             "L5 Hit %":    ("_l5",         True),
             "Line":        ("_line",        False),
