@@ -18871,9 +18871,9 @@ with tabs[9]:
         _stale_items = []
         _fresh_items = []
         _freshness_checks = [
-            ("Odds (game lines)",  f"espn_ids_{_audit_sport}.pkl",         15 * 60),   # 15 min
-            ("Props board",        f"pp_{_audit_sport.lower()}_props.pkl", 15 * 60),   # 15 min
-            ("Injury data",        f"ud_injuries_{_audit_sport}.pkl",       20 * 60),  # 20 min
+            ("Odds (game lines)",  f"espn_ids_{_audit_sport}.pkl",         35 * 60),   # 35 min (cache TTL 30min + 5min buffer)
+            ("Props board",        f"pp_{_audit_sport.lower()}_props.pkl", 20 * 60),   # 20 min
+            ("Injury data",        f"ud_injuries_{_audit_sport}.pkl",       30 * 60),  # 30 min
             ("Weather data",       None,                                    1440 * 60), # 24 hrs (daily refresh is fine for MLB)
             ("DK Salaries",        "dk_salaries.pkl",                        90 * 60),  # 90 min
         ]
@@ -18920,17 +18920,20 @@ with tabs[9]:
             _sharp_agreements  = []
             for _sg in _audit_games[:10]:
                 _matchup = _sg.get("matchup","?")
-                _pin_ml  = safe_float(_sg.get("Home ML","") or 0)
-                _circa_ml= safe_float(_sg.get("OddsAPI ML Home","") or 0)
+                # game_analysis has HomeML, TotalEdge, SpreadEdge
+                _pin_ml  = safe_float(_sg.get("HomeML","") or 0)
+                _ml_edge = safe_float(_sg.get("MLEdge", 0) or 0)
+                _tot_edge= safe_float(_sg.get("TotalEdge", 0) or 0)
                 _total   = safe_float(_sg.get("Total","") or 0)
-                _odds_tot= safe_float(_sg.get("OddsAPI Total","") or 0)
-                # Compare total lines between ESPN and OddsAPI (proxy for sharp book)
-                if _total and _odds_tot and abs(_total - _odds_tot) >= 1.5:
-                    _sharp_divergences.append(
-                        f"{_matchup}: Total ESPN={_total} OddsAPI={_odds_tot} (diff {abs(_total-_odds_tot):.1f})"
-                    )
-                elif _total and _odds_tot:
-                    _sharp_agreements.append(_matchup)
+                # Has OddsAPI data if edges are non-zero or ML populated
+                _has_data = (_pin_ml != 0 or abs(_ml_edge) > 0 or abs(_tot_edge) > 0 or _total != 0)
+                if _has_data:
+                    if abs(_ml_edge) >= 0.05 or abs(_tot_edge) >= 0.05:
+                        _sharp_divergences.append(
+                            f"{_matchup}: ML edge {_ml_edge:+.1%} Total edge {_tot_edge:+.1%}"
+                        )
+                    else:
+                        _sharp_agreements.append(_matchup)
                 # Check book_clv from CLV summary for sharp agreement signal
             _clv_data = get_clv_summary()
             _consensus_edge = (_clv_data or {}).get("consensus_sharp_edge", 0)
@@ -18948,8 +18951,9 @@ with tabs[9]:
             else:
                 # Check if OddsAPI is returning data (proxy for sharp book availability)
                 _has_oddsapi = any(
-                    g.get("OddsAPI ML Home") not in ("N/A",None,"") or
-                    g.get("OddsAPI Total") not in ("N/A",None,"")
+                    safe_float(g.get("HomeML","") or 0) != 0 or
+                    safe_float(g.get("MLEdge", 0) or 0) != 0 or
+                    safe_float(g.get("TotalEdge", 0) or 0) != 0
                     for g in _audit_games[:5]
                 ) if _audit_games else False
                 if _has_oddsapi:
