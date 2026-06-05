@@ -18913,12 +18913,23 @@ with tabs[9]:
             ))
 
         # ── AUDIT 10: Sharp Consensus ───────────────────────────
-        # Checks agreement among Pinnacle, Circa, BetOnline on game totals.
-        # Divergence > 3% = unstable market — reduce confidence.
-        if _audit_games:
+        # Deduplicate game_analysis by normalized matchup to prevent
+        # same game appearing as both "NY @ SA" and full team names
+        _seen_matchups = set()
+        _deduped_games = []
+        for _sg in _audit_games:
+            _raw_m = _sg.get("matchup","").lower()
+            # Normalize: strip spaces, sort teams
+            _parts = sorted(_raw_m.replace(" @ "," vs ").split(" vs "))
+            _norm_m = " vs ".join(_parts)
+            if _norm_m not in _seen_matchups:
+                _seen_matchups.add(_norm_m)
+                _deduped_games.append(_sg)
+        _audit_games_deduped = _deduped_games
+        if _audit_games_deduped:
             _sharp_divergences = []
             _sharp_agreements  = []
-            for _sg in _audit_games[:10]:
+            for _sg in _audit_games_deduped[:10]:
                 _matchup = _sg.get("matchup","?")
                 # game_analysis has HomeML, TotalEdge, SpreadEdge
                 _pin_ml  = safe_float(_sg.get("HomeML","") or 0)
@@ -18954,8 +18965,8 @@ with tabs[9]:
                     safe_float(g.get("HomeML","") or 0) != 0 or
                     safe_float(g.get("MLEdge", 0) or 0) != 0 or
                     safe_float(g.get("TotalEdge", 0) or 0) != 0
-                    for g in _audit_games[:5]
-                ) if _audit_games else False
+                    for g in _audit_games_deduped[:5]
+                ) if _audit_games_deduped else False
                 if _has_oddsapi:
                     _audit_results.append(_audit_pass(
                         "Audit 10 — Sharp Consensus",
