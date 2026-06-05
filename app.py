@@ -15711,6 +15711,7 @@ with tabs[1]:
 
         # Rows
         _html_rows = []
+        _lock_buttons = []  # collect lock actions outside HTML
         for _r in _rows:
             _tc    = _tier_colors.get(_r["_tier"],"#6a7a8a")
             _gc    = _r["_grade_color"]
@@ -15748,6 +15749,46 @@ with tabs[1]:
                 + '</div>',
                 unsafe_allow_html=True
             )
+
+        # Individual lock buttons — rendered outside HTML for interactivity
+        if _rows:
+            st.markdown("**Quick Lock:**")
+            _lk_cols = st.columns(min(5, len(_rows)))
+            for _lki, _lr in enumerate(_rows[:10]):
+                _lk_col = _lk_cols[_lki % len(_lk_cols)]
+                with _lk_col:
+                    _lk_label = f"🔒 {_lr['_player'][:12]} {_lr['_grade']}"
+                    if st.button(_lk_label, key=f"ev_lock_{_lki}", use_container_width=True,
+                                  help=f"{_lr['_prop']} {_lr['_side']} {_lr['_line']} | {'+' if _lr['_edge_pct']>0 else ''}{_lr['_edge_pct']}%"):
+                        # Find the prop in board and lock it
+                        _lk_prop = next((p for p in _board
+                                         if normalize_name(p.get("Player",""))==normalize_name(_lr["_player"])
+                                         and str(p.get("Line",""))==str(_lr["_line"])), None)
+                        if _lk_prop:
+                            _already = any(
+                                normalize_name(l.get("player",""))==normalize_name(_lr["_player"]) and
+                                str(l.get("line",""))==str(_lr["_line"])
+                                for l in st.session_state.locks
+                            )
+                            if not _already:
+                                st.session_state.locks.append({
+                                    "player":    _lk_prop.get("Player",""),
+                                    "prop":      _lk_prop.get("Prop",""),
+                                    "line":      _lk_prop.get("Line",0),
+                                    "side":      _lk_prop.get("Side","OVER"),
+                                    "tier":      _lk_prop.get("Tier",""),
+                                    "edge":      _lk_prop.get("Edge",0),
+                                    "sport":     _sport,
+                                    "source":    "EV Optimizer",
+                                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                    "prob":      _lk_prop.get("Prob",0.5),
+                                })
+                                save_json_data(LOCKS_PATH, st.session_state.locks)
+                                save_to_gist("locks", st.session_state.locks)
+                                st.success(f"Locked {_lr['_player']} {_lr['_prop']}")
+                                st.rerun()
+                            else:
+                                st.info("Already locked")
 
         if not _rows:
             st.info("No props match current filters.")
@@ -16073,6 +16114,43 @@ with tabs[2]:
                         m = movements[0]
                         st.markdown(f"**Current:** Spread {m.get('spread','—')} | Total {m.get('over_under','—')} | ML {m.get('home_ml','—')}/{m.get('away_ml','—')}")
                         st.caption(f"Source: {m.get('provider','ESPN')}")
+                        st.caption("⚠️ Only one snapshot available — load board again later to see movement direction.")
+
+                    # ── Market move explanation ──────────────────────
+                    # Pull from game_analysis if available
+                    _ga_match = next((g for g in st.session_state.get("game_analysis",[])
+                                      if g.get("matchup","").lower() == matchup.lower()), None)
+                    if _ga_match:
+                        _mmq  = int(_ga_match.get("MarketMoveQuality", 0) or 0) if hasattr(_ga_match, "get") else 0
+                        _mmn  = _ga_match.get("MarketMoveNote","") if hasattr(_ga_match, "get") else ""
+                        _pub  = _ga_match.get("public_data",{}) or {}
+                        _rlm  = _ga_match.get("rlm_signals",[]) or []
+                        if _mmn:
+                            _mmq_color = "#22c55e" if _mmq >= 1 else "#e04040" if _mmq <= -1 else "#6a7a8a"
+                            st.markdown(
+                                f'<div style="background:#0a0e14;border-left:3px solid {_mmq_color};'
+                                f'border-radius:4px;padding:5px 10px;margin-top:6px;">'
+                                f'<span style="color:{_mmq_color};font-weight:600;">Movement Signal:</span> '
+                                f'<span style="color:#b0b8c8;font-size:12px;">{_mmn}</span></div>',
+                                unsafe_allow_html=True
+                            )
+                        if _rlm:
+                            for _rlm_item in _rlm[:1]:
+                                st.markdown(
+                                    f'<div style="background:#0a1a0a;border-left:3px solid #22c55e;'
+                                    f'border-radius:4px;padding:5px 10px;margin-top:4px;">'
+                                    f'<span style="color:#22c55e;font-weight:600;">↔️ RLM Detected:</span> '
+                                    f'<span style="color:#b0b8c8;font-size:12px;">'
+                                    f'{_rlm_item.get("public_pct",0)}% tickets on {_rlm_item.get("public_side","")} | '
+                                    f'{_rlm_item.get("money_pct",0)}% money on {_rlm_item.get("sharp_side","")} — '
+                                    f'sharp action moving against public</span></div>',
+                                    unsafe_allow_html=True
+                                )
+                        # Public betting breakdown
+                        _sharp_sigs = _pub.get("sharp_signals",[]) if isinstance(_pub,dict) else []
+                        for _ss in _sharp_sigs[:2]:
+                            if _ss:
+                                st.caption(f"⚡ {_ss[:80]}")
         else:
             st.caption("Line movement loads with the board. If empty, ESPN odds data wasn't available for this game.")
 
