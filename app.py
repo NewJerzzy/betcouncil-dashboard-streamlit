@@ -1865,22 +1865,35 @@ def compute_bankroll_multiplier(history=None, clv_data=None):
     # Multiplier
     if score >= 3:
         mult, reason, color = 1.25, f"Strong model (+{roi:.1%} ROI, CLV {clv_avg:+.1f})", "#22c55e"
+        reasons_up   = [reason]
+        reasons_down = []
     elif score >= 1:
         mult, reason, color = 1.00, f"Neutral ({roi:.1%} ROI)", "#e8a020"
+        reasons_up   = [reason]
+        reasons_down = []
     elif score >= -1:
         mult, reason, color = 0.75, f"Mild drift ({drift:+.1%} vs baseline)", "#e8a020"
+        reasons_up   = []
+        reasons_down = [reason]
     else:
         mult, reason, color = 0.50, f"Significant drift ({drift:+.1%}, ROI {roi:.1%})", "#e04040"
+        reasons_up   = []
+        reasons_down = [reason]
+
+    kelly_advised = round(mult * 0.15, 3)  # 15% base Kelly fraction × multiplier
 
     return {
-        "multiplier": mult,
-        "reason":     reason,
-        "label":      f"{mult:.2f}x",
-        "color":      color,
-        "roi":        round(roi, 3),
-        "clv_avg":    round(clv_avg, 2),
-        "drift":      round(drift, 3),
-        "score":      score,
+        "multiplier":   mult,
+        "reason":       reason,
+        "label":        f"{mult:.2f}x",
+        "color":        color,
+        "roi":          round(roi, 3),
+        "clv_avg":      round(clv_avg, 2),
+        "drift":        round(drift, 3),
+        "score":        score,
+        "kelly_advised":kelly_advised,
+        "reasons_up":   reasons_up,
+        "reasons_down": reasons_down,
     }
 
 def generate_post_mortem(history, target_date=None):
