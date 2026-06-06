@@ -1779,95 +1779,108 @@ def compute_prop_correlation_score(props):
 # When drifting → size down automatically.
 # ═══════════════════════════════════════════════════════════════
 
+def compute_model_drift(history=None, window=50):
+    """
+    Compares recent N-bet ROI vs all-time ROI.
+    Fires alert if recent performance diverges significantly.
+    """
+    if history is None:
+        history = st.session_state.get("history", [])
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 60:
+        return None
+    # All-time ROI per bet
+    def _roi(bets):
+        total_w = sum(float(b.get("wager",1) or 1) for b in bets)
+        total_p = sum(
+            float(b.get("wager",1) or 1) * 0.909
+            if b.get("outcome") == "WIN"
+            else -float(b.get("wager",1) or 1)
+            for b in bets
+        )
+        return round(total_p / total_w, 3) if total_w > 0 else 0.0
+    all_roi    = _roi(resolved)
+    recent     = resolved[-window:]
+    recent_roi = _roi(recent)
+    drift      = recent_roi - all_roi
+    alert      = drift < -1.0
+    return {
+        "all_time_roi": all_roi,
+        "recent_roi":   recent_roi,
+        "drift":        drift,
+        "window":       len(recent),
+        "alert":        alert,
+        "status":       "⚠️ Model Drift Detected" if alert else "✅ Model Performing Normally",
+    }
+
+
 def compute_bankroll_multiplier(history=None, clv_data=None):
     """
     Model-aware stake sizing.
-    Adjusts Kelly multiplier based on model confidence:
-    
-    Conditions for INCREASED stakes (1.25x):
-      - Recent ROI positive
-      - CLV positive
-      - No drift detected
-      - Calibration healthy
-    
-    Conditions for REDUCED stakes (0.5x):
-      - Model drift detected
-      - Negative CLV trend
-      - Calibration degraded
-      - ROI declining
-    
-    Returns: {multiplier, recommendation, reasons}
+    Adjusts Kelly multiplier based on recent performance:
+      1.25x — positive ROI + positive CLV + no drift
+      1.00x — neutral / insufficient data
+      0.75x — mild drift or negative CLV
+      0.50x — significant drift or degraded calibration
     """
     if history is None:
         history = st.session_state.get("history", [])
     if clv_data is None:
-        clv_data = get_clv_summary()
+        clv_data = load_json_data(CLV_PATH, [])
 
-    reasons_up   = []
-    reasons_down = []
-    score = 0  # -3 to +3
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    if len(resolved) < 10:
+        return {"multiplier": 1.0, "reason": "Insufficient data (<10 bets)", "label": "1.00x"}
 
-    # 1. Recent ROI
-    drift = compute_model_drift(history)
-    if drift:
-        if drift["recent_roi"] > 0.3:
-            score += 1
-            reasons_up.append(f"Recent ROI +{drift['recent_roi']:.2f}u/bet")
-        elif drift["recent_roi"] < -0.3:
-            score -= 1
-            reasons_down.append(f"Recent ROI {drift['recent_roi']:.2f}u/bet")
-        if drift["alert"]:
-            score -= 2
-            reasons_down.append("🚨 Model drift detected")
+    # Recent ROI (last 20)
+    recent = resolved[-20:]
+    wins   = sum(1 for h in recent if h.get("outcome") == "WIN")
+    roi    = (wins / len(recent)) - 0.524  # vs breakeven
 
-    # 2. CLV trend
+    # CLV trend
+    clv_avg = 0.0
     if clv_data:
-        avg_clv = clv_data.get("avg_clv", 0)
-        beat_pct = clv_data.get("positive_clv_pct", 0.5)
-        if avg_clv > 1.0 and beat_pct > 0.55:
-            score += 1
-            reasons_up.append(f"CLV +{avg_clv:.2f}, beating line {beat_pct:.0%}")
-        elif avg_clv < -0.5:
-            score -= 1
-            reasons_down.append(f"Negative CLV {avg_clv:.2f}")
+        recent_clv = clv_data[-20:]
+        clv_avg = sum(c.get("clv", 0) for c in recent_clv) / len(recent_clv) if recent_clv else 0
 
-    # 3. Calibration
-    cal_summary = get_calibration_summary(history)
-    if "EXCELLENT" in cal_summary or "GOOD" in cal_summary:
-        score += 1
-        reasons_up.append("Calibration healthy")
-    elif "NEEDS" in cal_summary:
-        score -= 1
-        reasons_down.append("Calibration degraded")
+    # Drift: compare last 20 vs all-time win rate
+    all_wins = sum(1 for h in resolved if h.get("outcome") == "WIN")
+    all_rate = all_wins / len(resolved) if resolved else 0.5
+    recent_rate = wins / len(recent)
+    drift = recent_rate - all_rate  # negative = cooling off
 
-    # Translate score to multiplier
-    if score >= 2:
-        multiplier = 1.25
-        label = "📈 INCREASE STAKES"
-        color = "#22c55e"
-    elif score <= -2:
-        multiplier = 0.50
-        label = "📉 REDUCE STAKES"
-        color = "#e04040"
-    elif score == -1:
-        multiplier = 0.75
-        label = "⚠️ SLIGHT REDUCTION"
-        color = "#e8a020"
+    # Score
+    score = 0
+    if roi > 0.05:   score += 2
+    elif roi > 0:    score += 1
+    elif roi < -0.05:score -= 2
+    else:            score -= 1
+
+    if clv_avg > 1.0:  score += 1
+    elif clv_avg < -1.0: score -= 1
+
+    if drift < -0.10:  score -= 2
+    elif drift < -0.05:score -= 1
+
+    # Multiplier
+    if score >= 3:
+        mult, reason = 1.25, f"Strong model (+{roi:.1%} ROI, CLV {clv_avg:+.1f})"
+    elif score >= 1:
+        mult, reason = 1.00, f"Neutral ({roi:.1%} ROI)"
+    elif score >= -1:
+        mult, reason = 0.75, f"Mild drift ({drift:+.1%} vs baseline)"
     else:
-        multiplier = 1.0
-        label = "✅ NORMAL STAKES"
-        color = "#8a9ab0"
+        mult, reason = 0.50, f"Significant drift ({drift:+.1%}, ROI {roi:.1%})"
 
     return {
-        "multiplier":     multiplier,
-        "label":          label,
-        "color":          color,
-        "score":          score,
-        "reasons_up":     reasons_up,
-        "reasons_down":   reasons_down,
-        "kelly_advised":  round(KELLY_FRACTION * multiplier, 3),
+        "multiplier": mult,
+        "reason":     reason,
+        "label":      f"{mult:.2f}x",
+        "roi":        round(roi, 3),
+        "clv_avg":    round(clv_avg, 2),
+        "drift":      round(drift, 3),
+        "score":      score,
     }
-
 
 def generate_post_mortem(history, target_date=None):
     """
