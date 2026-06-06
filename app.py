@@ -13687,26 +13687,56 @@ def load_sport_data(sport):
                     p["DFFPropNote"]  = _ps_note
 
         # All sports: apply FantasyLabs lineup bonus
-        # MLB: batting order bonus (leadoff +6%, etc.)
-        # NBA/WNBA: starter confirmation (+3%)
-        # NFL: active/inactive status
+        # MLB: batting order bonus — ONLY within 4hr of first pitch
+        #      (lineups not posted until 2-3hr before game)
+        # NBA/WNBA: starter confirmation
+        # NFL: active/inactive (90min before kickoff — handled separately)
         # NHL: skater line confirmation
         if sport in ("MLB","NBA","WNBA","NFL","NHL"):
             _fl_data = st.session_state.get("fantasylabs_lineups", {})
             if _fl_data:
-                _fl_adj, _fl_flags, _fl_note = get_fantasylabs_lineup_bonus(player, _fl_data, sport)
-                if _fl_adj != 0:
-                    final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _fl_adj)), 4)
-                    tier = get_tier(final_edge, sport)
-                if _fl_note:
-                    p["LineupStatus"] = _fl_note
-                # Store separate flags — not composite score
-                if isinstance(_fl_flags, dict) and _fl_flags.get("found"):
-                    p["IsStarting"]      = _fl_flags.get("is_starting", True)
-                    p["BattingOrder"]    = _fl_flags.get("batting_order", 0)
-                    p["LineupInjury"]    = _fl_flags.get("injury_status","")
-                    p["LineupConfirmed"] = _fl_flags.get("is_starting", False)
-                    p["IsQuestionable"]  = _fl_flags.get("is_questionable", False)
+                # MLB time guard: only apply batting order bonuses when
+                # lineups are actually confirmed (within 4hr of first pitch)
+                # Before that window: S12 = neutral (0%) to avoid
+                # false penalties on morning loads
+                _apply_fl = True
+                if sport == "MLB":
+                    _game_time_str = p.get("GameTime","") or p.get("game_time","")
+                    if _game_time_str:
+                        try:
+                            from datetime import datetime as _dt
+                            _gt = _dt.strptime(str(_game_time_str)[:16], "%Y-%m-%d %H:%M")
+                            _hrs_to_game = (_gt - _dt.now()).total_seconds() / 3600
+                            _apply_fl = _hrs_to_game <= 4.0
+                        except Exception:
+                            # Can't parse time — only apply if lineups confirmed
+                            _apply_fl = bool(_fl_data.get(
+                                normalize_name(player), {}
+                            ).get("in_lineup", False))
+                    else:
+                        # No game time stored — check if lineup is confirmed
+                        _apply_fl = bool(_fl_data.get(
+                            normalize_name(player), {}
+                        ).get("in_lineup", False))
+
+                if _apply_fl:
+                    _fl_adj, _fl_flags, _fl_note = get_fantasylabs_lineup_bonus(player, _fl_data, sport)
+                    if _fl_adj != 0:
+                        final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _fl_adj)), 4)
+                        tier = get_tier(final_edge, sport)
+                    if _fl_note:
+                        p["LineupStatus"] = _fl_note
+                    # Store separate flags — not composite score
+                    if isinstance(_fl_flags, dict) and _fl_flags.get("found"):
+                        p["IsStarting"]      = _fl_flags.get("is_starting", True)
+                        p["BattingOrder"]    = _fl_flags.get("batting_order", 0)
+                        p["LineupInjury"]    = _fl_flags.get("injury_status","")
+                        p["LineupConfirmed"] = _fl_flags.get("is_starting", False)
+                        p["IsQuestionable"]  = _fl_flags.get("is_questionable", False)
+                else:
+                    # Outside 4hr window — neutral, no adjustment
+                    p["LineupStatus"]   = "⏳ Lineups not yet confirmed (>4h to game)"
+                    p["LineupConfirmed"] = False
 
         # NFL: add practice trend to injury flag
         if sport == "NFL" and not injury_flag:
