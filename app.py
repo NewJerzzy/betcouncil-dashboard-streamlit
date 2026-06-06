@@ -16975,7 +16975,9 @@ with tabs[4]:
             for rec in _portfolio["recommendations"]:
                 st.info(f"💡 {rec}")
         if _portfolio["sport_breakdown"]:
-            _sport_rows = [{"Sport": k, "Exposure %": f"{v:.1f}%"} for k,v in sorted(_portfolio["sport_breakdown"].items(), key=lambda x:-x[1])]
+            _sport_rows = [{"Sport": k, "Count": v.get("count",0), "Exposure %": f"{v.get('pct',0):.1f}%"}
+                           for k,v in sorted(_portfolio["sport_breakdown"].items(),
+                           key=lambda x: -x[1].get("count",0) if isinstance(x[1],dict) else -float(x[1] or 0))]
             st.dataframe(pd.DataFrame(_sport_rows), use_container_width=True, hide_index=True)
     else:
         st.info("Load the board and lock picks to see portfolio exposure.")
