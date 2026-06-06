@@ -1779,570 +1779,6 @@ def compute_prop_correlation_score(props):
 # When drifting → size down automatically.
 # ═══════════════════════════════════════════════════════════════
 
-def compute_bankroll_multiplier(history):
-    """
-    Computes a stake multiplier based on current model health.
-    
-    Inputs: ROI trend, CLV trend, model drift status.
-    Output: multiplier between 0.5x and 1.5x normal stake.
-    
-    This is not gambling — it's Kelly-inspired position sizing
-    that responds to the model's demonstrated predictive power.
-    
-    All changes are gradual (max ±25% from 1.0x baseline).
-    Never exceeds 1.5x or drops below 0.5x.
-    """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
-    if len(resolved) < 20:
-        return 1.0, "Insufficient data — using baseline stake (1.0x)"
-
-    # Component 1: Recent ROI (L20 bets)
-    recent = resolved[-20:]
-    recent_roi = sum(h.get("net",0) for h in recent) / len(recent)
-    roi_component = 0.0
-    if recent_roi > 0.5:
-        roi_component = 0.20   # up 20%
-    elif recent_roi > 0.2:
-        roi_component = 0.10   # up 10%
-    elif recent_roi < -0.5:
-        roi_component = -0.30  # down 30%
-    elif recent_roi < -0.2:
-        roi_component = -0.15  # down 15%
-
-    # Component 2: CLV signal
-    clv_data = get_clv_summary()
-    clv_component = 0.0
-    if clv_data:
-        avg_clv = clv_data.get("avg_clv", 0)
-        beat_pct = clv_data.get("positive_clv_pct", 0.5)
-        if avg_clv > 1.0 and beat_pct > 0.60:
-            clv_component = 0.15   # CLV confirms edge
-        elif avg_clv < -1.0:
-            clv_component = -0.20  # CLV says fading
-
-    # Component 3: Model drift
-    drift_data = compute_model_drift(history)
-    drift_component = 0.0
-    if drift_data:
-        if drift_data["alert"]:
-            drift_component = -0.25  # Drift detected — reduce
-        elif drift_data["drift"] > 1.0:
-            drift_component = 0.10   # Hot streak but stay disciplined
-
-    # Combine components
-    raw_multiplier = 1.0 + roi_component + clv_component + drift_component
-    multiplier = round(max(0.5, min(1.5, raw_multiplier)), 2)
-
-    # Build explanation
-    parts = []
-    if roi_component != 0:
-        parts.append(f"Recent ROI {recent_roi:+.2f}u/bet ({'+' if roi_component>0 else ''}{roi_component:.0%})")
-    if clv_component != 0:
-        parts.append(f"CLV {clv_data.get('avg_clv',0):+.2f} ({'+' if clv_component>0 else ''}{clv_component:.0%})")
-    if drift_component != 0:
-        parts.append(f"Drift detected ({drift_component:.0%})")
-
-    if multiplier > 1.1:
-        label = f"📈 Size UP — {multiplier}x normal stake"
-    elif multiplier < 0.9:
-        label = f"📉 Size DOWN — {multiplier}x normal stake"
-    else:
-        label = f"✅ Normal sizing — {multiplier}x stake"
-
-    reason = " | ".join(parts) if parts else "Stable performance"
-    return multiplier, f"{label} | {reason}"
-
-
-def compute_portfolio_exposure(board, locks=None):
-    """
-    Portfolio-level exposure analysis.
-    Answers: am I over-concentrated in one team/sport/player?
-    
-    Returns exposure breakdown by sport, team, and player,
-    plus correlation warnings and stake recommendations.
-    """
-    if locks is None:
-        locks = st.session_state.get("locks", [])
-    today_str = date.today().strftime("%Y-%m-%d")
-    today_locks = [l for l in locks if l.get("timestamp","").startswith(today_str)]
-
-    if not today_locks and not board:
-        return None
-
-    # Use today's locked picks + top approved props
-    active_props = today_locks if today_locks else [
-        p for p in (board or []) if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")
-    ][:8]
-
-    # Total exposure
-    total_stake = sum(float(p.get("wager", p.get("Kelly", 0.5)) or 0.5) for p in active_props)
-    bankroll = st.session_state.get("bankroll", 100)
-
-    # Sport breakdown
-    sport_exp = {}
-    for p in active_props:
-        sp = p.get("sport", p.get("Sport","?"))
-        sport_exp[sp] = sport_exp.get(sp, 0) + float(p.get("wager", p.get("Kelly", 0.5)) or 0.5)
-
-    # Player exposure (same player multiple props)
-    player_exp = {}
-    for p in active_props:
-        pl = p.get("player", p.get("Player",""))
-        player_exp[pl] = player_exp.get(pl, 0) + float(p.get("wager", p.get("Kelly", 0.5)) or 0.5)
-
-    # Team exposure
-    team_exp = {}
-    for p in active_props:
-        team = p.get("Team", p.get("team",""))
-        if team:
-            team_exp[team] = team_exp.get(team, 0) + float(p.get("wager", p.get("Kelly", 0.5)) or 0.5)
-
-    # Concentration warnings
-    warnings = []
-    for sp, stake in sport_exp.items():
-        pct = stake / max(total_stake, 0.01)
-        if pct > 0.70:
-            warnings.append(f"⚠️ {sp} concentration: {pct:.0%} of total exposure")
-    for pl, stake in player_exp.items():
-        if stake > 0 and len([p for p in active_props if p.get("player",p.get("Player","")) == pl]) > 1:
-            warnings.append(f"⚠️ {pl}: multiple props — correlated exposure")
-    for team, stake in team_exp.items():
-        pct = stake / max(total_stake, 0.01)
-        if pct > 0.50:
-            warnings.append(f"⚠️ {team} team exposure: {pct:.0%} — game script risk")
-
-    # Stake recommendations
-    recommendations = []
-    for sp, stake in sport_exp.items():
-        pct = stake / max(total_stake, 0.01)
-        if pct > 0.65:
-            recommendations.append(f"Reduce {sp} stake by ~{int((pct-0.50)*100)}%")
-
-    return {
-        "total_stake":      round(total_stake, 2),
-        "total_pct_br":     round(total_stake / max(bankroll, 1) * 100, 1),
-        "n_active":         len(active_props),
-        "sport_breakdown":  {k: round(v/max(total_stake,0.01)*100,1) for k,v in sport_exp.items()},
-        "player_breakdown": {k: round(v/max(total_stake,0.01)*100,1) for k,v in player_exp.items()},
-        "team_breakdown":   {k: round(v/max(total_stake,0.01)*100,1) for k,v in team_exp.items()},
-        "warnings":         warnings,
-        "recommendations":  recommendations,
-    }
-
-
-def generate_weight_recommendations(history, sport="NBA"):
-    """
-    Every 100 bets: compare expected signal ROI vs actual.
-    Generate weight adjustment recommendations (human approval required).
-    
-    Never auto-changes weights — only recommends.
-    Prevents model drift while enabling data-driven improvement.
-    """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")
-                and h.get("sport") == sport]
-    if len(resolved) < 100:
-        return None, len(resolved)
-
-    attr, n = compute_signal_attribution(resolved)
-    if not attr:
-        return None, n
-
-    current_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
-    recommendations = []
-
-    for row in attr:
-        signal_label = row["Signal"]
-        net_str = row["Net Units"].replace("u","").replace("+","")
-        try:
-            net = float(net_str)
-        except Exception:
-            continue
-        roi = net / max(1, row["Bets"])
-
-        # Map signal label to weight key
-        weight_map = {
-            "Base (avg>line)":   "base",
-            "Defense":           "defense",
-            "Location (home)":   "location",
-            "Rest":              "rest",
-            "Usage Boost":       "usage",
-            "Sharp Money":       "pace",
-        }
-        wkey = weight_map.get(signal_label)
-        if not wkey or wkey not in current_weights:
-            continue
-
-        current_w = current_weights[wkey]
-
-        if roi > 0.5 and current_w < 0.50:
-            recommendations.append({
-                "Signal":      signal_label,
-                "Current W":   f"{current_w:.3f}",
-                "Suggested W": f"{min(0.55, current_w * 1.05):.3f}",
-                "ROI/bet":     f"{roi:+.2f}u",
-                "Action":      "↑ Increase 5%",
-                "Reason":      f"Strong ROI {roi:+.2f}u/bet over {row['Bets']} bets",
-                "Approved":    False,
-            })
-        elif roi < -0.3 and current_w > 0.05:
-            recommendations.append({
-                "Signal":      signal_label,
-                "Current W":   f"{current_w:.3f}",
-                "Suggested W": f"{max(0.01, current_w * 0.95):.3f}",
-                "ROI/bet":     f"{roi:+.2f}u",
-                "Action":      "↓ Reduce 5%",
-                "Reason":      f"Negative ROI {roi:+.2f}u/bet over {row['Bets']} bets",
-                "Approved":    False,
-            })
-
-    return recommendations, n
-
-
-def compute_signal_attribution(history):
-    """
-    For each resolved bet, break down the contribution of each signal.
-    Then aggregate: which signals led to wins vs losses?
-    
-    Returns per-signal stats: {signal: {wins, losses, total_edge, avg_edge, roi}}
-    Activates at 20+ resolved bets.
-    """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
-    if len(resolved) < 20:
-        return None, len(resolved)
-
-    SIGNAL_LABELS = {
-        "base":     "Base (avg>line)",
-        "defense":  "Defense",
-        "location": "Location (home)",
-        "rest":     "Rest",
-        "usage":    "Usage Boost",
-        "blowout":  "Blowout Risk",
-        "weather":  "Weather",
-        "sharp":    "Sharp Money",
-    }
-
-    signal_stats = {}
-    for h in resolved:
-        sig_vals = h.get("signal_values", {})
-        outcome = h.get("outcome")
-        edge    = abs(float(h.get("edge", 0) or 0))
-        wager   = float(h.get("wager", 0) or 0)
-        net     = float(h.get("net", 0) or 0)
-
-        for sig_key, sig_label in SIGNAL_LABELS.items():
-            sig_val = sig_vals.get(sig_key, 0)
-            if abs(sig_val) < 0.005:
-                continue  # Signal not meaningfully active
-            if sig_label not in signal_stats:
-                signal_stats[sig_label] = {
-                    "wins": 0, "losses": 0,
-                    "total_contribution": 0.0,
-                    "total_net": 0.0,
-                    "n": 0,
-                }
-            ss = signal_stats[sig_label]
-            ss["n"] += 1
-            ss["total_contribution"] += abs(sig_val)
-            ss["total_net"] += net
-            if outcome == "WIN":
-                ss["wins"] += 1
-            else:
-                ss["losses"] += 1
-
-    results = []
-    for label, ss in signal_stats.items():
-        total = ss["wins"] + ss["losses"]
-        if total < 3:
-            continue
-        wr   = ss["wins"] / total
-        roi  = ss["total_net"] / max(1, total)
-        avg_contrib = ss["total_contribution"] / total
-        if roi > 0.5:
-            grade = "🟢 Strong"
-        elif roi > 0:
-            grade = "🟡 Positive"
-        elif roi > -0.5:
-            grade = "🟠 Weak"
-        else:
-            grade = "🔴 Drag"
-        results.append({
-            "Signal":        label,
-            "Bets":          total,
-            "Win Rate":      f"{wr:.1%}",
-            "Net Units":     f"{ss['total_net']:+.1f}u",
-            "ROI/bet":       f"{roi:+.2f}u",
-            "Avg Contribution": f"{avg_contrib:.1%}",
-            "Grade":         grade,
-        })
-    results.sort(key=lambda x: float(x["Net Units"].replace("u","").replace("+","")), reverse=True)
-    return results, len(resolved)
-
-
-def compute_model_drift(history, window=50):
-    """
-    Detects model drift: compares recent ROI vs historical ROI.
-    Fires alert if recent performance diverges significantly.
-    
-    window: number of recent bets to compare vs all-time
-    """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
-    if len(resolved) < window + 10:
-        return None
-    all_time_roi = sum(h.get("net", 0) for h in resolved) / len(resolved)
-    recent = resolved[-window:]
-    recent_roi  = sum(h.get("net", 0) for h in recent) / len(recent)
-    drift = recent_roi - all_time_roi
-    status = "STABLE"
-    if drift < -1.5:
-        status = "🚨 DRIFT ALERT — Recent ROI significantly below historical"
-    elif drift < -0.5:
-        status = "⚠️ MILD DRIFT — Recent performance below average"
-    elif drift > 1.5:
-        status = "📈 HOT STREAK — Recent ROI above historical (stay disciplined)"
-    return {
-        "all_time_roi":  round(all_time_roi, 3),
-        "recent_roi":    round(recent_roi, 3),
-        "drift":         round(drift, 3),
-        "window":        window,
-        "n_total":       len(resolved),
-        "status":        status,
-        "alert":         drift < -1.0,
-    }
-
-
-def generate_weekly_model_report(history, signal_performance):
-    """
-    Auto-generates weekly performance summary.
-    Covers: bets, ROI, best/worst signal, best/worst sport, CLV, calibration.
-    """
-    from datetime import timedelta
-    cutoff = datetime.now() - timedelta(days=7)
-    weekly = []
-    for h in history:
-        if h.get("outcome") not in ("WIN","LOSS"):
-            continue
-        ts = h.get("timestamp","")
-        try:
-            # Try multiple formats
-            for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d", "%m/%d/%Y"):
-                try:
-                    dt = datetime.strptime(ts[:16], fmt[:len(ts[:16])])
-                    if dt >= cutoff:
-                        weekly.append(h)
-                    break
-                except ValueError:
-                    continue
-        except Exception:
-            pass
-    if not weekly:
-        return None
-    n = len(weekly)
-    wins = sum(1 for h in weekly if h.get("outcome") == "WIN")
-    total_net = sum(h.get("net", 0) for h in weekly)
-    wr = wins / n
-    roi_per_bet = total_net / n
-
-    # Best/worst sport
-    sport_net = {}
-    for h in weekly:
-        sp = h.get("sport","?")
-        sport_net[sp] = sport_net.get(sp, 0) + h.get("net", 0)
-    best_sport  = max(sport_net, key=sport_net.get) if sport_net else "—"
-    worst_sport = min(sport_net, key=sport_net.get) if sport_net else "—"
-
-    # Signal attribution for the week
-    attr, _ = compute_signal_attribution(weekly)
-    best_signal  = attr[0]["Signal"]  if attr else "—"
-    worst_signal = attr[-1]["Signal"] if attr and len(attr) > 1 else "—"
-
-    # CLV
-    clv = get_clv_summary()
-    avg_clv = clv.get("avg_clv", 0) if clv else 0
-
-    # Calibration
-    cal_summary = get_calibration_summary(history)
-
-    return {
-        "period":        "Last 7 Days",
-        "bets":          n,
-        "wins":          wins,
-        "win_rate":      f"{wr:.1%}",
-        "net_units":     f"{total_net:+.1f}u",
-        "roi_per_bet":   f"{roi_per_bet:+.2f}u",
-        "best_sport":    f"{best_sport} ({sport_net.get(best_sport,0):+.1f}u)",
-        "worst_sport":   f"{worst_sport} ({sport_net.get(worst_sport,0):+.1f}u)",
-        "best_signal":   best_signal,
-        "worst_signal":  worst_signal,
-        "avg_clv":       f"{avg_clv:+.2f}",
-        "calibration":   cal_summary,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════
-# INSTITUTIONAL INTELLIGENCE — FINAL THREE
-# 1. Prop-to-prop correlation scoring
-# 2. Regime detection (playoff vs regular season)
-# 3. Bankroll intelligence (model-aware stake sizing)
-# ═══════════════════════════════════════════════════════════════
-
-# ── 1. Prop-to-Prop Correlation Scoring ────────────────────────
-KNOWN_PROP_CORRELATIONS = {
-    # Same team scoring correlations
-    ("PTS", "PTS"):       0.15,   # Different players, same team
-    ("PTS", "PRA"):       0.85,   # Same player — high overlap
-    ("PTS", "AST"):       0.45,   # Same player
-    ("PTS", "REB"):       0.30,   # Same player
-    ("PRA", "AST"):       0.70,   # Same player
-    ("AST", "AST"):       0.20,   # Different players, same team
-    # Game total correlations
-    ("PTS", "GameTotal"): 0.55,   # Player pts + team total
-    ("AST", "GameTotal"): 0.40,
-    # NFL
-    ("PassYds","RecYds"):  0.65,  # QB pass yards + WR rec yards
-    ("RushYds","GameTotal"):0.35,
-    # MLB
-    ("HR",  "GameTotal"): 0.40,
-    ("H",   "GameTotal"): 0.45,
-}
-
-
-def compute_parlay_correlation(picks):
-    """
-    Compute correlation score for a set of picks.
-    Returns 0-1 where 1 = perfectly correlated (all rise/fall together).
-    
-    Used to warn: "These 3 picks have 0.83 correlation — high risk"
-    """
-    if len(picks) < 2:
-        return 0.0, []
-
-    correlations = []
-    pair_details = []
-
-    for i, p1 in enumerate(picks):
-        for p2 in picks[i+1:]:
-            p1_player = p1.get("Player", p1.get("player",""))
-            p2_player = p2.get("Player", p2.get("player",""))
-            p1_prop   = p1.get("Prop", p1.get("prop",""))
-            p2_prop   = p2.get("Prop", p2.get("prop",""))
-            p1_team   = p1.get("Team", p1.get("team",""))
-            p2_team   = p2.get("Team", p2.get("team",""))
-            p1_sport  = p1.get("Sport", p1.get("sport",""))
-
-            corr = 0.0
-            reason = ""
-
-            # Same player
-            if normalize_name(p1_player) == normalize_name(p2_player):
-                key = tuple(sorted([p1_prop, p2_prop]))
-                corr = KNOWN_PROP_CORRELATIONS.get(key, 0.60)
-                reason = "Same player"
-            # Same team
-            elif p1_team and p2_team and p1_team == p2_team:
-                key = tuple(sorted([p1_prop, p2_prop]))
-                corr = KNOWN_PROP_CORRELATIONS.get(key, 0.20)
-                reason = f"Same team ({p1_team})"
-            # Game total vs player scoring
-            elif ("Total" in p1_prop or "Total" in p2_prop):
-                corr = 0.40
-                reason = "Game total overlap"
-
-            if corr > 0.10:
-                correlations.append(corr)
-                pair_details.append({
-                    "pair":   f"{p1_player} {p1_prop} ↔ {p2_player} {p2_prop}",
-                    "corr":   round(corr, 2),
-                    "reason": reason,
-                })
-
-    if not correlations:
-        return 0.0, []
-
-    avg_corr = sum(correlations) / len(correlations)
-    return round(avg_corr, 3), sorted(pair_details, key=lambda x: -x["corr"])
-
-
-# ── 2. Regime Detection ─────────────────────────────────────────
-def detect_season_regime(sport):
-    """
-    Detect current season regime: Early / Mid / Late / Playoffs
-    
-    Regime matters because signal weights should shift:
-    - Playoffs: defense signal stronger, pace less reliable
-    - Early season: small sample, trust averages less
-    - Late season: tanking affects some teams
-    
-    Returns dict: {regime, description, adjustments}
-    """
-    today = date.today()
-    month = today.month
-    day   = today.day
-
-    regimes = {
-        "NBA": {
-            (10, 11): ("Early Season",  "Small sample — dampen confidence by 15%", {"base": -0.05, "defense": -0.03}),
-            (12, 1, 2, 3): ("Mid Season", "Peak reliability — full weights", {}),
-            (4,):  ("Late Season",  "Playoff seeding — rest patterns shift",   {"rest": 0.02}),
-            (5, 6): ("Playoffs",    "Playoffs — defense premium, pace down",   {"defense": 0.05, "pace": -0.02}),
-        },
-        "NFL": {
-            (9, 10): ("Early Season",  "Weeks 1-4 — small sample caution",       {"base": -0.05}),
-            (11, 12, 1): ("Mid Season", "Weeks 5-13 — full reliability", {}),
-            (1,):    ("Late Season",   "Week 14-18 — rest/tanking risk",          {"rest": 0.03}),
-            (2,):    ("Playoffs",      "Playoffs — defense dominates",            {"defense": 0.06, "pace": -0.03}),
-        },
-        "MLB": {
-            (3, 4, 5): ("Early Season", "Weeks 1-8 — small sample",              {"base": -0.04}),
-            (6, 7, 8): ("Mid Season",   "Peak season — full confidence", {}),
-            (9,):      ("Late Season",  "Playoff push — lineup changes frequent", {"rest": 0.02}),
-            (10,):     ("Playoffs",     "MLB Playoffs — pitcher-heavy",           {"defense": 0.04, "pace": -0.02}),
-        },
-        "WNBA": {
-            (5, 6):    ("Early Season", "Opening weeks — calibrating",            {"base": -0.04}),
-            (7, 8):    ("Mid Season",   "Peak reliability", {}),
-            (9,):      ("Late Season",  "Playoff push",                           {"rest": 0.02}),
-            (10,):     ("Playoffs",     "WNBA Playoffs — intensity rises",        {"defense": 0.04}),
-        },
-    }
-
-    sport_regimes = regimes.get(sport, {})
-    for months_tuple, (regime, desc, adj) in sport_regimes.items():
-        if month in months_tuple:
-            return {
-                "regime":       regime,
-                "description":  desc,
-                "adjustments":  adj,
-                "sport":        sport,
-                "month":        month,
-                "note":         f"{sport} {regime} — {desc}",
-            }
-    return {
-        "regime":      "Mid Season",
-        "description": "Standard weights apply",
-        "adjustments": {},
-        "sport":       sport,
-        "note":        f"{sport} — Standard season",
-    }
-
-
-def apply_regime_adjustments(signals, sport):
-    """
-    Apply regime-based adjustments to signal weights.
-    Called during edge calculation when regime is detected.
-    Returns adjusted signals dict.
-    """
-    regime = detect_season_regime(sport)
-    adj = regime.get("adjustments", {})
-    if not adj:
-        return signals
-    adjusted = dict(signals)
-    for sig_key, delta in adj.items():
-        if sig_key in adjusted:
-            adjusted[sig_key] = round(adjusted[sig_key] + delta, 4)
-    return adjusted
-
-
-# ── 3. Bankroll Intelligence ────────────────────────────────────
 def compute_bankroll_multiplier(history=None, clv_data=None):
     """
     Model-aware stake sizing.
@@ -3379,11 +2815,27 @@ def compute_market_consensus(model_prob, player, prop, sport, game_analysis=None
     
     player_lower = normalize_name(player)
     
-    # Build normalized name tokens for exact matching (prevents Smith matching Will Smith)
+    # Build normalized name tokens for exact matching
     player_tokens = set(normalize_name(player).split())
     
     # Use single list of {prob, volume} to guarantee alignment
     market_entries = []
+
+    # Pre-build Kalshi/Poly indexes if not cached — avoids O(N×M) scan
+    if "_kalshi_idx" not in st.session_state or len(st.session_state["_kalshi_idx"]) != len(kalshi_data):
+        _ki = {}
+        for _m in kalshi_data:
+            for _t in set(normalize_name(_m.get("event","")).split()):
+                _ki.setdefault(_t,[]).append(_m)
+        st.session_state["_kalshi_idx"] = _ki
+    if "_poly_idx" not in st.session_state or len(st.session_state["_poly_idx"]) != len(poly_data):
+        _pi = {}
+        for _m in poly_data:
+            for _t in set(normalize_name(_m.get("question","")).split()):
+                _pi.setdefault(_t,[]).append(_m)
+        st.session_state["_poly_idx"] = _pi
+    _kalshi_idx = st.session_state["_kalshi_idx"]
+    _poly_idx   = st.session_state["_poly_idx"]
 
     # Match Kalshi markets — require ALL first+last name tokens to match
     for mkt in kalshi_data:
@@ -7160,6 +6612,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         "home": home_team, "away": away_team,
         "Sport": sport,  # uppercase for UI filter compatibility
         "sport": sport,  # lowercase for internal use
+        "loaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),  # freshness tracking
         "recommendations": recommendations, "best_bet": best_bet,
         "best_edge": best_edge, "sport": sport,
         "public_signals": public_sharp_signals, "public_data": game_public,
@@ -13374,6 +12827,22 @@ def load_sport_data(sport):
     enriched = []
     skipped_def = skipped_edge = 0
 
+    # Pre-build normalize_name index for O(1) history lookups
+    # Avoids calling normalize_name() 126× per board load
+    _history_norm_index = {}
+    for _hi, _hb in enumerate(history):
+        _hn = normalize_name(_hb.get("player",""))
+        if _hn not in _history_norm_index:
+            _history_norm_index[_hn] = []
+        _history_norm_index[_hn].append(_hb)
+
+    # Pre-build injury lookup index
+    _injuries_raw = st.session_state.get("injuries", {})
+    _injury_index = {}
+    if isinstance(_injuries_raw, dict):
+        for _ik, _iv in _injuries_raw.items():
+            _injury_index[normalize_name(_ik)] = _iv
+
     # Hoist session_state reads — avoids repeated dict lookups per prop
     _locks_snapshot  = list(st.session_state.get("locks", []))
     _public_data     = st.session_state.get("public_betting_data", {})
@@ -15784,7 +15253,7 @@ with tabs[1]:
                                     "prob":      _lk_prop.get("Prob",0.5),
                                 })
                                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                                save_to_gist("locks", st.session_state.locks)
+                                st.session_state["_gist_dirty_locks"] = True  # batched
                                 st.success(f"Locked {_lr['_player']} {_lr['_prop']}")
                                 st.rerun()
                             else:
@@ -15878,7 +15347,7 @@ with tabs[1]:
                             "prob": _lp.get("Prob",0.5),
                         })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
+                st.session_state["_gist_dirty_locks"] = True  # batched
                 st.success(f"Locked {len(_pb_sel)} portfolio bets")
                 st.rerun()
 
@@ -15904,7 +15373,7 @@ with tabs[1]:
                                 "prob": _p.get("Prob",0.5),
                             })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
+                st.session_state["_gist_dirty_locks"] = True  # batched
                 st.success(f"Locked {len([p for p in _board if p.get('Tier') in ('SOVEREIGN','ELITE')])} plays")
                 st.rerun()
         with _qa2:
@@ -16086,7 +15555,7 @@ with tabs[2]:
                         }
                         st.session_state.locks.append(_new_game_lock)
                         save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)
+                        st.session_state["_gist_dirty_locks"] = True  # batched
                         st.rerun()
 
         # Keep line movement and public betting data below
@@ -16316,7 +15785,7 @@ with tabs[3]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)
+                    st.session_state["_gist_dirty_locks"] = True  # batched
                     st.rerun()
             with btn_col3:
                 if st.button("❌ LOSS SLIP", key=f"loss_{slip_key}", use_container_width=True):
@@ -16332,7 +15801,7 @@ with tabs[3]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)
+                    st.session_state["_gist_dirty_locks"] = True  # batched
                     st.rerun()
             with btn_col4:
                 if st.button("↩ VOID", key=f"void_{slip_key}", use_container_width=True):
@@ -16340,7 +15809,7 @@ with tabs[3]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)
+                    st.session_state["_gist_dirty_locks"] = True  # batched
                     st.rerun()
 
             st.markdown("---")
@@ -16521,7 +15990,7 @@ with tabs[3]:
 
             if resolved > 0:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)
+                st.session_state["_gist_dirty_locks"] = True  # batched
                 st.success(f"✅ Auto-resolved {resolved} picks via ESPN box scores")
                 st.rerun()
 
@@ -16585,7 +16054,7 @@ with tabs[3]:
                             continue
                     if bdl_resolved > 0:
                         save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)
+                        st.session_state["_gist_dirty_locks"] = True  # batched
                         resolved += bdl_resolved
 
             # Also resolve game line locks
@@ -17767,7 +17236,7 @@ with tabs[5]:
                             locked += 1
                 if locked:
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)
+                    st.session_state["_gist_dirty_locks"] = True  # batched
                     st.success(f"✅ Locked {locked} picks")
                     st.rerun()
 
