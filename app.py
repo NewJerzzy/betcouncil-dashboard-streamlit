@@ -1779,6 +1779,79 @@ def compute_prop_correlation_score(props):
 # When drifting → size down automatically.
 # ═══════════════════════════════════════════════════════════════
 
+def detect_season_regime(sport="NBA"):
+    """
+    Detect current season phase and return weight adjustments.
+    Used by enrichment loop (S weight modifiers) and History tab display.
+    Returns: {regime, description, adjustments, month}
+    """
+    month = date.today().month
+
+    if sport in ("NBA", "WNBA"):
+        if month in (10, 11):
+            regime = "Early Season"
+            desc   = "First month — small sample, base stats less reliable"
+            adj    = {"base": -0.04, "defense": -0.03}
+        elif month in (4, 5, 6):
+            regime = "Playoffs"
+            desc   = "Playoffs — defense weight increases, pace less predictive"
+            adj    = {"defense": 0.04, "pace": -0.02}
+        elif month in (3,):
+            regime = "Late Season"
+            desc   = "Late season — rest signal strengthens"
+            adj    = {"rest": 0.02}
+        else:
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
+    elif sport == "MLB":
+        if month in (3, 4):
+            regime = "Early Season"
+            desc   = "Early MLB — small sample, pitcher ERA stabilizing"
+            adj    = {"base": -0.04}
+        elif month in (10,):
+            regime = "Playoffs"
+            desc   = "MLB Playoffs — defense weight increases"
+            adj    = {"defense": 0.04}
+        elif month in (9,):
+            regime = "Late Season"
+            desc   = "Late MLB — rest signal strengthens"
+            adj    = {"rest": 0.02}
+        else:
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
+    elif sport == "NFL":
+        if month in (9,):
+            regime = "Early Season"
+            desc   = "Early NFL — base signal less reliable"
+            adj    = {"base": -0.05}
+        elif month in (1,):
+            regime = "Playoffs"
+            desc   = "NFL Playoffs — defense weight increases significantly"
+            adj    = {"defense": 0.06}
+        elif month in (12,):
+            regime = "Late Season"
+            desc   = "Late NFL — rest critical"
+            adj    = {"rest": 0.03}
+        else:
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
+    else:
+        regime = "Mid Season"
+        desc   = "Full weights active"
+        adj    = {}
+
+    return {
+        "regime":      regime,
+        "description": desc,
+        "adjustments": adj,
+        "month":       month,
+        "sport":       sport,
+    }
+
+
 def compute_model_drift(history=None, window=50):
     """
     Compares recent N-bet ROI vs all-time ROI.
