@@ -1864,18 +1864,19 @@ def compute_bankroll_multiplier(history=None, clv_data=None):
 
     # Multiplier
     if score >= 3:
-        mult, reason = 1.25, f"Strong model (+{roi:.1%} ROI, CLV {clv_avg:+.1f})"
+        mult, reason, color = 1.25, f"Strong model (+{roi:.1%} ROI, CLV {clv_avg:+.1f})", "#22c55e"
     elif score >= 1:
-        mult, reason = 1.00, f"Neutral ({roi:.1%} ROI)"
+        mult, reason, color = 1.00, f"Neutral ({roi:.1%} ROI)", "#e8a020"
     elif score >= -1:
-        mult, reason = 0.75, f"Mild drift ({drift:+.1%} vs baseline)"
+        mult, reason, color = 0.75, f"Mild drift ({drift:+.1%} vs baseline)", "#e8a020"
     else:
-        mult, reason = 0.50, f"Significant drift ({drift:+.1%}, ROI {roi:.1%})"
+        mult, reason, color = 0.50, f"Significant drift ({drift:+.1%}, ROI {roi:.1%})", "#e04040"
 
     return {
         "multiplier": mult,
         "reason":     reason,
         "label":      f"{mult:.2f}x",
+        "color":      color,
         "roi":        round(roi, 3),
         "clv_avg":    round(clv_avg, 2),
         "drift":      round(drift, 3),
