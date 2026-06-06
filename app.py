@@ -1935,7 +1935,6 @@ def generate_weekly_model_report(history=None, signal_data=None):
     """
     if history is None:
         history = []
-    from datetime import date, timedelta
     week_ago = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
     recent = [h for h in history
               if h.get("outcome") in ("WIN","LOSS")
@@ -1951,16 +1950,52 @@ def generate_weekly_model_report(history=None, signal_data=None):
         for h in recent
     )
     roi = round(total_p / total_w, 3) if total_w > 0 else 0
+    # Best/worst signals
+    signal_wins = {}
+    for bet in recent:
+        for sig in (bet.get("signal_values") or {}):
+            signal_wins.setdefault(sig, {"w":0,"t":0})
+            signal_wins[sig]["t"] += 1
+            if bet.get("outcome") == "WIN":
+                signal_wins[sig]["w"] += 1
+    best_sig  = max(signal_wins, key=lambda s: signal_wins[s]["w"]/max(signal_wins[s]["t"],1), default="—") if signal_wins else "—"
+    worst_sig = min(signal_wins, key=lambda s: signal_wins[s]["w"]/max(signal_wins[s]["t"],1), default="—") if signal_wins else "—"
+    # Best/worst sport
+    sport_wins = {}
+    for bet in recent:
+        sp = bet.get("sport","Unknown")
+        sport_wins.setdefault(sp, {"w":0,"t":0})
+        sport_wins[sp]["t"] += 1
+        if bet.get("outcome") == "WIN":
+            sport_wins[sp]["w"] += 1
+    best_sport  = max(sport_wins, key=lambda s: sport_wins[s]["w"]/max(sport_wins[s]["t"],1), default="—") if sport_wins else "—"
+    worst_sport = min(sport_wins, key=lambda s: sport_wins[s]["w"]/max(sport_wins[s]["t"],1), default="—") if sport_wins else "—"
+    # CLV avg — CLV_PATH is a module-level global, no import needed
+    try:
+        clv_data = load_json_data(CLV_PATH, [])
+        week_clv = [c for c in clv_data if str(c.get("timestamp","")) >= week_ago]
+        avg_clv  = round(sum(c.get("clv",0) for c in week_clv)/len(week_clv), 2) if week_clv else 0.0
+    except Exception:
+        avg_clv = 0.0
     return {
-        "wins":    wins,
-        "losses":  losses,
-        "total":   len(recent),
-        "roi":     roi,
-        "roi_pct": f"{roi*100:+.1f}%",
-        "units":   round(total_p, 2),
-        "period":  "Last 7 days",
+        "wins":         wins,
+        "losses":       losses,
+        "bets":         len(recent),
+        "total":        len(recent),
+        "win_rate":     round(wins/len(recent), 3),
+        "roi":          roi,
+        "roi_pct":      f"{roi*100:+.1f}%",
+        "roi_per_bet":  roi,
+        "net_units":    round(total_p, 2),
+        "units":        round(total_p, 2),
+        "avg_clv":      avg_clv,
+        "best_signal":  best_sig,
+        "worst_signal": worst_sig,
+        "best_sport":   best_sport,
+        "worst_sport":  worst_sport,
+        "calibration":  "N/A",
+        "period":       "Last 7 days",
     }
-
 
 def detect_season_regime(sport="NBA"):
     """
