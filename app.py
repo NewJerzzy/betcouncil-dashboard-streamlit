@@ -1819,42 +1819,66 @@ def compute_signal_attribution(history=None):
 def compute_portfolio_exposure(board_data=None):
     """
     Check concentration risk across current locked picks.
-    Returns dict with sport/team/player exposure warnings.
+    Returns full exposure dict with all keys used by the History tab UI.
     """
-    if not board_data:
-        return {}
-    locks = []
     try:
         import streamlit as _st
-        locks = _st.session_state.get("locks", [])
+        locks = list(_st.session_state.get("locks", []))
+        bankroll = float(_st.session_state.get("bankroll", 100) or 100)
     except Exception:
-        return {}
+        locks, bankroll = [], 100.0
+
     if not locks:
         return {}
+
     sport_counts  = {}
     team_counts   = {}
     player_counts = {}
+    total_stake   = 0.0
+
     for lk in locks:
         s = lk.get("sport","")
         t = lk.get("team","")
         p = lk.get("player","")
-        sport_counts[s]  = sport_counts.get(s, 0)  + 1
-        team_counts[t]   = team_counts.get(t, 0)   + 1
-        player_counts[p] = player_counts.get(p, 0) + 1
+        w = float(lk.get("wager", 1) or 1)
+        sport_counts[s]  = sport_counts.get(s,0)  + 1
+        team_counts[t]   = team_counts.get(t,0)   + 1
+        player_counts[p] = player_counts.get(p,0) + 1
+        total_stake     += w
+
     warnings = []
+    recommendations = []
     for sport, cnt in sport_counts.items():
         if cnt > 4:
             warnings.append(f"⚠️ {cnt} picks on {sport} — max 4 recommended")
+            recommendations.append(f"Reduce {sport} exposure to 4 or fewer")
     for team, cnt in team_counts.items():
         if cnt >= 3 and team:
             warnings.append(f"⚠️ {cnt} picks from {team} — high correlation")
+            recommendations.append(f"Reduce {team} to 2 or fewer props")
     for player, cnt in player_counts.items():
         if cnt >= 2 and player:
             warnings.append(f"⚠️ {cnt} props on {player} — same-player correlation")
-    return {"warnings": warnings, "sport_counts": sport_counts,
-            "team_counts": team_counts, "player_counts": player_counts,
-            "total_locks": len(locks)}
+            recommendations.append(f"Keep {player} to 1 prop max")
 
+    # Sport breakdown for display
+    sport_breakdown = {s: {"count": c, "pct": round(c/len(locks)*100,1)}
+                       for s,c in sport_counts.items()}
+
+    total_pct_br = round(total_stake / bankroll * 100, 1) if bankroll > 0 else 0.0
+
+    return {
+        "warnings":        warnings,
+        "recommendations": recommendations,
+        "sport_counts":    sport_counts,
+        "team_counts":     team_counts,
+        "player_counts":   player_counts,
+        "sport_breakdown": sport_breakdown,
+        "total_locks":     len(locks),
+        "n_active":        len(locks),
+        "total_stake":     round(total_stake, 2),
+        "total_pct_br":    total_pct_br,
+    }
 
 def compute_parlay_correlation(props):
     """
