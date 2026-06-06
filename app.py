@@ -14875,14 +14875,48 @@ with tabs[0]:
                 (10 if _game_edge >= 0.10 else 5 if _game_edge >= 0.05 else 0)
             ))
             _gscore_icon = "🟢" if _game_score >= 80 else "🟡" if _game_score >= 60 else "🟠" if _game_score >= 40 else "🔴"
-            st.markdown(f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 1rem;margin-top:0.3rem;"><span style="color:var(--color-text-tertiary);font-size:1.0rem;">LOCK QUALITY SCORE: </span><span style="color:#e8f0f8;font-weight:700;">{_game_score}/100 {_gscore_icon}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:0.6rem 1rem;margin-top:0.3rem;"><span style="color:var(--color-text-tertiary);font-size:1.0rem;">LOCK QUALITY SCORE: </span><span style="color:var(--color-text-primary);font-weight:700;">{_game_score}/100 {_gscore_icon}</span></div>', unsafe_allow_html=True)
+
+        # ── BEST GAME QUEUE ─────────────────────────────────
+        _top_games = sorted(
+            [g for g in game_analysis if g.get("best_edge",0) >= 0.015 and g.get("best_bet")],
+            key=lambda x: x.get("best_edge",0), reverse=True
+        )[:5]
+        if len(_top_games) >= 2:
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:0.5px;background:var(--color-border-tertiary);"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🏟️ Best Game Queue</span><div style="flex:1;height:0.5px;background:var(--color-border-tertiary);"></div></div>''', unsafe_allow_html=True)
+            for _gi, _tg in enumerate(_top_games, 1):
+                _tbb    = _tg.get("best_bet", {})
+                _tge    = float(_tg.get("best_edge",0) or 0)
+                _ttype  = _tbb.get("type","")
+                _tpick  = _tbb.get("pick","")
+                _tnote  = _tbb.get("note","")[:70]
+                _ttier  = _tg.get("tier","LEAN") if _tg.get("tier") else ("SOVEREIGN" if _tge>=0.06 else "ELITE" if _tge>=0.03 else "APPROVED")
+                _tc     = {"SOVEREIGN":"#22c55e","ELITE":"#378add","APPROVED":"#e8a020"}.get(_ttier,"#6a7a8a")
+                st.markdown(f'''
+                <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-left:3px solid {_tc};border-radius:8px;padding:0.9rem 1rem;margin-bottom:0.5rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <span style="color:var(--color-text-tertiary);font-size:0.85rem;">#{_gi} &nbsp;</span>
+                            <span style="color:var(--color-text-primary);font-weight:600;">{_tg.get("matchup","")} — {_ttype} {_tpick}</span>
+                        </div>
+                        <div style="text-align:right;">
+                            <span style="color:{_tc};font-weight:700;font-size:1.0rem;">Edge {abs(_tge):.1%}</span>
+                            <span style="color:var(--color-text-tertiary);font-size:0.85rem;margin-left:0.5rem;">{_ttier}</span>
+                        </div>
+                    </div>
+                    <div style="color:var(--color-text-secondary);font-size:0.9rem;margin-top:0.3rem;">{_tnote}</div>
+                </div>
+                ''', unsafe_allow_html=True)
 
 
         # ═══════════════════════════════════════════════════
         # SECTION 5 — PARLAY
+        # Note: intentionally AFTER Players to Avoid so
+        # the "singles only" message doesn't contradict
+        # the Best Bet Queue shown above.
         # ═══════════════════════════════════════════════════
         # ── PARLAY OF THE DAY — PROPS ──────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--color-border-tertiary);"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:var(--color-border-tertiary);"></div></div>''', unsafe_allow_html=True)
         # Filter to current sport only, SOVEREIGN/ELITE tier
         _cur_sport = st.session_state.get("last_sport", "NBA")
         parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
@@ -14917,12 +14951,24 @@ with tabs[0]:
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.markdown(f'<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;color:#9aa8b8;font-size:1.0rem;">⚠️ No +EV prop parlay available today. Combined probability ({combined:.1%}) is below the {be:.1%} breakeven. Sit out or go single picks only.</div>', unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-left:3px solid #e8a020;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">
+                    <div style="color:#e8a020;font-weight:600;margin-bottom:0.4rem;">⚠️ Singles Only — Skip the Parlay Today</div>
+                    <div style="color:var(--color-text-secondary);font-size:0.95rem;line-height:1.6;">
+                        The individual props above show positive edge, but combining them into a parlay
+                        drops the combined probability to <strong>{combined:.1%}</strong>, well below the
+                        <strong>{be:.1%}</strong> breakeven needed for a {len(parlay_props)}-pick parlay to be profitable.
+                        <br><br>
+                        <span style="color:var(--color-text-primary);">Take them as singles.</span>
+                        The edge is real — a parlay just multiplies the variance against you at this probability.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;padding:0.3rem 0;">Need 2+ SOVEREIGN/ELITE props to build a parlay.</div>', unsafe_allow_html=True)
 
         # ── PLAYERS TO AVOID (always visible) ──────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--color-border-tertiary);"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Players to Avoid</span><div style="flex:1;height:1px;background:var(--color-border-tertiary);"></div></div>''', unsafe_allow_html=True)
         avoid_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0))
                        if p.get("Edge",0) < 0
                        and p.get("Sport","") == _cur_sport][:5]
