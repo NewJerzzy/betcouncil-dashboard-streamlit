@@ -1779,6 +1779,189 @@ def compute_prop_correlation_score(props):
 # When drifting → size down automatically.
 # ═══════════════════════════════════════════════════════════════
 
+def compute_signal_attribution(history=None):
+    """
+    Compute per-signal win rate and ROI from resolved bets.
+    Activates at 20+ resolved bets.
+    Returns (rows_list, resolved_count)
+    """
+    if history is None:
+        history = []
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    n = len(resolved)
+    if n < 20:
+        return None, n
+    signal_stats = {}
+    for bet in resolved:
+        sv = bet.get("signal_values", {})
+        for sig, val in sv.items():
+            if sig not in signal_stats:
+                signal_stats[sig] = {"wins":0,"total":0,"edge_sum":0}
+            signal_stats[sig]["total"] += 1
+            if bet.get("outcome") == "WIN":
+                signal_stats[sig]["wins"] += 1
+            signal_stats[sig]["edge_sum"] += float(val or 0)
+    rows = []
+    for sig, stats in sorted(signal_stats.items(), key=lambda x: -x[1]["total"]):
+        if stats["total"] < 3:
+            continue
+        wr = stats["wins"] / stats["total"]
+        rows.append({
+            "Signal":   sig,
+            "Bets":     stats["total"],
+            "Win Rate": f"{wr:.0%}",
+            "Avg Edge": f"{stats['edge_sum']/stats['total']:+.3f}",
+            "Status":   "✅" if wr >= 0.55 else "⚠️" if wr >= 0.50 else "❌",
+        })
+    return rows, n
+
+
+def compute_portfolio_exposure(board_data=None):
+    """
+    Check concentration risk across current locked picks.
+    Returns dict with sport/team/player exposure warnings.
+    """
+    if not board_data:
+        return {}
+    locks = []
+    try:
+        import streamlit as _st
+        locks = _st.session_state.get("locks", [])
+    except Exception:
+        return {}
+    if not locks:
+        return {}
+    sport_counts  = {}
+    team_counts   = {}
+    player_counts = {}
+    for lk in locks:
+        s = lk.get("sport","")
+        t = lk.get("team","")
+        p = lk.get("player","")
+        sport_counts[s]  = sport_counts.get(s, 0)  + 1
+        team_counts[t]   = team_counts.get(t, 0)   + 1
+        player_counts[p] = player_counts.get(p, 0) + 1
+    warnings = []
+    for sport, cnt in sport_counts.items():
+        if cnt > 4:
+            warnings.append(f"⚠️ {cnt} picks on {sport} — max 4 recommended")
+    for team, cnt in team_counts.items():
+        if cnt >= 3 and team:
+            warnings.append(f"⚠️ {cnt} picks from {team} — high correlation")
+    for player, cnt in player_counts.items():
+        if cnt >= 2 and player:
+            warnings.append(f"⚠️ {cnt} props on {player} — same-player correlation")
+    return {"warnings": warnings, "sport_counts": sport_counts,
+            "team_counts": team_counts, "player_counts": player_counts,
+            "total_locks": len(locks)}
+
+
+def compute_parlay_correlation(props):
+    """
+    Compute correlation score for a set of props.
+    Returns (score 0-1, list of correlated pairs).
+    """
+    if not props or len(props) < 2:
+        return 0.0, []
+    KNOWN_CORR = [
+        ("Points","PRA"), ("Rebounds","PRA"), ("Assists","PRA"),
+        ("Points","Fantasy Score"), ("Hits","Total Bases"),
+    ]
+    corr_pairs = []
+    score = 0.0
+    players = [p.get("Player","") for p in props]
+    # Same player = high correlation
+    from collections import Counter
+    dupes = [pl for pl, cnt in Counter(players).items() if cnt >= 2 and pl]
+    for pl in dupes:
+        corr_pairs.append(f"{pl} has multiple props")
+        score += 0.35
+    # Known correlated prop types
+    prop_types = [(p.get("Player",""), p.get("Prop","")) for p in props]
+    for i, (pl1, pr1) in enumerate(prop_types):
+        for j, (pl2, pr2) in enumerate(prop_types):
+            if i >= j:
+                continue
+            if pl1 == pl2:
+                for ca, cb in KNOWN_CORR:
+                    if (ca in pr1 and cb in pr2) or (cb in pr1 and ca in pr2):
+                        corr_pairs.append(f"{pl1}: {pr1}+{pr2}")
+                        score += 0.25
+    return round(min(1.0, score), 2), corr_pairs
+
+
+def generate_weight_recommendations(history=None, sport="NBA"):
+    """
+    Generate signal weight recommendations based on historical performance.
+    Activates at 100+ resolved bets for the given sport.
+    Returns (recommendations_list, resolved_count)
+    """
+    if history is None:
+        history = []
+    resolved = [h for h in history
+                if h.get("outcome") in ("WIN","LOSS")
+                and h.get("sport","") == sport]
+    n = len(resolved)
+    if n < 100:
+        return None, n
+    # Simple win rate by signal
+    recs = []
+    signal_perf = {}
+    for bet in resolved:
+        sv = bet.get("signal_values", {})
+        for sig, val in sv.items():
+            if sig not in signal_perf:
+                signal_perf[sig] = {"wins":0,"total":0}
+            signal_perf[sig]["total"] += 1
+            if bet.get("outcome") == "WIN":
+                signal_perf[sig]["wins"] += 1
+    for sig, perf in sorted(signal_perf.items(), key=lambda x: -x[1]["total"]):
+        if perf["total"] < 10:
+            continue
+        wr = perf["wins"] / perf["total"]
+        if wr >= 0.58:
+            recs.append({"signal": sig, "action": "INCREASE", "win_rate": wr,
+                         "reason": f"{wr:.0%} win rate — above threshold"})
+        elif wr <= 0.48:
+            recs.append({"signal": sig, "action": "DECREASE", "win_rate": wr,
+                         "reason": f"{wr:.0%} win rate — below threshold"})
+    return recs, n
+
+
+def generate_weekly_model_report(history=None, signal_data=None):
+    """
+    Generate weekly P&L and model performance summary.
+    Returns dict with weekly metrics or None if insufficient data.
+    """
+    if history is None:
+        history = []
+    from datetime import date, timedelta
+    week_ago = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+    recent = [h for h in history
+              if h.get("outcome") in ("WIN","LOSS")
+              and str(h.get("timestamp","")) >= week_ago]
+    if not recent:
+        return None
+    wins    = sum(1 for h in recent if h.get("outcome") == "WIN")
+    losses  = len(recent) - wins
+    total_w = sum(float(h.get("wager",1) or 1) for h in recent)
+    total_p = sum(
+        float(h.get("wager",1) or 1) * 0.909 if h.get("outcome")=="WIN"
+        else -float(h.get("wager",1) or 1)
+        for h in recent
+    )
+    roi = round(total_p / total_w, 3) if total_w > 0 else 0
+    return {
+        "wins":    wins,
+        "losses":  losses,
+        "total":   len(recent),
+        "roi":     roi,
+        "roi_pct": f"{roi*100:+.1f}%",
+        "units":   round(total_p, 2),
+        "period":  "Last 7 days",
+    }
+
+
 def detect_season_regime(sport="NBA"):
     """
     Detect current season phase and return weight adjustments.
