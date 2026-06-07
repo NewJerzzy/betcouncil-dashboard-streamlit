@@ -4802,6 +4802,170 @@ def check_correlation_risk(selected_props):
     return warnings
 
 
+# ═══════════════════════════════════════════════════════════════
+# BOVADA GAME LINES
+# Confirmed working — no cookies, no auth required
+# Endpoint: bovada.lv/services/sports/event/coupon/events/A/description/{sport}
+# Returns: Moneyline, Spread, Total for all games
+# Sharpness: between soft books and Pinnacle — useful comparison
+# ═══════════════════════════════════════════════════════════════
+
+BOVADA_PATH    = os.path.join(CACHE_DIR, "bovada_lines.json")
+BOVADA_BASE    = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+BOVADA_HEADERS = {
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept":          "application/json, text/plain, */*",
+    "Referer":         "https://www.bovada.lv/",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+BOVADA_SPORT_MAP = {
+    "NBA":  "basketball/nba",
+    "MLB":  "baseball/mlb",
+    "NHL":  "hockey/nhl",
+    "WNBA": "basketball/wnba",
+    "NFL":  "football/nfl",
+    "GOLF": "golf/pga-tour",
+}
+
+
+@st.cache_data(ttl=1800)
+def fetch_bovada_lines(sport="NBA"):
+    """
+    Fetch Bovada game lines — ML, spread, total.
+    No auth required. Confirmed working via browser test.
+
+    Returns list of:
+      {matchup, home, away, home_ml, away_ml,
+       spread, spread_odds, total, over_odds, under_odds}
+    """
+    sport_path = BOVADA_SPORT_MAP.get(sport, "basketball/nba")
+    url        = f"{BOVADA_BASE}/{sport_path}"
+
+    try:
+        r = requests.get(
+            url,
+            headers=BOVADA_HEADERS,
+            params={"lang": "en", "eventsLimit": 50, "preMatchOnly": "true"},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return load_json_data(BOVADA_PATH, [])
+
+        raw = r.json()
+        if not isinstance(raw, list) or not raw:
+            return load_json_data(BOVADA_PATH, [])
+
+        games = []
+        for section in raw:
+            for event in section.get("events", []):
+                if event.get("type") != "GAMEEVENT":
+                    continue
+                if event.get("live"):
+                    continue  # skip live games
+
+                desc         = event.get("description","")
+                competitors  = event.get("competitors", [])
+                home_team    = next((c["name"] for c in competitors if c.get("home")), "")
+                away_team    = next((c["name"] for c in competitors if not c.get("home")), "")
+                start_time   = event.get("startTime", 0)
+
+                # Find Game Lines display group
+                game_lines_grp = next(
+                    (g for g in event.get("displayGroups", [])
+                     if g.get("description") == "Game Lines"),
+                    None
+                )
+                if not game_lines_grp:
+                    continue
+
+                ml_home = ml_away = None
+                spread = spread_home = spread_odds = None
+                total = over_odds = under_odds = None
+
+                for mkt in game_lines_grp.get("markets", []):
+                    key = mkt.get("key","")
+                    outcomes = mkt.get("outcomes", [])
+
+                    if key == "2W-12":  # Moneyline
+                        for out in outcomes:
+                            price = out.get("price",{})
+                            if out.get("type") == "H":
+                                ml_home = price.get("american","")
+                            elif out.get("type") == "A":
+                                ml_away = price.get("american","")
+
+                    elif key == "2W-HCAP":  # Spread
+                        for out in outcomes:
+                            price = out.get("price",{})
+                            if out.get("type") == "H":
+                                spread      = price.get("handicap","")
+                                spread_odds = price.get("american","")
+
+                    elif key == "2W-OU":  # Total
+                        for out in outcomes:
+                            price = out.get("price",{})
+                            if out.get("type") == "O":
+                                total     = price.get("handicap","")
+                                over_odds = price.get("american","")
+                            elif out.get("type") == "U":
+                                under_odds = price.get("american","")
+
+                if not home_team or not away_team:
+                    continue
+
+                games.append({
+                    "matchup":     f"{away_team} @ {home_team}",
+                    "home":        home_team,
+                    "away":        away_team,
+                    "home_ml":     ml_home,
+                    "away_ml":     ml_away,
+                    "spread":      spread,
+                    "spread_odds": spread_odds,
+                    "total":       total,
+                    "over_odds":   over_odds,
+                    "under_odds":  under_odds,
+                    "start_time":  start_time,
+                    "sport":       sport,
+                    "link":        event.get("link",""),
+                    "event_id":    event.get("id",""),
+                })
+
+        if games:
+            save_json_data(BOVADA_PATH, games)
+        return games or load_json_data(BOVADA_PATH, [])
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "source": "Bovada", "error": str(e)[:80],
+            "time":   datetime.now().strftime("%H:%M"),
+        })
+        return load_json_data(BOVADA_PATH, [])
+
+
+def get_bovada_game_line(matchup, bovada_data=None):
+    """
+    Look up Bovada lines for a matchup.
+    Used to compare vs OddsAPI lines for market agreement.
+    Returns dict or None.
+    """
+    if bovada_data is None:
+        bovada_data = st.session_state.get("bovada_lines", [])
+    if not bovada_data:
+        return None
+
+    matchup_norm = normalize_name(matchup)
+    for game in bovada_data:
+        gm_norm = normalize_name(game.get("matchup",""))
+        h_norm  = normalize_name(game.get("home",""))
+        a_norm  = normalize_name(game.get("away",""))
+        if (matchup_norm in gm_norm or gm_norm in matchup_norm or
+            (h_norm and h_norm in matchup_norm) or
+            (a_norm and a_norm in matchup_norm)):
+            return game
+    return None
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -14254,6 +14418,11 @@ def load_sport_data(sport):
         if _golf_odds:
             st.session_state["golf_odds"] = _golf_odds
 
+    # Bovada game lines — all sports, no auth required
+    _bovada = fetch_bovada_lines(sport)
+    if _bovada:
+        st.session_state["bovada_lines"] = _bovada
+
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
 # =========================
@@ -16043,6 +16212,15 @@ with tabs[2]:
                         st.markdown(f"**Current:** Spread {m.get('spread','—')} | Total {m.get('over_under','—')} | ML {m.get('home_ml','—')}/{m.get('away_ml','—')}")
                         st.caption(f"Source: {m.get('provider','ESPN')}")
                         st.caption("⚠️ Only one snapshot available — load board again later to see movement direction.")
+
+                    # Bovada comparison
+                    _bov = get_bovada_game_line(matchup)
+                    if _bov:
+                        st.markdown("**Bovada:**")
+                        _bc1, _bc2, _bc3 = st.columns(3)
+                        _bc1.metric("ML", f"{_bov.get('away_ml','—')} / {_bov.get('home_ml','—')}")
+                        _bc2.metric("Spread", f"{_bov.get('spread','—')} ({_bov.get('spread_odds','—')})")
+                        _bc3.metric("Total", f"{_bov.get('total','—')} ({_bov.get('over_odds','—')} / {_bov.get('under_odds','—')})")
 
                     # ── Market move explanation ──────────────────────
                     # Pull from game_analysis if available
@@ -19089,6 +19267,24 @@ with tabs[9]:
             st.caption(f"Last refresh: {fetched}")
         else:
             st.info("FantasyLabs lineups load with the MLB board. Typically posted 3-4h before first pitch.")
+
+    # ── Bovada Lines ─────────────────────────────────────────
+    _bov_sys = st.session_state.get("bovada_lines", [])
+    if _bov_sys:
+        st.markdown("---")
+        st.markdown("### 🐂 Bovada Game Lines")
+        st.caption(f"✅ {len(_bov_sys)} games loaded | No auth required")
+        _bov_rows = []
+        for _bg in _bov_sys[:10]:
+            _bov_rows.append({
+                "Matchup":    _bg.get("matchup",""),
+                "ML":         f"{_bg.get('away_ml','—')} / {_bg.get('home_ml','—')}",
+                "Spread":     f"{_bg.get('spread','—')} ({_bg.get('spread_odds','—')})",
+                "Total":      f"{_bg.get('total','—')}",
+            })
+        if _bov_rows:
+            import pandas as _pd
+            st.dataframe(_pd.DataFrame(_bov_rows), use_container_width=True, hide_index=True)
 
     # ── Golf Leaderboard ─────────────────────────────────────
     _golf_lb_sys  = st.session_state.get("golf_leaderboard", [])
