@@ -2,6 +2,38 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, date, timedelta, timezone
+
+# ═══════════════════════════════════════════════════════════════
+# BETCOUNCIL TELEMETRY
+# Zero-overhead timing. Results in System tab → Performance.
+# ═══════════════════════════════════════════════════════════════
+import time as _time_mod
+from contextlib import contextmanager as _ctx
+
+def _bc_track(stage, duration, meta=None):
+    try:
+        if "bc_telemetry" not in st.session_state:
+            st.session_state["bc_telemetry"] = {}
+        t = st.session_state["bc_telemetry"]
+        if stage not in t:
+            t[stage] = {"runs":0,"total":0.0,"max":0.0,"last":0.0}
+        t[stage]["runs"]  += 1
+        t[stage]["total"] += duration
+        t[stage]["max"]    = max(t[stage]["max"], duration)
+        t[stage]["last"]   = duration
+        if meta:
+            t[stage]["meta"] = meta
+    except Exception:
+        pass
+
+@_ctx
+def bc_timer(stage, meta=None):
+    _t = _time_mod.perf_counter()
+    try:
+        yield
+    finally:
+        _bc_track(stage, _time_mod.perf_counter() - _t, meta)
+
 import re
 import requests
 import time
@@ -14586,6 +14618,8 @@ with st.sidebar:
             pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
+            _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
+                      {"props": len(board), "sport": sport})
             st.session_state.board_data = board
             st.session_state.games = games
             # Cache last good props per sport for fallback
