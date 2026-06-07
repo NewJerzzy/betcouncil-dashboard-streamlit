@@ -15036,12 +15036,18 @@ with tabs[0]:
             _tlk_key = f"sum_track_{lock_prop.get('Player','').replace(' ','_')[:15]}"
             if st.button("📝 Track This Bet", key=_tlk_key, type="secondary"):
                 track_bet_dialog(lock_prop)
-            with st.expander(f"📊 Signal breakdown — {lock_prop.get('Player','')}"):
-                try:
-                    chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
-                    st.markdown(chart_html, unsafe_allow_html=True)
-                except Exception:
-                    st.write("Signal chart unavailable")
+            # Signal chart visible by default — no expander needed
+            # Why This Play is the key differentiator, should be visible
+            try:
+                chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
+                if chart_html:
+                    st.markdown(
+                        f'<div style="margin-top:-4px;margin-bottom:12px;">'
+                        f'{chart_html}</div>',
+                        unsafe_allow_html=True
+                    )
+            except Exception:
+                pass
 
 
         # ═══════════════════════════════════════════════════
@@ -15783,16 +15789,17 @@ with tabs[1]:
 
         _header = (
             '<div style="display:grid;grid-template-columns:'
-            '180px 60px 100px 55px 50px 55px 45px 55px 55px 55px 50px 50px 50px 70px 60px;'
-            'gap:4px;padding:6px 8px;background:var(--color-background-secondary);border-radius:6px 6px 0 0;'
-            'font-size:11px;font-weight:700;color:var(--color-text-tertiary);text-transform:uppercase;'
+            '12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 65px;'
+            'gap:3px;padding:6px 8px;background:var(--color-background-secondary);border-radius:6px 6px 0 0;'
+            'font-size:10px;font-weight:700;color:var(--color-text-tertiary);text-transform:uppercase;'
             'letter-spacing:0.05em;position:sticky;top:0;z-index:10;">'
+            '<span></span>'
             '<span>Player</span>'
-            '<span>Team</span>'
+            '<span>Tier</span>'
             '<span>Prop</span>'
             '<span style="text-align:center">Line</span>'
             '<span style="text-align:center">Grade</span>'
-            '<span style="text-align:center">Edge %</span>'
+            '<span style="text-align:center">Edge</span>'
             '<span style="text-align:center">Model</span>'
             '<span style="text-align:center">Kalshi</span>'
             '<span style="text-align:center">Poly</span>'
@@ -15800,8 +15807,7 @@ with tabs[1]:
             '<span style="text-align:center">L5</span>'
             '<span style="text-align:center">L10</span>'
             '<span style="text-align:center">Szn</span>'
-            '<span style="text-align:center">Signal</span>'
-            '<span style="text-align:center">Rely</span>'
+            '<span style="text-align:center">● Rely</span>'
             '</div>'
         )
         st.markdown(_header, unsafe_allow_html=True)
@@ -15814,29 +15820,39 @@ with tabs[1]:
             _gc    = _r["_grade_color"]
             _bg    = _r["_row_bg"]
             _e_str = f"+{_r['_edge_pct']}%" if _r["_edge_pct"] > 0 else f"{_r['_edge_pct']}%"
-            _html_rows.append(
-                '<div style="display:grid;grid-template-columns:'
-                '180px 60px 100px 55px 50px 55px 45px 55px 55px 55px 50px 50px 50px 70px 60px;'
-                f'gap:4px;padding:5px 8px;background:{_bg};border-bottom:0.5px solid var(--color-border-tertiary);'
-                'font-size:12px;align-items:center;">'
-                f'<span style="font-weight:600;color:#e8eaf0;">{_r["_player"][:22]}</span>'
-                f'<span style="color:var(--color-text-tertiary);">{_r["_team"][:5]}</span>'
-                f'<span style="color:var(--color-text-secondary);">{_r["_prop"][:14]} {_r["_side"]}</span>'
+            # Tier badge + left accent bar
+            _tier_bg_map = {"SOVEREIGN":"#22c55e22","ELITE":"#378add22","APPROVED":"#e8a02022","LEAN":"#6a7a8a22"}
+            _tier_bg   = _tier_bg_map.get(_r["_tier"],"#6a7a8a22")
+            _tier_str  = _r["_tier"][:3]
+            _conf_color = "#22c55e" if _r.get("_conflict")=="ALIGNED" else "#e04040" if _r.get("_conflict")=="CONFLICTED" else "#e8a020"
+            _rely_color = "#22c55e" if _r["_rel"] in ("4/4","3/4") else "var(--color-text-tertiary)"
+            _gs = "15px" if _r["_grade"] in ("A+","A") else "13px"
+            _row = (
+                f'<div style="display:grid;grid-template-columns:'
+                f'12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 65px;'
+                f'gap:3px;padding:6px 8px;background:{_bg};'
+                f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;">'
+                f'<span style="width:3px;height:30px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
+                f'<span style="font-weight:600;color:var(--color-text-primary);">{_r["_player"][:24]}</span>'
+                f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
+                f'padding:2px 5px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
+                f'<span style="color:var(--color-text-secondary);font-size:11px;">{_r["_prop"][:13]} {_r["_side"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-primary);font-weight:600;">{_r["_line"]}</span>'
-                f'<span style="text-align:center;font-weight:700;color:{_gc};">{_r["_grade"]}</span>'
-                f'<span style="text-align:center;font-weight:700;color:{_gc};">{_e_str}</span>'
-                f'<span style="text-align:center;color:var(--color-text-secondary);">{_r["_model_prob"]}%</span>'
-                f'<span style="text-align:center;color:var(--color-text-tertiary);">{_r["_kalshi"] or "—"}</span>'
-                f'<span style="text-align:center;color:var(--color-text-tertiary);">{_r["_poly"] or "—"}</span>'
-                f'<span style="text-align:center;color:var(--color-text-tertiary);">{_r["_pub_pct"] or "—"}</span>'
-                f'<span style="text-align:center;color:var(--color-text-secondary);">{_r["_l5"]}</span>'
-                f'<span style="text-align:center;color:var(--color-text-secondary);">{_r["_l10"]}</span>'
-                f'<span style="text-align:center;color:var(--color-text-secondary);">{_r["_szn"]}</span>'
-                f'<span style="text-align:center;font-size:10px;color:{"#22c55e" if "MODEL+" in _r["_mkt_signal"] else "#6a7a8a"};">{_r["_mkt_signal"] or "—"}</span>'
-                f'<span style="text-align:center;color:{"#22c55e" if _r["_rel"] in ("4/4","3/4") else "#6a7a8a"};">{_r["_rel"]}</span>'
-                f'</div>'
+                f'<span style="text-align:center;font-size:{_gs};font-weight:800;color:{_gc};">{_r["_grade"]}</span>'
+                f'<span style="text-align:center;font-size:13px;font-weight:700;color:{_gc};">{_e_str}</span>'
+                f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_model_prob"]}%</span>'
+                f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">{_r["_kalshi"] or "—"}</span>'
+                f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">{_r["_poly"] or "—"}</span>'
+                f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">{_r["_pub_pct"] or "—"}</span>'
+                f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l5"]}</span>'
+                f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l10"]}</span>'
+                f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_szn"]}</span>'
+                f'<span style="text-align:center;">'
+                f'<span style="color:{_conf_color};font-size:10px;">●</span> '
+                 f'<span style="color:{_rely_color};font-size:11px;">{_r["_rel"]}</span>'
+                f'</span></div>'
             )
-
+            _html_rows.append(_row)
         # Render in chunks to avoid hitting Streamlit limits
         _chunk = 50
         for _i in range(0, len(_html_rows), _chunk):
