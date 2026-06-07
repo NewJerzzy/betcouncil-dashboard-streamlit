@@ -1180,6 +1180,7 @@ def get_action_network_sport_map():
 # FUNCTIONS
 # =========================
 
+@st.cache_data(ttl=3600)
 def ewma_average(game_values, decay=0.85, sport=None):
     if not game_values:
         return 0.0
@@ -1189,6 +1190,7 @@ def ewma_average(game_values, decay=0.85, sport=None):
     weighted = sum(v * w for v, w in zip(reversed(game_values), weights))
     return round(weighted / sum(weights), 2)
 
+@st.cache_data(ttl=3600)
 def compute_std_dev(game_values, decay=0.85, sport=None):
     if not game_values or len(game_values) < 3:
         return None
@@ -8920,7 +8922,13 @@ def fetch_game_lines(sport):
     # Also provides Circa/BetOnline/Pinnacle market data
     if ODDS_API_KEY:
         try:
-            odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
+            _oapi_key = f'oddsapi_lines_{sport}'
+            if _oapi_key in st.session_state:
+                odds_games, odds_home, odds_away = st.session_state[_oapi_key]
+            else:
+                odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
+                if odds_games:
+                    st.session_state[_oapi_key] = (odds_games, odds_home, odds_away)
             if odds_games:
                 odds_lookup = {g["Matchup"]: g for g in odds_games}
 
@@ -13051,7 +13059,14 @@ def load_sport_data(sport):
     def _pf_pinnacle():     return fetch_pinnacle_lines(sport)
     def _pf_oddswrap():     return fetch_oddswrap_props(sport)
     def _pf_parlayapi():    return fetch_parlayapi_props(sport)
-    def _pf_odds_api():     return fetch_odds_api_props(sport)
+    _papi_key = f'oddsapi_props_{sport}'
+    def _pf_odds_api():
+        if _papi_key in st.session_state:
+            return st.session_state[_papi_key]
+        result = fetch_odds_api_props(sport)
+        if result:
+            st.session_state[_papi_key] = result
+        return result
     def _pf_oddspapi():     return fetch_oddspapi_props(sport)
     def _pf_bdl():          return fetch_bdl_props(sport)
     def _pf_sleeper():      return fetch_sleeper_props(sport)
