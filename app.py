@@ -18754,6 +18754,22 @@ with tabs[8]:
 # ----- TAB 7: SYSTEM -----
 with tabs[9]:
     st.markdown("## \u2699\ufe0f System Info")
+
+    # ── Performance Telemetry ─────────────────────────────
+    _telem = st.session_state.get("bc_telemetry", {})
+    if _telem:
+        st.markdown("### ⏱️ Performance")
+        _rows = []
+        for _s, _d in sorted(_telem.items(), key=lambda x: -x[1].get("last",0)):
+            _avg = round(_d["total"] / max(_d["runs"],1), 2)
+            _rows.append({"Stage":_s,"Last":f'{_d["last"]:.2f}s',"Avg":f'{_avg:.2f}s',"Max":f'{_d["max"]:.2f}s',"Runs":_d["runs"],"Status":"🔴 SLOW" if _d["last"]>5 else "🟡 OK" if _d["last"]>2 else "🟢 FAST"})
+        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        _slow=[r["Stage"] for r in _rows if "SLOW" in r["Status"]]
+        if _slow: st.warning(f"🐌 Slow: {chr(44).join(_slow)}")
+    else:
+        st.caption("⏱️ Performance telemetry activates after first board load.")
+    st.markdown("---")
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**Configuration**")
