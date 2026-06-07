@@ -10320,7 +10320,7 @@ def fetch_oddspapi_props(sport):
         if not top_ids:
             return []
         tournament_ids = ",".join(top_ids)
-        url = (f"https://api.oddspapi.io/v4/odds-by-tournaments?bookmaker=draftkings,fanduel,betmgm,pinnacle&tournamentIds={tournament_ids}&apiKey={ODDSPAPI_KEY}&oddsFormat=american")
+        url = (f"https://api.oddspapi.io/v4/odds-by-tournaments?bookmaker=draftkings,fanduel,betmgm,pinnacle,bet365&tournamentIds={tournament_ids}&apiKey={ODDSPAPI_KEY}&oddsFormat=american")
         resp = requests.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDSPAPI")
         if resp.status_code == 429:
