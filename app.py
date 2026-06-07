@@ -13381,7 +13381,6 @@ def load_sport_data(sport):
     tier_stats = compute_tier_stats(history)
     enriched = []
     skipped_def = skipped_edge = 0
-    _enrich_t0 = time.perf_counter()
 
     # Pre-build normalize_name index for O(1) history lookups
     # Avoids calling normalize_name() 126× per board load
@@ -14617,9 +14616,10 @@ with st.sidebar:
         except (ValueError, KeyError, TypeError, AttributeError):
             pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
+            _enrich_t0 = _time_mod.perf_counter()
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
             _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
-                      {"props": len(board), "sport": sport})
+                      {"props": len(board), "sport": sport_sel})
             st.session_state.board_data = board
             st.session_state.games = games
             # Cache last good props per sport for fallback
