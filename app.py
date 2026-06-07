@@ -4802,258 +4802,6 @@ def check_correlation_risk(selected_props):
     return warnings
 
 
-# ═══════════════════════════════════════════════════════════════
-# MYBOOKIE PROPS — FULLY AUTOMATED (no cookies required)
-# Confirmed: engine.mybookie.ag/sports_api/search-props
-#            returns JSON without session auth
-#
-# Same approach as FantasyLabs — just needs correct headers.
-# Fetches player props for each game by game ID.
-# Use: line comparison vs PrizePicks + CLV tracking
-# ═══════════════════════════════════════════════════════════════
-
-MYBOOKIE_PATH    = os.path.join(CACHE_DIR, "mybookie_props.json")
-MYBOOKIE_PROPS_URL = "https://engine.mybookie.ag/sports_api/search-props"
-MYBOOKIE_GAMES_URL = "https://engine.mybookie.ag/sports_api/events"
-
-MYBOOKIE_HEADERS = {
-    "User-Agent":     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-    "Accept":         "application/json, text/plain, */*",
-    "Referer":        "https://engine.mybookie.ag/sports/",
-    "Origin":         "https://engine.mybookie.ag",
-    "sec-fetch-site": "same-origin",
-    "sec-fetch-mode": "cors",
-    "Accept-Language":"en-US,en;q=0.9",
-}
-
-MYBOOKIE_SPORT_MAP = {
-    "NBA":  {"sportId": 7,  "propMarketId": 2064},
-    "MLB":  {"sportId": 12, "propMarketId": 2064},
-    "NHL":  {"sportId": 8,  "propMarketId": 2064},
-    "WNBA": {"sportId": 7,  "propMarketId": 2064},
-    "NFL":  {"sportId": 1,  "propMarketId": 2064},
-}
-
-MYBOOKIE_MARKET_MAP = {
-    "Batter HR":                "Home Runs",
-    "Batter Hits":              "Hits",
-    "Batter Total Bases":       "Total Bases",
-    "Batter RBI":               "RBI",
-    "Batter Runs":              "Runs",
-    "Batter Strikeouts":        "Strikeouts",
-    "Pitcher Strikeouts":       "Strikeouts",
-    "Pitcher Hits Allowed":     "Hits Allowed",
-    "Pitcher Earned Runs":      "Earned Runs",
-    "Player Points":            "Points",
-    "Player Rebounds":          "Rebounds",
-    "Player Assists":           "Assists",
-    "Player PRA":               "PRA",
-    "Player Threes":            "Threes",
-    "Player Steals":            "Steals",
-    "Player Blocks":            "Blocks",
-    "Player Passing Yards":     "Pass Yards",
-    "Player Rushing Yards":     "Rush Yards",
-    "Player Receiving Yards":   "Rec Yards",
-    "Player Receptions":        "Receptions",
-    "Player Touchdowns":        "Touchdowns",
-    "Goals":                    "Goals",
-    "Shots on Goal":            "Shots",
-    "Saves":                    "Saves",
-}
-
-
-def parse_mybookie_player_line(outcome_desc, odd_str):
-    """
-    Parse MyBookie outcome → (player, line, side, american_odds)
-    
-    Confirmed formats from response:
-      "Reynolds, Bryan 1+"      → Bryan Reynolds, 1.0, OVER, +460
-      "Reynolds, Bryan 2+"      → Bryan Reynolds, 2.0, OVER, +3100
-      "Player Name X.5 Over"    → Player Name, X.5, OVER
-      "Player Name X.5 Under"   → Player Name, X.5, UNDER
-    """
-    import re as _re
-    desc = str(outcome_desc or "").strip()
-
-    # Pattern 1: "Last, First X+" (most common in MLB)
-    m = _re.match(r"^(.+?),\s*(.+?)\s+(\d+(?:\.\d+)?)\+\s*$", desc)
-    if m:
-        player = f"{m.group(2).strip()} {m.group(1).strip()}"
-        line   = float(m.group(3))
-        side   = "OVER"
-    else:
-        # Pattern 2: "Name X+ or X.5 Over/Under"
-        m2 = _re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\+\s*$", desc)
-        m3 = _re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s+(Over|Under)\s*$", desc, _re.I)
-        m4 = _re.match(r"^(.+?)\s+(Over|Under)\s+(\d+(?:\.\d+)?)\s*$", desc, _re.I)
-        if m2:
-            player = m2.group(1).strip()
-            line   = float(m2.group(2))
-            side   = "OVER"
-        elif m3:
-            player = m3.group(1).strip()
-            line   = float(m3.group(2))
-            side   = m3.group(3).upper()
-        elif m4:
-            player = m4.group(1).strip()
-            side   = m4.group(2).upper()
-            line   = float(m4.group(3))
-        else:
-            return None, None, None, None
-
-    # Normalize "Last, First" if not already done
-    if "," in player and not _re.search(r",\s*[A-Z][a-z]", player):
-        parts  = player.split(",", 1)
-        player = f"{parts[1].strip()} {parts[0].strip()}"
-
-    # Convert to American odds
-    try:
-        odd_int  = int(str(odd_str).replace("+","").replace(" ",""))
-        american = f"+{odd_int}" if odd_int > 0 else str(odd_int)
-    except (ValueError, TypeError):
-        american = str(odd_str)
-
-    return player, line, side, american
-
-
-@st.cache_data(ttl=1800)
-def fetch_mybookie_game_ids(sport="MLB"):
-    """
-    Fetch today's MyBookie game IDs for a sport.
-    Returns list of game IDs to query for props.
-    """
-    sport_cfg = MYBOOKIE_SPORT_MAP.get(sport, {})
-    if not sport_cfg:
-        return []
-    try:
-        r = requests.get(
-            MYBOOKIE_GAMES_URL,
-            params={"sportId": sport_cfg["sportId"], "isLive": "false"},
-            headers=MYBOOKIE_HEADERS,
-            timeout=10
-        )
-        if r.status_code != 200:
-            return []
-        data  = r.json()
-        games = data.get("events", data.get("games", data.get("lines", [])))
-        if isinstance(games, list):
-            return [g.get("id") or g.get("gameId") for g in games if g.get("id") or g.get("gameId")]
-        return []
-    except Exception:
-        return []
-
-
-@st.cache_data(ttl=1800)
-def fetch_mybookie_props(sport="MLB"):
-    """
-    Fetch MyBookie player props for today's games — fully automated.
-    No cookies required. Confirmed working via browser test.
-    
-    Returns: {normalize_name(player): [{prop, line, side, odds, game, sport}]}
-    """
-    sport_cfg = MYBOOKIE_SPORT_MAP.get(sport, {})
-    if not sport_cfg:
-        return {}
-
-    # Get game IDs first
-    game_ids = fetch_mybookie_game_ids(sport)
-
-    # Fallback: if no game IDs from events endpoint,
-    # use game IDs from our existing game_analysis
-    if not game_ids:
-        game_analysis = st.session_state.get("game_analysis", [])
-        game_ids = [g.get("mybookie_id") or g.get("game_id")
-                    for g in game_analysis
-                    if g.get("sport","").upper() == sport
-                    and (g.get("mybookie_id") or g.get("game_id"))]
-
-    if not game_ids:
-        return load_json_data(MYBOOKIE_PATH, {})
-
-    all_props = {}
-    prop_market_id = sport_cfg.get("propMarketId", 2064)
-
-    for game_id in [g for g in game_ids if g][:15]:  # cap at 15 games
-        try:
-            r = requests.get(
-                MYBOOKIE_PROPS_URL,
-                params={
-                    "gameID":       game_id,
-                    "propMarketId": prop_market_id,
-                    "isLive":       "false",
-                },
-                headers=MYBOOKIE_HEADERS,
-                timeout=10
-            )
-            if r.status_code != 200:
-                continue
-
-            data    = r.json()
-            lines   = data.get("lines", {})
-            markets = lines.get("gameMarkets", {})
-            game_d  = lines.get("gameDescription","")
-
-            for category, props_list in markets.items():
-                prop_type = MYBOOKIE_MARKET_MAP.get(category, category)
-                for prop in props_list:
-                    if not prop.get("isMarketActive"):
-                        continue
-                    for outcome in prop.get("special", []):
-                        if not outcome.get("active"):
-                            continue
-                        player, line, side, american = parse_mybookie_player_line(
-                            outcome.get("outcomeDescription",""),
-                            outcome.get("odd","")
-                        )
-                        if not player or line is None:
-                            continue
-                        key = normalize_name(player)
-                        all_props.setdefault(key, []).append({
-                            "player":   player,
-                            "prop":     prop_type,
-                            "line":     line,
-                            "side":     side,
-                            "odds":     american,
-                            "game":     game_d,
-                            "game_id":  game_id,
-                            "sport":    sport,
-                            "category": category,
-                        })
-        except Exception as e:
-            st.session_state.setdefault("errors", []).append({
-                "source": "MyBookie",
-                "error":  str(e)[:80],
-                "time":   datetime.now().strftime("%H:%M"),
-            })
-            continue
-
-    if all_props:
-        save_json_data(MYBOOKIE_PATH, all_props)
-        st.session_state["mybookie_props"] = all_props
-    return all_props or load_json_data(MYBOOKIE_PATH, {})
-
-
-def get_mybookie_line(player, prop_type, line, side, mybookie_data=None):
-    """
-    Look up MyBookie odds for a player prop.
-    Returns (odds_str, line_diff) or ("—", 0) if not found.
-    line_diff > 0 = MyBookie line higher (OVER value for us)
-    line_diff < 0 = MyBookie line lower  (UNDER value for us)
-    """
-    if mybookie_data is None:
-        mybookie_data = st.session_state.get("mybookie_props", {})
-    if not mybookie_data:
-        return "—", 0
-    key       = normalize_name(player)
-    prop_norm = prop_type.lower().replace(" ","")
-    for p in mybookie_data.get(key, []):
-        if (p.get("prop","").lower().replace(" ","") == prop_norm and
-                p.get("side","").upper() == side.upper()):
-            diff = round(float(p.get("line",0) or 0) - float(line or 0), 1)
-            return p.get("odds","—"), diff
-    return "—", 0
-
-
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -13089,11 +12837,7 @@ def load_sport_data(sport):
         if _fl_lineups:
             st.session_state["fantasylabs_lineups"] = _fl_lineups
 
-        # MyBookie props — fully automated, no cookies required
-        # Fetches player props for all today's games
-        _mb_props = fetch_mybookie_props(sport)
-        if _mb_props:
-            st.session_state["mybookie_props"] = _mb_props
+
         st.session_state["mlb_pitchers"] = mlb_pitchers
     elif sport == "NHL":
         nhl_rolling = fetch_nhl_rolling_averages()
@@ -13917,14 +13661,6 @@ def load_sport_data(sport):
                 if _dff_signals:
                     p["DFFRosterContext"] = _dff_signals
 
-        # MyBookie line comparison — soft book, useful for CLV
-        _mb_data = st.session_state.get("mybookie_props", {})
-        if _mb_data:
-            _mb_odds, _mb_diff = get_mybookie_line(player, stat_norm, line, pick_dir, _mb_data)
-            if _mb_odds != "—":
-                p["MyBookieOdds"]     = _mb_odds
-                p["MyBookieLineDiff"] = _mb_diff
-
         # DFF PropStats — hit rate confirmation signal
         _dff_pid = get_dff_player_id(player, sport)
         if _dff_pid:
@@ -14043,8 +13779,6 @@ def load_sport_data(sport):
             "RiskLevel":        _risk_level,
             "RiskNote":         _risk_note,
             "DFFSignal":        p.get("DFFSignal",""),
-            "MyBookieOdds":     p.get("MyBookieOdds","—"),
-            "MyBookieLineDiff": p.get("MyBookieLineDiff", 0),
             "DFFRosterContext":  p.get("DFFRosterContext",[]),
             "DFFHitRateL10":    p.get("DFFHitRateL10", 0),
             "DFFAvgVal":        p.get("DFFAvgVal", 0),
@@ -15856,8 +15590,6 @@ with tabs[1]:
                 "_mins_stab":  _p.get("MinutesStability",""),
                 "_bq_score":   _bq,
                 "_conflict":   _conflict,
-                "_mb_odds":    _p.get("MyBookieOdds","—"),
-                "_mb_diff":    _p.get("MyBookieLineDiff",0),
             })
 
         # Sort
@@ -19279,22 +19011,6 @@ with tabs[9]:
 
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
-
-    # ── MyBookie Props ──────────────────────────────────────
-    _mb_sys = st.session_state.get("mybookie_props", {})
-    st.markdown("---")
-    st.markdown("### 📒 MyBookie Props")
-    if _mb_sys:
-        _mb_players = len(_mb_sys)
-        _mb_total   = sum(len(v) for v in _mb_sys.values())
-        st.caption(f"✅ Loaded: {_mb_players} players | {_mb_total} prop lines")
-        st.caption("No cookies required — fully automated via engine.mybookie.ag")
-        # Show sample
-        _mb_sample = list(_mb_sys.items())[:3]
-        for _mbk, _mbv in _mb_sample:
-            st.caption(f"  {_mbv[0]['player'] if _mbv else _mbk}: {len(_mbv)} lines")
-    else:
-        st.info("MyBookie props load with the board. If empty, game IDs may not be available yet.")
 
     # ── DFF Teammate Cache ──────────────────────────────────
     _dff_cache_sys = st.session_state.get("dff_cache", {})
