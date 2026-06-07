@@ -1552,7 +1552,7 @@ def get_api_counter(counter_path):
                 counter["month"] = current_month
                 counter["monthly_count"] = 0 if "monthly_count" in counter else 0
             return counter
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
     return {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
 
@@ -1675,7 +1675,7 @@ def track_line_origin(game_analysis, sport):
                 "note":        f"{origin_type}: Total moved {direction}{abs(movement):.1f}"
             }
         return origins
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return {}
 
 
@@ -1825,7 +1825,7 @@ def compute_portfolio_exposure(board_data=None):
         import streamlit as _st
         locks = list(_st.session_state.get("locks", []))
         bankroll = float(_st.session_state.get("bankroll", 100) or 100)
-    except Exception:
+    except (ImportError, AttributeError):
         locks, bankroll = [], 100.0
 
     if not locks:
@@ -1999,7 +1999,7 @@ def generate_weekly_model_report(history=None, signal_data=None):
         clv_data = load_json_data(CLV_PATH, [])
         week_clv = [c for c in clv_data if str(c.get("timestamp","")) >= week_ago]
         avg_clv  = round(sum(c.get("clv",0) for c in week_clv)/len(week_clv), 2) if week_clv else 0.0
-    except Exception:
+    except (ValueError, ZeroDivisionError, KeyError):
         avg_clv = 0.0
     return {
         "wins":         wins,
@@ -2702,7 +2702,7 @@ def store_nfl_usage(player, team, game_date, stats):
             oldest = sorted(stored.keys())[0]
             del stored[oldest]
         save_json_data(NFL_USAGE_PATH, stored)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
 
 
@@ -2736,7 +2736,7 @@ def get_nfl_usage(player, last_n=3):
             "red_zone_tgts":avg_metric("red_zone_tgts"),
             "last_game":    player_entries[0].get("date",""),
         }
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return None
 
 
@@ -2808,7 +2808,7 @@ def store_nfl_team_context(team, week, stats):
             "updated_at":   datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
         save_json_data(NFL_TEAM_CONTEXT_PATH, stored)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
 
 
@@ -2855,7 +2855,7 @@ def get_nfl_team_context(team, last_n=4):
             "proe_adj":    proe_adj,
             "proe_note":   proe_note,
         }
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return None
 
 
@@ -3058,7 +3058,7 @@ def fetch_covers_consensus(sport="MLB"):
             import json as _json
             try:
                 raw = _json.loads(raw)
-            except Exception:
+            except (requests.RequestException, ValueError, KeyError):
                 return load_json_data(COVERS_PATH, [])
 
         if not isinstance(raw, list):
@@ -3426,7 +3426,7 @@ def fetch_golf_leaderboard():
         if players:
             save_json_data(GOLF_PATH, {"leaderboard": players, "fetched": datetime.now().strftime("%H:%M")})
         return players
-    except Exception as e:
+    except (requests.RequestException, ValueError, KeyError, TypeError) as e:
         st.session_state.setdefault("errors",[]).append({
             "source":"Golf ESPN","error":str(e)[:80],"time":datetime.now().strftime("%H:%M")
         })
@@ -3482,7 +3482,7 @@ def fetch_golf_odds(tournament_key="default"):
                                     "book":         bm.get("key",""),
                                 }
         return players
-    except Exception as e:
+    except (requests.RequestException, ValueError, KeyError, TypeError) as e:
         st.session_state.setdefault("errors",[]).append({
             "source":"Golf OddsAPI","error":str(e)[:80],"time":datetime.now().strftime("%H:%M")
         })
@@ -5296,7 +5296,7 @@ def get_clv_summary():
                 model_prob = c.get("prob", 0.5)
                 if book_prob > 0:
                     edges.append(model_prob - book_prob)
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
         if edges:
             avg_e = sum(edges) / len(edges)
@@ -5749,7 +5749,7 @@ def compute_signal_stability(performance_data=None, window_days=30):
     def parse_ts(ts_str):
         try:
             return datetime.strptime(ts_str[:16], "%Y-%m-%d %H:%M")
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return now - timedelta(days=999)
 
     last_30  = [r for r in resolved if parse_ts(r.get("timestamp","")) >= cutoff_30]
@@ -6022,7 +6022,7 @@ def detect_game_script_contradictions(parlay_props, games):
         if total and total != "N/A":
             try:
                 game_total_map[matchup] = float(total)
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
     for i, j in combinations(range(len(parlay_props)), 2):
         p1 = parlay_props[i]
@@ -6064,7 +6064,7 @@ def detect_game_script_contradictions(parlay_props, games):
                             fav_team = str(spread).split()[0]
                             if team1 == fav_team:
                                 warnings.append(f"⚠️ Blowout risk: {p1['Player']} on {team1} favored by {spread_val}pts. May sit late if big lead develops.")
-                    except Exception:
+                    except (ValueError, KeyError, TypeError):
                         pass
     return warnings
 
@@ -6211,7 +6211,7 @@ def _fetch_nws_weather(city):
         wind_spd_str = p.get("windSpeed", "0 mph")
         try:
             wind_mph = int(wind_spd_str.split()[0])
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             wind_mph = 0
         temp_f = int(p.get("temperature", 70))
         return {
@@ -6221,7 +6221,7 @@ def _fetch_nws_weather(city):
             "fetched_at": datetime.now().strftime("%H:%M"),
             "source": "NWS",
         }
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return None
 
 
@@ -6247,7 +6247,7 @@ def fetch_weather_for_game(city, is_outdoor=True):
                        "wind_dir": current.get("winddir16Point", "N"), "temp_f": int(current.get("temp_F", 70)),
                        "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.now().strftime("%H:%M"),
                        "source": "wttr.in"}
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     # Tier 2: NWS fallback
     if weather is None:
@@ -6256,7 +6256,7 @@ def fetch_weather_for_game(city, is_outdoor=True):
         try:
             with open(cache_path, "wb") as f:
                 pickle.dump(weather, f)
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
     return weather
 
@@ -6416,7 +6416,7 @@ def get_edge_staleness(last_scan_time):
             return f"🟠 Stale ({elapsed_minutes}m ago)", "orange"
         else:
             return f"🔴 Very stale ({elapsed_minutes}m ago)", "red"
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return "⚫ Unknown", "black"
 
 def check_portfolio_correlation(new_prop, existing_locks, player_team_map, positive_correlations, negative_correlations):
@@ -6817,7 +6817,7 @@ def fetch_todays_referees(sport):
         if officials:
             with open(cache_path, "wb") as f:
                 pickle.dump(officials, f)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return officials
 
@@ -6943,7 +6943,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     
     try:
@@ -7035,7 +7035,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     
     try:
@@ -7078,7 +7078,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     
     # Market availability flags for UI labeling
@@ -7341,7 +7341,7 @@ def fetch_nba_rolling_averages():
                     }
             if rolling:
                 break
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             continue
     if not rolling:
         st.session_state["nba_api_status"] = "FAILED — likely blocked by hosting"
@@ -7409,7 +7409,7 @@ def fetch_wnba_rolling_averages():
                     }
             if rolling:
                 break
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             continue
     if rolling:
         with open(cache_path, "wb") as f:
@@ -7574,7 +7574,7 @@ def fetch_nba_team_defense():
                         continue
             if team_def:
                 break
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             continue
     if team_def:
         with open(cache_path, "wb") as f:
@@ -7801,7 +7801,7 @@ def fetch_underdog_props(sport):
                     cached = pickle.load(_f)
                 if cached:
                     return cached
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
     # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
     product_exp_id = "018e1234-5678-9abc-def0-123456789006"
@@ -7943,7 +7943,7 @@ def fetch_underdog_props(sport):
             try:
                 with open(cache_path, "wb") as _f:
                     pickle.dump(props, _f)
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
         return props
     except Exception as e:
@@ -8138,7 +8138,7 @@ def scrape_prizepicks(sport):
                 elif resp.status_code == 403:
                     # Bot protection — try next URL
                     continue
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         if not data or not data.get("data"):
             continue
@@ -8185,7 +8185,7 @@ def scrape_prizepicks(sport):
         import glob
         for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
             os.remove(f)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return fetch_underdog_props(sport)
 
@@ -8300,7 +8300,7 @@ def fetch_espn_injuries(sport):
                         "source": "ESPN",
                     })
         return results
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -8360,10 +8360,10 @@ def fetch_espn_depth_charts(sport):
                         "positions": positions,
                         "fetched_at": datetime.now().strftime("%H:%M"),
                     }
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         return depth_charts
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return {}
 
 
@@ -8432,10 +8432,10 @@ def fetch_cbs_injuries(sport):
                     })
                 if results:
                     return results
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         return []
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -8514,7 +8514,7 @@ def fetch_rotowire_injuries(sport):
             })
 
         return results
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -9031,7 +9031,7 @@ def fetch_game_lines(sport):
                     home_word = om.split(" @ ")[-1][:4] if " @ " in om else ""
                     if not any(home_word in m for m in espn_matchups if home_word):
                         today_games.append(odds_game)
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
 
     if not today_games:
@@ -9415,7 +9415,7 @@ def fetch_alt_lines(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(alt_data, f)
         return alt_data
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return {}
 
 
@@ -10229,7 +10229,7 @@ def fetch_bdl_props(sport):
                         "OddsType": "standard"
                     })
                 time.sleep(0.3)
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         if all_props:
             with open(cache_path, "wb") as f:
@@ -10391,7 +10391,7 @@ def check_data_freshness():
         days_old = (datetime.now() - last_updated).days
         if days_old > 14:
             warnings.append(f"Hardcoded averages (NFL/Soccer/UFC): {days_old} days old")
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return warnings
 
@@ -10422,7 +10422,7 @@ def fetch_espn_game_ids(sport):
         if game_ids:
             with open(cache_path, "wb") as f:
                 pickle.dump(game_ids, f)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return game_ids
 
@@ -10490,7 +10490,7 @@ def detect_sharp_movement(movements):
         if ou_move >= 2.0:
             direction = "↑" if last_ou > first_ou else "↓"
             return True, direction, round(ou_move, 1)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return False, "", 0
 
@@ -10764,7 +10764,7 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
                 if game_stat:
                     game_stats.append(game_stat)
                 time.sleep(0.2)
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         if not game_stats:
             return None
@@ -11299,7 +11299,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
                     "prob":        prob or 0.5,
                 })
                 save_json_data(CLV_PATH, _clv_data)
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
     # ── Optimizer guard — only run when bet count changes ──
     # Prevents running 10x per session when board reloads.
@@ -11579,7 +11579,7 @@ def parse_bet_screenshot_ocr(image_bytes):
                 if 1 <= w <= 10000:
                     for b in bets:
                         b["wager"] = w
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
 
         pc_m = re.search(r"(\d+)[- ]pick|pick[- ](\d+)", raw_text.lower())
@@ -11589,7 +11589,7 @@ def parse_bet_screenshot_ocr(image_bytes):
                 if 2 <= pc <= 6:
                     for b in bets:
                         b["pick_count"] = pc
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
 
         return bets
@@ -12229,7 +12229,7 @@ def fetch_player_id_bdl(player_name):
                 with open(cache_path, "wb") as f:
                     pickle.dump(pid, f)
                 return pid
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return None
 
@@ -12561,10 +12561,10 @@ def fetch_mlb_confirmed_lineups():
                                 "source": "MLB Stats API",
                                 "fetched_at": datetime.now().strftime("%H:%M"),
                             }
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         return lineups
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return {}
 # ═══════════════════════════════════════════════════════════════
 # NFL READINESS SUITE
@@ -12759,7 +12759,7 @@ def save_depth_chart_snapshot(sport, depth_charts):
             oldest = sorted(stored.keys())[0]
             del stored[oldest]
         save_json_data(NFL_DEPTH_SNAP_PATH, stored)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
 
 
@@ -12796,7 +12796,7 @@ def detect_depth_chart_changes(sport, current_charts=None):
                         "type":     "Starter Change",
                     })
         return changes
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -12827,7 +12827,7 @@ def store_opening_lines(game_analysis, sport):
                     "stored_at":     datetime.now().strftime("%H:%M"),
                 }
         save_json_data(OPENING_LINES_PATH, stored)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
 
 
@@ -12887,7 +12887,7 @@ def store_board_snapshot(board, sport):
             oldest = sorted(stored.keys())[0]
             del stored[oldest]
         save_json_data(BOARD_SNAP_PATH, stored)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
 
 
@@ -12927,7 +12927,7 @@ def check_prediction_stability(board, sport):
                     "delta":  curr_edge - prev_edge,
                 })
         return unstable
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -13060,32 +13060,32 @@ def load_sport_data(sport):
         try:
             result = fetch_rotowire_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
             return result
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []  # RotoWire RSS blocks cloud IPs — silent fallback, not a board error
     def _pf_cbs_injuries():
         try:
             return fetch_cbs_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_espn_injuries():
         try:
             return fetch_espn_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_kalshi():
         try:
             return fetch_kalshi_markets(sport)
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_polymarket():
         try:
             return fetch_polymarket_markets(sport)
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_covers():
         try:
             return fetch_covers_consensus(sport)
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
@@ -13218,7 +13218,7 @@ def load_sport_data(sport):
                         "betonlineag": "BetOnline"
                     }.get(book, book.title())
                     all_alt_sources.append((op, book_display))
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
     for alt_prop, source in all_alt_sources:
         key = (normalize_name(alt_prop.get("Player","")), alt_prop.get("Prop",""))
@@ -13296,7 +13296,7 @@ def load_sport_data(sport):
                             team = competitor.get("team", {}).get("abbreviation", "")
                             if team:
                                 b2b_teams.add(team)
-    except Exception:
+    except (ValueError, KeyError, TypeError, AttributeError):
         pass
     game_ids = fetch_espn_game_ids(sport)
     # officials_data already fetched in parallel — session_state set above
@@ -13616,7 +13616,7 @@ def load_sport_data(sport):
                         elif h2h_rate <= 0.30:
                             h2h_adj = -0.02
                             h2h_note = f"H2H {h2h_rate:.0%} vs {opp_abbr} ({h2h_games}g)"
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
         game_total_adj = 0.0
         if sport == "NBA" and player_team:
@@ -14566,7 +14566,7 @@ with st.sidebar:
                                 os.remove(fp)
                         except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
                             os.remove(fp)
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
@@ -15046,7 +15046,7 @@ with tabs[0]:
                         f'{chart_html}</div>',
                         unsafe_allow_html=True
                     )
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
 
 
@@ -17949,7 +17949,7 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
             })
         st.session_state[cache_key] = logs
         return logs
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -18027,7 +18027,7 @@ def fetch_nhl_starting_goalies():
                     pass
 
         return goalies
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return {}
 
 
@@ -18075,7 +18075,7 @@ def fetch_nhl_player_game_logs(player_name, last_n=15):
             })
         st.session_state[cache_key] = logs
         return logs
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -18122,7 +18122,7 @@ def fetch_wnba_player_game_logs(player_name, last_n=15):
             })
         st.session_state[cache_key] = logs
         return logs
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return []
 
 
@@ -18645,7 +18645,7 @@ with tabs[8]:
                     _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada","circa_sports":"Circa","betonlineag":"BetOnline"}.get(_op.get("Book","").lower())
                     if _bk2:
                         _ls_add([_op], _bk2)
-            except Exception:
+            except (ValueError, KeyError, TypeError, AttributeError):
                 pass
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
