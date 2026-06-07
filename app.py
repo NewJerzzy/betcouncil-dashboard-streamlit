@@ -10339,8 +10339,14 @@ def fetch_oddspapi_props(sport):
                 book_name = bookmaker.get("key", "unknown")
                 for market in bookmaker.get("markets", []):
                     market_key = market.get("key", "")
-                    if "player" not in market_key.lower():
-                        continue
+                    # Accept player props — OddsPapi uses various keys:
+                    # NBA: player_points, player_rebounds, player_assists
+                    # MLB: pitcher_strikeouts, batter_home_runs, batter_hits
+                    # NHL: player_shots_on_goal, goalie_saves
+                    _prop_keywords = ("player_","pitcher_","batter_","goalie_","anytime_")
+                    if not any(market_key.lower().startswith(k) for k in _prop_keywords):
+                        if "player" not in market_key.lower():
+                            continue
                     for outcome in market.get("outcomes", []):
                         player = outcome.get("description", "")
                         line = outcome.get("point")
@@ -10353,7 +10359,10 @@ def fetch_oddspapi_props(sport):
                             continue
                         if side.upper() != "OVER":
                             continue
-                        stat_clean = market_key.replace("player_", "").replace("_", " ").title()
+                        stat_clean = market_key
+                        for _pfx in ("player_","pitcher_","batter_","goalie_","anytime_"):
+                            stat_clean = stat_clean.replace(_pfx, "")
+                        stat_clean = stat_clean.replace("_", " ").title()
                         key = (sport, player, stat_clean, float(line))
                         if key in seen:
                             continue
