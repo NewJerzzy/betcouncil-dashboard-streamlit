@@ -18696,11 +18696,17 @@ with tabs[8]:
         _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
         if _odds_props_ss:
             for _op in _odds_props_ss:
-                _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM",
-                        "caesars":"Caesars","bovada":"Bovada","bet365":"Bet365",
-                        "circa_sports":"Circa","betonlineag":"BetOnline",
-                        "pinnacle":"Pinnacle"}.get(
-                    (_op.get("Book","") or _op.get("bookmaker","")).lower(), "")
+                # OddsAPI stores bookmaker in "source" as "OddsAPI_{bookname}"
+                _src = str(_op.get("source","") or _op.get("Book","") or _op.get("bookmaker",""))
+                _bk2 = ""
+                if "draftkings" in _src.lower():   _bk2 = "DraftKings"
+                elif "fanduel"  in _src.lower():   _bk2 = "FanDuel"
+                elif "betmgm"   in _src.lower():   _bk2 = "BetMGM"
+                elif "caesars"  in _src.lower():   _bk2 = "Caesars"
+                elif "bovada"   in _src.lower():   _bk2 = "Bovada"
+                elif "bet365"   in _src.lower():   _bk2 = "Bet365"
+                elif "pinnacle" in _src.lower():   _bk2 = "Pinnacle"
+                elif "betonline" in _src.lower():  _bk2 = "BetOnline"
                 if _bk2:
                     _ls_add([_op], _bk2)
         else:
@@ -18724,9 +18730,19 @@ with tabs[8]:
         # Also add OddsPapi props (includes Bet365)
         _oddspapi_ss = st.session_state.get(f"oddspapi_props_{_sport_ls}", [])
         for _op2 in (_oddspapi_ss or []):
-            _bk3 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM",
-                    "pinnacle":"Pinnacle","bet365":"Bet365"}.get(
-                (_op2.get("bookmaker","") or _op2.get("Book","")).lower(), "")
+            # OddsPapi stores bookmaker in "source" as "OddsPapi_{bookname}"
+            _src2 = str(_op2.get("source","") or _op2.get("bookmaker","") or _op2.get("Book",""))
+            _bk3 = ""
+            if "bet365" in _src2.lower():
+                _bk3 = "Bet365"
+            elif "pinnacle" in _src2.lower():
+                _bk3 = "Pinnacle"
+            elif "draftkings" in _src2.lower():
+                _bk3 = "DraftKings"
+            elif "fanduel" in _src2.lower():
+                _bk3 = "FanDuel"
+            elif "betmgm" in _src2.lower():
+                _bk3 = "BetMGM"
             if _bk3:
                 _ls_add([_op2], _bk3)
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
