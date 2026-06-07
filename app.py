@@ -13349,6 +13349,7 @@ def load_sport_data(sport):
     tier_stats = compute_tier_stats(history)
     enriched = []
     skipped_def = skipped_edge = 0
+    _enrich_t0 = time.perf_counter()
 
     # Pre-build normalize_name index for O(1) history lookups
     # Avoids calling normalize_name() 126× per board load
