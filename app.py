@@ -13167,6 +13167,11 @@ def load_sport_data(sport):
     st.session_state["oddswrap_props"]   = oddswrap_props or []
     st.session_state["ud_props_compare"] = ud_props_compare or []
     st.session_state["officials_data"]   = officials_data_raw or {}
+    # Store OddsAPI + OddsPapi props for Line Shop access
+    if odds_api_props_raw:
+        st.session_state[f"oddsapi_props_{sport}"] = odds_api_props_raw
+    if oddspapi_props_raw:
+        st.session_state[f"oddspapi_props_{sport}"] = oddspapi_props_raw
     if public_betting:
         st.session_state["public_betting_data"] = public_betting
     if an_props:
@@ -18686,21 +18691,48 @@ with tabs[8]:
             if _bk:
                 _ls_add([ow_p], _bk)
         _sport_ls = st.session_state.get("current_sport", "NBA")
-        _odds_cache = os.path.join(CACHE_DIR, f"odds_api_props_{_sport_ls}.pkl")
-        if os.path.exists(_odds_cache):
-            try:
-                with open(_odds_cache, "rb") as _f:
-                    _odds_props = pickle.load(_f)
-                for _op in (_odds_props or []):
-                    _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM","caesars":"Caesars","bovada":"Bovada","circa_sports":"Circa","betonlineag":"BetOnline"}.get(_op.get("Book","").lower())
-                    if _bk2:
-                        _ls_add([_op], _bk2)
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
+
+        # Try session_state first (faster, no disk read)
+        _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
+        if _odds_props_ss:
+            for _op in _odds_props_ss:
+                _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM",
+                        "caesars":"Caesars","bovada":"Bovada","bet365":"Bet365",
+                        "circa_sports":"Circa","betonlineag":"BetOnline",
+                        "pinnacle":"Pinnacle"}.get(
+                    (_op.get("Book","") or _op.get("bookmaker","")).lower(), "")
+                if _bk2:
+                    _ls_add([_op], _bk2)
+        else:
+            # Fallback: read from pkl cache
+            _odds_cache = os.path.join(CACHE_DIR, f"odds_api_props_{_sport_ls}.pkl")
+            if os.path.exists(_odds_cache):
+                try:
+                    with open(_odds_cache, "rb") as _f:
+                        _odds_props = pickle.load(_f)
+                    for _op in (_odds_props or []):
+                        _bk2 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM",
+                                "caesars":"Caesars","bovada":"Bovada","bet365":"Bet365",
+                                "circa_sports":"Circa","betonlineag":"BetOnline",
+                                "pinnacle":"Pinnacle"}.get(
+                            (_op.get("Book","") or _op.get("bookmaker","")).lower(), "")
+                        if _bk2:
+                            _ls_add([_op], _bk2)
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    pass
+
+        # Also add OddsPapi props (includes Bet365)
+        _oddspapi_ss = st.session_state.get(f"oddspapi_props_{_sport_ls}", [])
+        for _op2 in (_oddspapi_ss or []):
+            _bk3 = {"fanduel":"FanDuel","draftkings":"DraftKings","betmgm":"BetMGM",
+                    "pinnacle":"Pinnacle","bet365":"Bet365"}.get(
+                (_op2.get("bookmaker","") or _op2.get("Book","")).lower(), "")
+            if _bk3:
+                _ls_add([_op2], _bk3)
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
-        BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Bovada","Sleeper"]
+        BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","Sleeper"]
         all_books_ls = [b for b in BOOK_ORDER if b in all_books_ls] + [b for b in all_books_ls if b not in BOOK_ORDER]
 
         rows_ls = []
