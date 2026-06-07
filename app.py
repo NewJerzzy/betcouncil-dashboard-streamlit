@@ -4802,6 +4802,176 @@ def check_correlation_risk(selected_props):
     return warnings
 
 
+# ═══════════════════════════════════════════════════════════════
+# MYBOOKIE PROPS PARSER
+# Endpoint: engine.mybookie.ag/sports_api/search-props
+# Params:   gameID={id}&propMarketId=2064&isLive=false
+# Auth:     Session cookies (MYBOOKIE_COOKIES in Streamlit Secrets)
+# Response: lines.gameMarkets.{category}[].special[].outcomeDescription
+# Use:      Line comparison + CLV tracking (soft book)
+# ═══════════════════════════════════════════════════════════════
+
+MYBOOKIE_PATH    = os.path.join(CACHE_DIR, "mybookie_props.json")
+MYBOOKIE_BASE    = "https://engine.mybookie.ag/sports_api/search-props"
+
+MYBOOKIE_MARKET_MAP = {
+    "Batter HR":              "Home Runs",
+    "Batter Hits":            "Hits",
+    "Batter Total Bases":     "Total Bases",
+    "Batter RBI":             "RBI",
+    "Batter Runs":            "Runs",
+    "Batter Strikeouts":      "Strikeouts",
+    "Pitcher Strikeouts":     "Strikeouts",
+    "Pitcher Hits Allowed":   "Hits Allowed",
+    "Player Points":          "Points",
+    "Player Rebounds":        "Rebounds",
+    "Player Assists":         "Assists",
+    "Player PRA":             "PRA",
+    "Player Threes":          "Threes",
+    "Player Passing Yards":   "Pass Yards",
+    "Player Rushing Yards":   "Rush Yards",
+    "Player Receiving Yards": "Rec Yards",
+    "Player Receptions":      "Receptions",
+}
+
+
+def parse_mybookie_outcome(outcome_desc, odd_str):
+    """
+    Parse MyBookie outcome description.
+    "Reynolds, Bryan 1+" → ("Bryan Reynolds", 1.0, "OVER", "+460")
+    """
+    import re as _re
+    desc = str(outcome_desc or "").strip()
+    player = None
+    line   = None
+    side   = "OVER"
+
+    m1 = _re.search(r"(.+?)\s+(\d+(?:\.\d+)?)\+\s*$", desc)
+    m2 = _re.search(r"(.+?)\s+(\d+(?:\.\d+)?)\s+(Over|Under)\s*$", desc, _re.I)
+    m3 = _re.search(r"(.+?)\s+(Over|Under)\s+(\d+(?:\.\d+)?)\s*$", desc, _re.I)
+
+    if m1:
+        player = m1.group(1).strip()
+        line   = float(m1.group(2))
+        side   = "OVER"
+    elif m2:
+        player = m2.group(1).strip()
+        line   = float(m2.group(2))
+        side   = m2.group(3).upper()
+    elif m3:
+        player = m3.group(1).strip()
+        side   = m3.group(2).upper()
+        line   = float(m3.group(3))
+
+    if player is None:
+        return None, None, None, None
+
+    # "Last, First" -> "First Last"
+    if "," in player:
+        parts  = player.split(",", 1)
+        player = f"{parts[1].strip()} {parts[0].strip()}"
+
+    try:
+        odd_val  = int(str(odd_str))
+        american = f"+{odd_val}" if odd_val > 0 else str(odd_val)
+    except (ValueError, TypeError):
+        american = str(odd_str)
+
+    return player, line, side, american
+
+
+@st.cache_data(ttl=900)
+def fetch_mybookie_props(game_ids, mybookie_cookies="", prop_market_id=2064):
+    """
+    Fetch MyBookie player props for a list of game IDs.
+    Requires session cookies stored in MYBOOKIE_COOKIES secret.
+    Cookies expire every 3 hours — user must refresh manually.
+    """
+    if not mybookie_cookies or not game_ids:
+        return {}
+
+    cookie_dict = {}
+    for part in mybookie_cookies.split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            cookie_dict[k.strip()] = v.strip()
+
+    headers = {
+        "User-Agent":     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept":         "application/json, text/plain, */*",
+        "Referer":        "https://engine.mybookie.ag/sports/search-props/",
+        "Origin":         "https://engine.mybookie.ag",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+    }
+
+    all_props = {}
+
+    for game_id in list(game_ids)[:10]:
+        try:
+            r = requests.get(
+                MYBOOKIE_BASE,
+                params={"gameID": game_id, "propMarketId": prop_market_id, "isLive": "false"},
+                headers=headers, cookies=cookie_dict, timeout=10
+            )
+            if r.status_code != 200:
+                continue
+
+            data    = r.json()
+            lines   = data.get("lines", {})
+            markets = lines.get("gameMarkets", {})
+            game_d  = lines.get("gameDescription","")
+
+            for category, props_list in markets.items():
+                prop_type = MYBOOKIE_MARKET_MAP.get(category, category)
+                for prop in props_list:
+                    if not prop.get("isMarketActive"):
+                        continue
+                    for outcome in prop.get("special", []):
+                        if not outcome.get("active"):
+                            continue
+                        player, line, side, american = parse_mybookie_outcome(
+                            outcome.get("outcomeDescription",""),
+                            outcome.get("odd","")
+                        )
+                        if not player or line is None:
+                            continue
+                        key = normalize_name(player)
+                        all_props.setdefault(key, []).append({
+                            "player": player, "prop": prop_type,
+                            "line": line, "side": side,
+                            "odds": american, "game": game_d,
+                            "game_id": game_id, "active": True,
+                        })
+        except Exception as e:
+            st.session_state.setdefault("errors",[]).append({
+                "source": "MyBookie", "error": str(e)[:80],
+                "time": datetime.now().strftime("%H:%M"),
+            })
+
+    if all_props:
+        save_json_data(MYBOOKIE_PATH, all_props)
+    return all_props
+
+
+def get_mybookie_line(player, prop_type, line, side, mybookie_data=None):
+    """Look up MyBookie odds for a player prop. Returns (odds, line_diff)."""
+    if mybookie_data is None:
+        mybookie_data = st.session_state.get("mybookie_props", {})
+    if not mybookie_data:
+        return "—", 0
+    key       = normalize_name(player)
+    props     = mybookie_data.get(key, [])
+    prop_norm = prop_type.lower().replace(" ","")
+    for p in props:
+        if (p.get("prop","").lower().replace(" ","") == prop_norm and
+                p.get("side","").upper() == side.upper()):
+            diff = round(float(p.get("line",0) or 0) - float(line), 1)
+            return p.get("odds","—"), diff
+    return "—", 0
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -13659,6 +13829,13 @@ def load_sport_data(sport):
                 if _dff_signals:
                     p["DFFRosterContext"] = _dff_signals
 
+        # MyBookie line comparison
+        _mb_data = st.session_state.get("mybookie_props", {})
+        if _mb_data:
+            _mb_odds, _mb_diff = get_mybookie_line(player, stat_norm, line, pick_dir, _mb_data)
+            p["MyBookieOdds"]     = _mb_odds
+            p["MyBookieLineDiff"] = _mb_diff
+
         # DFF PropStats — hit rate confirmation signal
         _dff_pid = get_dff_player_id(player, sport)
         if _dff_pid:
@@ -13777,6 +13954,8 @@ def load_sport_data(sport):
             "RiskLevel":        _risk_level,
             "RiskNote":         _risk_note,
             "DFFSignal":        p.get("DFFSignal",""),
+            "MyBookieOdds":     p.get("MyBookieOdds","—"),
+            "MyBookieLineDiff": p.get("MyBookieLineDiff", 0),
             "DFFRosterContext":  p.get("DFFRosterContext",[]),
             "DFFHitRateL10":    p.get("DFFHitRateL10", 0),
             "DFFAvgVal":        p.get("DFFAvgVal", 0),
@@ -19009,6 +19188,18 @@ with tabs[9]:
 
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
+
+    # ── MyBookie Props ──────────────────────────────────────
+    _mb_sys = st.session_state.get("mybookie_props", {})
+    st.markdown("---")
+    st.markdown("### 📒 MyBookie Props")
+    if not MYBOOKIE_COOKIES:
+        st.warning("Add MYBOOKIE_COOKIES to Streamlit Secrets to enable MyBookie comparison.")
+        st.caption("Steps: mybookie.ag → DevTools → Network → any request → copy Cookie header → paste as MYBOOKIE_COOKIES secret")
+    else:
+        _mb_count = sum(len(v) for v in _mb_sys.values())
+        st.caption(f"✅ {len(_mb_sys)} players | {_mb_count} lines loaded")
+        st.caption("⚠️ Session cookies expire every 3 hours — update MYBOOKIE_COOKIES when stale")
 
     # ── DFF Teammate Cache ──────────────────────────────────
     _dff_cache_sys = st.session_state.get("dff_cache", {})
