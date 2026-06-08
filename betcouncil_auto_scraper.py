@@ -110,29 +110,34 @@ def mybookie_login(username, password):
     session.headers.update(BROWSER_HEADERS)
 
     try:
-        # Step 1: Get CSRF token from login page
+        # Step 1: Load mybookie.ag to get initial cookies (cf_bm, websession etc)
         r = session.get("https://mybookie.ag/login", timeout=15)
         print(f"  Login page: {r.status_code}")
 
-        # Extract CSRF token from cookies
+        # Step 1b: Load engine.mybookie.ag to get XSRF token
+        r_eng = session.get("https://engine.mybookie.ag/login", timeout=15,
+                            headers={**BROWSER_HEADERS,
+                                     "Referer": "https://mybookie.ag/",
+                                     "Origin":  "https://mybookie.ag"})
+        print(f"  Engine login page: {r_eng.status_code}")
+
+        from urllib.parse import unquote
         csrf_token = session.cookies.get("XSRF-TOKEN", "")
         if csrf_token:
-            from urllib.parse import unquote
             csrf_token = unquote(csrf_token)
-            # Decode JWT-style token
             try:
-                import base64, json as _json
+                import base64 as _b64, json as _json
                 parts = csrf_token.split('.')
                 if len(parts) == 3:
                     padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
-                    decoded = _json.loads(base64.b64decode(padded))
+                    decoded = _json.loads(_b64.b64decode(padded))
                     csrf_value = decoded.get("value", csrf_token)
                 else:
                     csrf_value = csrf_token
             except:
                 csrf_value = csrf_token
         else:
-            csrf_value = ""
+            csrf_value = csrf_token = ""
 
         # Step 2: POST login credentials
         login_headers = {
@@ -148,30 +153,52 @@ def mybookie_login(username, password):
             "password": password,
             "remember": True,
         }
-        # Try all known MyBookie login endpoints
+        # Confirmed login endpoint from DevTools: engine.mybookie.ag/login
+        # Try form POST first (matches the HTML form action), then JSON
         login_attempts = [
-            ("POST", "https://mybookie.ag/login",         "form",  {"Content-Type":"application/x-www-form-urlencoded"}),
-            ("POST", "https://mybookie.ag/auth/login",    "json",  {}),
-            ("POST", "https://mybookie.ag/api/login",     "json",  {}),
-            ("POST", "https://mybookie.ag/user/login",    "json",  {}),
-            ("POST", "https://engine.mybookie.ag/login",  "json",  {"Origin":"https://engine.mybookie.ag","Referer":"https://engine.mybookie.ag/"}),
+            ("form", "https://engine.mybookie.ag/login",
+             {"Content-Type":"application/x-www-form-urlencoded",
+              "Origin":"https://mybookie.ag",
+              "Referer":"https://mybookie.ag/login"}),
+            ("json", "https://engine.mybookie.ag/login",
+             {"Content-Type":"application/json",
+              "Origin":"https://mybookie.ag",
+              "Referer":"https://mybookie.ag/login"}),
+            ("json", "https://engine.mybookie.ag/api/auth/login",
+             {"Content-Type":"application/json",
+              "Origin":"https://engine.mybookie.ag",
+              "Referer":"https://engine.mybookie.ag/login"}),
+            ("json", "https://engine.mybookie.ag/user/login",
+             {"Content-Type":"application/json",
+              "Origin":"https://engine.mybookie.ag",
+              "Referer":"https://engine.mybookie.ag/login"}),
         ]
-        for method, ep, fmt, extra_h in login_attempts:
+        for fmt, ep, extra_h in login_attempts:
             try:
-                h = {**login_headers, **extra_h}
+                h = {**login_headers, **extra_h,
+                     "X-CSRF-TOKEN": csrf_value,
+                     "X-XSRF-TOKEN": csrf_token}
                 if fmt == "form":
-                    r2 = session.post(ep, data={"username":username,"password":password,"remember":"on"}, headers=h, timeout=15, allow_redirects=True)
+                    payload = {"username": username, "password": password,
+                               "remember": "on", "_token": csrf_value}
+                    r2 = session.post(ep, data=payload, headers=h,
+                                      timeout=15, allow_redirects=True)
                 else:
-                    r2 = session.post(ep, json=login_data, headers=h, timeout=15, allow_redirects=True)
-                print(f"  Login {ep[-35:]}: {r2.status_code}")
+                    r2 = session.post(ep, json=login_data, headers=h,
+                                      timeout=15, allow_redirects=True)
+                print(f"  Login {ep[-40:]}: {r2.status_code}")
                 if r2.status_code in (200, 201, 302):
                     cookies = dict(session.cookies)
-                    if any(k in cookies for k in ["gamingstation_session","XSRF-TOKEN","cf_clearance","auth","session"]):
+                    if any(k in cookies for k in
+                           ["gamingstation_session","XSRF-TOKEN","cf_clearance",
+                            "auth","session","cust_s_a"]):
                         save_cookies(cookies)
-                        print(f"  ✅ Login successful")
+                        print(f"  ✅ Login successful via {ep}")
                         return cookies
+                    else:
+                        print(f"  Cookies: {list(cookies.keys())}")
             except Exception as _le:
-                print(f"  {ep[-35:]}: {_le}")
+                print(f"  {ep[-40:]}: {_le}")
         print(f"  ❌ All login endpoints failed")
         return None
 
