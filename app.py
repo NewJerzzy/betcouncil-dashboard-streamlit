@@ -5032,6 +5032,42 @@ def get_bovada_game_line(matchup, bovada_data=None):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════
+# AUTO SCRAPER GIST READER
+# Reads props pushed by betcouncil_auto_scraper.py
+# File: auto_scraped_props.json in your Gist
+# To remove: delete this function + the 3 lines that call it
+# ═══════════════════════════════════════════════════════════════
+@st.cache_data(ttl=1800)
+def fetch_auto_scraped_props(sport="NBA"):
+    """Read props from local scraper (MyBookie/BetOnline/PrizePicks backup)."""
+    try:
+        r = requests.get(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization": f"token {GITHUB_TOKEN}",
+                     "Accept": "application/vnd.github.v3+json"},
+            timeout=8
+        )
+        if r.status_code != 200:
+            return []
+        files = r.json().get("files", {})
+        if "auto_scraped_props.json" not in files:
+            return []
+        content = files["auto_scraped_props.json"].get("content","")
+        if not content:
+            return []
+        data = json.loads(content)
+        if data.get("date") != date.today().isoformat():
+            return []
+        props = data.get("props", [])
+        if props:
+            _sport_match = [p for p in props if p.get("Sport","").upper() == sport.upper()]
+            return _sport_match
+        return []
+    except Exception:
+        return []
+
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -14546,6 +14582,13 @@ def load_sport_data(sport):
     if _bovada:
         st.session_state["bovada_lines"] = _bovada
 
+    # Auto scraper props (MyBookie/BetOnline from local machine)
+    _auto_props = fetch_auto_scraped_props(sport)
+    if _auto_props:
+        st.session_state[f"auto_scraped_props_{sport}"] = _auto_props
+        _auto_books = list({p.get("Book","") for p in _auto_props})
+        st.caption(f"📡 Auto scraper: {len(_auto_props)} props from {', '.join(_auto_books)}")
+
 
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
@@ -18807,7 +18850,8 @@ with tabs[8]:
         _has_oddsapi  = bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", []))
         _has_oddspapi = bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", []))
         _has_oddswrap = bool(st.session_state.get("oddswrap_props", []))
-        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'}")
+        _has_auto    = bool(st.session_state.get(f"auto_scraped_props_{_sport_ls}", []))
+        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'} | AutoScraper={'✅' if _has_auto else '❌ (run script)'}")
 
         # Try session_state first (faster, no disk read)
         _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
@@ -18844,6 +18888,20 @@ with tabs[8]:
                 except (ValueError, KeyError, TypeError, AttributeError):
                     pass
 
+        # Auto scraper props (MyBookie/BetOnline from local machine)
+        _auto_ss = st.session_state.get(f"auto_scraped_props_{_sport_ls}", [])
+        for _ap in (_auto_ss or []):
+            _src_a = str(_ap.get("Book","") or _ap.get("source",""))
+            _bk_a  = ""
+            if "mybookie"  in _src_a.lower(): _bk_a = "MyBookie"
+            elif "betonline" in _src_a.lower(): _bk_a = "BetOnline"
+            elif "prizepicks" in _src_a.lower(): _bk_a = "PrizePicks"
+            if _bk_a:
+                _norm_ap = {**_ap, "Prop": OW_PROP_MAP.get(
+                    str(_ap.get("Prop","")).lower().strip(), _ap.get("Prop","")
+                )}
+                _ls_add([_norm_ap], _bk_a)
+
         # Also add OddsPapi props (includes Bet365)
         _oddspapi_ss = st.session_state.get(f"oddspapi_props_{_sport_ls}", [])
         for _op2 in (_oddspapi_ss or []):
@@ -18865,7 +18923,7 @@ with tabs[8]:
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
-        BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","Sleeper"]
+        BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper"]
         # Always show all books in order — even if no data (shows — for empty)
         # This lets user see at a glance which books are populated vs missing
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
