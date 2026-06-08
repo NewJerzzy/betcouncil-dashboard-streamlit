@@ -13069,7 +13069,15 @@ def load_sport_data(sport):
     if sport in ["Golf", "Tennis", "UFC", "Soccer"]:
         props = scrape_prizepicks(sport)
         if not props:
-            return [], [], 0, 0, {}, {}
+            # Fallback: read from Gist (pushed by betcouncil_auto_scraper.py)
+            _gist_fb = fetch_auto_scraped_props(sport)
+            if _gist_fb:
+                _pp_fb = [p for p in _gist_fb if "prizepicks" in str(p.get("source","")).lower()]
+                props  = _pp_fb if _pp_fb else _gist_fb
+                st.info(f"📡 PrizePicks loaded from local scraper ({len(props)} props). Run script daily to keep fresh.")
+            else:
+                st.warning("⚠️ PrizePicks unavailable. Run betcouncil_auto_scraper.py on your PC to populate data.")
+                return [], [], 0, 0, {}, {}
         enriched = []
         for p in props:
             enriched.append({
