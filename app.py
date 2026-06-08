@@ -18792,7 +18792,9 @@ with tabs[8]:
 
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
         BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","Sleeper"]
-        all_books_ls = [b for b in BOOK_ORDER if b in all_books_ls] + [b for b in all_books_ls if b not in BOOK_ORDER]
+        # Always show all books in order — even if no data (shows — for empty)
+        # This lets user see at a glance which books are populated vs missing
+        all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
 
         rows_ls = []
         for prop in board_ls[:50]:
@@ -18815,13 +18817,19 @@ with tabs[8]:
             rows_ls.append(row)
 
         if rows_ls:
-            active_sources = ["PrizePicks"] + [b for b in all_books_ls if b != "PrizePicks"]
-            src_cols = st.columns(min(len(active_sources), 8))
-            for i, src in enumerate(active_sources[:8]):
-                count = sum(1 for r in rows_ls if r.get(src) not in ("—", None))
-                src_cols[i].metric(src, f"{count}")
+            # Show all books — populated AND empty — so user sees full picture
+            active_sources = [b for b in BOOK_ORDER if b != "ParlayPlay"]
+            # Split into rows of 6 for display
+            for _chunk_start in range(0, len(active_sources), 6):
+                _chunk = active_sources[_chunk_start:_chunk_start+6]
+                src_cols = st.columns(len(_chunk))
+                for i, src in enumerate(_chunk):
+                    count = sum(1 for r in rows_ls if r.get(src) not in ("—", None, ""))
+                    _icon = "✅" if count > 0 else "❌"
+                    src_cols[i].metric(src, f"{count}", delta=_icon, delta_color="off")
             st.markdown("---")
-            col_order = ["Player","Prop","Side","Tier","PrizePicks"] + [b for b in all_books_ls if b != "PrizePicks"] + ["Best Book","Best Line","Edge Gain"]
+            _all_book_cols = [b for b in BOOK_ORDER if b != "ParlayPlay"]
+            col_order = ["Player","Prop","Side","Tier"] + _all_book_cols + ["Best Book","Best Line","Edge Gain"]
             col_order = [c for c in col_order if c in rows_ls[0]]
             st.dataframe(pd.DataFrame(rows_ls)[col_order], use_container_width=True, hide_index=True)
             better_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Edge Gain"] >= 0.5]
