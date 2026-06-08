@@ -1,0 +1,55 @@
+BetCouncil Auto Scraper — Setup Instructions
+=============================================
+
+STEP 1: Install Python
+  Download from python.org/downloads
+  Check "Add to PATH" during install
+
+STEP 2: Install requirements
+  Open Command Prompt and run:
+  pip install requests curl_cffi
+
+STEP 3: Create config file
+  Copy config_sample.json → rename to config.json
+  Fill in your MyBookie username + password:
+  {
+    "github_token": "YOUR_GITHUB_TOKEN_HERE",
+    "gist_id":      "YOUR_GIST_ID_HERE",
+    "mybookie": {
+      "username": "YOUR_ACTUAL_USERNAME",
+      "password": "YOUR_ACTUAL_PASSWORD"
+    },
+    "prizepicks": { "enabled": true },
+    "betonline":  { "enabled": true }
+  }
+
+STEP 4: Test it (no push to Gist)
+  cd C:\Users\User\Desktop
+  python betcouncil_auto_scraper.py --sport NBA --no-push
+
+STEP 5: Run for real
+  python betcouncil_auto_scraper.py --sport NBA
+
+STEP 6: Schedule to run every 3 hours automatically
+  Open Command Prompt as Administrator and run:
+  schtasks /create /tn "BetCouncil Scraper" /tr "python C:\Users\User\Desktop\betcouncil_auto_scraper.py --all" /sc hourly /mo 3 /st 06:00
+
+  This runs every 3 hours starting at 6am.
+  You never have to touch it again.
+
+WHAT IT SCRAPES:
+  PrizePicks  - all props (no login needed)
+  BetOnline   - all props (no login needed)
+  MyBookie    - all props (auto-login with your credentials)
+
+WHERE DATA GOES:
+  GitHub Gist → BetCouncil reads it automatically
+  Shows in Line Shop tab as MyBookie + BetOnline columns
+
+TO STOP:
+  schtasks /delete /tn "BetCouncil Scraper" /f
+
+SECURITY NOTE:
+  config.json stays on YOUR PC only.
+  Never pushed to GitHub.
+  Your password never leaves your machine.
