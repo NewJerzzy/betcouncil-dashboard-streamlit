@@ -7621,7 +7621,7 @@ def fetch_nba_team_defense():
             if team_def:
                 break
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
-                except (ValueError, KeyError, TypeError, AttributeError):
+                requests.exceptions.RequestException, ValueError, KeyError, TypeError, AttributeError):
             continue
     if team_def:
         with open(cache_path, "wb") as f:
