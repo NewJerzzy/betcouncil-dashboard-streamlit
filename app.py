@@ -6732,9 +6732,9 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
         "Referer": "https://www.nba.com/"
     }
     for season_type in ["Playoffs", "Regular+Season"]:
-        url = f"https://stats.nba.com/stats/teamgamelogs?Season=2024-25&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
+        url = f"https://stats.nba.com/stats/teamgamelogs?Season=2025-26&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=15)
+            resp = requests.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -7454,7 +7454,8 @@ def fetch_wnba_rolling_averages():
                     }
             if rolling:
                 break
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
+                except (ValueError, KeyError, TypeError, AttributeError):
             continue
     if rolling:
         with open(cache_path, "wb") as f:
@@ -7590,9 +7591,9 @@ def fetch_nba_team_defense():
     seasons = ["Playoffs", "Regular+Season"]
     team_def = {}
     for season_type in seasons:
-        url = f"https://stats.nba.com/stats/leaguedashteamstats?Season=2024-25&SeasonType={season_type}&MeasureType=Defense&PerMode=PerGame"
+        url = f"https://stats.nba.com/stats/leaguedashteamstats?Season=2025-26&SeasonType={season_type}&MeasureType=Defense&PerMode=PerGame"
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=15)
+            resp = requests.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -7619,7 +7620,8 @@ def fetch_nba_team_defense():
                         continue
             if team_def:
                 break
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
+                except (ValueError, KeyError, TypeError, AttributeError):
             continue
     if team_def:
         with open(cache_path, "wb") as f:
