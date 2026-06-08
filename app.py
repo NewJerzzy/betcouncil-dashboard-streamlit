@@ -18712,7 +18712,13 @@ with tabs[8]:
             _bk = {"Draftkings":"DraftKings","Fanduel":"FanDuel","Betmgm":"BetMGM","Caesars":"Caesars","Betrivers":"BetRivers"}.get(_bk, _bk)
             if _bk:
                 _ls_add([ow_p], _bk)
-        _sport_ls = st.session_state.get("current_sport", "NBA")
+        _sport_ls = st.session_state.get("last_sport", "NBA")
+
+        # Debug — show what's actually in session for this sport
+        _has_oddsapi  = bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", []))
+        _has_oddspapi = bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", []))
+        _has_oddswrap = bool(st.session_state.get("oddswrap_props", []))
+        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'}")
 
         # Try session_state first (faster, no disk read)
         _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
