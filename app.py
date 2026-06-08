@@ -19431,24 +19431,6 @@ with tabs[9]:
         else:
             st.info("FantasyLabs lineups load with the MLB board. Typically posted 3-4h before first pitch.")
 
-    # ── Bovada Lines ─────────────────────────────────────────
-    _bov_sys = st.session_state.get("bovada_lines", [])
-    if _bov_sys:
-        st.markdown("---")
-        st.markdown("### 🐂 Bovada Game Lines")
-        st.caption(f"✅ {len(_bov_sys)} games loaded | No auth required")
-        _bov_rows = []
-        for _bg in _bov_sys[:10]:
-            _bov_rows.append({
-                "Matchup":    _bg.get("matchup",""),
-                "ML":         f"{_bg.get('away_ml','—')} / {_bg.get('home_ml','—')}",
-                "Spread":     f"{_bg.get('spread','—')} ({_bg.get('spread_odds','—')})",
-                "Total":      f"{_bg.get('total','—')}",
-            })
-        if _bov_rows:
-            import pandas as _pd
-            st.dataframe(_pd.DataFrame(_bov_rows), use_container_width=True, hide_index=True)
-
     # ── Golf Leaderboard ─────────────────────────────────────
     _golf_lb_sys  = st.session_state.get("golf_leaderboard", [])
     _golf_odds_sys = st.session_state.get("golf_odds", {})
