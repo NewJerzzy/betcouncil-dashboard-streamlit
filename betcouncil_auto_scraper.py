@@ -24,6 +24,7 @@ CREATE config.json (same folder as this script):
   "betonline":    {"enabled": true},
   "bovada":       {"enabled": true},
   "draftkings":   {"username": "YOUR_DK_EMAIL",    "password": "YOUR_DK_PASSWORD"},
+  "dk_pick6":     {"enabled": true},  # uses same DK credentials as above
   "fanduel":      {"username": "YOUR_FD_EMAIL",    "password": "YOUR_FD_PASSWORD"},
   "betmgm":       {"username": "YOUR_MGM_EMAIL",   "password": "YOUR_MGM_PASSWORD"},
   "caesars":      {"username": "YOUR_CZR_EMAIL",   "password": "YOUR_CZR_PASSWORD"},
@@ -667,6 +668,199 @@ def parse_generic_response(data, sport, book):
     except: pass
     return props
 
+def scrape_dk_pick6(sport, cookies):
+    """
+    DraftKings Pick6 DFS props.
+    Uses Playwright to navigate pick6.draftkings.com
+    and intercept the projections API.
+    Requires DraftKings login (same credentials as sportsbook).
+    """
+    print(f"\n  DraftKings Pick6 {sport}:")
+    props = []
+
+    sport_map = {
+        "NBA":  "basketball",
+        "MLB":  "baseball",
+        "NHL":  "hockey",
+        "NFL":  "football",
+        "WNBA": "basketball",
+    }
+    sp = sport_map.get(sport, "basketball")
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox","--disable-blink-features=AutomationControlled"]
+            )
+            ctx = browser.new_context(
+                user_agent=UA,
+                viewport={"width": 1280, "height": 800},
+                locale="en-US",
+            )
+            ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            )
+
+            # Restore DK sportsbook cookies — shared auth
+            if cookies:
+                for name, value in cookies.items():
+                    try:
+                        ctx.add_cookies([{
+                            "name": name, "value": value,
+                            "domain": ".draftkings.com", "path": "/"
+                        }])
+                    except:
+                        pass
+
+            # Intercept Pick6 API responses
+            captured = []
+            def on_response(response):
+                try:
+                    url = response.url
+                    if any(x in url for x in
+                           ["pick6","projection","lineup","player-prop",
+                            "draftable","contest","entry"]):
+                        if response.status == 200:
+                            ct = response.headers.get("content-type","")
+                            if "json" in ct:
+                                try:
+                                    captured.append((url, response.json()))
+                                except:
+                                    pass
+                except:
+                    pass
+
+            page = ctx.new_page()
+            page.on("response", on_response)
+
+            # Navigate to Pick6
+            print(f"    Loading pick6.draftkings.com...")
+            page.goto(
+                f"https://pick6.draftkings.com/draft/new-lineup/{sp}",
+                wait_until="networkidle",
+                timeout=30000
+            )
+            time.sleep(3)
+
+            # Also try the lobby
+            page.goto(
+                "https://pick6.draftkings.com/",
+                wait_until="networkidle",
+                timeout=20000
+            )
+            time.sleep(2)
+
+            browser.close()
+
+            print(f"    Captured {len(captured)} API responses")
+
+            # Parse captured responses
+            for url, data in captured:
+                print(f"    Parsing: {url[-60:]}")
+                parsed = parse_pick6_response(data, sport)
+                props.extend(parsed)
+
+    except ImportError:
+        print("    ❌ Playwright not installed")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for p in props:
+        key = f"{p['Player']}_{p['Prop']}_{p['Line']}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+
+    print(f"    Pick6 props: {len(unique)}")
+    return unique
+
+
+def parse_pick6_response(data, sport):
+    """Parse DraftKings Pick6 API response."""
+    props = []
+    try:
+        # Pick6 structure varies — try multiple formats
+        # Format 1: draftables list
+        draftables = data.get("draftables", [])
+        for player in draftables:
+            pname = (player.get("displayName","") or
+                     f"{player.get('firstName','')} {player.get('lastName','')}".strip())
+            for stat in player.get("draftStatAttributes", []):
+                stat_name = stat.get("label","") or stat.get("id","")
+                line      = stat.get("value") or stat.get("projectedValue")
+                if pname and line is not None:
+                    props.append({
+                        "Player":    pname,
+                        "Prop":      stat_name,
+                        "Line":      float(str(line).replace("+","")),
+                        "Side":      "OVER",
+                        "OverOdds":  "—",
+                        "UnderOdds": "—",
+                        "Book":      "DK Pick6",
+                        "Sport":     sport,
+                        "source":    "dk_pick6_auto",
+                    })
+
+        # Format 2: projections list
+        projections = data.get("projections", data.get("playerProjections", []))
+        for proj in projections:
+            pname = (proj.get("playerName","") or proj.get("name","") or
+                     f"{proj.get('firstName','')} {proj.get('lastName','')}".strip())
+            for stat_key in ["points","rebounds","assists","pra","threes",
+                             "steals","blocks","strikeouts","hits","homeRuns",
+                             "goals","saves","shots"]:
+                val = proj.get(stat_key) or proj.get(f"projected_{stat_key}")
+                if val and pname:
+                    stat_label = {
+                        "points":"Points","rebounds":"Rebounds",
+                        "assists":"Assists","pra":"Pts+Rebs+Asts",
+                        "threes":"3-Pointers","steals":"Steals",
+                        "blocks":"Blocks","strikeouts":"Strikeouts",
+                        "hits":"Hits","homeRuns":"Home Runs",
+                        "goals":"Goals","saves":"Saves","shots":"Shots"
+                    }.get(stat_key, stat_key.title())
+                    props.append({
+                        "Player":    pname,
+                        "Prop":      stat_label,
+                        "Line":      float(val),
+                        "Side":      "OVER",
+                        "OverOdds":  "—",
+                        "UnderOdds": "—",
+                        "Book":      "DK Pick6",
+                        "Sport":     sport,
+                        "source":    "dk_pick6_auto",
+                    })
+
+        # Format 3: entries/contests with player lines
+        entries = data.get("entries", data.get("contests", []))
+        for entry in entries:
+            for pick in entry.get("picks", entry.get("playerPicks", [])):
+                pname = pick.get("playerName","") or pick.get("name","")
+                stat  = pick.get("statType","") or pick.get("stat","")
+                line  = pick.get("statLine") or pick.get("line") or pick.get("projectedValue")
+                if pname and line is not None:
+                    props.append({
+                        "Player":    pname,
+                        "Prop":      stat,
+                        "Line":      float(str(line).replace("+","")),
+                        "Side":      "OVER",
+                        "OverOdds":  "—",
+                        "UnderOdds": "—",
+                        "Book":      "DK Pick6",
+                        "Sport":     sport,
+                        "source":    "dk_pick6_auto",
+                    })
+
+    except Exception as e:
+        pass
+    return props
+
+
 # ── Gist Push ─────────────────────────────────────────────────
 def push_to_gist(all_props, all_lines, token, gist_id):
     if not token or not gist_id:
@@ -768,6 +962,11 @@ def main():
             dk_props = scrape_with_playwright("DraftKings", sport,
                 sessions["draftkings"], url, parse_dk_response)
             all_props += dk_props
+
+        # DraftKings Pick6 — DFS props (separate from sportsbook)
+        if "draftkings" in sessions and (use("dk") or use("pick6") or use("draftkings")):
+            pick6_props = scrape_dk_pick6(sport, sessions["draftkings"])
+            all_props += pick6_props
 
         if "fanduel" in sessions and (use("fd") or use("fanduel")):
             url = f"https://sportsbook.fanduel.com/basketball/nba"
