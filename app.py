@@ -18901,9 +18901,16 @@ with tabs[8]:
         for _ap in (_auto_ss or []):
             _src_a = str(_ap.get("Book","") or _ap.get("source",""))
             _bk_a  = ""
-            if "mybookie"  in _src_a.lower(): _bk_a = "MyBookie"
-            elif "betonline" in _src_a.lower(): _bk_a = "BetOnline"
+            if "mybookie"   in _src_a.lower(): _bk_a = "MyBookie"
+            elif "betonline"  in _src_a.lower(): _bk_a = "BetOnline"
             elif "prizepicks" in _src_a.lower(): _bk_a = "PrizePicks"
+            elif "pick6"      in _src_a.lower(): _bk_a = "DK Pick6"
+            elif "draftkings" in _src_a.lower(): _bk_a = "DraftKings"
+            elif "fanduel"    in _src_a.lower(): _bk_a = "FanDuel"
+            elif "betmgm"     in _src_a.lower(): _bk_a = "BetMGM"
+            elif "caesars"    in _src_a.lower(): _bk_a = "Caesars"
+            elif "underdog"   in _src_a.lower(): _bk_a = "Underdog"
+            elif "sleeper"    in _src_a.lower(): _bk_a = "Sleeper"
             if _bk_a:
                 _norm_ap = {**_ap, "Prop": OW_PROP_MAP.get(
                     str(_ap.get("Prop","")).lower().strip(), _ap.get("Prop","")
@@ -18931,7 +18938,7 @@ with tabs[8]:
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
-        BOOK_ORDER = ["PrizePicks","Underdog","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper"]
+        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper"]
         # Always show all books in order — even if no data (shows — for empty)
         # This lets user see at a glance which books are populated vs missing
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
