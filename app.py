@@ -7455,6 +7455,7 @@ def fetch_wnba_rolling_averages():
             if rolling:
                 break
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
+                requests.exceptions.RequestException, ValueError, KeyError, TypeError, AttributeError):
             continue
     if rolling:
         with open(cache_path, "wb") as f:
