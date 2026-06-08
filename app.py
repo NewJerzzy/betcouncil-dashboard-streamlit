@@ -19843,18 +19843,21 @@ with tabs[9]:
             results = {}
             for src in _PING_SOURCES:
                 # Use ScrapeOps proxy for blocked sources (PrizePicks, Kalshi etc)
-                _use_scrapeops = SCRAPEOPS_KEY and src.get("use_scrapeops", False)
+                _use_scrapeops = src.get("use_scrapeops", False)
                 if _use_scrapeops:
                     try:
                         _pr = scrapeops_get(src["url"], timeout=20)
                         code = _pr.status_code
+                        # Determine which proxy actually worked
+                        _log = st.session_state.get("scrapeops_log", [])
+                        _last_proxy = _log[-1]["proxy"] if _log else "Unknown"
+                        _last_status = _log[-1]["status"] if _log else code
                         color = "green" if code == 200 else "red"
-                        detail = f"✅ 200 OK via ScrapeOps" if code == 200 else f"❌ {code}"
+                        detail = f"✅ 200 OK via {_last_proxy}" if code == 200 else f"❌ {code} (tried: ScrapeOps→ScraperAPI→Scrape.do)"
                     except Exception as _pe:
-                        # Fall back to direct ping
                         code, detail, color = _ping_url(src["url"], src["headers"])
                         if color != "green":
-                            detail = f"⚠️ ScrapeOps unavailable — direct: {detail}"
+                            detail = f"⚠️ All proxies failed — direct: {detail}"
                 else:
                     code, detail, color = _ping_url(src["url"], src["headers"])
                 # For prop sources returning JSON, try to count items
