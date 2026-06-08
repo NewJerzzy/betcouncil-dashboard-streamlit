@@ -8047,7 +8047,9 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 timeout=timeout
             )
             _log("ScraperAPI", r.status_code, len(r.text))
-            if _is_valid(r):
+            if r.status_code in (403, 429, 402):
+                st.session_state["scraperapi_exhausted"] = True
+            elif _is_valid(r):
                 return r
         except Exception as e:
             _log("ScraperAPI", "ERR", error=e)
@@ -14657,6 +14659,17 @@ with st.sidebar:
                             os.remove(fp)
         except (ValueError, KeyError, TypeError, AttributeError):
             pass
+        # Proxy credit warning — warn before consuming credits
+        _so_exhausted = st.session_state.get("scrapeops_exhausted", False)
+        _sa_exhausted = st.session_state.get("scraperapi_exhausted", False)
+        _load_count   = st.session_state.get("board_load_count", 0) + 1
+        st.session_state["board_load_count"] = _load_count
+        if _so_exhausted and _sa_exhausted:
+            st.warning("⚠️ ScrapeOps + ScraperAPI credits exhausted. Scrape.do is fallback — PrizePicks may fail. Consider upgrading ScrapeOps ($9/mo).")
+        elif _so_exhausted:
+            st.warning("⚠️ ScrapeOps credits exhausted — using ScraperAPI fallback for PrizePicks.")
+        elif _load_count > 5:
+            st.info(f"ℹ️ Board loaded {_load_count}x this session — each load uses proxy credits. Reload only when needed.")
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             _enrich_t0 = _time_mod.perf_counter()
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
