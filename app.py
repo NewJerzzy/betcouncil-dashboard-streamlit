@@ -19197,21 +19197,26 @@ with tabs[9]:
             _sharp_agreements  = []
             for _sg in _audit_games_deduped[:10]:
                 _matchup = _sg.get("matchup","?")
-                # game_analysis has HomeML, TotalEdge, SpreadEdge
-                _pin_ml  = safe_float(_sg.get("HomeML","") or 0)
-                _ml_edge = safe_float(_sg.get("MLEdge", 0) or 0)
-                _tot_edge= safe_float(_sg.get("TotalEdge", 0) or 0)
-                _total   = safe_float(_sg.get("Total","") or 0)
-                # Has OddsAPI data if edges are non-zero or ML populated
-                _has_data = (_pin_ml != 0 or abs(_ml_edge) > 0 or abs(_tot_edge) > 0 or _total != 0)
-                if _has_data:
+                # Only use OddsAPI/Pinnacle edges — NOT Bovada
+                # Bovada is a soft book and should not drive sharp consensus
+                _ml_edge  = safe_float(_sg.get("MLEdge", 0) or 0)
+                _tot_edge = safe_float(_sg.get("TotalEdge", 0) or 0)
+                _pin_ml   = safe_float(_sg.get("HomeML","") or 0)
+                # Skip if edge came purely from Bovada (no Pinnacle/OddsAPI data)
+                _has_sharp_data = (
+                    safe_float(_sg.get("PinnacleTotal", 0) or 0) != 0 or
+                    safe_float(_sg.get("PinnacleML", 0) or 0) != 0 or
+                    _sg.get("sharp_source","") not in ("bovada","Bovada","") or
+                    (abs(_ml_edge) > 0 and _sg.get("odds_source","") != "bovada")
+                )
+                _has_data = (_pin_ml != 0 or abs(_ml_edge) > 0 or abs(_tot_edge) > 0)
+                if _has_data and _has_sharp_data:
                     if abs(_ml_edge) >= 0.05 or abs(_tot_edge) >= 0.05:
                         _sharp_divergences.append(
                             f"{_matchup}: ML edge {_ml_edge:+.1%} Total edge {_tot_edge:+.1%}"
                         )
                     else:
                         _sharp_agreements.append(_matchup)
-                # Check book_clv from CLV summary for sharp agreement signal
             _clv_data = get_clv_summary()
             _consensus_edge = (_clv_data or {}).get("consensus_sharp_edge", 0)
             _n_books = (_clv_data or {}).get("n_sharp_books", 0)
