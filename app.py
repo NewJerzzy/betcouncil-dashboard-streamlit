@@ -7334,14 +7334,17 @@ def fetch_nba_rolling_averages():
         "Connection": "keep-alive",
         "Origin": "https://www.nba.com",
     }
+    # Auto-detect current season
+    _yr = date.today().year
+    _season = f"{_yr-1}-{str(_yr)[2:]}" if date.today().month < 9 else f"{_yr}-{str(_yr+1)[2:]}"
     urls = [
-        "https://stats.nba.com/stats/playergamelogs?Season=2024-25&SeasonType=Playoffs&PlayerOrTeam=P&LastNGames=10",
-        "https://stats.nba.com/stats/playergamelogs?Season=2024-25&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
+        f"https://stats.nba.com/stats/playergamelogs?Season={_season}&SeasonType=Playoffs&PlayerOrTeam=P&LastNGames=10",
+        f"https://stats.nba.com/stats/playergamelogs?Season={_season}&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
     ]
     rolling = {}
     for url in urls:
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=15)
+            resp = requests.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -7375,7 +7378,15 @@ def fetch_nba_rolling_averages():
                     }
             if rolling:
                 break
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
+                requests.exceptions.RequestException, ValueError, KeyError, TypeError, AttributeError):
+            # On timeout — use stale cache instead of crashing board
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as _cf:
+                        return pickle.load(_cf)
+                except Exception:
+                    pass
             continue
     if not rolling:
         st.session_state["nba_api_status"] = "FAILED — likely blocked by hosting"
