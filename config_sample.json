@@ -1,14 +1,31 @@
 {
   "github_token": "YOUR_GITHUB_TOKEN_HERE",
   "gist_id":      "YOUR_GIST_ID_HERE",
+
+  "prizepicks":   {"enabled": true},
+  "underdog":     {"enabled": true},
+  "sleeper":      {"enabled": true},
+  "betonline":    {"enabled": true},
+  "bovada":       {"enabled": true},
+
+  "draftkings": {
+    "username": "YOUR_DRAFTKINGS_EMAIL",
+    "password": "YOUR_DRAFTKINGS_PASSWORD"
+  },
+  "fanduel": {
+    "username": "YOUR_FANDUEL_EMAIL",
+    "password": "YOUR_FANDUEL_PASSWORD"
+  },
+  "betmgm": {
+    "username": "YOUR_BETMGM_EMAIL",
+    "password": "YOUR_BETMGM_PASSWORD"
+  },
+  "caesars": {
+    "username": "YOUR_CAESARS_EMAIL",
+    "password": "YOUR_CAESARS_PASSWORD"
+  },
   "mybookie": {
     "username": "YOUR_MYBOOKIE_USERNAME",
     "password": "YOUR_MYBOOKIE_PASSWORD"
-  },
-  "prizepicks": {
-    "enabled": true
-  },
-  "betonline": {
-    "enabled": true
   }
 }
