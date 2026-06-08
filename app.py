@@ -13813,6 +13813,21 @@ def load_sport_data(sport):
         clv_mult, clv_note = get_clv_edge_adjustment(sport, get_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
+        # ── Always-OVER props — markets that don't offer UNDER ──
+        # Sportsbooks only offer OVER on these low-base-rate props
+        ALWAYS_OVER_PROPS = {
+            "Home Runs", "HR", "Pitcher Wins", "Wins",
+            "Saves", "Blowout", "First Basket",
+        }
+        _stat_norm_check = stat_norm.strip().title()
+        if _stat_norm_check in ALWAYS_OVER_PROPS:
+            if final_edge < 0:
+                # Negative edge = model says UNDER — not a valid market
+                skipped_edge += 1
+                continue
+            # Force OVER regardless of signal direction
+            pick_dir = "OVER"
+
         if final_edge < min_edge:
             skipped_edge += 1
             continue
