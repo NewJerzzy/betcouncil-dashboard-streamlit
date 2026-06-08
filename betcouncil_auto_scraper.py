@@ -102,109 +102,58 @@ BROWSER_HEADERS = {
 # ── MyBookie Auto Login ───────────────────────────────────────
 def mybookie_login(username, password):
     """
-    Logs into MyBookie automatically.
-    Returns session cookies dict or None on failure.
+    Logs into MyBookie using Playwright browser automation.
+    Handles Cloudflare automatically — runs a real browser.
     """
-    print("\n  Logging into MyBookie...")
-    session = requests.Session()
-    session.headers.update(BROWSER_HEADERS)
+    print("\n  Logging into MyBookie (browser)...")
 
+    # Try Playwright first
     try:
-        # Step 1: Load mybookie.ag to get initial cookies (cf_bm, websession etc)
-        r = session.get("https://mybookie.ag/login", timeout=15)
-        print(f"  Login page: {r.status_code}")
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx     = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800},
+            )
+            page = ctx.new_page()
 
-        # Step 1b: Load engine.mybookie.ag to get XSRF token
-        r_eng = session.get("https://engine.mybookie.ag/login", timeout=15,
-                            headers={**BROWSER_HEADERS,
-                                     "Referer": "https://mybookie.ag/",
-                                     "Origin":  "https://mybookie.ag"})
-        print(f"  Engine login page: {r_eng.status_code}")
+            # Go to login page
+            print("  Opening mybookie.ag/login...")
+            page.goto("https://mybookie.ag/login", wait_until="networkidle", timeout=30000)
+            print(f"  Page loaded: {page.title()}")
 
-        from urllib.parse import unquote
-        csrf_token = session.cookies.get("XSRF-TOKEN", "")
-        if csrf_token:
-            csrf_token = unquote(csrf_token)
-            try:
-                import base64 as _b64, json as _json
-                parts = csrf_token.split('.')
-                if len(parts) == 3:
-                    padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
-                    decoded = _json.loads(_b64.b64decode(padded))
-                    csrf_value = decoded.get("value", csrf_token)
-                else:
-                    csrf_value = csrf_token
-            except:
-                csrf_value = csrf_token
-        else:
-            csrf_value = csrf_token = ""
+            # Fill login form
+            page.fill('input[name="username"], input[type="email"], #username, #email', username)
+            page.fill('input[name="password"], input[type="password"], #password', password)
+            page.click('button[type="submit"], input[type="submit"], .login-btn, button:has-text("Login"), button:has-text("Sign In")')
 
-        # Step 2: POST login credentials
-        login_headers = {
-            **BROWSER_HEADERS,
-            "Content-Type":  "application/json",
-            "Origin":        "https://mybookie.ag",
-            "Referer":       "https://mybookie.ag/login",
-            "X-CSRF-TOKEN":  csrf_value,
-            "X-XSRF-TOKEN":  csrf_token,
-        }
-        login_data = {
-            "username": username,
-            "password": password,
-            "remember": True,
-        }
-        # Confirmed login endpoint from DevTools: engine.mybookie.ag/login
-        # Try form POST first (matches the HTML form action), then JSON
-        login_attempts = [
-            ("form", "https://engine.mybookie.ag/login",
-             {"Content-Type":"application/x-www-form-urlencoded",
-              "Origin":"https://mybookie.ag",
-              "Referer":"https://mybookie.ag/login"}),
-            ("json", "https://engine.mybookie.ag/login",
-             {"Content-Type":"application/json",
-              "Origin":"https://mybookie.ag",
-              "Referer":"https://mybookie.ag/login"}),
-            ("json", "https://engine.mybookie.ag/api/auth/login",
-             {"Content-Type":"application/json",
-              "Origin":"https://engine.mybookie.ag",
-              "Referer":"https://engine.mybookie.ag/login"}),
-            ("json", "https://engine.mybookie.ag/user/login",
-             {"Content-Type":"application/json",
-              "Origin":"https://engine.mybookie.ag",
-              "Referer":"https://engine.mybookie.ag/login"}),
-        ]
-        for fmt, ep, extra_h in login_attempts:
-            try:
-                h = {**login_headers, **extra_h,
-                     "X-CSRF-TOKEN": csrf_value,
-                     "X-XSRF-TOKEN": csrf_token}
-                if fmt == "form":
-                    payload = {"username": username, "password": password,
-                               "remember": "on", "_token": csrf_value}
-                    r2 = session.post(ep, data=payload, headers=h,
-                                      timeout=15, allow_redirects=True)
-                else:
-                    r2 = session.post(ep, json=login_data, headers=h,
-                                      timeout=15, allow_redirects=True)
-                print(f"  Login {ep[-40:]}: {r2.status_code}")
-                if r2.status_code in (200, 201, 302):
-                    cookies = dict(session.cookies)
-                    if any(k in cookies for k in
-                           ["gamingstation_session","XSRF-TOKEN","cf_clearance",
-                            "auth","session","cust_s_a"]):
-                        save_cookies(cookies)
-                        print(f"  ✅ Login successful via {ep}")
-                        return cookies
-                    else:
-                        print(f"  Cookies: {list(cookies.keys())}")
-            except Exception as _le:
-                print(f"  {ep[-40:]}: {_le}")
-        print(f"  ❌ All login endpoints failed")
+            # Wait for redirect after login
+            page.wait_for_url("**/sportsbook**", timeout=15000)
+            print(f"  Redirected to: {page.url}")
+
+            # Extract cookies
+            cookies = ctx.cookies()
+            cookie_dict = {c["name"]: c["value"] for c in cookies}
+            browser.close()
+
+            if any(k in cookie_dict for k in ["gamingstation_session","cust_s_a","XSRF-TOKEN"]):
+                save_cookies(cookie_dict)
+                print(f"  ✅ Login successful — {len(cookie_dict)} cookies saved")
+                return cookie_dict
+            else:
+                print(f"  ❌ Login failed — cookies: {list(cookie_dict.keys())}")
+                return None
+
+    except ImportError:
+        print("  Playwright not installed.")
+        print("  Run: pip install playwright && playwright install chromium")
+        print("  Then re-run the scraper.")
         return None
-
     except Exception as e:
-        print(f"  ❌ Login error: {e}")
+        print(f"  ❌ Browser login error: {e}")
         return None
+
 
 def get_mybookie_session(cfg):
     """Get valid session — use cached or re-login."""
