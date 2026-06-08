@@ -18722,11 +18722,39 @@ with tabs[8]:
         _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
         _pa_all = st.session_state.get("parlayapi_props_cache", [])
         _ls_add([p for p in _pa_all if p.get("source","").lower() in ("parlayplay","parlay play")], "ParlayPlay")
+        # OddsWrap prop name → PrizePicks format mapping
+        OW_PROP_MAP = {
+            "player points": "Points", "points": "Points",
+            "player rebounds": "Rebounds", "rebounds": "Rebounds",
+            "player assists": "Assists", "assists": "Assists",
+            "player points rebounds assists": "PRA", "pra": "PRA",
+            "player steals": "Steals", "steals": "Steals",
+            "player blocks": "Blocks", "blocks": "Blocks",
+            "player threes": "Threes", "threes": "Threes",
+            "player turnovers": "Turnovers", "turnovers": "Turnovers",
+            "pitcher strikeouts": "Pitcher Strikeouts", "strikeouts": "Strikeouts",
+            "batter hits": "Hits", "hits": "Hits",
+            "batter home runs": "Home Runs", "home runs": "Home Runs",
+            "batter rbis": "RBI", "rbis": "RBI",
+            "batter runs scored": "Runs", "runs scored": "Runs",
+            "player pass yards": "Pass Yards", "pass yards": "Pass Yards",
+            "player rush yards": "Rush Yards", "rush yards": "Rush Yards",
+            "player receiving yards": "Rec Yards", "receiving yards": "Rec Yards",
+            "player receptions": "Receptions", "receptions": "Receptions",
+            "player shots on goal": "Shots", "shots on goal": "Shots",
+            "goalie saves": "Saves", "saves": "Saves",
+        }
         for ow_p in (st.session_state.get("oddswrap_props", []) or []):
             _bk = ow_p.get("Book", ow_p.get("source", "")).replace("oddswrap_","").title()
-            _bk = {"Draftkings":"DraftKings","Fanduel":"FanDuel","Betmgm":"BetMGM","Caesars":"Caesars","Betrivers":"BetRivers"}.get(_bk, _bk)
-            if _bk:
-                _ls_add([ow_p], _bk)
+            _bk = {"Draftkings":"DraftKings","Fanduel":"FanDuel","Betmgm":"BetMGM",
+                   "Caesars":"Caesars","Betrivers":"BetRivers","Bovada":"Bovada"}.get(_bk, _bk)
+            if not _bk:
+                continue
+            # Normalize prop name to match PrizePicks format
+            _raw_prop = str(ow_p.get("Prop","")).lower().strip()
+            _norm_prop = OW_PROP_MAP.get(_raw_prop, ow_p.get("Prop",""))
+            _ow_normalized = {**ow_p, "Prop": _norm_prop}
+            _ls_add([_ow_normalized], _bk)
         _sport_ls = st.session_state.get("last_sport", "NBA")
 
         # Debug — show what's actually in session for this sport
