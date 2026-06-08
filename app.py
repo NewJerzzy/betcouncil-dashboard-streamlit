@@ -5000,47 +5000,6 @@ def get_bovada_game_line(matchup, bovada_data=None):
     return None
 
 
-# ═══════════════════════════════════════════════════════════════
-# LOCAL BOOK SCRAPER READER
-# Reads props pushed by betcouncil_local_scraper.py running
-# on user's local machine. Remove this + GIST_FILE reference
-# to revert completely. Zero impact if file doesn't exist in Gist.
-# ═══════════════════════════════════════════════════════════════
-LOCAL_SCRAPER_GIST_FILE = "local_book_props.json"
-
-@st.cache_data(ttl=1800)
-def fetch_local_book_props(sport="NBA"):
-    """
-    Read props scraped by local machine (DK/FD/BetMGM).
-    Returns [] if local scraper hasn't run or sport doesn't match.
-    """
-    try:
-        r = requests.get(
-            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization": f"token {GITHUB_TOKEN}",
-                     "Accept": "application/vnd.github.v3+json"},
-            timeout=8
-        )
-        if r.status_code != 200:
-            return []
-        files = r.json().get("files", {})
-        if LOCAL_SCRAPER_GIST_FILE not in files:
-            return []
-        content = files[LOCAL_SCRAPER_GIST_FILE].get("content","")
-        if not content:
-            return []
-        data = json.loads(content)
-        # Check it's for today and matching sport
-        if data.get("date") != date.today().isoformat():
-            return []
-        if data.get("sport","").upper() != sport.upper():
-            return []
-        props = data.get("props", [])
-        return props
-    except Exception:
-        return []
-
-
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
@@ -14555,13 +14514,6 @@ def load_sport_data(sport):
     if _bovada:
         st.session_state["bovada_lines"] = _bovada
 
-    # Local scraper props (DK/FD/BetMGM from user's machine)
-    _local_props = fetch_local_book_props(sport)
-    if _local_props:
-        st.session_state[f"local_book_props_{sport}"] = _local_props
-        _n_local = len(_local_props)
-        _local_books = list({p.get("Book","") for p in _local_props})
-        st.caption(f"📡 Local scraper: {_n_local} props from {', '.join(_local_books)}")
 
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
@@ -18823,8 +18775,7 @@ with tabs[8]:
         _has_oddsapi  = bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", []))
         _has_oddspapi = bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", []))
         _has_oddswrap = bool(st.session_state.get("oddswrap_props", []))
-        _has_local    = bool(st.session_state.get(f"local_book_props_{_sport_ls}", []))
-        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'} | Local={'✅' if _has_local else '❌ (run local scraper)'}")
+        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'}")
 
         # Try session_state first (faster, no disk read)
         _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
@@ -18860,21 +18811,6 @@ with tabs[8]:
                             _ls_add([_op], _bk2)
                 except (ValueError, KeyError, TypeError, AttributeError):
                     pass
-
-        # Local scraper props (DK/FD/BetMGM from user's machine)
-        _local_ss = st.session_state.get(f"local_book_props_{_sport_ls}", [])
-        for _lp in (_local_ss or []):
-            _src_l = str(_lp.get("Book","") or _lp.get("source",""))
-            _bk_l  = ""
-            if "draftkings" in _src_l.lower(): _bk_l = "DraftKings"
-            elif "fanduel"  in _src_l.lower(): _bk_l = "FanDuel"
-            elif "betmgm"   in _src_l.lower(): _bk_l = "BetMGM"
-            elif "caesars"  in _src_l.lower(): _bk_l = "Caesars"
-            if _bk_l:
-                _norm_lp = {**_lp, "Prop": OW_PROP_MAP.get(
-                    str(_lp.get("Prop","")).lower().strip(), _lp.get("Prop","")
-                )}
-                _ls_add([_norm_lp], _bk_l)
 
         # Also add OddsPapi props (includes Bet365)
         _oddspapi_ss = st.session_state.get(f"oddspapi_props_{_sport_ls}", [])
