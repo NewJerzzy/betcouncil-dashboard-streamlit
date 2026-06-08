@@ -1,0 +1,14 @@
+{
+  "github_token": "YOUR_GITHUB_TOKEN_HERE",
+  "gist_id":      "YOUR_GIST_ID_HERE",
+  "mybookie": {
+    "username": "YOUR_MYBOOKIE_USERNAME",
+    "password": "YOUR_MYBOOKIE_PASSWORD"
+  },
+  "prizepicks": {
+    "enabled": true
+  },
+  "betonline": {
+    "enabled": true
+  }
+}
