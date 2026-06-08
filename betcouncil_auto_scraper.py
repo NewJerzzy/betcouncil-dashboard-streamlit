@@ -148,40 +148,32 @@ def mybookie_login(username, password):
             "password": password,
             "remember": True,
         }
-        r2 = session.post(
-            "https://mybookie.ag/api/auth/login",
-            json=login_data,
-            headers=login_headers,
-            timeout=15
-        )
-        print(f"  Login POST: {r2.status_code}")
-
-        if r2.status_code in (200, 201, 302):
-            # Get session cookies
-            cookies = dict(session.cookies)
-            if cookies:
-                save_cookies(cookies)
-                print(f"  ✅ Login successful — session saved")
-                return cookies
-            else:
-                print(f"  ❌ No cookies returned")
-                return None
-        else:
-            print(f"  ❌ Login failed: {r2.text[:100]}")
-            # Try alternate login endpoint
-            r3 = session.post(
-                "https://engine.mybookie.ag/api/auth/login",
-                json=login_data,
-                headers={**login_headers, "Origin": "https://engine.mybookie.ag"},
-                timeout=15
-            )
-            print(f"  Alt login: {r3.status_code}")
-            if r3.status_code in (200, 201):
-                cookies = dict(session.cookies)
-                save_cookies(cookies)
-                print(f"  ✅ Alt login successful")
-                return cookies
-            return None
+        # Try all known MyBookie login endpoints
+        login_attempts = [
+            ("POST", "https://mybookie.ag/login",         "form",  {"Content-Type":"application/x-www-form-urlencoded"}),
+            ("POST", "https://mybookie.ag/auth/login",    "json",  {}),
+            ("POST", "https://mybookie.ag/api/login",     "json",  {}),
+            ("POST", "https://mybookie.ag/user/login",    "json",  {}),
+            ("POST", "https://engine.mybookie.ag/login",  "json",  {"Origin":"https://engine.mybookie.ag","Referer":"https://engine.mybookie.ag/"}),
+        ]
+        for method, ep, fmt, extra_h in login_attempts:
+            try:
+                h = {**login_headers, **extra_h}
+                if fmt == "form":
+                    r2 = session.post(ep, data={"username":username,"password":password,"remember":"on"}, headers=h, timeout=15, allow_redirects=True)
+                else:
+                    r2 = session.post(ep, json=login_data, headers=h, timeout=15, allow_redirects=True)
+                print(f"  Login {ep[-35:]}: {r2.status_code}")
+                if r2.status_code in (200, 201, 302):
+                    cookies = dict(session.cookies)
+                    if any(k in cookies for k in ["gamingstation_session","XSRF-TOKEN","cf_clearance","auth","session"]):
+                        save_cookies(cookies)
+                        print(f"  ✅ Login successful")
+                        return cookies
+            except Exception as _le:
+                print(f"  {ep[-35:]}: {_le}")
+        print(f"  ❌ All login endpoints failed")
+        return None
 
     except Exception as e:
         print(f"  ❌ Login error: {e}")
@@ -399,7 +391,7 @@ def scrape_betonline(sport):
         # Get today's games
         r = requests.post(
             "https://api-offering.betonline.ag/api/offering/Sports/get-menu",
-            headers=menu_headers, data="{}", timeout=10
+            headers=menu_headers, json={}, timeout=10
         )
         print(f"    Menu: {r.status_code}")
 
