@@ -1470,6 +1470,20 @@ def push_to_gist(all_props, all_lines, token, gist_id):
         print("❌ No GitHub token/Gist ID")
         return False
     books   = list({p["Book"] for p in all_props + all_lines})
+    # Trim to stay under GitHub Gist 1MB limit
+    max_props = 2500
+    if len(all_props) > max_props:
+        # Keep proportional mix of sports
+        from collections import defaultdict
+        sport_props = defaultdict(list)
+        for p in all_props:
+            sport_props[p.get("Sport","NBA")].append(p)
+        trimmed = []
+        per_sport = max_props // max(len(sport_props), 1)
+        for sp_list in sport_props.values():
+            trimmed.extend(sp_list[:per_sport])
+        all_props = trimmed[:max_props]
+
     payload = {
         "date":        date.today().isoformat(),
         "timestamp":   datetime.now().isoformat(),
@@ -1477,8 +1491,18 @@ def push_to_gist(all_props, all_lines, token, gist_id):
         "line_count":  len(all_lines),
         "books":       books,
         "props":       all_props,
-        "lines":       all_lines,
+        "lines":       all_lines[:1000],  # cap lines too
     }
+
+    # Verify size before pushing
+    import json as _json
+    payload_str = _json.dumps(payload)
+    if len(payload_str) > 900000:
+        payload["props"] = all_props[:1500]
+        payload["lines"] = all_lines[:500]
+        payload_str = _json.dumps(payload)
+        print(f"  ⚠️  Trimmed to fit Gist limit: {len(payload['props'])} props")
+
     r = requests.patch(
         f"https://api.github.com/gists/{gist_id}",
         headers={"Authorization": f"token {token}",
