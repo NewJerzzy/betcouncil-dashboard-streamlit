@@ -13265,7 +13265,23 @@ def load_sport_data(sport):
     props = []  # Initialize — will be set by fallback chain below
     if pp_props:
         props = pp_props
-    elif ud_props_compare:
+        st.session_state["pp_source"] = "prizepicks_direct"
+    else:
+        # PrizePicks failed — try Gist from local scraper FIRST
+        _gist_fb = fetch_auto_scraped_props(sport)
+        if _gist_fb:
+            _pp_gist = [p for p in _gist_fb
+                        if "prizepicks" in str(p.get("source","")).lower()
+                        or p.get("Book","") == "PrizePicks"]
+            if _pp_gist:
+                props = _pp_gist
+                st.session_state["pp_status"] = "ok"
+                st.session_state["pp_source"]  = "gist_scraper"
+            elif _gist_fb:
+                props = _gist_fb
+                st.session_state["pp_status"] = "fallback"
+                st.session_state["pp_source"]  = "gist_scraper"
+    if not props and ud_props_compare:
         props = ud_props_compare
     else:
         # All primary DFS sources failed — use parallel-fetched alternates
