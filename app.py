@@ -20232,12 +20232,20 @@ with tabs[9]:
     col_pp1, col_pp2 = st.columns(2)
     with col_pp1:
         if st.button("🧹 Clear All Prop Cache", key="clear_pp_cache"):
+            st.cache_data.clear()
             cleared = 0
             for f in os.listdir(CACHE_DIR):
-                if f.endswith("_pp.pkl"):
-                    os.remove(os.path.join(CACHE_DIR, f))
-                    cleared += 1
-            st.success(f"✅ Cleared {cleared} PrizePicks cache files — reload the board now")
+                if f.endswith(".pkl") and any(x in f for x in ["_pp","prizepicks","parlayplay","oddspapi","oddsapi","oddswrap","underdog","sleeper"]):
+                    try:
+                        os.remove(os.path.join(CACHE_DIR, f))
+                        cleared += 1
+                    except (OSError, IOError):
+                        pass
+            # Reset status keys
+            for _sk in ["pp_status","pp_source","scrapeops_exhausted","scraperapi_exhausted"]:
+                if _sk in st.session_state:
+                    del st.session_state[_sk]
+            st.success(f"✅ Cleared {cleared} cache files + reset status flags — reload now")
     with col_pp2:
         pp_cache_files = [f for f in os.listdir(CACHE_DIR) if f.endswith("_pp.pkl")]
         pp_cache_age = 0
@@ -20261,11 +20269,31 @@ with tabs[9]:
     st.markdown("---")
     col_s1, col_s2 = st.columns(2)
     if col_s1.button("\U0001f504 Reset Session State"):
+        # Clear Streamlit function caches (removes stale 429/403 responses)
+        st.cache_data.clear()
+        # Clear session state (keeps bankroll/history)
         keep = ["bankroll","history","locks","persistence_loaded","day_start_br","session_start"]
         for k in list(st.session_state.keys()):
             if k not in keep:
                 del st.session_state[k]
-        st.success("Session reset")
+        # Clear ALL pkl cache files
+        _cleared_count = 0
+        for _cf in os.listdir(CACHE_DIR):
+            if _cf.endswith(".pkl"):
+                try:
+                    os.remove(os.path.join(CACHE_DIR, _cf))
+                    _cleared_count += 1
+                except (OSError, IOError):
+                    pass
+        # Clear API counters
+        for _bc in API_BUDGETS.values():
+            _cp = _bc.get("counter_path","")
+            if _cp and os.path.exists(_cp):
+                try:
+                    os.remove(_cp)
+                except (OSError, IOError):
+                    pass
+        st.success(f"✅ Full reset: session cleared, {_cleared_count} cache files removed, API counters reset")
         st.rerun()
     if col_s2.button("\U0001f9f9 Clean Old Cache Files"):
         cleaned = 0
