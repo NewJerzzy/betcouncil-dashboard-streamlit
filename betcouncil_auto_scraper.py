@@ -23,6 +23,7 @@ CREATE config.json (same folder as this script):
   "sleeper":      {"enabled": true},
   "betonline":    {"enabled": true},
   "bovada":       {"enabled": true},
+  "parlayplay":   {"session_cookie": "YOUR_PARLAYPLAY_SESSIONID"},
   "draftkings":   {"username": "YOUR_DK_EMAIL",    "password": "YOUR_DK_PASSWORD"},
   "dk_pick6":     {"enabled": true},  # uses same DK credentials as above
   "fanduel":      {"username": "YOUR_FD_EMAIL",    "password": "YOUR_FD_PASSWORD"},
@@ -1260,6 +1261,98 @@ def parse_pick6_response(data, sport):
     return props
 
 
+def scrape_parlayplay(sport):
+    """ParlayPlay props — uses session cookie from config.json."""
+    print(f"\n  ParlayPlay {sport}:")
+    props = []
+    cfg_s = SPORT_MAP.get(sport, SPORT_MAP["NBA"])
+
+    try:
+        # Read session cookie from config
+        cfg = load_config()
+        pp_session = cfg.get("parlayplay", {}).get("session_cookie", "")
+        if not pp_session:
+            print("    No session_cookie in config.json parlayplay section")
+            return props
+
+        league_map = {"NBA": "nba", "MLB": "mlb", "NHL": "nhl", "WNBA": "wnba", "NFL": "nfl"}
+        league = league_map.get(sport, "nba")
+
+        headers = {
+            "User-Agent": UA,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://parlayplay.io/",
+            "Origin": "https://parlayplay.io",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "x-parlayplay-native-platform": "web",
+            "x-parlayplay-platform": "web",
+            "x-requested-with": "XMLHttpRequest",
+            "Cookie": f"sessionid={pp_session}",
+        }
+
+        r = requests.get(
+            f"https://parlayplay.io/api/v1/crossgame/offering/",
+            params={"league": league},
+            headers=headers,
+            timeout=15
+        )
+        print(f"    Status: {r.status_code}")
+
+        if r.status_code == 200:
+            data = r.json()
+            games = data.get("games", data.get("offerings", data.get("data", [])))
+            if isinstance(games, dict):
+                games = list(games.values())
+
+            for game in games:
+                game_props = game.get("props", game.get("offerings", game.get("lines", [])))
+                if isinstance(game_props, dict):
+                    game_props = list(game_props.values())
+
+                for prop in game_props:
+                    player = (prop.get("playerName", "") or
+                              prop.get("player_name", "") or
+                              prop.get("name", "")).strip()
+                    stat   = (prop.get("statName", "") or
+                              prop.get("stat_name", "") or
+                              prop.get("stat", "")).strip()
+                    line   = prop.get("line") or prop.get("selectionPoints") or prop.get("value")
+
+                    if not player or line is None:
+                        # Try nested structure
+                        for lv in prop.get("lineValues", prop.get("line_values", [])):
+                            line = lv.get("selectionPoints") or lv.get("line")
+                            if line is not None:
+                                break
+
+                    if player and line is not None:
+                        props.append({
+                            "Player": player,
+                            "Prop": stat,
+                            "Line": float(str(line).replace("+", "")),
+                            "Side": "OVER",
+                            "OverOdds": "—",
+                            "UnderOdds": "—",
+                            "Book": "ParlayPlay",
+                            "Sport": sport,
+                            "source": "parlayplay_auto",
+                        })
+
+            print(f"    Props: {len(props)}")
+        elif r.status_code == 403:
+            print(f"    403 — session cookie may be expired. Update parlayplay.session_cookie in config.json")
+        else:
+            print(f"    Error: {r.text[:100]}")
+
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    return props
+
+
 # ── Direct API scrapers (no Playwright needed) ────────────────
 
 def scrape_dk_api(sport, cookies):
@@ -1578,6 +1671,11 @@ def main():
 
         if use("bov") and cfg.get("bovada",{}).get("enabled",True):
             all_lines += scrape_bovada_lines(sport)
+
+        # ParlayPlay (uses session cookie from config.json)
+        if (use("pp_play") or use("parlayplay")) and cfg.get("parlayplay",{}).get("session_cookie"):
+            pp_play_props = scrape_parlayplay(sport)
+            all_props += pp_play_props
 
         # Browser-based sources
         sport_map_dk = {"NBA":"nba","MLB":"mlb","NHL":"nhl","WNBA":"wnba","NFL":"nfl"}
