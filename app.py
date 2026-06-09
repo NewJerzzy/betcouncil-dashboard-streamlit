@@ -8297,6 +8297,24 @@ def scrape_prizepicks(sport):
         st.session_state["pp_status"] = "ok"
         return all_props
     st.session_state["pp_status"] = "unavailable"
+    # Try Gist from local auto scraper FIRST
+    try:
+        _gist_props = fetch_auto_scraped_props(sport)
+        if _gist_props:
+            _pp_gist = [p for p in _gist_props
+                        if "prizepicks" in str(p.get("source","")).lower()
+                        or p.get("Book","") == "PrizePicks"]
+            if _pp_gist:
+                st.session_state["pp_status"] = "ok"
+                st.session_state["pp_source"]  = "gist_scraper"
+                return _pp_gist
+            elif _gist_props:
+                # Use all auto-scraped props as board
+                st.session_state["pp_status"] = "fallback"
+                st.session_state["pp_source"]  = "gist_scraper"
+                return _gist_props
+    except Exception:
+        pass
     # Clear cache so next load retries PrizePicks
     try:
         import glob
@@ -14685,12 +14703,17 @@ with st.sidebar:
     st.markdown("---")
     # Show data source status
     _pp_status = st.session_state.get("pp_status", "unknown")
-    if _pp_status == "ok":
+    _pp_source = st.session_state.get("pp_source","")
+    if _pp_status == "ok" and _pp_source == "gist_scraper":
+        st.success("✅ PrizePicks loaded from local scraper (Gist)")
+    elif _pp_status == "ok":
         st.success("✅ PrizePicks connected via ScrapeOps")
+    elif _pp_status == "fallback" and _pp_source == "gist_scraper":
+        st.info("ℹ️ Using auto-scraped props from local script (Gist)")
     elif _pp_status == "fallback":
         st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
     elif _pp_status == "unavailable":
-        st.warning("⚠️ PrizePicks unavailable — using fallback sources")
+        st.warning("⚠️ PrizePicks unavailable — run betcouncil_auto_scraper.py to populate")
     _wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
     _losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
     if _wins + _losses > 0:
