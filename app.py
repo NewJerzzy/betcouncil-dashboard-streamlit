@@ -5100,7 +5100,7 @@ def fetch_auto_scraped_props(sport="NBA"):
         if file_size > 900000:
             raw_url = file_obj.get("raw_url", "")
             if raw_url:
-                r_raw = requests.get(raw_url, timeout=10)
+                r_raw = requests.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=15)
                 if r_raw.status_code == 200:
                     gist_content = r_raw.json()
                 else:
