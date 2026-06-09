@@ -14080,35 +14080,36 @@ def load_sport_data(sport):
 
     # FanDuel/DraftKings no-vig validation using alt lines
     fd_dk_alts = _fd_dk_alts
-    if fd_dk_alts:
-        fd_result = get_fanduel_dk_validation(player, stat_norm, line, sport, fd_dk_alts)
-        if fd_result:
-            prop["FDDKProb"] = fd_result["implied_prob"]
-            prop["FDDKConfirms"] = fd_result["confirms"]
-            prop["FDDKFades"] = fd_result["fades"]
-            prop["FDDKSource"] = fd_result["source"]
-            prop["FDDKOverOdds"] = fd_result.get("over_odds","—")
-            prop["FDDKUnderOdds"] = fd_result.get("under_odds","—")
-            # Tier boost: FD/DK AND Pinnacle both confirm → SOVEREIGN
-            if fd_result["confirms"] and prop.get("PinnacleConfirms") and prop.get("Tier") in ("APPROVED","ELITE"):
-                prop["Tier"] = "SOVEREIGN"
-                prop["TierBoost"] = "FD/DK + Pinnacle confirmed"
-            # Tier boost: FD/DK confirms alone → APPROVED → ELITE
-            elif fd_result["confirms"] and prop.get("Tier") == "APPROVED":
-                prop["Tier"] = "ELITE"
-                prop["TierBoost"] = "FD/DK confirmed"
-            # Tier fade: FD/DK fades → downgrade
-            elif fd_result["fades"] and prop.get("Tier") in ("SOVEREIGN","ELITE"):
-                prop["Tier"] = "APPROVED"
-                prop["TierNote"] = "Downgraded: FD/DK fades"
+    for prop in enriched:
+        player    = prop.get("Player","")
+        stat_norm = STAT_NORMALIZE.get((sport, prop.get("Prop","")), prop.get("Prop",""))
+        line      = prop.get("Line", 0)
+        if fd_dk_alts:
+            fd_result = get_fanduel_dk_validation(player, stat_norm, line, sport, fd_dk_alts)
+            if fd_result:
+                prop["FDDKProb"] = fd_result["implied_prob"]
+                prop["FDDKConfirms"] = fd_result["confirms"]
+                prop["FDDKFades"] = fd_result["fades"]
+                prop["FDDKSource"] = fd_result["source"]
+                prop["FDDKOverOdds"] = fd_result.get("over_odds","—")
+                prop["FDDKUnderOdds"] = fd_result.get("under_odds","—")
+                if fd_result["confirms"] and prop.get("PinnacleConfirms") and prop.get("Tier") in ("APPROVED","ELITE"):
+                    prop["Tier"] = "SOVEREIGN"
+                    prop["TierBoost"] = "FD/DK + Pinnacle confirmed"
+                elif fd_result["confirms"] and prop.get("Tier") == "APPROVED":
+                    prop["Tier"] = "ELITE"
+                    prop["TierBoost"] = "FD/DK confirmed"
+                elif fd_result["fades"] and prop.get("Tier") in ("SOVEREIGN","ELITE"):
+                    prop["Tier"] = "APPROVED"
+                    prop["TierNote"] = "Downgraded: FD/DK fades"
+            else:
+                prop["FDDKProb"] = None
+                prop["FDDKConfirms"] = False
+                prop["FDDKFades"] = False
         else:
             prop["FDDKProb"] = None
             prop["FDDKConfirms"] = False
             prop["FDDKFades"] = False
-    else:
-        prop["FDDKProb"] = None
-        prop["FDDKConfirms"] = False
-        prop["FDDKFades"] = False
 
 
 
