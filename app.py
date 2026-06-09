@@ -19078,6 +19078,42 @@ with tabs[8]:
 with tabs[9]:
     st.markdown("## \u2699\ufe0f System Info")
 
+
+    # ── API Health Check ─────────────────────────────────────
+    st.markdown("### 🔑 API Keys & Token Status")
+    _hc_data = []
+    _secrets_check = [
+        ("ODDS_API_KEY",        "OddsAPI",       "Game lines + props"),
+        ("ODDSPAPI_KEY",        "OddsPAPI",      "DK/FD/BetMGM/Pinnacle/Bet365"),
+        ("PARLAY_API_KEY",      "ParlayAPI",     "Underdog/ParlayPlay props"),
+        ("BALLSDONTLIE_API_KEY","BallsDontLie",  "NBA player stats"),
+        ("SCRAPEOPS_KEY",       "ScrapeOps",     "PrizePicks proxy"),
+        ("SCRAPERAPI_KEY",      "ScraperAPI",    "Backup proxy"),
+        ("SCRAPEDO_KEY",        "Scrape.do",     "Backup proxy #2"),
+        ("FIRECRAWL_KEY",       "Firecrawl",     "Covers consensus"),
+        ("GITHUB_TOKEN",        "GitHub",        "Gist read/write"),
+        ("GITHUB_GIST_ID",      "GitHub Gist",   "Auto scraper data"),
+    ]
+    for _hc_key, _hc_display, _hc_purpose in _secrets_check:
+        _hc_val = st.secrets.get(_hc_key, "")
+        _hc_status = "🟢 Set" if _hc_val else "🔴 Missing"
+        _hc_data.append({"Service": _hc_display, "Status": _hc_status, "Purpose": _hc_purpose, "Secret Key": _hc_key})
+    st.dataframe(pd.DataFrame(_hc_data), use_container_width=True, hide_index=True)
+
+    st.markdown("### 🍪 Session & Cookie Status")
+    _ck_data = [
+        {"Service": "ParlayPlay", "Secret": "PARLAYPLAY_SESSION",
+         "Status": "🟢 Set" if st.secrets.get("PARLAYPLAY_SESSION","") else "🔴 Expired — refresh in Secrets",
+         "Refresh Interval": "Every ~2 weeks"},
+        {"Service": "Auto Scraper (Gist)", "Secret": "auto_scraped_props.json",
+         "Status": "🟢 Loaded" if st.session_state.get("pp_source","") == "gist_scraper" else "🟡 Run scraper on PC",
+         "Refresh Interval": "Daily — run betcouncil_auto_scraper.py"},
+        {"Service": "ScrapeOps Proxy", "Secret": "SCRAPEOPS_KEY",
+         "Status": "🔴 Exhausted" if st.session_state.get("scrapeops_exhausted") else "🟢 Available",
+         "Refresh Interval": "Monthly reset"},
+    ]
+    st.dataframe(pd.DataFrame(_ck_data), use_container_width=True, hide_index=True)
+
     # ── Performance Telemetry ─────────────────────────────
     _telem = st.session_state.get("bc_telemetry", {})
     if _telem:
