@@ -10269,6 +10269,9 @@ def fetch_parlayplay_props(sport):
         api_budget_increment("PARLAYPLAY")
         if resp.status_code == 403:
             st.caption("⚠️ ParlayPlay: 403 — blocked by bot protection")
+            if os.path.exists(cache_path):
+                try: os.remove(cache_path)
+                except (OSError, IOError): pass
             return []
         if resp.status_code != 200:
             return []
@@ -10613,10 +10616,17 @@ def fetch_oddspapi_props(sport):
         resp = requests.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDSPAPI")
         if resp.status_code == 429:
-            st.warning("⚠️ OddsPapi rate limit hit — will retry after cache expires")
+            st.warning("⚠️ OddsPapi rate limit hit")
+            # Clear cache so next board load retries fresh
+            if os.path.exists(cache_path):
+                try: os.remove(cache_path)
+                except (OSError, IOError): pass
             return []
         if resp.status_code == 403:
-            st.warning("⚠️ OddsPapi monthly limit reached — free tier exhausted")
+            st.warning("⚠️ OddsPapi monthly limit reached")
+            if os.path.exists(cache_path):
+                try: os.remove(cache_path)
+                except (OSError, IOError): pass
             return []
         if resp.status_code != 200:
             return []
@@ -20058,6 +20068,10 @@ with tabs[9]:
     # Store ping results in session state so they persist until refresh
     if "api_panel_results" not in st.session_state:
         st.session_state["api_panel_results"] = {}
+    # If board loaded via Gist, show that in panel
+    _pp_src = st.session_state.get("pp_source","")
+    if _pp_src == "gist_scraper":
+        st.success("📡 **Board data loaded from local scraper (Gist)** — API status below is informational only.")
 
     col_refresh, col_reset = st.columns([2, 2])
     do_refresh = col_refresh.button("🔄 Refresh All", key="api_panel_refresh")
@@ -20070,7 +20084,7 @@ with tabs[9]:
                 os.remove(path_s)
         st.success("✅ All API counters reset")
 
-    if do_refresh or not st.session_state["api_panel_results"]:
+    if do_refresh:  # Only ping when user clicks Refresh — auto-ping wastes API calls
         with st.spinner("Pinging all sources..."):
             results = {}
             for src in _PING_SOURCES:
