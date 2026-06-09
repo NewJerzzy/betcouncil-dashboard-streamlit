@@ -385,13 +385,18 @@ def login_mybookie(cfg):
             page.goto("https://mybookie.ag/login", wait_until="domcontentloaded", timeout=45000)
             _t.sleep(3)
             # Use confirmed selectors from diagnostic
-            page.fill("#user", cfg["username"])
+            # Clear fields first then fill
+            page.click("#user")
+            page.fill("#user", "")
+            page.type("#user", cfg["username"], delay=50)
             _t.sleep(0.5)
-            page.fill("#pass", cfg["password"])
+            page.click("#pass")
+            page.fill("#pass", "")
+            page.type("#pass", cfg["password"], delay=50)
             _t.sleep(0.5)
             # Click the Login submit button
-            page.click('button[type="submit"]:has-text("Login"), input[type="submit"]')
-            _t.sleep(4)
+            page.click('button[type="submit"]:has-text("Login")')
+            _t.sleep(5)
             print(f"  Post-login URL: {page.url}")
             cookies = {c["name"]:c["value"] for c in ctx.cookies()}
             browser.close()
@@ -497,30 +502,34 @@ def scrape_underdog(sport):
                 # appearance links to appearances array
                 stat  = line.get("stat_value","")
                 val   = line.get("stat_line") or line.get("over_under","")
-                app_id= line.get("appearance_id","") or line.get("appearance",{}).get("id","")
+                # Underdog structure: line has no appearance_id
+                # Must match via entry_stable_id or direct player lookup
+                # line keys: id, contract_terms_url, line_type, live_event, live_event_stat
+                # Use live_event_stat for player + stat info
+                live_stat = line.get("live_event_stat") or {}
+                pname     = ""
+                stat      = line.get("stat_value","")
+                val       = line.get("stat_line") or line.get("over_under","")
 
-                # Build appearances lookup once
-                if not hasattr(scrape_underdog, "_app_cache"):
-                    scrape_underdog._app_cache = {}
-                if id(data) not in scrape_underdog._app_cache:
-                    scrape_underdog._app_cache[id(data)] = {
-                        a.get("id",""): a for a in data.get("appearances",[])
-                    }
-                app_lookup = scrape_underdog._app_cache[id(data)]
-                app = app_lookup.get(app_id, {})
+                # Try to get player from live_event_stat
+                if isinstance(live_stat, dict):
+                    pname = (live_stat.get("player_name","") or
+                             live_stat.get("name","") or
+                             live_stat.get("display_name",""))
+                    if not stat:
+                        stat = live_stat.get("type","") or live_stat.get("stat","")
 
-                player_id = app.get("player_id","") or line.get("player_id","")
-                sport_key = (app.get("sport_id","") or "").upper()
-
-                # Sport filter — Underdog uses sport_id like "NBA" or numeric
-                if sport and sport_key and sport_key not in (sport, sport[:3]):
-                    continue
-
-                pname = players.get(player_id,"")
+                # Fallback: check line itself
                 if not pname:
-                    pname = (app.get("name","") or
-                             line.get("player_name","") or
-                             app.get("player_name",""))
+                    pname = line.get("player_name","") or line.get("name","")
+
+                # Sport filter via line_type or live_event
+                live_event = line.get("live_event") or {}
+                if isinstance(live_event, dict):
+                    sport_key = (live_event.get("sport","") or
+                                 live_event.get("league","") or "").upper()
+                    if sport and sport_key and sport not in sport_key and sport_key not in sport:
+                        continue
 
                 if pname and val is not None:
                     props.append({
@@ -1264,9 +1273,15 @@ def main():
         sport_map_dk = {"NBA":"nba","MLB":"mlb","NHL":"nhl","WNBA":"wnba","NFL":"nfl"}
 
         if "draftkings" in sessions and (use("dk") or use("draftkings")):
-            url = f"https://sportsbook.draftkings.com/leagues/basketball/nba-player-props"
-            if sport != "NBA":
-                url = f"https://sportsbook.draftkings.com/leagues/{sport_map_dk.get(sport,sport.lower())}"
+            dk_sport_urls = {
+                "NBA":  "https://sportsbook.draftkings.com/leagues/basketball/88670846",
+                "MLB":  "https://sportsbook.draftkings.com/leagues/baseball/84240",
+                "NHL":  "https://sportsbook.draftkings.com/leagues/hockey/42133",
+                "WNBA": "https://sportsbook.draftkings.com/leagues/basketball/88670847",
+                "NFL":  "https://sportsbook.draftkings.com/leagues/football/88670775",
+            }
+            # Use direct category URL for player props
+            url = dk_sport_urls.get(sport, dk_sport_urls["NBA"])
             dk_props = scrape_with_playwright("DraftKings", sport,
                 sessions["draftkings"], url, parse_dk_response)
             all_props += dk_props
@@ -1277,21 +1292,40 @@ def main():
             all_props += pick6_props
 
         if "fanduel" in sessions and (use("fd") or use("fanduel")):
-            url = f"https://sportsbook.fanduel.com/basketball/nba"
-            if sport != "NBA":
-                url = f"https://sportsbook.fanduel.com/{sport.lower()}"
+            fd_sport_urls = {
+                "NBA":  "https://sportsbook.fanduel.com/basketball/nba",
+                "MLB":  "https://sportsbook.fanduel.com/baseball/mlb",
+                "NHL":  "https://sportsbook.fanduel.com/hockey/nhl",
+                "WNBA": "https://sportsbook.fanduel.com/basketball/wnba",
+                "NFL":  "https://sportsbook.fanduel.com/football/nfl",
+            }
+            url = fd_sport_urls.get(sport, fd_sport_urls["NBA"])
             fd_props = scrape_with_playwright("FanDuel", sport,
                 sessions["fanduel"], url, parse_fd_response)
             all_props += fd_props
 
         if "betmgm" in sessions and (use("mgm") or use("betmgm")):
-            url = f"https://sports.betmgm.com/en/sports/basketball-7/betting/usa-9/nba-6004"
+            mgm_sport_urls = {
+                "NBA":  "https://www.nj.betmgm.com/en/sports/basketball-7/betting/usa-9/nba-6004",
+                "MLB":  "https://www.nj.betmgm.com/en/sports/baseball-23/betting/usa-9/mlb-75",
+                "NHL":  "https://www.nj.betmgm.com/en/sports/hockey-22/betting/usa-9/nhl-52",
+                "WNBA": "https://www.nj.betmgm.com/en/sports/basketball-7/betting/usa-9/wnba-237",
+                "NFL":  "https://www.nj.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",
+            }
+            url = mgm_sport_urls.get(sport, mgm_sport_urls["NBA"])
             mgm_props = scrape_with_playwright("BetMGM", sport,
                 sessions["betmgm"], url, parse_generic_response)
             all_props += mgm_props
 
         if "caesars" in sessions and (use("czr") or use("caesars")):
-            url = f"https://sportsbook.caesars.com/us/nj/bet#/sport/basketball"
+            czr_sport_urls = {
+                "NBA":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/basketball",
+                "MLB":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/baseball",
+                "NHL":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/hockey",
+                "WNBA": "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/basketball",
+                "NFL":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/americanfootball",
+            }
+            url = czr_sport_urls.get(sport, czr_sport_urls["NBA"])
             czr_props = scrape_with_playwright("Caesars", sport,
                 sessions["caesars"], url, parse_generic_response)
             all_props += czr_props
