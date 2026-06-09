@@ -5039,37 +5039,43 @@ def get_bovada_game_line(matchup, bovada_data=None):
 # To remove: delete this function + the 3 lines that call it
 # ═══════════════════════════════════════════════════════════════
 @st.cache_data(ttl=1800)
+@st.cache_data(ttl=600)
 def fetch_auto_scraped_props(sport="NBA"):
-    """Read props from local scraper (MyBookie/BetOnline/PrizePicks backup)."""
+    """Read props from local scraper pushed to Gist by betcouncil_auto_scraper.py"""
+    from datetime import timedelta
     try:
         r = requests.get(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
             headers={"Authorization": f"token {GITHUB_TOKEN}",
                      "Accept": "application/vnd.github.v3+json"},
-            timeout=8
+            timeout=10
         )
         if r.status_code != 200:
             return []
         files = r.json().get("files", {})
         if "auto_scraped_props.json" not in files:
             return []
-        content = files["auto_scraped_props.json"].get("content","")
+        raw = files["auto_scraped_props.json"]
+        # Handle truncated file — fetch raw URL if content missing
+        content = raw.get("content","") or ""
+        if not content and raw.get("raw_url"):
+            r2 = requests.get(raw["raw_url"], timeout=10)
+            if r2.status_code == 200:
+                content = r2.text
         if not content:
             return []
         data = json.loads(content)
-        # Accept today or yesterday (script may run before midnight)
-        from datetime import timedelta
         gist_date = data.get("date","")
         today     = date.today().isoformat()
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         if gist_date not in (today, yesterday):
             return []
         props = data.get("props", [])
-        if props:
-            _sport_match = [p for p in props if p.get("Sport","").upper() == sport.upper()]
-            return _sport_match if _sport_match else props
-        return []
-    except Exception:
+        if not props:
+            return []
+        sport_match = [p for p in props if p.get("Sport","").upper() == sport.upper()]
+        return sport_match if sport_match else props
+    except Exception as _e:
         return []
 
 
