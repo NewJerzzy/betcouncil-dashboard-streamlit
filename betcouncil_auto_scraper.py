@@ -392,7 +392,7 @@ def login_mybookie(cfg):
             for verify_sel in [
                 'button:has-text("Verify")',
                 'button:has-text("Continue")',
-                'button:has-text("I'm not a robot")',
+                'button:has-text("Not a robot")',
                 'button:has-text("Confirm")',
                 '[data-testid="verify-btn"]',
             ]:
