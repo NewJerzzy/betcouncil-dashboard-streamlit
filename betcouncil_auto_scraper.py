@@ -481,46 +481,48 @@ def scrape_underdog(sport):
                     ln  = p.get("last_name","")  or p.get("attributes",{}).get("last_name","")
                     players[pid] = f"{fn} {ln}".strip()
 
-            # Try multiple response structures
-            lines = (data.get("over_under_lines") or
-                     data.get("lines") or
-                     data.get("data") or [])
+            # Confirmed structure: over_under_lines + players
+            lines   = data.get("over_under_lines", [])
+            players = {}
+            for p in data.get("players", []):
+                pid  = p.get("id","")
+                name = (p.get("display_name","") or
+                        f"{p.get('first_name','')} {p.get('last_name','')}".strip())
+                if pid:
+                    players[pid] = name
 
             for line in lines:
-                # Get appearance/sport info
-                app       = line.get("appearance", line)
-                sport_key = (app.get("sport_id","") or app.get("sport","") or "").upper()
-                if sport and sport_key and sport_key != sport:
+                # over_under_lines structure:
+                # {id, stat_value, stat_line, appearance_id}
+                # appearance links to appearances array
+                stat  = line.get("stat_value","")
+                val   = line.get("stat_line") or line.get("over_under","")
+                app_id= line.get("appearance_id","")
+
+                # Find appearance for player + sport
+                appearances = data.get("appearances", [])
+                app = next((a for a in appearances if a.get("id") == app_id), {})
+                player_id = app.get("player_id","")
+                sport_key = (app.get("sport_id","") or "").upper()
+
+                if sport and sport_key and sport_key != sport[:4]:
                     continue
 
-                # Get player name
-                player_id = app.get("player_id","") or line.get("player_id","")
-                pname     = players.get(player_id,"")
+                pname = players.get(player_id,"")
                 if not pname:
-                    pname = (line.get("player_name","") or
-                             app.get("player_name","") or
-                             line.get("name",""))
-
-                # Get stat and line
-                stat = (line.get("stat_value","") or
-                        line.get("stat","") or
-                        app.get("stat",""))
-                val  = (line.get("stat_line") or
-                        line.get("line") or
-                        line.get("value"))
+                    pname = app.get("player_name","")
 
                 if pname and val is not None:
                     props.append({
                         "Player": pname, "Prop": stat,
-                        "Line": float(val),
+                        "Line": float(str(val).replace("+","")),
                         "Side": "OVER", "OverOdds": "—", "UnderOdds": "—",
                         "Book": "Underdog", "Sport": sport,
                         "source": "underdog_auto"
                     })
             print(f"    Props: {len(props)}")
             if not props:
-                # Show structure for debugging
-                print(f"    Keys: {list(data.keys())[:5]}")
+                print(f"    Lines found: {len(lines)}, Players: {len(players)}")
     except Exception as e:
         print(f"    Error: {e}")
     return props
@@ -535,8 +537,9 @@ def scrape_sleeper(sport):
         # Try multiple Sleeper endpoints
         sleeper_urls = [
             f"https://api.sleeper.com/lines/v1/{sl_sport}",
-            f"https://api.sleeper.app/v1/players/{sl_sport}",
-            f"https://sleeper.com/picks/lines/{sl_sport}",
+            f"https://api.sleeper.com/v1/lines/{sl_sport}",
+            f"https://api.sleeper.app/lines/v1/{sl_sport}",
+            f"https://api.sleeper.app/v1/lines/{sl_sport}",
         ]
         r = None
         for su in sleeper_urls:
@@ -707,9 +710,17 @@ def scrape_mybookie(sport, cookies):
     cfg_s  = SPORT_MAP.get(sport, SPORT_MAP["NBA"])
     props  = []
     cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
-    headers = {"User-Agent": UA, "Cookie": cookie_str,
-               "Referer": "https://engine.mybookie.ag/",
-               "Origin":  "https://engine.mybookie.ag"}
+    headers = {
+        "User-Agent": UA,
+        "Cookie": cookie_str,
+        "Referer":  "https://engine.mybookie.ag/sports/nba",
+        "Origin":   "https://engine.mybookie.ag",
+        "Accept":   "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        # CSRF tokens from session
+        "X-CSRF-TOKEN":  cookies.get("XSRF-TOKEN",""),
+        "X-XSRF-TOKEN":  cookies.get("XSRF-TOKEN",""),
+    }
     try:
         r = requests.get(
             "https://engine.mybookie.ag/sports_api/leagues-lines",
@@ -789,13 +800,23 @@ def scrape_with_playwright(book, sport, cookies, prop_url, prop_selector_fn):
             captured = []
             def handle_response(response):
                 try:
-                    if any(x in response.url for x in
-                           ["props","player-props","markets","betting","lines","odds"]):
-                        if response.status == 200:
-                            ct = response.headers.get("content-type","")
-                            if "json" in ct:
+                    if response.status == 200:
+                        ct = response.headers.get("content-type","")
+                        if "json" in ct:
+                            size = int(response.headers.get("content-length",0) or 0)
+                            # Capture any JSON response > 1KB (small = tracking/config)
+                            url  = response.url
+                            skip = any(x in url for x in
+                                       ["analytics","tracking","telemetry","beacon",
+                                        "nr-data","newrelic","google","facebook",
+                                        "favicon","font","icon","svg","png","jpg",
+                                        "ads","pixel","segment","mixpanel"])
+                            if not skip:
                                 try:
-                                    captured.append(response.json())
+                                    data = response.json()
+                                    # Only keep if it has useful data
+                                    if isinstance(data, (dict, list)) and data:
+                                        captured.append((url, data))
                                 except:
                                     pass
                 except:
@@ -811,11 +832,14 @@ def scrape_with_playwright(book, sport, cookies, prop_url, prop_selector_fn):
             browser.close()
 
             # Parse captured responses
-            for data in captured:
+            print(f"    Captured {len(captured)} API responses")
+            for url, data in captured:
                 parsed = prop_selector_fn(data, sport, book)
+                if parsed:
+                    print(f"    ✅ {len(parsed)} props from {url[-50:]}")
                 props.extend(parsed)
 
-            print(f"    Captured {len(captured)} API responses → {len(props)} props")
+            print(f"    Total props: {len(props)}")
 
     except ImportError:
         print("  ❌ Playwright not installed: pip install playwright && playwright install chromium")
@@ -1008,11 +1032,10 @@ def scrape_dk_pick6(sport, cookies):
             browser.close()
 
             print(f"    Captured {len(captured)} API responses")
-
-            # Parse captured responses
             for url, data in captured:
-                print(f"    Parsing: {url[-60:]}")
                 parsed = parse_pick6_response(data, sport)
+                if parsed:
+                    print(f"    ✅ {len(parsed)} props from {url[-50:]}")
                 props.extend(parsed)
 
     except ImportError:
