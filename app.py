@@ -11451,288 +11451,134 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 # Future extraction target: ocr.py
 # ═══════════════════════════════════════════════════════════
 def parse_bet_screenshot_ocr(image_bytes):
-    """Parse PrizePicks/prop screenshots using pytesseract.
-    Optimised for dark-themed screenshots (white text on dark background).
-    No external API needed — uses locally installed Tesseract.
     """
+    Parse PrizePicks/prop screenshots using Claude vision API.
+    Replaces pytesseract OCR — no local Tesseract install needed.
+    """
+    import base64 as _b64, json as _json, io, re
     try:
-        import pytesseract
-        from PIL import Image, ImageEnhance, ImageOps
-        import io, re
+        # Try Claude vision first (most accurate)
+        img_b64 = _b64.b64encode(image_bytes).decode()
 
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode == "RGBA":
-            bg = Image.new("RGB", img.size, (255, 255, 255))
-            bg.paste(img, mask=img.split()[3])
-            img = bg
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
+        # Detect image format
+        from PIL import Image as _PIL
+        _img = _PIL.open(io.BytesIO(image_bytes))
+        fmt  = (_img.format or "PNG").lower()
+        if fmt == "jpeg": fmt = "jpeg"
+        elif fmt == "webp": fmt = "webp"
+        else: fmt = "png"
+        media_type = f"image/{fmt}"
 
-        def preprocess(image, invert=False):
-            w, h = image.size
-            scale = 3 if max(w, h) < 1200 else 2
-            image = image.resize((w * scale, h * scale), Image.LANCZOS)
-            image = image.convert("L")
-            if invert:
-                image = ImageOps.invert(image)
-            image = ImageEnhance.Contrast(image).enhance(3.0)
-            image = ImageEnhance.Sharpness(image).enhance(2.0)
-            image = image.point(lambda x: 0 if x < 128 else 255, "1").convert("L")
-            return image
+        # Call Claude vision
+        api_resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         st.secrets.get("ANTHROPIC_API_KEY",""),
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model": "claude-opus-4-5",
+                "max_tokens": 1024,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type":       "base64",
+                                "media_type": media_type,
+                                "data":       img_b64,
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": """Extract all player props from this betting slip image.
+Return ONLY a JSON array, no other text, like this:
+[
+  {"player": "Nikola Jokic", "prop": "Points", "line": 27.5, "side": "OVER", "sport": "NBA"},
+  {"player": "Jayson Tatum", "prop": "Rebounds", "line": 8.5, "side": "OVER", "sport": "NBA"}
+]
 
-        raw_texts = []
-        for inv in [True, False]:
-            for psm in [6, 11, 4, 3]:
-                try:
-                    text = pytesseract.image_to_string(
-                        preprocess(img.copy(), invert=inv),
-                        config=f"--psm {psm} --oem 3"
-                    )
-                    if len(text.strip()) > 20:
-                        raw_texts.append(text)
-                except Exception:
-                    continue
+Rules:
+- Extract every player prop shown
+- side is OVER or UNDER (MORE=OVER, LESS=UNDER)
+- line is a number
+- sport: NBA, MLB, NHL, NFL, or WNBA
+- If sport unclear, use NBA
+- Include only active/pending props, skip settled ones
+- Return empty array [] if no props found"""
+                        }
+                    ]
+                }]
+            },
+            timeout=30
+        )
 
-        if not raw_texts:
-            return []
-
-        raw_text = max(raw_texts, key=len)
-        st.session_state["ocr_raw_text"] = raw_text
-        lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
-        text_lower = raw_text.lower()
-
-        # Detect sport
-        sport = "NBA"
-        for sp, kws in {
-            "NBA": ["nba","okc","spurs","thunder","celtics","lakers","warriors","bucks","heat","nets","knicks","suns","sixers"],
-            "MLB": ["mlb","baseball","strikeouts","rbis","innings","pitcher"],
-            "NHL": ["nhl","hockey","saves","goalie"],
-            "NFL": ["nfl","passing yards","rushing yards","touchdowns"],
-            "WNBA": ["wnba"],
-        }.items():
-            if any(k in text_lower for k in kws):
-                sport = sp
-                break
-
-        STAT_MAP = {
-            "hits+runs+rbis": "Hits+Runs+RBIs",
-            "pts+reb+ast":    "Pts+Reb+Ast",
-            "fg attempted":   "FG Attempted",
-            "fg made":        "FG Made",
-            "hitter fs":      "Hitter FS",
-            "fantasy score":  "Fantasy Score",
-            "shots on goal":  "Shots On Goal",
-            "passing yards":  "Passing Yards",
-            "rushing yards":  "Rushing Yards",
-            "receiving yards":"Receiving Yards",
-            "home runs":      "Home Runs",
-            "pra":            "Pts+Reb+Ast",
-            "fga":            "FG Attempted",
-            "fgm":            "FG Made",
-            "points":         "Points",
-            "rebounds":       "Rebounds",
-            "assists":        "Assists",
-            "steals":         "Steals",
-            "blocks":         "Blocked Shots",
-            "turnovers":      "Turnovers",
-            "strikeouts":     "Strikeouts",
-            "receptions":     "Receptions",
-            "touchdowns":     "Touchdowns",
-            "goals":          "Goals",
-            "saves":          "Saves",
-            "hits":           "Hits",
-            "runs":           "Runs",
-            "3pt":            "3-PT Made",
-            "3-pt":           "3-PT Made",
-            "threes":         "3-PT Made",
-        }
-
-        def get_stat(t):
-            tl = t.lower()
-            for k in sorted(STAT_MAP, key=len, reverse=True):
-                if k in tl:
-                    return STAT_MAP[k]
-            return None
-
-        def get_line(t):
-            # Pass 1 — well-formed decimal (e.g. 21.5, 7.5)
-            for n in re.findall(r"\b(\d{1,2}\.\d)\b", t):
-                v = float(n)
-                if 0.5 <= v <= 99.5:
-                    return v
-            # Pass 2 — clean integer that is a plausible PrizePicks line (e.g. 14, 8)
-            for n in re.findall(r"\b(\d{1,2})\b", t):
-                v = float(n)
-                if 1.0 <= v <= 60.0:
-                    return v
-            # Pass 3 — OCR dropped decimal point: "215"→21.5, "75"→7.5, "235"→23.5
-            # Only applies when the number ends in 5 (PrizePicks uses half-point lines)
-            for n in re.findall(r"\b(\d{2,3})\b", t):
-                iv = int(n)
-                if str(iv).endswith("5"):
-                    v = iv / 10.0
-                    if 0.5 <= v <= 60.0:
-                        return v
-            return None
-
-        def get_side(t):
-            tl = t.lower()
-            # Tesseract commonly misreads ↓ as: vv, vy, v (standalone)
-            # and ↑ as: t, wt, tt, 1 (standalone before a number)
-            under_tokens = ["less","under","demon","↓","vv","vy"]
-            # Check for isolated "v" before a digit (OCR for ↓)
-            if re.search(r'\bv[vy]?\b', tl) or any(w in tl for w in under_tokens):
-                return "UNDER"
-            return "OVER"
-
-        def get_outcome(t):
-            tl = t.lower()
-            # PENDING: game not finished
-            if any(w in tl for w in ["pending","live","locked","in progress","scheduled"]): return "PENDING"
-            # BOVADA FORMAT: "3 Team Parlay" + "Win" or "Loss"
-            if any(f"{n} team parlay" in tl for n in ["2","3","4","5","two","three","four","five"]):
-                if "win" in tl and "winnings" not in tl: return "WIN"
-                if "loss" in tl or "lose" in tl: return "LOSS"
-            # MYBOOKIE FORMAT: "- WIN(Baseball)" or "- LOSE(Baseball)"
-            if "- win(" in tl or ") - win" in tl: return "WIN"
-            if "- lose(" in tl or "- loss(" in tl or ") - lose" in tl or ") - loss" in tl: return "LOSS"
-            # Bovada winnings field: "Winnings\n+ $X.XX" = WIN, "Winnings\n$ 0.00" = LOSS
-            if "winnings" in tl and "+ $" in tl: return "WIN"
-            if "winnings" in tl and "$ 0.00" in tl: return "LOSS"
-            # PRIZEPICKS FORMAT
-            if "to win $" in tl: return "WIN"
-            if "to pay $" in tl and "final" in tl: return "LOSS"
-            if "lost" in tl: return "LOSS"
-            if any(w in tl for w in ["won","winner","you won","entry won","congrats","payout"]): return "WIN"
-            if any(w in tl for w in ["loss","incorrect","loser","you lost","entry lost","no payout"]): return "LOSS"
-            if tl.strip() in ("win","win!"): return "WIN"
-            if "✓" in t or "✅" in t: return "WIN"
-            if "✗" in t or "❌" in t: return "LOSS"
-            return None
-
-
-        entry_outcome = get_outcome(raw_text)
-
-        # Tokenise by BOTH newlines AND 2+ consecutive spaces so we handle
-        # PrizePicks screenshots where Tesseract collapses everything onto one long line
-        tokens = re.split(r"\n+|\s{2,}", raw_text)
-        lines = [t.strip() for t in tokens if t.strip()]
-
-        # Position codes that can trail a player name and must be ignored
-        POSITION_CODES = {
-            "G","F","C","P","SP","RP","IF","OF",
-            "PG","SG","SF","PF","C-F","G-F","F-C","F/C","G/F",
-        }
-        SKIP_WORDS = {
-            "NBA","MLB","NHL","NFL","WNBA","NCAAB","NCAAF",
-            "More","Less","Over","Under","Pick","Entry","Flex",
-            "Goblin","Demon","Final","Pending","Live","Show",
-            "Details","Leaderboard","Vs","At","Play","Win",
-        }
-
-        def is_player_name(tok):
-            """Return cleaned player name if token looks like one, else None."""
-            # Strip trailing position code
-            cleaned = re.sub(
-                r'\s+[A-Za-z]{1,3}(?:-[A-Za-z]{1,2})?$', '', tok
-            ).strip()
-            cleaned = re.sub(r"[^A-Za-z .\'-]", "", cleaned).strip()
-            words = [w for w in cleaned.split() if w]
-            if len(words) < 2 or len(cleaned) < 5:
-                return None
-            if any(w.upper() in SKIP_WORDS for w in words):
-                return None
-            # All substantial words must start with uppercase
-            if not all(w[0].isupper() for w in words if len(w) > 1):
-                return None
-            # Must have at least 2 words of 3+ chars (filters out junk like "Vv Vy")
-            if sum(1 for w in words if len(w) >= 3) < 2:
-                return None
-            return cleaned
-
-        # --- Step 1: Find all player name positions in the token list ---
-        player_positions = []   # list of (token_index, cleaned_name)
-        for i, tok in enumerate(lines):
-            name = is_player_name(tok)
-            if name:
-                player_positions.append((i, name))
-
-        # --- Step 2: For each player extract stat + line from the segment after them ---
-        bets = []
-        for pi, (name_idx, player) in enumerate(player_positions):
-            end_idx = (player_positions[pi + 1][0]
-                       if pi + 1 < len(player_positions)
-                       else len(lines))
-            segment_toks = lines[name_idx + 1 : end_idx]
-            segment_text = " ".join(segment_toks)
-
-            stat     = get_stat(segment_text)
-            line_val = None
-            side     = "OVER"
-
-            for tok in segment_toks:
-                if line_val is None:
-                    line_val = get_line(tok)
-                    if line_val is not None:
-                        side = get_side(tok)
-
-            if stat is None or line_val is None:
-                continue
-
-            # Use per-pick outcome first, then fall back to entry-level outcome
-            pick_outcome = get_outcome(segment_text)
-            # If entry is a WIN, individual picks that hit also WIN
-            # PrizePicks flex: need 3+ of 4 to win, so some picks can lose
-            # For simplicity: if entry won, mark all as WIN
-            # If entry lost, mark all as LOSS
-            if pick_outcome is None and entry_outcome in ("WIN","LOSS"):
-                pick_outcome = entry_outcome
-            if pick_outcome is None:
-                pick_outcome = "PENDING"
-
-            bets.append({
-                "player":     player,
-                "prop":       stat,
-                "line":       line_val,
-                "side":       side,
-                "sport":      sport,
-                "outcome":    pick_outcome,
-                "wager":      0,
-                "pick_count": 2,
-                "source":     "PrizePicks",
-                "bet_type":   "prop",
-            })
-
-        # Pull wager and pick count from slip header
-        wager_m = re.search(r"\$(\d[\d,]*\.?\d*)", raw_text)
-        if wager_m and bets:
-            try:
-                w = float(wager_m.group(1).replace(",", ""))
-                if 1 <= w <= 10000:
-                    for b in bets:
-                        b["wager"] = w
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
-
-        pc_m = re.search(r"(\d+)[- ]pick|pick[- ](\d+)", raw_text.lower())
-        if pc_m and bets:
-            try:
-                pc = int(pc_m.group(1) or pc_m.group(2))
-                if 2 <= pc <= 6:
-                    for b in bets:
-                        b["pick_count"] = pc
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
-
-        return bets
+        if api_resp.status_code == 200:
+            content = api_resp.json().get("content", [{}])[0].get("text","")
+            st.session_state["ocr_raw_text"] = content
+            # Parse JSON from response
+            clean = content.strip()
+            if "```" in clean:
+                clean = re.sub(r"```[a-z]*", "", clean).replace("```","").strip()
+            picks = _json.loads(clean)
+            result = []
+            for p in picks:
+                player = str(p.get("player","")).strip()
+                prop   = str(p.get("prop","")).strip()
+                line   = p.get("line",0)
+                side   = str(p.get("side","OVER")).upper()
+                sport  = str(p.get("sport","NBA")).upper()
+                if player and prop and line:
+                    result.append({
+                        "player": player,
+                        "prop":   prop,
+                        "line":   float(line),
+                        "side":   side,
+                        "sport":  sport,
+                        "book":   "PrizePicks",
+                    })
+            return result
+        else:
+            # Fallback to pytesseract if Claude fails
+            raise Exception(f"Claude API error: {api_resp.status_code}")
 
     except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time":   datetime.now().strftime("%H:%M:%S"),
-            "source": "parse_bet_screenshot_ocr",
-            "error":  str(e)[:150],
-        })
-        return []
+        # Fallback: try pytesseract
+        try:
+            import pytesseract
+            from PIL import Image, ImageEnhance, ImageOps
+            img = _PIL.open(io.BytesIO(image_bytes)).convert("RGB")
+            w, h = img.size
+            scale = 3 if max(w,h) < 1200 else 2
+            img_proc = img.resize((w*scale,h*scale), _PIL.LANCZOS).convert("L")
+            img_proc = ImageOps.invert(img_proc)
+            img_proc = ImageEnhance.Contrast(img_proc).enhance(3.0)
+            raw = pytesseract.image_to_string(img_proc, config="--psm 6 --oem 3")
+            st.session_state["ocr_raw_text"] = raw
+            # Basic parse
+            result = []
+            for line in raw.split("\n"):
+                m = re.search(r"([A-Za-z][A-Za-z .\'-]+)\s+(OVER|UNDER|MORE|LESS)\s+([\d.]+)", line, re.I)
+                if m:
+                    side = "OVER" if m.group(2).upper() in ("OVER","MORE") else "UNDER"
+                    result.append({
+                        "player": m.group(1).strip(),
+                        "prop":   "Points",
+                        "line":   float(m.group(3)),
+                        "side":   side,
+                        "sport":  "NBA",
+                        "book":   "PrizePicks",
+                    })
+            return result
+        except Exception as e2:
+            st.session_state.setdefault("errors",[]).append({
+                "time":   datetime.now().strftime("%H:%M:%S"),
+                "source": "parse_bet_screenshot_ocr",
+                "error":  str(e2)[:150],
+            })
+            return []
 
 
 def parse_prizepicks_text(raw_text):
