@@ -125,10 +125,22 @@ def playwright_login(book, login_url, username, password,
             page = ctx.new_page()
 
             print(f"  Loading {login_url}...")
-            page.goto(login_url, wait_until="networkidle", timeout=30000)
-            time.sleep(2)
+            page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
+            time.sleep(3)
 
-            # Fill credentials
+            # Wait for form to appear then fill
+            try:
+                page.wait_for_selector(user_selector, timeout=15000)
+            except:
+                # Try clicking login button first if form not visible
+                for btn in ["button:has-text('Log in')", "button:has-text('Sign in')",
+                            "a:has-text('Log in')", "[data-testid='login']"]:
+                    try:
+                        page.click(btn, timeout=3000)
+                        time.sleep(1)
+                        break
+                    except:
+                        continue
             page.fill(user_selector, username)
             time.sleep(0.5)
             page.fill(pass_selector, password)
@@ -142,14 +154,17 @@ def playwright_login(book, login_url, username, password,
             page.click(submit_selector)
             print(f"  Submitted login...")
 
-            # Wait for success
+            # Wait for page to settle after login
             try:
-                page.wait_for_url(f"**{success_url_pattern}**", timeout=20000)
-                print(f"  ✅ Login successful: {page.url}")
-            except PWTimeout:
-                print(f"  Current URL: {page.url}")
-                # May still be logged in
-                pass
+                page.wait_for_load_state("domcontentloaded", timeout=20000)
+                time.sleep(2)
+                print(f"  Post-login URL: {page.url}")
+                if success_url_pattern in page.url or "login" not in page.url:
+                    print(f"  ✅ Login successful")
+                else:
+                    print(f"  ⚠️  May not be logged in — URL: {page.url}")
+            except Exception as _we:
+                print(f"  URL after submit: {page.url}")
 
             time.sleep(2)
             cookies = {c["name"]: c["value"] for c in ctx.cookies()}
@@ -173,7 +188,7 @@ def playwright_login(book, login_url, username, password,
 def login_draftkings(cfg):
     return playwright_login(
         book="draftkings",
-        login_url="https://sportsbook.draftkings.com/",
+        login_url="https://sportsbook.draftkings.com/login",
         username=cfg["username"],
         password=cfg["password"],
         user_selector='input[placeholder*="email" i], input[name="email"], #email-input',
@@ -185,7 +200,7 @@ def login_draftkings(cfg):
 def login_fanduel(cfg):
     return playwright_login(
         book="fanduel",
-        login_url="https://sportsbook.fanduel.com/",
+        login_url="https://sportsbook.fanduel.com/login",
         username=cfg["username"],
         password=cfg["password"],
         user_selector='input[type="email"], input[name="email"], input[placeholder*="email" i]',
@@ -197,7 +212,7 @@ def login_fanduel(cfg):
 def login_betmgm(cfg):
     return playwright_login(
         book="betmgm",
-        login_url="https://sports.betmgm.com/en/sports",
+        login_url="https://sports.betmgm.com/en/sports/login",
         username=cfg["username"],
         password=cfg["password"],
         user_selector='input[name="username"], input[placeholder*="username" i], input[placeholder*="email" i]',
@@ -209,7 +224,7 @@ def login_betmgm(cfg):
 def login_caesars(cfg):
     return playwright_login(
         book="caesars",
-        login_url="https://sportsbook.caesars.com/us/nj/bet",
+        login_url="https://sportsbook.caesars.com/us/nj/bet#login",
         username=cfg["username"],
         password=cfg["password"],
         user_selector='input[name="username"], input[placeholder*="username" i], input[placeholder*="email" i]',
