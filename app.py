@@ -19089,6 +19089,126 @@ with tabs[9]:
     st.markdown("## \u2699\ufe0f System Info")
 
 
+
+    # ── Data Source Status (from last board load) ────────────
+    st.markdown("### 📊 Data Source Status")
+    st.caption("Based on last board load — no API calls used. Load a board to update.")
+
+    _src_statuses = []
+    _pp_src = st.session_state.get("pp_source", "")
+    _pp_st  = st.session_state.get("pp_status", "")
+    _errors = st.session_state.get("errors", [])
+    _error_sources = {e.get("source","") for e in _errors if e.get("type","") != "info"}
+
+    # PrizePicks
+    if _pp_src == "gist_scraper":
+        _src_statuses.append({"Source": "PrizePicks", "Status": "🟢 Loaded via Gist (local scraper)", "Action": "Run scraper daily"})
+    elif _pp_src == "prizepicks_direct":
+        _src_statuses.append({"Source": "PrizePicks", "Status": "🟢 Connected via ScrapeOps", "Action": "None"})
+    elif _pp_st == "unavailable":
+        _src_statuses.append({"Source": "PrizePicks", "Status": "🔴 ScrapeOps exhausted + no Gist data", "Action": "Run betcouncil_auto_scraper.py"})
+    else:
+        _src_statuses.append({"Source": "PrizePicks", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Underdog
+    _ud = st.session_state.get("ud_props_compare", [])
+    if _ud:
+        _src_statuses.append({"Source": "Underdog", "Status": f"🟢 {len(_ud)} props", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Underdog", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # ParlayPlay
+    _pp_play = st.session_state.get("parlayapi_props_cache", [])
+    _pp_play_count = len([p for p in _pp_play if "parlayplay" in str(p.get("source","")).lower()]) if _pp_play else 0
+    if _pp_play_count > 0:
+        _src_statuses.append({"Source": "ParlayPlay", "Status": f"🟢 {_pp_play_count} props", "Action": "None"})
+    elif "parlayplay" in str(_error_sources).lower():
+        _src_statuses.append({"Source": "ParlayPlay", "Status": "🔴 403 Blocked from cloud", "Action": "Add to local scraper OR refresh PARLAYPLAY_SESSION"})
+    else:
+        _src_statuses.append({"Source": "ParlayPlay", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # OddsPAPI
+    _oddspapi = st.session_state.get(f"oddspapi_props_{st.session_state.get('last_sport','NBA')}", [])
+    if _oddspapi:
+        _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": f"🟢 {len(_oddspapi)} props", "Action": "None"})
+    elif "oddspapi" in str(_error_sources).lower():
+        _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "🟡 Rate limited or quota hit", "Action": "Wait for daily reset (100/day, 1000/month)"})
+    else:
+        _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # OddsAPI
+    _oddsapi = st.session_state.get(f"oddsapi_props_{st.session_state.get('last_sport','NBA')}", [])
+    if _oddsapi:
+        _src_statuses.append({"Source": "OddsAPI (game lines)", "Status": f"🟢 {len(_oddsapi)} lines", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "OddsAPI (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Bovada
+    _bov = st.session_state.get("bovada_lines", [])
+    if _bov:
+        _src_statuses.append({"Source": "Bovada (game lines)", "Status": f"🟢 {len(_bov)} lines", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Bovada (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Pinnacle
+    _pin = st.session_state.get(f"pinnacle_{st.session_state.get('last_sport','NBA')}", {})
+    if _pin:
+        _src_statuses.append({"Source": "Pinnacle (sharp lines)", "Status": "🟢 Connected", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Pinnacle (sharp lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Auto Scraper Gist
+    _auto = st.session_state.get(f"auto_scraped_props_{st.session_state.get('last_sport','NBA')}", [])
+    if _auto:
+        _books = list({p.get("Book","") for p in _auto})
+        _src_statuses.append({"Source": "Auto Scraper (Gist)", "Status": f"🟢 {len(_auto)} props from {', '.join(_books)}", "Action": "Run scraper daily"})
+    else:
+        _src_statuses.append({"Source": "Auto Scraper (Gist)", "Status": "⚪ No data — run scraper", "Action": "python betcouncil_auto_scraper.py --all"})
+
+    # Injuries
+    _inj = st.session_state.get("injuries_combined", {})
+    if _inj:
+        _src_statuses.append({"Source": "Injuries (ESPN/RotoWire/CBS)", "Status": f"🟢 {len(_inj)} players tracked", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Injuries (ESPN/RotoWire/CBS)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Action Network
+    _an = st.session_state.get("an_props_data", [])
+    if _an:
+        _src_statuses.append({"Source": "Action Network (public %)", "Status": f"🟢 {len(_an)} signals", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Action Network (public %)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Kalshi
+    _kal = st.session_state.get("kalshi_markets", [])
+    if _kal:
+        _src_statuses.append({"Source": "Kalshi (prediction markets)", "Status": f"🟢 {len(_kal)} markets", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Kalshi (prediction markets)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Polymarket
+    _poly = st.session_state.get("polymarket_markets", [])
+    if _poly:
+        _src_statuses.append({"Source": "Polymarket", "Status": f"🟢 {len(_poly)} markets", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Polymarket", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Covers
+    _cov = st.session_state.get("covers_consensus", [])
+    if _cov:
+        _src_statuses.append({"Source": "Covers (consensus)", "Status": f"🟢 {len(_cov)} games", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Covers (consensus)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Display
+    _green  = sum(1 for s in _src_statuses if "🟢" in s["Status"])
+    _red    = sum(1 for s in _src_statuses if "🔴" in s["Status"])
+    _yellow = sum(1 for s in _src_statuses if "🟡" in s["Status"])
+    _grey   = sum(1 for s in _src_statuses if "⚪" in s["Status"])
+
+    st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
+    st.dataframe(pd.DataFrame(_src_statuses), use_container_width=True, hide_index=True)
+
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
     _hc_data = []
