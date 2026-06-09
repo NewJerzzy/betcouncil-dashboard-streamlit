@@ -215,20 +215,11 @@ def login_fanduel(cfg):
             ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
             page = ctx.new_page()
 
-            # Step 1: Go to sportsbook — redirects to state selector
-            page.goto("https://sportsbook.fanduel.com/", wait_until="domcontentloaded", timeout=45000)
-            import time as _t; _t.sleep(2)
-
-            # Step 2: Select New Jersey (or your state)
-            # Try user's state first
-            for state in ["Arizona","New Jersey","New York","Colorado","Illinois","Virginia"]:
-                try:
-                    page.click(f"button:has-text('{state}')", timeout=3000)
-                    _t.sleep(2)
-                    print(f"  Selected state: {state}")
-                    break
-                except:
-                    continue
+            import time as _t
+            # Go directly to Arizona FanDuel (bypass state selector)
+            page.goto("https://az.sportsbook.fanduel.com/", wait_until="domcontentloaded", timeout=45000)
+            _t.sleep(3)
+            print(f"  FD URL: {page.url}")
 
             # Step 3: Click Login
             try:
@@ -278,8 +269,8 @@ def login_betmgm(cfg):
             ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
             page = ctx.new_page()
 
-            # Use state-specific URL to bypass geo redirect
-            page.goto("https://www.nj.betmgm.com/en/sports", wait_until="domcontentloaded", timeout=45000)
+            # Use Arizona state URL
+            page.goto("https://www.az.betmgm.com/en/sports", wait_until="domcontentloaded", timeout=45000)
             _t.sleep(3)
 
             # Click login
@@ -332,7 +323,7 @@ def login_caesars(cfg):
             ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
             page = ctx.new_page()
 
-            page.goto("https://sportsbook.caesars.com/us/nj/bet#login", wait_until="domcontentloaded", timeout=45000)
+            page.goto("https://sportsbook.caesars.com/us/az/bet#login", wait_until="domcontentloaded", timeout=45000)
             _t.sleep(3)
 
             # Click LOG IN button to open modal
@@ -396,7 +387,23 @@ def login_mybookie(cfg):
             _t.sleep(0.5)
             # Click the Login submit button
             page.click('button[type="submit"]:has-text("Login")')
-            _t.sleep(5)
+            _t.sleep(3)
+            # Handle verification popup if present
+            for verify_sel in [
+                'button:has-text("Verify")',
+                'button:has-text("Continue")',
+                'button:has-text("I'm not a robot")',
+                'button:has-text("Confirm")',
+                '[data-testid="verify-btn"]',
+            ]:
+                try:
+                    if page.is_visible(verify_sel, timeout=2000):
+                        page.click(verify_sel)
+                        _t.sleep(2)
+                        print(f"  Handled verification popup")
+                except:
+                    pass
+            _t.sleep(3)
             print(f"  Post-login URL: {page.url}")
             cookies = {c["name"]:c["value"] for c in ctx.cookies()}
             browser.close()
@@ -892,26 +899,69 @@ def parse_dk_response(data, sport, book):
     """Parse DraftKings API response for props."""
     props = []
     try:
-        # DK structure: eventGroup → offerCategories → offers
-        categories = data.get("eventGroup",{}).get("offerCategories",[])
-        for cat in categories:
-            for sub in cat.get("offerSubcategoryDescriptors",[]):
-                for offer_list in sub.get("offerSubcategory",{}).get("offers",[]):
-                    for offer in offer_list:
-                        player = offer.get("playerName","") or offer.get("label","")
-                        line   = offer.get("line")
-                        for out in offer.get("outcomes",[]):
-                            side   = out.get("label","OVER").upper()
-                            odds   = out.get("oddsAmerican","—")
-                            if player and line is not None:
-                                props.append({
-                                    "Player": player, "Prop": cat.get("name",""),
-                                    "Line": float(line), "Side": side,
-                                    "OverOdds": odds if side=="OVER" else "—",
-                                    "UnderOdds": odds if side=="UNDER" else "—",
-                                    "Book": book, "Sport": sport,
-                                    "source": f"{book.lower()}_auto"
-                                })
+        # Format 1: REST format with sports/leagues/events/markets/selections
+        markets   = data.get("markets", [])
+        selections= data.get("selections", [])
+
+        if markets and selections:
+            # Build market lookup
+            mkt_map = {m.get("marketId"): m for m in markets}
+            # Build selection lookup by marketId
+            sel_map = {}
+            for sel in selections:
+                mid = sel.get("marketId")
+                if mid:
+                    sel_map.setdefault(mid, []).append(sel)
+
+            for mkt in markets:
+                mid    = mkt.get("marketId")
+                mname  = mkt.get("name","")
+                # Only player props markets
+                if not any(x in mname.lower() for x in
+                           ["point","rebound","assist","steal","block","three",
+                            "pra","strikeout","hit","home run","goal","shot",
+                            "save","yard","reception","touchdown","pass","rush"]):
+                    continue
+                for sel in sel_map.get(mid, []):
+                    player = sel.get("name","") or sel.get("label","")
+                    line   = sel.get("line") or sel.get("handicap") or mkt.get("line")
+                    odds   = sel.get("displayOdds",{}).get("american","—") or sel.get("oddsAmerican","—")
+                    side   = ("OVER" if "over" in (sel.get("name","") or "").lower()
+                              else "UNDER" if "under" in (sel.get("name","") or "").lower()
+                              else "OVER")
+                    player = player.replace(" Over","").replace(" Under","").strip()
+                    if player and line is not None:
+                        props.append({
+                            "Player": player, "Prop": mname,
+                            "Line": float(str(line).replace("+","")),
+                            "Side": side,
+                            "OverOdds": odds if side=="OVER" else "—",
+                            "UnderOdds": odds if side=="UNDER" else "—",
+                            "Book": book, "Sport": sport,
+                            "source": f"{book.lower()}_auto"
+                        })
+
+        # Format 2: eventGroup structure
+        if not props:
+            categories = data.get("eventGroup",{}).get("offerCategories",[])
+            for cat in categories:
+                for sub in cat.get("offerSubcategoryDescriptors",[]):
+                    for offer_list in sub.get("offerSubcategory",{}).get("offers",[]):
+                        for offer in offer_list:
+                            player = offer.get("playerName","") or offer.get("label","")
+                            line   = offer.get("line")
+                            for out in offer.get("outcomes",[]):
+                                side = out.get("label","OVER").upper()
+                                odds = out.get("oddsAmerican","—")
+                                if player and line is not None:
+                                    props.append({
+                                        "Player": player, "Prop": cat.get("name",""),
+                                        "Line": float(line), "Side": side,
+                                        "OverOdds": odds if side=="OVER" else "—",
+                                        "UnderOdds": odds if side=="UNDER" else "—",
+                                        "Book": book, "Sport": sport,
+                                        "source": f"{book.lower()}_auto"
+                                    })
     except Exception as e:
         pass
     return props
@@ -1293,11 +1343,11 @@ def main():
 
         if "fanduel" in sessions and (use("fd") or use("fanduel")):
             fd_sport_urls = {
-                "NBA":  "https://sportsbook.fanduel.com/basketball/nba",
-                "MLB":  "https://sportsbook.fanduel.com/baseball/mlb",
-                "NHL":  "https://sportsbook.fanduel.com/hockey/nhl",
-                "WNBA": "https://sportsbook.fanduel.com/basketball/wnba",
-                "NFL":  "https://sportsbook.fanduel.com/football/nfl",
+                "NBA":  "https://az.sportsbook.fanduel.com/basketball/nba",
+                "MLB":  "https://az.sportsbook.fanduel.com/baseball/mlb",
+                "NHL":  "https://az.sportsbook.fanduel.com/hockey/nhl",
+                "WNBA": "https://az.sportsbook.fanduel.com/basketball/wnba",
+                "NFL":  "https://az.sportsbook.fanduel.com/football/nfl",
             }
             url = fd_sport_urls.get(sport, fd_sport_urls["NBA"])
             fd_props = scrape_with_playwright("FanDuel", sport,
@@ -1306,11 +1356,11 @@ def main():
 
         if "betmgm" in sessions and (use("mgm") or use("betmgm")):
             mgm_sport_urls = {
-                "NBA":  "https://www.nj.betmgm.com/en/sports/basketball-7/betting/usa-9/nba-6004",
-                "MLB":  "https://www.nj.betmgm.com/en/sports/baseball-23/betting/usa-9/mlb-75",
-                "NHL":  "https://www.nj.betmgm.com/en/sports/hockey-22/betting/usa-9/nhl-52",
-                "WNBA": "https://www.nj.betmgm.com/en/sports/basketball-7/betting/usa-9/wnba-237",
-                "NFL":  "https://www.nj.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",
+                "NBA":  "https://www.az.betmgm.com/en/sports/basketball-7/betting/usa-9/nba-6004",
+                "MLB":  "https://www.az.betmgm.com/en/sports/baseball-23/betting/usa-9/mlb-75",
+                "NHL":  "https://www.az.betmgm.com/en/sports/hockey-22/betting/usa-9/nhl-52",
+                "WNBA": "https://www.az.betmgm.com/en/sports/basketball-7/betting/usa-9/wnba-237",
+                "NFL":  "https://www.az.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",
             }
             url = mgm_sport_urls.get(sport, mgm_sport_urls["NBA"])
             mgm_props = scrape_with_playwright("BetMGM", sport,
@@ -1319,11 +1369,11 @@ def main():
 
         if "caesars" in sessions and (use("czr") or use("caesars")):
             czr_sport_urls = {
-                "NBA":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/basketball",
-                "MLB":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/baseball",
-                "NHL":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/hockey",
-                "WNBA": "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/basketball",
-                "NFL":  "https://sportsbook.caesars.com/us/nj/bet#/player-props/sport/americanfootball",
+                "NBA":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/basketball",
+                "MLB":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/baseball",
+                "NHL":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/hockey",
+                "WNBA": "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/basketball",
+                "NFL":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/americanfootball",
             }
             url = czr_sport_urls.get(sport, czr_sport_urls["NBA"])
             czr_props = scrape_with_playwright("Caesars", sport,
