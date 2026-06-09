@@ -96,6 +96,92 @@ ODDS = -110
 EDGE_CAP = 0.20
 MIN_EDGE_DEFAULT = 0.02
 REQUEST_TIMEOUT = 10
+
+# ── Connection Pool + Retry Session ──────────────────────────
+# Reuses TCP connections across all API calls. Retries transient errors.
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry as _Retry
+
+def _build_api_session():
+    """Create a requests Session with connection pooling and auto-retry."""
+    s = requests.Session()
+    retry = _Retry(
+        total=3,                          # max 3 retries
+        backoff_factor=0.5,               # 0.5s, 1s, 2s between retries
+        status_forcelist=(500, 502, 503, 504, 429),  # retry on server errors + rate limit
+        allowed_methods=["GET", "POST"],
+        raise_on_status=False,            # don't raise — let caller check status_code
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry,
+        pool_connections=15,              # reuse up to 15 TCP connections
+        pool_maxsize=15,
+    )
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
+    s.headers.update({
+        "User-Agent": "BetCouncil/4.7",
+        "Accept": "application/json",
+    })
+    return s
+
+API_SESSION = _build_api_session()
+
+# ── Request Timeout Constants ────────────────────────────────
+REQUEST_TIMEOUT_FAST   = 8    # Quick lookups (odds, scores)
+REQUEST_TIMEOUT_STD    = 12   # Standard API calls
+REQUEST_TIMEOUT_SLOW   = 20   # Heavy endpoints (history, bulk)
+REQUEST_TIMEOUT_PROXY  = 25   # Proxy-routed requests (ScrapeOps)
+# ── Session State Safe Access ────────────────────────────────
+def ss_get(key, default=None):
+    """Safe session_state access — never raises KeyError."""
+    try:
+        return st.session_state.get(key, default)
+    except Exception:
+        return default
+
+def ss_set(key, value):
+    """Safe session_state setter."""
+    try:
+        st.session_state[key] = value
+    except Exception:
+        pass
+# ── Named Constants ──────────────────────────────────────────
+# Kelly Criterion
+KELLY_FRACTION = 0.15      # Fractional Kelly (15% of full) — reduces variance 97%
+KELLY_CAP      = 0.20      # Never risk >20% bankroll per bet
+KELLY_MIN      = 0.01      # Below 1% = negligible EV, skip
+
+# Tier thresholds (props) — sport-specific overrides in get_tier()
+TIER_SOVEREIGN_DEFAULT = 0.15   # 15%+ edge
+TIER_ELITE_DEFAULT     = 0.10   # 10%+ edge
+TIER_APPROVED_DEFAULT  = 0.05   # 5%+ edge
+TIER_LEAN_DEFAULT      = 0.02   # 2%+ edge
+
+# API quotas
+SCRAPEOPS_MONTHLY_LIMIT  = 1000   # Free tier
+SCRAPERAPI_DAILY_LIMIT   = 1000   # Free tier, resets daily
+ODDSPAPI_MONTHLY_LIMIT   = 1000   # Free tier
+ODDSPAPI_DAILY_LIMIT     = 100    # Free tier
+PARLAYAPI_DAILY_LIMIT    = 200    # Free tier
+
+# Cache TTLs (seconds)
+CACHE_TTL_PROPS     = 1800   # 30 min — props refresh every half hour
+CACHE_TTL_GAMELINES = 3600   # 1 hr — game lines change slower
+CACHE_TTL_INJURIES  = 7200   # 2 hr — injury reports update less frequently
+CACHE_TTL_GIST      = 600    # 10 min — Gist data from local scraper
+
+# Board limits
+MAX_PROPS_PER_BOARD   = 200   # Show top 200 props per sport
+MAX_GAMES_PER_BOARD   = 20    # Show up to 20 games
+MIN_BETS_CALIBRATION  = 30    # Need 30+ bets before calibration
+MIN_BETS_SIGNAL_AUDIT = 20    # Need 20+ bets before signal audit
+MIN_BETS_OPTIMIZER    = 50    # Need 50+ bets before optimizer
+
+
+
+
+
 CACHE_DIR = "/tmp/betcouncil_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 # Clear ALL game line caches on startup — forces fresh fetch with fixed abbrev mapping
@@ -3590,7 +3676,7 @@ def get_golf_player_edge(player_name, leaderboard=None, odds=None):
                 elif pos_num > 30:
                     adj -= 0.03
                     notes.append(f"📉 #{pos_num} leaderboard -3%")
-            except:
+            except (OSError, IOError, ValueError, KeyError, TypeError, AttributeError):
                 pass
             break
     
@@ -5382,7 +5468,8 @@ def kelly_unit_prizepicks(prob, bankroll, n_picks=2, apply_bi=False):
 def kelly_unit(prob, bankroll, n_picks=2):
     return kelly_unit_prizepicks(prob, bankroll, n_picks)
 
-def get_tier(edge, sport="NBA") -> str:
+def get_tier(edge, sport  # Maps edge % to tier: SOVEREIGN/ELITE/APPROVED/LEAN/PASS
+="NBA") -> str:
     try:
         edge = float(edge or 0)
     except (TypeError, ValueError):
@@ -11820,7 +11907,8 @@ GLOBAL_AWAY_ADJ  = -0.05
 # MODULE: EDGE MODEL — signals, tiers, kelly sizing
 # Future extraction target: models.py
 # ═══════════════════════════════════════════════════════════
-def compute_multi_signal_edge(line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None, player_name=""):
+def compute_multi_signal_edge(  # Calculates edge using 12 weighted signals (Base, Def, Loc, Rest, Pace + overlays)
+line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None, player_name=""):
     if player_avg <= 0:
         return 0.0, 0.5, {}
     signals = {}
@@ -13029,6 +13117,7 @@ def check_prediction_stability(board, sport):
 
 
 def load_sport_data(sport):
+    """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
     if sport in ["Golf", "Tennis", "UFC", "Soccer"]:
@@ -14823,7 +14912,12 @@ with st.sidebar:
         st.success("✅ PrizePicks loaded from local scraper (Gist)")
         st.caption("Run betcouncil_auto_scraper.py daily to keep fresh.")
     elif _pp_status == "ok":
-        st.success("✅ PrizePicks connected via ScrapeOps")
+        _pp_src = st.session_state.get("pp_source","")
+        if _pp_src == "gist_scraper":
+            st.success("✅ PrizePicks loaded from local scraper (Gist)")
+            st.caption("Run betcouncil_auto_scraper.py daily to keep fresh.")
+        else:
+            st.success("✅ PrizePicks connected via ScrapeOps")
     elif _pp_status == "fallback":
         st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
     elif _pp_status == "unavailable":
