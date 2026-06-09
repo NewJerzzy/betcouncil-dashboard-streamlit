@@ -5057,12 +5057,17 @@ def fetch_auto_scraped_props(sport="NBA"):
         if not content:
             return []
         data = json.loads(content)
-        if data.get("date") != date.today().isoformat():
+        # Accept today or yesterday (script may run before midnight)
+        from datetime import timedelta
+        gist_date = data.get("date","")
+        today     = date.today().isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        if gist_date not in (today, yesterday):
             return []
         props = data.get("props", [])
         if props:
             _sport_match = [p for p in props if p.get("Sport","").upper() == sport.upper()]
-            return _sport_match
+            return _sport_match if _sport_match else props
         return []
     except Exception:
         return []
