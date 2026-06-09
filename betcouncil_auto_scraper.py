@@ -535,33 +535,39 @@ def scrape_underdog(sport):
                 # appearance links to appearances array
                 stat  = line.get("stat_value","")
                 val   = line.get("stat_line") or line.get("over_under","")
-                # Underdog structure: line has no appearance_id
-                # Must match via entry_stable_id or direct player lookup
-                # line keys: id, contract_terms_url, line_type, live_event, live_event_stat
-                # Use live_event_stat for player + stat info
-                live_stat = line.get("live_event_stat") or {}
-                pname     = ""
-                stat      = line.get("stat_value","")
-                val       = line.get("stat_line") or line.get("over_under","")
+                # Underdog confirmed structure from debug:
+                # line keys: id, line_type, live_event, live_event_stat
+                # live_event_stat = dict OR None
+                # appearance_id = empty string (not used)
+                live_stat  = line.get("live_event_stat") or {}
+                live_event = line.get("live_event") or {}
+                stat       = line.get("stat_value","") or line.get("stat","")
+                val        = line.get("stat_line") or line.get("over_under")
 
-                # Try to get player from live_event_stat
+                # Get player name from live_event_stat
+                pname = ""
                 if isinstance(live_stat, dict):
                     pname = (live_stat.get("player_name","") or
+                             live_stat.get("display_name","") or
                              live_stat.get("name","") or
-                             live_stat.get("display_name",""))
+                             live_stat.get("full_name",""))
                     if not stat:
-                        stat = live_stat.get("type","") or live_stat.get("stat","")
+                        stat = (live_stat.get("type","") or
+                                live_stat.get("stat_type","") or
+                                live_stat.get("category",""))
 
-                # Fallback: check line itself
-                if not pname:
-                    pname = line.get("player_name","") or line.get("name","")
+                # Fallback to live_event for player
+                if not pname and isinstance(live_event, dict):
+                    pname = (live_event.get("player_name","") or
+                             live_event.get("name","") or
+                             live_event.get("title",""))
 
-                # Sport filter via line_type or live_event
-                live_event = line.get("live_event") or {}
+                # Sport filter
                 if isinstance(live_event, dict):
-                    sport_key = (live_event.get("sport","") or
+                    sport_key = (live_event.get("sport_id","") or
+                                 live_event.get("sport","") or
                                  live_event.get("league","") or "").upper()
-                    if sport and sport_key and sport not in sport_key and sport_key not in sport:
+                    if sport and sport_key and sport[:3] not in sport_key and sport_key not in sport:
                         continue
 
                 if pname and val is not None:
@@ -1254,6 +1260,210 @@ def parse_pick6_response(data, sport):
     return props
 
 
+# ── Direct API scrapers (no Playwright needed) ────────────────
+
+def scrape_dk_api(sport, cookies):
+    """DraftKings direct API — uses session cookies."""
+    print(f"\n  DraftKings {sport} (API):")
+    props = []
+    cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
+    headers = {
+        "User-Agent": UA,
+        "Cookie": cookie_str,
+        "Accept": "application/json",
+        "Referer": "https://sportsbook.draftkings.com/",
+        "Origin":  "https://sportsbook.draftkings.com",
+    }
+    sport_ids = {"NBA":42648,"MLB":84240,"NHL":42133,"WNBA":42648,"NFL":88670775}
+    sid = sport_ids.get(sport, 42648)
+    try:
+        # Get today's events
+        r = requests.get(
+            f"https://sportsbook.draftkings.com/sites/US-AZ-SB/api/v5/eventgroups/{sid}",
+            params={"format":"json","include":"participants+groups+subgroups"},
+            headers=headers, timeout=15
+        )
+        print(f"    Events: {r.status_code}")
+        if r.status_code == 200:
+            data   = r.json()
+            events = data.get("eventGroup",{}).get("events",[])
+            print(f"    Found {len(events)} events")
+            for ev in events[:5]:
+                eid = ev.get("eventId","")
+                if not eid:
+                    continue
+                # Get player props for this event
+                rp = requests.get(
+                    f"https://sportsbook.draftkings.com/sites/US-AZ-SB/api/v5/eventgroups/{sid}/categories/player-props/events/{eid}",
+                    headers=headers, timeout=10
+                )
+                if rp.status_code == 200:
+                    pdata = rp.json()
+                    parsed = parse_dk_response(pdata, sport, "DraftKings")
+                    props.extend(parsed)
+                time.sleep(0.3)
+    except Exception as e:
+        print(f"    Error: {e}")
+    print(f"    Props: {len(props)}")
+    return props
+
+
+def scrape_fd_api(sport, cookies):
+    """FanDuel direct API."""
+    print(f"\n  FanDuel {sport} (API):")
+    props = []
+    cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
+    headers = {
+        "User-Agent": UA,
+        "Cookie": cookie_str,
+        "Accept": "application/json",
+        "Referer": "https://az.sportsbook.fanduel.com/",
+        "x-api-key": "FhMFpcPWXMeyZxOx",
+    }
+    event_type_map = {"NBA":7522,"MLB":1,"NHL":4,"WNBA":614,"NFL":5}
+    etid = event_type_map.get(sport, 7522)
+    try:
+        r = requests.get(
+            f"https://sbapi.fanduel.com/api/content-managed-page",
+            params={"page":"SPORT","eventTypeId":etid,"_ak":"FhMFpcPWXMeyZxOx","timezone":"America/Phoenix"},
+            headers=headers, timeout=15
+        )
+        print(f"    Status: {r.status_code}")
+        if r.status_code == 200:
+            data   = r.json()
+            events = data.get("result",{}).get("events",[])
+            print(f"    Events: {len(events)}")
+            for ev in events[:5]:
+                eid = ev.get("eventId")
+                if not eid:
+                    continue
+                rp = requests.get(
+                    f"https://sbapi.fanduel.com/api/event-page",
+                    params={"eventId":eid,"_ak":"FhMFpcPWXMeyZxOx"},
+                    headers=headers, timeout=10
+                )
+                if rp.status_code == 200:
+                    parsed = parse_fd_response(rp.json(), sport, "FanDuel")
+                    props.extend(parsed)
+                time.sleep(0.3)
+        else:
+            print(f"    Response: {r.text[:100]}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    print(f"    Props: {len(props)}")
+    return props
+
+
+def scrape_mgm_api(sport, cookies):
+    """BetMGM direct API using CDS endpoints."""
+    print(f"\n  BetMGM {sport} (API):")
+    props = []
+    cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
+    headers = {
+        "User-Agent": UA,
+        "Cookie": cookie_str,
+        "Accept": "application/json",
+        "Referer": "https://www.az.betmgm.com/",
+        "x-bwin-accessid": "NDBlOWQ5YjgtMjk3ZS00MTI0LTg3YmMtZDA3ZGVlMWM4MjYw",
+    }
+    sport_ids = {"NBA":7,"MLB":23,"NHL":19,"WNBA":7,"NFL":11}
+    sid = sport_ids.get(sport, 7)
+    try:
+        r = requests.get(
+            "https://cds-api.betmgm.com/bettingoffer/fixtures",
+            params={
+                "x-bwin-accessid": "NDBlOWQ5YjgtMjk3ZS00MTI0LTg3YmMtZDA3ZGVlMWM4MjYw",
+                "lang": "en-us", "country": "US", "userCountry": "US",
+                "subdivision": "US-AZ", "offer-category": "player-props",
+                "sportId": sid, "fixtureTypes": "Standard",
+                "state": "Latest", "skip": 0, "take": 50, "sortBy": "StartDate"
+            },
+            headers=headers, timeout=15
+        )
+        print(f"    Status: {r.status_code}")
+        if r.status_code == 200:
+            data = r.json()
+            fixtures = data.get("fixtures",[])
+            print(f"    Fixtures: {len(fixtures)}")
+            for fix in fixtures:
+                for game in fix.get("games",[]):
+                    mname = game.get("name",{}).get("value","")
+                    for result in game.get("results",[]):
+                        player = result.get("name",{}).get("value","")
+                        odds_d = result.get("odds", 2.0)
+                        attr   = result.get("attr","")
+                        side   = "OVER" if "over" in player.lower() else "UNDER"
+                        player = player.replace(" Over","").replace(" Under","").strip()
+                        if not player or not attr:
+                            continue
+                        try:
+                            american = f"+{int((float(odds_d)-1)*100)}" if float(odds_d)>=2 else f"{int(-100/(float(odds_d)-1))}"
+                        except:
+                            american = "—"
+                        props.append({
+                            "Player": player, "Prop": mname,
+                            "Line": float(str(attr).replace("+","")),
+                            "Side": side,
+                            "OverOdds": american if side=="OVER" else "—",
+                            "UnderOdds": american if side=="UNDER" else "—",
+                            "Book": "BetMGM", "Sport": sport,
+                            "source": "betmgm_api"
+                        })
+        else:
+            print(f"    Response: {r.text[:100]}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    print(f"    Props: {len(props)}")
+    return props
+
+
+def scrape_czr_api(sport, cookies):
+    """Caesars direct API."""
+    print(f"\n  Caesars {sport} (API):")
+    props = []
+    cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
+    headers = {
+        "User-Agent": UA,
+        "Cookie": cookie_str,
+        "Accept": "application/json",
+        "Referer": "https://sportsbook.caesars.com/us/az/bet",
+    }
+    sport_ids = {"NBA":"basketball","MLB":"baseball","NHL":"icehockey","WNBA":"basketball","NFL":"americanfootball"}
+    sp = sport_ids.get(sport, "basketball")
+    try:
+        # Get player props events
+        r = requests.get(
+            f"https://api.americanwagering.com/regions/us/locations/az/brands/czr/sb/v4/sports/{sp}/player-props",
+            headers=headers, timeout=15
+        )
+        print(f"    Status: {r.status_code}")
+        if r.status_code == 200:
+            data = r.json()
+            items = data if isinstance(data,list) else data.get("playerProps", data.get("events",[]))
+            print(f"    Items: {len(items)}")
+            for item in items:
+                mname   = item.get("marketName","") or item.get("name","")
+                player  = item.get("playerName","") or item.get("player","")
+                line    = item.get("line") or item.get("handicap")
+                over_ml = item.get("overOdds","—")
+                under_ml= item.get("underOdds","—")
+                if player and line is not None:
+                    props.append({
+                        "Player": player, "Prop": mname,
+                        "Line": float(str(line).replace("+","")),
+                        "Side": "OVER",
+                        "OverOdds": str(over_ml), "UnderOdds": str(under_ml),
+                        "Book": "Caesars", "Sport": sport,
+                        "source": "caesars_api"
+                    })
+        else:
+            print(f"    Response: {r.text[:100]}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    print(f"    Props: {len(props)}")
+    return props
+
+
 # ── Gist Push ─────────────────────────────────────────────────
 def push_to_gist(all_props, all_lines, token, gist_id):
     if not token or not gist_id:
@@ -1349,17 +1559,7 @@ def main():
         sport_map_dk = {"NBA":"nba","MLB":"mlb","NHL":"nhl","WNBA":"wnba","NFL":"nfl"}
 
         if "draftkings" in sessions and (use("dk") or use("draftkings")):
-            dk_sport_urls = {
-                "NBA":  "https://sportsbook.draftkings.com/leagues/basketball/88670846",
-                "MLB":  "https://sportsbook.draftkings.com/leagues/baseball/84240",
-                "NHL":  "https://sportsbook.draftkings.com/leagues/hockey/42133",
-                "WNBA": "https://sportsbook.draftkings.com/leagues/basketball/88670847",
-                "NFL":  "https://sportsbook.draftkings.com/leagues/football/88670775",
-            }
-            # Use direct category URL for player props
-            url = dk_sport_urls.get(sport, dk_sport_urls["NBA"])
-            dk_props = scrape_with_playwright("DraftKings", sport,
-                sessions["draftkings"], url, parse_dk_response)
+            dk_props = scrape_dk_api(sport, sessions["draftkings"])
             all_props += dk_props
 
         # DraftKings Pick6 — DFS props (separate from sportsbook)
@@ -1368,53 +1568,39 @@ def main():
             all_props += pick6_props
 
         if "fanduel" in sessions and (use("fd") or use("fanduel")):
-            fd_sport_urls = {
-                "NBA":  "https://az.sportsbook.fanduel.com/basketball/nba",
-                "MLB":  "https://az.sportsbook.fanduel.com/baseball/mlb",
-                "NHL":  "https://az.sportsbook.fanduel.com/hockey/nhl",
-                "WNBA": "https://az.sportsbook.fanduel.com/basketball/wnba",
-                "NFL":  "https://az.sportsbook.fanduel.com/football/nfl",
-            }
-            url = fd_sport_urls.get(sport, fd_sport_urls["NBA"])
-            fd_props = scrape_with_playwright("FanDuel", sport,
-                sessions["fanduel"], url, parse_fd_response)
+            fd_props = scrape_fd_api(sport, sessions["fanduel"])
             all_props += fd_props
 
         if "betmgm" in sessions and (use("mgm") or use("betmgm")):
-            mgm_sport_urls = {
-                "NBA":  "https://www.az.betmgm.com/en/sports/basketball-7/betting/usa-9/nba-6004",
-                "MLB":  "https://www.az.betmgm.com/en/sports/baseball-23/betting/usa-9/mlb-75",
-                "NHL":  "https://www.az.betmgm.com/en/sports/hockey-22/betting/usa-9/nhl-52",
-                "WNBA": "https://www.az.betmgm.com/en/sports/basketball-7/betting/usa-9/wnba-237",
-                "NFL":  "https://www.az.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",
-            }
-            url = mgm_sport_urls.get(sport, mgm_sport_urls["NBA"])
-            mgm_props = scrape_with_playwright("BetMGM", sport,
-                sessions["betmgm"], url, parse_generic_response)
+            mgm_props = scrape_mgm_api(sport, sessions["betmgm"])
             all_props += mgm_props
 
         if "caesars" in sessions and (use("czr") or use("caesars")):
-            czr_sport_urls = {
-                "NBA":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/basketball",
-                "MLB":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/baseball",
-                "NHL":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/hockey",
-                "WNBA": "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/basketball",
-                "NFL":  "https://sportsbook.caesars.com/us/az/bet#/player-props/sport/americanfootball",
-            }
-            url = czr_sport_urls.get(sport, czr_sport_urls["NBA"])
-            czr_props = scrape_with_playwright("Caesars", sport,
-                sessions["caesars"], url, parse_generic_response)
+            czr_props = scrape_czr_api(sport, sessions["caesars"])
             all_props += czr_props
 
-        if "mybookie" in sessions and (use("mb") or use("mybookie")):
-            mb_props, needs_relogin = scrape_mybookie(sport, sessions["mybookie"])
-            if needs_relogin:
-                print("  Re-logging into MyBookie...")
-                new_cookies = login_mybookie(cfg.get("mybookie",{}))
-                if new_cookies:
-                    sessions["mybookie"] = new_cookies
-                    mb_props, _ = scrape_mybookie(sport, new_cookies)
-            all_props += mb_props
+        if (use("mb") or use("mybookie")):
+            mb_cfg = cfg.get("mybookie", {})
+            # Use manual cookie if provided (most reliable)
+            manual_cookie = mb_cfg.get("session_cookie","")
+            if manual_cookie:
+                mb_cookies = {"manual": manual_cookie}
+                # Convert string cookie to dict
+                mb_cookies = {}
+                for part in manual_cookie.split(";"):
+                    if "=" in part:
+                        k, v = part.strip().split("=", 1)
+                        mb_cookies[k.strip()] = v.strip()
+                mb_props, _ = scrape_mybookie(sport, mb_cookies)
+                all_props += mb_props
+            elif "mybookie" in sessions:
+                mb_props, needs_relogin = scrape_mybookie(sport, sessions["mybookie"])
+                if needs_relogin:
+                    new_cookies = login_mybookie(mb_cfg)
+                    if new_cookies:
+                        sessions["mybookie"] = new_cookies
+                        mb_props, _ = scrape_mybookie(sport, new_cookies)
+                all_props += mb_props
 
         time.sleep(1)
 
