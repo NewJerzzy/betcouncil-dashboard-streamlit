@@ -388,19 +388,45 @@ def login_mybookie(cfg):
             # Click the Login submit button
             page.click('button[type="submit"]:has-text("Login")')
             _t.sleep(3)
-            # Handle verification popup if present
-            for verify_sel in [
-                'button:has-text("Verify")',
-                'button:has-text("Continue")',
-                'button:has-text("Not a robot")',
+            # Handle "confirm I'm human" popup
+            _t.sleep(2)
+            human_selectors = [
+                'button:has-text("I'm Human")',
+                'button:has-text("Human")',
                 'button:has-text("Confirm")',
-                '[data-testid="verify-btn"]',
-            ]:
+                'button:has-text("Continue")',
+                'button:has-text("Verify")',
+                'button:has-text("I Agree")',
+                'button:has-text("OK")',
+                'input[type="submit"]',
+                '[class*="human"]',
+                '[class*="verify"]',
+                '[class*="confirm"]',
+                '[id*="human"]',
+                '[id*="verify"]',
+            ]
+            for sel in human_selectors:
                 try:
-                    if page.is_visible(verify_sel, timeout=2000):
-                        page.click(verify_sel)
+                    if page.is_visible(sel, timeout=1500):
+                        page.click(sel)
+                        print(f"  ✅ Clicked human verification: {sel}")
                         _t.sleep(2)
-                        print(f"  Handled verification popup")
+                        break
+                except:
+                    continue
+
+            # If still on login page try clicking any visible button
+            if "login" in page.url.lower():
+                try:
+                    # Find all buttons and click first non-nav one
+                    btns = page.query_selector_all("button:visible")
+                    for btn in btns:
+                        txt = (btn.inner_text() or "").strip().lower()
+                        if any(w in txt for w in ["human","confirm","verify","continue","ok","agree"]):
+                            btn.click()
+                            print(f"  ✅ Clicked: {txt}")
+                            _t.sleep(2)
+                            break
                 except:
                     pass
             _t.sleep(3)
