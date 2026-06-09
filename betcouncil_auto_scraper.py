@@ -391,7 +391,7 @@ def login_mybookie(cfg):
             # Handle "confirm I'm human" popup
             _t.sleep(2)
             human_selectors = [
-                'button:has-text("I'm Human")',
+                'button:has-text("Im Human")',
                 'button:has-text("Human")',
                 'button:has-text("Confirm")',
                 'button:has-text("Continue")',
