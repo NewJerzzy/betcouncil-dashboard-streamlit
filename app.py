@@ -14584,9 +14584,22 @@ with st.sidebar:
     st.metric("Active Unit", f"${active_unit():.2f}")
     st.markdown(f'<div style="font-size:15px;color:#5a6a7a;margin-bottom:16px;">Session: {get_session_time()}</div>', unsafe_allow_html=True)
     st.markdown("---")
-    st.subheader("Chairman Strategy")
-    st.session_state.min_edge = st.slider("Min Edge (%)", 0, 15, int(st.session_state.min_edge * 100), step=1) / 100.0
-    st.session_state.skip_defaults = st.checkbox("Skip unknown players", value=st.session_state.skip_defaults)
+    st.subheader("⚙️ Filter Settings")
+    st.caption("Control which props appear on your board.")
+
+    st.markdown("**Minimum Edge (%)**")
+    st.caption("Only show props where the model's projected edge exceeds this threshold. Higher = fewer but stronger plays.")
+    st.session_state.min_edge = st.slider(
+        "Min Edge (%)", 0, 15,
+        int(st.session_state.min_edge * 100), step=1,
+        help="Edge = model's estimated advantage over the book line. 0% shows all props. 5%+ = APPROVED or better."
+    ) / 100.0
+
+    st.session_state.skip_defaults = st.checkbox(
+        "Skip unknown players",
+        value=st.session_state.skip_defaults,
+        help="Hide props for players not in the stats database. Unchecking may show props with less accurate projections."
+    )
     st.markdown("---")
     sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0)
     if st.button("Load Board", width="stretch"):
