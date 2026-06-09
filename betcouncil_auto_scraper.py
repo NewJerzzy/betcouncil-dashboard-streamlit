@@ -220,15 +220,15 @@ def login_fanduel(cfg):
             import time as _t; _t.sleep(2)
 
             # Step 2: Select New Jersey (or your state)
-            try:
-                page.click("button:has-text('New Jersey')", timeout=5000)
-                _t.sleep(2)
-            except:
+            # Try user's state first
+            for state in ["Arizona","New Jersey","New York","Colorado","Illinois","Virginia"]:
                 try:
-                    page.click("button:has-text('New York')", timeout=3000)
+                    page.click(f"button:has-text('{state}')", timeout=3000)
                     _t.sleep(2)
+                    print(f"  Selected state: {state}")
+                    break
                 except:
-                    pass
+                    continue
 
             # Step 3: Click Login
             try:
@@ -366,16 +366,46 @@ def login_caesars(cfg):
     return None
 
 def login_mybookie(cfg):
-    return playwright_login(
-        book="mybookie",
-        login_url="https://mybookie.ag/login",
-        username=cfg["username"],
-        password=cfg["password"],
-        user_selector="#user",
-        pass_selector="#pass",
-        submit_selector='button[type="submit"]:has-text("Login")',
-        success_url_pattern="sportsbook",
-    )
+    cached = load_session("mybookie")
+    if cached:
+        print("  Using cached mybookie session")
+        return cached
+    print("\n  Logging into mybookie (browser)...")
+    try:
+        from playwright.sync_api import sync_playwright
+        import time as _t
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox","--disable-blink-features=AutomationControlled"]
+            )
+            ctx = browser.new_context(user_agent=UA, viewport={"width":1280,"height":800})
+            ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+            page = ctx.new_page()
+            page.goto("https://mybookie.ag/login", wait_until="domcontentloaded", timeout=45000)
+            _t.sleep(3)
+            # Use confirmed selectors from diagnostic
+            page.fill("#user", cfg["username"])
+            _t.sleep(0.5)
+            page.fill("#pass", cfg["password"])
+            _t.sleep(0.5)
+            # Click the Login submit button
+            page.click('button[type="submit"]:has-text("Login"), input[type="submit"]')
+            _t.sleep(4)
+            print(f"  Post-login URL: {page.url}")
+            cookies = {c["name"]:c["value"] for c in ctx.cookies()}
+            browser.close()
+            # Check if login succeeded — URL should change away from /login
+            if "login" not in page.url or any(k in cookies for k in ["cust_s_a","gamingstation_session"]):
+                save_session("mybookie", cookies)
+                print(f"  ✅ MyBookie login successful")
+                return cookies
+            else:
+                print(f"  ❌ MyBookie login failed — still on login page")
+                return None
+    except Exception as e:
+        print(f"  ❌ mybookie login error: {e}")
+        return None
 
 def login_underdog(cfg):
     return playwright_login(
@@ -442,23 +472,55 @@ def scrape_underdog(sport):
         print(f"    Status: {r.status_code}")
         if r.status_code == 200:
             data    = r.json()
-            players = {p["id"]: p for p in data.get("players",[])}
-            for line in data.get("over_under_lines",[]):
-                opts   = line.get("options",[])
-                app    = line.get("appearance",{})
-                sport_key = app.get("sport_id","").upper()
-                if sport_key != sport:
+            # Build player lookup
+            players = {}
+            for p in data.get("players", data.get("included", [])):
+                if isinstance(p, dict):
+                    pid = p.get("id","")
+                    fn  = p.get("first_name","") or p.get("attributes",{}).get("first_name","")
+                    ln  = p.get("last_name","")  or p.get("attributes",{}).get("last_name","")
+                    players[pid] = f"{fn} {ln}".strip()
+
+            # Try multiple response structures
+            lines = (data.get("over_under_lines") or
+                     data.get("lines") or
+                     data.get("data") or [])
+
+            for line in lines:
+                # Get appearance/sport info
+                app       = line.get("appearance", line)
+                sport_key = (app.get("sport_id","") or app.get("sport","") or "").upper()
+                if sport and sport_key and sport_key != sport:
                     continue
-                player_id = app.get("player_id","")
-                player    = players.get(player_id,{})
-                pname     = f"{player.get('first_name','')} {player.get('last_name','')}".strip()
-                stat      = line.get("stat_value","")
-                val       = line.get("stat_line")
+
+                # Get player name
+                player_id = app.get("player_id","") or line.get("player_id","")
+                pname     = players.get(player_id,"")
+                if not pname:
+                    pname = (line.get("player_name","") or
+                             app.get("player_name","") or
+                             line.get("name",""))
+
+                # Get stat and line
+                stat = (line.get("stat_value","") or
+                        line.get("stat","") or
+                        app.get("stat",""))
+                val  = (line.get("stat_line") or
+                        line.get("line") or
+                        line.get("value"))
+
                 if pname and val is not None:
-                    props.append({"Player":pname,"Prop":stat,"Line":float(val),
-                                  "Side":"OVER","OverOdds":"—","UnderOdds":"—",
-                                  "Book":"Underdog","Sport":sport,"source":"underdog_auto"})
+                    props.append({
+                        "Player": pname, "Prop": stat,
+                        "Line": float(val),
+                        "Side": "OVER", "OverOdds": "—", "UnderOdds": "—",
+                        "Book": "Underdog", "Sport": sport,
+                        "source": "underdog_auto"
+                    })
             print(f"    Props: {len(props)}")
+            if not props:
+                # Show structure for debugging
+                print(f"    Keys: {list(data.keys())[:5]}")
     except Exception as e:
         print(f"    Error: {e}")
     return props
@@ -470,11 +532,28 @@ def scrape_sleeper(sport):
     sport_map = {"NBA":"nba","MLB":"mlb","NFL":"nfl","NHL":"nhl","WNBA":"wnba"}
     sl_sport = sport_map.get(sport,"nba")
     try:
-        r = requests.get(
+        # Try multiple Sleeper endpoints
+        sleeper_urls = [
             f"https://api.sleeper.com/lines/v1/{sl_sport}",
-            headers={"User-Agent": UA},
-            timeout=10
-        )
+            f"https://api.sleeper.app/v1/players/{sl_sport}",
+            f"https://sleeper.com/picks/lines/{sl_sport}",
+        ]
+        r = None
+        for su in sleeper_urls:
+            try:
+                _r = requests.get(su, headers={"User-Agent": UA,
+                    "Accept": "application/json"}, timeout=10)
+                if _r.status_code == 200:
+                    r = _r
+                    print(f"    Endpoint: {su[-40:]}")
+                    break
+                print(f"    {_r.status_code} {su[-40:]}")
+            except:
+                pass
+        if not r:
+            print(f"    All Sleeper endpoints failed")
+            return props
+        r.status_code  # will be 200 if we got here
         print(f"    Status: {r.status_code}")
         if r.status_code == 200:
             data = r.json()
@@ -544,12 +623,31 @@ def scrape_betonline(sport):
                "Referer": "https://www.betonline.ag/"}
     try:
         # Get menu
-        rm = requests.post(
-            "https://api-offering.betonline.ag/api/offering/Sports/get-menu",
-            headers={**headers,"Content-Type":"application/json","gsetting":"bolsassite"},
-            json={}, timeout=10
-        )
-        print(f"    Menu: {rm.status_code}")
+        # Try GET first, then POST
+        rm = None
+        for method, data in [("GET", None), ("POST", {})]:
+            try:
+                if method == "GET":
+                    _rm = requests.get(
+                        "https://api-offering.betonline.ag/api/offering/Sports/get-menu",
+                        headers={**headers,"Content-Type":"application/json","gsetting":"bolsassite"},
+                        timeout=10
+                    )
+                else:
+                    _rm = requests.post(
+                        "https://api-offering.betonline.ag/api/offering/Sports/get-menu",
+                        headers={**headers,"Content-Type":"application/json","gsetting":"bolsassite"},
+                        json=data, timeout=10
+                    )
+                print(f"    Menu ({method}): {_rm.status_code}")
+                if _rm.status_code == 200:
+                    rm = _rm
+                    break
+            except Exception as _be:
+                print(f"    Menu error: {_be}")
+        if not rm or rm.status_code != 200:
+            print(f"    BetOnline menu unavailable")
+            return props
         if rm.status_code == 200:
             today = date.today().isoformat()
             data  = rm.json()
@@ -705,8 +803,11 @@ def scrape_with_playwright(book, sport, cookies, prop_url, prop_selector_fn):
 
             page = ctx.new_page()
             page.on("response", handle_response)
-            page.goto(prop_url, wait_until="networkidle", timeout=30000)
-            time.sleep(3)
+            page.goto(prop_url, wait_until="domcontentloaded", timeout=45000)
+            time.sleep(5)
+            # Also scroll to trigger lazy-loaded content
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
             browser.close()
 
             # Parse captured responses
@@ -886,18 +987,23 @@ def scrape_dk_pick6(sport, cookies):
             print(f"    Loading pick6.draftkings.com...")
             page.goto(
                 f"https://pick6.draftkings.com/draft/new-lineup/{sp}",
-                wait_until="networkidle",
-                timeout=30000
+                wait_until="domcontentloaded",
+                timeout=45000
             )
-            time.sleep(3)
+            time.sleep(5)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
 
             # Also try the lobby
-            page.goto(
-                "https://pick6.draftkings.com/",
-                wait_until="networkidle",
-                timeout=20000
-            )
-            time.sleep(2)
+            try:
+                page.goto(
+                    "https://pick6.draftkings.com/",
+                    wait_until="domcontentloaded",
+                    timeout=20000
+                )
+                time.sleep(3)
+            except:
+                pass
 
             browser.close()
 
