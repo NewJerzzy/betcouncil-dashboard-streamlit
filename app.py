@@ -8423,7 +8423,7 @@ def scrape_prizepicks(sport):
             os.remove(f)
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
-    return fetch_underdog_props(sport)
+    return []  # Let wrapper handle Gist fallback
 
 @st.cache_data(ttl=900)
 def fetch_underdog_injuries(sport):
