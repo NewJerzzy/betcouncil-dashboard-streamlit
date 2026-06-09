@@ -5039,44 +5039,134 @@ def get_bovada_game_line(matchup, bovada_data=None):
 # To remove: delete this function + the 3 lines that call it
 # ═══════════════════════════════════════════════════════════════
 @st.cache_data(ttl=1800)
-@st.cache_data(ttl=600)
-def fetch_auto_scraped_props(sport="NBA"):
-    """Read props from local scraper pushed to Gist by betcouncil_auto_scraper.py"""
-    from datetime import timedelta
+
+def log_error_to_session(source, error, error_type="error"):
+    """Log errors to session_state so they appear in the System tab."""
     try:
+        if "errors" not in st.session_state:
+            st.session_state["errors"] = []
+        st.session_state["errors"].append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": source,
+            "error": str(error)[:200],
+            "type": error_type
+        })
+        st.session_state["errors"] = st.session_state["errors"][-50:]
+    except Exception:
+        pass
+
+
+def is_date_valid_for_today(date_str):
+    """Check if date_str is today or yesterday."""
+    try:
+        from datetime import timedelta as _td
+        today = date.today()
+        yesterday = today - _td(days=1)
+        if "T" in str(date_str):
+            date_obj = date.fromisoformat(str(date_str).split("T")[0])
+        else:
+            date_obj = date.fromisoformat(str(date_str))
+        return date_obj in (today, yesterday)
+    except (ValueError, IndexError, TypeError):
+        return False
+
+
+def fetch_auto_scraped_props(sport="NBA"):
+    """Fetch props from GitHub Gist. Fallback when PrizePicks direct fails."""
+    try:
+        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+            log_error_to_session("fetch_auto_scraped_props", "GitHub credentials not configured", "warning")
+            return []
+
         r = requests.get(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization": f"token {GITHUB_TOKEN}",
-                     "Accept": "application/vnd.github.v3+json"},
+            headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"},
             timeout=10
         )
+
         if r.status_code != 200:
+            log_error_to_session("fetch_auto_scraped_props", f"Gist API returned {r.status_code}", "warning")
             return []
+
         files = r.json().get("files", {})
         if "auto_scraped_props.json" not in files:
+            log_error_to_session("fetch_auto_scraped_props", "auto_scraped_props.json not found in Gist", "warning")
             return []
-        raw = files["auto_scraped_props.json"]
-        # Handle truncated file — fetch raw URL if content missing
-        content = raw.get("content","") or ""
-        if not content and raw.get("raw_url"):
-            r2 = requests.get(raw["raw_url"], timeout=10)
-            if r2.status_code == 200:
-                content = r2.text
-        if not content:
+
+        file_obj = files["auto_scraped_props.json"]
+        file_size = file_obj.get("size", 0)
+
+        # Large files may be truncated — use raw_url
+        if file_size > 900000:
+            raw_url = file_obj.get("raw_url", "")
+            if raw_url:
+                r_raw = requests.get(raw_url, timeout=10)
+                if r_raw.status_code == 200:
+                    gist_content = r_raw.json()
+                else:
+                    log_error_to_session("fetch_auto_scraped_props", f"Raw URL returned {r_raw.status_code}", "error")
+                    return []
+            else:
+                log_error_to_session("fetch_auto_scraped_props", "raw_url not available", "error")
+                return []
+        else:
+            content = file_obj.get("content", "")
+            if not content:
+                log_error_to_session("fetch_auto_scraped_props", "Gist content is empty", "warning")
+                return []
+            try:
+                gist_content = json.loads(content)
+            except json.JSONDecodeError as e:
+                log_error_to_session("fetch_auto_scraped_props", f"JSON parse error: {str(e)[:100]}", "error")
+                return []
+
+        # Verify date
+        gist_date = gist_content.get("date", "")
+        if not is_date_valid_for_today(gist_date):
+            log_error_to_session("fetch_auto_scraped_props", f"Gist stale (date: {gist_date}, today: {date.today().isoformat()})", "warning")
             return []
-        data = json.loads(content)
-        gist_date = data.get("date","")
-        today     = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        if gist_date not in (today, yesterday):
-            return []
-        props = data.get("props", [])
-        if not props:
-            return []
-        sport_match = [p for p in props if p.get("Sport","").upper() == sport.upper()]
-        return sport_match if sport_match else props
-    except Exception as _e:
+
+        # Filter by sport
+        all_props = gist_content.get("props", [])
+        props = [p for p in all_props if p.get("Sport") == sport]
+
+        if props:
+            log_error_to_session("fetch_auto_scraped_props", f"Loaded {len(props)} {sport} props from Gist", "info")
+        else:
+            log_error_to_session("fetch_auto_scraped_props", f"No {sport} props in Gist", "warning")
+
+        return props
+
+    except requests.Timeout:
+        log_error_to_session("fetch_auto_scraped_props", "Gist API timed out (10s)", "error")
         return []
+    except Exception as e:
+        log_error_to_session("fetch_auto_scraped_props", f"Unexpected: {str(e)[:100]}", "error")
+        return []
+
+
+def scrape_prizepicks_with_gist_fallback(sport):
+    """Try PrizePicks direct, then Gist fallback, then empty."""
+    pp_props = scrape_prizepicks(sport)
+
+    if pp_props:
+        st.session_state["pp_source"] = "prizepicks_direct"
+        st.session_state["pp_status"] = "ok"
+        return pp_props
+
+    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"PrizePicks direct failed for {sport}, trying Gist...", "warning")
+
+    gist_props = fetch_auto_scraped_props(sport)
+    if gist_props:
+        st.session_state["pp_source"] = "gist_scraper"
+        st.session_state["pp_status"] = "ok"
+        log_error_to_session("scrape_prizepicks_with_gist_fallback", f"Using {len(gist_props)} props from Gist", "info")
+        return gist_props
+
+    st.session_state["pp_status"] = "unavailable"
+    st.session_state["pp_source"] = "none"
+    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"PrizePicks unavailable for {sport} (direct + Gist failed)", "error")
+    return []
 
 
 def compute_tier_stats(history):
@@ -13060,7 +13150,7 @@ def load_sport_data(sport):
     # ── PARALLEL FETCH — all independent data sources fire simultaneously ──
     # Groups fetches with no inter-dependencies into one ThreadPoolExecutor call.
     # _fetch_parallel was built last session but never wired in — now connected.
-    def _pf_prizepicks():   return scrape_prizepicks(sport)
+    def _pf_prizepicks():   return scrape_prizepicks_with_gist_fallback(sport)
     def _pf_underdog():     return fetch_underdog_props(sport)
     def _pf_dk_sal():       return fetch_dk_salaries(sport)
     def _pf_pinnacle():     return fetch_pinnacle_lines(sport)
@@ -13265,23 +13355,7 @@ def load_sport_data(sport):
     props = []  # Initialize — will be set by fallback chain below
     if pp_props:
         props = pp_props
-        st.session_state["pp_source"] = "prizepicks_direct"
-    else:
-        # PrizePicks failed — try Gist from local scraper FIRST
-        _gist_fb = fetch_auto_scraped_props(sport)
-        if _gist_fb:
-            _pp_gist = [p for p in _gist_fb
-                        if "prizepicks" in str(p.get("source","")).lower()
-                        or p.get("Book","") == "PrizePicks"]
-            if _pp_gist:
-                props = _pp_gist
-                st.session_state["pp_status"] = "ok"
-                st.session_state["pp_source"]  = "gist_scraper"
-            elif _gist_fb:
-                props = _gist_fb
-                st.session_state["pp_status"] = "fallback"
-                st.session_state["pp_source"]  = "gist_scraper"
-    if not props and ud_props_compare:
+    elif ud_props_compare:
         props = ud_props_compare
     else:
         # All primary DFS sources failed — use parallel-fetched alternates
@@ -14745,12 +14819,11 @@ with st.sidebar:
     # Show data source status
     _pp_status = st.session_state.get("pp_status", "unknown")
     _pp_source = st.session_state.get("pp_source","")
-    if _pp_status == "ok" and _pp_source == "gist_scraper":
+    if _pp_source == "gist_scraper":
         st.success("✅ PrizePicks loaded from local scraper (Gist)")
+        st.caption("Run betcouncil_auto_scraper.py daily to keep fresh.")
     elif _pp_status == "ok":
         st.success("✅ PrizePicks connected via ScrapeOps")
-    elif _pp_status == "fallback" and _pp_source == "gist_scraper":
-        st.info("ℹ️ Using auto-scraped props from local script (Gist)")
     elif _pp_status == "fallback":
         st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
     elif _pp_status == "unavailable":
