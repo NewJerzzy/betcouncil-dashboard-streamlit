@@ -188,50 +188,182 @@ def playwright_login(book, login_url, username, password,
 def login_draftkings(cfg):
     return playwright_login(
         book="draftkings",
-        login_url="https://sportsbook.draftkings.com/login",
+        login_url="https://myaccount.draftkings.com/auth/login?intendedSiteExp=US-SB",
         username=cfg["username"],
         password=cfg["password"],
-        user_selector='input[placeholder*="email" i], input[name="email"], #email-input',
-        pass_selector='input[type="password"], #password-input',
-        submit_selector='button[type="submit"], button:has-text("Log In"), button:has-text("Sign In")',
-        success_url_pattern="sportsbook.draftkings.com",
+        user_selector="#login-username-input",
+        pass_selector="#login-password-input",
+        submit_selector='button[type="submit"]',
+        success_url_pattern="draftkings.com",
     )
 
 def login_fanduel(cfg):
-    return playwright_login(
-        book="fanduel",
-        login_url="https://sportsbook.fanduel.com/login",
-        username=cfg["username"],
-        password=cfg["password"],
-        user_selector='input[type="email"], input[name="email"], input[placeholder*="email" i]',
-        pass_selector='input[type="password"]',
-        submit_selector='button[type="submit"], button:has-text("Log in"), button:has-text("Sign in")',
-        success_url_pattern="sportsbook.fanduel.com",
-    )
+    # FanDuel requires state selection before login
+    cached = load_session("fanduel")
+    if cached:
+        print("  Using cached fanduel session")
+        return cached
+    print("\n  Logging into fanduel (browser)...")
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox","--disable-blink-features=AutomationControlled"]
+            )
+            ctx = browser.new_context(user_agent=UA, viewport={"width":1280,"height":800})
+            ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+            page = ctx.new_page()
+
+            # Step 1: Go to sportsbook — redirects to state selector
+            page.goto("https://sportsbook.fanduel.com/", wait_until="domcontentloaded", timeout=45000)
+            import time as _t; _t.sleep(2)
+
+            # Step 2: Select New Jersey (or your state)
+            try:
+                page.click("button:has-text('New Jersey')", timeout=5000)
+                _t.sleep(2)
+            except:
+                try:
+                    page.click("button:has-text('New York')", timeout=3000)
+                    _t.sleep(2)
+                except:
+                    pass
+
+            # Step 3: Click Login
+            try:
+                page.click("button:has-text('Log In'), a:has-text('Log In')", timeout=5000)
+                _t.sleep(2)
+            except:
+                pass
+
+            # Step 4: Fill credentials
+            try:
+                page.wait_for_selector('input[type="email"], input[name="email"]', timeout=10000)
+                page.fill('input[type="email"], input[name="email"]', cfg["username"])
+                _t.sleep(0.5)
+                page.fill('input[type="password"]', cfg["password"])
+                _t.sleep(0.5)
+                page.click('button[type="submit"]')
+                _t.sleep(3)
+                print(f"  Post-login URL: {page.url}")
+            except Exception as e:
+                print(f"  Login form error: {e}")
+
+            cookies = {c["name"]:c["value"] for c in ctx.cookies()}
+            browser.close()
+            if cookies:
+                save_session("fanduel", cookies)
+                print(f"  ✅ FanDuel session saved")
+                return cookies
+    except Exception as e:
+        print(f"  ❌ fanduel login error: {e}")
+    return None
 
 def login_betmgm(cfg):
-    return playwright_login(
-        book="betmgm",
-        login_url="https://sports.betmgm.com/en/sports/login",
-        username=cfg["username"],
-        password=cfg["password"],
-        user_selector='input[name="username"], input[placeholder*="username" i], input[placeholder*="email" i]',
-        pass_selector='input[type="password"]',
-        submit_selector='button[type="submit"], button:has-text("Log In"), ms-primary-button',
-        success_url_pattern="sports.betmgm.com/en/sports",
-    )
+    cached = load_session("betmgm")
+    if cached:
+        print("  Using cached betmgm session")
+        return cached
+    print("\n  Logging into betmgm (browser)...")
+    try:
+        from playwright.sync_api import sync_playwright
+        import time as _t
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox","--disable-blink-features=AutomationControlled"]
+            )
+            ctx = browser.new_context(user_agent=UA, viewport={"width":1280,"height":800})
+            ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+            page = ctx.new_page()
+
+            # Use state-specific URL to bypass geo redirect
+            page.goto("https://www.nj.betmgm.com/en/sports", wait_until="domcontentloaded", timeout=45000)
+            _t.sleep(3)
+
+            # Click login
+            for sel in ["button:has-text('Log In')", "a:has-text('Log In')", "[data-test='login-btn']"]:
+                try:
+                    page.click(sel, timeout=3000)
+                    _t.sleep(2)
+                    break
+                except:
+                    continue
+
+            # Fill credentials
+            try:
+                page.wait_for_selector('input[type="email"], input[name="username"], input[name="email"]', timeout=10000)
+                page.fill('input[type="email"], input[name="username"], input[name="email"]', cfg["username"])
+                _t.sleep(0.5)
+                page.fill('input[type="password"]', cfg["password"])
+                _t.sleep(0.5)
+                page.click('button[type="submit"], ms-primary-button')
+                _t.sleep(3)
+                print(f"  Post-login URL: {page.url}")
+            except Exception as e:
+                print(f"  Form error: {e}")
+
+            cookies = {c["name"]:c["value"] for c in ctx.cookies()}
+            browser.close()
+            if cookies:
+                save_session("betmgm", cookies)
+                print(f"  ✅ BetMGM session saved")
+                return cookies
+    except Exception as e:
+        print(f"  ❌ betmgm login error: {e}")
+    return None
 
 def login_caesars(cfg):
-    return playwright_login(
-        book="caesars",
-        login_url="https://sportsbook.caesars.com/us/nj/bet#login",
-        username=cfg["username"],
-        password=cfg["password"],
-        user_selector='input[name="username"], input[placeholder*="username" i], input[placeholder*="email" i]',
-        pass_selector='input[type="password"]',
-        submit_selector='button[type="submit"], button:has-text("Log In"), button:has-text("Sign In")',
-        success_url_pattern="sportsbook.caesars.com",
-    )
+    cached = load_session("caesars")
+    if cached:
+        print("  Using cached caesars session")
+        return cached
+    print("\n  Logging into caesars (browser)...")
+    try:
+        from playwright.sync_api import sync_playwright
+        import time as _t
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox","--disable-blink-features=AutomationControlled"]
+            )
+            ctx = browser.new_context(user_agent=UA, viewport={"width":1280,"height":800})
+            ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+            page = ctx.new_page()
+
+            page.goto("https://sportsbook.caesars.com/us/nj/bet#login", wait_until="domcontentloaded", timeout=45000)
+            _t.sleep(3)
+
+            # Click LOG IN button to open modal
+            try:
+                page.click("button:has-text('LOG IN')", timeout=5000)
+                _t.sleep(2)
+            except:
+                pass
+
+            # Fill credentials in modal
+            try:
+                page.wait_for_selector('input[type="email"], input[name="username"], input[placeholder*="email" i]', timeout=10000)
+                page.fill('input[type="email"], input[name="username"], input[placeholder*="email" i]', cfg["username"])
+                _t.sleep(0.5)
+                page.fill('input[type="password"]', cfg["password"])
+                _t.sleep(0.5)
+                page.click('button[type="submit"], button:has-text("LOG IN"), button:has-text("Sign In")')
+                _t.sleep(3)
+                print(f"  Post-login URL: {page.url}")
+            except Exception as e:
+                print(f"  Form error: {e}")
+
+            cookies = {c["name"]:c["value"] for c in ctx.cookies()}
+            browser.close()
+            if cookies:
+                save_session("caesars", cookies)
+                print(f"  ✅ Caesars session saved")
+                return cookies
+    except Exception as e:
+        print(f"  ❌ caesars login error: {e}")
+    return None
 
 def login_mybookie(cfg):
     return playwright_login(
@@ -239,9 +371,9 @@ def login_mybookie(cfg):
         login_url="https://mybookie.ag/login",
         username=cfg["username"],
         password=cfg["password"],
-        user_selector='input[name="username"], input[placeholder*="username" i]',
-        pass_selector='input[type="password"], input[name="password"]',
-        submit_selector='button[type="submit"], input[type="submit"], button:has-text("Login")',
+        user_selector="#user",
+        pass_selector="#pass",
+        submit_selector='button[type="submit"]:has-text("Login")',
         success_url_pattern="sportsbook",
     )
 
