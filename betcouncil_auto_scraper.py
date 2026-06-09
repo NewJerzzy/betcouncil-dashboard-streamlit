@@ -497,20 +497,30 @@ def scrape_underdog(sport):
                 # appearance links to appearances array
                 stat  = line.get("stat_value","")
                 val   = line.get("stat_line") or line.get("over_under","")
-                app_id= line.get("appearance_id","")
+                app_id= line.get("appearance_id","") or line.get("appearance",{}).get("id","")
 
-                # Find appearance for player + sport
-                appearances = data.get("appearances", [])
-                app = next((a for a in appearances if a.get("id") == app_id), {})
-                player_id = app.get("player_id","")
+                # Build appearances lookup once
+                if not hasattr(scrape_underdog, "_app_cache"):
+                    scrape_underdog._app_cache = {}
+                if id(data) not in scrape_underdog._app_cache:
+                    scrape_underdog._app_cache[id(data)] = {
+                        a.get("id",""): a for a in data.get("appearances",[])
+                    }
+                app_lookup = scrape_underdog._app_cache[id(data)]
+                app = app_lookup.get(app_id, {})
+
+                player_id = app.get("player_id","") or line.get("player_id","")
                 sport_key = (app.get("sport_id","") or "").upper()
 
-                if sport and sport_key and sport_key != sport[:4]:
+                # Sport filter — Underdog uses sport_id like "NBA" or numeric
+                if sport and sport_key and sport_key not in (sport, sport[:3]):
                     continue
 
                 pname = players.get(player_id,"")
                 if not pname:
-                    pname = app.get("player_name","")
+                    pname = (app.get("name","") or
+                             line.get("player_name","") or
+                             app.get("player_name",""))
 
                 if pname and val is not None:
                     props.append({
@@ -521,8 +531,20 @@ def scrape_underdog(sport):
                         "source": "underdog_auto"
                     })
             print(f"    Props: {len(props)}")
-            if not props:
-                print(f"    Lines found: {len(lines)}, Players: {len(players)}")
+            if not props and lines:
+                # Show first line structure for debugging
+                sample = lines[0] if lines else {}
+                print(f"    Lines: {len(lines)} | Sample keys: {list(sample.keys())[:8]}")
+                # Show first appearance
+                apps = data.get("appearances",[])
+                if apps:
+                    print(f"    Appearances: {len(apps)} | Sample: {list(apps[0].keys())[:6]}")
+                # Show first player
+                if players:
+                    pid = list(players.keys())[0]
+                    print(f"    Players: {len(players)} | Sample ID type: {type(pid).__name__} val: {pid}")
+                    if sample:
+                        print(f"    Line appearance_id type: {type(sample.get('appearance_id','')).__name__} val: {sample.get('appearance_id','')}")
     except Exception as e:
         print(f"    Error: {e}")
     return props
@@ -728,8 +750,9 @@ def scrape_mybookie(sport, cookies):
             headers=headers, timeout=15
         )
         print(f"    leagues-lines: {r.status_code}")
-        if r.status_code == 401:
+        if r.status_code in (401, 403):
             SESSION_DIR.joinpath("mybookie_session.json").unlink(missing_ok=True)
+            print(f"    Session cleared — will re-login next run")
             return props, True
         if r.status_code != 200:
             return props, False
@@ -837,6 +860,15 @@ def scrape_with_playwright(book, sport, cookies, prop_url, prop_selector_fn):
                 parsed = prop_selector_fn(data, sport, book)
                 if parsed:
                     print(f"    ✅ {len(parsed)} props from {url[-50:]}")
+                else:
+                    # Show structure of unparsed response for debugging
+                    if isinstance(data, dict):
+                        keys = list(data.keys())[:8]
+                        print(f"    ⚠️  0 props | keys: {keys} | {url[-40:]}")
+                    elif isinstance(data, list) and data:
+                        first = data[0]
+                        if isinstance(first, dict):
+                            print(f"    ⚠️  0 props | list[{len(data)}] keys: {list(first.keys())[:6]} | {url[-40:]}")
                 props.extend(parsed)
 
             print(f"    Total props: {len(props)}")
