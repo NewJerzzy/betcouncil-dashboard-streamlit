@@ -1421,15 +1421,32 @@ def scrape_draftkings_curlffi(sport):
                             "touchdown","pass","rush","pra","fantasy"]):
                     continue
                 for sel in sel_by_mkt.get(mid, []):
-                    player = sel.get("name","") or sel.get("label","")
+                    label = sel.get("label", "")
+                    # Get player name from participants array
+                    parts = sel.get("participants", [])
+                    player = parts[0].get("name","") if parts else ""
+                    if not player:
+                        player = label
                     line = sel.get("points") or sel.get("line") or sel.get("handicap")
                     odds_am = sel.get("displayOdds",{}).get("american","—")
-                    if " Over " in player:
-                        player, sd = player.split(" Over ")[0].strip(), "OVER"
-                    elif " Under " in player:
-                        player, sd = player.split(" Under ")[0].strip(), "UNDER"
+                    # Parse Over/Under from label
+                    if "Under" in label:
+                        sd = "UNDER"
+                        if not player or player == label:
+                            player = label.replace("Under","").strip()
+                    elif "Over" in label:
+                        sd = "OVER"
+                        if not player or player == label:
+                            player = label.replace("Over","").strip()
                     else:
                         sd = "OVER"
+                    # Extract line from label if not in fields
+                    if line is None:
+                        import re as _re
+                        _lm = _re.search(r"([\d.]+)", label)
+                        if _lm:
+                            try: line = float(_lm.group(1))
+                            except: pass
                     if player and line is not None:
                         props.append({
                             "Player": player, "Prop": mname,
@@ -1566,10 +1583,12 @@ def scrape_betmgm_curlffi(sport):
                 print(f"    First game: {_f0_games[0].get('name',{}).get('value','')}")
         for fix in _mgm_fixtures[:8]:
             fix_id = fix.get("id")
+            fix_name = fix.get("name",{}).get("value","") if isinstance(fix.get("name"),dict) else str(fix.get("name",""))
             if not fix_id: continue
-            game_ids = [str(g.get("id","")) for g in fix.get("games",[]) if g.get("id")]
-            if not game_ids: continue
-            print(f"    Fixture {fix_id}: {len(game_ids)} games")
+            # Skip futures/specials — only want today's games
+            if any(skip in fix_name.lower() for skip in ["futures","special","season","championship","mvp","award","2026/27","2027"]):
+                continue
+            print(f"    Fixture: {fix_name}")
 
             r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
@@ -1579,13 +1598,19 @@ def scrape_betmgm_curlffi(sport):
                 headers=headers, timeout=10)
             if r2.status_code != 200: continue
 
-            for fd in r2.json().get("fixtures", [r2.json()]):
-                for game in fd.get("games", []):
-                    mname = game.get("name", {}).get("value", "")
-                    for res in game.get("results", []):
-                        fname = res.get("name", {}).get("value", "")
-                        odds  = res.get("price", {}).get("americanOdds")
-                        attr  = res.get("attr", "")
+            _mgm_resp = r2.json()
+            _mgm_fxs = _mgm_resp.get("fixtures", [_mgm_resp]) if isinstance(_mgm_resp, dict) else _mgm_resp
+            for fd in _mgm_fxs:
+                # Check both games and optionMarkets
+                all_markets = fd.get("games", []) + fd.get("optionMarkets", [])
+                for game in all_markets:
+                    mname = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else str(game.get("name",""))
+                    results = game.get("results", game.get("options", []))
+                    for res in results:
+                        fname = res.get("name", {}).get("value", "") if isinstance(res.get("name"), dict) else str(res.get("name",""))
+                        price = res.get("price", {})
+                        odds  = price.get("americanOdds") or price.get("americanOdds")
+                        attr  = res.get("attr", "") or res.get("handicap", "")
                         player, sd = fname, "OVER"
                         if " Over " in fname:
                             player, sd = fname.split(" Over ")[0].strip(), "OVER"
