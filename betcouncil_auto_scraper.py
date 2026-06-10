@@ -1353,6 +1353,180 @@ def scrape_parlayplay(sport):
     return props
 
 
+def scrape_fanduel_curlffi(sport):
+    """FanDuel props via curl_cffi — bypasses SSL fingerprinting."""
+    print(f"\n  FanDuel {sport} (curl_cffi):")
+    props = []
+
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        print("    curl_cffi not installed — pip install curl_cffi")
+        return props
+
+    FD_KEY = "FhMFpcPWXMeyZxOx"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://az.sportsbook.fanduel.com",
+        "Referer": "https://az.sportsbook.fanduel.com/",
+        "x-application": FD_KEY,
+    }
+
+    event_type_map = {"NBA": 7522, "MLB": 6, "NHL": 7524, "WNBA": 614, "NFL": 63747}
+    etid = event_type_map.get(sport, 7522)
+
+    try:
+        # Step 1: Get today's events
+        r1 = session.get(
+            f"https://api.sportsbook.fanduel.com/sbapi/content-managed-page",
+            params={"page": "SPORT", "eventTypeId": etid, "_ak": FD_KEY, "timezone": "America/Phoenix"},
+            headers=headers,
+            timeout=15
+        )
+        print(f"    Events: {r1.status_code}")
+
+        if r1.status_code != 200:
+            print(f"    Response: {r1.text[:100]}")
+            return props
+
+        data = r1.json()
+
+        # Extract event IDs
+        attachments = data.get("attachments", {})
+        events = attachments.get("events", {})
+        markets = attachments.get("markets", {})
+        selections_map = attachments.get("selections", {})
+
+        print(f"    Events: {len(events)} | Markets: {len(markets)} | Selections: {len(selections_map)}")
+
+        # Parse markets and selections from attachments
+        for mkt_id, mkt in markets.items():
+            mkt_name = mkt.get("marketName", "")
+            mkt_type = mkt.get("marketType", "")
+
+            # Only player props
+            if not any(kw in mkt_name.lower() for kw in
+                       ["point", "rebound", "assist", "steal", "block", "three",
+                        "strikeout", "hit", "home run", "rbi", "bases",
+                        "goal", "shot", "save", "yard", "reception",
+                        "touchdown", "pass", "rush", "pra", "fantasy",
+                        "pts", "reb", "ast"]):
+                continue
+
+            runners = mkt.get("runners", [])
+            for runner in runners:
+                sel_id = str(runner.get("selectionId", ""))
+                handicap = runner.get("handicap")
+                player_name = runner.get("runnerName", "")
+
+                # Clean player name
+                if " Over " in player_name:
+                    player_name = player_name.split(" Over ")[0].strip()
+                    side = "OVER"
+                elif " Under " in player_name:
+                    player_name = player_name.split(" Under ")[0].strip()
+                    side = "UNDER"
+                else:
+                    side = "OVER"
+
+                # Get odds from selection details
+                odds = "—"
+                sel_detail = selections_map.get(sel_id, {})
+                if sel_detail:
+                    win_odds = sel_detail.get("winRunnerOdds", {})
+                    american = win_odds.get("americanDisplayOdds", {}).get("americanOdds")
+                    if american is not None:
+                        odds = f"{'+' if american > 0 else ''}{int(american)}"
+
+                if not player_name or handicap is None:
+                    continue
+
+                props.append({
+                    "Player": player_name,
+                    "Prop": mkt_name,
+                    "Line": float(handicap),
+                    "Side": side,
+                    "OverOdds": odds if side == "OVER" else "—",
+                    "UnderOdds": odds if side == "UNDER" else "—",
+                    "Book": "FanDuel",
+                    "Sport": sport,
+                    "source": "fanduel_curlffi",
+                })
+
+        # If attachments didn't have enough data, try per-event
+        if not props:
+            event_ids = list(events.keys())[:5]
+            print(f"    Trying per-event for {len(event_ids)} events...")
+            for eid in event_ids:
+                r2 = session.get(
+                    f"https://api.sportsbook.fanduel.com/sbapi/event-page",
+                    params={"_ak": FD_KEY, "eventId": eid,
+                            "tab": "player-props", "useQuickBets": "true"},
+                    headers=headers,
+                    timeout=10
+                )
+                if r2.status_code == 200:
+                    ev_data = r2.json()
+                    ev_attach = ev_data.get("attachments", {})
+                    ev_markets = ev_attach.get("markets", {})
+                    ev_sels = ev_attach.get("selections", {})
+
+                    for mid, m in ev_markets.items():
+                        m_name = m.get("marketName", "")
+                        if not any(kw in m_name.lower() for kw in
+                                   ["point", "rebound", "assist", "strikeout",
+                                    "hit", "home run", "goal", "shot", "yard",
+                                    "touchdown", "pass", "rush"]):
+                            continue
+                        for rn in m.get("runners", []):
+                            rn_name = rn.get("runnerName", "")
+                            hcap = rn.get("handicap")
+                            sid = str(rn.get("selectionId", ""))
+                            if " Over " in rn_name:
+                                pn = rn_name.split(" Over ")[0].strip()
+                                sd = "OVER"
+                            elif " Under " in rn_name:
+                                pn = rn_name.split(" Under ")[0].strip()
+                                sd = "UNDER"
+                            else:
+                                pn = rn_name
+                                sd = "OVER"
+                            od = "—"
+                            sd_det = ev_sels.get(sid, {})
+                            if sd_det:
+                                am = sd_det.get("winRunnerOdds", {}).get("americanDisplayOdds", {}).get("americanOdds")
+                                if am is not None:
+                                    od = f"{'+' if am > 0 else ''}{int(am)}"
+                            if pn and hcap is not None:
+                                props.append({
+                                    "Player": pn, "Prop": m_name,
+                                    "Line": float(hcap), "Side": sd,
+                                    "OverOdds": od if sd == "OVER" else "—",
+                                    "UnderOdds": od if sd == "UNDER" else "—",
+                                    "Book": "FanDuel", "Sport": sport,
+                                    "source": "fanduel_curlffi",
+                                })
+                time.sleep(0.3)
+
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for p in props:
+        key = f"{p['Player']}_{p['Prop']}_{p['Line']}_{p['Side']}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+
+    print(f"    FanDuel props: {len(unique)}")
+    return unique
+
+
 # ── Direct API scrapers (no Playwright needed) ────────────────
 
 def scrape_dk_api(sport, cookies):
@@ -1689,8 +1863,8 @@ def main():
             pick6_props = scrape_dk_pick6(sport, sessions["draftkings"])
             all_props += pick6_props
 
-        if "fanduel" in sessions and (use("fd") or use("fanduel")):
-            fd_props = scrape_fd_api(sport, sessions["fanduel"])
+        if use("fd") or use("fanduel"):
+            fd_props = scrape_fanduel_curlffi(sport)
             all_props += fd_props
 
         if "betmgm" in sessions and (use("mgm") or use("betmgm")):
