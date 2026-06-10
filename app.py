@@ -13320,6 +13320,117 @@ def fetch_caesars_direct(sport):
     return props
 
 
+# ── BetRivers Direct (Kambi backend) ──────────────────────────
+def fetch_betrivers_direct(sport):
+    """Fetch BetRivers player props via Kambi API. No auth needed."""
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        session = requests
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://az.betrivers.com",
+        "Referer": "https://az.betrivers.com/",
+    }
+    props = []
+
+    cache_path = os.path.join(CACHE_DIR, f"betrivers_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    # Step 1: Get today's events from Kambi
+    sport_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NHL": "ice_hockey/nhl",
+                 "WNBA": "basketball/wnba", "NFL": "american_football/nfl"}
+    kambi_sport = sport_map.get(sport, "basketball/nba")
+
+    try:
+        r1 = session.get(
+            f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all/matches.json",
+            params={"lang": "en_US", "market": "US-AZ", "useCombinedSGM": "true"},
+            headers=headers, timeout=15
+        )
+        if r1.status_code != 200:
+            return []
+
+        events = r1.json().get("events", [])
+
+        # Step 2: For each event, get player props
+        for ev in events[:8]:
+            ev_id = ev.get("event", {}).get("id")
+            if not ev_id:
+                continue
+
+            r2 = session.get(
+                f"https://az.betrivers.com/api/service/sportsbook/offering/playerprops",
+                params={"groupId": ev_id, "pageNr": 1, "pageSize": 100, "cageCode": 602},
+                headers=headers, timeout=10
+            )
+            if r2.status_code != 200:
+                continue
+
+            data = r2.json()
+            items = data.get("items", data.get("offerings", []))
+            if isinstance(items, dict):
+                items = list(items.values())
+
+            for item in items:
+                # BetRivers/Kambi prop structure
+                player = (item.get("participant", {}).get("name", "") or
+                          item.get("playerName", "") or
+                          item.get("name", ""))
+                mkt_name = item.get("criterion", {}).get("label", "") or item.get("marketName", "")
+
+                outcomes = item.get("outcomes", item.get("betOffers", []))
+                for oc in outcomes:
+                    label = oc.get("label", "") or oc.get("type", "")
+                    line = oc.get("line") or oc.get("overUnderLine") or oc.get("handicap")
+                    odds_am = oc.get("oddsAmerican") or oc.get("americanOdds")
+                    odds_d = oc.get("odds") or oc.get("decimalOdds")
+
+                    if line is not None:
+                        line = float(str(line).replace("+", "")) / 1000 if float(str(line).replace("+", "")) > 100 else float(str(line).replace("+", ""))
+
+                    side = "OVER"
+                    if "under" in label.lower():
+                        side = "UNDER"
+
+                    odds_str = "—"
+                    if odds_am is not None:
+                        odds_str = f"{'+' if int(odds_am) > 0 else ''}{int(odds_am)}"
+                    elif odds_d is not None:
+                        d = float(odds_d) / 1000 if float(odds_d) > 100 else float(odds_d)
+                        odds_str = f"+{int((d-1)*100)}" if d >= 2 else f"{int(-100/(d-1))}"
+
+                    if player and line is not None:
+                        props.append({
+                            "Player": player, "Prop": mkt_name,
+                            "Line": float(line), "Side": side,
+                            "OverOdds": odds_str if side == "OVER" else "—",
+                            "UnderOdds": odds_str if side == "UNDER" else "—",
+                            "Book": "BetRivers", "Sport": sport,
+                            "source": "betrivers_direct",
+                        })
+
+            time.sleep(0.3)
+
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+
+    except Exception:
+        pass
+
+    return props
+
+
 # ── Feature 1: Practice Participation Tracker ──────────────────
 @st.cache_data(ttl=1800)
 def fetch_nfl_practice_participation():
@@ -13911,6 +14022,13 @@ def load_sport_data(sport):
             if _czr_direct:
                 _direct_props.extend(_czr_direct)
                 st.caption(f"📡 Caesars: {len(_czr_direct)} props loaded directly")
+        except Exception:
+            pass
+        try:
+            _br_direct = fetch_betrivers_direct(sport)
+            if _br_direct:
+                _direct_props.extend(_br_direct)
+                st.caption(f"📡 BetRivers: {len(_br_direct)} props loaded directly")
         except Exception:
             pass
         if _direct_props:
