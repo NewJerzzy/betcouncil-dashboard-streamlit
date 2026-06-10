@@ -1353,6 +1353,93 @@ def scrape_parlayplay(sport):
     return props
 
 
+def scrape_draftkings_curlffi(sport):
+    """DraftKings props via curl_cffi — bypasses SSL fingerprinting."""
+    print(f"\n  DraftKings {sport} (curl_cffi):")
+    props = []
+
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        print("    curl_cffi not installed")
+        return props
+
+    headers = {
+        "User-Agent": UA,
+        "Accept": "application/json",
+        "Origin": "https://sportsbook.draftkings.com",
+        "Referer": "https://sportsbook.draftkings.com/",
+    }
+
+    league_map = {
+        "NBA": "42648", "MLB": "84240", "NHL": "42133",
+        "WNBA": "92483", "NFL": "88670775",
+    }
+    lid = league_map.get(sport, "42648")
+    sid = "16477"
+
+    try:
+        url = "https://sportsbook-nash.draftkings.com/sites/US-SB/api/sportscontent/controldata/league/leagueSubcategory/v1/markets"
+        params = {
+            "isBatchable": "false",
+            "templateVars": lid,
+            "eventsQuery": f"$filter=leagueId eq \'{lid}\' AND clientMetadata/Subcategories/any(s: s/Id eq \'{sid}\')",
+            "marketsQuery": f"$filter=clientMetadata/subCategoryId eq \'{sid}\' AND tags/all(t: t ne \'SportcastBetBuilder\')",
+            "include": "Events",
+            "entity": "events",
+        }
+
+        r = session.get(url, params=params, headers=headers, timeout=15)
+        print(f"    Status: {r.status_code}")
+
+        if r.status_code == 200:
+            data = r.json()
+            markets = data.get("markets", [])
+            selections = data.get("selections", [])
+            sel_by_mkt = {}
+            for sel in selections:
+                mid = sel.get("marketId")
+                if mid:
+                    sel_by_mkt.setdefault(mid, []).append(sel)
+
+            for mkt in markets:
+                mname = mkt.get("name", "")
+                mid = mkt.get("marketId")
+                if not any(kw in mname.lower() for kw in
+                           ["point","rebound","assist","steal","block","three",
+                            "strikeout","hit","home run","goal","shot","yard",
+                            "touchdown","pass","rush","pra","fantasy"]):
+                    continue
+                for sel in sel_by_mkt.get(mid, []):
+                    player = sel.get("name","") or sel.get("label","")
+                    line = sel.get("points") or sel.get("line") or sel.get("handicap")
+                    odds_am = sel.get("displayOdds",{}).get("american","—")
+                    if " Over " in player:
+                        player, sd = player.split(" Over ")[0].strip(), "OVER"
+                    elif " Under " in player:
+                        player, sd = player.split(" Under ")[0].strip(), "UNDER"
+                    else:
+                        sd = "OVER"
+                    if player and line is not None:
+                        props.append({
+                            "Player": player, "Prop": mname,
+                            "Line": float(str(line).replace("+","")),
+                            "Side": sd,
+                            "OverOdds": str(odds_am) if sd == "OVER" else "—",
+                            "UnderOdds": str(odds_am) if sd == "UNDER" else "—",
+                            "Book": "DraftKings", "Sport": sport,
+                            "source": "draftkings_curlffi",
+                        })
+            print(f"    Props: {len(props)}")
+        else:
+            print(f"    Error: {r.text[:100]}")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    return props
+
+
 def scrape_fanduel_curlffi(sport):
     """FanDuel props via curl_cffi — bypasses SSL fingerprinting."""
     print(f"\n  FanDuel {sport} (curl_cffi):")
@@ -1854,8 +1941,8 @@ def main():
         # Browser-based sources
         sport_map_dk = {"NBA":"nba","MLB":"mlb","NHL":"nhl","WNBA":"wnba","NFL":"nfl"}
 
-        if "draftkings" in sessions and (use("dk") or use("draftkings")):
-            dk_props = scrape_dk_api(sport, sessions["draftkings"])
+        if use("dk") or use("draftkings"):
+            dk_props = scrape_draftkings_curlffi(sport)
             all_props += dk_props
 
         # DraftKings Pick6 — DFS props (separate from sportsbook)
