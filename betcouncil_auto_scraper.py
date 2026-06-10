@@ -1440,6 +1440,76 @@ def scrape_draftkings_curlffi(sport):
     return props
 
 
+def scrape_betmgm_curlffi(sport):
+    """BetMGM props via curl_cffi."""
+    print(f"\n  BetMGM {sport} (curl_cffi):")
+    props = []
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        print("    curl_cffi not installed")
+        return props
+
+    MGM_KEY = "N2Q4OGJjODYtODczMi00NjhhLWJlMWItOGY5MDUzMjYwNWM5"
+    headers = {"User-Agent": UA, "Accept": "application/json",
+               "Origin": "https://www.az.betmgm.com", "Referer": "https://www.az.betmgm.com/"}
+    sport_ids = {"NBA": 7, "MLB": 23, "NHL": 19, "WNBA": 7, "NFL": 11}
+    sid = sport_ids.get(sport, 7)
+
+    try:
+        r1 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixtures",
+            params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
+                    "userCountry": "US", "subdivision": "US-AZ", "offerMapping": "Filtered",
+                    "sportIds": sid, "fixtureTypes": "Standard", "state": "Latest",
+                    "skip": 0, "take": 30, "sortBy": "StartDate"},
+            headers=headers, timeout=15)
+        print(f"    Fixtures: {r1.status_code}")
+        if r1.status_code != 200:
+            return props
+
+        for fix in r1.json().get("fixtures", [])[:8]:
+            fix_id = fix.get("id")
+            if not fix_id: continue
+            game_ids = [str(g.get("id","")) for g in fix.get("games",[]) if g.get("id")]
+            if not game_ids: continue
+
+            r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
+                params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
+                        "userCountry": "US", "subdivision": "US-AZ",
+                        "fixtureIds": fix_id, "gameIds": ",".join(game_ids[:10]),
+                        "offerMapping": "Filtered"},
+                headers=headers, timeout=10)
+            if r2.status_code != 200: continue
+
+            for fd in r2.json().get("fixtures", [r2.json()]):
+                for game in fd.get("games", []):
+                    mname = game.get("name", {}).get("value", "")
+                    for res in game.get("results", []):
+                        fname = res.get("name", {}).get("value", "")
+                        odds  = res.get("price", {}).get("americanOdds")
+                        attr  = res.get("attr", "")
+                        player, sd = fname, "OVER"
+                        if " Over " in fname:
+                            player, sd = fname.split(" Over ")[0].strip(), "OVER"
+                        elif " Under " in fname:
+                            player, sd = fname.split(" Under ")[0].strip(), "UNDER"
+                        if not player or not attr: continue
+                        try: line_f = float(str(attr).replace("+",""))
+                        except: continue
+                        od = f"{'+' if odds > 0 else ''}{int(odds)}" if odds else "—"
+                        props.append({"Player": player, "Prop": mname,
+                            "Line": line_f, "Side": sd,
+                            "OverOdds": od if sd == "OVER" else "—",
+                            "UnderOdds": od if sd == "UNDER" else "—",
+                            "Book": "BetMGM", "Sport": sport, "source": "betmgm_curlffi"})
+            time.sleep(0.3)
+        print(f"    Props: {len(props)}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    return props
+
+
 def scrape_fanduel_curlffi(sport):
     """FanDuel props via curl_cffi — bypasses SSL fingerprinting."""
     print(f"\n  FanDuel {sport} (curl_cffi):")
@@ -1954,8 +2024,8 @@ def main():
             fd_props = scrape_fanduel_curlffi(sport)
             all_props += fd_props
 
-        if "betmgm" in sessions and (use("mgm") or use("betmgm")):
-            mgm_props = scrape_mgm_api(sport, sessions["betmgm"])
+        if use("mgm") or use("betmgm"):
+            mgm_props = scrape_betmgm_curlffi(sport)
             all_props += mgm_props
 
         if "caesars" in sessions and (use("czr") or use("caesars")):
