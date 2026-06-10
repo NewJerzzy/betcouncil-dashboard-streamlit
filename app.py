@@ -12986,23 +12986,32 @@ def fetch_draftkings_direct(sport):
                 continue
 
             for sel in sel_by_market.get(mkt_id, []):
-                player = sel.get("name", "") or sel.get("label", "")
+                label = sel.get("label", "")
+                parts = sel.get("participants", [])
+                player = parts[0].get("name","") if parts else ""
+                if not player:
+                    player = label
                 line = sel.get("points") or sel.get("line") or sel.get("handicap")
                 odds_am = sel.get("displayOdds", {}).get("american", "—")
 
-                # Parse Over/Under from name
-                if " Over " in player:
-                    player = player.split(" Over ")[0].strip()
-                    side = "OVER"
-                elif " Under " in player:
-                    player = player.split(" Under ")[0].strip()
+                # Parse Over/Under from label
+                if "Under" in label:
                     side = "UNDER"
-                elif "Over" in (sel.get("outcomeType", "") or sel.get("type", "")):
+                    if not player or player == label:
+                        player = label.replace("Under","").strip()
+                elif "Over" in label:
                     side = "OVER"
-                elif "Under" in (sel.get("outcomeType", "") or sel.get("type", "")):
-                    side = "UNDER"
+                    if not player or player == label:
+                        player = label.replace("Over","").strip()
                 else:
                     side = "OVER"
+                # Extract line from label if not in fields
+                if line is None:
+                    import re as _re
+                    _lm = _re.search(r"([\d.]+)", label)
+                    if _lm:
+                        try: line = float(_lm.group(1))
+                        except: pass
 
                 if player and line is not None:
                     props.append({
