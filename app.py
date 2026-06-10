@@ -13026,6 +13026,152 @@ def fetch_draftkings_direct(sport):
     return props
 
 
+# ── BetMGM Direct (curl_cffi) ─────────────────────────────────
+def fetch_betmgm_direct(sport):
+    """Fetch BetMGM props directly using curl_cffi."""
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    MGM_KEY = "N2Q4OGJjODYtODczMi00NjhhLWJlMWItOGY5MDUzMjYwNWM5"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://www.az.betmgm.com",
+        "Referer": "https://www.az.betmgm.com/",
+    }
+    props = []
+
+    cache_path = os.path.join(CACHE_DIR, f"betmgm_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    # Sport config: sportId for listing fixtures
+    sport_ids = {"NBA": 7, "MLB": 23, "NHL": 19, "WNBA": 7, "NFL": 11}
+    sid = sport_ids.get(sport, 7)
+
+    try:
+        # Step 1: Get today's fixtures
+        r1 = session.get(
+            "https://www.az.betmgm.com/cds-api/bettingoffer/fixtures",
+            params={
+                "x-bwin-accessid": MGM_KEY,
+                "lang": "en-us", "country": "US", "userCountry": "US",
+                "subdivision": "US-AZ", "offerMapping": "Filtered",
+                "sportIds": sid, "fixtureTypes": "Standard",
+                "state": "Latest", "skip": 0, "take": 30, "sortBy": "StartDate",
+            },
+            headers=headers, timeout=15
+        )
+        if r1.status_code != 200:
+            return []
+
+        fixtures = r1.json().get("fixtures", [])
+
+        # Step 2: For each fixture, get player props
+        for fix in fixtures[:8]:
+            fix_id = fix.get("id")
+            if not fix_id:
+                continue
+
+            # Get all game IDs (market categories) for this fixture
+            games = fix.get("games", [])
+            prop_game_ids = []
+            for g in games:
+                gname = (g.get("name", {}).get("value", "") or "").lower()
+                if any(kw in gname for kw in
+                       ["point", "rebound", "assist", "strikeout", "hit",
+                        "home run", "rbi", "goal", "shot", "save",
+                        "yard", "touchdown", "pass", "rush", "pra",
+                        "fantasy", "three", "steal", "block", "bases"]):
+                    gid = g.get("id")
+                    if gid:
+                        prop_game_ids.append(str(gid))
+
+            if not prop_game_ids:
+                # Try fixture-offers without game filter
+                prop_game_ids = [str(g.get("id","")) for g in games if g.get("id")]
+
+            if not prop_game_ids:
+                continue
+
+            r2 = session.get(
+                "https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
+                params={
+                    "x-bwin-accessid": MGM_KEY,
+                    "lang": "en-us", "country": "US", "userCountry": "US",
+                    "subdivision": "US-AZ",
+                    "fixtureIds": fix_id,
+                    "gameIds": ",".join(prop_game_ids[:10]),
+                    "offerMapping": "Filtered",
+                },
+                headers=headers, timeout=10
+            )
+            if r2.status_code != 200:
+                continue
+
+            data2 = r2.json()
+            fixture_data = data2.get("fixtures", [data2]) if isinstance(data2, dict) else data2
+
+            for fd in fixture_data:
+                for game in fd.get("games", []):
+                    mkt_name = game.get("name", {}).get("value", "")
+                    for result in game.get("results", []):
+                        full_name = result.get("name", {}).get("value", "")
+                        odds_d    = result.get("price", {}).get("americanOdds")
+                        attr      = result.get("attr", "")
+
+                        # Parse player name and side from full_name
+                        player = full_name
+                        side = "OVER"
+                        if " Over " in full_name:
+                            player = full_name.split(" Over ")[0].strip()
+                            side = "OVER"
+                        elif " Under " in full_name:
+                            player = full_name.split(" Under ")[0].strip()
+                            side = "UNDER"
+
+                        line = attr or result.get("handicap")
+                        if not player or line is None or line == "":
+                            continue
+
+                        try:
+                            line_f = float(str(line).replace("+", ""))
+                        except (ValueError, TypeError):
+                            continue
+
+                        odds_str = "—"
+                        if odds_d is not None:
+                            odds_str = f"{'+' if odds_d > 0 else ''}{int(odds_d)}"
+
+                        props.append({
+                            "Player": player, "Prop": mkt_name,
+                            "Line": line_f, "Side": side,
+                            "OverOdds": odds_str if side == "OVER" else "—",
+                            "UnderOdds": odds_str if side == "UNDER" else "—",
+                            "Book": "BetMGM", "Sport": sport,
+                            "source": "betmgm_direct",
+                        })
+
+            time.sleep(0.3)
+
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+
+    except Exception:
+        pass
+
+    return props
+
+
 # ── Feature 1: Practice Participation Tracker ──────────────────
 @st.cache_data(ttl=1800)
 def fetch_nfl_practice_participation():
@@ -13603,6 +13749,13 @@ def load_sport_data(sport):
             if _dk_direct:
                 _direct_props.extend(_dk_direct)
                 st.caption(f"📡 DraftKings: {len(_dk_direct)} props loaded directly")
+        except Exception:
+            pass
+        try:
+            _mgm_direct = fetch_betmgm_direct(sport)
+            if _mgm_direct:
+                _direct_props.extend(_mgm_direct)
+                st.caption(f"📡 BetMGM: {len(_mgm_direct)} props loaded directly")
         except Exception:
             pass
         if _direct_props:
