@@ -12908,6 +12908,124 @@ NFL_DEPTH_SNAP_PATH = os.path.join(CACHE_DIR, "nfl_depth_snapshots.json")
 OPENING_LINES_PATH  = os.path.join(CACHE_DIR, "opening_lines.json")
 BOARD_SNAP_PATH     = os.path.join(CACHE_DIR, "board_snapshots.json")
 
+# ── DraftKings Direct (curl_cffi) ─────────────────────────────
+def fetch_draftkings_direct(sport):
+    """Fetch DraftKings props directly using curl_cffi. Fallback when OddsPAPI is down."""
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://sportsbook.draftkings.com",
+        "Referer": "https://sportsbook.draftkings.com/",
+    }
+
+    # League IDs and player prop subcategory IDs
+    league_map = {
+        "NBA":  {"leagueId": "42648", "subCatId": "16477"},
+        "MLB":  {"leagueId": "84240", "subCatId": "16477"},
+        "NHL":  {"leagueId": "42133", "subCatId": "16477"},
+        "WNBA": {"leagueId": "92483", "subCatId": "16477"},
+        "NFL":  {"leagueId": "88670775", "subCatId": "16477"},
+    }
+    cfg = league_map.get(sport, league_map["NBA"])
+    props = []
+
+    cache_path = os.path.join(CACHE_DIR, f"draftkings_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    try:
+        lid = cfg["leagueId"]
+        sid = cfg["subCatId"]
+
+        url = "https://sportsbook-nash.draftkings.com/sites/US-SB/api/sportscontent/controldata/league/leagueSubcategory/v1/markets"
+        params = {
+            "isBatchable": "false",
+            "templateVars": lid,
+            "eventsQuery": f"$filter=leagueId eq '{lid}' AND clientMetadata/Subcategories/any(s: s/Id eq '{sid}')",
+            "marketsQuery": f"$filter=clientMetadata/subCategoryId eq '{sid}' AND tags/all(t: t ne 'SportcastBetBuilder')",
+            "include": "Events",
+            "entity": "events",
+        }
+
+        r = session.get(url, params=params, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+        events = data.get("events", [])
+        markets = data.get("markets", [])
+        selections = data.get("selections", [])
+
+        # Build selection lookup by marketId
+        sel_by_market = {}
+        for sel in selections:
+            mid = sel.get("marketId")
+            if mid:
+                sel_by_market.setdefault(mid, []).append(sel)
+
+        for mkt in markets:
+            mkt_name = mkt.get("name", "")
+            mkt_id = mkt.get("marketId")
+
+            if not any(kw in mkt_name.lower() for kw in
+                       ["point", "rebound", "assist", "steal", "block", "three",
+                        "strikeout", "hit", "home run", "rbi", "bases",
+                        "goal", "shot", "save", "yard", "reception",
+                        "touchdown", "pass", "rush", "pra", "fantasy"]):
+                continue
+
+            for sel in sel_by_market.get(mkt_id, []):
+                player = sel.get("name", "") or sel.get("label", "")
+                line = sel.get("points") or sel.get("line") or sel.get("handicap")
+                odds_am = sel.get("displayOdds", {}).get("american", "—")
+
+                # Parse Over/Under from name
+                if " Over " in player:
+                    player = player.split(" Over ")[0].strip()
+                    side = "OVER"
+                elif " Under " in player:
+                    player = player.split(" Under ")[0].strip()
+                    side = "UNDER"
+                elif "Over" in (sel.get("outcomeType", "") or sel.get("type", "")):
+                    side = "OVER"
+                elif "Under" in (sel.get("outcomeType", "") or sel.get("type", "")):
+                    side = "UNDER"
+                else:
+                    side = "OVER"
+
+                if player and line is not None:
+                    props.append({
+                        "Player": player, "Prop": mkt_name,
+                        "Line": float(str(line).replace("+", "")),
+                        "Side": side,
+                        "OverOdds": str(odds_am) if side == "OVER" else "—",
+                        "UnderOdds": str(odds_am) if side == "UNDER" else "—",
+                        "Book": "DraftKings", "Sport": sport,
+                        "source": "draftkings_direct",
+                    })
+
+        # Cache
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+
+    except Exception:
+        pass
+
+    return props
+
+
 # ── Feature 1: Practice Participation Tracker ──────────────────
 @st.cache_data(ttl=1800)
 def fetch_nfl_practice_participation():
@@ -13471,14 +13589,24 @@ def load_sport_data(sport):
     if oddspapi_props_raw:
         st.session_state[f"oddspapi_props_{sport}"] = oddspapi_props_raw
     elif not oddspapi_props_raw:
-        # OddsPAPI failed — try FanDuel direct via curl_cffi
+        # OddsPAPI failed — try FanDuel + DraftKings direct via curl_cffi
+        _direct_props = []
         try:
             _fd_direct = fetch_fanduel_direct(sport)
             if _fd_direct:
-                st.session_state[f"oddspapi_props_{sport}"] = _fd_direct
-                st.caption(f"📡 FanDuel: {len(_fd_direct)} props loaded directly (OddsPAPI unavailable)")
+                _direct_props.extend(_fd_direct)
+                st.caption(f"📡 FanDuel: {len(_fd_direct)} props loaded directly")
         except Exception:
             pass
+        try:
+            _dk_direct = fetch_draftkings_direct(sport)
+            if _dk_direct:
+                _direct_props.extend(_dk_direct)
+                st.caption(f"📡 DraftKings: {len(_dk_direct)} props loaded directly")
+        except Exception:
+            pass
+        if _direct_props:
+            st.session_state[f"oddspapi_props_{sport}"] = _direct_props
     if public_betting:
         st.session_state["public_betting_data"] = public_betting
     if an_props:
