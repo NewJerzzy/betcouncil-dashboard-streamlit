@@ -5255,6 +5255,140 @@ def scrape_prizepicks_with_gist_fallback(sport):
     return []
 
 
+
+# ── FanDuel Direct (curl_cffi — bypasses SSL fingerprinting) ──
+def fetch_fanduel_direct(sport):
+    """Fetch FanDuel props directly using curl_cffi. Fallback when OddsPAPI is down."""
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    FD_KEY = "FhMFpcPWXMeyZxOx"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://az.sportsbook.fanduel.com",
+        "Referer": "https://az.sportsbook.fanduel.com/",
+        "x-application": FD_KEY,
+    }
+
+    event_type_map = {"NBA": 7522, "MLB": 6, "NHL": 7524, "WNBA": 614, "NFL": 63747}
+    etid = event_type_map.get(sport, 7522)
+    props = []
+
+    cache_path = os.path.join(CACHE_DIR, f"fanduel_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    try:
+        r = session.get(
+            f"https://api.sportsbook.fanduel.com/sbapi/content-managed-page",
+            params={"page": "SPORT", "eventTypeId": etid, "_ak": FD_KEY, "timezone": "America/Phoenix"},
+            headers=headers, timeout=15
+        )
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+        attachments = data.get("attachments", {})
+        events = attachments.get("events", {})
+        markets = attachments.get("markets", {})
+        selections = attachments.get("selections", {})
+
+        for mkt_id, mkt in markets.items():
+            mkt_name = mkt.get("marketName", "")
+            if not any(kw in mkt_name.lower() for kw in
+                       ["point", "rebound", "assist", "steal", "block", "three",
+                        "strikeout", "hit", "home run", "rbi", "bases",
+                        "goal", "shot", "save", "yard", "reception",
+                        "touchdown", "pass", "rush", "pra", "fantasy"]):
+                continue
+
+            for runner in mkt.get("runners", []):
+                rn_name = runner.get("runnerName", "")
+                handicap = runner.get("handicap")
+                sel_id = str(runner.get("selectionId", ""))
+
+                if " Over " in rn_name:
+                    player = rn_name.split(" Over ")[0].strip()
+                    side = "OVER"
+                elif " Under " in rn_name:
+                    player = rn_name.split(" Under ")[0].strip()
+                    side = "UNDER"
+                else:
+                    player = rn_name
+                    side = "OVER"
+
+                odds = "—"
+                sel_det = selections.get(sel_id, {})
+                if sel_det:
+                    am = sel_det.get("winRunnerOdds", {}).get("americanDisplayOdds", {}).get("americanOdds")
+                    if am is not None:
+                        odds = f"{'+' if am > 0 else ''}{int(am)}"
+
+                if player and handicap is not None:
+                    props.append({
+                        "Player": player, "Prop": mkt_name,
+                        "Line": float(handicap), "Side": side,
+                        "OverOdds": odds if side == "OVER" else "—",
+                        "UnderOdds": odds if side == "UNDER" else "—",
+                        "Book": "FanDuel", "Sport": sport,
+                        "source": "fanduel_direct",
+                    })
+
+        # Per-event fallback if content-managed-page didn't have props
+        if not props:
+            for eid in list(events.keys())[:5]:
+                r2 = session.get(
+                    f"https://api.sportsbook.fanduel.com/sbapi/event-page",
+                    params={"_ak": FD_KEY, "eventId": eid, "tab": "player-props"},
+                    headers=headers, timeout=10
+                )
+                if r2.status_code == 200:
+                    ev = r2.json().get("attachments", {})
+                    for mid, m in ev.get("markets", {}).items():
+                        mn = m.get("marketName", "")
+                        if not any(kw in mn.lower() for kw in ["point","rebound","assist","strikeout","hit","home run","goal","shot","yard","touchdown"]):
+                            continue
+                        for rn in m.get("runners", []):
+                            nm = rn.get("runnerName", "")
+                            hc = rn.get("handicap")
+                            if " Over " in nm:
+                                pn, sd = nm.split(" Over ")[0].strip(), "OVER"
+                            elif " Under " in nm:
+                                pn, sd = nm.split(" Under ")[0].strip(), "UNDER"
+                            else:
+                                pn, sd = nm, "OVER"
+                            od = "—"
+                            sd2 = ev.get("selections", {}).get(str(rn.get("selectionId", "")), {})
+                            if sd2:
+                                am2 = sd2.get("winRunnerOdds", {}).get("americanDisplayOdds", {}).get("americanOdds")
+                                if am2 is not None:
+                                    od = f"{'+' if am2 > 0 else ''}{int(am2)}"
+                            if pn and hc is not None:
+                                props.append({"Player": pn, "Prop": mn, "Line": float(hc), "Side": sd,
+                                    "OverOdds": od if sd == "OVER" else "—",
+                                    "UnderOdds": od if sd == "UNDER" else "—",
+                                    "Book": "FanDuel", "Sport": sport, "source": "fanduel_direct"})
+                time.sleep(0.3)
+
+        # Cache results
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+
+    except Exception:
+        pass
+
+    return props
+
 def compute_tier_stats(history):
     stats = {}
     for bet in history:
