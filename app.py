@@ -13172,6 +13172,145 @@ def fetch_betmgm_direct(sport):
     return props
 
 
+# ── Caesars Direct (curl_cffi) ─────────────────────────────────
+def fetch_caesars_direct(sport):
+    """Fetch Caesars props directly via api.americanwagering.com."""
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://sportsbook.caesars.com",
+        "Referer": "https://sportsbook.caesars.com/",
+    }
+    props = []
+
+    cache_path = os.path.join(CACHE_DIR, f"caesars_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    sport_map = {
+        "NBA": "basketball", "MLB": "baseball", "NHL": "icehockey",
+        "WNBA": "basketball", "NFL": "americanfootball",
+    }
+    czr_sport = sport_map.get(sport, "basketball")
+    base_url = f"https://api.americanwagering.com/regions/us/locations/az/brands/czr/sb/v4/sports/{czr_sport}"
+
+    try:
+        # Step 1: Get competitions (league IDs)
+        r1 = session.get(f"{base_url}/competitions", headers=headers, timeout=15)
+        if r1.status_code != 200:
+            return []
+
+        comps = r1.json()
+        comp_list = comps if isinstance(comps, list) else comps.get("competitions", [])
+
+        # Find the right competition for this sport
+        target_names = {
+            "NBA": ["nba"], "MLB": ["mlb", "major league"],
+            "NHL": ["nhl", "national hockey"], "WNBA": ["wnba"],
+            "NFL": ["nfl", "national football"],
+        }
+        targets = target_names.get(sport, ["nba"])
+        comp_id = None
+
+        for comp in comp_list:
+            cname = (comp.get("name", "") or "").lower()
+            cid = comp.get("id", "")
+            if any(t in cname for t in targets):
+                comp_id = cid
+                break
+
+        if not comp_id and comp_list:
+            comp_id = comp_list[0].get("id", "")
+
+        if not comp_id:
+            return []
+
+        # Step 2: Get player props for this competition
+        prop_markets = [
+            "Player Points", "Player Rebounds", "Player Assists",
+            "Player Pts + Reb + Ast", "Player 3-Pointers",
+            "Player Steals", "Player Blocks",
+            "Pitcher Strikeouts", "Player Hits", "Player Home Runs",
+            "Player RBIs", "Player Total Bases",
+            "Player Goals", "Player Shots", "Player Saves",
+            "Player Passing Yards", "Player Rushing Yards",
+            "Player Receiving Yards", "Player Touchdowns",
+        ]
+
+        r2 = session.get(
+            f"{base_url}/competitions/{comp_id}/tabs/SCHEDULE%7CPlayer%20Props",
+            headers=headers, timeout=15
+        )
+
+        if r2.status_code == 200:
+            data = r2.json()
+            events = data.get("events", [])
+            if not events:
+                events = data.get("competitions", [{}])[0].get("events", []) if data.get("competitions") else []
+
+            for event in events:
+                for market in event.get("markets", []):
+                    mname = market.get("name", "")
+                    for sel in market.get("selections", []):
+                        full_name = sel.get("name", "")
+                        odds_d = sel.get("price", {}).get("d") or sel.get("price", {}).get("decimal")
+                        odds_a = sel.get("price", {}).get("a") or sel.get("price", {}).get("american")
+                        handicap = sel.get("points") or sel.get("handicap") or sel.get("line")
+
+                        player = full_name
+                        side = "OVER"
+                        if " Over " in full_name:
+                            player = full_name.split(" Over ")[0].strip()
+                            side = "OVER"
+                        elif " Under " in full_name:
+                            player = full_name.split(" Under ")[0].strip()
+                            side = "UNDER"
+
+                        if not player or handicap is None:
+                            continue
+
+                        try:
+                            line_f = float(str(handicap).replace("+", ""))
+                        except (ValueError, TypeError):
+                            continue
+
+                        odds_str = "—"
+                        if odds_a is not None:
+                            odds_str = f"{'+' if float(odds_a) > 0 else ''}{int(float(odds_a))}"
+                        elif odds_d is not None:
+                            d = float(odds_d)
+                            odds_str = f"+{int((d-1)*100)}" if d >= 2 else f"{int(-100/(d-1))}"
+
+                        props.append({
+                            "Player": player, "Prop": mname,
+                            "Line": line_f, "Side": side,
+                            "OverOdds": odds_str if side == "OVER" else "—",
+                            "UnderOdds": odds_str if side == "UNDER" else "—",
+                            "Book": "Caesars", "Sport": sport,
+                            "source": "caesars_direct",
+                        })
+
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+
+    except Exception:
+        pass
+
+    return props
+
+
 # ── Feature 1: Practice Participation Tracker ──────────────────
 @st.cache_data(ttl=1800)
 def fetch_nfl_practice_participation():
@@ -13756,6 +13895,13 @@ def load_sport_data(sport):
             if _mgm_direct:
                 _direct_props.extend(_mgm_direct)
                 st.caption(f"📡 BetMGM: {len(_mgm_direct)} props loaded directly")
+        except Exception:
+            pass
+        try:
+            _czr_direct = fetch_caesars_direct(sport)
+            if _czr_direct:
+                _direct_props.extend(_czr_direct)
+                st.caption(f"📡 Caesars: {len(_czr_direct)} props loaded directly")
         except Exception:
             pass
         if _direct_props:
