@@ -1440,6 +1440,72 @@ def scrape_draftkings_curlffi(sport):
     return props
 
 
+def scrape_caesars_curlffi(sport):
+    """Caesars props via curl_cffi + api.americanwagering.com."""
+    print(f"\n  Caesars {sport} (curl_cffi):")
+    props = []
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        print("    curl_cffi not installed")
+        return props
+
+    headers = {"User-Agent": UA, "Accept": "application/json",
+               "Origin": "https://sportsbook.caesars.com", "Referer": "https://sportsbook.caesars.com/"}
+    sport_map = {"NBA": "basketball", "MLB": "baseball", "NHL": "icehockey",
+                 "WNBA": "basketball", "NFL": "americanfootball"}
+    czr_sport = sport_map.get(sport, "basketball")
+    base = f"https://api.americanwagering.com/regions/us/locations/az/brands/czr/sb/v4/sports/{czr_sport}"
+
+    try:
+        r1 = session.get(f"{base}/competitions", headers=headers, timeout=15)
+        print(f"    Competitions: {r1.status_code}")
+        if r1.status_code != 200: return props
+
+        comps = r1.json() if isinstance(r1.json(), list) else r1.json().get("competitions", [])
+        targets = {"NBA": "nba", "MLB": "mlb", "NHL": "nhl", "WNBA": "wnba", "NFL": "nfl"}
+        comp_id = None
+        for c in comps:
+            if targets.get(sport, "nba") in c.get("name", "").lower():
+                comp_id = c.get("id"); break
+        if not comp_id and comps:
+            comp_id = comps[0].get("id")
+        if not comp_id: return props
+
+        r2 = session.get(f"{base}/competitions/{comp_id}/tabs/SCHEDULE%7CPlayer%20Props",
+            headers=headers, timeout=15)
+        print(f"    Props: {r2.status_code}")
+        if r2.status_code == 200:
+            data = r2.json()
+            events = data.get("events", [])
+            if not events:
+                events = data.get("competitions", [{}])[0].get("events", []) if data.get("competitions") else []
+            for ev in events:
+                for mkt in ev.get("markets", []):
+                    mname = mkt.get("name", "")
+                    for sel in mkt.get("selections", []):
+                        fname = sel.get("name", "")
+                        odds_a = sel.get("price", {}).get("a") or sel.get("price", {}).get("american")
+                        hcap = sel.get("points") or sel.get("handicap") or sel.get("line")
+                        player, sd = fname, "OVER"
+                        if " Over " in fname: player, sd = fname.split(" Over ")[0].strip(), "OVER"
+                        elif " Under " in fname: player, sd = fname.split(" Under ")[0].strip(), "UNDER"
+                        if not player or hcap is None: continue
+                        try: lf = float(str(hcap).replace("+",""))
+                        except: continue
+                        od = "—"
+                        if odds_a is not None:
+                            od = f"{'+' if float(odds_a)>0 else ''}{int(float(odds_a))}"
+                        props.append({"Player": player, "Prop": mname, "Line": lf, "Side": sd,
+                            "OverOdds": od if sd=="OVER" else "—", "UnderOdds": od if sd=="UNDER" else "—",
+                            "Book": "Caesars", "Sport": sport, "source": "caesars_curlffi"})
+        print(f"    Props: {len(props)}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    return props
+
+
 def scrape_betmgm_curlffi(sport):
     """BetMGM props via curl_cffi."""
     print(f"\n  BetMGM {sport} (curl_cffi):")
@@ -2028,8 +2094,8 @@ def main():
             mgm_props = scrape_betmgm_curlffi(sport)
             all_props += mgm_props
 
-        if "caesars" in sessions and (use("czr") or use("caesars")):
-            czr_props = scrape_czr_api(sport, sessions["caesars"])
+        if use("czr") or use("caesars"):
+            czr_props = scrape_caesars_curlffi(sport)
             all_props += czr_props
 
         if (use("mb") or use("mybookie")):
