@@ -13470,6 +13470,15 @@ def load_sport_data(sport):
         st.session_state[f"oddsapi_props_{sport}"] = odds_api_props_raw
     if oddspapi_props_raw:
         st.session_state[f"oddspapi_props_{sport}"] = oddspapi_props_raw
+    elif not oddspapi_props_raw:
+        # OddsPAPI failed — try FanDuel direct via curl_cffi
+        try:
+            _fd_direct = fetch_fanduel_direct(sport)
+            if _fd_direct:
+                st.session_state[f"oddspapi_props_{sport}"] = _fd_direct
+                st.caption(f"📡 FanDuel: {len(_fd_direct)} props loaded directly (OddsPAPI unavailable)")
+        except Exception:
+            pass
     if public_betting:
         st.session_state["public_betting_data"] = public_betting
     if an_props:
