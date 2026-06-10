@@ -1395,8 +1395,17 @@ def scrape_draftkings_curlffi(sport):
 
         if r.status_code == 200:
             data = r.json()
+            print(f"    Keys: {list(data.keys())[:10]}")
             markets = data.get("markets", [])
             selections = data.get("selections", [])
+            # Also try nested structures
+            if not markets:
+                for key in data:
+                    val = data[key]
+                    if isinstance(val, list) and val and isinstance(val[0], dict):
+                        subkeys = list(val[0].keys())[:6]
+                        print(f"    {key}: list[{len(val)}] keys={subkeys}")
+            print(f"    Markets: {len(markets)} | Selections: {len(selections)}")
             sel_by_mkt = {}
             for sel in selections:
                 mid = sel.get("marketId")
@@ -1461,6 +1470,17 @@ def scrape_caesars_curlffi(sport):
     try:
         r1 = session.get(f"{base}/competitions", headers=headers, timeout=15)
         print(f"    Competitions: {r1.status_code}")
+        if r1.status_code == 403:
+            # Try the player-props endpoint directly
+            print(f"    Trying direct player-props endpoint...")
+            r1b = session.get(
+                f"https://api.americanwagering.com/regions/us/locations/az/brands/czr/sb/v4/sports/{czr_sport}/player-props",
+                headers=headers, timeout=15
+            )
+            print(f"    Direct player-props: {r1b.status_code}")
+            if r1b.status_code == 200:
+                data = r1b.json()
+                print(f"    Keys: {list(data.keys())[:8] if isinstance(data, dict) else f'list[{len(data)}]'}")
         if r1.status_code != 200: return props
 
         comps = r1.json() if isinstance(r1.json(), list) else r1.json().get("competitions", [])
@@ -1532,13 +1552,24 @@ def scrape_betmgm_curlffi(sport):
             headers=headers, timeout=15)
         print(f"    Fixtures: {r1.status_code}")
         if r1.status_code != 200:
+            print(f"    Response: {r1.text[:100]}")
             return props
 
-        for fix in r1.json().get("fixtures", [])[:8]:
+        _mgm_fixtures = r1.json().get("fixtures", [])
+        print(f"    Found {len(_mgm_fixtures)} fixtures")
+        if _mgm_fixtures:
+            _f0 = _mgm_fixtures[0]
+            print(f"    First fixture keys: {list(_f0.keys())[:8]}")
+            _f0_games = _f0.get("games", [])
+            print(f"    First fixture games: {len(_f0_games)}")
+            if _f0_games:
+                print(f"    First game: {_f0_games[0].get('name',{}).get('value','')}")
+        for fix in _mgm_fixtures[:8]:
             fix_id = fix.get("id")
             if not fix_id: continue
             game_ids = [str(g.get("id","")) for g in fix.get("games",[]) if g.get("id")]
             if not game_ids: continue
+            print(f"    Fixture {fix_id}: {len(game_ids)} games")
 
             r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
