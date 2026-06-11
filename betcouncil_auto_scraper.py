@@ -1590,11 +1590,15 @@ def scrape_draftkings_curlffi(sport):
     }
 
     league_map = {
-        "NBA": "42648", "MLB": "84240", "NHL": "42133",
-        "WNBA": "92483", "NFL": "88670775",
+        "NBA":  {"lid": "42648",    "sid": "16477"},
+        "MLB":  {"lid": "84240",    "sid": "16477"},
+        "NHL":  {"lid": "42133",    "sid": "16477"},
+        "WNBA": {"lid": "92483",    "sid": "16477"},
+        "NFL":  {"lid": "88670775", "sid": "16477"},
     }
-    lid = league_map.get(sport, "42648")
-    sid = "16477"
+    cfg_dk = league_map.get(sport, league_map["NBA"])
+    lid = cfg_dk["lid"]
+    sid = cfg_dk["sid"]
 
     try:
         url = "https://sportsbook-nash.draftkings.com/sites/US-SB/api/sportscontent/controldata/league/leagueSubcategory/v1/markets"
