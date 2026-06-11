@@ -1541,7 +1541,7 @@ def scrape_betrivers_curlffi(sport):
             if not ev_id: continue
 
             r2 = session.get("https://az.betrivers.com/api/service/sportsbook/offering/playerprops",
-                params={"groupId": ev_id, "pageNr": 1, "pageSize": 100, "cageCode": 602},
+                params={"groupId": ev_id, "pageNr": 1, "pageSize": 200, "cageCode": 602},
                 headers=headers, timeout=10)
             if r2.status_code != 200: continue
 
@@ -1631,12 +1631,8 @@ def scrape_draftkings_curlffi(sport):
 
             for mkt in markets:
                 mname = mkt.get("name", "")
-                mid = mkt.get("marketId")
-                if not any(kw in mname.lower() for kw in
-                           ["point","rebound","assist","steal","block","three",
-                            "strikeout","hit","home run","goal","shot","yard",
-                            "touchdown","pass","rush","pra","fantasy"]):
-                    continue
+                mid = mkt.get("id") or mkt.get("marketId")
+                # DK subcategory already filters to player props — no keyword filter needed
                 for sel in sel_by_mkt.get(mid, []):
                     label = sel.get("label", "")
                     # Get player name from participants array
@@ -1790,7 +1786,7 @@ def scrape_betrivers_curlffi(sport):
             ev_id = ev.get("event", {}).get("id")
             if not ev_id: continue
             r2 = session.get("https://az.betrivers.com/api/service/sportsbook/offering/playerprops",
-                params={"groupId": ev_id, "pageNr": 1, "pageSize": 100, "cageCode": 602},
+                params={"groupId": ev_id, "pageNr": 1, "pageSize": 200, "cageCode": 602},
                 headers=headers, timeout=10)
             if r2.status_code != 200: continue
             items = r2.json().get("items", r2.json().get("offerings", []))
