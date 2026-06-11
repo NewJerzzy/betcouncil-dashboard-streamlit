@@ -12976,14 +12976,7 @@ def fetch_draftkings_direct(sport):
 
         for mkt in markets:
             mkt_name = mkt.get("name", "")
-            mkt_id = mkt.get("marketId")
-
-            if not any(kw in mkt_name.lower() for kw in
-                       ["point", "rebound", "assist", "steal", "block", "three",
-                        "strikeout", "hit", "home run", "rbi", "bases",
-                        "goal", "shot", "save", "yard", "reception",
-                        "touchdown", "pass", "rush", "pra", "fantasy"]):
-                continue
+            mkt_id = mkt.get("id") or mkt.get("marketId")
 
             for sel in sel_by_market.get(mkt_id, []):
                 label = sel.get("label", "")
