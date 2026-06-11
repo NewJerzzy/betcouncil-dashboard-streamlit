@@ -1640,8 +1640,14 @@ def scrape_draftkings_curlffi(sport):
                     player = parts[0].get("name","") if parts else ""
                     if not player:
                         player = label
-                    line = sel.get("points") or sel.get("line") or sel.get("handicap")
                     odds_am = sel.get("displayOdds",{}).get("american","—")
+                    # Extract line from label (DK puts it in "Over 18.0" format)
+                    import re as _re
+                    line = sel.get("points") or sel.get("line")
+                    if line is None:
+                        _lm = _re.search(r"(\d+\.?\d*)", label)
+                        if _lm:
+                            line = float(_lm.group(1))
                     # Parse Over/Under from label
                     if "Under" in label:
                         sd = "UNDER"
