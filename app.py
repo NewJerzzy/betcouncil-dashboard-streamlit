@@ -16405,9 +16405,15 @@ with tabs[0]:
         # Compute prop-to-prop correlation for parlay picks
         _top_for_corr = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:5]
         if len(_top_for_corr) >= 2:
-            _corr_score, _corr_pairs = compute_parlay_correlation(_top_for_corr)
-            if _corr_score > 0.40:
-                st.warning(f"⚠️ Top picks correlation score: {_corr_score:.2f} — high correlation may inflate perceived edge. Top pair: {_corr_pairs[0]['pair']} ({_corr_pairs[0]['reason']})")
+            try:
+                _corr_score, _corr_pairs = compute_parlay_correlation(_top_for_corr)
+                if _corr_score > 0.40 and _corr_pairs:
+                    _cp = _corr_pairs[0]
+                    _cp_pair = _cp.get("pair","") if isinstance(_cp, dict) else str(_cp)
+                    _cp_reason = _cp.get("reason","") if isinstance(_cp, dict) else ""
+                    st.warning(f"⚠️ Top picks correlation score: {_corr_score:.2f} — high correlation may inflate perceived edge. Top pair: {_cp_pair} ({_cp_reason})")
+            except (TypeError, KeyError, IndexError, ValueError):
+                pass
         if len(top_games) >= 2:
             g_probs = [min(0.65, 0.5 + g.get("best_edge",0.05)) for g in top_games]
             g_combined = parlay_prob(g_probs)
