@@ -574,9 +574,8 @@ def scrape_underdog(sport):
                             pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
                             if not pname or pname == " ":
                                 pname = _pl.get("display_name","") or _pl.get("name","")
-                        if not pname:
-                            # Debug: show what keys are in options
-                            print(f"    Options keys: {list(_opts[0].keys())[:6]}") if not hasattr(parse, '_ud_debug_shown') else None
+                        if not pname and _opts:
+                            print(f"    Options keys: {list(_opts[0].keys())[:6]}")
 
                 # Path 4: appearance_id → appearances → players (legacy)
                 if not pname:
