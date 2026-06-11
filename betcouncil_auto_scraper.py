@@ -530,6 +530,34 @@ def scrape_underdog(sport):
                 if pid:
                     players[pid] = name
 
+            # Build appearances lookup
+            appearances = {}
+            for _a in data.get("appearances", []):
+                _aid = str(_a.get("id", ""))
+                if _aid:
+                    appearances[_aid] = _a
+            print(f"    Players: {len(players)} | Appearances: {len(appearances)}")
+
+            # Debug: trace the chain for first line
+            if lines:
+                _l0 = lines[0]
+                _l0_opts = _l0.get("options", [])
+                print(f"    First line options: {len(_l0_opts)}")
+                if _l0_opts:
+                    _test_aid = str(_l0_opts[0].get("appearance_id",""))
+                    print(f"    opt.appearance_id: {_test_aid[:30]}")
+                    if _test_aid in appearances:
+                        _ta = appearances[_test_aid]
+                        print(f"    → appearance keys: {list(_ta.keys())[:6]}")
+                        # Find player link
+                        for _k in ["player_id","lineup_status_id"]:
+                            _v = str(_ta.get(_k,""))
+                            if _v in players:
+                                print(f"    → player via {_k}: {players[_v]}")
+                                break
+                    elif _test_aid:
+                        print(f"    opt.appearance_id NOT in appearances")
+
             for line in lines:
                 # over_under_lines structure:
                 # {id, stat_value, stat_line, appearance_id}
