@@ -564,18 +564,37 @@ def scrape_underdog(sport):
                              live_event.get("name","") or
                              live_event.get("title",""))
 
-                # Path 3: options[0].player_id → players lookup
+                # Path 3: options[0].appearance_id → appearances → player_id → players
                 if not pname:
                     _opts = line.get("options", [])
                     if _opts and isinstance(_opts, list):
-                        _pid = str(_opts[0].get("player_id", ""))
-                        if _pid and _pid in players:
-                            _pl = players[_pid]
-                            pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
-                            if not pname or pname == " ":
-                                pname = _pl.get("display_name","") or _pl.get("name","")
-                        if not pname and _opts:
-                            print(f"    Options keys: {list(_opts[0].keys())[:6]}")
+                        _opt_aid = str(_opts[0].get("appearance_id", ""))
+                        if _opt_aid and _opt_aid in appearances:
+                            _app = appearances[_opt_aid]
+                            # appearances have lineup_status_id — try as player link
+                            _app_pid = str(_app.get("player_id","") or _app.get("lineup_status_id",""))
+                            if _app_pid and _app_pid in players:
+                                _pl = players[_app_pid]
+                                pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
+                                if not pname or pname == " ":
+                                    pname = _pl.get("display_name","") or _pl.get("name","")
+                            if not pname:
+                                # Try match_id or other appearance fields
+                                for _ak in ["player_id","lineup_status_id","id"]:
+                                    _test_id = str(_app.get(_ak,""))
+                                    if _test_id and _test_id in players:
+                                        _pl2 = players[_test_id]
+                                        pname = (str(_pl2.get("first_name","")) + " " + str(_pl2.get("last_name",""))).strip()
+                                        if pname and pname != " ":
+                                            break
+                        elif _opt_aid:
+                            # appearance_id exists but not in appearances dict — try direct player lookup
+                            if _opt_aid in players:
+                                _pl3 = players[_opt_aid]
+                                pname = (str(_pl3.get("first_name","")) + " " + str(_pl3.get("last_name",""))).strip()
+                        # Get odds from option too
+                        if not val:
+                            val = _opts[0].get("american_price")
 
                 # Path 4: appearance_id → appearances → players (legacy)
                 if not pname:
