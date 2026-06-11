@@ -1877,7 +1877,7 @@ def scrape_betmgm_curlffi(sport):
             r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
                         "userCountry": "US", "subdivision": "US-AZ",
-                        "fixtureIds": fix_id, "gameIds": ",".join(game_ids[:10]),
+                        "fixtureIds": fix_id,
                         "offerMapping": "Filtered"},
                 headers=headers, timeout=10)
             if r2.status_code != 200: continue
