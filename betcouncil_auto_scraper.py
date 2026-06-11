@@ -542,11 +542,12 @@ def scrape_underdog(sport):
                 # appearance_id = empty string (not used)
                 live_stat  = line.get("live_event_stat") or {}
                 live_event = line.get("live_event") or {}
-                stat       = line.get("stat_value","") or line.get("stat","")
-                val        = line.get("stat_line") or line.get("over_under")
+                stat       = line.get("stat_type","") or line.get("stat_value","") or line.get("stat","")
+                val        = line.get("stat_line") or line.get("over_under") or line.get("line_score")
 
-                # Get player name from live_event_stat
+                # Get player name — try multiple paths
                 pname = ""
+                # Path 1: live_event_stat (new format)
                 if isinstance(live_stat, dict):
                     pname = (live_stat.get("player_name","") or
                              live_stat.get("display_name","") or
@@ -557,11 +558,23 @@ def scrape_underdog(sport):
                                 live_stat.get("stat_type","") or
                                 live_stat.get("category",""))
 
-                # Fallback to live_event for player
+                # Path 2: live_event title/name
                 if not pname and isinstance(live_event, dict):
                     pname = (live_event.get("player_name","") or
                              live_event.get("name","") or
                              live_event.get("title",""))
+
+                # Path 3: appearance_id → appearances → players lookup
+                if not pname:
+                    _aid = line.get("appearance_id","")
+                    if _aid and _aid in appearances:
+                        _app = appearances[_aid]
+                        _pid = str(_app.get("player_id","") or _app.get("lineup_status_id",""))
+                        if _pid and _pid in players:
+                            _pl = players[_pid]
+                            pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
+                            if not pname or pname == " ":
+                                pname = _pl.get("display_name","") or _pl.get("name","")
 
                 # Sport filter
                 if isinstance(live_event, dict):
@@ -1526,11 +1539,19 @@ def scrape_betrivers_curlffi(sport):
     kambi_sport = sport_map.get(sport, "basketball/nba")
 
     try:
-        r1 = session.get(
-            f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all.json",
-            params={"lang": "en_US", "market": "US-AZ"},
-            headers=headers, timeout=15)
-        print(f"    Events: {r1.status_code}")
+        import random as _rand
+        for _br_attempt in range(3):
+            r1 = session.get(
+                f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all.json",
+                params={"lang": "en_US", "market": "US-AZ"},
+                headers=headers, timeout=15)
+            print(f"    Events: {r1.status_code}")
+            if r1.status_code == 429:
+                _wait = ((_br_attempt + 1) * 8) + _rand.uniform(2, 5)
+                print(f"    Rate limited — waiting {_wait:.0f}s...")
+                time.sleep(_wait)
+                continue
+            break
         if r1.status_code != 200: return props
 
         events = r1.json().get("events", [])
@@ -1856,8 +1877,28 @@ def scrape_betmgm_curlffi(sport):
             print(f"    Response: {r1.text[:100]}")
             return props
 
-        _mgm_fixtures = r1.json().get("fixtures", [])
-        print(f"    Found {len(_mgm_fixtures)} fixtures")
+        _mgm_fixtures_raw = r1.json().get("fixtures", [])
+        # Filter to US leagues only — BetMGM returns global fixtures
+        US_TEAMS = {"knicks","spurs","celtics","lakers","warriors","heat","bucks","nets",
+            "suns","mavericks","nuggets","clippers","pacers","76ers","cavaliers","hawks",
+            "bulls","grizzlies","pelicans","rockets","thunder","timberwolves","blazers",
+            "kings","raptors","wizards","pistons","hornets","magic","jazz",
+            "yankees","red sox","mets","dodgers","cubs","astros","braves","padres",
+            "phillies","orioles","rays","guardians","twins","mariners","tigers",
+            "diamondbacks","marlins","reds","brewers","royals","pirates","rockies",
+            "cardinals","giants","angels","athletics","nationals","rangers","white sox",
+            "bruins","rangers","maple leafs","avalanche","oilers","panthers","hurricanes",
+            "stars","lightning","devils","islanders","penguins","capitals","predators",
+            "red wings","blue jackets","flames","jets","wild","senators","canadiens",
+            "kraken","blackhawks","ducks","coyotes","blues","sabres","canucks","flyers",
+            "aces","storm","liberty","fever","sky","sun","mystics","dream","mercury",
+            "sparks","lynx","wings","valkyries","unmatched"}
+        _mgm_fixtures = []
+        for _f in _mgm_fixtures_raw:
+            _fn = str(_f.get("name",{}).get("value","") if isinstance(_f.get("name"),dict) else _f.get("name","")).lower()
+            if any(t in _fn for t in US_TEAMS):
+                _mgm_fixtures.append(_f)
+        print(f"    Found {len(_mgm_fixtures_raw)} fixtures, {len(_mgm_fixtures)} US matches")
         if _mgm_fixtures:
             _f0 = _mgm_fixtures[0]
             print(f"    First fixture keys: {list(_f0.keys())[:8]}")
