@@ -1927,11 +1927,11 @@ def scrape_betmgm_curlffi(sport):
                 continue
             print(f"    Fixture: {fix_name}")
 
-            r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
+            r2 = session.get("https://sports.az.betmgm.com/cds-api/bettingoffer/fixture-view",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
                         "userCountry": "US", "subdivision": "US-AZ",
                         "fixtureIds": fix_id,
-                        "offerMapping": "Filtered"},
+                        "layout": "AllMarkets", "marketGroupId": "AllMarkets", "type": "Main"},
                 headers=headers, timeout=10)
             if r2.status_code != 200: continue
 
