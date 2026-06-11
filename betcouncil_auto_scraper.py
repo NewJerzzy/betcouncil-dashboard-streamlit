@@ -1353,6 +1353,68 @@ def scrape_parlayplay(sport):
     return props
 
 
+def scrape_betrivers_curlffi(sport):
+    """BetRivers props via Kambi API — no auth needed."""
+    print(f"\n  BetRivers {sport} (curl_cffi):")
+    props = []
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        print("    curl_cffi not installed")
+        return props
+
+    headers = {"User-Agent": UA, "Accept": "application/json",
+               "Origin": "https://az.betrivers.com", "Referer": "https://az.betrivers.com/"}
+    sport_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NHL": "ice_hockey/nhl",
+                 "WNBA": "basketball/wnba", "NFL": "american_football/nfl"}
+    kambi_sport = sport_map.get(sport, "basketball/nba")
+
+    try:
+        r1 = session.get(
+            f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all.json",
+            params={"lang": "en_US", "market": "US-AZ"},
+            headers=headers, timeout=15)
+        print(f"    Events: {r1.status_code}")
+        if r1.status_code != 200: return props
+
+        events = r1.json().get("events", [])
+        print(f"    Found {len(events)} events")
+
+        for ev in events[:10]:
+            ev_id = ev.get("event", {}).get("id")
+            if not ev_id: continue
+
+            r2 = session.get("https://az.betrivers.com/api/service/sportsbook/offering/playerprops",
+                params={"groupId": ev_id, "pageNr": 1, "pageSize": 100, "cageCode": 602},
+                headers=headers, timeout=10)
+            if r2.status_code != 200: continue
+
+            items = r2.json().get("items", r2.json().get("offerings", []))
+            if isinstance(items, dict): items = list(items.values())
+
+            for item in items:
+                criterion = item.get("criterion", {})
+                prop_label = criterion.get("label", "")
+                for oc in item.get("outcomes", []):
+                    player = oc.get("participantName", "") or oc.get("label", "")
+                    odds_am = oc.get("americanOdds") or oc.get("oddsAmerican")
+                    line = oc.get("line") or oc.get("handicap") or oc.get("overUnder")
+                    sd = "UNDER" if "UNDER" in (oc.get("type","") or "").upper() else "OVER"
+                    if not player or line is None: continue
+                    try: lf = float(str(line).replace("+",""))
+                    except: continue
+                    od = f"{'+' if float(odds_am)>0 else ''}{int(float(odds_am))}" if odds_am else "—"
+                    props.append({"Player": player, "Prop": prop_label, "Line": lf, "Side": sd,
+                        "OverOdds": od if sd=="OVER" else "—", "UnderOdds": od if sd=="UNDER" else "—",
+                        "Book": "BetRivers", "Sport": sport, "source": "betrivers_curlffi"})
+            time.sleep(0.3)
+        print(f"    Props: {len(props)}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    return props
+
+
 def scrape_draftkings_curlffi(sport):
     """DraftKings props via curl_cffi — bypasses SSL fingerprinting."""
     print(f"\n  DraftKings {sport} (curl_cffi):")
@@ -2219,6 +2281,10 @@ def main():
         if use("czr") or use("caesars"):
             czr_props = scrape_caesars_curlffi(sport)
             all_props += czr_props
+
+        if use("br") or use("betrivers"):
+            br_props = scrape_betrivers_curlffi(sport)
+            all_props += br_props
 
         if (use("mb") or use("mybookie")):
             mb_cfg = cfg.get("mybookie", {})
