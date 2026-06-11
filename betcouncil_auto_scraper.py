@@ -1353,6 +1353,161 @@ def scrape_parlayplay(sport):
     return props
 
 
+NOVIG_QUERY = """query EventMarkets_Query($eventId: uuid, $marketVisibleWhere: market_bool_exp) @cached(ttl: 5) {
+  event(where: {id: {_eq: $eventId}}) {
+    id type league scheduled_start status
+    markets(where: $marketVisibleWhere) {
+      id strike type description status volume
+      player { id full_name __typename }
+      outcomes { id index description available altAvailable __typename }
+      __typename
+    }
+    __typename
+  }
+}"""
+
+def scrape_novig(sport):
+    """Novig props via GraphQL + live event ticker. No auth needed."""
+    print(f"\n  Novig {sport} (GraphQL):")
+    props = []
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        session = requests
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": "https://novig.com",
+        "Referer": "https://novig.com/",
+        "User-Agent": UA,
+    }
+
+    league_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "WNBA": "WNBA", "NFL": "NFL"}
+    target_league = league_map.get(sport, "NBA")
+
+    try:
+        # Step 1: Get all events from ticker
+        r1 = session.get(
+            "https://api.novig.us/nbx/v1/live-event-ticker",
+            params={"liveLeagues": "NFL,NBA,MLB,NHL,NCAAF,NCAAB,WNBA"},
+            headers=headers, timeout=15
+        )
+        print(f"    Ticker: {r1.status_code}")
+        if r1.status_code != 200:
+            return props
+
+        ticker = r1.json()
+        all_events = ticker.get("liveEvents", []) + ticker.get("upcomingEvents", [])
+        sport_events = [e for e in all_events if e.get("league") == target_league]
+        print(f"    {target_league} events: {len(sport_events)}")
+
+        # Step 2: Get props for each event via GraphQL
+        for ev in sport_events[:10]:
+            eid = ev.get("id")
+            if not eid:
+                continue
+
+            payload = {
+                "operationName": "EventMarkets_Query",
+                "variables": {
+                    "eventId": eid,
+                    "marketVisibleWhere": {
+                        "_and": [
+                            {"status": {"_eq": "OPEN"}},
+                            {"_or": [
+                                {"is_consensus": {"_eq": True}},
+                                {"outcomes": {"available": {"_is_null": False}}}
+                            ]}
+                        ]
+                    }
+                },
+                "query": NOVIG_QUERY
+            }
+
+            r2 = session.post(
+                "https://api.novig.us/v1/graphql",
+                json=payload, headers=headers, timeout=15
+            )
+            if r2.status_code != 200:
+                continue
+
+            data = r2.json()
+            events = data.get("data", {}).get("event", [])
+
+            for event in events:
+                for mkt in event.get("markets", []):
+                    player_data = mkt.get("player")
+                    if not player_data:
+                        continue  # Skip game lines, only want player props
+
+                    player_name = player_data.get("full_name", "")
+                    prop_type = mkt.get("type", "")
+                    strike = mkt.get("strike")
+                    outcomes = mkt.get("outcomes", [])
+
+                    if not player_name or strike is None:
+                        continue
+
+                    # Parse Over/Under from outcomes
+                    # available = implied probability (not American odds)
+                    over_prob, under_prob = None, None
+                    for oc in outcomes:
+                        desc = oc.get("description", "")
+                        avail = oc.get("available") or oc.get("altAvailable")
+                        if "Over" in desc:
+                            over_prob = avail
+                        elif "Under" in desc:
+                            under_prob = avail
+
+                    # Convert implied prob to American odds
+                    def prob_to_american(p):
+                        if p is None or p <= 0 or p >= 1:
+                            return "\u2014"
+                        if p >= 0.5:
+                            return f"{int(-100 * p / (1 - p))}"
+                        else:
+                            return f"+{int(100 * (1 - p) / p)}"
+
+                    over_odds = prob_to_american(over_prob)
+                    under_odds = prob_to_american(under_prob)
+
+                    # Map prop type to readable name
+                    prop_name_map = {
+                        "POINTS": "Points", "REBOUNDS": "Rebounds", "ASSISTS": "Assists",
+                        "POINTS_REBOUNDS_ASSISTS": "Pts+Rebs+Asts",
+                        "POINTS_REBOUNDS": "Pts+Rebs", "POINTS_ASSISTS": "Pts+Asts",
+                        "REBOUNDS_ASSISTS": "Rebs+Asts",
+                        "THREES": "3-Pt Made", "STEALS": "Steals", "BLOCKS": "Blocks",
+                        "TURNOVERS": "Turnovers", "FANTASY": "Fantasy Score",
+                        "STRIKEOUTS": "Strikeouts", "HITS_ALLOWED": "Hits Allowed",
+                        "EARNED_RUNS": "Earned Runs", "TOTAL_BASES": "Total Bases",
+                        "HITS": "Hits", "RUNS": "Runs", "RBIS": "RBIs",
+                        "HOME_RUNS": "Home Runs", "STOLEN_BASES": "Stolen Bases",
+                        "GOALS": "Goals", "SHOTS": "Shots", "SAVES": "Saves",
+                        "PASSING_YARDS": "Pass Yds", "RUSHING_YARDS": "Rush Yds",
+                        "RECEIVING_YARDS": "Rec Yds", "TOUCHDOWNS": "TDs",
+                    }
+                    prop_name = prop_name_map.get(prop_type, prop_type.replace("_", " ").title())
+
+                    props.append({
+                        "Player": player_name, "Prop": prop_name,
+                        "Line": float(strike), "Side": "OVER",
+                        "OverOdds": over_odds, "UnderOdds": under_odds,
+                        "Book": "Novig", "Sport": sport,
+                        "source": "novig_graphql",
+                    })
+
+            time.sleep(0.5)
+
+        print(f"    Props: {len(props)}")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    return props
+
+
 def scrape_betrivers_curlffi(sport):
     """BetRivers props via Kambi API — no auth needed."""
     print(f"\n  BetRivers {sport} (curl_cffi):")
@@ -2252,6 +2407,10 @@ def main():
         if use("br") or use("betrivers"):
             br_props = scrape_betrivers_curlffi(sport)
             all_props += br_props
+
+        if use("novig") or use("nv"):
+            nv_props = scrape_novig(sport)
+            all_props += nv_props
 
         # ParlayPlay (uses session cookie from config.json)
         if (use("pp_play") or use("parlayplay")) and cfg.get("parlayplay",{}).get("session_cookie"):
