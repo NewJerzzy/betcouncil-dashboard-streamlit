@@ -564,7 +564,21 @@ def scrape_underdog(sport):
                              live_event.get("name","") or
                              live_event.get("title",""))
 
-                # Path 3: appearance_id → appearances → players lookup
+                # Path 3: options[0].player_id → players lookup
+                if not pname:
+                    _opts = line.get("options", [])
+                    if _opts and isinstance(_opts, list):
+                        _pid = str(_opts[0].get("player_id", ""))
+                        if _pid and _pid in players:
+                            _pl = players[_pid]
+                            pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
+                            if not pname or pname == " ":
+                                pname = _pl.get("display_name","") or _pl.get("name","")
+                        if not pname:
+                            # Debug: show what keys are in options
+                            print(f"    Options keys: {list(_opts[0].keys())[:6]}") if not hasattr(parse, '_ud_debug_shown') else None
+
+                # Path 4: appearance_id → appearances → players (legacy)
                 if not pname:
                     _aid = line.get("appearance_id","")
                     if _aid and _aid in appearances:
@@ -573,8 +587,6 @@ def scrape_underdog(sport):
                         if _pid and _pid in players:
                             _pl = players[_pid]
                             pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
-                            if not pname or pname == " ":
-                                pname = _pl.get("display_name","") or _pl.get("name","")
 
                 # Sport filter
                 if isinstance(live_event, dict):
