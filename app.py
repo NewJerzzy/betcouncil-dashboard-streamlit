@@ -17430,6 +17430,8 @@ with tabs[2]:
                         _pct  = _cov_game.get("public_pct",50)
                         _raw  = _cov_game.get("raw_pcts",{})
                         st.caption(f"**Covers Public:**")
+                        if not isinstance(_raw, dict):
+                            _raw = {}
                         for _team, _tpct in _raw.items():
                             st.caption(f"  {_team}: {_tpct}")
                         if _pct >= 75:
