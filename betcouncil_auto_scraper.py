@@ -557,82 +557,56 @@ def scrape_underdog(sport):
                     print(f"    Player sample: id={_p0_id} name={players[_p0_id]}")
 
             for line in lines:
-                # over_under_lines structure:
-                # {id, stat_value, stat_line, appearance_id}
-                # appearance links to appearances array
-                stat  = line.get("stat_value","")
-                val   = line.get("stat_line") or line.get("over_under","")
-                # Underdog confirmed structure from debug:
-                # line keys: id, line_type, live_event, live_event_stat
-                # live_event_stat = dict OR None
-                # appearance_id = empty string (not used)
-                live_stat  = line.get("live_event_stat") or {}
-                live_event = line.get("live_event") or {}
-                stat       = line.get("stat_type","") or line.get("stat_value","") or line.get("stat","")
-                val        = line.get("stat_line") or line.get("over_under") or line.get("line_score")
+                if line.get("status") != "active":
+                    continue
 
-                # Get player name — try multiple paths
+                # CONFIRMED PATH: over_under → appearance_stat → appearance_id
+                ou = line.get("over_under") or {}
+                app_stat = ou.get("appearance_stat") or {} if isinstance(ou, dict) else {}
+                stat_value = line.get("stat_value")
+                stat_type = ""
                 pname = ""
-                # Path 1: live_event_stat (new format)
-                if isinstance(live_stat, dict):
-                    pname = (live_stat.get("player_name","") or
-                             live_stat.get("display_name","") or
-                             live_stat.get("name","") or
-                             live_stat.get("full_name",""))
-                    if not stat:
-                        stat = (live_stat.get("type","") or
-                                live_stat.get("stat_type","") or
-                                live_stat.get("category",""))
 
-                # Path 2: live_event title/name
-                if not pname and isinstance(live_event, dict):
-                    pname = (live_event.get("player_name","") or
-                             live_event.get("name","") or
-                             live_event.get("title",""))
+                if isinstance(app_stat, dict):
+                    _ou_aid = str(app_stat.get("appearance_id", ""))
+                    stat_type = app_stat.get("display_stat", "") or app_stat.get("stat", "")
 
-                # Path 3: options[0].appearance_id → appearances → player_id → players
+                    # Chain: appearance_id → appearances → player_id → players
+                    if _ou_aid and _ou_aid in appearances:
+                        _app = appearances[_ou_aid]
+                        _pid = str(_app.get("player_id", ""))
+                        if _pid and _pid in players:
+                            pname = players[_pid]
+
+                # Fallback: live_event_stat
+                if not pname:
+                    live_stat = line.get("live_event_stat") or {}
+                    if isinstance(live_stat, dict):
+                        pname = (live_stat.get("player_name","") or
+                                 live_stat.get("display_name","") or
+                                 live_stat.get("full_name",""))
+                        if not stat_type:
+                            stat_type = live_stat.get("stat_type","") or live_stat.get("type","")
+
+                # Fallback: options selection_header
                 if not pname:
                     _opts = line.get("options", [])
-                    if _opts and isinstance(_opts, list):
-                        _opt_aid = str(_opts[0].get("appearance_id", ""))
-                        if _opt_aid and _opt_aid in appearances:
-                            _app = appearances[_opt_aid]
-                            # appearances have lineup_status_id — try as player link
-                            _app_pid = str(_app.get("player_id","") or _app.get("lineup_status_id",""))
-                            if _app_pid and _app_pid in players:
-                                _pl = players[_app_pid]
-                                pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
-                                if not pname or pname == " ":
-                                    pname = _pl.get("display_name","") or _pl.get("name","")
-                            if not pname:
-                                # Try match_id or other appearance fields
-                                for _ak in ["player_id","lineup_status_id","id"]:
-                                    _test_id = str(_app.get(_ak,""))
-                                    if _test_id and _test_id in players:
-                                        _pl2 = players[_test_id]
-                                        pname = (str(_pl2.get("first_name","")) + " " + str(_pl2.get("last_name",""))).strip()
-                                        if pname and pname != " ":
-                                            break
-                        elif _opt_aid:
-                            # appearance_id exists but not in appearances dict — try direct player lookup
-                            if _opt_aid in players:
-                                _pl3 = players[_opt_aid]
-                                pname = (str(_pl3.get("first_name","")) + " " + str(_pl3.get("last_name",""))).strip()
-                        # Get odds from option too
-                        if not val:
-                            val = _opts[0].get("american_price")
+                    if _opts:
+                        pname = _opts[0].get("selection_header","") or _opts[0].get("choice_display_name_shorter","")
 
-                # Path 4: appearance_id → appearances → players (legacy)
-                if not pname:
-                    _aid = line.get("appearance_id","")
-                    if _aid and _aid in appearances:
-                        _app = appearances[_aid]
-                        _pid = str(_app.get("player_id","") or _app.get("lineup_status_id",""))
-                        if _pid and _pid in players:
-                            _pl = players[_pid]
-                            pname = (str(_pl.get("first_name","")) + " " + str(_pl.get("last_name",""))).strip()
+                # Get odds from options
+                over_odds = "—"
+                under_odds = "—"
+                for _opt in line.get("options", []):
+                    _choice = (_opt.get("choice","") or _opt.get("choice_display","")).lower()
+                    _price = _opt.get("american_price","—")
+                    if "higher" in _choice or "over" in _choice or "more" in _choice:
+                        over_odds = str(_price)
+                    elif "lower" in _choice or "under" in _choice or "less" in _choice:
+                        under_odds = str(_price)
 
-                # Sport filter
+                # Sport filter via live_event
+                live_event = line.get("live_event") or {}
                 if isinstance(live_event, dict):
                     sport_key = (live_event.get("sport_id","") or
                                  live_event.get("sport","") or
