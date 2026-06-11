@@ -614,7 +614,7 @@ def scrape_underdog(sport):
                     if sport and sport_key and sport[:3] not in sport_key and sport_key not in sport:
                         continue
 
-                if pname and val is not None:
+                if pname and stat_value is not None:
                     props.append({
                         "Player": pname, "Prop": stat,
                         "Line": float(str(val).replace("+","")),
