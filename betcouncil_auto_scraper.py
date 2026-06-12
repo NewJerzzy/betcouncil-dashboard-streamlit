@@ -2008,6 +2008,28 @@ def scrape_betmgm_curlffi(sport):
             else:
                 fx_list = [data]
 
+            # Debug: show what's in fx_list
+            if fx_list:
+                _fd0 = fx_list[0]
+                _fd0_games = _fd0.get("games", [])
+                _fd0_opts = _fd0.get("optionMarkets", [])
+                print(f"      fx_list[0] games: {len(_fd0_games)} | optionMarkets: {len(_fd0_opts)}")
+                for _g in _fd0_games[:5]:
+                    _gn2 = _g.get("name", {}).get("value", "") if isinstance(_g.get("name"), dict) else _g.get("name", "")
+                    _gr = _g.get("results", [])
+                    print(f"        game: '{_gn2}' | results: {len(_gr)}")
+                    if _gr:
+                        _r0 = _gr[0]
+                        _r0n = _r0.get("name", {}).get("value", "") if isinstance(_r0.get("name"), dict) else _r0.get("name", "")
+                        print(f"          result[0]: '{_r0n}' | attr: {_r0.get('attr','')} | odds: {_r0.get('americanOdds','')}")
+                for _o in _fd0_opts[:5]:
+                    _on2 = _o.get("name", {}).get("value", "") if isinstance(_o.get("name"), dict) else _o.get("name", "")
+                    _oo = _o.get("options", [])
+                    print(f"        optMkt: '{_on2}' | options: {len(_oo)}")
+                    if _oo:
+                        _oo0 = _oo[0]
+                        _oo0n = _oo0.get("name", {}).get("value", "") if isinstance(_oo0.get("name"), dict) else _oo0.get("name", "")
+                        print(f"          opt[0]: '{_oo0n}' | attr: {_oo0.get('attr','')} | odds: {_oo0.get('price',{}).get('americanOdds','')}")
             for fd in fx_list:
                 for game in fd.get("games", []):
                     gn = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else game.get("name", "")
