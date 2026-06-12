@@ -1878,8 +1878,18 @@ def scrape_betrivers_curlffi(sport):
     return props
 
 
+
+def _mgm_odds(odds):
+    if odds is None:
+        return "—"
+    try:
+        o = float(odds)
+        return f"+{int(o)}" if o > 0 else str(int(o))
+    except:
+        return "—"
+
 def scrape_betmgm_curlffi(sport):
-    """BetMGM props via curl_cffi."""
+    """BetMGM props via fixture-view + curl_cffi."""
     print(f"\n  BetMGM {sport} (curl_cffi):")
     props = []
     try:
@@ -1895,6 +1905,19 @@ def scrape_betmgm_curlffi(sport):
     sport_ids = {"NBA": 7, "MLB": 23, "NHL": 19, "WNBA": 7, "NFL": 11}
     sid = sport_ids.get(sport, 7)
 
+    US_TEAMS = {"knicks","spurs","celtics","lakers","warriors","heat","bucks","nets",
+        "suns","mavericks","nuggets","clippers","pacers","76ers","cavaliers","hawks",
+        "bulls","grizzlies","pelicans","rockets","thunder","timberwolves","blazers",
+        "kings","raptors","wizards","pistons","hornets","magic","jazz",
+        "yankees","red sox","mets","dodgers","cubs","astros","braves","padres",
+        "phillies","orioles","rays","guardians","twins","mariners","tigers",
+        "diamondbacks","marlins","reds","brewers","royals","pirates","rockies",
+        "cardinals","giants","angels","athletics","nationals","rangers","white sox",
+        "bruins","maple leafs","avalanche","oilers","panthers","hurricanes",
+        "stars","lightning","devils","islanders","penguins","capitals","predators",
+        "aces","storm","liberty","fever","sky","sun","mystics","dream","mercury",
+        "sparks","lynx","wings","valkyries","fire"}
+
     try:
         r1 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixtures",
             params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
@@ -1904,83 +1927,83 @@ def scrape_betmgm_curlffi(sport):
             headers=headers, timeout=15)
         print(f"    Fixtures: {r1.status_code}")
         if r1.status_code != 200:
-            print(f"    Response: {r1.text[:100]}")
             return props
 
-        _mgm_fixtures_raw = r1.json().get("fixtures", [])
-        # Filter to US leagues only — BetMGM returns global fixtures
-        US_TEAMS = {"knicks","spurs","celtics","lakers","warriors","heat","bucks","nets",
-            "suns","mavericks","nuggets","clippers","pacers","76ers","cavaliers","hawks",
-            "bulls","grizzlies","pelicans","rockets","thunder","timberwolves","blazers",
-            "kings","raptors","wizards","pistons","hornets","magic","jazz",
-            "yankees","red sox","mets","dodgers","cubs","astros","braves","padres",
-            "phillies","orioles","rays","guardians","twins","mariners","tigers",
-            "diamondbacks","marlins","reds","brewers","royals","pirates","rockies",
-            "cardinals","giants","angels","athletics","nationals","rangers","white sox",
-            "bruins","rangers","maple leafs","avalanche","oilers","panthers","hurricanes",
-            "stars","lightning","devils","islanders","penguins","capitals","predators",
-            "red wings","blue jackets","flames","jets","wild","senators","canadiens",
-            "kraken","blackhawks","ducks","coyotes","blues","sabres","canucks","flyers",
-            "aces","storm","liberty","fever","sky","sun","mystics","dream","mercury",
-            "sparks","lynx","wings","valkyries","unmatched"}
-        _mgm_fixtures = []
-        for _f in _mgm_fixtures_raw:
-            _fn = str(_f.get("name",{}).get("value","") if isinstance(_f.get("name"),dict) else _f.get("name","")).lower()
-            if any(t in _fn for t in US_TEAMS):
-                _mgm_fixtures.append(_f)
-        print(f"    Found {len(_mgm_fixtures_raw)} fixtures, {len(_mgm_fixtures)} US matches")
-        if _mgm_fixtures:
-            _f0 = _mgm_fixtures[0]
-            print(f"    First fixture keys: {list(_f0.keys())[:8]}")
-            _f0_games = _f0.get("games", [])
-            print(f"    First fixture games: {len(_f0_games)}")
-            if _f0_games:
-                print(f"    First game: {_f0_games[0].get('name',{}).get('value','')}")
-        for fix in _mgm_fixtures[:8]:
-            fix_id = fix.get("id")
-            fix_name = fix.get("name",{}).get("value","") if isinstance(fix.get("name"),dict) else str(fix.get("name",""))
-            if not fix_id: continue
-            # Skip futures/specials — only want today's games
-            if any(skip in fix_name.lower() for skip in ["futures","special","season","championship","mvp","award","2026/27","2027"]):
-                continue
-            print(f"    Fixture: {fix_name}")
+        fixtures = r1.json().get("fixtures", [])
+        us_fixtures = [f for f in fixtures if any(t in str(f.get("name",{}).get("value","") if isinstance(f.get("name"),dict) else f.get("name","")).lower() for t in US_TEAMS)]
+        print(f"    Total: {len(fixtures)} | US: {len(us_fixtures)}")
 
+        for fix in us_fixtures[:8]:
+            fix_id = fix.get("id")
+            if not fix_id:
+                continue
+
+            # Try fixture-view first (has player props)
             r2 = session.get("https://sports.az.betmgm.com/cds-api/bettingoffer/fixture-view",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
                         "userCountry": "US", "subdivision": "US-AZ",
                         "fixtureIds": fix_id,
                         "layout": "AllMarkets", "marketGroupId": "AllMarkets", "type": "Main"},
                 headers=headers, timeout=10)
-            if r2.status_code != 200: continue
+            print(f"    Fixture {fix_id}: view={r2.status_code} ({len(r2.text)} bytes)")
 
-            _mgm_resp = r2.json()
-            _mgm_fxs = _mgm_resp.get("fixtures", [_mgm_resp]) if isinstance(_mgm_resp, dict) else _mgm_resp
-            for fd in _mgm_fxs:
-                # Check both games and optionMarkets
-                all_markets = fd.get("games", []) + fd.get("optionMarkets", [])
-                for game in all_markets:
-                    mname = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else str(game.get("name",""))
-                    results = game.get("results", game.get("options", []))
-                    for res in results:
-                        fname = res.get("name", {}).get("value", "") if isinstance(res.get("name"), dict) else str(res.get("name",""))
-                        price = res.get("price", {})
-                        odds  = price.get("americanOdds") or price.get("americanOdds")
-                        attr  = res.get("attr", "") or res.get("handicap", "")
-                        player, sd = fname, "OVER"
-                        if " Over " in fname:
-                            player, sd = fname.split(" Over ")[0].strip(), "OVER"
-                        elif " Under " in fname:
-                            player, sd = fname.split(" Under ")[0].strip(), "UNDER"
-                        if not player or not attr: continue
-                        try: line_f = float(str(attr).replace("+",""))
+            if r2.status_code != 200:
+                r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
+                    params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
+                            "userCountry": "US", "subdivision": "US-AZ",
+                            "fixtureIds": fix_id, "offerMapping": "Filtered"},
+                    headers=headers, timeout=10)
+                if r2.status_code != 200:
+                    continue
+
+            data = r2.json()
+            # Navigate response structure
+            fx_list = []
+            if "fixtureGroup" in data:
+                fx_list = data["fixtureGroup"].get("fixtures", [])
+            elif "fixtures" in data:
+                fx_list = data["fixtures"]
+            else:
+                fx_list = [data]
+
+            for fd in fx_list:
+                for game in fd.get("games", []):
+                    gn = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else game.get("name", "")
+                    for res in game.get("results", []):
+                        rn = res.get("name", {}).get("value", "") if isinstance(res.get("name"), dict) else res.get("name", "")
+                        odds = res.get("americanOdds") or res.get("price", {}).get("americanOdds")
+                        attr = res.get("attr", "")
+                        pn, sd = rn, "OVER"
+                        if " Over " in rn: pn, sd = rn.split(" Over ")[0].strip(), "OVER"
+                        elif " Under " in rn: pn, sd = rn.split(" Under ")[0].strip(), "UNDER"
+                        pl = res.get("player", {})
+                        if isinstance(pl, dict) and pl.get("fullName"):
+                            pn = pl["fullName"]
+                        if not pn or not attr: continue
+                        try: lf = float(str(attr).replace("+",""))
                         except: continue
-                        od = f"{'+' if odds > 0 else ''}{int(odds)}" if odds else "—"
-                        props.append({"Player": player, "Prop": mname,
-                            "Line": line_f, "Side": sd,
-                            "OverOdds": od if sd == "OVER" else "—",
-                            "UnderOdds": od if sd == "UNDER" else "—",
+                        props.append({"Player": pn, "Prop": gn, "Line": lf, "Side": sd,
+                            "OverOdds": _mgm_odds(odds) if sd=="OVER" else "\u2014",
+                            "UnderOdds": _mgm_odds(odds) if sd=="UNDER" else "\u2014",
                             "Book": "BetMGM", "Sport": sport, "source": "betmgm_curlffi"})
-            time.sleep(0.3)
+                for mkt in fd.get("optionMarkets", []):
+                    mn = mkt.get("name", {}).get("value", "") if isinstance(mkt.get("name"), dict) else mkt.get("name", "")
+                    for opt in mkt.get("options", []):
+                        on = opt.get("name", {}).get("value", "") if isinstance(opt.get("name"), dict) else opt.get("name", "")
+                        odds = opt.get("price", {}).get("americanOdds")
+                        attr = opt.get("attr", "")
+                        pn, sd = on, "OVER"
+                        if " Over " in on: pn, sd = on.split(" Over ")[0].strip(), "OVER"
+                        elif " Under " in on: pn, sd = on.split(" Under ")[0].strip(), "UNDER"
+                        if not pn or not attr: continue
+                        try: lf = float(str(attr).replace("+",""))
+                        except: continue
+                        props.append({"Player": pn, "Prop": mn, "Line": lf, "Side": sd,
+                            "OverOdds": _mgm_odds(odds) if sd=="OVER" else "\u2014",
+                            "UnderOdds": _mgm_odds(odds) if sd=="UNDER" else "\u2014",
+                            "Book": "BetMGM", "Sport": sport, "source": "betmgm_curlffi"})
+            time.sleep(0.5)
+
         print(f"    Props: {len(props)}")
     except Exception as e:
         print(f"    Error: {e}")
