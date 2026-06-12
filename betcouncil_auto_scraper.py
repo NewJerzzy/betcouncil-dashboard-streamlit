@@ -1658,10 +1658,10 @@ def scrape_draftkings_curlffi(sport):
 
     league_map = {
         "NBA":  {"lid": "42648",    "sid": "16477"},
-        "MLB":  {"lid": "84240",    "sid": "16477"},
-        "NHL":  {"lid": "42133",    "sid": "16477"},
-        "WNBA": {"lid": "92483",    "sid": "16477"},
-        "NFL":  {"lid": "88670775", "sid": "16477"},
+        "MLB":  {"lid": "84240",    "sid": "11145"},
+        "NHL":  {"lid": "42133",    "sid": "11601"},
+        "WNBA": {"lid": "92483",    "sid": "11839"},
+        "NFL":  {"lid": "88670775", "sid": "10015"},
     }
     cfg_dk = league_map.get(sport, league_map["NBA"])
     lid = cfg_dk["lid"]
