@@ -20174,9 +20174,27 @@ with tabs[9]:
         _cov_base = _all_games_raw if _all_games_raw else _audit_games
         if _cov_base:
             _n_games    = len(_cov_base)
-            _cov_spread = sum(1 for g in _cov_base if g.get("SpreadEdge", g.get("Spread", g.get("spread","N/A"))) not in ("N/A",None,"",0)) / _n_games
-            _cov_total  = sum(1 for g in _cov_base if g.get("TotalEdge",  g.get("Total",  g.get("total", "N/A"))) not in ("N/A",None,"",0)) / _n_games
-            _cov_ml     = sum(1 for g in _cov_base if g.get("MLEdge",     g.get("HomeML", g.get("Home ML","N/A"))) not in ("N/A",None,"",0)) / _n_games
+            def _has_market(g, mtype):
+                # Check recommendations array for this market type
+                for rec in g.get("recommendations", []):
+                    rt = (rec.get("type","") or "").upper()
+                    if mtype == "ML" and "MONEYLINE" in rt:
+                        return True
+                    if mtype == "SPREAD" and "SPREAD" in rt:
+                        return True
+                    if mtype == "TOTAL" and ("TOTAL" in rt or "OVER" in rt or "UNDER" in rt):
+                        return True
+                # Fallback: check direct keys
+                if mtype == "ML" and g.get("HomeML", g.get("home_ml", g.get("MLEdge","N/A"))) not in ("N/A",None,"",0):
+                    return True
+                if mtype == "SPREAD" and g.get("Spread", g.get("spread", g.get("SpreadEdge","N/A"))) not in ("N/A",None,"",0):
+                    return True
+                if mtype == "TOTAL" and g.get("Total", g.get("total", g.get("TotalEdge","N/A"))) not in ("N/A",None,"",0):
+                    return True
+                return False
+            _cov_spread = sum(1 for g in _cov_base if _has_market(g, "SPREAD")) / _n_games
+            _cov_total  = sum(1 for g in _cov_base if _has_market(g, "TOTAL")) / _n_games
+            _cov_ml     = sum(1 for g in _cov_base if _has_market(g, "ML")) / _n_games
             # MLB has thinner odds coverage (15 games/day, not all markets liquid)
             _spread_threshold = 0.70 if _audit_sport == "MLB" else 0.80
             _total_threshold  = 0.70 if _audit_sport == "MLB" else 0.80
