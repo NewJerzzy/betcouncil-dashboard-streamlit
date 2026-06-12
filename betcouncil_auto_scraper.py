@@ -1982,6 +1982,31 @@ def scrape_betmgm_curlffi(sport):
             if not fx_list:
                 fx_list = [data]
 
+            # Debug: show what's inside
+            if fx_list:
+                _fd0 = fx_list[0]
+                print(f"      fx keys: {list(_fd0.keys())[:10]}")
+                _g = _fd0.get("games", [])
+                _om = _fd0.get("optionMarkets", [])
+                print(f"      games: {len(_g)} | optionMarkets: {len(_om)}")
+                if _g:
+                    _g0 = _g[0]
+                    _g0n = _g0.get("name", {}).get("value", "") if isinstance(_g0.get("name"), dict) else _g0.get("name", "")
+                    _g0r = _g0.get("results", [])
+                    print(f"      game[0]: \'{_g0n}\' results:{len(_g0r)}")
+                    if _g0r:
+                        _r0 = _g0r[0]
+                        _r0n = _r0.get("name", {}).get("value", "") if isinstance(_r0.get("name"), dict) else _r0.get("name", "")
+                        print(f"        result: \'{_r0n}\' attr:{_r0.get(\"attr\",\"\")} odds:{_r0.get(\"americanOdds\",\"\")}")
+                if _om:
+                    _om0 = _om[0]
+                    _om0n = _om0.get("name", {}).get("value", "") if isinstance(_om0.get("name"), dict) else _om0.get("name", "")
+                    _om0o = _om0.get("options", [])
+                    print(f"      optMkt[0]: \'{_om0n}\' options:{len(_om0o)}")
+                    if _om0o:
+                        _oo0 = _om0o[0]
+                        _oo0n = _oo0.get("name", {}).get("value", "") if isinstance(_oo0.get("name"), dict) else _oo0.get("name", "")
+                        print(f"        opt: \'{_oo0n}\' attr:{_oo0.get(\"attr\",\"\")} price:{_oo0.get(\"price\",{}).get(\"americanOdds\",\"\")}")
             for fd in fx_list:
                 for game in fd.get("games", []):
                     gn = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else game.get("name", "")
