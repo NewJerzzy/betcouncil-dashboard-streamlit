@@ -1938,13 +1938,37 @@ def scrape_betmgm_curlffi(sport):
             if not fix_id:
                 continue
 
-            # Try fixture-view first (has player props)
+            # Step 2a: Get available market group IDs
             r2 = session.get("https://sports.az.betmgm.com/cds-api/bettingoffer/fixture-view",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
                         "userCountry": "US", "subdivision": "US-AZ",
                         "fixtureIds": fix_id,
                         "layout": "AllMarkets", "marketGroupId": "AllMarkets", "type": "Main"},
                 headers=headers, timeout=10)
+            # If games empty, try each available marketGroupId
+            if r2.status_code == 200:
+                _init = r2.json()
+                _avail_ids = _init.get("availableMarketGroupIds", [])
+                _fx_obj = _init.get("fixture", {})
+                if not _fx_obj.get("games") and not _fx_obj.get("optionMarkets") and _avail_ids:
+                    print(f"      Available groups: {_avail_ids}")
+                    for _mgid in _avail_ids:
+                        r2b = session.get("https://sports.az.betmgm.com/cds-api/bettingoffer/fixture-view",
+                            params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
+                                    "userCountry": "US", "subdivision": "US-AZ",
+                                    "fixtureIds": fix_id,
+                                    "layout": "AllMarkets", "marketGroupId": _mgid, "type": "Main"},
+                            headers=headers, timeout=10)
+                        if r2b.status_code == 200:
+                            _d2b = r2b.json()
+                            _fx2 = _d2b.get("fixture", {})
+                            _g2 = len(_fx2.get("games", []))
+                            _o2 = len(_fx2.get("optionMarkets", []))
+                            print(f"      Group '{_mgid}': games={_g2} opts={_o2}")
+                            if _g2 > 0 or _o2 > 0:
+                                r2 = r2b  # Use this response
+                                break
+                        time.sleep(0.3)
             print(f"    Fixture {fix_id}: view={r2.status_code} ({len(r2.text)} bytes)")
             if r2.status_code == 200 and len(r2.text) > 5000:
                 _d = r2.json()
