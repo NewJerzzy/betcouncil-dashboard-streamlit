@@ -569,7 +569,7 @@ def scrape_underdog(sport):
 
                 if isinstance(app_stat, dict):
                     _ou_aid = str(app_stat.get("appearance_id", ""))
-                    stat_type = app_stat.get("display_stat", "") or app_stat.get("stat", "")
+                    stat_type = app_stat.get("display_stat", "") or app_stat.get("stat_type", "")
 
                     # Chain: appearance_id → appearances → player_id → players
                     if _ou_aid and _ou_aid in appearances:
@@ -616,7 +616,7 @@ def scrape_underdog(sport):
 
                 if pname and stat_value is not None:
                     props.append({
-                        "Player": pname, "Prop": stat,
+                        "Player": pname, "Prop": stat_type,
                         "Line": float(str(val).replace("+","")),
                         "Side": "OVER", "OverOdds": "—", "UnderOdds": "—",
                         "Book": "Underdog", "Sport": sport,
@@ -1289,7 +1289,7 @@ def parse_pick6_response(data, sport):
                 if pname and line is not None:
                     props.append({
                         "Player":    pname,
-                        "Prop":      stat,
+                        "Prop":      stat_type,
                         "Line":      float(str(line).replace("+","")),
                         "Side":      "OVER",
                         "OverOdds":  "—",
@@ -1374,7 +1374,7 @@ def scrape_parlayplay(sport):
                     if player and line is not None:
                         props.append({
                             "Player": player,
-                            "Prop": stat,
+                            "Prop": stat_type,
                             "Line": float(str(line).replace("+", "")),
                             "Side": "OVER",
                             "OverOdds": "—",
