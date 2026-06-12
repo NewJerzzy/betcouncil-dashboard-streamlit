@@ -1946,6 +1946,45 @@ def scrape_betmgm_curlffi(sport):
                         "layout": "AllMarkets", "marketGroupId": "AllMarkets", "type": "Main"},
                 headers=headers, timeout=10)
             print(f"    Fixture {fix_id}: view={r2.status_code} ({len(r2.text)} bytes)")
+            if r2.status_code == 200 and len(r2.text) > 5000:
+                _d = r2.json()
+                print(f"      Top keys: {list(_d.keys())[:8]}")
+                # Show fixture group structure
+                _fg = _d.get("fixtureGroup", {})
+                if _fg:
+                    print(f"      fixtureGroup keys: {list(_fg.keys())[:6]}")
+                    _fxs = _fg.get("fixtures", [])
+                    print(f"      fixtures inside group: {len(_fxs)}")
+                    if _fxs:
+                        _fx0 = _fxs[0]
+                        print(f"      fixture[0] keys: {list(_fx0.keys())[:10]}")
+                        _games = _fx0.get("games", [])
+                        _opts = _fx0.get("optionMarkets", [])
+                        print(f"      games: {len(_games)} | optionMarkets: {len(_opts)}")
+                        for _g in _games[:3]:
+                            _gn = _g.get("name", {}).get("value", "") if isinstance(_g.get("name"), dict) else _g.get("name", "")
+                            _res = _g.get("results", [])
+                            print(f"        game: {_gn} | results: {len(_res)}")
+                        for _o in _opts[:3]:
+                            _on = _o.get("name", {}).get("value", "") if isinstance(_o.get("name"), dict) else _o.get("name", "")
+                            _oo = _o.get("options", [])
+                            print(f"        optMkt: {_on} | options: {len(_oo)}")
+                else:
+                    # No fixtureGroup — check other structures
+                    _fxs = _d.get("fixtures", [])
+                    if _fxs:
+                        print(f"      fixtures (direct): {len(_fxs)}")
+                        _fx0 = _fxs[0]
+                        print(f"      fixture[0] keys: {list(_fx0.keys())[:10]}")
+                    else:
+                        print(f"      No fixtureGroup or fixtures — dumping top-level:")
+                        for _k, _v in _d.items():
+                            if isinstance(_v, list):
+                                print(f"        {_k}: list[{len(_v)}]")
+                            elif isinstance(_v, dict):
+                                print(f"        {_k}: dict keys={list(_v.keys())[:6]}")
+                            else:
+                                print(f"        {_k}: {str(_v)[:50]}")
 
             if r2.status_code != 200:
                 r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
