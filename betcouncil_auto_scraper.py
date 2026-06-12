@@ -2559,6 +2559,17 @@ def main():
         "mybookie":   ("mb",  login_mybookie),
     }
     for book, (short, login_fn) in login_map.items():
+        # Skip MyBookie Playwright login if session_cookie provided
+        if book == "mybookie" and cfg.get("mybookie", {}).get("session_cookie"):
+            print(f"\nUsing MyBookie session cookie from config (skipping browser login)")
+            mb_cookie_str = cfg["mybookie"]["session_cookie"]
+            mb_cookies = {}
+            for part in mb_cookie_str.split(";"):
+                if "=" in part:
+                    k, v = part.strip().split("=", 1)
+                    mb_cookies[k.strip()] = v.strip()
+            sessions["mybookie"] = mb_cookies
+            continue
         book_cfg = cfg.get(book,{})
         if book_cfg.get("username") and (use(short) or use(book)):
             print(f"\nAuthenticating {book}...")
