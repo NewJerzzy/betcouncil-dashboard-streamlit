@@ -11865,6 +11865,13 @@ Rules:
             timeout=30
         )
 
+        # Log vision attempt result for debugging
+        st.session_state["vision_debug"] = {
+            "status": api_resp.status_code,
+            "key_present": bool(st.secrets.get("ANTHROPIC_API_KEY", "")),
+            "key_prefix": (st.secrets.get("ANTHROPIC_API_KEY", "")[:15] + "...") if st.secrets.get("ANTHROPIC_API_KEY", "") else "MISSING",
+            "body": api_resp.text[:300] if api_resp.status_code != 200 else "OK",
+        }
         if api_resp.status_code == 200:
             content = api_resp.json().get("content", [{}])[0].get("text","")
             st.session_state["ocr_raw_text"] = content
