@@ -1969,6 +1969,16 @@ def scrape_betmgm_curlffi(sport):
             for fd in fx_list:
                 for game in fd.get("games", []):
                     gn = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else game.get("name", "")
+                    gn_upper = gn.upper()
+                    # Skip standard game lines, keep player props
+                    SKIP = {"MONEYLINE","MONEY LINE","MATCH RESULT","DRAW NO BET","HANDICAP RESULT"}
+                    PROP_KW = {"POINT","REBOUND","ASSIST","THREE","BLOCK","STEAL","TURNOVER",
+                               "PRA","FANTASY","STRIKEOUT","HIT","HOME RUN","RBI","BASE",
+                               "GOAL","SHOT","SAVE","YARD","RECEPTION","TOUCHDOWN","PASS","RUSH"}
+                    is_game_line = any(s in gn_upper for s in SKIP)
+                    is_prop = any(k in gn_upper for k in PROP_KW) or "PLAYER" in gn_upper
+                    if is_game_line and not is_prop:
+                        continue
                     for res in game.get("results", []):
                         rn = res.get("name", {}).get("value", "") if isinstance(res.get("name"), dict) else res.get("name", "")
                         odds = res.get("americanOdds") or res.get("price", {}).get("americanOdds")
