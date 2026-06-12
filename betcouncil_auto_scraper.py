@@ -617,7 +617,7 @@ def scrape_underdog(sport):
                 if pname and stat_value is not None:
                     props.append({
                         "Player": pname, "Prop": stat_type,
-                        "Line": float(str(val).replace("+","")),
+                        "Line": float(str(stat_value).replace("+","")),
                         "Side": "OVER", "OverOdds": "—", "UnderOdds": "—",
                         "Book": "Underdog", "Sport": sport,
                         "source": "underdog_auto"
@@ -634,9 +634,9 @@ def scrape_underdog(sport):
                 # Show first player
                 if players:
                     pid = list(players.keys())[0]
-                    print(f"    Players: {len(players)} | Sample ID type: {type(pid).__name__} val: {pid}")
+                    print(f"    Players: {len(players)} | Sample ID type: {type(pid).__name__} stat_value: {pid}")
                     if sample:
-                        print(f"    Line appearance_id type: {type(sample.get('appearance_id','')).__name__} val: {sample.get('appearance_id','')}")
+                        print(f"    Line appearance_id type: {type(sample.get('appearance_id','')).__name__} stat_value: {sample.get('appearance_id','')}")
     except Exception as e:
         print(f"    Error: {e}")
     return props
