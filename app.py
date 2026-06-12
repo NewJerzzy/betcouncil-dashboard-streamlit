@@ -11823,12 +11823,12 @@ def parse_bet_screenshot_ocr(image_bytes):
         api_resp = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
-                "x-api-key":         st.secrets.get("ANTHROPIC_API_KEY",""),
+                "x-api-key":         st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "")),
                 "anthropic-version": "2023-06-01",
                 "content-type":      "application/json",
             },
             json={
-                "model": "claude-opus-4-5",
+                "model": "claude-sonnet-4-6",
                 "max_tokens": 1024,
                 "messages": [{
                     "role": "user",
