@@ -17215,6 +17215,9 @@ with tabs[2]:
                  "line":_alt_line or _g.get("OddsAPI Spread","—"),
                  "edge":_alt_edge,"tier":_alt_tier},
             ]
+            # DEBUG: show ML data availability (remove after diagnosis)
+            if st.session_state.get("show_ml_debug", False):
+                st.caption(f"🔧 {_g.get('matchup','?')}: HomeML={_g.get('HomeML','MISSING')} AwayML={_g.get('AwayML','MISSING')} MLPick={_g.get('MLPick','MISSING')} MLEdge={_g.get('MLEdge','MISSING')} | keys with ML: {[k for k in _g.keys() if 'ml' in k.lower() or 'ML' in k]}")
             # Game card header
             st.markdown(
                 f'<div style="background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
@@ -18160,6 +18163,7 @@ with tabs[4]:
         st.caption("Stable = WR consistent across L30d/L90d/Season. Unstable = hot/cold streaks — reduce optimizer trust for that signal.")
 
     st.markdown("---")
+    st.checkbox("🔧 Show ML debug on Game Lines", key="show_ml_debug", value=False)
     st.markdown("### 🧠 Loss Pattern Analysis")
     _lp = st.session_state.get("loss_patterns", [])
     _resolved_count = len([h for h in st.session_state.get("history",[]) if h.get("outcome") in ("WIN","LOSS")])
