@@ -11892,6 +11892,11 @@ Rules:
             return result
         else:
             # Fallback to pytesseract if Claude fails
+            st.session_state["vision_debug"] = {
+                "status_code": api_resp.status_code,
+                "api_key_truncated": f"{st.secrets.get('ANTHROPIC_API_KEY', '')[:12]}...",
+                "response_body_truncated": api_resp.text[:300] if hasattr(api_resp, 'text') else str(api_resp)[:300]
+            }
             raise Exception(f"Claude API error: {api_resp.status_code}")
 
     except Exception as e:
@@ -18232,6 +18237,14 @@ with tabs[4]:
     st.markdown("### 🏦 Bankroll Intelligence")
     st.caption("Model-aware stake sizing. Adjusts Kelly fraction based on current model confidence.")
     _bi = compute_bankroll_multiplier()
+    if not isinstance(_bi, dict):
+        _bi = {}
+    _bi.setdefault("color", "#FFFFFF")
+    _bi.setdefault("label", "Standard")
+    _bi.setdefault("multiplier", 1.0)
+    _bi.setdefault("kelly_advised", 0.0)
+    _bi.setdefault("reasons_up", [])
+    _bi.setdefault("reasons_down", [])
     if not isinstance(_bi, dict):
         _bi = {}
     _bi.setdefault("color", "#8a9ab0")
