@@ -11865,11 +11865,6 @@ Rules:
             timeout=30
         )
 
-        st.session_state["vision_debug"] = {
-            "status": api_resp.status_code,
-            "key_prefix": (st.secrets.get("ANTHROPIC_API_KEY", "")[:12] + "...") if st.secrets.get("ANTHROPIC_API_KEY", "") else "MISSING",
-            "body": api_resp.text[:300] if api_resp.status_code != 200 else "OK",
-        }
         if api_resp.status_code == 200:
             content = api_resp.json().get("content", [{}])[0].get("text","")
             st.session_state["ocr_raw_text"] = content
@@ -18245,14 +18240,6 @@ with tabs[4]:
     _bi.setdefault("kelly_advised", 0.02)
     _bi.setdefault("reasons_up", [])
     _bi.setdefault("reasons_down", [])
-    if not isinstance(_bi, dict):
-        _bi = {}
-    _bi.setdefault("color", "#8a9ab0")
-    _bi.setdefault("label", "Normal")
-    _bi.setdefault("multiplier", 1.0)
-    _bi.setdefault("kelly_advised", 0.02)
-    _bi.setdefault("reasons_up", [])
-    _bi.setdefault("reasons_down", [])
     st.markdown(
         f'<div style="background:#0a0e14;border:1px solid {_bi["color"]}44;border-radius:8px;padding:0.8rem;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
@@ -19617,9 +19604,6 @@ with tabs[7]:
                     st.success(f"✅ Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
                 else:
                     st.error("Could not read screenshots. Try manual entry below.")
-                    _vd = st.session_state.get("vision_debug", {})
-                    if _vd:
-                        st.warning(f"🔧 Vision debug: status={_vd.get('status','?')} key={_vd.get('key_prefix','?')} body={str(_vd.get('body',''))[:200]}")
         parsed_bets = st.session_state.get("parsed_bets", [])
         if parsed_bets:
             top_c1, top_c2 = st.columns([3, 1])
