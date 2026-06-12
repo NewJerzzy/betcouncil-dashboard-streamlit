@@ -1889,7 +1889,7 @@ def _mgm_odds(odds):
         return "—"
 
 def scrape_betmgm_curlffi(sport):
-    """BetMGM props via fixture-view + curl_cffi."""
+    """BetMGM props via fixture-offers with gameIds from fixtures list."""
     print(f"\n  BetMGM {sport} (curl_cffi):")
     props = []
     try:
@@ -1919,6 +1919,7 @@ def scrape_betmgm_curlffi(sport):
         "sparks","lynx","wings","valkyries","fire"}
 
     try:
+        # Step 1: Get fixtures with their game IDs
         r1 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixtures",
             params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
                     "userCountry": "US", "subdivision": "US-AZ", "offerMapping": "Filtered",
@@ -1930,142 +1931,63 @@ def scrape_betmgm_curlffi(sport):
             return props
 
         fixtures = r1.json().get("fixtures", [])
-        us_fixtures = [f for f in fixtures if any(t in str(f.get("name",{}).get("value","") if isinstance(f.get("name"),dict) else f.get("name","")).lower() for t in US_TEAMS)]
+        us_fixtures = [f for f in fixtures if any(t in str(
+            f.get("name",{}).get("value","") if isinstance(f.get("name"),dict) else f.get("name","")
+        ).lower() for t in US_TEAMS)]
         print(f"    Total: {len(fixtures)} | US: {len(us_fixtures)}")
 
+        # Step 2: For each US fixture, get game IDs then fetch fixture-offers WITH gameIds
         for fix in us_fixtures[:8]:
             fix_id = fix.get("id")
             if not fix_id:
                 continue
 
-            # Step 2a: Get available market group IDs
-            r2 = session.get("https://sports.az.betmgm.com/cds-api/bettingoffer/fixture-view",
+            # Get game IDs from the fixture's optionMarkets and games
+            game_ids = []
+            for g in fix.get("games", []):
+                gid = g.get("id")
+                if gid:
+                    game_ids.append(str(gid))
+            for om in fix.get("optionMarkets", []):
+                omid = om.get("id")
+                if omid:
+                    game_ids.append(str(omid))
+
+            fname = fix.get("name",{}).get("value","") if isinstance(fix.get("name"),dict) else fix.get("name","")
+            print(f"    {fname}: {len(game_ids)} gameIds")
+
+            if not game_ids:
+                continue
+
+            # Hit fixture-offers WITH gameIds
+            r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
                 params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
                         "userCountry": "US", "subdivision": "US-AZ",
                         "fixtureIds": fix_id,
-                        "layout": "AllMarkets", "marketGroupId": "AllMarkets", "type": "Main"},
+                        "gameIds": ",".join(game_ids[:20]),
+                        "offerMapping": "Filtered"},
                 headers=headers, timeout=10)
-            # If games empty, try each available marketGroupId
-            if r2.status_code == 200:
-                _init = r2.json()
-                _avail_ids = _init.get("availableMarketGroupIds", [])
-                _fx_obj = _init.get("fixture", {})
-                if not _fx_obj.get("games") and not _fx_obj.get("optionMarkets") and _avail_ids:
-                    print(f"      Available groups: {_avail_ids}")
-                    for _mgid in _avail_ids:
-                        r2b = session.get("https://sports.az.betmgm.com/cds-api/bettingoffer/fixture-view",
-                            params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
-                                    "userCountry": "US", "subdivision": "US-AZ",
-                                    "fixtureIds": fix_id,
-                                    "layout": "AllMarkets", "marketGroupId": _mgid, "type": "Main"},
-                            headers=headers, timeout=10)
-                        if r2b.status_code == 200:
-                            _d2b = r2b.json()
-                            _fx2 = _d2b.get("fixture", {})
-                            _g2 = len(_fx2.get("games", []))
-                            _o2 = len(_fx2.get("optionMarkets", []))
-                            print(f"      Group '{_mgid}': games={_g2} opts={_o2}")
-                            if _g2 > 0 or _o2 > 0:
-                                r2 = r2b  # Use this response
-                                break
-                        time.sleep(0.3)
-            print(f"    Fixture {fix_id}: view={r2.status_code} ({len(r2.text)} bytes)")
-            if r2.status_code == 200 and len(r2.text) > 5000:
-                _d = r2.json()
-                print(f"      Top keys: {list(_d.keys())[:8]}")
-                # Show fixture group structure
-                _fg = _d.get("fixtureGroup", {})
-                if _fg:
-                    print(f"      fixtureGroup keys: {list(_fg.keys())[:6]}")
-                    _fxs = _fg.get("fixtures", [])
-                    print(f"      fixtures inside group: {len(_fxs)}")
-                    if _fxs:
-                        _fx0 = _fxs[0]
-                        print(f"      fixture[0] keys: {list(_fx0.keys())[:10]}")
-                        _games = _fx0.get("games", [])
-                        _opts = _fx0.get("optionMarkets", [])
-                        print(f"      games: {len(_games)} | optionMarkets: {len(_opts)}")
-                        for _g in _games[:3]:
-                            _gn = _g.get("name", {}).get("value", "") if isinstance(_g.get("name"), dict) else _g.get("name", "")
-                            _res = _g.get("results", [])
-                            print(f"        game: {_gn} | results: {len(_res)}")
-                        for _o in _opts[:3]:
-                            _on = _o.get("name", {}).get("value", "") if isinstance(_o.get("name"), dict) else _o.get("name", "")
-                            _oo = _o.get("options", [])
-                            print(f"        optMkt: {_on} | options: {len(_oo)}")
-                else:
-                    # No fixtureGroup — check other structures
-                    _fxs = _d.get("fixtures", [])
-                    if _fxs:
-                        print(f"      fixtures (direct): {len(_fxs)}")
-                        _fx0 = _fxs[0]
-                        print(f"      fixture[0] keys: {list(_fx0.keys())[:10]}")
-                    else:
-                        print(f"      No fixtureGroup or fixtures — dumping top-level:")
-                        for _k, _v in _d.items():
-                            if isinstance(_v, list):
-                                print(f"        {_k}: list[{len(_v)}]")
-                            elif isinstance(_v, dict):
-                                print(f"        {_k}: dict keys={list(_v.keys())[:6]}")
-                            else:
-                                print(f"        {_k}: {str(_v)[:50]}")
 
             if r2.status_code != 200:
-                r2 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixture-offers",
-                    params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
-                            "userCountry": "US", "subdivision": "US-AZ",
-                            "fixtureIds": fix_id, "offerMapping": "Filtered"},
-                    headers=headers, timeout=10)
-                if r2.status_code != 200:
-                    continue
+                print(f"      offers: {r2.status_code}")
+                continue
 
             data = r2.json()
-            # Navigate response structure
-            # BetMGM fixture-view: data["fixture"] is the root (single dict, not list)
-            fx_list = []
-            if "fixture" in data and isinstance(data["fixture"], dict):
+            print(f"      offers: {r2.status_code} ({len(r2.text)} bytes)")
+
+            # Navigate: fixtures[] or fixture{}
+            fx_list = data.get("fixtures", [])
+            if not fx_list and "fixture" in data:
                 fx_list = [data["fixture"]]
-            elif "fixtureGroup" in data:
-                fx_list = data["fixtureGroup"].get("fixtures", [])
-            elif "fixtures" in data:
-                fx_list = data["fixtures"]
-            else:
+            if not fx_list:
                 fx_list = [data]
 
-            # Debug: show what's in fx_list
-            if fx_list:
-                _fd0 = fx_list[0]
-                _fd0_games = _fd0.get("games", [])
-                _fd0_opts = _fd0.get("optionMarkets", [])
-                print(f"      fx_list[0] games: {len(_fd0_games)} | optionMarkets: {len(_fd0_opts)}")
-                for _g in _fd0_games[:5]:
-                    _gn2 = _g.get("name", {}).get("value", "") if isinstance(_g.get("name"), dict) else _g.get("name", "")
-                    _gr = _g.get("results", [])
-                    print(f"        game: '{_gn2}' | results: {len(_gr)}")
-                    if _gr:
-                        _r0 = _gr[0]
-                        _r0n = _r0.get("name", {}).get("value", "") if isinstance(_r0.get("name"), dict) else _r0.get("name", "")
-                        print(f"          result[0]: '{_r0n}' | attr: {_r0.get('attr','')} | odds: {_r0.get('americanOdds','')}")
-                for _o in _fd0_opts[:5]:
-                    _on2 = _o.get("name", {}).get("value", "") if isinstance(_o.get("name"), dict) else _o.get("name", "")
-                    _oo = _o.get("options", [])
-                    print(f"        optMkt: '{_on2}' | options: {len(_oo)}")
-                    if _oo:
-                        _oo0 = _oo[0]
-                        _oo0n = _oo0.get("name", {}).get("value", "") if isinstance(_oo0.get("name"), dict) else _oo0.get("name", "")
-                        print(f"          opt[0]: '{_oo0n}' | attr: {_oo0.get('attr','')} | odds: {_oo0.get('price',{}).get('americanOdds','')}")
             for fd in fx_list:
                 for game in fd.get("games", []):
                     gn = game.get("name", {}).get("value", "") if isinstance(game.get("name"), dict) else game.get("name", "")
                     gn_upper = gn.upper()
-                    # Skip standard game lines, keep player props
-                    SKIP = {"MONEYLINE","MONEY LINE","MATCH RESULT","DRAW NO BET","HANDICAP RESULT"}
-                    PROP_KW = {"POINT","REBOUND","ASSIST","THREE","BLOCK","STEAL","TURNOVER",
-                               "PRA","FANTASY","STRIKEOUT","HIT","HOME RUN","RBI","BASE",
-                               "GOAL","SHOT","SAVE","YARD","RECEPTION","TOUCHDOWN","PASS","RUSH"}
-                    is_game_line = any(s in gn_upper for s in SKIP)
-                    is_prop = any(k in gn_upper for k in PROP_KW) or "PLAYER" in gn_upper
-                    if is_game_line and not is_prop:
+                    SKIP = {"MONEYLINE","MONEY LINE","MATCH RESULT","DRAW NO BET"}
+                    if any(s in gn_upper for s in SKIP):
                         continue
                     for res in game.get("results", []):
                         rn = res.get("name", {}).get("value", "") if isinstance(res.get("name"), dict) else res.get("name", "")
@@ -2080,12 +2002,18 @@ def scrape_betmgm_curlffi(sport):
                         if not pn or not attr: continue
                         try: lf = float(str(attr).replace("+",""))
                         except: continue
+                        od = _mgm_odds(odds)
                         props.append({"Player": pn, "Prop": gn, "Line": lf, "Side": sd,
-                            "OverOdds": _mgm_odds(odds) if sd=="OVER" else "\u2014",
-                            "UnderOdds": _mgm_odds(odds) if sd=="UNDER" else "\u2014",
+                            "OverOdds": od if sd=="OVER" else "\u2014",
+                            "UnderOdds": od if sd=="UNDER" else "\u2014",
                             "Book": "BetMGM", "Sport": sport, "source": "betmgm_curlffi"})
+
                 for mkt in fd.get("optionMarkets", []):
                     mn = mkt.get("name", {}).get("value", "") if isinstance(mkt.get("name"), dict) else mkt.get("name", "")
+                    mn_upper = mn.upper()
+                    SKIP2 = {"MONEYLINE","MONEY LINE","MATCH RESULT","DRAW NO BET","SPREAD"}
+                    if any(s in mn_upper for s in SKIP2):
+                        continue
                     for opt in mkt.get("options", []):
                         on = opt.get("name", {}).get("value", "") if isinstance(opt.get("name"), dict) else opt.get("name", "")
                         odds = opt.get("price", {}).get("americanOdds")
@@ -2096,10 +2024,12 @@ def scrape_betmgm_curlffi(sport):
                         if not pn or not attr: continue
                         try: lf = float(str(attr).replace("+",""))
                         except: continue
+                        od = _mgm_odds(odds)
                         props.append({"Player": pn, "Prop": mn, "Line": lf, "Side": sd,
-                            "OverOdds": _mgm_odds(odds) if sd=="OVER" else "\u2014",
-                            "UnderOdds": _mgm_odds(odds) if sd=="UNDER" else "\u2014",
+                            "OverOdds": od if sd=="OVER" else "\u2014",
+                            "UnderOdds": od if sd=="UNDER" else "\u2014",
                             "Book": "BetMGM", "Sport": sport, "source": "betmgm_curlffi"})
+
             time.sleep(0.5)
 
         print(f"    Props: {len(props)}")
