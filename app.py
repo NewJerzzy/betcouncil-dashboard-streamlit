@@ -18232,6 +18232,10 @@ with tabs[4]:
     st.markdown("### 🏦 Bankroll Intelligence")
     st.caption("Model-aware stake sizing. Adjusts Kelly fraction based on current model confidence.")
     _bi = compute_bankroll_multiplier()
+    if not isinstance(_bi, dict): _bi = {}
+    _bi.setdefault("color", "#8a9ab0")
+    _bi.setdefault("label", "Normal")
+    _bi.setdefault("multiplier", 1.0)
     if not isinstance(_bi, dict):
         _bi = {}
     _bi.setdefault("color", "#8a9ab0")
