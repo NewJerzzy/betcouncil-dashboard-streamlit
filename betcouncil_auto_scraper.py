@@ -1997,8 +1997,11 @@ def scrape_betmgm_curlffi(sport):
 
             data = r2.json()
             # Navigate response structure
+            # BetMGM fixture-view: data["fixture"] is the root (single dict, not list)
             fx_list = []
-            if "fixtureGroup" in data:
+            if "fixture" in data and isinstance(data["fixture"], dict):
+                fx_list = [data["fixture"]]
+            elif "fixtureGroup" in data:
                 fx_list = data["fixtureGroup"].get("fixtures", [])
             elif "fixtures" in data:
                 fx_list = data["fixtures"]
