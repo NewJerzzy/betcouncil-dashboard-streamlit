@@ -1975,11 +1975,38 @@ def scrape_betmgm_curlffi(sport):
             data = r2.json()
             print(f"      offers: {r2.status_code} ({len(r2.text)} bytes)")
 
-            # Navigate: fixtures[] or fixture{}
-            fx_list = data.get("fixtures", [])
-            if not fx_list and "fixture" in data:
+            # Navigate: fixtureOffers (fixture-offers response) or fixture/fixtures
+            fx_list = []
+            if "fixtureOffers" in data:
+                # fixtureOffers is the actual data — may be list of game groups
+                fo = data["fixtureOffers"]
+                if isinstance(fo, list):
+                    fx_list = fo
+                elif isinstance(fo, dict):
+                    fx_list = [fo]
+                print(f"      fixtureOffers: {len(fx_list)} items")
+                if fx_list:
+                    _fo0 = fx_list[0]
+                    print(f"      fo[0] keys: {list(_fo0.keys())[:10]}")
+                    if isinstance(_fo0, dict):
+                        for _fk, _fv in _fo0.items():
+                            if isinstance(_fv, list) and _fv:
+                                print(f"        {_fk}: list[{len(_fv)}]")
+                                if isinstance(_fv[0], dict):
+                                    print(f"          [0] keys: {list(_fv[0].keys())[:8]}")
+                                    # Show first item name/value
+                                    _n = _fv[0].get("name", "")
+                                    if isinstance(_n, dict):
+                                        _n = _n.get("value", "")
+                                    if _n:
+                                        print(f"          [0] name: {_n}")
+                            elif isinstance(_fv, dict):
+                                print(f"        {_fk}: dict keys={list(_fv.keys())[:6]}")
+            elif "fixture" in data and isinstance(data["fixture"], dict):
                 fx_list = [data["fixture"]]
-            if not fx_list:
+            elif "fixtures" in data:
+                fx_list = data["fixtures"]
+            else:
                 fx_list = [data]
 
             # Debug: show structure
