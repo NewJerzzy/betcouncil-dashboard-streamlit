@@ -11877,7 +11877,12 @@ def _parse_pp_ocr_inline(raw_text):
         entry["payout"] = _payout if i == 0 else 0.0
         entry["slip_type"] = _slip_type
         entry["overall_result"] = _overall
-        entry["outcome"] = entry.get("result", _overall)
+        # Header "Win" overrides OCR x-marker noise
+        if _header_win:
+            entry["result"] = "WIN"
+            entry["outcome"] = "WIN"
+        else:
+            entry["outcome"] = entry.get("result", _overall)
         out.append(entry)
     return out
 
