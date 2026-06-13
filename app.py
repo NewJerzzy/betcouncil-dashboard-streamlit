@@ -11827,7 +11827,8 @@ def _parse_pp_ocr_inline(raw_text):
     _slip_type = ""
     _tm = re.search(r"(\d+-Pick\s+(?:Flex|Power)\s+Play)", raw_text, re.I)
     if _tm: _slip_type = _tm.group(1)
-    _wm = re.search(r"\$([\d.]+)\s+to\s+(?:pay|win)", raw_text, re.I)
+    _wm = re.search(r"\$([\d.]+)\s+to\s+(?:pay|win|Play)", raw_text, re.I)
+    if not _wm: _wm = re.search(r"Play\s+\$([\d.]+)", raw_text, re.I)
     if _wm: _wager = float(_wm.group(1))
     _pm = re.search(r"(?:pay|win)\s+\$([\d.]+)", raw_text, re.I)
     if _pm: _payout = float(_pm.group(1))
@@ -11888,7 +11889,7 @@ def _parse_pp_ocr_inline(raw_text):
         if line == 0 and len(nums) >= 2:
             actual, line = float(nums[0]), float(nums[1])
         # Swap if needed (line should be the target, actual the result)
-        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 and line == 0 else "UNKNOWN")
+        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "LOSS")
         prop_clean = "Strikeouts" if pm.group(1).lower() == "ks" else pm.group(1)
         metrics.append({"prop": prop_clean, "actual": actual, "line": line, "result": result, "side": "OVER"})
 
@@ -11904,6 +11905,9 @@ def _parse_pp_ocr_inline(raw_text):
         if _header_win:
             entry["result"] = "WIN"
             entry["outcome"] = "WIN"
+        elif entry.get("result") == "UNKNOWN" or not entry.get("result"):
+            entry["result"] = _overall
+            entry["outcome"] = _overall
         else:
             entry["outcome"] = entry.get("result", _overall)
         out.append(entry)
