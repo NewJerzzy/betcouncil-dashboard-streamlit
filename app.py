@@ -12104,7 +12104,7 @@ Rules:
                         line_val = float(sn.group(2))
                         prop_clean = stat_map.get(prop_raw, prop_raw)
                         # Detect win/loss from OCR text
-                        _leg_result = "UNKNOWN"
+                        _leg_result = "LOSS"
                         _actual = 0.0
                         _p_lower = pname.lower()
                         _full = " ".join(blocks).lower()
@@ -12119,7 +12119,7 @@ Rules:
                             if _nv == line_val and _ni > 0:
                                 _actual = _all_nums[_ni-1]
                                 break
-                        if _leg_result == "UNKNOWN" and _actual > 0:
+                        if _leg_result == "LOSS" and _actual > 0:
                             _leg_result = "WIN" if _actual >= line_val else "LOSS"
                         result.append({"player": pname, "prop": prop_clean,
                             "line": line_val, "side": "OVER",
@@ -12132,7 +12132,7 @@ Rules:
             for _item in result:
                 if "result" in _item and "outcome" not in _item:
                     _item["outcome"] = _item["result"]
-                _item.setdefault("outcome", "UNKNOWN")
+                _item.setdefault("outcome", "LOSS")
                 _item.setdefault("actual", 0.0)
             return result
         except Exception as e2:
