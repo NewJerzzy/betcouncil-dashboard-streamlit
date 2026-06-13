@@ -11845,7 +11845,7 @@ def _parse_pp_ocr_inline(raw_text):
         else:
             res = "WIN" if actual_v >= line_v else "LOSS"
         prop_clean = "Strikeouts" if prop_raw.strip().lower() == "ks" else prop_raw.strip()
-        metrics.append({"prop": prop_clean, "actual": actual_v, "line": line_v, "result": res, "side": "OVER"})
+        metrics.append({"prop": prop_clean, "actual": actual_v, "line": line_v, "result": res, "outcome": res, "side": "OVER"})
     out = []
     for i in range(min(len(players), len(metrics))):
         out.append({**players[i], **metrics[i]})
@@ -12062,6 +12062,12 @@ Rules:
             # Method 4: Full single-line OCR parser
             if not result:
                 result = _parse_pp_ocr_inline(raw)
+            # Bridge result→outcome for UI
+            for _item in result:
+                if "result" in _item and "outcome" not in _item:
+                    _item["outcome"] = _item["result"]
+                _item.setdefault("outcome", "UNKNOWN")
+                _item.setdefault("actual", 0.0)
             return result
         except Exception as e2:
             st.session_state.setdefault("errors",[]).append({
