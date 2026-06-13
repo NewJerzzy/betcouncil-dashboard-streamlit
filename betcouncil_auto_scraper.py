@@ -605,30 +605,8 @@ def scrape_underdog(sport):
                     elif "lower" in _choice or "under" in _choice or "less" in _choice:
                         under_odds = str(_price)
 
-                # Sport filter — check live_event first, then appearance match_type
-                _skip_sport = False
-                live_event = line.get("live_event") or {}
-                sport_key = ""
-                if isinstance(live_event, dict):
-                    sport_key = (live_event.get("sport_id","") or
-                                 live_event.get("sport","") or
-                                 live_event.get("league","") or "").upper()
-                # Fallback: check appearance match_type
-                if not sport_key:
-                    ou = line.get("over_under") or {}
-                    app_stat = ou.get("appearance_stat") or {} if isinstance(ou, dict) else {}
-                    if isinstance(app_stat, dict):
-                        _ou_aid = str(app_stat.get("appearance_id", ""))
-                        if _ou_aid and _ou_aid in appearances:
-                            _app = appearances[_ou_aid]
-                            sport_key = str(_app.get("match_type", "")).upper()
-                if sport and sport_key:
-                    sport_upper = sport.upper()
-                    # Map match_types to standard sport codes
-                    if sport_upper not in sport_key and sport_upper[:3] not in sport_key:
-                        _skip_sport = True
-                if _skip_sport:
-                    continue
+                # Sport filter removed from inline loop (was breaking appearance_id lookup)
+                # Filtering happens after collection below
 
                 if pname and stat_value is not None:
                     props.append({
