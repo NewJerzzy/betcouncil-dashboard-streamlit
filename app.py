@@ -12057,6 +12057,10 @@ Rules:
                             "line": line_val, "side": "OVER",
                             "sport": psport, "book": "PrizePicks",
                             "result": _leg_result, "actual": _actual})
+            # Method 4: Full single-line OCR parser
+            if not result:
+                result = _parse_pp_ocr_inline(raw)
+            return result
         except Exception as e2:
             st.session_state.setdefault("errors",[]).append({
                 "time":   datetime.now().strftime("%H:%M:%S"),
