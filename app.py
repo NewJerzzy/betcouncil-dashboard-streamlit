@@ -13426,6 +13426,66 @@ def fetch_betrivers_direct(sport):
     return props
 
 
+# ── Betr Direct (GraphQL, no auth) ────────────────────────────
+def fetch_betr_direct(sport):
+    """Fetch Betr Picks props via GraphQL — no auth needed."""
+    league_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "WNBA": "WNBA", "NFL": "NFL"}
+    league = league_map.get(sport)
+    if not league:
+        return []
+    query = """query LeagueUpcomingEvents($league: League!) {
+      getUpcomingEventsV2(league: $league) {
+        name sport league
+        ... on TeamVersusEvent {
+          teams { name players { firstName lastName position
+            projections { name label value currentValue type }
+          }}
+        }
+        ... on IndividualVersusEvent {
+          players { firstName lastName position
+            projections { name label value currentValue type }
+          }
+        }
+      }
+    }"""
+    props = []
+    try:
+        import requests as _req
+        r = _req.post("https://api.fantasy.betr.app/graphql",
+            json={"operationName": "LeagueUpcomingEvents", "query": query, "variables": {"league": league}},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=12)
+        if r.status_code != 200:
+            return []
+        events = r.json().get("data", {}).get("getUpcomingEventsV2", []) or []
+        for event in events:
+            matchup = event.get("name", "")
+            players_list = []
+            for team in (event.get("teams") or []):
+                if team and team.get("players"):
+                    players_list.extend(team["players"])
+            if event.get("players"):
+                players_list.extend(event["players"])
+            for player in players_list:
+                if not player:
+                    continue
+                full_name = f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
+                for proj in (player.get("projections") or []):
+                    if not proj:
+                        continue
+                    line = proj.get("currentValue") or proj.get("value") or 0
+                    prop_name = proj.get("label") or proj.get("name") or ""
+                    props.append({
+                        "Player": full_name, "Prop": prop_name,
+                        "Line": float(line) if line else 0.0,
+                        "Side": "OVER", "OverOdds": "\u2014", "UnderOdds": "\u2014",
+                        "Book": "Betr", "Sport": sport, "source": "betr_direct",
+                    })
+    except Exception:
+        pass
+    return props
+
+
 # ── BetRivers Direct (Kambi backend) ──────────────────────────
 def fetch_betrivers_direct(sport):
     """Fetch BetRivers player props via Kambi API. No auth needed."""
@@ -14135,6 +14195,13 @@ def load_sport_data(sport):
             if _br_direct:
                 _direct_props.extend(_br_direct)
                 st.caption(f"📡 BetRivers: {len(_br_direct)} props loaded directly")
+        except Exception:
+            pass
+        try:
+            _betr_direct = fetch_betr_direct(sport)
+            if _betr_direct:
+                _direct_props.extend(_betr_direct)
+                st.caption(f"\U0001f4e1 Betr: {len(_betr_direct)} props loaded directly")
         except Exception:
             pass
         if _direct_props:
