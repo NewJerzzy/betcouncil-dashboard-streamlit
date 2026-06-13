@@ -12013,6 +12013,10 @@ Rules:
                 except Exception:
                     pass
             st.session_state["ocr_raw_text"] = raw
+            # Run full parser FIRST (handles win/loss correctly)
+            result = _parse_pp_ocr_inline(raw)
+            if result:
+                return result
             SPORTS_RE = r"(TENNIS|PGA|GOLF|NBA|WNBA|MLB|NHL|NFL|SOCCER|MMA|UFC|SOC|CFB)"
             result = []
             blocks = [b.strip() for b in raw.split("\n") if b.strip()]
