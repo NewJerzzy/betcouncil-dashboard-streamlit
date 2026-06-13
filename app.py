@@ -11828,22 +11828,24 @@ def _parse_pp_ocr_inline(raw_text):
         pname = " ".join(pwords).strip()
         if pname:
             players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
+    # Clean OCR noise from metrics
+    met_chunk = re.sub(r"&\s*'t", "", met_chunk)
     met_chunk = re.sub(r"\b\d+/\d+\b", "", met_chunk)
-    prop_matches = list(re.finditer(props_re, met_chunk, re.I))
+    met_chunk = re.sub(r"\s+", " ", met_chunk).strip()
+    # Pattern: (x)? line prop_name actual
+    met_pattern = r"(x)?\s*(\d+\.?\d*)\s+(.+?)\s+(\d+)"
+    met_matches = re.findall(met_pattern, met_chunk, re.I)
     metrics = []
-    for idx, pm in enumerate(prop_matches):
-        lead_start = prop_matches[idx-1].end() if idx > 0 else 0
-        lead = met_chunk[lead_start:pm.start()].strip()
-        has_x = "x" in lead.lower().split()
-        trail_end = prop_matches[idx+1].start() if idx+1 < len(prop_matches) else len(met_chunk)
-        trail = met_chunk[pm.end():trail_end].strip()
-        nums = re.findall(r"\d+(?:\.\d+)?", trail)
-        actual, line = 0.0, 0.0
-        if len(nums) >= 2: actual, line = float(nums[0]), float(nums[1])
-        elif len(nums) == 1: actual = float(nums[0])
-        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "UNKNOWN")
-        prop_clean = "Strikeouts" if pm.group(1).lower() == "ks" else pm.group(1)
-        metrics.append({"prop": prop_clean, "actual": actual, "line": line, "result": result, "side": "OVER"})
+    for mm in met_matches:
+        loss_marker, line_str, prop_raw, actual_str = mm
+        line_v = float(line_str)
+        actual_v = float(actual_str)
+        if loss_marker and loss_marker.lower() == "x":
+            res = "LOSS"
+        else:
+            res = "WIN" if actual_v >= line_v else "LOSS"
+        prop_clean = "Strikeouts" if prop_raw.strip().lower() == "ks" else prop_raw.strip()
+        metrics.append({"prop": prop_clean, "actual": actual_v, "line": line_v, "result": res, "side": "OVER"})
     out = []
     for i in range(min(len(players), len(metrics))):
         out.append({**players[i], **metrics[i]})
