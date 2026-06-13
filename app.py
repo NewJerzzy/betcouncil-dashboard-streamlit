@@ -20134,9 +20134,9 @@ with tabs[9]:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
     # Pinnacle
-    _betr_props = [p for p in st.session_state.get(f"oddspapi_props_{sport}", []) if p.get("source") == "betr_direct"]
-    if _betr_props:
-        _src_statuses.append({"Source": "Betr Picks", "Status": f"\U0001f7e2 {len(_betr_props)} props", "Action": "None"})
+    _betr_count = sum(len([p for p in st.session_state.get(f"oddspapi_props_{s}", []) if p.get("source") == "betr_direct"]) for s in ["NBA","MLB","NHL","WNBA","NFL"])
+    if _betr_count > 0:
+        _src_statuses.append({"Source": "Betr Picks", "Status": f"\U0001f7e2 {_betr_count} props", "Action": "None"})
     else:
         _src_statuses.append({"Source": "Betr Picks", "Status": "\u26aa Not loaded yet", "Action": "Load a board"})
     _pin = st.session_state.get(f"pinnacle_{st.session_state.get('last_sport','NBA')}", {})
