@@ -11800,6 +11800,56 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 # MODULE: OCR — bet screenshot parsing
 # Future extraction target: ocr.py
 # ═══════════════════════════════════════════════════════════
+
+def _parse_pp_ocr_inline(raw_text):
+    """Parse single-line OCR text from PrizePicks screenshots. All sports."""
+    target_sports = ["NBA","WNBA","MLB","NHL","NFL","TENNIS","WORLD CUP","PGA","MMA","UFC","SOCCER"]
+    skip_pos = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD","SP","RP","OF","SS","1B","2B","3B"}
+    known_props = ["Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds","Ks","Total Bases","Hits","RBIs","Fantasy Score","Passes Attempted","Goals","Saves","Break Points Won","Strokes","Aces","Total Games Won","Goalie Saves","H+R+RBI","Runs"]
+    sports_re = r"\b(" + "|".join(re.escape(s) for s in target_sports) + r")\b"
+    props_re = r"\b(" + "|".join(re.escape(p) for p in known_props) + r")\b"
+    parts = re.split(r"\bFinal\b", raw_text, flags=re.I)
+    if len(parts) < 2: return []
+    id_chunk = " Final ".join(parts[:-1]).strip()
+    met_chunk = parts[-1].strip()
+    sport_matches = list(re.finditer(sports_re, id_chunk))
+    if not sport_matches: return []
+    players = []
+    for idx, m in enumerate(sport_matches):
+        sport = m.group(1)
+        prev_end = sport_matches[idx-1].end() if idx > 0 else 0
+        seg = id_chunk[prev_end:m.start()].strip()
+        seg = re.sub(r".*?play\s+\$[\d.]+\s+to\s+(?:pay|win)\s+\$[\d.]+\s+leaderboard\s+show\s+details\s+[vVxX]?", "", seg, flags=re.I).strip()
+        words = seg.split()
+        pwords = []
+        for w in words:
+            if w.upper() in skip_pos or w in ("@","vs","VS") or w.isdigit(): break
+            pwords.append(w)
+        pname = " ".join(pwords).strip()
+        if pname:
+            players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
+    met_chunk = re.sub(r"\b\d+/\d+\b", "", met_chunk)
+    prop_matches = list(re.finditer(props_re, met_chunk, re.I))
+    metrics = []
+    for idx, pm in enumerate(prop_matches):
+        lead_start = prop_matches[idx-1].end() if idx > 0 else 0
+        lead = met_chunk[lead_start:pm.start()].strip()
+        has_x = "x" in lead.lower().split()
+        trail_end = prop_matches[idx+1].start() if idx+1 < len(prop_matches) else len(met_chunk)
+        trail = met_chunk[pm.end():trail_end].strip()
+        nums = re.findall(r"\d+(?:\.\d+)?", trail)
+        actual, line = 0.0, 0.0
+        if len(nums) >= 2: actual, line = float(nums[0]), float(nums[1])
+        elif len(nums) == 1: actual = float(nums[0])
+        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "UNKNOWN")
+        prop_clean = "Strikeouts" if pm.group(1).lower() == "ks" else pm.group(1)
+        metrics.append({"prop": prop_clean, "actual": actual, "line": line, "result": result, "side": "OVER"})
+    out = []
+    for i in range(min(len(players), len(metrics))):
+        out.append({**players[i], **metrics[i]})
+    return out
+
+
 def parse_bet_screenshot_ocr(image_bytes):
     """
     Parse PrizePicks/prop screenshots using Claude vision API.
