@@ -11804,7 +11804,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 def _parse_pp_ocr_inline(raw_text):
     """Parse single-line OCR text from PrizePicks screenshots. All sports."""
     target_sports = ["NBA","WNBA","MLB","NHL","NFL","TENNIS","WORLD CUP","PGA","MMA","UFC","SOCCER"]
-    skip_pos = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD","SP","RP","OF","SS","1B","2B","3B"}
+    skip_pos = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD","SP","RP","OF","SS","1B","2B","3B","IF"}
     known_props = ["Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds","Ks","Total Bases","Hits","RBIs","Fantasy Score","Passes Attempted","Goals","Saves","Break Points Won","Strokes","Aces","Total Games Won","Goalie Saves","H+R+RBI","Runs"]
     sports_re = r"\b(" + "|".join(re.escape(s) for s in target_sports) + r")\b"
     props_re = r"\b(" + "|".join(re.escape(p) for p in known_props) + r")\b"
@@ -11813,8 +11813,15 @@ def _parse_pp_ocr_inline(raw_text):
     id_chunk = " Final ".join(parts[:-1]).strip()
     met_chunk = parts[-1].strip()
     _wager = 0.0
+    _payout = 0.0
+    _slip_type = ""
+    _type_m = re.search(r"(\d+-Pick\s+(?:Flex|Power)\s+Play)", raw_text, re.I)
+    if _type_m: _slip_type = _type_m.group(1)
     _wm = re.search(r"\$([\d.]+)\s+to\s+(?:pay|win)", raw_text, re.I)
     if _wm: _wager = float(_wm.group(1))
+    _pm = re.search(r"(?:pay|win)\s+\$([\d.]+)", raw_text, re.I)
+    if _pm: _payout = float(_pm.group(1))
+    _header_win = "win" in raw_text[:raw_text.lower().find("final") if "final" in raw_text.lower() else 100].lower()
     sport_matches = list(re.finditer(sports_re, id_chunk))
     if not sport_matches: return []
     players = []
@@ -11863,8 +11870,15 @@ def _parse_pp_ocr_inline(raw_text):
         prop_clean = "Strikeouts" if prop_raw.strip().lower() == "ks" else prop_raw.strip()
         metrics.append({"prop": prop_clean, "actual": actual_v, "line": line_v, "result": res, "outcome": res, "side": "OVER"})
     out = []
+    _overall = "WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS"
     for i in range(min(len(players), len(metrics))):
-        out.append({**players[i], **metrics[i]})
+        entry = {**players[i], **metrics[i]}
+        entry["wager"] = _wager if i == 0 else 0.0
+        entry["payout"] = _payout if i == 0 else 0.0
+        entry["slip_type"] = _slip_type
+        entry["overall_result"] = _overall
+        entry["outcome"] = entry.get("result", _overall)
+        out.append(entry)
     return out
 
 
