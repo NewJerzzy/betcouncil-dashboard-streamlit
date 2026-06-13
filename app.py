@@ -11958,6 +11958,35 @@ Rules:
                                 "line": line_val, "side": "OVER", "sport": sport, "book": "PrizePicks"})
                     except Exception:
                         continue
+            # Method 3: PrizePicks format — "{Name} {pos} {SPORT} {matchup}" pattern
+            if not result:
+                full_text = " ".join(blocks)
+                import re as _re3
+                # Split on sport tags to find player chunks
+                SPORTS3 = ["MLB", "NBA", "NHL", "WNBA", "NFL", "PGA", "TENNIS", "MMA", "UFC", "SOC", "CFB"]
+                # Find all "Name pos SPORT" patterns
+                pattern3 = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+(?:[pcgs]|PG|SG|SF|PF|C|G|F|G-F|SP|RP|P|OF|SS|1B|2B|3B)\s+(" + "|".join(SPORTS3) + r")"
+                matches3 = list(_re3.finditer(pattern3, full_text))
+                # Find all stat+line patterns like "Ks 4.5" or "Points 25.5"
+                stat_map = {"Ks": "Strikeouts", "Pts": "Points", "Reb": "Rebounds",
+                    "Ast": "Assists", "Hits": "Hits", "HR": "Home Runs",
+                    "RBI": "RBIs", "TB": "Total Bases", "SO": "Strikeouts",
+                    "Strokes": "Strokes", "Saves": "Saves", "Goals": "Goals",
+                    "SOG": "Shots on Goal", "Fantasy": "Fantasy Score",
+                    "Break Points Won": "Break Points Won"}
+                stat_nums = list(_re3.finditer(r"(Ks|Pts|Reb|Ast|Hits|HR|RBI|TB|SO|Strokes|Saves|Goals|SOG|Fantasy|Points|Rebounds|Assists|Strikeouts|Total Bases|Break Points Won)\s+([\d.]+)", full_text, _re3.I))
+                for pi, pm in enumerate(matches3):
+                    pname = pm.group(1).strip()
+                    psport = pm.group(2).upper()
+                    # Match with corresponding stat
+                    if pi < len(stat_nums):
+                        sn = stat_nums[pi]
+                        prop_raw = sn.group(1)
+                        line_val = float(sn.group(2))
+                        prop_clean = stat_map.get(prop_raw, prop_raw)
+                        result.append({"player": pname, "prop": prop_clean,
+                            "line": line_val, "side": "OVER",
+                            "sport": psport, "book": "PrizePicks"})
             return result
         except Exception as e2:
             st.session_state.setdefault("errors",[]).append({
