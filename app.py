@@ -19684,6 +19684,11 @@ with tabs[7]:
                     st.success(f"✅ Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
                 else:
                     st.error("Could not read screenshots. Try manual entry below.")
+                    _vd = st.session_state.get("vision_debug", {})
+                    if _vd:
+                        st.warning(f"Vision API: status={_vd.get('status_code','?')} | key={_vd.get('api_key_truncated','?')} | {str(_vd.get('response_body_truncated',''))[:200]}")
+                    else:
+                        st.warning("Vision API was never called. Check ANTHROPIC_API_KEY in Streamlit secrets.")
         parsed_bets = st.session_state.get("parsed_bets", [])
         if parsed_bets:
             top_c1, top_c2 = st.columns([3, 1])
