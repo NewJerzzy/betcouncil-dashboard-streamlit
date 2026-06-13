@@ -11812,6 +11812,9 @@ def _parse_pp_ocr_inline(raw_text):
     if len(parts) < 2: return []
     id_chunk = " Final ".join(parts[:-1]).strip()
     met_chunk = parts[-1].strip()
+    _wager = 0.0
+    _wm = re.search(r"\$([\d.]+)\s+to\s+(?:pay|win)", raw_text, re.I)
+    if _wm: _wager = float(_wm.group(1))
     sport_matches = list(re.finditer(sports_re, id_chunk))
     if not sport_matches: return []
     players = []
@@ -11820,14 +11823,27 @@ def _parse_pp_ocr_inline(raw_text):
         prev_end = sport_matches[idx-1].end() if idx > 0 else 0
         seg = id_chunk[prev_end:m.start()].strip()
         seg = re.sub(r".*?play\s+\$[\d.]+\s+to\s+(?:pay|win)\s+\$[\d.]+\s+leaderboard\s+show\s+details\s+[vVxX]?", "", seg, flags=re.I).strip()
+        BANNED = {"FINAL","LEADERBOARD","SHOW","DETAILS","PLAY","FLEX","POWER","WIN","PAY","VS","V",
+            "ARI","ATL","BAL","BOS","CHC","CWS","CHI","CIN","CLE","COL","DET","HOU","KC","LAA","LAD",
+            "MIA","MIL","MIN","NYM","NYY","OAK","PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH",
+            "BKN","CHA","DAL","DEN","GSW","IND","MEM","NOP","OKC","ORL","PHX","POR","SAC","SAS","UTA","WAS",
+            "CON","LVA","LA","NYL","NY","BOS","IND","PHX","DAL","ATL"}
+        seg = re.sub(r"\b(Final|Leaderboard|Show details)\b", "", seg, flags=re.I)
         words = seg.split()
         pwords = []
-        for w in words:
-            if w.upper() in skip_pos or w in ("@","vs","VS") or w.isdigit(): break
-            pwords.append(w)
-        pname = " ".join(pwords).strip()
+        for w in reversed(words):
+            cw = re.sub(r"[^a-zA-Z]", "", w)
+            if not cw: continue
+            if cw.upper() in skip_pos or cw.upper() in BANNED or w in ("@","vs","VS"): 
+                if len(pwords) >= 2: break
+                continue
+            if w.isdigit() or re.match(r"^\d+$", w): continue
+            if cw[0].isupper() and len(cw) >= 2:
+                pwords.insert(0, cw)
+            if len(pwords) == 2 and all(len(x) >= 2 for x in pwords): break
+        pname = " ".join(pwords).strip() if len(pwords) >= 2 else ""
         if pname:
-            players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
+            players.append({"player": pname, "sport": sport, "book": "PrizePicks", "wager": _wager})
     # Clean OCR noise from metrics
     met_chunk = re.sub(r"&\s*'t", "", met_chunk)
     met_chunk = re.sub(r"\b\d+/\d+\b", "", met_chunk)
