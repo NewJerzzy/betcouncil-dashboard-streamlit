@@ -1412,6 +1412,80 @@ def scrape_parlayplay(sport):
     return props
 
 
+def scrape_betr(sport):
+    """Betr Picks via GraphQL — no auth needed."""
+    print(f"\n  Betr {sport} (GraphQL):")
+    props = []
+    league_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "WNBA": "WNBA", "NFL": "NFL"}
+    league = league_map.get(sport)
+    if not league:
+        return props
+
+    query = """query LeagueUpcomingEvents($league: League!) {
+      getUpcomingEventsV2(league: $league) {
+        name sport league
+        ... on TeamVersusEvent {
+          teams { name players { firstName lastName position
+            projections { name label value currentValue type
+              allowedOptions { outcome marketOptionId }
+            }
+          }}
+        }
+        ... on IndividualVersusEvent {
+          players { firstName lastName position
+            projections { name label value currentValue type
+              allowedOptions { outcome marketOptionId }
+            }
+          }
+        }
+      }
+    }"""
+
+    try:
+        import requests as req
+        r = req.post("https://api.fantasy.betr.app/graphql",
+            json={"operationName": "LeagueUpcomingEvents", "query": query, "variables": {"league": league}},
+            headers={"Content-Type": "application/json", "Accept": "application/json",
+                     "User-Agent": UA}, timeout=12)
+        print(f"    Status: {r.status_code}")
+        if r.status_code != 200:
+            return props
+
+        events = r.json().get("data", {}).get("getUpcomingEventsV2", []) or []
+        print(f"    Events: {len(events)}")
+
+        for event in events:
+            matchup = event.get("name", "")
+            players_list = []
+            for team in (event.get("teams") or []):
+                if team and team.get("players"):
+                    players_list.extend(team["players"])
+            if event.get("players"):
+                players_list.extend(event["players"])
+
+            for player in players_list:
+                if not player:
+                    continue
+                full_name = f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
+                for proj in (player.get("projections") or []):
+                    if not proj:
+                        continue
+                    line = proj.get("currentValue") or proj.get("value") or 0
+                    prop_name = proj.get("label") or proj.get("name") or ""
+                    props.append({
+                        "Player": full_name, "Prop": prop_name,
+                        "Line": float(line) if line else 0.0,
+                        "Side": "OVER", "OverOdds": "—", "UnderOdds": "—",
+                        "Book": "Betr", "Sport": sport,
+                        "source": "betr_graphql",
+                    })
+
+        print(f"    Props: {len(props)}")
+    except Exception as e:
+        print(f"    Error: {e}")
+    return props
+
+
 NOVIG_QUERY = """query EventMarkets_Query($eventId: uuid, $marketVisibleWhere: market_bool_exp) @cached(ttl: 5) {
   event(where: {id: {_eq: $eventId}}) {
     id type league scheduled_start status
@@ -2626,6 +2700,10 @@ def main():
         if use("novig") or use("nv"):
             nv_props = scrape_novig(sport)
             all_props += nv_props
+
+        if use("betr") or use("bt"):
+            bt_props = scrape_betr(sport)
+            all_props += bt_props
 
         # ParlayPlay (uses session cookie from config.json)
         if (use("pp_play") or use("parlayplay")) and cfg.get("parlayplay",{}).get("session_cookie"):
