@@ -11905,7 +11905,7 @@ def _parse_pp_ocr_inline(raw_text):
         if _header_win:
             entry["result"] = "WIN"
             entry["outcome"] = "WIN"
-        elif entry.get("result") == "UNKNOWN" or not entry.get("result"):
+        elif not entry.get("result") or entry.get("result") not in ("WIN","LOSS"):
             entry["result"] = _overall
             entry["outcome"] = _overall
         else:
