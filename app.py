@@ -11819,7 +11819,8 @@ def parse_bet_screenshot_ocr(image_bytes):
         else: fmt = "png"
         media_type = f"image/{fmt}"
 
-        # Call Claude vision
+        # Claude Vision disabled — no credits. Skip to OCR.space
+        raise Exception("Claude Vision disabled")
         api_resp = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
