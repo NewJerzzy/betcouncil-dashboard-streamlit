@@ -11900,32 +11900,64 @@ Rules:
             raise Exception(f"Claude API error: {api_resp.status_code}")
 
     except Exception as e:
-        # Fallback: try pytesseract
+        # Fallback: OCR.space API (free 25k/month) then multi-sport parser
         try:
-            import pytesseract
-            from PIL import Image, ImageEnhance, ImageOps
-            img = _PIL.open(io.BytesIO(image_bytes)).convert("RGB")
-            w, h = img.size
-            scale = 3 if max(w,h) < 1200 else 2
-            img_proc = img.resize((w*scale,h*scale), _PIL.LANCZOS).convert("L")
-            img_proc = ImageOps.invert(img_proc)
-            img_proc = ImageEnhance.Contrast(img_proc).enhance(3.0)
-            raw = pytesseract.image_to_string(img_proc, config="--psm 6 --oem 3")
+            raw = ""
+            _ocr_key = st.secrets.get("OCR_SPACE_API_KEY", "")
+            if _ocr_key:
+                _ocr_resp = requests.post("https://api.ocr.space/parse/image",
+                    data={"apikey": _ocr_key, "language": "eng", "scale": "true"},
+                    files={"filename": ("slip.png", image_bytes, "image/png")}, timeout=15)
+                _ocr_json = _ocr_resp.json()
+                if _ocr_json.get("ParsedResults"):
+                    raw = _ocr_json["ParsedResults"][0].get("ParsedText", "")
+            if not raw:
+                try:
+                    import pytesseract
+                    from PIL import Image, ImageEnhance, ImageOps
+                    img = _PIL.open(io.BytesIO(image_bytes)).convert("RGB")
+                    w, h = img.size
+                    scale = 3 if max(w,h) < 1200 else 2
+                    img_proc = img.resize((w*scale,h*scale), _PIL.LANCZOS).convert("L")
+                    img_proc = ImageOps.invert(img_proc)
+                    img_proc = ImageEnhance.Contrast(img_proc).enhance(3.0)
+                    raw = pytesseract.image_to_string(img_proc, config="--psm 6 --oem 3")
+                except Exception:
+                    pass
             st.session_state["ocr_raw_text"] = raw
-            # Basic parse
+            SPORTS_RE = r"(TENNIS|PGA|GOLF|NBA|WNBA|MLB|NHL|NFL|SOCCER|MMA|UFC|SOC|CFB)"
             result = []
-            for line in raw.split("\n"):
-                m = re.search(r"([A-Za-z][A-Za-z .\'-]+)\s+(OVER|UNDER|MORE|LESS)\s+([\d.]+)", line, re.I)
-                if m:
-                    side = "OVER" if m.group(2).upper() in ("OVER","MORE") else "UNDER"
-                    result.append({
-                        "player": m.group(1).strip(),
-                        "prop":   "Points",
-                        "line":   float(m.group(3)),
-                        "side":   side,
-                        "sport":  "NBA",
-                        "book":   "PrizePicks",
-                    })
+            blocks = [b.strip() for b in raw.split("\n") if b.strip()]
+            for i, block in enumerate(blocks):
+                m1 = re.search(r"([A-Za-z][A-Za-z .\'-]+)\s+(OVER|UNDER|MORE|LESS)\s+([\d.]+)", block, re.I)
+                if m1:
+                    sp = re.search(SPORTS_RE, block, re.I)
+                    result.append({"player": m1.group(1).strip(), "prop": "Line",
+                        "line": float(m1.group(3)),
+                        "side": "OVER" if m1.group(2).upper() in ("OVER","MORE") else "UNDER",
+                        "sport": sp.group(1).upper() if sp else "NBA", "book": "PrizePicks"})
+                    continue
+                if re.search(SPORTS_RE, block, re.I) and ("|" in block or "@" in block):
+                    try:
+                        clean = re.sub(r"^[~\\\s\-\.\*]+", "", block).strip()
+                        sp2 = re.search(SPORTS_RE, clean, re.I)
+                        sport = sp2.group(1).upper() if sp2 else "NBA"
+                        stag = f"({sport})"
+                        player_part = clean.split(stag)[0] if stag in clean else clean.split(sport)[0]
+                        player = re.sub(r"[@|()\d\.\*]+", "", player_part).strip()
+                        right = clean.split("|")[-1].strip() if "|" in clean else clean
+                        prop_part = clean.split("|")[0].split(stag)[-1] if "|" in clean and stag in clean else ""
+                        prop = re.sub(r"[@\s\-]+", " ", prop_part).strip()
+                        prop = re.sub(r"Final\s*", "", prop, flags=re.I).strip()
+                        nums = re.findall(r"\d+(?:\.\d+)?", right)
+                        line_val = float(nums[-1]) if nums else 0.0
+                        if not prop and i > 0 and "|" not in blocks[i-1]:
+                            prop = blocks[i-1].strip()
+                        if player and len(player) > 2:
+                            result.append({"player": player, "prop": prop or "Line",
+                                "line": line_val, "side": "OVER", "sport": sport, "book": "PrizePicks"})
+                    except Exception:
+                        continue
             return result
         except Exception as e2:
             st.session_state.setdefault("errors",[]).append({
