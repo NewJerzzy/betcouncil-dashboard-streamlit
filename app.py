@@ -11803,81 +11803,104 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 
 def _parse_pp_ocr_inline(raw_text):
     """Parse single-line OCR text from PrizePicks screenshots. All sports."""
-    target_sports = ["NBA","WNBA","MLB","NHL","NFL","TENNIS","WORLD CUP","PGA","MMA","UFC","SOCCER"]
-    skip_pos = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD","SP","RP","OF","SS","1B","2B","3B","IF"}
-    known_props = ["Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds","Ks","Total Bases","Hits","RBIs","Fantasy Score","Passes Attempted","Goals","Saves","Break Points Won","Strokes","Aces","Total Games Won","Goalie Saves","H+R+RBI","Runs"]
-    sports_re = r"\b(" + "|".join(re.escape(s) for s in target_sports) + r")\b"
-    props_re = r"\b(" + "|".join(re.escape(p) for p in known_props) + r")\b"
-    parts = re.split(r"\bFinal\b", raw_text, flags=re.I)
-    if len(parts) < 2: return []
-    id_chunk = " Final ".join(parts[:-1]).strip()
-    met_chunk = parts[-1].strip()
+    import re
+    # Normalize WORLDCUP → WORLD CUP
+    raw_text = re.sub(r"WORLDCUP", "WORLD CUP", raw_text, flags=re.I)
+    
+    SPORTS = ["WORLD CUP","NBA","WNBA","MLB","NHL","NFL","TENNIS","PGA","MMA","UFC","SOCCER"]
+    SKIP_POS = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","IF","SP","RP","OF","SS","1B","2B","3B",
+                "MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD"}
+    BANNED = {"FINAL","LEADERBOARD","SHOW","DETAILS","PLAY","FLEX","POWER","WIN","PAY","VS","V",
+        "ARI","ATL","BAL","BOS","CHC","CWS","CHI","CIN","CLE","COL","DET","HOU","KC","LAA","LAD",
+        "MIA","MIL","MIN","NYM","NYY","OAK","PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH",
+        "BKN","CHA","DAL","DEN","GSW","IND","MEM","NOP","OKC","ORL","PHX","POR","SAC","SAS","UTA","WAS",
+        "CON","LVA","LA","NYL","NY","USA","PAR"}
+    PROPS = ["Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds",
+        "Strikeouts","Ks","Total Bases","Hits Allowed","Hits","RBIs","Earned Runs Allowed",
+        "Fantasy Score","Pitcher FS","Hitter FS","Passes Attempted","Goals","Goalie Saves",
+        "Saves","Break Points Won","Strokes","Aces","Total Games Won","H+R+RBI","Runs",
+        "Turnovers","Blocks","Steals","Rebounds","3-Pointers"]
+
+    # Extract wager, payout, slip type
     _wager = 0.0
     _payout = 0.0
     _slip_type = ""
-    _type_m = re.search(r"(\d+-Pick\s+(?:Flex|Power)\s+Play)", raw_text, re.I)
-    if _type_m: _slip_type = _type_m.group(1)
+    _tm = re.search(r"(\d+-Pick\s+(?:Flex|Power)\s+Play)", raw_text, re.I)
+    if _tm: _slip_type = _tm.group(1)
     _wm = re.search(r"\$([\d.]+)\s+to\s+(?:pay|win)", raw_text, re.I)
     if _wm: _wager = float(_wm.group(1))
     _pm = re.search(r"(?:pay|win)\s+\$([\d.]+)", raw_text, re.I)
     if _pm: _payout = float(_pm.group(1))
-    _header_win = "win" in raw_text[:raw_text.lower().find("final") if "final" in raw_text.lower() else 100].lower()
-    sport_matches = list(re.finditer(sports_re, id_chunk))
-    if not sport_matches: return []
+    _header_win = bool(re.search(r"\bWin\b", raw_text[:200], re.I))
+
+    # Step 1: Find all players by sport tag positions
+    sports_re = r"\b(" + "|".join(re.escape(s) for s in SPORTS) + r")\b"
+    sport_matches = list(re.finditer(sports_re, raw_text, re.I))
+    
     players = []
-    for idx, m in enumerate(sport_matches):
-        sport = m.group(1)
+    for idx, sm in enumerate(sport_matches):
+        sport = sm.group(1).upper()
         prev_end = sport_matches[idx-1].end() if idx > 0 else 0
-        seg = id_chunk[prev_end:m.start()].strip()
-        seg = re.sub(r".*?play\s+\$[\d.]+\s+to\s+(?:pay|win)\s+\$[\d.]+\s+leaderboard\s+show\s+details\s+[vVxX]?", "", seg, flags=re.I).strip()
-        BANNED = {"FINAL","LEADERBOARD","SHOW","DETAILS","PLAY","FLEX","POWER","WIN","PAY","VS","V",
-            "ARI","ATL","BAL","BOS","CHC","CWS","CHI","CIN","CLE","COL","DET","HOU","KC","LAA","LAD",
-            "MIA","MIL","MIN","NYM","NYY","OAK","PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH",
-            "BKN","CHA","DAL","DEN","GSW","IND","MEM","NOP","OKC","ORL","PHX","POR","SAC","SAS","UTA","WAS",
-            "CON","LVA","LA","NYL","NY","BOS","IND","PHX","DAL","ATL"}
-        seg = re.sub(r"\b(Final|Leaderboard|Show details)\b", "", seg, flags=re.I)
+        seg = raw_text[prev_end:sm.start()].strip()
+        seg = re.sub(r".*?Play\s+.*?\$[\d.]+.*?(?:Leaderboard|Show details|\bv\b)", "", seg, flags=re.I).strip()
+        seg = re.sub(r"\bFinal\b", "", seg, flags=re.I).strip()
         words = seg.split()
         pwords = []
         for w in reversed(words):
-            cw = re.sub(r"[^a-zA-Z]", "", w)
-            if not cw: continue
-            if cw.upper() in skip_pos or cw.upper() in BANNED or w in ("@","vs","VS"): 
+            cw = re.sub(r"[^a-zA-Z\'-]", "", w)
+            if not cw or len(cw) < 2: continue
+            if cw.upper() in SKIP_POS or cw.upper() in BANNED: 
                 if len(pwords) >= 2: break
                 continue
-            if w.isdigit() or re.match(r"^\d+$", w): continue
-            if cw[0].isupper() and len(cw) >= 2:
+            if cw[0].isupper():
                 pwords.insert(0, cw)
-            if len(pwords) == 2 and all(len(x) >= 2 for x in pwords): break
-        pname = " ".join(pwords).strip() if len(pwords) >= 2 else ""
+            if len(pwords) >= 2 and all(len(x) >= 2 for x in pwords): break
+        pname = " ".join(pwords) if len(pwords) >= 2 else ""
         if pname:
-            players.append({"player": pname, "sport": sport, "book": "PrizePicks", "wager": _wager})
-    # Clean OCR noise from metrics
-    met_chunk = re.sub(r"&\s*'t", "", met_chunk)
-    met_chunk = re.sub(r"\b\d+/\d+\b", "", met_chunk)
-    met_chunk = re.sub(r"\s+", " ", met_chunk).strip()
-    # Pattern: (x)? line prop_name actual
+            players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
+
+    # Step 2: Find all prop metrics anywhere in text
+    props_re = r"\b(" + "|".join(re.escape(p) for p in PROPS) + r")\b"
+    # Clean OCR noise
+    clean = re.sub(r"&\s*'t", "", raw_text)
+    clean = re.sub(r"\b\d+/\d+\b", "", clean)
+    clean = re.sub(r"\bFinal\b", "", clean, flags=re.I)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    
     met_pattern = r"(x)?\s*(\d+\.?\d*)\s+(.+?)\s+(\d+)"
-    met_matches = re.findall(met_pattern, met_chunk, re.I)
+    prop_matches = list(re.finditer(props_re, clean, re.I))
+    
     metrics = []
-    for mm in met_matches:
-        loss_marker, line_str, prop_raw, actual_str = mm
-        line_v = float(line_str)
-        actual_v = float(actual_str)
-        if loss_marker and loss_marker.lower() == "x":
-            res = "LOSS"
-        else:
-            res = "WIN" if actual_v >= line_v else "LOSS"
-        prop_clean = "Strikeouts" if prop_raw.strip().lower() == "ks" else prop_raw.strip()
-        metrics.append({"prop": prop_clean, "actual": actual_v, "line": line_v, "result": res, "outcome": res, "side": "OVER"})
-    out = []
+    for pidx, pm in enumerate(prop_matches):
+        lead_start = prop_matches[pidx-1].end() if pidx > 0 else 0
+        lead = clean[lead_start:pm.start()].strip()
+        has_x = "x" in lead.lower().split()
+        trail_end = prop_matches[pidx+1].start() if pidx+1 < len(prop_matches) else len(clean)
+        trail = clean[pm.end():trail_end].strip()
+        nums = re.findall(r"\d+(?:\.\d+)?", trail)
+        # Also check for numbers BEFORE the prop (line is often before prop name)
+        pre_nums = re.findall(r"\d+(?:\.\d+)?", lead)
+        actual, line = 0.0, 0.0
+        if nums:
+            actual = float(nums[0])
+        if pre_nums:
+            line = float(pre_nums[-1])
+        if line == 0 and len(nums) >= 2:
+            actual, line = float(nums[0]), float(nums[1])
+        # Swap if needed (line should be the target, actual the result)
+        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 and line == 0 else "UNKNOWN")
+        prop_clean = "Strikeouts" if pm.group(1).lower() == "ks" else pm.group(1)
+        metrics.append({"prop": prop_clean, "actual": actual, "line": line, "result": result, "side": "OVER"})
+
+    # Step 3: Combine and apply header win override
     _overall = "WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS"
+    out = []
     for i in range(min(len(players), len(metrics))):
         entry = {**players[i], **metrics[i]}
         entry["wager"] = _wager if i == 0 else 0.0
         entry["payout"] = _payout if i == 0 else 0.0
         entry["slip_type"] = _slip_type
         entry["overall_result"] = _overall
-        # Header "Win" overrides OCR x-marker noise
         if _header_win:
             entry["result"] = "WIN"
             entry["outcome"] = "WIN"
