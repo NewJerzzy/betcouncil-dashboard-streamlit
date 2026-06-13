@@ -11984,10 +11984,28 @@ Rules:
                         prop_raw = sn.group(1)
                         line_val = float(sn.group(2))
                         prop_clean = stat_map.get(prop_raw, prop_raw)
+                        # Detect win/loss from OCR text
+                        _leg_result = "UNKNOWN"
+                        _actual = 0.0
+                        _p_lower = pname.lower()
+                        _full = " ".join(blocks).lower()
+                        if _p_lower in _full:
+                            _pidx = _full.find(_p_lower)
+                            _window = _full[_pidx:_pidx+200]
+                            if " x " in _window or _window.startswith("x "):
+                                _leg_result = "LOSS"
+                        # Find actual value: number before the line value in text
+                        _all_nums = [float(n) for n in __import__("re").findall(r"\d+(?:\.\d+)?", " ".join(blocks))]
+                        for _ni, _nv in enumerate(_all_nums):
+                            if _nv == line_val and _ni > 0:
+                                _actual = _all_nums[_ni-1]
+                                break
+                        if _leg_result == "UNKNOWN" and _actual > 0:
+                            _leg_result = "WIN" if _actual >= line_val else "LOSS"
                         result.append({"player": pname, "prop": prop_clean,
                             "line": line_val, "side": "OVER",
-                            "sport": psport, "book": "PrizePicks"})
-            return result
+                            "sport": psport, "book": "PrizePicks",
+                            "result": _leg_result, "actual": _actual})
         except Exception as e2:
             st.session_state.setdefault("errors",[]).append({
                 "time":   datetime.now().strftime("%H:%M:%S"),
