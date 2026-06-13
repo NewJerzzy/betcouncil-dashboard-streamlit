@@ -11861,13 +11861,18 @@ def _parse_pp_ocr_inline(raw_text):
             players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
 
     # Step 2: Find all prop metrics anywhere in text
+    # Step 2: Extract metrics AFTER last "Final" cluster only
+    # Prevents matchup scores (85, 106) from contaminating prop data
     props_re = r"\b(" + "|".join(re.escape(p) for p in PROPS) + r")\b"
-    # Clean OCR noise
-    clean = re.sub(r"&\s*'t", "", raw_text)
+    _final_matches = list(re.finditer(r"Final", raw_text, re.I))
+    if _final_matches:
+        clean = raw_text[_final_matches[-1].end():]
+    else:
+        clean = raw_text
+    clean = re.sub(r"&\s*'t", "", clean)
     clean = re.sub(r"\b\d+/\d+\b", "", clean)
     clean = re.sub(r"\bFinal\b", "", clean, flags=re.I)
     clean = re.sub(r"\s+", " ", clean).strip()
-    
     met_pattern = r"(x)?\s*(\d+\.?\d*)\s+(.+?)\s+(\d+)"
     prop_matches = list(re.finditer(props_re, clean, re.I))
     
