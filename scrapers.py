@@ -4,6 +4,10 @@ import datetime
 import os
 import json
 import time
+import os
+
+CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
 import requests
 from functools import lru_cache
 try:
