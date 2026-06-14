@@ -7,7 +7,7 @@ import time
 import requests
 from functools import lru_cache
 try:
-    from utils import normalize_name, safe_float
+    from bc_utils import normalize_name, safe_float
 except ImportError:
     def normalize_name(n): return n.strip().lower()
     def safe_float(v, d=0.0):

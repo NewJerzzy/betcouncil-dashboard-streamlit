@@ -1,4 +1,19 @@
 import streamlit as st
+
+# --- Module imports ---
+from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
+    devig_odds, calculate_edge, compute_std_dev, compute_fair_prob,
+    tier_badge, is_game_total_prop, classify_regime, parlay_prob,
+    parlay_payout, poisson_prob_over, bc_timer)
+from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
+from scrapers import (fetch_auto_scraped_props, fetch_fanduel_direct, fetch_weather_for_game,
+    fetch_todays_referees, fetch_soccer_rolling_averages, fetch_underdog_props,
+    fetch_cbs_injuries, fetch_alt_lines, fetch_espn_game_ids, fetch_espn_line_movement,
+    fetch_espn_predictor, fetch_espn_player_gamelogs, fetch_player_id_bdl,
+    fetch_mlb_confirmed_lineups, fetch_draftkings_direct, fetch_betmgm_direct,
+    fetch_caesars_direct, fetch_betrivers_direct, fetch_nfl_practice_participation,
+    fetch_nfl_inactives, fetch_nhl_starting_goalies)
+from styles import COLORS, TIER_COLORS
 import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, date, timedelta, timezone
