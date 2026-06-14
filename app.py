@@ -72,6 +72,9 @@ _SS_DEFAULTS = {
 }
 for _k, _v in _SS_DEFAULTS.items():
     st.session_state.setdefault(_k, _v)
+    _cap_list("errors", 50)
+    _cap_list("parsed_bets", 200)
+    _cap_list("bet_history", 500)
 
 st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
 
@@ -18093,7 +18096,7 @@ with tabs[4]:
                 "ROI":      _sd["roi_pct"],
                 "Verdict":  _sd["verdict"],
             })
-        import pandas as _pd
+# DUPLICATE REMOVED: import pandas as _pd
         _audit_df = _pd.DataFrame(_audit_rows)
         st.dataframe(_audit_df, use_container_width=True, hide_index=True)
     elif _resolved_count < 20:
@@ -19233,7 +19236,7 @@ with tabs[6]:
                     f"vs {pl_line}": "✅" if (g.get(sk,0) or 0) > pl_line else "❌" if pl_line > 0 else "—"
                 })
             if log_data:
-                import pandas as pd
+# DUPLICATE REMOVED: import pandas as pd
                 log_df = pd.DataFrame(log_data)
                 st.dataframe(log_df, hide_index=True, use_container_width=True)
 
