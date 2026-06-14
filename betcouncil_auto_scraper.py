@@ -42,6 +42,10 @@ USAGE:
 import requests
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Global session for connection pooling
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
 import time
 import argparse
 import os
