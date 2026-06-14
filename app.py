@@ -72,9 +72,14 @@ _SS_DEFAULTS = {
 }
 for _k, _v in _SS_DEFAULTS.items():
     st.session_state.setdefault(_k, _v)
-    _cap_list("errors", 50)
-    _cap_list("parsed_bets", 200)
-    _cap_list("bet_history", 500)
+
+def _cap_list(key, max_len=200):
+    if key in st.session_state and isinstance(st.session_state[key], list):
+        if len(st.session_state[key]) > max_len:
+            st.session_state[key] = st.session_state[key][-max_len:]
+_cap_list("errors", 50)
+_cap_list("parsed_bets", 200)
+_cap_list("bet_history", 500)
 
 st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
 
@@ -213,11 +218,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 import glob as _glob_startup
 
 # --- Utility: cap list growth in session state ---
-def _cap_list(key, max_len=200):
-    """Prevent unbounded list growth in session state."""
-    if key in st.session_state and isinstance(st.session_state[key], list):
-        if len(st.session_state[key]) > max_len:
-            st.session_state[key] = st.session_state[key][-max_len:]
+
 
 
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "odds_api_games_*.pkl")):
