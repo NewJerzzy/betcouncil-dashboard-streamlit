@@ -2661,11 +2661,13 @@ def main():
         if use("ud") and cfg.get("underdog",{}).get("enabled",True):
             all_props += scrape_underdog(sport)
 
-        if use("sl") and cfg.get("sleeper",{}).get("enabled",True):
-            all_props += scrape_sleeper(sport)
+        # Sleeper disabled — API returns 500 (deprecated)
+        # if use("sl") and cfg.get("sleeper",{}).get("enabled",True):
+        #     all_props += scrape_sleeper(sport)
 
-        if use("bo") and cfg.get("betonline",{}).get("enabled",True):
-            all_props += scrape_betonline(sport)
+        # BetOnline disabled — endpoints return 405/400
+        # if use("bo") and cfg.get("betonline",{}).get("enabled",True):
+        #     all_props += scrape_betonline(sport)
 
         if use("bov") and cfg.get("bovada",{}).get("enabled",True):
             all_lines += scrape_bovada_lines(sport)
@@ -2701,16 +2703,22 @@ def main():
             all_props += pick6_props
 
         if use("fd") or use("fanduel"):
-            fd_props = scrape_fanduel_curlffi(sport)
-            all_props += fd_props
+            try:
+                fd_props = scrape_fanduel_curlffi(sport)
+                all_props += fd_props
+            except Exception:
+                print("    FanDuel: WAF blocked, skipping")
 
         if use("mgm") or use("betmgm"):
             mgm_props = scrape_betmgm_curlffi(sport)
             all_props += mgm_props
 
         if use("czr") or use("caesars"):
-            czr_props = scrape_caesars_curlffi(sport)
-            all_props += czr_props
+            try:
+                czr_props = scrape_caesars_curlffi(sport)
+                all_props += czr_props
+            except Exception:
+                print("    Caesars: WAF blocked, skipping")
 
         if use("br") or use("betrivers"):
             br_props = scrape_betrivers_curlffi(sport)
