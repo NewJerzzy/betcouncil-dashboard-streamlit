@@ -129,3 +129,42 @@ infinite rerun loop, board stat name matching (spaces around +), _tier_why reaso
 ```bash
 python3 -c "import ast; ast.parse(open('app.py').read()); print('Syntax OK')"
 ```
+
+
+## Session 9 (June 13, 2026) — Code Audit + Module Split
+
+### Scraper Improvements
+- 7 books: PrizePicks, Underdog, Novig, Betr, DraftKings, BetMGM, Bovada
+- Parallel fetching (ThreadPoolExecutor) — 5 books run simultaneously
+- Browser logins disabled for DK/FD/MGM/Caesars (curl_cffi handles)
+- Sleeper + BetOnline disabled (dead APIs)
+- FanDuel + Caesars wrapped (WAF blocks)
+- BetRivers jitter increased to 8-15s
+- 23 bare excepts fixed
+
+### App.py Audit
+- Module split: bc_utils.py (15 helpers), slip_parser.py (3 parsers), styles.py (colors)
+- Scraper extraction reverted (too many shared globals — needs config.py first)
+- SessionState defaults schema (prevents KeyError)
+- Duplicate fetch_betrivers_direct removed
+- 9 bare excepts fixed, 16 silent errors → logging
+- _cap_list helper for bounding lists
+
+### Slip Analyzer
+- OCR.space replaces Claude Vision (no credits)
+- Multi-sport parser (_parse_pp_ocr_inline)
+- Win/Loss detection: header "Win" = WIN, no "Win" = LOSS
+- PrizePicks text paste parser
+- Wager on first leg only (not duplicated per leg)
+- All UNKNOWN → LOSS
+
+### Git Data API
+- ALL app.py edits via Git Data API (Contents API truncates 1MB files)
+- Multiple wipes caught and recovered
+- File size: ~1,045KB (needs config.py extraction to get under 1MB)
+
+### Known Issues
+- DraftKings MLB: subcategory 11145 returns 0 (may need fresh DevTools capture)
+- BetMGM MLB: optionMarkets has game-level data only, not player props
+- OCR: "Final" prefix sometimes leaks into player names
+- Anthropic API: no credits — Vision disabled
