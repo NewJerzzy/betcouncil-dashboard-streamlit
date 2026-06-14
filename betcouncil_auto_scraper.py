@@ -2655,47 +2655,21 @@ def main():
         print(f"{'='*50}")
 
         # No-login sources
+        # --- PARALLEL BOOK FETCHING (PrizePicks, Underdog, Novig, Betr, DK) ---
+        _parallel_books = {}
         if use("pp") and cfg.get("prizepicks",{}).get("enabled",True):
-            all_props += scrape_prizepicks(sport)
-
+            _parallel_books["PrizePicks"] = scrape_prizepicks
         if use("ud") and cfg.get("underdog",{}).get("enabled",True):
-            all_props += scrape_underdog(sport)
-
-        # Sleeper disabled — API returns 500 (deprecated)
-        # if use("sl") and cfg.get("sleeper",{}).get("enabled",True):
-        #     all_props += scrape_sleeper(sport)
-
-        # BetOnline disabled — endpoints return 405/400
-        # if use("bo") and cfg.get("betonline",{}).get("enabled",True):
-        #     all_props += scrape_betonline(sport)
-
-        if use("bov") and cfg.get("bovada",{}).get("enabled",True):
-            all_lines += scrape_bovada_lines(sport)
-
-        # BetRivers (Kambi — no login needed)
-        if use("br") or use("betrivers"):
-            br_props = scrape_betrivers_curlffi(sport)
-            all_props += br_props
-
+            _parallel_books["Underdog"] = scrape_underdog
         if use("novig") or use("nv"):
-            nv_props = scrape_novig(sport)
-            all_props += nv_props
-
+            _parallel_books["Novig"] = scrape_novig
         if use("betr") or use("bt"):
-            bt_props = scrape_betr(sport)
-            all_props += bt_props
-
-        # ParlayPlay (uses session cookie from config.json)
-        if (use("pp_play") or use("parlayplay")) and cfg.get("parlayplay",{}).get("session_cookie"):
-            pp_play_props = scrape_parlayplay(sport)
-            all_props += pp_play_props
-
-        # Browser-based sources
-        sport_map_dk = {"NBA":"nba","MLB":"mlb","NHL":"nhl","WNBA":"wnba","NFL":"nfl"}
-
+            _parallel_books["Betr"] = scrape_betr
         if use("dk") or use("draftkings"):
-            dk_props = scrape_draftkings_curlffi(sport)
-            all_props += dk_props
+            _parallel_books["DraftKings"] = scrape_draftkings
+        if _parallel_books:
+            _par_results = fetch_books_parallel(sport, _parallel_books)
+            all_props += _par_results
 
         # DraftKings Pick6 — DFS props (separate from sportsbook)
         if "draftkings" in sessions and (use("dk") or use("pick6") or use("draftkings")):
