@@ -1,5 +1,6 @@
 """BetCouncil Utilities — helper functions used across the app."""
 import re
+import unicodedata
 from functools import lru_cache
 
 
