@@ -81,6 +81,17 @@ _cap_list("errors", 50)
 _cap_list("parsed_bets", 200)
 _cap_list("bet_history", 500)
 
+def _ss_set(key, value, expected_type=None):
+    """Type-safe session state write."""
+    if expected_type and not isinstance(value, expected_type):
+        try:
+            value = expected_type(value)
+        except (ValueError, TypeError):
+            return
+    st.session_state[key] = value
+
+
+
 st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
 
 st.markdown("""
@@ -7096,7 +7107,7 @@ def fetch_espn_fpi_ratings(sport="NBA"):
                 pickle.dump(ratings, f)
             return ratings
         return {}
-    except Exception as e:
+    except (ValueError, TypeError, ZeroDivisionError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_espn_fpi_ratings", "error": str(e)[:100]})
         return {}
 
@@ -8351,7 +8362,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
             _log("Scrape.do", r.status_code, len(r.text))
             if _is_valid(r):
                 return r
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError) as e:
             _log("Scrape.do", "ERR", error=e)
 
     # ── 4. Direct (fallback) ─────────────────────────────────
@@ -9853,7 +9864,7 @@ def fetch_oddswrap_props(sport):
         if all_props:
             with open(cache_path, "wb") as f:
                 pickle.dump(all_props, f)
-    except Exception as e:
+    except (ValueError, TypeError, ZeroDivisionError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddswrap_props", "error": str(e)[:100]})
     return all_props
 
@@ -10893,7 +10904,7 @@ def detect_steam_moves(sport):
                         pass
         save_json_data(baseline_path, current_lines)
         return steam_moves
-    except Exception as e:
+    except (ValueError, TypeError, ZeroDivisionError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "detect_steam_moves", "error": str(e)[:100]})
         return []
 
@@ -12604,7 +12615,7 @@ def fetch_sleeper_props(sport):
                 pickle.dump(props, f)
         return props
 
-    except Exception as e:
+    except (ValueError, TypeError, ZeroDivisionError) as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_sleeper_props",
@@ -12629,7 +12640,7 @@ def _fetch_parallel(fns: list) -> list:
             elapsed = round(_time.time() - t0, 2)
             timings[name] = {"time": elapsed, "status": "✅"}
             return result
-        except Exception as e:
+        except (ValueError, TypeError, ZeroDivisionError) as e:
             elapsed = round(_time.time() - t0, 2)
             timings[name] = {"time": elapsed, "status": f"❌ {str(e)[:40]}"}
             return None
@@ -12815,7 +12826,7 @@ def fetch_draftkings_direct(sport):
                     _lm = _re.search(r"([\d.]+)", label)
                     if _lm:
                         try: line = float(_lm.group(1))
-                        except Exception: pass
+                        except (ValueError, TypeError, ZeroDivisionError): pass
 
                 if player and line is not None:
                     props.append({
@@ -13287,7 +13298,7 @@ def fetch_betr_direct(sport):
                         "Side": "OVER", "OverOdds": "\u2014", "UnderOdds": "\u2014",
                         "Book": "Betr", "Sport": sport, "source": "betr_direct",
                     })
-    except Exception as _e:
+    except (ValueError, TypeError, ZeroDivisionError) as _e:
             print(f"[WARN] {_e}")
     return props
 
@@ -13867,35 +13878,35 @@ def load_sport_data(sport):
             if _dk_direct:
                 _direct_props.extend(_dk_direct)
                 st.caption(f"📡 DraftKings: {len(_dk_direct)} props loaded directly")
-        except Exception as _e:
+        except (ValueError, TypeError, ZeroDivisionError) as _e:
             print(f"[WARN] {_e}")
         try:
             _mgm_direct = fetch_betmgm_direct(sport)
             if _mgm_direct:
                 _direct_props.extend(_mgm_direct)
                 st.caption(f"📡 BetMGM: {len(_mgm_direct)} props loaded directly")
-        except Exception as _e:
+        except (ValueError, TypeError, ZeroDivisionError) as _e:
             print(f"[WARN] {_e}")
         try:
             _czr_direct = fetch_caesars_direct(sport)
             if _czr_direct:
                 _direct_props.extend(_czr_direct)
                 st.caption(f"📡 Caesars: {len(_czr_direct)} props loaded directly")
-        except Exception as _e:
+        except (ValueError, TypeError, ZeroDivisionError) as _e:
             print(f"[WARN] {_e}")
         try:
             _br_direct = fetch_betrivers_direct(sport)
             if _br_direct:
                 _direct_props.extend(_br_direct)
                 st.caption(f"📡 BetRivers: {len(_br_direct)} props loaded directly")
-        except Exception as _e:
+        except (ValueError, TypeError, ZeroDivisionError) as _e:
             print(f"[WARN] {_e}")
         try:
             _betr_direct = fetch_betr_direct(sport)
             if _betr_direct:
                 _direct_props.extend(_betr_direct)
                 st.caption(f"\U0001f4e1 Betr: {len(_betr_direct)} props loaded directly")
-        except Exception as _e:
+        except (ValueError, TypeError, ZeroDivisionError) as _e:
             print(f"[WARN] {_e}")
         if _direct_props:
             st.session_state[f"oddspapi_props_{sport}"] = _direct_props
@@ -17488,7 +17499,7 @@ with tabs[3]:
                                 st.session_state.locks.remove(lock)
                             resolved += 1
 
-                    except Exception as e:
+                    except (ValueError, TypeError, ZeroDivisionError) as e:
                         skipped.extend([f"{l.get('player','')} (error: {str(e)[:40]})" for l in locks])
 
             if resolved > 0:
@@ -19308,7 +19319,7 @@ with tabs[7]:
                             source=_pk_source, bet_date=_pk_date_str,
                         )
                         _logged_pk += 1
-                    except Exception as _e:
+                    except (ValueError, TypeError, ZeroDivisionError) as _e:
                         st.caption(f"⚠️ {_pkl['player']}: {str(_e)[:50]}")
                 if _logged_pk:
                     st.success(f"✅ Logged {_logged_pk}-pick parlay (${_pk_stake:.2f} stake) → {_pk_outcome}")
@@ -21107,7 +21118,7 @@ with tabs[9]:
                         st.success(f"✅ Kalshi via ScrapeOps: {len(events)} events")
                     else:
                         st.write(f"Kalshi via ScrapeOps: {r3.status_code}")
-                except Exception as e:
+                except (requests.RequestException, KeyError, ValueError) as e:
                     st.error(f"Error: {str(e)[:100]}")
 
     if st.button("Test ESPN + NBA APIs", key="test_boxscore_apis"):
@@ -21123,7 +21134,7 @@ with tabs[9]:
                     st.success(f"✅ {name}: 200 OK — {len(r.text)} bytes")
                 else:
                     st.error(f"❌ {name}: {r.status_code}")
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError) as e:
                 st.error(f"❌ {name}: {str(e)[:50]}")
 
     st.markdown("---")
