@@ -51,6 +51,20 @@ from scipy import stats as scipy_stats
 # =========================
 # PAGE CONFIG
 # =========================
+
+# --- Session State Schema (prevents KeyError on missing keys) ---
+_SS_DEFAULTS = {
+    "board_loaded": False, "active_sport": "NBA",
+    "parsed_bets": [], "bet_history": [], "vision_debug": {},
+    "ocr_raw_text": "", "errors": [], "recommendations": [],
+    "game_analysis": [], "show_ml_debug": False,
+    "oddspapi_props_NBA": [], "oddspapi_props_MLB": [],
+    "oddspapi_props_NHL": [], "oddspapi_props_WNBA": [],
+    "oddspapi_props_NFL": [],
+}
+for _k, _v in _SS_DEFAULTS.items():
+    st.session_state.setdefault(_k, _v)
+
 st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
 
 st.markdown("""
