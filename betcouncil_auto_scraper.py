@@ -2666,7 +2666,7 @@ def main():
         if use("betr") or use("bt"):
             _parallel_books["Betr"] = scrape_betr
         if use("dk") or use("draftkings"):
-            _parallel_books["DraftKings"] = scrape_draftkings
+            _parallel_books["DraftKings"] = scrape_draftkings_curlffi
         if _parallel_books:
             _par_results = fetch_books_parallel(sport, _parallel_books)
             all_props += _par_results
