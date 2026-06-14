@@ -13,6 +13,7 @@ def safe_float(val, default: float = 0.0) -> float:
 
 
 
+@lru_cache(maxsize=4096)
 def normalize_name(s: str) -> str:
     if not s:
         return ""
