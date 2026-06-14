@@ -1,4 +1,7 @@
 import streamlit as st
+import pandas
+import re
+import json
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
@@ -10,6 +13,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     devig_odds, compute_std_dev,
     compute_fair_prob, tier_badge, is_game_total_prop, classify_regime, parlay_prob,
     parlay_payout, poisson_prob_over)
+from datetime import datetime, date, timedelta, timezone
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
 
