@@ -1,7 +1,23 @@
 import streamlit as st
-import pandas as pd
+import os
 import re
 import json
+import time
+import math
+import statistics
+import hashlib
+import io
+import base64
+import traceback
+import pandas as pd
+import numpy as np
+import requests
+import streamlit.components.v1 as components
+from datetime import datetime, date, timedelta, timezone
+from functools import lru_cache
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from scipy import stats as scipy_stats
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
@@ -13,12 +29,10 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     devig_odds, compute_std_dev,
     compute_fair_prob, tier_badge, is_game_total_prop, classify_regime, parlay_prob,
     parlay_payout, poisson_prob_over)
-from datetime import datetime, date, timedelta, timezone
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
 
 # --- API Keys ---
-import os
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "7e52e1c2c2054847c7c4663a157386c5")
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
@@ -1066,25 +1080,16 @@ def _bc_track(stage, duration, meta=None):
 
 def bc_timer(label):
     """Simple context manager for timing code blocks."""
-    import time
     class _Timer:
         def __init__(self, l): self.l = l
         def __enter__(self): self.t = time.time(); return self
         def __exit__(self, *a): print(f"  {self.l}: {time.time()-self.t:.2f}s")
     return _Timer(label)
-import re
-import requests
-import time
-import hashlib
 import pickle
-import os
-import json
 import unicodedata
 import functools
 from math import exp, factorial
-import math
 from itertools import combinations
-from scipy import stats as scipy_stats
 
 # =========================
 # PAGE CONFIG
@@ -8730,7 +8735,6 @@ def fetch_rotowire_injuries(sport):
         if r.status_code != 200:
             return []
 
-        import xml.etree.ElementTree as ET
         root = ET.fromstring(r.content)
         channel = root.find("channel")
         if channel is None:
@@ -11627,7 +11631,6 @@ def parse_prizepicks_text(raw_text):
       Stat type  (e.g. Hits+Runs+RBIs)
       Actual result  (numeric)
     """
-    import re
 
     POSITIONS = {"G", "F", "C", "IF", "OF", "P", "SP", "RP", "C-F", "G-F", "F-C", "PG", "SG", "SF", "PF"}
     SPORTS    = {"NBA", "MLB", "NHL", "NFL", "WNBA", "NCAAB", "NCAAF", "MLS", "EPL", "PGA"}
@@ -12504,7 +12507,6 @@ BOARD_SNAP_PATH     = os.path.join(CACHE_DIR, "board_snapshots.json")
 def fetch_draftkings_direct(sport):
     """Fetch DraftKings props directly using curl_cffi. Fallback when OddsPAPI is down."""
     try:
-        from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         return []
@@ -12592,7 +12594,6 @@ def fetch_draftkings_direct(sport):
                     side = "OVER"
                 # Extract line from label if not in fields
                 if line is None:
-                    import re as _re
                     _lm = _re.search(r"([\d.]+)", label)
                     if _lm:
                         try: line = float(_lm.group(1))
@@ -12624,7 +12625,6 @@ def fetch_draftkings_direct(sport):
 def fetch_betmgm_direct(sport):
     """Fetch BetMGM props directly using curl_cffi."""
     try:
-        from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         return []
@@ -12770,7 +12770,6 @@ def fetch_betmgm_direct(sport):
 def fetch_caesars_direct(sport):
     """Fetch Caesars props directly via api.americanwagering.com."""
     try:
-        from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         return []
@@ -12909,7 +12908,6 @@ def fetch_caesars_direct(sport):
 def fetch_betrivers_direct(sport):
     """Fetch BetRivers props — Kambi backend, no auth needed."""
     try:
-        from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         return []
@@ -16124,7 +16122,6 @@ with tabs[0]:
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Trending Picks (Last 7 Days)</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         all_history = st.session_state.get("history", [])
         if all_history:
-            from datetime import timedelta
             cutoff = datetime.now() - timedelta(days=7)
             recent_picks = [h for h in all_history if h.get("timestamp","") >= cutoff.strftime("%Y-%m-%d")]
             if recent_picks:
@@ -18233,7 +18230,6 @@ with tabs[5]:
         )
         if st.button("📥 Parse Slip", key="parse_slip_btn"):
             if paste_text.strip():
-                import re
                 parsed_picks = []
                 for line in paste_text.strip().split("\n"):
                     line = line.strip()
