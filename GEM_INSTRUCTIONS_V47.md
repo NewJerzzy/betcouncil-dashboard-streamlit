@@ -496,3 +496,34 @@ MODE A = paste brief. MODE B = type SKIP or ask for scan.
 SCAN = full report. Paste anything = instant analysis.
 "diagnose my model" = full diagnostic.
 ════════════════════════════════════════
+
+
+---
+## Session 9 Addendum (June 13, 2026)
+
+### Updated Book Coverage
+The auto scraper now covers 7 books with parallel fetching:
+1. **PrizePicks** — curl_cffi, 4,000-7,000 props per run
+2. **Underdog** — curl_cffi, 17,000+ props (all sports combined)
+3. **Novig** — GraphQL, 2,000+ props
+4. **Betr** — GraphQL (api.fantasy.betr.app), 500-950 props, no auth
+5. **DraftKings** — curl_cffi, 130+ NBA props (MLB subcategory under investigation)
+6. **BetMGM** — curl_cffi fixture-offers, 68-122 props
+7. **Bovada** — curl_cffi, 2,500-5,000 game lines
+
+### Disabled Books
+- Sleeper: API returns 500 (deprecated)
+- BetOnline: endpoints return 405/400
+- FanDuel: PerimeterX WAF blocks curl_cffi (OddsPAPI fallback in app)
+- Caesars: CloudFront WAF blocks curl_cffi (OddsPAPI fallback in app)
+
+### Scraper Performance
+- Parallel fetching via ThreadPoolExecutor (PP/UD/Novig/Betr/DK run simultaneously)
+- Browser logins disabled for DK/FD/MGM/Caesars (saves 2+ minutes)
+- Total run time: ~2-3 minutes for --all
+
+### Slip Analyzer
+- OCR.space replaces Claude Vision (no Anthropic credits)
+- Multi-sport parser handles all sports
+- Win/Loss detection from header "Win" keyword
+- Wager extraction from "$X.XX to win/pay" pattern
