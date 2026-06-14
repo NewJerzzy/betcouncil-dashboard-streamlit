@@ -18,6 +18,10 @@ from functools import lru_cache
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from scipy import stats as scipy_stats
+try:
+    from curl_cffi import requests as cf
+except ImportError:
+    cf = None
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
