@@ -41,6 +41,7 @@ USAGE:
 
 import requests
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import argparse
 import os
