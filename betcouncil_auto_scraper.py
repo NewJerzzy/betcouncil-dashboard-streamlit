@@ -1682,7 +1682,7 @@ def scrape_betrivers_curlffi(sport):
                     props.append({"Player": player, "Prop": prop_label, "Line": lf, "Side": sd,
                         "OverOdds": od if sd=="OVER" else "—", "UnderOdds": od if sd=="UNDER" else "—",
                         "Book": "BetRivers", "Sport": sport, "source": "betrivers_curlffi"})
-            time.sleep(0.3)
+            time.sleep(random.uniform(8, 15))
         print(f"    Props: {len(props)}")
     except Exception as e:
         print(f"    Error: {e}")
