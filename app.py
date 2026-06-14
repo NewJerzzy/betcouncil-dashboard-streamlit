@@ -186,18 +186,27 @@ CACHE_DIR = "/tmp/betcouncil_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 # Clear ALL game line caches on startup — forces fresh fetch with fixed abbrev mapping
 import glob as _glob_startup
+
+# --- Utility: cap list growth in session state ---
+def _cap_list(key, max_len=200):
+    """Prevent unbounded list growth in session state."""
+    if key in st.session_state and isinstance(st.session_state[key], list):
+        if len(st.session_state[key]) > max_len:
+            st.session_state[key] = st.session_state[key][-max_len:]
+
+
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "odds_api_games_*.pkl")):
     try: os.remove(_stale)
-    except: pass
+    except Exception: pass
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "espn_games_*.pkl")):
     try: os.remove(_stale)
-    except: pass
+    except Exception: pass
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "game_lines_*.pkl")):
     try: os.remove(_stale)
-    except: pass
+    except Exception: pass
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "mlb_pitchers.pkl")):
     try: os.remove(_stale)
-    except: pass
+    except Exception: pass
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
 
@@ -4529,7 +4538,7 @@ def compute_signal_conflict(prop):
     def parse_pct(val_str):
         try:
             return float(str(val_str).replace("%","").replace("+","").strip())
-        except:
+        except Exception:
             return 0.0
     
     pos_total = sum(parse_pct(v) for _, v, _ in drivers if parse_pct(v) > 0)
@@ -8515,7 +8524,7 @@ def scrape_prizepicks(sport):
                         os.remove(cache_path)  # Clear bad cache
                 except Exception:
                     try: os.remove(cache_path)
-                    except: pass
+                    except Exception: pass
         if data is None:
             try:
                 # ── Attempt 1: curl_cffi with Chrome TLS fingerprint ──
@@ -13222,7 +13231,7 @@ def fetch_draftkings_direct(sport):
                     _lm = _re.search(r"([\d.]+)", label)
                     if _lm:
                         try: line = float(_lm.group(1))
-                        except: pass
+                        except Exception: pass
 
                 if player and line is not None:
                     props.append({
@@ -13700,116 +13709,7 @@ def fetch_betr_direct(sport):
 
 
 # ── BetRivers Direct (Kambi backend) ──────────────────────────
-def fetch_betrivers_direct(sport):
-    """Fetch BetRivers player props via Kambi API. No auth needed."""
-    try:
-        from curl_cffi import requests as cf
-        session = cf.Session(impersonate="chrome124")
-    except ImportError:
-        session = requests
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Origin": "https://az.betrivers.com",
-        "Referer": "https://az.betrivers.com/",
-    }
-    props = []
-
-    cache_path = os.path.join(CACHE_DIR, f"betrivers_direct_{sport}.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
-            if cached:
-                return cached
-
-    # Step 1: Get today's events from Kambi
-    sport_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NHL": "ice_hockey/nhl",
-                 "WNBA": "basketball/wnba", "NFL": "american_football/nfl"}
-    kambi_sport = sport_map.get(sport, "basketball/nba")
-
-    try:
-        r1 = session.get(
-            f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all/matches.json",
-            params={"lang": "en_US", "market": "US-AZ", "useCombinedSGM": "true"},
-            headers=headers, timeout=15
-        )
-        if r1.status_code != 200:
-            return []
-
-        events = r1.json().get("events", [])
-
-        # Step 2: For each event, get player props
-        for ev in events[:8]:
-            ev_id = ev.get("event", {}).get("id")
-            if not ev_id:
-                continue
-
-            r2 = session.get(
-                f"https://az.betrivers.com/api/service/sportsbook/offering/playerprops",
-                params={"groupId": ev_id, "pageNr": 1, "pageSize": 100, "cageCode": 602},
-                headers=headers, timeout=10
-            )
-            if r2.status_code != 200:
-                continue
-
-            data = r2.json()
-            items = data.get("items", data.get("offerings", []))
-            if isinstance(items, dict):
-                items = list(items.values())
-
-            for item in items:
-                # BetRivers/Kambi prop structure
-                player = (item.get("participant", {}).get("name", "") or
-                          item.get("playerName", "") or
-                          item.get("name", ""))
-                mkt_name = item.get("criterion", {}).get("label", "") or item.get("marketName", "")
-
-                outcomes = item.get("outcomes", item.get("betOffers", []))
-                for oc in outcomes:
-                    label = oc.get("label", "") or oc.get("type", "")
-                    line = oc.get("line") or oc.get("overUnderLine") or oc.get("handicap")
-                    odds_am = oc.get("oddsAmerican") or oc.get("americanOdds")
-                    odds_d = oc.get("odds") or oc.get("decimalOdds")
-
-                    if line is not None:
-                        line = float(str(line).replace("+", "")) / 1000 if float(str(line).replace("+", "")) > 100 else float(str(line).replace("+", ""))
-
-                    side = "OVER"
-                    if "under" in label.lower():
-                        side = "UNDER"
-
-                    odds_str = "—"
-                    if odds_am is not None:
-                        odds_str = f"{'+' if int(odds_am) > 0 else ''}{int(odds_am)}"
-                    elif odds_d is not None:
-                        d = float(odds_d) / 1000 if float(odds_d) > 100 else float(odds_d)
-                        odds_str = f"+{int((d-1)*100)}" if d >= 2 else f"{int(-100/(d-1))}"
-
-                    if player and line is not None:
-                        props.append({
-                            "Player": player, "Prop": mkt_name,
-                            "Line": float(line), "Side": side,
-                            "OverOdds": odds_str if side == "OVER" else "—",
-                            "UnderOdds": odds_str if side == "UNDER" else "—",
-                            "Book": "BetRivers", "Sport": sport,
-                            "source": "betrivers_direct",
-                        })
-
-            time.sleep(0.3)
-
-        if props:
-            with open(cache_path, "wb") as f:
-                pickle.dump(props, f)
-
-    except Exception:
-        pass
-
-    return props
-
-
+# DUPLICATE fetch_betrivers_direct removed (was identical to L13535)
 # ── Feature 1: Practice Participation Tracker ──────────────────
 @st.cache_data(ttl=1800)
 def fetch_nfl_practice_participation():
@@ -17143,7 +17043,7 @@ with tabs[1]:
         _sk, _sr = _sort_map.get(_sort_col, ("_edge_pct", True))
         try:
             _rows.sort(key=lambda x: float(str(x.get(_sk,"0")).replace("%","").replace("—","0") or 0), reverse=_sr)
-        except:
+        except Exception:
             _rows.sort(key=lambda x: str(x.get(_sk,"")), reverse=_sr)
 
         st.caption(f"Showing {len(_rows)} props | Sorted by {_sort_col}")
@@ -18123,7 +18023,7 @@ with tabs[3]:
                                     if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                     resolved += 1
                                     st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
-                    except: continue
+                    except Exception: continue
 
             if resolved == 0:
                 st.info("No completed games found yet. Try after games finish.")
