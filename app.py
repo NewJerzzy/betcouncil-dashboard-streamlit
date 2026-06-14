@@ -23,8 +23,8 @@ def _bc_track(stage, duration, meta=None):
         t[stage]["last"]   = duration
         if meta:
             t[stage]["meta"] = meta
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
 @_ctx
 def bc_timer(stage, meta=None):
@@ -144,8 +144,8 @@ def ss_set(key, value):
     """Safe session_state setter."""
     try:
         st.session_state[key] = value
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 # ── Named Constants ──────────────────────────────────────────
 # Kelly Criterion
 KELLY_FRACTION = 0.15      # Fractional Kelly (15% of full) — reduces variance 97%
@@ -5147,8 +5147,8 @@ def log_error_to_session(source, error, error_type="error"):
             "type": error_type
         })
         st.session_state["errors"] = st.session_state["errors"][-50:]
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
 
 def is_date_valid_for_today(date_str):
@@ -5393,8 +5393,8 @@ def fetch_fanduel_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
     return props
 
@@ -8644,8 +8644,8 @@ def scrape_prizepicks(sport):
                 st.session_state["pp_status"] = "fallback"
                 st.session_state["pp_source"]  = "gist_scraper"
                 return _gist_props
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
     # Clear cache so next load retries PrizePicks
     try:
         import glob
@@ -13249,8 +13249,8 @@ def fetch_draftkings_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
     return props
 
@@ -13395,8 +13395,8 @@ def fetch_betmgm_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
     return props
 
@@ -13534,8 +13534,8 @@ def fetch_caesars_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
     return props
 
@@ -13642,8 +13642,8 @@ def fetch_betrivers_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
 
     return props
 
@@ -13703,8 +13703,8 @@ def fetch_betr_direct(sport):
                         "Side": "OVER", "OverOdds": "\u2014", "UnderOdds": "\u2014",
                         "Book": "Betr", "Sport": sport, "source": "betr_direct",
                     })
-    except Exception:
-        pass
+    except Exception as _e:
+            print(f"[WARN] {_e}")
     return props
 
 
@@ -14280,43 +14280,43 @@ def load_sport_data(sport):
             if _fd_direct:
                 _direct_props.extend(_fd_direct)
                 st.caption(f"📡 FanDuel: {len(_fd_direct)} props loaded directly")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[WARN] {_e}")
         try:
             _dk_direct = fetch_draftkings_direct(sport)
             if _dk_direct:
                 _direct_props.extend(_dk_direct)
                 st.caption(f"📡 DraftKings: {len(_dk_direct)} props loaded directly")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[WARN] {_e}")
         try:
             _mgm_direct = fetch_betmgm_direct(sport)
             if _mgm_direct:
                 _direct_props.extend(_mgm_direct)
                 st.caption(f"📡 BetMGM: {len(_mgm_direct)} props loaded directly")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[WARN] {_e}")
         try:
             _czr_direct = fetch_caesars_direct(sport)
             if _czr_direct:
                 _direct_props.extend(_czr_direct)
                 st.caption(f"📡 Caesars: {len(_czr_direct)} props loaded directly")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[WARN] {_e}")
         try:
             _br_direct = fetch_betrivers_direct(sport)
             if _br_direct:
                 _direct_props.extend(_br_direct)
                 st.caption(f"📡 BetRivers: {len(_br_direct)} props loaded directly")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[WARN] {_e}")
         try:
             _betr_direct = fetch_betr_direct(sport)
             if _betr_direct:
                 _direct_props.extend(_betr_direct)
                 st.caption(f"\U0001f4e1 Betr: {len(_betr_direct)} props loaded directly")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[WARN] {_e}")
         if _direct_props:
             st.session_state[f"oddspapi_props_{sport}"] = _direct_props
     if public_betting:
