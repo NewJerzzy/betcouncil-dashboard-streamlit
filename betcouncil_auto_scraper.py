@@ -132,7 +132,7 @@ def playwright_login(book, login_url, username, password,
             # Wait for form to appear then fill
             try:
                 page.wait_for_selector(user_selector, timeout=15000)
-            except:
+            except Exception:
                 # Try clicking login button first if form not visible
                 for btn in ["button:has-text('Log in')", "button:has-text('Sign in')",
                             "a:has-text('Log in')", "[data-testid='login']"]:
@@ -140,7 +140,7 @@ def playwright_login(book, login_url, username, password,
                         page.click(btn, timeout=3000)
                         time.sleep(1)
                         break
-                    except:
+                    except Exception:
                         continue
             page.fill(user_selector, username)
             time.sleep(0.5)
@@ -226,7 +226,7 @@ def login_fanduel(cfg):
             try:
                 page.click("button:has-text('Log In'), a:has-text('Log In')", timeout=5000)
                 _t.sleep(2)
-            except:
+            except Exception:
                 pass
 
             # Step 4: Fill credentials
@@ -280,7 +280,7 @@ def login_betmgm(cfg):
                     page.click(sel, timeout=3000)
                     _t.sleep(2)
                     break
-                except:
+                except Exception:
                     continue
 
             # Fill credentials
@@ -331,7 +331,7 @@ def login_caesars(cfg):
             try:
                 page.click("button:has-text('LOG IN')", timeout=5000)
                 _t.sleep(2)
-            except:
+            except Exception:
                 pass
 
             # Fill credentials in modal
@@ -413,7 +413,7 @@ def login_mybookie(cfg):
                         print(f"  ✅ Clicked human verification: {sel}")
                         _t.sleep(2)
                         break
-                except:
+                except Exception:
                     continue
 
             # If still on login page try clicking any visible button
@@ -428,8 +428,8 @@ def login_mybookie(cfg):
                             print(f"  ✅ Clicked: {txt}")
                             _t.sleep(2)
                             break
-                except:
-                    pass
+                except Exception as _e:
+                    pass  # TODO: log _e
             _t.sleep(3)
             print(f"  Post-login URL: {page.url}")
             cookies = {c["name"]:c["value"] for c in ctx.cookies()}
@@ -659,7 +659,7 @@ def scrape_sleeper(sport):
                     print(f"    Endpoint: {su[-40:]}")
                     break
                 print(f"    {_r.status_code} {su[-40:]}")
-            except:
+            except Exception:
                 pass
         if not r:
             print(f"    All Sleeper endpoints failed")
@@ -926,10 +926,10 @@ def scrape_with_playwright(book, sport, cookies, prop_url, prop_selector_fn):
                                     # Only keep if it has useful data
                                     if isinstance(data, (dict, list)) and data:
                                         captured.append((url, data))
-                                except:
+                                except Exception:
                                     pass
-                except:
-                    pass
+                except Exception as _e:
+                    pass  # TODO: log _e
 
             page = ctx.new_page()
             page.on("response", handle_response)
@@ -1088,7 +1088,7 @@ def parse_generic_response(data, sport, book):
                         d = float(odds_d)
                         american = f"+{int((d-1)*100)}" if d>=2 else f"{int(-100/(d-1))}"
                         over = american
-                except: pass
+                except Exception: pass
                 props.append({
                     "Player": player, "Prop": mname,
                     "Line": float(str(line).replace("+","")),
@@ -1098,7 +1098,7 @@ def parse_generic_response(data, sport, book):
                     "Book": book, "Sport": sport,
                     "source": f"{book.lower()}_auto"
                 })
-    except: pass
+    except Exception: pass
     return props
 
 def scrape_dk_pick6(sport, cookies):
@@ -1144,7 +1144,7 @@ def scrape_dk_pick6(sport, cookies):
                             "name": name, "value": value,
                             "domain": ".draftkings.com", "path": "/"
                         }])
-                    except:
+                    except Exception:
                         pass
 
             # Intercept Pick6 API responses
@@ -1160,10 +1160,10 @@ def scrape_dk_pick6(sport, cookies):
                             if "json" in ct:
                                 try:
                                     captured.append((url, response.json()))
-                                except:
+                                except Exception:
                                     pass
-                except:
-                    pass
+                except Exception as _e:
+                    pass  # TODO: log _e
 
             page = ctx.new_page()
             page.on("response", on_response)
@@ -1187,7 +1187,7 @@ def scrape_dk_pick6(sport, cookies):
                     timeout=20000
                 )
                 time.sleep(3)
-            except:
+            except Exception:
                 pass
 
             browser.close()
@@ -1677,7 +1677,7 @@ def scrape_betrivers_curlffi(sport):
                     sd = "UNDER" if "UNDER" in (oc.get("type","") or "").upper() else "OVER"
                     if not player or line is None: continue
                     try: lf = float(str(line).replace("+",""))
-                    except: continue
+                    except Exception: continue
                     od = f"{'+' if float(odds_am)>0 else ''}{int(float(odds_am))}" if odds_am else "—"
                     props.append({"Player": player, "Prop": prop_label, "Line": lf, "Side": sd,
                         "OverOdds": od if sd=="OVER" else "—", "UnderOdds": od if sd=="UNDER" else "—",
@@ -1788,7 +1788,7 @@ def scrape_draftkings_curlffi(sport):
                         _lm = _re.search(r"([\d.]+)", label)
                         if _lm:
                             try: line = float(_lm.group(1))
-                            except: pass
+                            except Exception: pass
                     if player and line is not None:
                         props.append({
                             "Player": player, "Prop": mname,
@@ -1872,7 +1872,7 @@ def scrape_caesars_curlffi(sport):
                         elif " Under " in fname: player, sd = fname.split(" Under ")[0].strip(), "UNDER"
                         if not player or hcap is None: continue
                         try: lf = float(str(hcap).replace("+",""))
-                        except: continue
+                        except Exception: continue
                         od = "—"
                         if odds_a is not None:
                             od = f"{'+' if float(odds_a)>0 else ''}{int(float(odds_a))}"
@@ -1953,7 +1953,7 @@ def _mgm_odds(odds):
     try:
         o = float(odds)
         return f"+{int(o)}" if o > 0 else str(int(o))
-    except:
+    except Exception:
         return "—"
 
 def scrape_betmgm_curlffi(sport):
@@ -2129,7 +2129,7 @@ def scrape_betmgm_curlffi(sport):
                             pn = pl["fullName"]
                         if not pn or not attr: continue
                         try: lf = float(str(attr).replace("+",""))
-                        except: continue
+                        except Exception: continue
                         od = _mgm_odds(odds)
                         props.append({"Player": pn, "Prop": gn, "Line": lf, "Side": sd,
                             "OverOdds": od if sd=="OVER" else "\u2014",
@@ -2151,7 +2151,7 @@ def scrape_betmgm_curlffi(sport):
                         elif " Under " in on: pn, sd = on.split(" Under ")[0].strip(), "UNDER"
                         if not pn or not attr: continue
                         try: lf = float(str(attr).replace("+",""))
-                        except: continue
+                        except Exception: continue
                         od = _mgm_odds(odds)
                         props.append({"Player": pn, "Prop": mn, "Line": lf, "Side": sd,
                             "OverOdds": od if sd=="OVER" else "\u2014",
@@ -2478,7 +2478,7 @@ def scrape_mgm_api(sport, cookies):
                             continue
                         try:
                             american = f"+{int((float(odds_d)-1)*100)}" if float(odds_d)>=2 else f"{int(-100/(float(odds_d)-1))}"
-                        except:
+                        except Exception:
                             american = "—"
                         props.append({
                             "Player": player, "Prop": mname,
