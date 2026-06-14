@@ -7,13 +7,16 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     parlay_payout, poisson_prob_over)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
-from config import (DAILY_RISK_CONTROLS, ACTION_NETWORK_SPORT_MAP, ACTION_NETWORK_LEAGUE_IDS, ACTION_NETWORK_PROP_TYPE_MAP, AN_GRADE_TO_TIER, ODDS_API_PROP_MARKETS, ODDS_API_STAT_MAP, API_BUDGETS,
+try:
+    from config import (DAILY_RISK_CONTROLS, ACTION_NETWORK_SPORT_MAP, ACTION_NETWORK_LEAGUE_IDS, ACTION_NETWORK_PROP_TYPE_MAP, AN_GRADE_TO_TIER, ODDS_API_PROP_MARKETS, ODDS_API_STAT_MAP, API_BUDGETS,
     TIER_THRESHOLDS, SPORT_SIGNAL_WEIGHTS, SIGNAL_RELIABILITY, SIGNAL_LABELS, REGIME_LABELS, SPORT_EWMA_DECAY, PRIZEPICKS_MULTIPLIERS, PLAYER_AVERAGES_SOCCER,
     PLAYER_AVERAGES_UFC, DEFAULT_AVERAGES, STAT_NORMALIZE, TEAMMATE_OUT_BOOST, PLAYER_TEAM_MAP, POSITIVE_CORRELATIONS, SAME_PLAYER_STAT_CORRELATION, MLB_BALLPARKS,
     MLB_PLAYER_TEAM_MAP, WNBA_PLAYER_IDS, MLB_PLAYER_IDS, NHL_PLAYER_IDS, NBA_TEAM_PACE, NBA_POWER_RATINGS, NBA_POSITION_DEFENSE, PLAYOFF_DEFENSE_WARNING,
     NBA_PLAYER_POSITIONS, NBA_REFEREE_TENDENCIES, MLB_UMPIRE_TENDENCIES, MLB_PITCHER_ERA, MLB_PARK_FACTORS, NHL_TEAM_GOALS_FOR, NHL_TEAM_GOALS_AGAINST, ESPN_ATHLETE_IDS,
     GAME_TOTAL_LINE_THRESHOLDS, PROP_CORRELATION_PAIRS, KALSHI_SPORT_SERIES, GOLF_TOURNAMENT_MAP, DFF_HEADERS, DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP,
     BQ_WEIGHTS_DEFAULT, BOVADA_HEADERS, BOVADA_SPORT_MAP, SIGNAL_COLS, MLB_STADIUM_COORDS, NFL_OUTDOOR_STADIUMS, FL_SPORT_MAP, FL_HEADERS, GAME_TIER_THRESHOLDS, BDL_PLAYER_IDS, ESPN_SLUG_MAP, PLAYER_HOME_SPLITS)
+except ImportError as _cie:
+    print(f"[WARN] config.py import failed: {_cie}")
 from bc_utils import (load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat, is_date_valid_for_today, adjusted_edge, find_player_avg, market_efficiency_score, get_weighted_average, get_recency_context,
     sample_size_confidence, compare_multibook_lines, make_display_df, compute_market_edge, compute_market_implied_projection, compute_sem_for_tier, compute_h2h_hit_rate)
 import streamlit.components.v1 as components
@@ -546,7 +549,9 @@ def render_signal_chart(prop, sport="NBA"):
 
 
 # Sport-specific EWMA decay
-# SPORT_EWMA_DECAY — moved to config.py
+# SPORT_EWMA_DECAY — fallback if config import fails
+if not globals().get("SPORT_EWMA_DECAY"):
+    SPORT_EWMA_DECAY = {"NBA": 0.12, "MLB": 0.08, "NHL": 0.10, "WNBA": 0.12, "NFL": 0.06}
 
 SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL", "Soccer", "UFC", "Golf", "Tennis"]
 
