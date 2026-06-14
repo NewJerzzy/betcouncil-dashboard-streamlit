@@ -8,18 +8,17 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
 
-# --- Constants (restored from config.py) ---
-GITHUB_TOKEN = get_secret("GITHUB_TOKEN")
-GITHUB_GIST_ID = get_secret("GITHUB_GIST_ID", "7e52e1c2c2054847c7c4663a157386c5")
-ODDS_API_KEY = get_secret("ODDS_API_KEY")
-ODDSPAPI_KEY = get_secret("ODDSPAPI_KEY")
-ANTHROPIC_API_KEY = get_secret("ANTHROPIC_API_KEY")
-OCR_SPACE_API_KEY = get_secret("OCR_SPACE_API_KEY")
-SCRAPEOPS_KEY = get_secret("SCRAPEOPS_KEY")
-BDL_API_KEY = get_secret("BALLSDONTLIE_API_KEY")
-RAPIDAPI_KEY = get_secret("RAPIDAPI_KEY")
-
-# === REQUEST CONFIG ===
+# --- API Keys ---
+import os
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "7e52e1c2c2054847c7c4663a157386c5")
+ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
+ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
+ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
+OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
+SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
+BDL_API_KEY = st.secrets.get("BALLSDONTLIE_API_KEY", "")
+RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
 REQUEST_TIMEOUT = 15
 CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
