@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime, date, timedelta
 import unicodedata
 from functools import lru_cache
+from scipy import stats as scipy_stats
 
 
 def safe_float(val, default: float = 0.0) -> float:
