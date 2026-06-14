@@ -74,3 +74,22 @@
 - **Cluster:** mt1
 - **App Key:** c975574818f436e8dd4a
 - **Type:** Real-time streaming, not REST
+
+
+## Betr Picks (GraphQL) — NO AUTH REQUIRED
+- **Endpoint:** `POST https://api.fantasy.betr.app/graphql`
+- **Query:** `LeagueUpcomingEvents($league: League!)`
+- **Leagues:** NBA, MLB, NHL, WNBA, NFL
+- **Response:** `data.getUpcomingEventsV2[].teams[].players[].projections[]`
+- **Props:** `label`, `value`, `currentValue`, `type`
+- **Status:** ✅ Working (558+ MLB props confirmed)
+
+## Session 8-9 Notes (June 12-13, 2026)
+- Underdog: sport filter moved to post-collection (was breaking inline)
+- DraftKings: subcategory IDs per sport — NBA=16477, MLB=11145, NHL=11601, WNBA=11839, NFL=10015
+- BetMGM: fixture-offers with gameIds, fixtureOffers root key, optionMarkets for MLB
+- Browser logins disabled for DK/FD/MGM/Caesars — curl_cffi handles auth-free
+- Sleeper/BetOnline disabled (dead APIs)
+- FanDuel/Caesars wrapped in try/except (WAF blocks)
+- Parallel fetching via ThreadPoolExecutor for PP/UD/Novig/Betr/DK
+- app.py modules: bc_utils.py, slip_parser.py, styles.py
