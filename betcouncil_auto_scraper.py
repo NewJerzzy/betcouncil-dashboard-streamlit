@@ -2620,10 +2620,10 @@ def main():
     # Login to regulated books once (session reused across sports)
     sessions = {}
     login_map = {
-        "draftkings": ("dk",  login_draftkings),
-        "fanduel":    ("fd",  login_fanduel),
-        "betmgm":     ("mgm", login_betmgm),
-        "caesars":    ("czr", login_caesars),
+        # "draftkings": ("dk",  login_draftkings),  # Not needed — curl_cffi works without auth
+        # "fanduel":    ("fd",  login_fanduel),  # WAF blocks curl_cffi anyway
+        # "betmgm":     ("mgm", login_betmgm),  # curl_cffi works without auth
+        # "caesars":    ("czr", login_caesars),  # WAF blocks anyway
         "mybookie":   ("mb",  login_mybookie),
     }
     for book, (short, login_fn) in login_map.items():
