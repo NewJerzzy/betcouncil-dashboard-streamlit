@@ -73,23 +73,7 @@ def devig_odds(american_odds):
         return None
 
 
-def calculate_edge(fair_prob, side="OVER", sport="NBA"):
-    """
-    Single source of truth for sportsbook edge calculation.
-    All prop edge calculations must use this function.
-    
-    Returns signed edge: positive = good bet, negative = fade.
-    For display: use abs(calculate_edge(...))
-    The sign is preserved internally for UNDER detection logic.
-    
-    Breakeven: sportsbook -110 = 52.4%
-    For DFS props use calculate_prizepicks_ev() instead.
-    """
-    breakeven = 0.524  # -110 standard juice
-    return round(fair_prob - breakeven, 4)
-
-
-
+# calculate_edge — moved back to app.py (cross-module dependency)
 def compute_std_dev(game_values, decay=0.85, sport=None):
     if not game_values or len(game_values) < 3:
         return None
@@ -448,29 +432,7 @@ def sample_size_confidence(n_games, sport):
     return round(confidence, 3)
 
 
-def get_best_alt_line_recommendation(player_name, stat_name, main_line, main_prob, main_ev, avg, std_dev, sport, bankroll):
-    best_alt, all_alts = compute_alt_line_ev(player_name, stat_name, avg, std_dev, sport, bankroll)
-    if not best_alt:
-        return None
-    if best_alt["line"] == main_line:
-        return None
-    return {
-        "player": player_name,
-        "stat": stat_name,
-        "main_line": main_line,
-        "main_ev": main_ev,
-        "best_line": best_alt["line"],
-        "best_ev": best_alt["ev"],
-        "best_odds": best_alt["decimal_odds"],
-        "best_payout": best_alt["payout"],
-        "fair_prob": best_alt["fair_prob"],
-        "wager": best_alt["wager"],
-        "ev_improvement": round(best_alt["ev"] - main_ev, 4),
-        "all_alts": all_alts,
-        "source": "ParlayPlay",
-    }
-
-
+# get_best_alt_line_recommendation — moved back to app.py (cross-module dependency)
 def compare_multibook_lines(pp_props, oddswrap_props):
     if not oddswrap_props:
         return []
