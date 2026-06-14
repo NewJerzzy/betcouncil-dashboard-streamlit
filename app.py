@@ -26,14 +26,7 @@ def _bc_track(stage, duration, meta=None):
     except Exception as _e:
             print(f"[WARN] {_e}")
 
-@_ctx
-def bc_timer(stage, meta=None):
-    _t = _time_mod.perf_counter()
-    try:
-        yield
-    finally:
-        _bc_track(stage, _time_mod.perf_counter() - _t, meta)
-
+# bc_timer — moved to utils.py
 import re
 import requests
 import time
@@ -583,18 +576,7 @@ REGIME_LABELS = {
     "neutral": ("NEUTRAL", "#6a7a8a"),
 }
 
-def classify_regime(signals, edge, line_moved):
-    """Classify the market regime for a prop."""
-    if abs(edge) >= 0.10 and not line_moved:
-        return "strong_over" if edge > 0 else "strong_under"
-    if line_moved and edge > 0.05:
-        return "reprice_over"
-    if line_moved and edge < -0.05:
-        return "reprice_under"
-    if line_moved and abs(edge) < 0.03:
-        return "sharp_fade"
-    return "neutral"
-
+# classify_regime — moved to utils.py
 def render_signal_chart(prop, sport="NBA"):
     """
     Render a plain-language signal breakdown chart.
@@ -1363,52 +1345,8 @@ def ewma_average(game_values, decay=0.85, sport=None):
     weighted = sum(v * w for v, w in zip(reversed(game_values), weights))
     return round(weighted / sum(weights), 2)
 
-@st.cache_data(ttl=3600)
-def compute_std_dev(game_values, decay=0.85, sport=None):
-    if not game_values or len(game_values) < 3:
-        return None
-    if sport:
-        decay = SPORT_EWMA_DECAY.get(sport, decay)
-    weights = [decay**i for i in range(len(game_values))]
-    total_weight = sum(weights)
-    weighted_mean = sum(v * w for v, w in zip(reversed(game_values), weights)) / total_weight
-    weighted_var = sum(w * (v - weighted_mean)**2 for v, w in zip(reversed(game_values), weights)) / total_weight
-    return round(weighted_var**0.5, 3)
-
-def calculate_edge(fair_prob, side="OVER", sport="NBA"):
-    """
-    Single source of truth for sportsbook edge calculation.
-    All prop edge calculations must use this function.
-    
-    Returns signed edge: positive = good bet, negative = fade.
-    For display: use abs(calculate_edge(...))
-    The sign is preserved internally for UNDER detection logic.
-    
-    Breakeven: sportsbook -110 = 52.4%
-    For DFS props use calculate_prizepicks_ev() instead.
-    """
-    breakeven = 0.524  # -110 standard juice
-    return round(fair_prob - breakeven, 4)
-
-
-def tier_badge(tier):
-    """Reusable HTML tier badge — use in any markdown block."""
-    styles = {
-        "SOVEREIGN": {"bg": "#c8840a", "color": "#fff",     "icon": "👑"},
-        "ELITE":     {"bg": "#0ea5a0", "color": "#fff",     "icon": "⭐"},
-        "APPROVED":  {"bg": "#378add", "color": "#fff",     "icon": "✓"},
-        "LEAN":      {"bg": "#4a5a6a", "color": "#b8c6d6",  "icon": "📊"},
-        "PASS":      {"bg": "#2a3a4a", "color": "#6a7a8a",  "icon": "⏸"},
-    }
-    s = styles.get(tier, styles["LEAN"])
-    return (f'<span style="background:{s["bg"]};color:{s["color"]};'
-            f'padding:2px 9px;border-radius:12px;font-size:11px;'
-            f'font-weight:700;letter-spacing:0.03em;">'
-            f'{s["icon"]} {tier}</span>')
-
-
-# Game-total prop detection thresholds
-# If a prop line exceeds this, it's a game total, not a player stat
+# compute_std_dev — moved to utils.py
+# tier_badge — moved to utils.py
 GAME_TOTAL_LINE_THRESHOLDS = {
     "NBA":  180.0,   # game totals ~210-240
     "WNBA": 130.0,   # game totals ~155-175
@@ -1424,33 +1362,7 @@ GAME_TOTAL_PROP_NAMES = {
     "Alternate Total",
 }
 
-def is_game_total_prop(player, prop_name, line, sport):
-    """
-    Detect whether a prop is a game-total bet vs a player stat.
-    Game total props must NOT use the player avg model.
-    """
-    threshold = GAME_TOTAL_LINE_THRESHOLDS.get(sport, 999)
-    if line >= threshold:
-        return True
-    if any(t.lower() in prop_name.lower() for t in GAME_TOTAL_PROP_NAMES):
-        return True
-    if "@" in player or " vs " in player.lower():
-        return True
-    return False
-
-
-def compute_fair_prob(line, avg, std_dev, side="OVER"):
-    if avg <= 0:
-        return 0.5
-    if std_dev is None or std_dev <= 0:
-        std_dev = avg * 0.40
-    adjusted_line = line + 0.5 if (line == int(line)) else line
-    if side.upper() == "OVER":
-        prob = 1 - scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
-    else:
-        prob = scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
-    return round(max(0.20, min(0.80, prob)), 4)
-
+# is_game_total_prop — moved to utils.py
 def compute_market_edge(fair_prob, side="OVER"):
     market_implied = 0.524
     if side.upper() == "OVER":
@@ -1459,19 +1371,7 @@ def compute_market_edge(fair_prob, side="OVER"):
         edge = fair_prob - market_implied
     return round(edge, 4)
 
-def devig_odds(american_odds):
-    if american_odds is None:
-        return None
-    try:
-        odds = float(american_odds)
-        if odds > 0:
-            implied = 100 / (odds + 100)
-        else:
-            implied = abs(odds) / (abs(odds) + 100)
-        return round(implied, 4)
-    except (pickle.UnpicklingError, OSError, EOFError):
-        return None
-
+# devig_odds — moved to utils.py
 def compute_consensus_probability(sport, player_name, stat_name, line_val, side="OVER"):
     """
     Compute true probability using no-vig devig.
@@ -5547,19 +5447,7 @@ def adjusted_edge(raw_edge, sport, tier, stat_norm, history):
     adjustment = calibration_error * min(1.0, n / 100)
     return raw_edge + adjustment, True
 
-@functools.lru_cache(maxsize=512)
-def normalize_name(s: str) -> str:
-    if not s:
-        return ""
-    try:
-        s = unicodedata.normalize("NFD", str(s))
-        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-        s = re.sub(r"\s+(jr|sr|ii|iii)\.?$", "", s.lower().strip())
-        s = s.replace("-", " ").replace(".", "").replace("'", "")
-        return re.sub(r"\s+", " ", s).strip()
-    except (TypeError, AttributeError):
-        return ""
-
+# normalize_name — moved to utils.py
 def find_player_avg(player_name, avgs_dict):
     if player_name in avgs_dict:
         return avgs_dict[player_name], False
@@ -5591,16 +5479,7 @@ def cached_fetch(url, ttl_minutes=25):
     except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
-def poisson_prob_over(line, avg):
-    if avg <= 0:
-        return 0.5
-    k = int(line)
-    try:
-        p_under = sum((avg**i * exp(-avg)) / factorial(int(i)) for i in range(int(k) + 1))
-        return round(1 - p_under, 4)
-    except (ValueError, OverflowError, ZeroDivisionError, TypeError):
-        return 0.5
-
+# poisson_prob_over — moved to utils.py
 def prizepicks_breakeven_prob(n_picks=2):
     multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
     return round((1 / multiplier) ** (1 / n_picks), 4)
@@ -5638,22 +5517,8 @@ def get_tier(edge, sport  # Maps edge % to tier: SOVEREIGN/ELITE/APPROVED/LEAN/P
     if edge >= thresholds["LEAN"]: return "LEAN"
     return "PASS"
 
-def parlay_prob(probs):
-    combined = 1.0
-    for p in probs:
-        combined *= p
-    return combined
-
-def parlay_payout(probs, odds=-110):
-    combined = parlay_prob(probs)
-    if combined <= 0:
-        return 0
-    fair_decimal = 1 / combined
-    if fair_decimal >= 2.0:
-        return round((fair_decimal - 1) * 100)
-    else:
-        return round(-100 / (fair_decimal - 1))
-
+# parlay_prob — moved to utils.py
+# parlay_payout — moved to utils.py
 def active_unit():
     return round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
 
@@ -9524,182 +9389,9 @@ def fetch_game_lines(sport):
         return [], playoff, home_teams, away_teams
     return today_games, playoff, home_teams, away_teams
 
-def safe_float(val, default: float = 0.0) -> float:
-    """Type-safe float conversion with fallback."""
-    try:
-        return float(val) if val is not None else default
-    except (TypeError, ValueError):
-        return default
-
-
-def american_to_prob(american_odds) -> float:
-    """Convert American odds to implied probability."""
-    try:
-        o = float(american_odds)
-        if o == 0:
-            return 0.5
-        if o > 0:
-            return 100.0 / (o + 100.0)
-        return abs(o) / (abs(o) + 100.0)
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 0.5
-
-def no_vig_prob(over_american, under_american) -> float:
-    """Calculate no-vig true probability from both sides."""
-    try:
-        over_imp = american_to_prob(over_american)
-        under_imp = american_to_prob(under_american)
-        total = over_imp + under_imp
-        if total <= 0:
-            return 0.5
-        return round(over_imp / total, 4)
-    except (TypeError, ValueError):
-        return 0.5
-
-def parse_bovada_slip_text(text: str) -> list:
-    """Parse Bovada text slip into bet records."""
-    import re
-    bets = []
-    if not text or not any(x in text.lower() for x in ['parlay', 'straight bet', 'ref.']):
-        return bets
-    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
-    tl = text.lower()
-
-    # Outcome
-    outcome = "PENDING"
-    if "winnings" in tl:
-        win_match = re.search(r'winnings\s*\$?\s*([\d.]+)', tl)
-        if win_match:
-            winnings = float(win_match.group(1))
-            outcome = "WIN" if winnings > 0 else "LOSS"
-    elif "\nloss\n" in tl or tl.strip().endswith("loss"):
-        outcome = "LOSS"
-    elif "\nwin\n" in tl or tl.strip().endswith("win"):
-        outcome = "WIN"
-
-    # Wager
-    wager = 0.0
-    risk_match = re.search(r'risk\s*\$?\s*([\d.]+)', tl)
-    if risk_match:
-        wager = float(risk_match.group(1))
-
-    # Bet type
-    parlay_match = re.search(r'(\d+)\s+team\s+parlay', tl)
-    is_parlay = bool(parlay_match)
-    n_picks = int(parlay_match.group(1)) if parlay_match else 1
-
-    # Parse each leg - Bovada format: "* Team1 @ Team2 / WinningTeam (odds)(type) Market"
-    legs = re.findall(r'\*\s+(.+?)\s*\n(.+?)(?:\n|$)', text, re.MULTILINE)
-    date_str = ""
-    date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
-    if date_match:
-        date_str = date_match.group(1)
-
-    for matchup, pick_line in legs:
-        matchup = matchup.strip()
-        pick_line = pick_line.strip()
-        # Extract team and odds from pick line: "Detroit Tigers (-310)(Live Game) Moneyline"
-        pick_match = re.match(r'^(.+?)\s*\(([+-]?\d+)\)', pick_line)
-        if pick_match:
-            team_pick = pick_match.group(1).strip()
-            odds = pick_match.group(2)
-            market = "Moneyline" if "moneyline" in pick_line.lower() else pick_line.split(")")[-1].strip()
-            bets.append({
-                "player": matchup, "prop": market, "line": 0,
-                "side": team_pick, "sport": "MLB",
-                "outcome": outcome, "wager": wager / max(1, n_picks),
-                "pick_count": n_picks, "bet_type": "game",
-                "source": "Bovada", "date": date_str,
-                "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5
-            })
-
-    # If no legs parsed but we have outcome, create a single record
-    if not bets and outcome != "PENDING":
-        bets.append({
-            "player": "Bovada Parlay", "prop": f"{n_picks}-Team Parlay",
-            "line": 0, "side": "WIN", "sport": "MLB",
-            "outcome": outcome, "wager": wager, "pick_count": n_picks,
-            "bet_type": "game", "source": "Bovada", "date": date_str,
-            "tier": "LEAN", "edge": 0, "prob": 0.5
-        })
-    return bets
-
-
-def parse_mybookie_slip_text(text: str) -> list:
-    """Parse MyBookie text slip into bet records."""
-    import re
-    bets = []
-    if not text:
-        return bets
-    tl = text.lower()
-
-    # Outcome
-    outcome = "PENDING"
-    if "straight bet - win" in tl or tl.rstrip().endswith("win"):
-        outcome = "WIN"
-    elif "straight bet - loss" in tl or tl.rstrip().endswith("loss"):
-        outcome = "LOSS"
-    elif re.search(r'win:\s*0\.00', tl):
-        outcome = "LOSS"
-    elif re.search(r'win:\s*[1-9]', tl):
-        outcome = "WIN"
-
-    # Wager
-    wager = 0.0
-    risk_match = re.search(r'risk:\s*([\d.]+)', tl)
-    if risk_match:
-        wager = float(risk_match.group(1))
-
-    # Parse each leg using line-by-line approach
-    # MyBookie format: "Team Name ( Pitcher1 / Pitcher2 )-ODDS"
-    lines = text.splitlines()
-    date_str = ""
-    team_odds_pattern = re.compile(r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*$')
-    legs = []
-    for i, line in enumerate(lines):
-        m = team_odds_pattern.match(line.strip())
-        if m:
-            team = m.group(1).strip()
-            odds = m.group(2).strip()
-            # Look for game date nearby
-            for j in range(i, min(i+5, len(lines))):
-                date_m = re.search(r'Game Date:\s*(.+)', lines[j])
-                if date_m and not date_str:
-                    date_str = date_m.group(1).strip()[:10]
-            legs.append({"team": team, "odds": odds})
-
-    n_picks = max(1, len(legs))
-    for leg in legs:
-        bets.append({
-            "player": leg["team"],
-            "prop": "Moneyline",
-            "line": 0,
-            "side": leg["team"],
-            "sport": "MLB",
-            "outcome": outcome,
-            "wager": round(wager / n_picks, 2),
-            "pick_count": n_picks,
-            "bet_type": "game",
-            "source": "MyBookie",
-            "date": date_str,
-            "odds": leg["odds"],
-            "tier": "LEAN",
-            "edge": 0,
-            "prob": 0.5
-        })
-
-    if not bets and outcome != "PENDING":
-        bets.append({
-            "player": "MyBookie Bet", "prop": "Moneyline",
-            "line": 0, "side": "WIN", "sport": "MLB",
-            "outcome": outcome, "wager": wager, "pick_count": 1,
-            "bet_type": "game", "source": "MyBookie", "date": date_str,
-            "tier": "LEAN", "edge": 0, "prob": 0.5
-        })
-    return bets
-
-
-
+# safe_float — moved to utils.py
+# american_to_prob — moved to utils.py
+# no_vig_prob — moved to utils.py
 def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
     """
     Find FanDuel/DraftKings no-vig probability for a specific player+stat+line.
@@ -11824,124 +11516,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 # Future extraction target: ocr.py
 # ═══════════════════════════════════════════════════════════
 
-def _parse_pp_ocr_inline(raw_text):
-    """Parse single-line OCR text from PrizePicks screenshots. All sports."""
-    import re
-    # Normalize WORLDCUP → WORLD CUP
-    raw_text = re.sub(r"WORLDCUP", "WORLD CUP", raw_text, flags=re.I)
-    
-    SPORTS = ["WORLD CUP","NBA","WNBA","MLB","NHL","NFL","TENNIS","PGA","MMA","UFC","SOCCER"]
-    SKIP_POS = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","IF","SP","RP","OF","SS","1B","2B","3B",
-                "MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD"}
-    BANNED = {"FINAL","LEADERBOARD","SHOW","DETAILS","PLAY","FLEX","POWER","WIN","PAY","VS","V",
-        "ARI","ATL","BAL","BOS","CHC","CWS","CHI","CIN","CLE","COL","DET","HOU","KC","LAA","LAD",
-        "MIA","MIL","MIN","NYM","NYY","OAK","PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH",
-        "BKN","CHA","DAL","DEN","GSW","IND","MEM","NOP","OKC","ORL","PHX","POR","SAC","SAS","UTA","WAS",
-        "CON","LVA","LA","NYL","NY","USA","PAR"}
-    PROPS = ["Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds",
-        "Strikeouts","Ks","Total Bases","Hits Allowed","Hits","RBIs","Earned Runs Allowed",
-        "Fantasy Score","Pitcher FS","Hitter FS","Passes Attempted","Goals","Goalie Saves",
-        "Saves","Break Points Won","Strokes","Aces","Total Games Won","H+R+RBI","Runs",
-        "Turnovers","Blocks","Steals","Rebounds","3-Pointers"]
-
-    # Extract wager, payout, slip type
-    _wager = 0.0
-    _payout = 0.0
-    _slip_type = ""
-    _tm = re.search(r"(\d+-Pick\s+(?:Flex|Power)\s+Play)", raw_text, re.I)
-    if _tm: _slip_type = _tm.group(1)
-    _wm = re.search(r"\$([\d.]+)\s+to\s+(?:pay|win|Play)", raw_text, re.I)
-    if not _wm: _wm = re.search(r"Play\s+\$([\d.]+)", raw_text, re.I)
-    if _wm: _wager = float(_wm.group(1))
-    _pm = re.search(r"(?:pay|win)\s+\$([\d.]+)", raw_text, re.I)
-    if _pm: _payout = float(_pm.group(1))
-    _header_win = bool(re.search(r"\bWin\b", raw_text[:200], re.I))
-
-    # Step 1: Find all players by sport tag positions
-    sports_re = r"\b(" + "|".join(re.escape(s) for s in SPORTS) + r")\b"
-    sport_matches = list(re.finditer(sports_re, raw_text, re.I))
-    
-    players = []
-    for idx, sm in enumerate(sport_matches):
-        sport = sm.group(1).upper()
-        prev_end = sport_matches[idx-1].end() if idx > 0 else 0
-        seg = raw_text[prev_end:sm.start()].strip()
-        seg = re.sub(r".*?Play\s+.*?\$[\d.]+.*?(?:Leaderboard|Show details|\bv\b)", "", seg, flags=re.I).strip()
-        seg = re.sub(r"\bFinal\b", "", seg, flags=re.I).strip()
-        words = seg.split()
-        pwords = []
-        for w in reversed(words):
-            cw = re.sub(r"[^a-zA-Z\'-]", "", w)
-            if not cw or len(cw) < 2: continue
-            if cw.upper() in SKIP_POS or cw.upper() in BANNED: 
-                if len(pwords) >= 2: break
-                continue
-            if cw[0].isupper():
-                pwords.insert(0, cw)
-            if len(pwords) >= 2 and all(len(x) >= 2 for x in pwords): break
-        pname = " ".join(pwords) if len(pwords) >= 2 else ""
-        if pname:
-            players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
-
-    # Step 2: Find all prop metrics anywhere in text
-    # Step 2: Extract metrics AFTER last "Final" cluster only
-    # Prevents matchup scores (85, 106) from contaminating prop data
-    props_re = r"\b(" + "|".join(re.escape(p) for p in PROPS) + r")\b"
-    _final_matches = list(re.finditer(r"Final", raw_text, re.I))
-    if _final_matches:
-        clean = raw_text[_final_matches[-1].end():]
-    else:
-        clean = raw_text
-    clean = re.sub(r"&\s*'t", "", clean)
-    clean = re.sub(r"\b\d+/\d+\b", "", clean)
-    clean = re.sub(r"\bFinal\b", "", clean, flags=re.I)
-    clean = re.sub(r"\s+", " ", clean).strip()
-    met_pattern = r"(x)?\s*(\d+\.?\d*)\s+(.+?)\s+(\d+)"
-    prop_matches = list(re.finditer(props_re, clean, re.I))
-    
-    metrics = []
-    for pidx, pm in enumerate(prop_matches):
-        lead_start = prop_matches[pidx-1].end() if pidx > 0 else 0
-        lead = clean[lead_start:pm.start()].strip()
-        has_x = "x" in lead.lower().split()
-        trail_end = prop_matches[pidx+1].start() if pidx+1 < len(prop_matches) else len(clean)
-        trail = clean[pm.end():trail_end].strip()
-        nums = re.findall(r"\d+(?:\.\d+)?", trail)
-        # Also check for numbers BEFORE the prop (line is often before prop name)
-        pre_nums = re.findall(r"\d+(?:\.\d+)?", lead)
-        actual, line = 0.0, 0.0
-        if nums:
-            actual = float(nums[0])
-        if pre_nums:
-            line = float(pre_nums[-1])
-        if line == 0 and len(nums) >= 2:
-            actual, line = float(nums[0]), float(nums[1])
-        # Swap if needed (line should be the target, actual the result)
-        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "LOSS")
-        prop_clean = "Strikeouts" if pm.group(1).lower() == "ks" else pm.group(1)
-        metrics.append({"prop": prop_clean, "actual": actual, "line": line, "result": result, "side": "OVER"})
-
-    # Step 3: Combine and apply header win override
-    _overall = "WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS"
-    out = []
-    for i in range(min(len(players), len(metrics))):
-        entry = {**players[i], **metrics[i]}
-        entry["wager"] = _wager if i == 0 else 0.0
-        entry["payout"] = _payout if i == 0 else 0.0
-        entry["slip_type"] = _slip_type
-        entry["overall_result"] = _overall
-        if _header_win:
-            entry["result"] = "WIN"
-            entry["outcome"] = "WIN"
-        elif not entry.get("result") or entry.get("result") not in ("WIN","LOSS"):
-            entry["result"] = _overall
-            entry["outcome"] = _overall
-        else:
-            entry["outcome"] = entry.get("result", _overall)
-        out.append(entry)
-    return out
-
-
+# _parse_pp_ocr_inline — moved to slip_parser.py
 def parse_bet_screenshot_ocr(image_bytes):
     """
     Parse PrizePicks/prop screenshots using Claude vision API.
