@@ -2770,5 +2770,22 @@ def main():
 
     print("\n✅ Done")
 
+
+def fetch_books_parallel(sport, book_fns):
+    """Run multiple book scrapers in parallel."""
+    all_props = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(fn, sport): name for name, fn in book_fns.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                result = future.result()
+                if result:
+                    all_props.extend(result)
+            except Exception as e:
+                print(f"    {name}: parallel fetch error: {e}")
+    return all_props
+
+
 if __name__ == "__main__":
     main()
