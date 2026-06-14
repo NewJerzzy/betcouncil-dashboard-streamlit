@@ -4,7 +4,7 @@ import streamlit as st
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     devig_odds, calculate_edge, compute_std_dev, compute_fair_prob,
     tier_badge, is_game_total_prop, classify_regime, parlay_prob,
-    parlay_payout, poisson_prob_over, bc_timer)
+    parlay_payout, poisson_prob_over)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from scrapers import (fetch_auto_scraped_props, fetch_fanduel_direct, fetch_weather_for_game,
     fetch_todays_referees, fetch_soccer_rolling_averages, fetch_underdog_props,
@@ -41,7 +41,14 @@ def _bc_track(stage, duration, meta=None):
     except Exception as _e:
             print(f"[WARN] {_e}")
 
-# bc_timer — moved to utils.py
+def bc_timer(label):
+    """Simple context manager for timing code blocks."""
+    import time
+    class _Timer:
+        def __init__(self, l): self.l = l
+        def __enter__(self): self.t = time.time(); return self
+        def __exit__(self, *a): print(f"  {self.l}: {time.time()-self.t:.2f}s")
+    return _Timer(label)
 import re
 import requests
 import time
