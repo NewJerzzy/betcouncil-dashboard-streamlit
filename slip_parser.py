@@ -59,6 +59,7 @@ def _parse_pp_ocr_inline(raw_text):
                 pwords.insert(0, cw)
             if len(pwords) >= 2 and all(len(x) >= 2 for x in pwords): break
         pname = " ".join(pwords) if len(pwords) >= 2 else ""
+        pname = re.sub(r"^Final\\s+", "", pname, flags=re.I).strip()
         if pname:
             players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
 
