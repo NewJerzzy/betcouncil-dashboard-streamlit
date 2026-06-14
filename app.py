@@ -94,6 +94,22 @@ def _ss_set(key, value, expected_type=None):
 
 st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
 
+# --- Centralized CSS Variables ---
+st.markdown("""<style>
+:root {
+    --bc-green: #22c55e;
+    --bc-red: #e04040;
+    --bc-gold: #e8a020;
+    --bc-bg: #0a0e14;
+    --bc-bg2: #1e2d3d;
+    --bc-text: #e8f0f8;
+    --bc-muted: #8a9ab0;
+    --bc-dim: #6a7a8a;
+    --bc-blue: #378add;
+    --bc-bg-card: #0d1520;
+}
+</style>""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -178,14 +194,14 @@ def ss_get(key, default=None):
     """Safe session_state access — never raises KeyError."""
     try:
         return st.session_state.get(key, default)
-    except Exception:
+    except (requests.RequestException, KeyError, ValueError):
         return default
 
 def ss_set(key, value):
     """Safe session_state setter."""
     try:
         st.session_state[key] = value
-    except Exception as _e:
+    except (requests.RequestException, KeyError, ValueError) as _e:
             print(f"[WARN] {_e}")
 # ── Named Constants ──────────────────────────────────────────
 # Kelly Criterion
@@ -234,16 +250,16 @@ import glob as _glob_startup
 
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "odds_api_games_*.pkl")):
     try: os.remove(_stale)
-    except Exception: pass
+    except (requests.RequestException, KeyError, ValueError): pass
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "espn_games_*.pkl")):
     try: os.remove(_stale)
-    except Exception: pass
+    except (requests.RequestException, KeyError, ValueError): pass
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "game_lines_*.pkl")):
     try: os.remove(_stale)
-    except Exception: pass
+    except (requests.RequestException, KeyError, ValueError): pass
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "mlb_pitchers.pkl")):
     try: os.remove(_stale)
-    except Exception: pass
+    except (requests.RequestException, KeyError, ValueError): pass
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
 
@@ -4482,7 +4498,7 @@ def compute_signal_conflict(prop):
     def parse_pct(val_str):
         try:
             return float(str(val_str).replace("%","").replace("+","").strip())
-        except Exception:
+        except (ValueError, TypeError, ZeroDivisionError):
             return 0.0
     
     pos_total = sum(parse_pct(v) for _, v, _ in drivers if parse_pct(v) > 0)
@@ -5091,7 +5107,7 @@ def log_error_to_session(source, error, error_type="error"):
             "type": error_type
         })
         st.session_state["errors"] = st.session_state["errors"][-50:]
-    except Exception as _e:
+    except (KeyError, TypeError, ValueError) as _e:
             print(f"[WARN] {_e}")
 
 
@@ -5179,7 +5195,7 @@ def fetch_auto_scraped_props(sport="NBA"):
     except requests.Timeout:
         log_error_to_session("fetch_auto_scraped_props", "Gist API timed out (10s)", "error")
         return []
-    except Exception as e:
+    except (requests.RequestException, KeyError, ValueError) as e:
         log_error_to_session("fetch_auto_scraped_props", f"Unexpected: {str(e)[:100]}", "error")
         return []
 def scrape_prizepicks_with_gist_fallback(sport):
@@ -5335,7 +5351,7 @@ def fetch_fanduel_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception as _e:
+    except (IOError, ValueError) as _e:
             print(f"[WARN] {_e}")
 
     return props
@@ -7012,7 +7028,7 @@ def fetch_mlb_probable_pitchers():
         if pitchers:
             with open(cache_path, "wb") as f:
                 pickle.dump(pitchers, f)
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_probable_pitchers", "error": str(e)[:100]})
     return pitchers
 
@@ -7512,7 +7528,7 @@ def fetch_alternate_lines(sport, matchup):
         if alternates["spreads"] or alternates["totals"]:
             with open(cache_path, "wb") as f:
                 pickle.dump(alternates, f)
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_alternate_lines", "error": str(e)[:100]})
     return alternates
 
@@ -7687,7 +7703,7 @@ def fetch_nba_rolling_averages():
                 try:
                     with open(cache_path, "rb") as _cf:
                         return pickle.load(_cf)
-                except Exception:
+                except (requests.RequestException, KeyError, ValueError):
                     pass
             continue
     if not rolling:
@@ -8292,7 +8308,7 @@ def fetch_underdog_props(sport):
             except (ValueError, KeyError, TypeError, AttributeError):
                 pass
         return props
-    except Exception as e:
+    except (IOError, ValueError) as e:
         print(f"Underdog props error: {e}")
         return []
 def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
@@ -8334,7 +8350,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}"))
             elif _is_valid(r):
                 return r
-        except Exception as e:
+        except (KeyError, TypeError, ValueError) as e:
             _log("ScrapeOps", "ERR", error=e)
 
     # ── 2. ScraperAPI ────────────────────────────────────────
@@ -8349,7 +8365,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 st.session_state["scraperapi_exhausted"] = True
             elif _is_valid(r):
                 return r
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError) as e:
             _log("ScraperAPI", "ERR", error=e)
 
     # ── 3. Scrape.do ─────────────────────────────────────────
@@ -8421,7 +8437,7 @@ def scrape_prizepicks(sport):
                         data = cached
                     else:
                         os.remove(cache_path)  # Clear bad cache
-                except Exception:
+                except (IOError, ValueError):
                     try: os.remove(cache_path)
                     except Exception: pass
         if data is None:
@@ -8459,7 +8475,7 @@ def scrape_prizepicks(sport):
                             _cffi_success = True
                 except ImportError:
                     pass
-                except Exception:
+                except (requests.RequestException, KeyError, ValueError):
                     pass
 
                 # ── Attempt 2: ScrapeOps residential proxy ──
@@ -8543,7 +8559,7 @@ def scrape_prizepicks(sport):
                 st.session_state["pp_status"] = "fallback"
                 st.session_state["pp_source"]  = "gist_scraper"
                 return _gist_props
-    except Exception as _e:
+    except (KeyError, TypeError, ValueError) as _e:
             print(f"[WARN] {_e}")
     # Clear cache so next load retries PrizePicks
     try:
@@ -8902,7 +8918,7 @@ def fetch_rotowire_injuries(sport):
                                 injuries[p] = "Out"
                             elif "questionable" in headline.lower() or "day-to-day" in headline.lower():
                                 injuries[p] = "Questionable"
-        except Exception:
+        except (ValueError, IndexError, AttributeError):
             injuries = {}
     underdog_injuries = fetch_underdog_injuries(sport)
     injuries.update(underdog_injuries)
@@ -9092,7 +9108,7 @@ def fetch_public_betting(sport):
                 pickle.dump(public_betting, f)
             st.session_state["public_betting_data"] = public_betting
         return public_betting
-    except Exception as e:
+    except (KeyError, TypeError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_public_betting", "error": str(e)[:100]})
         return {}
 
@@ -9163,7 +9179,7 @@ def fetch_action_network_props(sport):
                     if lv is not None:
                         try:
                             line_val = float(lv)
-                        except Exception:
+                        except (ValueError, TypeError, ZeroDivisionError):
                             pass
                 odds = line_entry.get("odds")
                 if odds:
@@ -9171,7 +9187,7 @@ def fetch_action_network_props(sport):
             if line_val is None and implied_value:
                 try:
                     line_val = round(float(implied_value), 1)
-                except Exception:
+                except (ValueError, TypeError, ZeroDivisionError):
                     pass
             if line_val is None:
                 continue
@@ -9201,7 +9217,7 @@ def fetch_action_network_props(sport):
                 pickle.dump(results, f)
             st.caption(f"✅ Action Network props: {len(results)} projections loaded for {sport}")
         return results
-    except Exception as e:
+    except (KeyError, TypeError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_action_network_props", "error": str(e)[:100]})
         return []
 
@@ -9533,7 +9549,7 @@ def fetch_odds_api_props(sport):
                                 "UnderOdds": None,
                             })
                 time.sleep(0.2)
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError) as e:
                 st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": str(e)[:100]})
                 continue
         if all_props:
@@ -9541,7 +9557,7 @@ def fetch_odds_api_props(sport):
                 pickle.dump(all_props, f)
             st.caption(f"✅ Odds API: {len(all_props)} props from Bovada/MyBookie/DK/FD/Novig")
         return all_props
-    except Exception as e:
+    except (requests.RequestException, KeyError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": str(e)[:100]})
         return []
 
@@ -9753,7 +9769,7 @@ def fetch_odds_api_game_lines(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(result, f)
         return result
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_game_lines", "error": str(e)[:100]})
         return [], {}, {}
 
@@ -9906,7 +9922,7 @@ def fetch_oddswrap_lines(sport):
         if lines_data:
             with open(cache_path, "wb") as f:
                 pickle.dump(lines_data, f)
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddswrap_lines", "error": str(e)[:100]})
     return lines_data
 
@@ -10003,7 +10019,7 @@ def fetch_parlayapi_props(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
         return props
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_parlayapi_props",
@@ -10127,7 +10143,7 @@ def fetch_parlayplay_props(sport):
         try:
             from curl_cffi import requests as cf_requests
             resp = cf_requests.get(url, headers=pp_headers, impersonate="chrome120", timeout=20)
-        except Exception:
+        except (requests.RequestException, KeyError, ValueError):
             resp = requests.get(url, headers=pp_headers, timeout=20)
         api_budget_increment("PARLAYPLAY")
         if resp.status_code == 403:
@@ -10207,7 +10223,7 @@ def fetch_parlayplay_props(sport):
             alt_count = sum(1 for p in props if p.get("AltLineCount", 0) > 1)
             st.caption(f"✅ ParlayPlay: {len(props)} props | {alt_count} with alt lines | All sports")
         return props
-    except Exception as e:
+    except (KeyError, TypeError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_parlayplay_props", "error": str(e)[:100]})
         return []
 
@@ -10432,7 +10448,7 @@ def fetch_bdl_props(sport):
             monthly_limit = API_BUDGETS["BDL"].get("monthly_limit", 200)
             st.caption(f"✅ BDL Props: {len(all_props)} props fetched — BDL monthly: {daily_used + 1}/{monthly_limit} calls")
         return all_props
-    except Exception as e:
+    except (requests.RequestException, KeyError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_bdl_props", "error": str(e)[:100]})
         return []
 
@@ -10543,7 +10559,7 @@ def fetch_oddspapi_props(sport):
                 pickle.dump(props, f)
             st.caption(f"✅ OddsPapi: {len(props)} props fetched ({daily_used + 1}/{ODDSPAPI_FREE_TIER_DAILY_LIMIT} calls today)")
         return props
-    except Exception as e:
+    except (requests.RequestException, KeyError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": str(e)[:100]})
         return []
 
@@ -10740,7 +10756,7 @@ def compute_sharp_consensus_no_vig(odds_data, matchup, market="total"):
                     book_probs[label] = prob
                     if game.get(line_key):
                         book_lines[label] = float(game[line_key])
-                except Exception:
+                except (ValueError, TypeError, ZeroDivisionError):
                     pass
 
     if not book_probs:
@@ -10900,7 +10916,7 @@ def detect_steam_moves(sport):
                                 "age_mins":    round(baseline_age, 0),
                                 "signal":      f"{strength} {direction}: {len(moved_books)} books moved ({', '.join(moved_books)}) in {baseline_age:.0f}m",
                             })
-                    except Exception:
+                    except (ValueError, TypeError, ZeroDivisionError):
                         pass
         save_json_data(baseline_path, current_lines)
         return steam_moves
@@ -11626,7 +11642,7 @@ Rules:
             }
             raise Exception(f"Claude API error: {api_resp.status_code}")
 
-    except Exception as e:
+    except (requests.RequestException, KeyError, ValueError) as e:
         # Fallback: OCR.space API (free 25k/month) then multi-sport parser
         try:
             raw = ""
@@ -11649,7 +11665,7 @@ Rules:
                     img_proc = ImageOps.invert(img_proc)
                     img_proc = ImageEnhance.Contrast(img_proc).enhance(3.0)
                     raw = pytesseract.image_to_string(img_proc, config="--psm 6 --oem 3")
-                except Exception:
+                except (IOError, ValueError):
                     pass
             st.session_state["ocr_raw_text"] = raw
             # Run full parser FIRST (handles win/loss correctly)
@@ -11687,7 +11703,7 @@ Rules:
                         if player and len(player) > 2:
                             result.append({"player": player, "prop": prop or "Line",
                                 "line": line_val, "side": "OVER", "sport": sport, "book": "PrizePicks"})
-                    except Exception:
+                    except (ValueError, TypeError, ZeroDivisionError):
                         continue
             # Method 3: PrizePicks format — "{Name} {pos} {SPORT} {matchup}" pattern
             if not result:
@@ -11747,7 +11763,7 @@ Rules:
                 _item.setdefault("outcome", "LOSS")
                 _item.setdefault("actual", 0.0)
             return result
-        except Exception as e2:
+        except (ValueError, IndexError, AttributeError) as e2:
             st.session_state.setdefault("errors",[]).append({
                 "time":   datetime.now().strftime("%H:%M:%S"),
                 "source": "parse_bet_screenshot_ocr",
@@ -12073,7 +12089,7 @@ def fetch_dk_salaries(sport="NBA"):
                 if attr.get("id") == 90:  # FPPG stat id
                     try:
                         fppg = float(attr.get("value", 0))
-                    except Exception:
+                    except (ValueError, TypeError, ZeroDivisionError):
                         pass
 
             if name and salary:
@@ -12098,7 +12114,7 @@ def fetch_dk_salaries(sport="NBA"):
 
         return salaries
 
-    except Exception as e:
+    except (KeyError, TypeError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_dk_salaries",
@@ -12279,7 +12295,7 @@ def fetch_pinnacle_lines(sport):
         n_games = len(pinnacle_data["games"])
         return pinnacle_data
 
-    except Exception as e:
+    except (KeyError, TypeError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_pinnacle_lines",
@@ -12450,7 +12466,7 @@ def fetch_player_game_logs(player_name, season=2025, last_n=15):
                 pickle.dump(logs, f)
         return logs
 
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_player_game_logs",
@@ -12539,7 +12555,7 @@ def fetch_dk_nba_draftgroup_id():
                 with open(cache_path, "wb") as f:
                     pickle.dump(dgid, f)
                 return dgid
-    except Exception as e:
+    except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_dk_nba_draftgroup_id",
@@ -12844,7 +12860,7 @@ def fetch_draftkings_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception as _e:
+    except (IOError, ValueError) as _e:
             print(f"[WARN] {_e}")
 
     return props
@@ -12990,7 +13006,7 @@ def fetch_betmgm_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception as _e:
+    except (IOError, ValueError) as _e:
             print(f"[WARN] {_e}")
 
     return props
@@ -13129,7 +13145,7 @@ def fetch_caesars_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception as _e:
+    except (IOError, ValueError) as _e:
             print(f"[WARN] {_e}")
 
     return props
@@ -13237,7 +13253,7 @@ def fetch_betrivers_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except Exception as _e:
+    except (IOError, ValueError) as _e:
             print(f"[WARN] {_e}")
 
     return props
@@ -13421,7 +13437,7 @@ def fetch_nfl_inactives():
         # Fall back to stored
         stored = load_json_data(NFL_INACTIVES_PATH, {})
         return stored.get("inactives", {})
-    except Exception:
+    except (requests.RequestException, KeyError, ValueError):
         return load_json_data(NFL_INACTIVES_PATH, {}).get("inactives", {})
 
 
@@ -13575,7 +13591,7 @@ def get_line_movement_summary(matchup, sport, current_game):
         if curr_spr and open_spr and curr_spr != open_spr:
             movements.append(f"Spread: {open_spr} → {curr_spr}")
         return " | ".join(movements)
-    except Exception:
+    except (ValueError, TypeError, ZeroDivisionError):
         return ""
 
 
@@ -13871,7 +13887,7 @@ def load_sport_data(sport):
             if _fd_direct:
                 _direct_props.extend(_fd_direct)
                 st.caption(f"📡 FanDuel: {len(_fd_direct)} props loaded directly")
-        except Exception as _e:
+        except (requests.RequestException, KeyError, ValueError) as _e:
             print(f"[WARN] {_e}")
         try:
             _dk_direct = fetch_draftkings_direct(sport)
@@ -14416,7 +14432,7 @@ def load_sport_data(sport):
                     if total and total != "N/A":
                         try:
                             game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
-                        except Exception:
+                        except (ValueError, TypeError, ZeroDivisionError):
                             pass
                     break
         weather_adj = 0.0
@@ -14796,7 +14812,7 @@ def load_sport_data(sport):
                             prop["Edge"] = round(prop.get("Edge",0) - 0.02, 4)
                     else:
                         prop["H2HRate"] = "—"
-                except Exception:
+                except (ValueError, TypeError, ZeroDivisionError):
                     prop["H2HRate"] = "—"
             else:
                 prop["H2HRate"] = "—"
@@ -16634,7 +16650,7 @@ with tabs[1]:
         _sk, _sr = _sort_map.get(_sort_col, ("_edge_pct", True))
         try:
             _rows.sort(key=lambda x: float(str(x.get(_sk,"0")).replace("%","").replace("—","0") or 0), reverse=_sr)
-        except Exception:
+        except (ValueError, TypeError, ZeroDivisionError):
             _rows.sort(key=lambda x: str(x.get(_sk,"")), reverse=_sr)
 
         st.caption(f"Showing {len(_rows)} props | Sorted by {_sort_col}")
@@ -17425,7 +17441,7 @@ with tabs[3]:
                                                 if i < len(stats_vals):
                                                     try:
                                                         player_stats[aname_norm][key.upper()] = float(stats_vals[i])
-                                                    except Exception:
+                                                    except (ValueError, TypeError, ZeroDivisionError):
                                                         pass
                                             # Map common stat label variants
                                             for label, variants in [
@@ -17444,7 +17460,7 @@ with tabs[3]:
                                                     if any(v.upper() == key.upper() for v in variants) and i < len(stats_vals):
                                                         try:
                                                             player_stats[aname_norm][label] = float(stats_vals[i])
-                                                        except Exception:
+                                                        except (ValueError, TypeError, ZeroDivisionError):
                                                             pass
                             except (ValueError, TypeError):
                                 continue
@@ -17564,7 +17580,7 @@ with tabs[3]:
                             bdl_resolved += 1
                             icon = "✅" if outcome == "WIN" else "❌"
                             st.markdown(f"{icon} **{lock.get('player','')}** (BDL) — actual: **{actual}** → **{outcome}**")
-                        except Exception:
+                        except (ValueError, TypeError, ZeroDivisionError):
                             continue
                     if bdl_resolved > 0:
                         save_json_data(LOCKS_PATH, st.session_state.locks)
@@ -17614,7 +17630,7 @@ with tabs[3]:
                                     if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                     resolved += 1
                                     st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
-                    except Exception: continue
+                    except (ValueError, TypeError, ZeroDivisionError): continue
 
             if resolved == 0:
                 st.info("No completed games found yet. Try after games finish.")
@@ -19048,7 +19064,7 @@ with tabs[6]:
                                 st.session_state[_bdl_cache_key] = [
                                     f"{p['first_name']} {p['last_name']}" for p in _sdata
                                 ]
-                        except Exception:
+                        except (requests.RequestException, KeyError, ValueError):
                             st.session_state[_bdl_cache_key] = []
                     _bdl_matches = st.session_state.get(_bdl_cache_key, [])
                     if _bdl_matches:
@@ -20802,7 +20818,7 @@ with tabs[9]:
             return None, "⏱️ Timeout — No response within 8s. API may be down.", "red"
         except requests.exceptions.ConnectionError:
             return None, "❌ Connection Error — Unreachable. Check if site is down.", "red"
-        except Exception as ex:
+        except (requests.RequestException, KeyError, ValueError) as ex:
             return None, f"❌ Error — {str(ex)[:60]}", "red"
 
     _COLOR_CSS = {
@@ -20847,7 +20863,7 @@ with tabs[9]:
                         _last_status = _log[-1]["status"] if _log else code
                         color = "green" if code == 200 else "red"
                         detail = f"✅ 200 OK via {_last_proxy}" if code == 200 else f"❌ {code} (tried: ScrapeOps→ScraperAPI→Scrape.do)"
-                    except Exception as _pe:
+                    except (requests.RequestException, KeyError, ValueError) as _pe:
                         code, detail, color = _ping_url(src["url"], src["headers"])
                         if color != "green":
                             detail = f"⚠️ All proxies failed — direct: {detail}"
@@ -20869,7 +20885,7 @@ with tabs[9]:
                         elif n == 0:
                             detail = "⚠️ 200 OK — Connected but 0 props. No slate posted yet."
                             color = "yellow"
-                    except Exception:
+                    except (requests.RequestException, KeyError, ValueError):
                         pass
                 results[src["name"]] = (code, detail, color)
             st.session_state["api_panel_results"] = results
