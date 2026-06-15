@@ -18848,50 +18848,6 @@ with tabs[4]:
         )
         st.markdown("---")
 
-    # CLV Performance Dashboard — Gap 3 complete (legacy block below kept for backward compat)
-    clv_summary = get_clv_summary(st.session_state.get("history", []))
-    if clv_summary:
-        st.markdown("### 📊 Closing Line Value (CLV) Performance")
-        st.caption("CLV measures whether you consistently get better prices than the closing line. Positive CLV = long-term +EV bettor. Pinnacle edge = how well you beat the sharpest book in the world.")
-        clv_cols = st.columns(4)
-        clv_grade, clv_color = compute_clv_grade(clv_summary.get("avg_clv", 0))
-        clv_cols[0].markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Avg CLV</div>'
-            f'<div style="font-size:22px;font-weight:700;color:{clv_color}">{clv_summary.get("avg_clv", 0):+.2f}</div>'
-            f'<div style="font-size:16px;color:{clv_color}">{clv_grade}</div></div>',
-            unsafe_allow_html=True
-        )
-        clv_cols[1].markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Positive CLV %</div>'
-            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">{clv_summary.get("positive_clv_pct", clv_summary.get("beat_rate", 0)):.1%}</div>'
-            f'<div style="font-size:16px;color:#6a7a8a">{clv_summary.get("total_tracked", clv_summary.get("n_resolved", 0))} bets tracked</div></div>',
-            unsafe_allow_html=True
-        )
-        clv_cols[2].markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Recent CLV (L20)</div>'
-            f'<div style="font-size:22px;font-weight:700;color:{"#22c55e" if clv_summary.get("recent_avg_clv", clv_summary.get("avg_clv", 0)) > 0 else "#e04040"}">{clv_summary.get("recent_avg_clv", clv_summary.get("avg_clv", 0)):+.2f}</div>'
-            f'<div style="font-size:16px;color:#6a7a8a">{clv_summary.get("recent_positive_pct", clv_summary.get("beat_rate", 0)):.0%} positive</div></div>',
-            unsafe_allow_html=True
-        )
-        pinn_edge_color = "#22c55e" if clv_summary.get("pinnacle_avg_edge", clv_summary.get("avg_clv", 0)) > 0 else "#e04040"
-        clv_cols[3].markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Avg Edge vs Pinnacle</div>'
-            f'<div style="font-size:22px;font-weight:700;color:{pinn_edge_color}">{clv_summary.get("pinnacle_avg_edge", clv_summary.get("avg_clv", 0)):+.1%}</div>'
-            f'<div style="font-size:16px;color:#6a7a8a">Gold standard metric</div></div>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px 16px;margin:8px 0;">'
-            f'<span style="font-size:16px;color:#e8f0f8;font-weight:600">Verdict: </span>'
-            f'<span style="font-size:16px;color:{clv_color}">{clv_summary.get("verdict", clv_summary.get("grade", "INSUFFICIENT"))}</span>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-        st.markdown("---")
 
     if st.session_state.history:
         hist_df = pd.DataFrame(st.session_state.history)
