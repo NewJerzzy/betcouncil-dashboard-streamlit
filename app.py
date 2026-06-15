@@ -16122,6 +16122,9 @@ with st.sidebar:
                       {"props": len(board), "sport": sport_sel})
             st.session_state.board_data = board
             st.session_state.games = games
+            st.session_state["board_loaded"]       = True
+            st.session_state["last_sport_loaded"]  = sport_sel
+            st.session_state["ev_auto_refresh_ts"] = 0   # trigger immediate first snapshot
             # Cache last good props per sport for fallback
             if board:
                 if "last_good_props" not in st.session_state:
@@ -16278,7 +16281,56 @@ st.markdown(f"""
 
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
-# ----- TAB 0: SUMMARY (Full version from original) -----
+# ── Background EV Auto-Refresh (every 2 min) ─────────────────────────────────
+# Silently re-fetches /api/ev, computes line movement deltas, and updates
+# sharp alerts — no board reload required. Runs as long as the tab is open.
+_EV_REFRESH_INTERVAL = 120   # seconds between EV snapshots
+
+_now_ts = time.time()
+_last_ev_refresh = st.session_state.get("ev_auto_refresh_ts", 0)
+_board_loaded    = bool(st.session_state.get("board_loaded"))
+_auto_refresh_on = st.session_state.get("ev_auto_refresh_enabled", True)
+
+if _board_loaded and _auto_refresh_on and (_now_ts - _last_ev_refresh) >= _EV_REFRESH_INTERVAL:
+    # Fetch fresh snapshot
+    _bg_ev_raw = fetch_ev_api_live.__wrapped__() if hasattr(fetch_ev_api_live, "__wrapped__") else None
+    try:
+        import requests as _req
+        _bg_r = _req.get("https://api-production-3a3b.up.railway.app/api/ev", timeout=10)
+        if _bg_r.status_code == 200:
+            _bg_ev_raw = _bg_r.json()
+    except Exception:
+        _bg_ev_raw = None
+
+    if _bg_ev_raw and _bg_ev_raw.get("data"):
+        # Compute movement deltas
+        _bg_mv_lookup, _bg_alerts, _bg_snapshot = compute_ev_line_movement(
+            _bg_ev_raw,
+            st.session_state.get("ev_odds_snapshot", {})
+        )
+        # Update session state
+        st.session_state["ev_odds_snapshot"]   = _bg_snapshot
+        st.session_state["ev_auto_refresh_ts"] = _now_ts
+        if _bg_mv_lookup:
+            st.session_state["ev_movement_lookup"] = _bg_mv_lookup
+        if _bg_alerts:
+            # Merge new alerts with existing, keep latest 20
+            existing = st.session_state.get("sharp_alerts", [])
+            merged   = _bg_alerts + [a for a in existing if a not in _bg_alerts]
+            st.session_state["sharp_alerts"] = merged[:20]
+        # Also update the EV props for Line Shop / StatsHub
+        _bg_props, _bg_sigs = extract_ev_props_for_app(
+            _bg_ev_raw,
+            sport_filter=st.session_state.get("last_sport_loaded")
+        )
+        if _bg_props:
+            st.session_state["ev_api_props"]     = _bg_props
+            st.session_state["ev_signal_lookup"] = _bg_sigs
+            st.session_state["ev_api_updated"]   = _bg_ev_raw.get("updated", {})
+        # Trigger silent rerun to push updated data to UI
+        st.rerun()
+
+
 with tabs[0]:
     # ═══════════════════════════════════════════════════════
     # SUMMARY TAB — DARK UI OVERHAUL
@@ -20538,9 +20590,30 @@ with tabs[8]:
 
 # ----- TAB 7: SYSTEM -----
 with tabs[9]:
-    st.markdown("## \u2699\ufe0f System Info")
+    st.markdown("## ⚙️ System Info")
 
-
+    # ── EV Auto-Refresh Control ───────────────────────────────
+    _col_tog1, _col_tog2, _col_tog3 = st.columns([2, 2, 3])
+    with _col_tog1:
+        _auto_refresh_toggle = st.toggle(
+            "🔄 EV Auto-Refresh (2min)",
+            value=st.session_state.get("ev_auto_refresh_enabled", True),
+            help="Fetches fresh EV API odds every 2 minutes and detects line movement automatically."
+        )
+        st.session_state["ev_auto_refresh_enabled"] = _auto_refresh_toggle
+    with _col_tog2:
+        _last_ts = st.session_state.get("ev_auto_refresh_ts", 0)
+        if _last_ts:
+            _mins = int((time.time() - _last_ts) / 60)
+            _secs = int((time.time() - _last_ts) % 60)
+            st.metric("Last EV Snapshot", f"{_mins}m {_secs}s ago")
+        else:
+            st.metric("Last EV Snapshot", "Not yet")
+    with _col_tog3:
+        _alerts_count = len(st.session_state.get("sharp_alerts", []))
+        _mv_count     = len(st.session_state.get("ev_movement_lookup", {}))
+        st.metric("Sharp Alerts", _alerts_count, delta=f"{_mv_count} props tracked")
+    st.markdown("---")
 
     # ── Data Source Status (from last board load) ────────────
     st.markdown("### 📊 Data Source Status")
@@ -20665,15 +20738,20 @@ with tabs[9]:
     else:
         _src_statuses.append({"Source": "EV Sharps API (20+ books)", "Status": "⚪ Not loaded — open Line Shop tab", "Action": "Open Line Shop"})
 
-    # EV JWT / Movement
-    _ev_jwt_present = bool(_get_ev_jwt())
-    _mv_alerts = st.session_state.get("sharp_alerts", [])
-    if _ev_jwt_present and _mv_alerts:
-        _src_statuses.append({"Source": "EV Movement API (S8/S9)", "Status": f"🟢 {len(_mv_alerts)} sharp alerts", "Action": "Refreshes on board load"})
-    elif _ev_jwt_present:
-        _src_statuses.append({"Source": "EV Movement API (S8/S9)", "Status": "🟡 JWT present — no alerts yet", "Action": "Load board to fetch"})
+    # EV Movement — snapshot engine + JWT fallback
+    _ev_jwt_present  = bool(_get_ev_jwt())
+    _mv_alerts       = st.session_state.get("sharp_alerts", [])
+    _last_refresh_ts = st.session_state.get("ev_auto_refresh_ts", 0)
+    _auto_on         = st.session_state.get("ev_auto_refresh_enabled", True)
+    _mins_ago        = int((time.time() - _last_refresh_ts) / 60) if _last_refresh_ts else None
+    _refresh_status  = f"Last snapshot: {_mins_ago}m ago" if _mins_ago is not None else "Not yet refreshed"
+
+    if _mv_alerts:
+        _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": f"🟢 {len(_mv_alerts)} alerts | {_refresh_status}", "Action": "Auto-refreshes every 2min"})
+    elif _auto_on and st.session_state.get("board_loaded"):
+        _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": f"🟡 Watching — {_refresh_status}", "Action": "Auto-refreshes every 2min"})
     else:
-        _src_statuses.append({"Source": "EV Movement API (S8/S9)", "Status": "🔴 JWT missing", "Action": "Add EV_JWT to Streamlit secrets"})
+        _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": "⚪ Load board to activate", "Action": "Snapshot engine ready"})
 
 
     _green  = sum(1 for s in _src_statuses if "🟢" in s["Status"])
