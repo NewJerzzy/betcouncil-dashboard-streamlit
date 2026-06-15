@@ -75,7 +75,12 @@ def devig_odds(american_odds):
         return None
 
 
-# calculate_edge — moved back to app.py (cross-module dependency)
+# calculate_edge — single source of truth for sportsbook edge
+def calculate_edge(fair_prob, side="OVER", sport="NBA"):
+    """Returns signed edge: positive = good bet. Breakeven = 52.4% (-110 juice)."""
+    return round(float(fair_prob) - 0.524, 4)
+
+
 def compute_std_dev(game_values, decay=0.85, sport=None):
     if not game_values or len(game_values) < 3:
         return None
