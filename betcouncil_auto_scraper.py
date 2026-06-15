@@ -2750,16 +2750,95 @@ def main():
     print("\n✅ Done")
 
 
+# ── EV API (20+ Books) ───────────────────────────────────────
+def fetch_ev_api(sport=None):
+    """
+    Fetch EV Sharps API data.
+    20+ books: DK, FD, HR, BetMGM, Caesars, ESPN, Circa, Pinnacle, Kalshi, Polymarket
+    All sports: MLB, NBA, NFL
+    ⚠️ UNSECURED: This API is currently public but unintended.
+    Could be locked down at any time.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/ev"
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            print(f"    EV API: {len(data.get('data', []))} props fetched")
+            return data
+        else:
+            print(f"    EV API: error {response.status_code}")
+            return {"data": [], "games": [], "updated": {}}
+    except requests.exceptions.Timeout:
+        print("    EV API: timeout")
+        return {"data": [], "games": [], "updated": {}}
+    except Exception as e:
+        print(f"    EV API: {e}")
+        return {"data": [], "games": [], "updated": {}}
+
+
+def extract_ev_props(ev_data, book_key="hr"):
+    """
+    Extract props from EV API, mapped to BetCouncil format.
+    book_key options: 'hr', 'dk', 'fd', 'mgm', 'caesars', 'espn', 'circa', 'pinnacle'
+    """
+    props = []
+    for item in ev_data.get("data", []):
+        if book_key not in item.get("bookOdds", {}):
+            continue
+        try:
+            book_odds = item["bookOdds"][book_key]
+            prop = {
+                "player": item.get("player", "Unknown"),
+                "team": item.get("team", ""),
+                "prop": item.get("prop", ""),
+                "line": item.get("line"),
+                "o": book_odds.get("odds"),  # over odds
+                "u": None,  # EV API doesn't split o/u, just use over
+                "book": f"EV_{book_key}",
+                "sport": item.get("sport", ""),
+                "game": item.get("game", ""),
+                "opp": item.get("opp", ""),
+                "ev": item.get("ev"),
+                "kelly": item.get("kelly"),
+                "fair_value": item.get("fairVal"),
+                "implied": item.get("implied"),
+                "_source": "EV API",
+                "_link": item.get("links", {}).get(book_key),
+                "_statcast": item.get("savant", {}),
+                "_hit_rates": item.get("hitRates", {}),
+                "_pitcher": item.get("pitcherData", {}),
+                "_stadium": item.get("stadiumRank"),
+            }
+            props.append(prop)
+        except Exception as e:
+            pass  # skip bad props silently
+    
+    if props:
+        print(f"    EV API ({book_key}): {len(props)} props extracted")
+    return props
+
+
 def fetch_books_parallel(sport, book_fns):
     """Run multiple book scrapers in parallel."""
     all_props = []
     with ThreadPoolExecutor(max_workers=5) as executor:
+        # Include EV API fetch
         futures = {executor.submit(fn, sport): name for name, fn in book_fns.items()}
+        
+        # Also fetch EV API (no sport param needed)
+        futures[executor.submit(fetch_ev_api)] = "EV_API"
+        
         for future in as_completed(futures):
             name = futures[future]
             try:
                 result = future.result()
-                if result:
+                if name == "EV_API" and result:
+                    # Extract Hard Rock props from EV API
+                    ev_props = extract_ev_props(result, book_key="hr")
+                    if ev_props:
+                        all_props.extend(ev_props)
+                elif result:
                     all_props.extend(result)
             except Exception as e:
                 print(f"    {name}: parallel fetch error: {e}")
