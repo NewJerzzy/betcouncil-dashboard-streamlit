@@ -13723,20 +13723,21 @@ def load_sport_data(sport):
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
     def _pf_game_lines():   return fetch_game_lines(sport)
     def _pf_parlayplay():   return fetch_parlayplay_props(sport)
+    def _pf_ev_api():       return fetch_ev_api_live()
 
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -13871,6 +13872,42 @@ def load_sport_data(sport):
     # Includes DFS platforms + sportsbooks for maximum line shopping
     better_lines = {}
     all_alt_sources = []
+
+    # EV Sharps API — 20+ books (Hard Rock, DK, FD, MGM, Caesars, Pinnacle, Circa, etc.)
+    ev_api_raw = ev_api_raw if isinstance(ev_api_raw, dict) else {}
+    _ev_board_props = extract_ev_props_for_app(ev_api_raw, sport_filter=sport) if ev_api_raw.get("data") else []
+    if _ev_board_props:
+        st.session_state["ev_api_props"] = _ev_board_props
+        st.session_state["ev_api_updated"] = ev_api_raw.get("updated", {})
+        # Feed every book's line into alt sources for BetterLineNote detection
+        for _evp in _ev_board_props:
+            _ev_bk = _evp.get("Book", "")
+            # Map to a format all_alt_sources expects
+            _ev_alt = {
+                "Player": _evp.get("Player", ""),
+                "Prop":   _evp.get("Prop", ""),
+                "Line":   _evp.get("Line"),
+                "Side":   _evp.get("Side", "OVER"),
+            }
+            if _ev_alt["Line"] is not None:
+                all_alt_sources.append((_ev_alt, _ev_bk))
+        # Also store per-book odds for CLV display
+        _ev_book_lookup = {}
+        for _evp in _ev_board_props:
+            _k = (normalize_name(_evp.get("Player","")), _evp.get("Prop",""))
+            _ev_book_lookup.setdefault(_k, {})[_evp.get("Book","")] = {
+                "odds_over":  _evp.get("OddsOver"),
+                "odds_under": _evp.get("OddsUnder"),
+                "line":       _evp.get("Line"),
+                "ev":         _evp.get("EV"),
+                "fair_value": _evp.get("FairValue"),
+                "bet_link":   _evp.get("_bet_link"),
+            }
+        st.session_state["ev_book_lookup"] = _ev_book_lookup
+        st.caption(f"📡 EV API: {len(_ev_board_props)} props from {len({p.get('Book') for p in _ev_board_props})} books")
+    else:
+        st.session_state["ev_api_props"] = []
+        st.session_state["ev_book_lookup"] = {}
 
     # DFS platforms
     if ud_props_compare:
@@ -14778,7 +14815,40 @@ def load_sport_data(sport):
         prop["BetterLineSource"] = best_line_source
         prop["BetterLineVal"] = best_line_val
 
-    arb_opps = detect_arbitrage_opportunities(sport)
+    # ── EV API enrichment — attach multi-book odds + EV/FV to every board prop ──
+    _ev_lookup = st.session_state.get("ev_book_lookup", {})
+    if _ev_lookup:
+        for prop in enriched:
+            _pk = (normalize_name(prop.get("Player","")), prop.get("Prop",""))
+            _ev_books = _ev_lookup.get(_pk, {})
+            if _ev_books:
+                prop["EVBooks"] = _ev_books  # full dict of {book: {odds_over, line, ev, fair_value, bet_link}}
+                # Attach best EV and fair value across all books
+                _best_ev, _best_fv, _best_link = None, None, None
+                for _bk, _bd in _ev_books.items():
+                    if _bd.get("ev") is not None:
+                        try:
+                            _ev_f = float(_bd["ev"])
+                            if _best_ev is None or _ev_f > _best_ev:
+                                _best_ev = _ev_f
+                                _best_link = _bd.get("bet_link")
+                        except (ValueError, TypeError):
+                            pass
+                    if _bd.get("fair_value") and _best_fv is None:
+                        _best_fv = _bd["fair_value"]
+                if _best_ev is not None:
+                    prop["EVSharpEV"]     = _best_ev
+                    prop["EVSharpFV"]     = _best_fv
+                    prop["EVSharpLink"]   = _best_link
+                    prop["EVSharpBooks"]  = len(_ev_books)
+            else:
+                prop["EVBooks"] = {}
+                prop["EVSharpEV"] = None
+                prop["EVSharpFV"] = None
+                prop["EVSharpLink"] = None
+                prop["EVSharpBooks"] = 0
+
+
     st.session_state["arb_opportunities"] = arb_opps
     alt_line_upgrades = []
     for prop in enriched:
@@ -16513,6 +16583,10 @@ with tabs[1]:
                 "_mins_stab":  _p.get("MinutesStability",""),
                 "_bq_score":   _bq,
                 "_conflict":   _conflict,
+                "_ev_sharp":   _p.get("EVSharpEV"),
+                "_ev_books":   _p.get("EVSharpBooks", 0),
+                "_ev_link":    _p.get("EVSharpLink", ""),
+                "_better":     _p.get("BetterLineNote", ""),
             })
 
         # Sort
@@ -16537,7 +16611,7 @@ with tabs[1]:
 
         _header = (
             '<div style="display:grid;grid-template-columns:'
-            '12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 65px;'
+            '12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 55px 65px;'
             'gap:3px;padding:6px 8px;background:var(--color-background-secondary);border-radius:6px 6px 0 0;'
             'font-size:10px;font-weight:700;color:var(--color-text-tertiary);text-transform:uppercase;'
             'letter-spacing:0.05em;position:sticky;top:0;z-index:10;">'
@@ -16555,6 +16629,7 @@ with tabs[1]:
             '<span style="text-align:center">L5</span>'
             '<span style="text-align:center">L10</span>'
             '<span style="text-align:center">Szn</span>'
+            '<span style="text-align:center">EV+</span>'
             '<span style="text-align:center">● Rely</span>'
             '</div>'
         )
@@ -16577,7 +16652,7 @@ with tabs[1]:
             _gs = "15px" if _r["_grade"] in ("A+","A") else "13px"
             _row = (
                 f'<div style="display:grid;grid-template-columns:'
-                f'12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 65px;'
+                f'12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 55px 65px;'
                 f'gap:3px;padding:6px 8px;background:{_bg};'
                 f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;">'
                 f'<span style="width:3px;height:30px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
@@ -16595,9 +16670,15 @@ with tabs[1]:
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l5"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l10"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_szn"]}</span>'
+                + (
+                    f'<span style="text-align:center;font-size:11px;font-weight:700;color:#00d4aa;">'
+                    f'{float(_r["_ev_sharp"]):+.1%}</span>'
+                    if _r.get("_ev_sharp") is not None else
+                    f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">—</span>'
+                ) +
                 f'<span style="text-align:center;">'
                 f'<span style="color:{_conf_color};font-size:10px;">●</span> '
-                 f'<span style="color:{_rely_color};font-size:11px;">{_r["_rel"]}</span>'
+                f'<span style="color:{_rely_color};font-size:11px;">{_r["_rel"]}</span>'
                 f'</span></div>'
             )
             _html_rows.append(_row)
