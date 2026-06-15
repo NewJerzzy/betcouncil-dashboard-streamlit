@@ -5328,13 +5328,80 @@ def fetch_ev_api_live():
         return {}
 
 
+# ── EV Sharps Auth — Auto-refresh JWT using Supabase refresh token ──────────
+_EV_TOKEN_CACHE = {"access_token": None, "expires_at": 0}
+
+SUPABASE_URL    = "https://nkdhryqpiulrepmphwmt.supabase.co"
+SUPABASE_ANON   = "sb_publishable_mMniM5v3auOHfF72hlVL_w_LUNlh3yt"
+
+
+def _ev_refresh_token():
+    """
+    Retrieve the EVSharps Supabase refresh token from st.secrets.
+    Set once in Streamlit Cloud → Settings → Secrets:
+      EV_REFRESH_TOKEN = "z325a7doims5"
+    This never expires (until explicitly revoked).
+    """
+    try:
+        return (st.secrets.get("EV_REFRESH_TOKEN")
+                or st.secrets.get("ev_refresh_token"))
+    except Exception:
+        return None
+
+
+def _ev_do_refresh(refresh_token):
+    """Exchange refresh_token for a new access_token via Supabase auth API."""
+    try:
+        r = requests.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
+            headers={
+                "apikey":        SUPABASE_ANON,
+                "Content-Type":  "application/json",
+            },
+            json={"refresh_token": refresh_token},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return {
+                "access_token":  data.get("access_token"),
+                "expires_at":    data.get("expires_at", 0),
+                "refresh_token": data.get("refresh_token", refresh_token),
+            }
+    except Exception:
+        pass
+    return None
+
+
 def _get_ev_jwt():
     """
-    Retrieve EVSharps JWT from st.secrets.
-    Token expires ~1hr after login. Update via Streamlit Cloud → Settings → Secrets:
-      EV_JWT = "eyJhbGci..."
-    Returns None if not configured.
+    Returns a valid EVSharps JWT, auto-refreshing when expired.
+    Priority:
+      1. In-memory cache (valid for remaining session)
+      2. Auto-refresh via EV_REFRESH_TOKEN secret (hands-free)
+      3. Fallback to EV_JWT secret (manual — legacy)
     """
+    import time as _time
+    now = _time.time()
+
+    # 1. Cached token still valid (refresh 5min before expiry)
+    if _EV_TOKEN_CACHE["access_token"] and _EV_TOKEN_CACHE["expires_at"] > now + 300:
+        return _EV_TOKEN_CACHE["access_token"]
+
+    # 2. Auto-refresh using refresh_token
+    refresh_tok = _ev_refresh_token()
+    if refresh_tok:
+        new_tokens = _ev_do_refresh(refresh_tok)
+        if new_tokens and new_tokens.get("access_token"):
+            _EV_TOKEN_CACHE["access_token"] = new_tokens["access_token"]
+            _EV_TOKEN_CACHE["expires_at"]   = new_tokens["expires_at"]
+            # Update refresh token in cache if rotated
+            if new_tokens.get("refresh_token") != refresh_tok:
+                # Log rotation — user may need to update secret eventually
+                log_error_to_session("ev_jwt_refresh", "Refresh token rotated — update EV_REFRESH_TOKEN secret", "warning")
+            return _EV_TOKEN_CACHE["access_token"]
+
+    # 3. Manual fallback
     try:
         return st.secrets.get("EV_JWT") or st.secrets.get("ev_jwt")
     except Exception:
