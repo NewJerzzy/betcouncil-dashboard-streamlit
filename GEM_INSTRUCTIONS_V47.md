@@ -645,3 +645,200 @@ The endpoint is currently unsecured (CORS wildcard, no auth). This was likely un
 - Fall back to existing scraper books (DK, BetMGM, Bovada) for line data
 - StatsHub Statcast data will not be available until API restored or Baseball Savant scraper added
 
+
+---
+## Session 11 Addendum (June 15, 2026) — Logic Upgrade: Shin Devig, Platoon S1, Ks Stabilization, CLV Buchdahl
+
+### 1. Devig Method Upgrade (S6)
+
+**Previous:** Additive/proportional devig for all markets.
+**Now:** Method selected by market type:
+
+| Market | Method | Why |
+|--------|--------|-----|
+| Standard props (PTS/REB/AST/spreads) | Additive (proportional) | Accurate for near-even markets |
+| HR / Futures / +200 to +800 props | **Shin method** | Accounts for favourite-longshot bias |
+| Extreme longshots (+500+) | **Logarithmic** | Log-space normalization for accuracy |
+
+**Shin formula (now used for HR props):**
+```
+z = total_implied - 1.0  (the hold/vig)
+fair_p = (sqrt(z² + 4*(1-z)*p_imp²) - z) / (2*(1-z))
+consensus = normalize(shin_pn + shin_circa + shin_espn)
+```
+
+**GEM MODE B rule:** When computing no-vig for HR/TD/Goals props, label `[SHIN NO-VIG]`. For standard props, `[ADDITIVE NO-VIG]`. Pinnacle + Circa + ESPN are the three sharp anchors.
+
+---
+
+### 2. S1 Base Probability Upgrade — MLB HR (Platoon-Stabilized Poisson)
+
+**Previous:** Raw season HR average → Poisson.
+**Now:** Platoon-adjusted, sample-stabilized Poisson.
+
+**Full formula:**
+```python
+# Step 1: Pick handedness-specific HR/PA rate
+if pitcher_throws == "L":
+    batter_hr_rate = batter_percs["hr_l_rate"] / 100
+    batter_pa      = batter_percs["hr_l"] * 20  # est. PA
+else:
+    batter_hr_rate = batter_percs["hr_r_rate"] / 100
+    batter_pa      = batter_percs["hr_r"] * 20
+
+# Step 2: 250 PA stabilization to league mean
+LEAGUE_HR_RATE = 0.032  # 1 HR per ~31 PA
+STABILIZE_PA   = 250
+stabilized_rate = (batter_pa * batter_hr_rate + 250 * 0.032) / (batter_pa + 250)
+
+# Step 3: Scale by pitcher xwOBA vs league average
+LEAGUE_XWOBA = 0.315
+adj_rate = stabilized_rate * (pitcher_xwoba / 0.315)
+adj_rate = max(0.01, min(0.15, adj_rate))
+
+# Step 4: Convert to per-game avg (~4 PA/game) → Poisson
+game_avg = adj_rate * 4.0
+prob = poisson_prob_over(0.5, game_avg)
+```
+
+**Key thresholds:**
+- 250 PA stabilization pulls small samples toward league mean — prevents early-season overconfidence
+- Pitcher xwOBA above 0.315 = hitter-friendly, boosts probability
+- Pitcher xwOBA below 0.315 = ace-quality, reduces probability
+- All data live from EV API `batter_percs` + `pitcherData.xwoba`
+
+**Fallback:** No EV signal data → standard Poisson with raw season avg
+
+**Label:** `[S1 — PLATOON-STABILIZED POISSON]`
+
+---
+
+### 3. S1 Upgrade — MLB Pitcher Strikeouts (K/9 Stabilization)
+
+**Formula:**
+```python
+LEAGUE_K9    = 8.5   # MLB avg K/9
+STABILIZE_BF = 200   # batters faced threshold
+raw_k9       = player_avg * 9.0 / 6.0  # convert per-game to per-9
+stabilized_k9 = (est_bf * raw_k9 + 200 * 8.5) / (est_bf + 200)
+# Scale by pitcher stuff quality
+xwoba_scale = (0.315 - pitcher_xwoba) / 0.315 * 0.20 + 1.0
+adj_k9 = max(3.0, min(15.0, stabilized_k9 * xwoba_scale))
+game_avg = adj_k9 * 6.0 / 9.0  # back to per-game (6 IP avg)
+```
+
+**Label:** `[S1 — K/9 STABILIZED]`
+
+---
+
+### 4. S1 Upgrade — NBA/WNBA (Sample-Size Damping)
+
+For players with fewer than 10 games, edge is scaled down:
+```
+sample_damp = 0.75 + 0.025 * n_games  (capped at 1.0 at 10 games)
+adj_avg = player_avg * sample_damp
+```
+Prevents overconfidence on early-season or new-team props.
+
+**Label:** `[S1 — SAMPLE DAMPED (n={games})]`
+
+---
+
+### 5. S1 Upgrade — NFL (L5/L10 Trend Blending)
+
+Recent form blended into base avg:
+```
+trend_factor = (L5_rate * 0.60 + L10_rate * 0.40)
+blended_avg  = player_avg * (0.70 + 0.30 * trend_factor)
+blended_avg  = clamp(blended_avg, player_avg * 0.80, player_avg * 1.20)
+```
+
+**Label:** `[S1 — TREND BLENDED L5/L10]`
+
+---
+
+### 6. S1 Upgrade — NHL (Goalie Quality Adjustment)
+
+```
+goalie_adj = (opp_rank - 15.5) / 15.5 * 0.12
+adj_avg = player_avg * (1.0 + goalie_adj)
+```
+Rank 1-5 = elite goalie → reduce avg. Rank 26-30 = weak goalie → boost avg.
+
+**Label:** `[S1 — GOALIE ADJ rank={rank}]`
+
+---
+
+### 7. S2 Upgrade — All Sports
+
+| Sport | Previous | Now |
+|-------|----------|-----|
+| MLB HR | Static team defense dict | Live pitcher ERA ratio scaling: `def_adj = (ERA/4.25 - 1.0) * 0.25` |
+| MLB Ks | Static | Pitcher xwOBA vs league K avg |
+| NFL | Static team D rating | Live `oppRank` from EV API: `def_adj = (rank - 15.5) / 15.5 * 0.15` |
+| NHL | Static | Goalie/team rank: `def_adj = (rank - 15.5) / 15.5 * 0.12` |
+| NBA/WNBA | Position-adjusted D rating | Unchanged — already position-adjusted |
+
+**MLB ERA scaling detail:** Finer-grained than old ±20% hard cap.
+- Skenes (2.80): `(2.80/4.25 - 1) * 0.25 = -0.085` → -8.5% adj (tough)
+- Wheeler (3.20): `(3.20/4.25 - 1) * 0.25 = -0.062` → -6.2% adj (distinguishable from Skenes now)
+- Soft arm (5.10): `(5.10/4.25 - 1) * 0.25 = +0.050` → +5.0% boost
+
+---
+
+### 8. Signal Weights Retuned (All Sports)
+
+| Sport | Base | Defense | Location | Rest | Pace | Notes |
+|-------|------|---------|----------|------|------|-------|
+| NBA | 0.42 | 0.28 | 0.13 | 0.09 | 0.08 | Pace raised (counts stats) |
+| MLB | 0.45 | 0.20 | 0.08 | 0.04 | 0.00 | Base raised (platoon S1 reliable) |
+| NFL | 0.35 | 0.38 | 0.13 | 0.09 | 0.05 | Defense dominant signal in football |
+| NHL | 0.48 | 0.26 | 0.12 | 0.09 | 0.05 | Base dominant |
+| WNBA | 0.48 | 0.24 | 0.13 | 0.08 | 0.07 | High variance, base most reliable |
+
+NFL usage weight raised to 0.80 (target share critical for receivers/TEs).
+
+---
+
+### 9. CLV — Buchdahl Methodology (Now Tracked)
+
+**What changed:** CLV is now captured at bet placement and resolved after games using Pinnacle+Circa no-vig consensus as the closing line benchmark.
+
+**Buchdahl standard (now implemented):**
+- CLV = closing no-vig prob − placement no-vig prob
+- Positive CLV = you got better odds than the market closed at = +EV
+- **50 resolved bets** = statistical significance threshold
+- **1000 resolved bets** = full P-value confidence (p < 0.001)
+- CLV requires far fewer samples than win/loss to prove skill (50 vs 3000+)
+
+**In MODE B:** When analyzing a bet, add CLV estimate:
+```
+CLV_estimate = current_novig_prob - your_implied_prob
+Positive = you have edge vs closing line
+```
+
+**GEM output addition for LOCK PROP:**
+```
+CLV: Est [+X%] vs Pinnacle+Circa no-vig | Method: [SHIN/ADDITIVE]
+```
+
+**Interpretation:**
+- CLV ≥ +5% + beat rate ≥ 55% over 50+ bets = ELITE
+- CLV ≥ +3% + beat rate ≥ 52% = GOOD
+- CLV ≥ +1% = POSITIVE
+- CLV < 0% = model needs recalibration
+
+---
+
+### 10. Updated Non-Negotiables (additions to v5.5 list)
+
+26. MLB HR S1: use platoon-stabilized Poisson (250 PA regression), not raw season avg
+27. MLB Ks S1: use K/9 stabilization (200 BF threshold), not raw avg
+28. NBA/WNBA: apply sample damping for <10 games — label n_games
+29. NFL S1: blend L5/L10 trend into base avg — label [TREND BLENDED]
+30. HR props: use Shin devig for no-vig, not additive — label [SHIN NO-VIG]
+31. CLV: compute at bet placement using Pinnacle+Circa Shin no-vig
+32. 50 resolved bets = minimum for CLV significance; never claim skill before this
+33. S2 MLB: ERA ratio scaling, not hard cap — Skenes and Wheeler produce different values
+34. S2 NFL/NHL: use live oppRank from EV API, not static defensive ratings
+
