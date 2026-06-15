@@ -6521,76 +6521,50 @@ def compute_clv_grade(clv_value, pinnacle_edge=None):
         return "BAD CLV", "#e04040"
 
 
-def get_clv_summary():
-    """
-    Summarize CLV performance vs Pinnacle.
-    The gold standard metric for long-term +EV betting.
-    """
-    clv_data = load_json_data(CLV_PATH, [])
-    if not clv_data:
-        return None
-
-    total = len(clv_data)
-    positive_clv = sum(1 for c in clv_data if c.get("clv", 0) > 0)
-    avg_clv = sum(c.get("clv", 0) for c in clv_data) / total if total else 0
-
-    # Multi-book CLV — Pinnacle + Circa + BetOnline
-    SHARP_BOOK_KEYS = {
-        "pinnacle_prob_at_lock": "Pinnacle",
-        "circa_prob_at_lock":    "Circa",
-        "betonline_prob_at_lock":"BetOnline",
-    }
-    pinn_avg_edge = 0
-    book_clv_summary = {}
-    for prob_key, book_label in SHARP_BOOK_KEYS.items():
-        entries = [c for c in clv_data if c.get(prob_key)]
-        if not entries:
-            continue
-        edges = []
-        for c in entries:
-            try:
-                book_prob = float(str(c.get(prob_key,"0")).replace("%","")) / 100
-                model_prob = c.get("prob", 0.5)
-                if book_prob > 0:
-                    edges.append(model_prob - book_prob)
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
-        if edges:
-            avg_e = sum(edges) / len(edges)
-            book_clv_summary[book_label] = {
-                "avg_edge": round(avg_e, 4),
-                "n":        len(edges),
-                "beat_pct": sum(1 for e in edges if e > 0) / len(edges),
-            }
-            if book_label == "Pinnacle":
-                pinn_avg_edge = avg_e
-    
-    # Consensus sharp edge — average across all sharp books found
-    all_sharp_edges = [v["avg_edge"] for v in book_clv_summary.values()]
-    consensus_sharp_edge = sum(all_sharp_edges) / len(all_sharp_edges) if all_sharp_edges else 0
-    pinn_clv_entries = [c for c in clv_data if c.get("pinnacle_prob_at_lock")]
-
-    # Recent form (last 20)
-    recent = clv_data[-20:] if len(clv_data) >= 20 else clv_data
-    recent_avg = sum(c.get("clv", 0) for c in recent) / len(recent) if recent else 0
-    recent_positive = sum(1 for c in recent if c.get("clv", 0) > 0)
-
+def get_clv_summary(history=None):
+    """Legacy wrapper — delegates to new Buchdahl CLV implementation."""
+    if history is None:
+        try:
+            import streamlit as _st
+            history = _st.session_state.get("history", [])
+        except Exception:
+            history = []
+    # Use new implementation defined earlier
+    resolved = [
+        r for r in (history or [])
+        if r.get("clv_capture", {}).get("clv_resolved")
+        and r.get("clv_capture", {}).get("clv_vs_novig") is not None
+    ]
+    if not resolved:
+        # Fall back to legacy CLV data
+        clv_data = load_json_data(CLV_PATH, [])
+        if not clv_data:
+            return None
+        total = len(clv_data)
+        positive_clv = sum(1 for c in clv_data if c.get("clv", 0) > 0)
+        avg_clv = sum(c.get("clv", 0) for c in clv_data) / total if total else 0
+        return {
+            "total_tracked": total,
+            "positive_clv_pct": positive_clv / total if total else 0,
+            "avg_clv": avg_clv,
+            "n_resolved": 0,
+            "grade": "INSUFFICIENT",
+            "beat_rate": positive_clv / total if total else 0,
+        }
+    clv_values  = [r["clv_capture"]["clv_vs_novig"] for r in resolved]
+    avg_clv     = round(sum(clv_values) / len(clv_values), 4)
+    beat_rate   = round(sum(1 for v in clv_values if v > 0) / len(clv_values), 3)
+    n = len(resolved)
+    if n < 50:   grade = "INSUFFICIENT"
+    elif avg_clv >= 0.05 and beat_rate >= 0.55: grade = "ELITE"
+    elif avg_clv >= 0.03 and beat_rate >= 0.52: grade = "GOOD"
+    elif avg_clv >= 0.01: grade = "POSITIVE"
+    elif avg_clv >= -0.01: grade = "NEUTRAL"
+    else: grade = "NEGATIVE"
     return {
-        "total_tracked":        total,
-        "positive_clv_pct":     positive_clv / total if total else 0,
-        "avg_clv":              avg_clv,
-        "recent_avg_clv":       recent_avg,
-        "recent_positive_pct":  recent_positive / len(recent) if recent else 0,
-        "pinnacle_avg_edge":    pinn_avg_edge,
-        "book_clv":             book_clv_summary,
-        "consensus_sharp_edge": round(consensus_sharp_edge, 4),
-        "n_sharp_books":        len(book_clv_summary),
-        "verdict": (
-            "ELITE — Consistently beating sharp lines" if avg_clv >= 1.0 and positive_clv/total >= 0.55
-            else "GOOD — Positive CLV trend" if avg_clv >= 0.3
-            else "NEUTRAL — Break even vs closing line" if avg_clv >= 0
-            else "NEEDS WORK — Losing CLV consistently"
-        )
+        "avg_clv": avg_clv, "beat_rate": beat_rate,
+        "n_resolved": n, "grade": grade,
+        "total_tracked": n, "positive_clv_pct": beat_rate,
     }
 
 
