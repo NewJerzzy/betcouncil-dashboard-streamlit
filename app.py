@@ -5304,6 +5304,127 @@ def scrape_prizepicks_with_gist_fallback(sport):
 
 
 
+# ── EV Sharps API (20+ books — Hard Rock, DK, FD, MGM, Caesars, Pinnacle, Circa, etc.) ──
+@st.cache_data(ttl=120)
+def fetch_ev_api_live():
+    """
+    Fetch live EV API data. Public endpoint, no auth required.
+    Returns raw JSON dict with 'data', 'games', 'updated' keys.
+    ⚠️ Endpoint may be locked down at any time — always check status.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/ev"
+    try:
+        r = requests.get(url, timeout=15)
+        if r.status_code == 200:
+            return r.json()
+        log_error_to_session("fetch_ev_api_live", f"EV API returned {r.status_code}", "warning")
+        return {}
+    except requests.exceptions.Timeout:
+        log_error_to_session("fetch_ev_api_live", "EV API timeout", "warning")
+        return {}
+    except Exception as e:
+        log_error_to_session("fetch_ev_api_live", str(e)[:100], "warning")
+        return {}
+
+
+def _ev_parse_odds(raw):
+    """Parse EV bookOdds string: '325' or '300/-595' → (over_str, under_str)."""
+    if raw is None:
+        return None, None
+    raw = str(raw).strip()
+    if "/" in raw:
+        parts = raw.split("/", 1)
+        return parts[0].strip() or None, parts[1].strip() or None
+    return raw or None, None
+
+
+def _ev_infer_sport(item):
+    prop = item.get("prop", "").lower()
+    if prop == "hr":                                    return "MLB"
+    if prop in ("td", "rush_yards", "rec_yards"):       return "NFL"
+    if prop in ("pts", "reb", "ast", "3pm"):            return "NBA"
+    if prop in ("goals", "shots", "saves"):             return "NHL"
+    return "MLB"
+
+
+EV_PROP_MAP = {
+    "hr": "Home Runs", "hits": "Hits", "rbi": "RBI", "runs": "Runs",
+    "sb": "Stolen Bases", "k": "Pitcher Strikeouts",
+    "pts": "Points", "reb": "Rebounds", "ast": "Assists", "3pm": "Threes",
+    "td": "Touchdowns", "rush_yards": "Rush Yards", "rec_yards": "Rec Yards",
+    "receptions": "Receptions", "pass_yards": "Pass Yards",
+    "goals": "Goals", "shots": "Shots", "saves": "Saves",
+}
+
+EV_BOOK_LABELS = {
+    "hr": "Hard Rock", "dk": "DraftKings", "fd": "FanDuel", "mgm": "BetMGM",
+    "cz": "Caesars", "espn": "ESPN Bet", "circa": "Circa", "pn": "Pinnacle",
+    "bv": "Bovada", "br": "BetRivers", "fn": "Fanatics", "b365": "Bet365",
+    "bol": "BetOnline", "nv": "NoVig", "kal": "Kalshi", "poly": "Polymarket",
+    "re": "Rebet", "fl": "Fliff", "hr_oh": "Hard Rock (OH)", "kambi": "Kambi",
+}
+
+
+def extract_ev_props_for_app(ev_data, sport_filter=None):
+    """
+    Extract all book props from EV API data for use in app.py.
+    Returns list of dicts with BetCouncil-compatible fields + EV metadata.
+    """
+    props = []
+    for item in (ev_data.get("data") or []):
+        try:
+            item_sport = _ev_infer_sport(item)
+            if sport_filter and item_sport != sport_filter:
+                continue
+            prop_key  = item.get("prop", "")
+            prop_name = EV_PROP_MAP.get(prop_key, prop_key.title())
+            handicap  = item.get("handicap")
+            try:
+                stat_line = float(handicap) if handicap is not None else None
+            except (ValueError, TypeError):
+                stat_line = None
+
+            book_odds = item.get("bookOdds", {})
+            for bk_key, bk_label in EV_BOOK_LABELS.items():
+                raw = book_odds.get(bk_key)
+                if raw is None:
+                    continue
+                o_odds, u_odds = _ev_parse_odds(raw)
+                props.append({
+                    # BetCouncil standard fields
+                    "Player":   item.get("player", "Unknown").title(),
+                    "Prop":     prop_name,
+                    "Line":     stat_line,
+                    "Side":     "UNDER" if item.get("under") else "OVER",
+                    "Sport":    item_sport,
+                    "Book":     bk_label,
+                    "source":   f"EV_{bk_key}",
+                    # Odds
+                    "OddsOver":  o_odds,
+                    "OddsUnder": u_odds,
+                    # EV metadata
+                    "EV":        item.get("ev"),
+                    "FairValue": item.get("fairVal"),
+                    "Kelly":     item.get("kelly"),
+                    # Context
+                    "Game":      item.get("game", ""),
+                    "Team":      item.get("team", ""),
+                    "Opp":       item.get("opp", ""),
+                    "OppRank":   item.get("oppRank"),
+                    # Deep link to place bet
+                    "_bet_link": (item.get("links") or {}).get(bk_key),
+                    # Statcast / analytics
+                    "_hit_rates":    item.get("hitRates", {}),
+                    "_savant":       item.get("savant", {}),
+                    "_batter_percs": item.get("batter_percs", {}),
+                    "_pitcher":      item.get("pitcherData", {}),
+                    "_stadium_rank": item.get("stadiumRank"),
+                })
+        except Exception:
+            continue
+    return props
+
+
 # ── FanDuel Direct (curl_cffi — bypasses SSL fingerprinting) ──
 def fetch_fanduel_direct(sport):
     """Fetch FanDuel props directly using curl_cffi. Fallback when OddsPAPI is down."""
@@ -19320,7 +19441,8 @@ with tabs[8]:
         _has_oddspapi = bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", []))
         _has_oddswrap = bool(st.session_state.get("oddswrap_props", []))
         _has_auto    = bool(st.session_state.get(f"auto_scraped_props_{_sport_ls}", []))
-        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'} | AutoScraper={'✅' if _has_auto else '❌ (run script)'}")
+        _has_ev = bool(st.session_state.get("ev_api_props"))
+        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'} | AutoScraper={'✅' if _has_auto else '❌ (run script)'} | EV API={'✅' if _has_ev else '❌'}")
 
         # Try session_state first (faster, no disk read)
         _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
@@ -19398,8 +19520,27 @@ with tabs[8]:
                 _ls_add([_op2], _bk3)
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
-        all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
-        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper"]
+        # ── EV Sharps API — Hard Rock + 20 books live data ──────────────────
+        _ev_raw = fetch_ev_api_live()
+        _ev_all_props = []
+        if _ev_raw and _ev_raw.get("data"):
+            _ev_all_props = extract_ev_props_for_app(_ev_raw, sport_filter=_sport_ls)
+            # Feed each book's lines into the line shop lookup
+            for _evp in _ev_all_props:
+                _ev_bk = _evp.get("Book", "")
+                _ev_prop_name = _evp.get("Prop", "")
+                _ev_player = normalize_name(_evp.get("Player", ""))
+                _ev_line = _evp.get("Line")
+                if _ev_player and _ev_prop_name and _ev_line is not None:
+                    ls_sources.setdefault(_ev_player, {}).setdefault(_ev_prop_name, {})[_ev_bk] = float(_ev_line)
+            # Cache for StatsHub section below
+            st.session_state["ev_api_props"] = _ev_all_props
+            st.session_state["ev_api_updated"] = _ev_raw.get("updated", {})
+        else:
+            _ev_all_props = st.session_state.get("ev_api_props", [])
+
+
+        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper","NoVig","Kalshi","Fliff"]
         # Always show all books in order — even if no data (shows — for empty)
         # This lets user see at a glance which books are populated vs missing
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
@@ -19457,6 +19598,95 @@ with tabs[8]:
         if arb_ls:
             st.markdown("### \u26a1 Arbitrage Opportunities")
             st.dataframe(pd.DataFrame(arb_ls[:10]), use_container_width=True, hide_index=True)
+
+        # ── StatsHub — Statcast + Hit Rates from EV API ──────────────────────
+        st.markdown("---")
+        st.markdown("### 📊 StatsHub — Player Analytics")
+        _sh_props = [p for p in _ev_all_props if p.get("_savant") or p.get("_hit_rates")]
+        if not _sh_props:
+            st.info("EV API not loaded or no Statcast data available. Open Line Shop to trigger a fetch.")
+        else:
+            _seen_sh = set()
+            _sh_unique = []
+            for _p in _sh_props:
+                _k = (normalize_name(_p.get("Player","")), _p.get("Prop",""))
+                if _k not in _seen_sh:
+                    _seen_sh.add(_k)
+                    _sh_unique.append(_p)
+
+            _c_filt1, _c_filt2 = st.columns(2)
+            _sh_sport_filter = _c_filt1.selectbox("Sport", ["All","MLB","NBA","NFL","NHL"], key="sh_sport_filter")
+            _sh_prop_filter  = _c_filt2.selectbox("Prop Type", ["All"] + sorted({p.get("Prop","") for p in _sh_unique if p.get("Prop")}), key="sh_prop_filter")
+            if _sh_sport_filter != "All":
+                _sh_unique = [p for p in _sh_unique if p.get("Sport","") == _sh_sport_filter]
+            if _sh_prop_filter != "All":
+                _sh_unique = [p for p in _sh_unique if p.get("Prop","") == _sh_prop_filter]
+
+            _updated = st.session_state.get("ev_api_updated", {})
+            _last_upd = _updated.get("dk","") or _updated.get("hr","")
+            st.caption(f"{len(_sh_unique)} players with Statcast data" + (f" | Last updated: {_last_upd}" if _last_upd else ""))
+
+            for _sp in _sh_unique[:30]:
+                _savant    = _sp.get("_savant", {}) or {}
+                _hit_rates = _sp.get("_hit_rates", {}) or {}
+                _percs     = _sp.get("_batter_percs", {}) or {}
+                _pitcher   = _sp.get("_pitcher", {}) or {}
+                _player    = _sp.get("Player","")
+                _prop      = _sp.get("Prop","")
+                _game      = _sp.get("Game","")
+                _odds_over = _sp.get("OddsOver","")
+                _ev_val    = _sp.get("EV")
+                _fv        = _sp.get("FairValue")
+                _link      = _sp.get("_bet_link","")
+                _stadium   = _sp.get("_stadium_rank")
+
+                with st.expander(f"**{_player}** — {_prop} | {_game}"):
+                    _c1, _c2, _c3 = st.columns(3)
+                    with _c1:
+                        st.markdown("**⚾ Statcast**")
+                        ev_avg  = _savant.get("exit_velocity_avg","—")
+                        brl_pct = _savant.get("barrels_per_bip","—")
+                        hh_pct  = _savant.get("hard_hit_percent","—")
+                        la_avg  = _savant.get("launch_angle_avg","—")
+                        xwoba   = _savant.get("est_woba","—")
+                        st.markdown(f"Exit Velo: **{ev_avg}** mph")
+                        st.markdown(f"Barrel%: **{brl_pct}%**")
+                        st.markdown(f"Hard Hit%: **{hh_pct}%**")
+                        st.markdown(f"Launch Angle: **{la_avg}°**")
+                        st.markdown(f"xwOBA: **{xwoba}**")
+                        if _percs:
+                            hr_pct = _percs.get("home_run_percentile")
+                            if hr_pct:
+                                pct_color = "#00d4aa" if float(hr_pct) >= 75 else ("#ffd700" if float(hr_pct) >= 50 else "#aaa")
+                                st.markdown(f'HR Percentile: <span style="color:{pct_color};font-weight:700">{float(hr_pct):.1f}th</span>', unsafe_allow_html=True)
+                    with _c2:
+                        st.markdown("**📈 Hit Rates**")
+                        for _period, _label in [("szn","Season"),("lyr","Last Yr"),("L5","L5"),("L10","L10"),("L20","L20")]:
+                            _hr_data = _hit_rates.get(_period, {})
+                            if _hr_data:
+                                w,t,p = _hr_data.get("w",0),_hr_data.get("t",0),_hr_data.get("p",0)
+                                _hr_color = "#00d4aa" if int(p) >= 30 else ("#ffd700" if int(p) >= 20 else "#aaa")
+                                st.markdown(f'{_label}: <span style="color:{_hr_color}"><b>{w}/{t}</b> ({p}%)</span>', unsafe_allow_html=True)
+                        if _stadium is not None:
+                            st.markdown(f"Stadium HR Rank: **#{_stadium}**")
+                    with _c3:
+                        st.markdown("**💰 Edge**")
+                        if _odds_over:
+                            st.markdown(f"Odds (Over): **{_odds_over}**")
+                        if _ev_val is not None:
+                            try:
+                                ev_color = "#00d4aa" if float(_ev_val) > 0 else "#e05c5c"
+                                st.markdown(f'EV: <span style="color:{ev_color}"><b>{float(_ev_val):+.1%}</b></span>', unsafe_allow_html=True)
+                            except (ValueError, TypeError):
+                                st.markdown(f"EV: **{_ev_val}**")
+                        if _fv:
+                            st.markdown(f"Fair Value: **{_fv}**")
+                        if _pitcher:
+                            st.markdown("**🎯 Pitcher**")
+                            st.markdown(f"ERA: {_pitcher.get('era','—')} | xwOBA: {_pitcher.get('xwoba','—')}")
+                            st.markdown(f"Barrel% allowed: {_pitcher.get('barrels_per_bip','—')}%")
+                        if _link:
+                            st.markdown(f"[🎰 Bet Hard Rock]({_link})")
 
 # ----- TAB 7: SYSTEM -----
 with tabs[9]:
@@ -19579,7 +19809,15 @@ with tabs[9]:
     else:
         _src_statuses.append({"Source": "Covers (consensus)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
-    # Display
+    # EV Sharps API
+    _ev_sys = st.session_state.get("ev_api_props", [])
+    if _ev_sys:
+        _ev_books_seen = len({p.get("Book","") for p in _ev_sys})
+        _src_statuses.append({"Source": "EV Sharps API (20+ books)", "Status": f"🟢 {len(_ev_sys)} props | {_ev_books_seen} books", "Action": "Open Line Shop to refresh"})
+    else:
+        _src_statuses.append({"Source": "EV Sharps API (20+ books)", "Status": "⚪ Not loaded — open Line Shop tab", "Action": "Open Line Shop"})
+
+
     _green  = sum(1 for s in _src_statuses if "🟢" in s["Status"])
     _red    = sum(1 for s in _src_statuses if "🔴" in s["Status"])
     _yellow = sum(1 for s in _src_statuses if "🟡" in s["Status"])
