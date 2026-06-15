@@ -5328,7 +5328,159 @@ def fetch_ev_api_live():
         return {}
 
 
-# ── EV Sharps Auth — Auto-refresh JWT using Supabase refresh token ──────────
+# ── EV Line Movement — snapshot delta engine ─────────────────────────────────
+# Replaces the /api/movement endpoint by comparing successive /api/ev snapshots.
+# Every board load compares current bookOdds against the previous snapshot
+# stored in session_state["ev_odds_snapshot"], computes deltas, and fires S8/S9.
+
+SHARP_BOOKS_SET = {"pn", "circa", "espn"}   # books whose moves signal sharp action
+MOVEMENT_THRESHOLD = 3                        # minimum American odds change to count
+
+
+def _parse_american(raw):
+    """Parse first side of American odds string. '300/-500' → 300.0"""
+    try:
+        return float(str(raw).split("/")[0].strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def compute_ev_line_movement(current_data, previous_snapshot):
+    """
+    Compare current EV API snapshot against previous to detect line movement.
+
+    Args:
+        current_data:      raw ev_data dict (has 'data' list)
+        previous_snapshot: dict keyed by (player, prop, book) → previous odds float
+
+    Returns:
+        movement_lookup: {(player_norm, prop_name): signal_dict} for S8/S9
+        sharp_alerts:    list of alert strings for Sharp Money Alerts widget
+        new_snapshot:    updated snapshot dict to store for next comparison
+    """
+    movement_lookup = {}
+    sharp_alerts    = []
+    new_snapshot    = {}
+
+    for item in (current_data.get("data") or []):
+        try:
+            player_raw  = item.get("player", "") or ""
+            prop_key    = item.get("prop", "") or ""
+            prop_name   = EV_PROP_MAP.get(prop_key, prop_key.title())
+            player_norm = normalize_name(player_raw)
+            sig_key     = (player_norm, prop_name)
+            book_odds   = item.get("bookOdds", {}) or {}
+
+            moved_books  = []   # list of (book_key, old_odds, new_odds, direction)
+            sharp_moved  = False
+
+            for bk, curr_raw in book_odds.items():
+                curr_val = _parse_american(curr_raw)
+                if curr_val is None:
+                    continue
+
+                snap_key = (player_norm, prop_key, bk)
+                new_snapshot[snap_key] = curr_val   # always update snapshot
+
+                prev_val = previous_snapshot.get(snap_key)
+                if prev_val is None:
+                    continue   # no previous data — first snapshot
+
+                delta = curr_val - prev_val
+                if abs(delta) < MOVEMENT_THRESHOLD:
+                    continue   # not a meaningful move
+
+                direction = "favorable" if delta > 0 else "unfavorable"
+                moved_books.append((bk, prev_val, curr_val, direction))
+                if bk in SHARP_BOOKS_SET:
+                    sharp_moved = True
+
+            if not moved_books:
+                continue
+
+            # ── S8: Market Movement Vector ─────────────────────────────
+            if sharp_moved and len(moved_books) >= 2:
+                s8_vector = 2    # sharp + consensus
+            elif sharp_moved:
+                s8_vector = 2    # sharp book moved
+            elif len(moved_books) >= 3:
+                s8_vector = 1    # soft consensus
+            elif len(moved_books) >= 1:
+                s8_vector = -1   # single soft book
+            else:
+                s8_vector = 0
+
+            # Reverse line movement: line moved unfavorable despite action
+            rlm = all(b[3] == "unfavorable" for b in moved_books) and s8_vector >= 1
+            if rlm:
+                s8_vector = -2
+
+            # ── S9: RLM boost ──────────────────────────────────────────
+            s9_boost = 0.0
+            rlm_note = ""
+            if rlm:
+                # Estimate magnitude from number of books that moved against action
+                gap = len(moved_books)
+                if gap >= 5:   s9_boost = 0.02; rlm_note = f"RLM: {gap} books moved unfavorable"
+                elif gap >= 3: s9_boost = 0.01; rlm_note = f"RLM: {gap} books moved unfavorable"
+                else:          s9_boost = 0.005; rlm_note = f"RLM: {gap} book(s) fading action"
+
+            movement_lookup[sig_key] = {
+                "s8_vector":     s8_vector,
+                "s9_boost":      s9_boost,
+                "rlm_note":      rlm_note,
+                "rlm_flag":      rlm,
+                "steam_flag":    sharp_moved and len(moved_books) >= 4,
+                "sharp_flag":    sharp_moved,
+                "moved_books":   moved_books,
+                "sharp_moved":   sharp_moved,
+                "move_direction": moved_books[-1][3] if moved_books else None,
+                "open_line":     None,
+                "curr_line":     item.get("handicap"),
+                "game":          item.get("game", ""),
+                "team":          item.get("team", ""),
+            }
+
+            # ── Build sharp alert string ────────────────────────────────
+            if sharp_moved or (len(moved_books) >= 3):
+                bk_labels   = [EV_BOOK_LABELS.get(b[0], b[0].upper()) for b in moved_books]
+                sharp_bks   = [EV_BOOK_LABELS.get(b[0], b[0].upper()) for b in moved_books if b[0] in SHARP_BOOKS_SET]
+                delta_str   = f"{moved_books[-1][1]:+.0f}→{moved_books[-1][2]:+.0f}"
+                label       = "STEAM" if (sharp_moved and len(moved_books) >= 4) else ("SHARP MOVE" if sharp_moved else "LINE MOVE")
+                tag         = "[SHARP]" if sharp_moved else f"[{len(moved_books)} books]"
+                alert_str   = f"🔥 {player_raw.title()} {prop_name} | {label} {tag} | {delta_str}"
+                if sharp_bks:
+                    alert_str += f" | Sharp: {', '.join(sharp_bks)}"
+                sharp_alerts.append(alert_str)
+
+        except Exception:
+            continue
+
+    return movement_lookup, sharp_alerts, new_snapshot
+
+
+def get_ev_movement_from_snapshots(current_ev_data):
+    """
+    Entry point called on every board load.
+    Loads previous snapshot from session_state, computes deltas,
+    stores new snapshot, returns (movement_lookup, sharp_alerts).
+    Falls back to /api/movement JWT endpoint if snapshot is empty.
+    """
+    previous_snapshot = st.session_state.get("ev_odds_snapshot", {})
+    mv_lookup, alerts, new_snapshot = compute_ev_line_movement(
+        current_ev_data, previous_snapshot
+    )
+    # Always update snapshot for next comparison
+    st.session_state["ev_odds_snapshot"] = new_snapshot
+
+    # If no movement detected yet (first load / cold start), try JWT endpoint
+    if not mv_lookup:
+        jwt_movement = st.session_state.get("ev_movement_lookup", {})
+        jwt_alerts   = st.session_state.get("sharp_alerts", [])
+        return jwt_movement, jwt_alerts
+
+    return mv_lookup, alerts
+
 _EV_TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 
 SUPABASE_URL    = "https://nkdhryqpiulrepmphwmt.supabase.co"
@@ -14352,18 +14504,23 @@ def load_sport_data(sport):
         st.session_state["ev_signal_lookup"] = {}
         st.session_state["ev_book_lookup"]   = {}
 
-    # ── EV Movement (S8/S9 — line movement + sharp signals) ───────────
+    # ── EV Movement — snapshot delta engine (S8/S9) ────────────────────
+    # Computes line movement from successive /api/ev snapshots.
+    # Falls back to JWT /api/movement endpoint if available.
     ev_movement_raw = ev_movement_raw if isinstance(ev_movement_raw, list) else []
-    if ev_movement_raw:
+    if ev_api_raw and ev_api_raw.get("data"):
+        _mv_lookup, _mv_alerts = get_ev_movement_from_snapshots(ev_api_raw)
+    elif ev_movement_raw:
+        # JWT endpoint returned data — parse it
         _mv_lookup, _mv_alerts = parse_ev_movement(ev_movement_raw)
+    else:
+        _mv_lookup, _mv_alerts = {}, []
+
+    if _mv_lookup or _mv_alerts:
         st.session_state["ev_movement_lookup"] = _mv_lookup
         st.session_state["sharp_alerts"]       = _mv_alerts
         if _mv_alerts:
             st.caption(f"📡 Movement: {len(_mv_alerts)} sharp alerts detected")
-    else:
-        # Don't wipe existing alerts if movement API returned nothing (JWT expired etc)
-        if "ev_movement_lookup" not in st.session_state:
-            st.session_state["ev_movement_lookup"] = {}
 
     # DFS platforms
     if ud_props_compare:
