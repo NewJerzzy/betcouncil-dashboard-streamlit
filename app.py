@@ -17160,7 +17160,7 @@ with tabs[0]:
 
         # Card 3 — CLV Tracker
         with _d3:
-            _clv = get_clv_summary()
+            _clv = get_clv_summary(st.session_state.get("history", []))
             if _clv:
                 _clv_color = "#22c55e" if _clv["avg_clv"] > 0 else "#e04040"
                 _sharp_edge = _clv.get("consensus_sharp_edge", _clv.get("pinnacle_avg_edge", 0))
@@ -21564,7 +21564,7 @@ with tabs[9]:
                         )
                     else:
                         _sharp_agreements.append(_matchup)
-            _clv_data = get_clv_summary()
+            _clv_data = get_clv_summary(st.session_state.get("history", []))
             _consensus_edge = (_clv_data or {}).get("consensus_sharp_edge", 0)
             _n_books = (_clv_data or {}).get("n_sharp_books", 0)
             if _sharp_divergences:
