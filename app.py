@@ -12441,7 +12441,50 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
                 st.session_state[_cache_key] = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
         weights = st.session_state[_cache_key]
     if stat_key in ["HR", "GOALS"]:
-        prob = poisson_prob_over(line, player_avg)
+        # ── S1 MLB HR: Platoon-stabilized Poisson ─────────────────────
+        # Uses live batter handedness splits + pitcher xwOBA from ev_signal_lookup
+        # instead of raw season HR avg — eliminates early-season Poisson noise
+        if stat_key == "HR" and sport == "MLB":
+            _ev_sig_s1 = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), "Home Runs"), {}
+            )
+            if _ev_sig_s1:
+                _pitcher_lr    = _ev_sig_s1.get("pitcher_lr", "R")   # "L" or "R"
+                _batter_percs  = _ev_sig_s1.get("_batter_percs", {}) or {}
+                _pitcher_xwoba = _ev_sig_s1.get("pitcher_xwoba") or 0.320
+
+                # Pick handedness-specific HR rate (HR per PA %)
+                if _pitcher_lr == "L":
+                    _batter_hr_rate = safe_float(_batter_percs.get("hr_l_rate", 0)) / 100.0
+                    _batter_pa      = int(_batter_percs.get("hr_l", 0) or 0) * 20
+                else:
+                    _batter_hr_rate = safe_float(_batter_percs.get("hr_r_rate", 0)) / 100.0
+                    _batter_pa      = int(_batter_percs.get("hr_r", 0) or 0) * 20
+
+                # 250 PA stabilization to league mean (0.032 = ~1 HR per 31 PA)
+                _LEAGUE_HR_RATE = 0.032
+                _STABILIZE_PA   = 250
+                if _batter_hr_rate > 0 and _batter_pa > 0:
+                    _stabilized_rate = (
+                        (_batter_pa * _batter_hr_rate) + (_STABILIZE_PA * _LEAGUE_HR_RATE)
+                    ) / (_batter_pa + _STABILIZE_PA)
+                else:
+                    # Fallback: use raw season avg converted to per-PA rate
+                    _stabilized_rate = player_avg / 650.0 if player_avg < 1 else player_avg / 162.0
+
+                # Scale by pitcher vulnerability vs league avg xwOBA
+                _LEAGUE_XWOBA = 0.315
+                _s1_adj_rate  = _stabilized_rate * (_pitcher_xwoba / _LEAGUE_XWOBA) if _pitcher_xwoba > 0 else _stabilized_rate
+                _s1_adj_rate  = max(0.01, min(0.15, _s1_adj_rate))
+
+                # Convert daily HR rate to per-game avg for Poisson
+                _adj_game_avg = _s1_adj_rate * 4.0   # ~4 PA per game
+                prob = poisson_prob_over(line, _adj_game_avg)
+            else:
+                # No EV signal data — standard Poisson
+                prob = poisson_prob_over(line, player_avg)
+        else:
+            prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
             prob = 1 - prob
         base_edge = calculate_edge(prob, side, sport)
@@ -12456,7 +12499,33 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
     signals["consensus_books"] = []
     if opp_def_rating > 0:
         def_adj = (opp_def_rating - league_avg_def) / league_avg_def
-        signals["defense"] = (-def_adj * weights.get("defense", 0.30) if side.upper() == "OVER" else def_adj * weights.get("defense", 0.30))
+
+        # ── S2 MLB: Override with live pitcher ERA-based defensive rating ──
+        # For MLB HR props, pitcher ERA is a far better defensive proxy
+        # than team defensive rating (which is designed for points/yards sports)
+        if sport == "MLB" and stat_key == "HR":
+            _ev_sig_s2 = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), "Home Runs"), {}
+            )
+            if _ev_sig_s2 and _ev_sig_s2.get("pitcher_era"):
+                _p_era     = _ev_sig_s2["pitcher_era"]
+                _LEAGUE_ERA = 4.25
+                # ERA above league avg = pitcher is hitter-friendly (positive def_adj for OVER)
+                # ERA below league avg = pitcher is tough (negative def_adj for OVER)
+                def_adj = (_p_era - _LEAGUE_ERA) / _LEAGUE_ERA
+                def_adj = max(-0.20, min(0.20, def_adj))
+            elif _ev_sig_s2 and _ev_sig_s2.get("opp_rank"):
+                # oppRank = quality of opponent's pitching staff (1=best, 30=worst)
+                # Rank 1-10 = tough staff → negative adj; 21-30 = weak staff → positive
+                try:
+                    _opp_rank = int(_ev_sig_s2["opp_rank"])
+                    def_adj = (_opp_rank - 15.5) / 15.5 * 0.10
+                except (ValueError, TypeError):
+                    pass
+
+        signals["defense"] = (-def_adj * weights.get("defense", 0.30)
+                               if side.upper() == "OVER"
+                               else def_adj * weights.get("defense", 0.30))
     else:
         signals["defense"] = 0
     # Apply regime adjustments (early season / playoffs)
