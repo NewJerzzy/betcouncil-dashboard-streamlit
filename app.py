@@ -12481,13 +12481,47 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
                 _adj_game_avg = _s1_adj_rate * 4.0   # ~4 PA per game
                 prob = poisson_prob_over(line, _adj_game_avg)
             else:
-                # No EV signal data — standard Poisson
                 prob = poisson_prob_over(line, player_avg)
+
+        elif stat_key in ("SO", "K", "Pitcher Strikeouts") and sport == "MLB":
+            # ── S1 MLB Ks: K/9 stabilized with 200 BF threshold ────────
+            _ev_sig_k = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), "Pitcher Strikeouts"), {}
+            )
+            if _ev_sig_k and _ev_sig_k.get("pitcher_xwoba"):
+                _p_xwoba       = safe_float(_ev_sig_k.get("pitcher_xwoba", 0.320))
+                _LEAGUE_K9     = 8.5
+                _STABILIZE_BF  = 200
+                _est_bf        = max(50, int(line * 40))
+                _raw_k9        = player_avg * 9.0 / 6.0
+                _stabilized_k9 = ((_est_bf * _raw_k9) + (_STABILIZE_BF * _LEAGUE_K9)) / (_est_bf + _STABILIZE_BF)
+                _xwoba_scale   = (0.315 - _p_xwoba) / 0.315 * 0.20 + 1.0
+                _adj_k9        = max(3.0, min(15.0, _stabilized_k9 * _xwoba_scale))
+                _adj_game_avg  = _adj_k9 * 6.0 / 9.0
+                prob = poisson_prob_over(line, _adj_game_avg)
+            else:
+                prob = poisson_prob_over(line, player_avg)
+
         else:
             prob = poisson_prob_over(line, player_avg)
         if side.upper() == "UNDER":
             prob = 1 - prob
-        base_edge = calculate_edge(prob, side, sport)
+        # ── HR/GOALS: sport-specific breakeven ────────────────────────
+        # HR props are priced at +200 to +650 (BE ~24-33%), not -110 (BE 52.4%)
+        # Use the actual market implied prob as breakeven via Pinnacle no-vig
+        _ev_be = None
+        if stat_key == "HR":
+            _ev_be_sig = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), "Home Runs"), {}
+            )
+            _ev_be = _ev_be_sig.get("sharp_implied") or _ev_be_sig.get("consensus_novig")
+        if _ev_be:
+            try:
+                base_edge = prob - float(_ev_be)
+            except (ValueError, TypeError):
+                base_edge = calculate_edge(prob, side, sport)
+        else:
+            base_edge = calculate_edge(prob, side, sport)
         fair_prob = prob
     else:
         fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
@@ -12508,20 +12542,30 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
                 (normalize_name(player_name), "Home Runs"), {}
             )
             if _ev_sig_s2 and _ev_sig_s2.get("pitcher_era"):
-                _p_era     = _ev_sig_s2["pitcher_era"]
+                _p_era      = _ev_sig_s2["pitcher_era"]
                 _LEAGUE_ERA = 4.25
-                # ERA above league avg = pitcher is hitter-friendly (positive def_adj for OVER)
-                # ERA below league avg = pitcher is tough (negative def_adj for OVER)
-                def_adj = (_p_era - _LEAGUE_ERA) / _LEAGUE_ERA
-                def_adj = max(-0.20, min(0.20, def_adj))
+                # Finer-grained ERA scaling: use square root to prevent capping
+                # at extremes — Skenes 2.80 vs Wheeler 3.20 should differ
+                _era_ratio = _p_era / _LEAGUE_ERA
+                def_adj    = (_era_ratio - 1.0) * 0.25   # ±25% max, linear
+                def_adj    = max(-0.15, min(0.15, def_adj))
             elif _ev_sig_s2 and _ev_sig_s2.get("opp_rank"):
-                # oppRank = quality of opponent's pitching staff (1=best, 30=worst)
-                # Rank 1-10 = tough staff → negative adj; 21-30 = weak staff → positive
                 try:
                     _opp_rank = int(_ev_sig_s2["opp_rank"])
-                    def_adj = (_opp_rank - 15.5) / 15.5 * 0.10
+                    def_adj = (_opp_rank - 15.5) / 15.5 * 0.08
                 except (ValueError, TypeError):
                     pass
+
+        # ── S2 MLB Ks: Pitcher K-rate is own defensive signal ──────────
+        elif sport == "MLB" and stat_key in ("SO", "K", "Pitcher Strikeouts"):
+            _ev_sig_s2k = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), "Pitcher Strikeouts"), {}
+            )
+            if _ev_sig_s2k and _ev_sig_s2k.get("pitcher_xwoba"):
+                _p_xwoba    = _ev_sig_s2k["pitcher_xwoba"]
+                _LEAGUE_K   = 0.300   # league avg xwOBA against (lower = better pitcher)
+                def_adj     = (_LEAGUE_K - _p_xwoba) / _LEAGUE_K * 0.15
+                def_adj     = max(-0.12, min(0.12, def_adj))
 
         signals["defense"] = (-def_adj * weights.get("defense", 0.30)
                                if side.upper() == "OVER"
