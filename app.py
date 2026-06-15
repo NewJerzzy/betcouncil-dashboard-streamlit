@@ -17160,10 +17160,14 @@ with tabs[0]:
 
         # Card 3 — CLV Tracker
         with _d3:
-            _clv = get_clv_summary(st.session_state.get("history", []))
-            if _clv:
+            try:
+                _clv = get_clv_summary(st.session_state.get("history", []))
+                _clv = _clv if isinstance(_clv, dict) else {}
+            except Exception:
+                _clv = {}
+            if _clv and isinstance(_clv.get("avg_clv"), (int, float)):
                 _clv_color = "#22c55e" if _clv.get("avg_clv", 0) > 0 else "#e04040"
-                _sharp_edge = _clv.get("consensus_sharp_edge", _clv.get("pinnacle_avg_edge", 0))
+                _sharp_edge = _clv.get("consensus_sharp_edge", _clv.get("pinnacle_avg_edge", 0)) or 0
                 _sharp_color = "#22c55e" if _sharp_edge > 0 else "#e04040"
                 _n_books = _clv.get("n_sharp_books", 1)
                 _book_label = f"vs {_n_books} sharp book{'s' if _n_books > 1 else ''}"
