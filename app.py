@@ -19876,8 +19876,7 @@ with tabs[8]:
 
 
         BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper","NoVig","Kalshi","Fliff"]
-        # Always show all books in order — even if no data (shows — for empty)
-        # This lets user see at a glance which books are populated vs missing
+        all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
 
         rows_ls = []
