@@ -6521,53 +6521,6 @@ def compute_clv_grade(clv_value, pinnacle_edge=None):
         return "BAD CLV", "#e04040"
 
 
-def get_clv_summary(history=None):
-    """Legacy wrapper — delegates to new Buchdahl CLV implementation."""
-    if history is None:
-        try:
-            import streamlit as _st
-            history = _st.session_state.get("history", [])
-        except Exception:
-            history = []
-    # Use new implementation defined earlier
-    resolved = [
-        r for r in (history or [])
-        if r.get("clv_capture", {}).get("clv_resolved")
-        and r.get("clv_capture", {}).get("clv_vs_novig") is not None
-    ]
-    if not resolved:
-        # Fall back to legacy CLV data
-        clv_data = load_json_data(CLV_PATH, [])
-        if not clv_data:
-            return None
-        total = len(clv_data)
-        positive_clv = sum(1 for c in clv_data if c.get("clv", 0) > 0)
-        avg_clv = sum(c.get("clv", 0) for c in clv_data) / total if total else 0
-        return {
-            "total_tracked": total,
-            "positive_clv_pct": positive_clv / total if total else 0,
-            "avg_clv": avg_clv,
-            "n_resolved": 0,
-            "grade": "INSUFFICIENT",
-            "beat_rate": positive_clv / total if total else 0,
-        }
-    clv_values  = [r["clv_capture"]["clv_vs_novig"] for r in resolved]
-    avg_clv     = round(sum(clv_values) / len(clv_values), 4)
-    beat_rate   = round(sum(1 for v in clv_values if v > 0) / len(clv_values), 3)
-    n = len(resolved)
-    if n < 50:   grade = "INSUFFICIENT"
-    elif avg_clv >= 0.05 and beat_rate >= 0.55: grade = "ELITE"
-    elif avg_clv >= 0.03 and beat_rate >= 0.52: grade = "GOOD"
-    elif avg_clv >= 0.01: grade = "POSITIVE"
-    elif avg_clv >= -0.01: grade = "NEUTRAL"
-    else: grade = "NEGATIVE"
-    return {
-        "avg_clv": avg_clv, "beat_rate": beat_rate,
-        "n_resolved": n, "grade": grade,
-        "total_tracked": n, "positive_clv_pct": beat_rate,
-    }
-
-
 def record_clv(lock, current_props):
     player = lock.get("player", "")
     prop = lock.get("prop", "")
@@ -18843,7 +18796,8 @@ with tabs[4]:
 
     # ── CLV Performance Dashboard ───────────────────────────────────────
     _clv_sum = get_clv_summary(st.session_state.get("history", []))
-    if _clv_sum["n_resolved"] > 0:
+    _clv_sum = _clv_sum or {"n_resolved": 0, "avg_clv": 0, "beat_rate": 0, "grade": "INSUFFICIENT"}
+    if _clv_sum.get("n_resolved", 0) > 0:
         st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
         st.caption(
             f"CLV measures whether you beat the no-vig closing line (Pinnacle+Circa consensus). "
