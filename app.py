@@ -5304,6 +5304,7 @@ def scrape_prizepicks_with_gist_fallback(sport):
 
 
 
+
 # ── EV Sharps API (20+ books — Hard Rock, DK, FD, MGM, Caesars, Pinnacle, Circa, etc.) ──
 @st.cache_data(ttl=120)
 def fetch_ev_api_live():
@@ -5325,6 +5326,224 @@ def fetch_ev_api_live():
     except Exception as e:
         log_error_to_session("fetch_ev_api_live", str(e)[:100], "warning")
         return {}
+
+
+def _get_ev_jwt():
+    """
+    Retrieve EVSharps JWT from st.secrets.
+    Token expires ~1hr after login. Update via Streamlit Cloud → Settings → Secrets:
+      EV_JWT = "eyJhbGci..."
+    Returns None if not configured.
+    """
+    try:
+        return st.secrets.get("EV_JWT") or st.secrets.get("ev_jwt")
+    except Exception:
+        return None
+
+
+def _ev_auth_headers():
+    """Build auth headers for EVSharps authenticated endpoints."""
+    jwt = _get_ev_jwt()
+    h = {
+        "accept": "*/*",
+        "origin": "https://www.evsharps.com",
+        "referer": "https://www.evsharps.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+    }
+    if jwt:
+        h["authorization"] = f"Bearer {jwt}"
+    return h
+
+
+@st.cache_data(ttl=300)
+def fetch_ev_movement(sport="mlb"):
+    """
+    Fetch line movement data from EVSharps /api/movement endpoint.
+    Requires JWT token in st.secrets['EV_JWT'].
+    Returns list of movement objects or [] on failure.
+
+    Each object expected to contain:
+      player, prop, handicap, team, opp, game,
+      opening (opening odds dict per book),
+      current (current odds dict per book),
+      movement (direction/magnitude),
+      bookOdds (current snapshot),
+      and possibly: sharp_action, steam_move, reverse_line_move flags
+    """
+    jwt = _get_ev_jwt()
+    if not jwt:
+        return []
+
+    url = "https://api-production-3a3b.up.railway.app/api/movement"
+    try:
+        r = requests.get(
+            url,
+            headers=_ev_auth_headers(),
+            params={"sport": sport.lower()},
+            timeout=15
+        )
+        if r.status_code == 200:
+            data = r.json()
+            # Handle both list and dict responses
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                return data.get("data", data.get("movements", []))
+            return []
+        if r.status_code == 401:
+            log_error_to_session("fetch_ev_movement", "JWT expired — update EV_JWT in Streamlit secrets", "warning")
+        else:
+            log_error_to_session("fetch_ev_movement", f"Movement API {r.status_code}", "warning")
+        return []
+    except requests.exceptions.Timeout:
+        log_error_to_session("fetch_ev_movement", "Movement API timeout", "warning")
+        return []
+    except Exception as e:
+        log_error_to_session("fetch_ev_movement", str(e)[:100], "warning")
+        return []
+
+
+def parse_ev_movement(movement_data):
+    """
+    Parse raw EVSharps movement response into BetCouncil signal dicts.
+    Builds:
+      - movement_lookup: keyed by (player_norm, prop) → signal dict for S8/S9
+      - sharp_alerts: list of human-readable alert strings for Sharp Money Alerts widget
+
+    S8 (Market Movement Vector) values:
+      +2 = sharp book leads move (Pinnacle/Circa moved first)
+      +1 = consensus move (3+ books moved same direction)
+       0 = mixed
+      -1 = soft books only moved
+      -2 = reverse line movement detected
+
+    S9 (RLM) fires when tickets vs money diverge significantly.
+    """
+    movement_lookup = {}  # (player_norm, prop) → signal dict
+    sharp_alerts = []     # list of alert strings for the UI widget
+
+    SHARP_BOOKS = {"pn", "circa", "fn", "br"}  # books considered sharp
+
+    for item in (movement_data or []):
+        try:
+            player_raw = item.get("player", "") or ""
+            prop_key   = item.get("prop", "") or ""
+            prop_name  = EV_PROP_MAP.get(prop_key, prop_key.title())
+            player_norm = normalize_name(player_raw)
+            sig_key    = (player_norm, prop_name)
+
+            # Opening vs current odds (structure TBD until we see real data)
+            opening   = item.get("opening", {}) or {}
+            current   = item.get("bookOdds", item.get("current", {})) or {}
+            movement  = item.get("movement", {}) or {}
+
+            # Detect which books moved and direction
+            moved_books = []
+            sharp_moved = False
+            move_direction = None  # "up" = line moved toward OVER, "down" = toward UNDER
+
+            for bk, curr_odds in current.items():
+                open_odds = opening.get(bk)
+                if open_odds is None or curr_odds is None:
+                    continue
+                try:
+                    # Parse American odds to compare direction
+                    def _parse_am(x):
+                        s = str(x).split("/")[0].strip()
+                        return float(s)
+                    o = _parse_am(open_odds)
+                    c = _parse_am(curr_odds)
+                    if abs(c - o) >= 3:  # meaningful move (≥3 cents)
+                        direction = "favorable" if c > o else "unfavorable"
+                        moved_books.append((bk, o, c, direction))
+                        if bk in SHARP_BOOKS:
+                            sharp_moved = True
+                            move_direction = direction
+                except (ValueError, TypeError):
+                    continue
+
+            # S8: Market Movement Vector
+            if not moved_books:
+                s8_vector = 0
+            elif sharp_moved and len(moved_books) >= 2:
+                s8_vector = 2   # sharp books lead + consensus
+            elif sharp_moved:
+                s8_vector = 2   # sharp book moved
+            elif len(moved_books) >= 3:
+                s8_vector = 1   # soft consensus
+            elif len(moved_books) >= 1:
+                s8_vector = -1  # soft only
+            else:
+                s8_vector = 0
+
+            # S9: RLM — explicit flags from EVSharps if present
+            rlm_flag   = item.get("reverse_line_move", item.get("rlm", False))
+            steam_flag = item.get("steam_move", item.get("steam", False))
+            sharp_flag = item.get("sharp_action", item.get("sharp", False))
+
+            tickets_pct = item.get("tickets") or item.get("tickets_pct")
+            money_pct   = item.get("money")   or item.get("money_pct")
+
+            s9_boost = 0.0
+            rlm_note = ""
+            if rlm_flag or (tickets_pct and money_pct):
+                try:
+                    t = float(tickets_pct or 0)
+                    m = float(money_pct or 0)
+                    gap = abs(t - m)
+                    if gap >= 30:
+                        s9_boost = 0.02
+                        rlm_note = f"{t:.0f}% tickets, {m:.0f}% money [RLM]"
+                    elif gap >= 20:
+                        s9_boost = 0.01
+                        rlm_note = f"{t:.0f}% tickets, {m:.0f}% money [RLM]"
+                    elif gap >= 12:
+                        s9_boost = 0.005
+                        rlm_note = f"{t:.0f}% tickets, {m:.0f}% money [soft RLM]"
+                except (TypeError, ValueError):
+                    pass
+
+            # Opening/current line for delta display
+            open_line  = item.get("openingHandicap") or item.get("opening_line")
+            curr_line  = item.get("handicap") or item.get("current_line")
+
+            movement_lookup[sig_key] = {
+                "s8_vector":    s8_vector,
+                "s9_boost":     s9_boost,
+                "rlm_note":     rlm_note,
+                "rlm_flag":     bool(rlm_flag),
+                "steam_flag":   bool(steam_flag),
+                "sharp_flag":   bool(sharp_flag) or sharp_moved,
+                "move_direction": move_direction,
+                "moved_books":  moved_books,
+                "sharp_moved":  sharp_moved,
+                "open_line":    open_line,
+                "curr_line":    curr_line,
+                "tickets_pct":  tickets_pct,
+                "money_pct":    money_pct,
+                "game":         item.get("game", ""),
+                "team":         item.get("team", ""),
+            }
+
+            # Build sharp alert string for UI
+            if sharp_moved or steam_flag or rlm_flag:
+                alert_parts = [f"🔥 {player_raw.title()} {prop_name}"]
+                if sharp_moved:
+                    bk_names = [EV_BOOK_LABELS.get(b[0], b[0]) for b in moved_books if b[0] in SHARP_BOOKS]
+                    alert_parts.append(f"Sharp move: {', '.join(bk_names)}")
+                if steam_flag:
+                    alert_parts.append("STEAM")
+                if rlm_flag:
+                    alert_parts.append("RLM")
+                if moved_books:
+                    last = moved_books[-1]
+                    alert_parts.append(f"{last[1]:+.0f}→{last[2]:+.0f}")
+                sharp_alerts.append(" | ".join(alert_parts))
+
+        except Exception:
+            continue
+
+    return movement_lookup, sharp_alerts
 
 
 def _ev_parse_odds(raw):
@@ -13893,20 +14112,21 @@ def load_sport_data(sport):
     def _pf_game_lines():   return fetch_game_lines(sport)
     def _pf_parlayplay():   return fetch_parlayplay_props(sport)
     def _pf_ev_api():       return fetch_ev_api_live()
+    def _pf_ev_movement():  return fetch_ev_movement(sport)
 
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_movement,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_movement_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -14082,6 +14302,19 @@ def load_sport_data(sport):
         st.session_state["ev_api_props"]     = []
         st.session_state["ev_signal_lookup"] = {}
         st.session_state["ev_book_lookup"]   = {}
+
+    # ── EV Movement (S8/S9 — line movement + sharp signals) ───────────
+    ev_movement_raw = ev_movement_raw if isinstance(ev_movement_raw, list) else []
+    if ev_movement_raw:
+        _mv_lookup, _mv_alerts = parse_ev_movement(ev_movement_raw)
+        st.session_state["ev_movement_lookup"] = _mv_lookup
+        st.session_state["sharp_alerts"]       = _mv_alerts
+        if _mv_alerts:
+            st.caption(f"📡 Movement: {len(_mv_alerts)} sharp alerts detected")
+    else:
+        # Don't wipe existing alerts if movement API returned nothing (JWT expired etc)
+        if "ev_movement_lookup" not in st.session_state:
+            st.session_state["ev_movement_lookup"] = {}
 
     # DFS platforms
     if ud_props_compare:
@@ -14557,6 +14790,16 @@ def load_sport_data(sport):
         _ev_sig = st.session_state.get("ev_signal_lookup", {}).get(
             (normalize_name(player), stat_raw), {}
         )
+
+        # ── EV Movement signal injection (S8 / S9) ─────────────────────
+        _mv_sig = st.session_state.get("ev_movement_lookup", {}).get(
+            (normalize_name(player), stat_raw), {}
+        )
+        ev_s8_vector  = _mv_sig.get("s8_vector", 0)   # -2 to +2
+        ev_s9_boost   = _mv_sig.get("s9_boost", 0.0)  # 0 to +0.02
+        ev_rlm_note   = _mv_sig.get("rlm_note", "")
+        ev_steam_flag = _mv_sig.get("steam_flag", False)
+        ev_sharp_move = _mv_sig.get("sharp_flag", False)
         if _ev_sig:
             # S6 — live Pinnacle + Circa no-vig (replaces manual MLB_PITCHER_ERA lookup for no-vig)
             ev_pn_novig       = _ev_sig.get("pn_novig")
@@ -14696,6 +14939,15 @@ def load_sport_data(sport):
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + statcast_edge))
         if stadium_edge != 0.0 and sport == "MLB":
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + stadium_edge))
+
+        # ── EV Movement S8 — Market Movement Vector ─────────────────────
+        if ev_s8_vector != 0:
+            s8_adj = ev_s8_vector * 0.01   # ±1% per vector unit, max ±2%
+            final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + s8_adj))
+
+        # ── EV Movement S9 — RLM boost ──────────────────────────────────
+        if ev_s9_boost > 0:
+            final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + ev_s9_boost))
 
         # ── EV API S6 — Pinnacle/Circa no-vig override ─────────────────
         # If sharp books strongly fade, down-tier. If they confirm, boost.
@@ -14955,6 +15207,12 @@ def load_sport_data(sport):
             "EVPitcherERA":      _ev_sig.get("pitcher_era") if _ev_sig else None,
             "EVPitcherXwOBA":    _ev_sig.get("pitcher_xwoba") if _ev_sig else None,
             "EVL10Rate":         ev_l10_rate,
+            # S8/S9 movement
+            "EVS8Vector":        ev_s8_vector,
+            "EVS9Boost":         ev_s9_boost,
+            "EVRLMNote":         ev_rlm_note,
+            "EVSteamFlag":       ev_steam_flag,
+            "EVSharpMove":       ev_sharp_move,
         })
     # Add H2H signal to each prop (uses cached game logs if available)
     for prop in enriched:
@@ -16607,7 +16865,27 @@ with tabs[0]:
         steam_moves = st.session_state.get("steam_moves", [])
         game_sharp_flags = st.session_state.get("game_sharp_flags", {})
         displayed = 0
-        # Sharp prop alerts
+
+        # ── EV Movement alerts (highest priority — real sharp book data) ──
+        for alert_str in sharp_data[:5]:
+            parts = alert_str.split(" | ")
+            title = parts[0] if parts else alert_str
+            detail = " | ".join(parts[1:]) if len(parts) > 1 else ""
+            is_steam = "STEAM" in alert_str
+            is_rlm   = "RLM" in alert_str
+            color = "#e04040" if is_steam else ("#e8a020" if is_rlm else "#22c55e")
+            label = "STEAM MOVE" if is_steam else ("REVERSE LINE" if is_rlm else "SHARP MOVE")
+            st.markdown(
+                f'<div style="background:#0d1520;border:1px solid {color}44;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;">'
+                f'<div style="color:{color};font-weight:700;font-size:0.85rem;text-transform:uppercase;margin-bottom:0.25rem;">⚡ {label} [EV API]</div>'
+                f'<div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{title}</div>'
+                + (f'<div style="color:#8a9ab0;font-size:0.85rem;margin-top:0.2rem;">{detail}</div>' if detail else '')
+                + '</div>',
+                unsafe_allow_html=True
+            )
+            displayed += 1
+
+        # Sharp prop alerts from board SharpFlag
         for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)[:20]:
             if p.get("SharpFlag") and displayed < 5:
                 st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#22c55e;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Line Update</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{p.get("Player","")} {p.get("Prop","")} — {p.get("SharpFlag","")}</div></div>', unsafe_allow_html=True)
@@ -16631,7 +16909,9 @@ with tabs[0]:
                 st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e8a020;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Injury Alert</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{ip.get("Player","")} — {ip.get("Injury","Questionable")}</div></div>', unsafe_allow_html=True)
                 displayed += 1
         if displayed == 0:
-            st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;padding:0.5rem;">No alerts — load board to scan for sharp activity.</div>', unsafe_allow_html=True)
+            _jwt_configured = bool(_get_ev_jwt())
+            _no_alert_msg = "No alerts — load board to scan for sharp activity." if _jwt_configured else "No alerts — add EV_JWT to Streamlit secrets to enable sharp movement data."
+            st.markdown(f'<div style="color:var(--color-text-tertiary);font-size:1.0rem;padding:0.5rem;">{_no_alert_msg}</div>', unsafe_allow_html=True)
 
 
 # ----- TAB 1: EV OPTIMIZER (DFF-style) -----
@@ -20150,6 +20430,16 @@ with tabs[9]:
         _src_statuses.append({"Source": "EV Sharps API (20+ books)", "Status": f"🟢 {len(_ev_sys)} props | {_ev_books_seen} books", "Action": "Open Line Shop to refresh"})
     else:
         _src_statuses.append({"Source": "EV Sharps API (20+ books)", "Status": "⚪ Not loaded — open Line Shop tab", "Action": "Open Line Shop"})
+
+    # EV JWT / Movement
+    _ev_jwt_present = bool(_get_ev_jwt())
+    _mv_alerts = st.session_state.get("sharp_alerts", [])
+    if _ev_jwt_present and _mv_alerts:
+        _src_statuses.append({"Source": "EV Movement API (S8/S9)", "Status": f"🟢 {len(_mv_alerts)} sharp alerts", "Action": "Refreshes on board load"})
+    elif _ev_jwt_present:
+        _src_statuses.append({"Source": "EV Movement API (S8/S9)", "Status": "🟡 JWT present — no alerts yet", "Action": "Load board to fetch"})
+    else:
+        _src_statuses.append({"Source": "EV Movement API (S8/S9)", "Status": "🔴 JWT missing", "Action": "Add EV_JWT to Streamlit secrets"})
 
 
     _green  = sum(1 for s in _src_statuses if "🟢" in s["Status"])
