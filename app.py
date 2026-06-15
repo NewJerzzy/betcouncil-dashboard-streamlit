@@ -1092,7 +1092,7 @@ def bc_timer(label):
 import pickle
 import unicodedata
 import functools
-from math import exp, factorial
+from math import exp, factorial, pi, log, sqrt
 from itertools import combinations
 
 # =========================
