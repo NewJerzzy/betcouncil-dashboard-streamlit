@@ -2751,19 +2751,32 @@ def main():
 
 
 # ── EV API (20+ Books) ───────────────────────────────────────
+# Module-level cache: fetch once per scraper run, reuse across all sport loops
+_EV_API_CACHE = {"data": None, "ts": 0}
+_EV_API_TTL = 120  # seconds
+
+
 def fetch_ev_api(sport=None):
     """
-    Fetch EV Sharps API data.
+    Fetch EV Sharps API data (module-level cached, max 1 fetch per 2 min).
     20+ books: DK, FD, HR, BetMGM, Caesars, ESPN, Circa, Pinnacle, Kalshi, Polymarket
     All sports: MLB, NBA, NFL
     ⚠️ UNSECURED: This API is currently public but unintended.
     Could be locked down at any time.
     """
+    import time as _time
+    now = _time.time()
+    if _EV_API_CACHE["data"] is not None and (now - _EV_API_CACHE["ts"]) < _EV_API_TTL:
+        print("    EV API: using cached data")
+        return _EV_API_CACHE["data"]
+
     url = "https://api-production-3a3b.up.railway.app/api/ev"
     try:
         response = requests.get(url, timeout=15)
         if response.status_code == 200:
             data = response.json()
+            _EV_API_CACHE["data"] = data
+            _EV_API_CACHE["ts"] = now
             print(f"    EV API: {len(data.get('data', []))} props fetched")
             return data
         else:
@@ -2777,26 +2790,72 @@ def fetch_ev_api(sport=None):
         return {"data": [], "games": [], "updated": {}}
 
 
-def extract_ev_props(ev_data, book_key="hr"):
+def _infer_sport_from_ev_item(item):
+    """Infer sport from EV API item (no 'sport' field in response)."""
+    prop = item.get("prop", "").lower()
+    if prop in ("hr",):
+        return "mlb"
+    if prop in ("td", "rush_yards", "rec_yards", "receptions"):
+        return "nfl"
+    if prop in ("pts", "reb", "ast", "3pm", "stl", "blk"):
+        return "nba"
+    if prop in ("goals", "shots", "saves"):
+        return "nhl"
+    # Fallback: check game string for known team abbreviations (MLB default)
+    return "mlb"
+
+
+def _parse_ev_odds(raw):
+    """
+    Parse EV API bookOdds value into (over_odds, under_odds).
+    Values are strings like '325', '+320', or '300/-595' (over/under split).
+    Returns (str|None, str|None).
+    """
+    if raw is None:
+        return None, None
+    raw = str(raw).strip()
+    if "/" in raw:
+        parts = raw.split("/", 1)
+        return parts[0].strip() or None, parts[1].strip() or None
+    return raw or None, None
+
+
+def extract_ev_props(ev_data, book_key="hr", sport_filter=None):
     """
     Extract props from EV API, mapped to BetCouncil format.
-    book_key options: 'hr', 'dk', 'fd', 'mgm', 'caesars', 'espn', 'circa', 'pinnacle'
+    book_key options: 'hr', 'dk', 'fd', 'mgm', 'cz', 'espn', 'circa', 'pn', 'bv'
+    sport_filter: 'mlb', 'nba', 'nfl', 'nhl' or None for all
     """
     props = []
     for item in ev_data.get("data", []):
         if book_key not in item.get("bookOdds", {}):
             continue
         try:
-            book_odds = item["bookOdds"][book_key]
+            inferred_sport = _infer_sport_from_ev_item(item)
+            if sport_filter and inferred_sport != sport_filter.lower():
+                continue
+
+            # FIX: bookOdds values are strings ("325") or "over/under" strings ("300/-595")
+            # NOT dicts — the old book_odds.get("odds") was always raising AttributeError
+            o_odds, u_odds = _parse_ev_odds(item["bookOdds"][book_key])
+
+            # FIX: "line" in EV API = American odds integer for the best book
+            # The actual stat threshold is in "handicap" (e.g. "0.5" for HR props)
+            stat_line = item.get("handicap")
+            try:
+                stat_line = float(stat_line) if stat_line is not None else None
+            except (ValueError, TypeError):
+                stat_line = None
+
             prop = {
                 "player": item.get("player", "Unknown"),
                 "team": item.get("team", ""),
                 "prop": item.get("prop", ""),
-                "line": item.get("line"),
-                "o": book_odds.get("odds"),  # over odds
-                "u": None,  # EV API doesn't split o/u, just use over
+                "line": stat_line,          # stat threshold (e.g. 0.5 HRs)
+                "o": o_odds,                # over American odds string
+                "u": u_odds,                # under American odds string (or None)
                 "book": f"EV_{book_key}",
-                "sport": item.get("sport", ""),
+                "sport": inferred_sport,
                 "game": item.get("game", ""),
                 "opp": item.get("opp", ""),
                 "ev": item.get("ev"),
@@ -2804,41 +2863,45 @@ def extract_ev_props(ev_data, book_key="hr"):
                 "fair_value": item.get("fairVal"),
                 "implied": item.get("implied"),
                 "_source": "EV API",
-                "_link": item.get("links", {}).get(book_key),
+                "_link": item.get("links", {}).get(book_key) if isinstance(item.get("links"), dict) else None,
                 "_statcast": item.get("savant", {}),
                 "_hit_rates": item.get("hitRates", {}),
                 "_pitcher": item.get("pitcherData", {}),
-                "_stadium": item.get("stadiumRank"),
+                "_batter_percs": item.get("batter_percs", {}),
+                "_stadium_rank": item.get("stadiumRank"),
+                "_under": item.get("under", False),
             }
             props.append(prop)
         except Exception as e:
-            pass  # skip bad props silently
-    
+            print(f"    EV API: skipped item ({e})")
+            continue
+
     if props:
         print(f"    EV API ({book_key}): {len(props)} props extracted")
+    else:
+        print(f"    EV API ({book_key}): 0 props — check book_key or API response")
     return props
 
 
 def fetch_books_parallel(sport, book_fns):
-    """Run multiple book scrapers in parallel."""
+    """Run multiple book scrapers in parallel. EV API fetched once at module level."""
     all_props = []
+
+    # Fetch EV API once (cached) BEFORE the thread pool so it's not called per-sport
+    ev_raw = fetch_ev_api()
+    if ev_raw and ev_raw.get("data"):
+        ev_props = extract_ev_props(ev_raw, book_key="hr", sport_filter=sport)
+        if ev_props:
+            all_props.extend(ev_props)
+            print(f"    EV API: {len(ev_props)} Hard Rock props added for {sport}")
+
     with ThreadPoolExecutor(max_workers=5) as executor:
-        # Include EV API fetch
         futures = {executor.submit(fn, sport): name for name, fn in book_fns.items()}
-        
-        # Also fetch EV API (no sport param needed)
-        futures[executor.submit(fetch_ev_api)] = "EV_API"
-        
         for future in as_completed(futures):
             name = futures[future]
             try:
                 result = future.result()
-                if name == "EV_API" and result:
-                    # Extract Hard Rock props from EV API
-                    ev_props = extract_ev_props(result, book_key="hr")
-                    if ev_props:
-                        all_props.extend(ev_props)
-                elif result:
+                if result:
                     all_props.extend(result)
             except Exception as e:
                 print(f"    {name}: parallel fetch error: {e}")
