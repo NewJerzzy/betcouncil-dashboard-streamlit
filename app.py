@@ -11778,7 +11778,7 @@ Rules:
             }
             raise Exception(f"Claude API error: {api_resp.status_code}")
 
-    except (requests.RequestException, KeyError, ValueError) as e:
+    except Exception as e:
         # Fallback: OCR.space API (free 25k/month) then multi-sport parser
         try:
             raw = ""
