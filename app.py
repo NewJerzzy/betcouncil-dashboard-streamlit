@@ -25,6 +25,7 @@ except ImportError:
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
+    no_vig_prob_shin, no_vig_prob_log, devig_best, compute_clv, compute_clv_novig,
     load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat,
     is_date_valid_for_today, adjusted_edge, find_player_avg, market_efficiency_score,
     get_weighted_average, get_recency_context, sample_size_confidence,
@@ -4582,6 +4583,106 @@ def compute_volatility_flag(player, sport, stat_norm, game_logs=None, n=10):
 
 # ── 4. Closing Line Hit Rate ────────────────────────────────────
 # track_closing_line_beat — moved to bc_utils.py
+
+def resolve_clv_records(history):
+    """
+    Auto-resolve CLV for settled bets by comparing placement odds
+    against current EV API odds (proxy for closing line).
+    Called on History tab load.
+
+    Buchdahl standard:
+    - CLV = closing no-vig prob - placement no-vig prob
+    - Positive = you got better odds than close = +EV
+    - Need 50+ resolved bets for statistical significance
+    - Need 1000+ for full P-value confidence
+    """
+    try:
+        import streamlit as _st
+        _ev_sig_lookup = _st.session_state.get("ev_signal_lookup", {})
+        if not _ev_sig_lookup:
+            return history   # no EV data yet
+
+        changed = False
+        for record in history:
+            _clv = record.get("clv_capture", {})
+            if not _clv or _clv.get("clv_resolved"):
+                continue
+            if record.get("outcome") not in ("WIN", "LOSS"):
+                continue
+
+            _player = normalize_name(record.get("player", ""))
+            _prop   = record.get("prop", "")
+            _sig    = _ev_sig_lookup.get((_player, _prop), {})
+            if not _sig:
+                continue
+
+            # Get closing no-vig from EV API current snapshot
+            _close_pn    = _sig.get("pn_novig")
+            _close_circa = _sig.get("circa_novig")
+            _close_cons  = _sig.get("consensus_novig")
+
+            if _close_cons is None:
+                continue
+
+            # CLV vs no-vig closing line (gold standard)
+            _placement_cons = _clv.get("consensus_novig_placement")
+            if _placement_cons is not None:
+                _side = record.get("side", "OVER")
+                if _side == "UNDER":
+                    _clv_novig = (1 - float(_close_cons)) - (1 - float(_placement_cons))
+                else:
+                    _clv_novig = float(_close_cons) - float(_placement_cons)
+                record["clv_capture"]["closing_pn_novig"]  = _close_pn
+                record["clv_capture"]["closing_consensus"] = _close_cons
+                record["clv_capture"]["clv_vs_novig"]      = round(_clv_novig, 4)
+                record["clv_capture"]["clv_resolved"]      = True
+                changed = True
+
+        return history, changed
+    except Exception:
+        return history, False
+
+
+def get_clv_summary(history):
+    """
+    Compute CLV statistics across all resolved bets.
+    Returns dict with avg_clv, beat_rate, n_resolved, and grade.
+    Per Buchdahl: 50+ resolved bets needed for significance.
+    """
+    resolved = [
+        r for r in (history or [])
+        if r.get("clv_capture", {}).get("clv_resolved")
+        and r.get("clv_capture", {}).get("clv_vs_novig") is not None
+    ]
+    if not resolved:
+        return {"avg_clv": None, "beat_rate": None, "n_resolved": 0, "grade": "INSUFFICIENT"}
+
+    clv_values = [r["clv_capture"]["clv_vs_novig"] for r in resolved]
+    avg_clv    = round(sum(clv_values) / len(clv_values), 4)
+    beat_rate  = round(sum(1 for v in clv_values if v > 0) / len(clv_values), 3)
+    n          = len(resolved)
+
+    if n < 50:
+        grade = "INSUFFICIENT"
+    elif avg_clv >= 0.05 and beat_rate >= 0.55:
+        grade = "ELITE"
+    elif avg_clv >= 0.03 and beat_rate >= 0.52:
+        grade = "GOOD"
+    elif avg_clv >= 0.01:
+        grade = "POSITIVE"
+    elif avg_clv >= -0.01:
+        grade = "NEUTRAL"
+    else:
+        grade = "NEGATIVE"
+
+    return {
+        "avg_clv":    avg_clv,
+        "beat_rate":  beat_rate,
+        "n_resolved": n,
+        "grade":      grade,
+    }
+
+
 def get_closing_line_hit_rate(history=None):
     """
     Compute what % of model projections beat the closing line.
@@ -5895,10 +5996,34 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
             sharp_ev      = item.get("ev")
             sharp_implied = item.get("implied")
             sharp_kelly   = item.get("kelly")
-            pn_novig      = _novig_from_raw(book_odds.get("pn"))
-            circa_novig   = _novig_from_raw(book_odds.get("circa"))
-            espn_novig    = _novig_from_raw(book_odds.get("espn"))
-            sharp_novigs  = [v for v in [pn_novig, circa_novig, espn_novig] if v is not None]
+            # Use Shin method for HR/longshot props, additive for standard props
+            _is_longshot = prop_key in ("hr", "goals", "td")
+            pn_raw    = book_odds.get("pn")
+            circa_raw = book_odds.get("circa")
+            espn_raw  = book_odds.get("espn")
+            if _is_longshot:
+                # Shin method — better for asymmetric/longshot markets
+                pn_novig    = _novig_from_raw(pn_raw)    # raw uses additive, override below
+                circa_novig = _novig_from_raw(circa_raw)
+                espn_novig  = _novig_from_raw(espn_raw)
+                # Apply Shin if both sides available
+                if pn_raw and "/" in str(pn_raw):
+                    try:
+                        o_s, u_s = str(pn_raw).split("/", 1)
+                        pn_novig = round(no_vig_prob_shin(o_s.strip(), u_s.strip()), 4)
+                    except Exception:
+                        pass
+                if circa_raw and "/" in str(circa_raw):
+                    try:
+                        o_s, u_s = str(circa_raw).split("/", 1)
+                        circa_novig = round(no_vig_prob_shin(o_s.strip(), u_s.strip()), 4)
+                    except Exception:
+                        pass
+            else:
+                pn_novig    = _novig_from_raw(pn_raw)
+                circa_novig = _novig_from_raw(circa_raw)
+                espn_novig  = _novig_from_raw(espn_raw)
+            sharp_novigs    = [v for v in [pn_novig, circa_novig, espn_novig] if v is not None]
             consensus_novig = round(sum(sharp_novigs)/len(sharp_novigs), 4) if sharp_novigs else None
 
             barrel_pct        = _safe_float(savant.get("barrels_per_bip"))
@@ -12049,8 +12174,46 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
             "weather_active":   bool((signals or {}).get("weather", 0) != 0),
             "blowout_risk":     bool((signals or {}).get("blowout", 0) < -0.02),
             "usage_boost":      bool((signals or {}).get("usage", 0) > 0.01),
+        },
+        # ── CLV Capture — Buchdahl methodology ─────────────────────────
+        # Store Pinnacle/Circa no-vig odds AT TIME OF BET PLACEMENT
+        # After game time, compare against closing line to compute true CLV
+        # Positive CLV over 50+ bets = statistically proven skill
+        "clv_capture": {
+            "placement_ts":       bet_date,
+            "placement_edge":     edge or 0,
+            "placement_prob":     prob or 0,
+            # Pull live Pinnacle + Circa odds from ev_signal_lookup at placement time
+            "pn_novig_placement":    None,
+            "circa_novig_placement": None,
+            "consensus_novig_placement": None,
+            "closing_pn_novig":   None,   # filled in after game
+            "closing_consensus":  None,   # filled in after game
+            "clv_vs_placement":   None,   # filled in after game
+            "clv_vs_novig":       None,   # gold standard CLV vs no-vig close
+            "clv_resolved":       False,
         }
     }
+
+    # Populate CLV placement odds from current ev_signal_lookup
+    try:
+        import streamlit as _st
+        _sig_key = (normalize_name(player), prop)
+        _ev_sig  = _st.session_state.get("ev_signal_lookup", {}).get(_sig_key, {})
+        if _ev_sig:
+            _pn_nv    = _ev_sig.get("pn_novig")
+            _circa_nv = _ev_sig.get("circa_novig")
+            _cons_nv  = _ev_sig.get("consensus_novig")
+            record["clv_capture"]["pn_novig_placement"]    = _pn_nv
+            record["clv_capture"]["circa_novig_placement"] = _circa_nv
+            record["clv_capture"]["consensus_novig_placement"] = _cons_nv
+            # Compute immediate CLV vs current market (pre-close)
+            if _cons_nv and prob:
+                record["clv_capture"]["clv_vs_placement"] = round(
+                    float(_cons_nv) - float(prob), 4
+                )
+    except Exception:
+        pass
     st.session_state.history.append(record)
     save_json_data(HISTORY_PATH, st.session_state.history)
     save_to_gist("history", st.session_state.history)
@@ -15385,7 +15548,8 @@ def load_sport_data(sport):
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + ev_homer_due_edge))
 
         # ── EV API S6 — Pinnacle/Circa no-vig override ─────────────────
-        # If sharp books strongly fade, down-tier. If they confirm, boost.
+        # Use Shin method for HR props (longshot market, +200 to +800 odds)
+        # Use additive for standard props
         if ev_consensus_novig is not None:
             _novig_side = ev_consensus_novig if best_side == "OVER" else (1 - ev_consensus_novig)
             if _novig_side > 0.52:
@@ -18693,10 +18857,67 @@ with tabs[3]:
 
 # ----- TAB 4: HISTORY -----
 with tabs[4]:
-    st.markdown("## \U0001f4c8 Full Bet History")
+    st.markdown("## 📈 Full Bet History")
 
-    # CLV Performance Dashboard — Gap 3 complete
-    clv_summary = get_clv_summary()
+    # ── Auto-resolve CLV for settled bets ──────────────────────────────
+    # Buchdahl methodology: compare placement odds vs current market (closing proxy)
+    if st.session_state.get("history"):
+        _resolved_hist, _clv_changed = resolve_clv_records(st.session_state.history)
+        if _clv_changed:
+            st.session_state.history = _resolved_hist
+            save_json_data(HISTORY_PATH, st.session_state.history)
+
+    # ── CLV Performance Dashboard ───────────────────────────────────────
+    _clv_sum = get_clv_summary(st.session_state.get("history", []))
+    if _clv_sum["n_resolved"] > 0:
+        st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
+        st.caption(
+            f"CLV measures whether you beat the no-vig closing line (Pinnacle+Circa consensus). "
+            f"Per Buchdahl: **{_clv_sum['n_resolved']} resolved bets** | "
+            f"Need 50+ for significance, 1000+ for full confidence."
+        )
+        _clv_grade  = _clv_sum["grade"]
+        _clv_color  = {"ELITE":"#22c55e","GOOD":"#0ea5a0","POSITIVE":"#e8a020",
+                       "NEUTRAL":"#6a7a8a","NEGATIVE":"#e04040","INSUFFICIENT":"#6a7a8a"}.get(_clv_grade,"#6a7a8a")
+        _cc1,_cc2,_cc3,_cc4 = st.columns(4)
+        _cc1.markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Avg CLV (No-Vig)</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{_clv_color}">'
+            f'{_clv_sum["avg_clv"]:+.2%}</div>'
+            f'<div style="font-size:12px;color:{_clv_color}">{_clv_grade}</div></div>',
+            unsafe_allow_html=True
+        )
+        _cc2.markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Beat Close Rate</div>'
+            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
+            f'{_clv_sum["beat_rate"]:.1%}</div>'
+            f'<div style="font-size:12px;color:#6a7a8a">{_clv_sum["n_resolved"]} bets</div></div>',
+            unsafe_allow_html=True
+        )
+        _be_needed = 50 - _clv_sum["n_resolved"]
+        _cc3.markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">To Significance</div>'
+            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
+            f'{"✅" if _be_needed <= 0 else str(max(0,_be_needed))+" more"}</div>'
+            f'<div style="font-size:12px;color:#6a7a8a">50 bet threshold</div></div>',
+            unsafe_allow_html=True
+        )
+        _full_conf = 1000 - _clv_sum["n_resolved"]
+        _cc4.markdown(
+            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Full Confidence</div>'
+            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
+            f'{"✅" if _full_conf <= 0 else str(max(0,_full_conf))+" more"}</div>'
+            f'<div style="font-size:12px;color:#6a7a8a">1000 bet threshold</div></div>',
+            unsafe_allow_html=True
+        )
+        st.markdown("---")
+
+    # CLV Performance Dashboard — Gap 3 complete (legacy block below kept for backward compat)
+    clv_summary = get_clv_summary(st.session_state.get("history", []))
     if clv_summary:
         st.markdown("### 📊 Closing Line Value (CLV) Performance")
         st.caption("CLV measures whether you consistently get better prices than the closing line. Positive CLV = long-term +EV bettor. Pinnacle edge = how well you beat the sharpest book in the world.")
