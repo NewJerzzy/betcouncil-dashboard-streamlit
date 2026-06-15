@@ -15102,6 +15102,7 @@ def load_sport_data(sport):
                 prop["EVSharpBooks"] = 0
 
 
+    arb_opps = detect_arbitrage_opportunities(sport)
     st.session_state["arb_opportunities"] = arb_opps
     alt_line_upgrades = []
     for prop in enriched:
