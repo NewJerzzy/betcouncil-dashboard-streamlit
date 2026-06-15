@@ -49,9 +49,9 @@ def american_to_prob(american_odds) -> float:
 
 
 def no_vig_prob(over_american, under_american) -> float:
-    """Calculate no-vig true probability from both sides."""
+    """Calculate no-vig true probability from both sides (additive/proportional method)."""
     try:
-        over_imp = american_to_prob(over_american)
+        over_imp  = american_to_prob(over_american)
         under_imp = american_to_prob(under_american)
         total = over_imp + under_imp
         if total <= 0:
@@ -59,6 +59,128 @@ def no_vig_prob(over_american, under_american) -> float:
         return round(over_imp / total, 4)
     except (TypeError, ValueError):
         return 0.5
+
+
+def no_vig_prob_shin(over_american, under_american) -> float:
+    """
+    Shin method devig — more accurate for asymmetric markets (heavy faves/longshots).
+    Used by sharp shops for props priced +200 to +1000.
+    Accounts for favourite-longshot bias by solving for the vig iteratively.
+    Reference: Shin (1993), Pinnacle educational resources.
+    """
+    try:
+        p1 = american_to_prob(over_american)
+        p2 = american_to_prob(under_american)
+        total = p1 + p2
+        if total <= 0 or total == 1.0:
+            return no_vig_prob(over_american, under_american)
+        z = total - 1.0   # vig/hold
+
+        # Shin's formula: solve for fair probability accounting for longshot bias
+        # p_fair = (sqrt(z^2 + 4*(1-z)*p_imp^2) - z) / (2*(1-z))
+        if z <= 0 or z >= 1:
+            return no_vig_prob(over_american, under_american)
+
+        shin_p1 = (sqrt(z**2 + 4*(1-z)*p1**2) - z) / (2*(1-z))
+        shin_p2 = (sqrt(z**2 + 4*(1-z)*p2**2) - z) / (2*(1-z))
+        shin_total = shin_p1 + shin_p2
+        if shin_total <= 0:
+            return no_vig_prob(over_american, under_american)
+        return round(shin_p1 / shin_total, 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return no_vig_prob(over_american, under_american)
+
+
+def no_vig_prob_log(over_american, under_american) -> float:
+    """
+    Logarithmic devig — produces slightly more accurate fair prices on
+    extreme longshots by applying log-space normalization.
+    Used by some sharp books for HR and high-odds props.
+    """
+    try:
+        p1 = american_to_prob(over_american)
+        p2 = american_to_prob(under_american)
+        if p1 <= 0 or p2 <= 0:
+            return no_vig_prob(over_american, under_american)
+        # Log method: normalize in log space
+        log_p1 = log(p1)
+        log_p2 = log(p2)
+        log_total = log_p1 + log_p2
+        # Fair odds in log space
+        log_fair_p1 = log_p1 - (log_total / 2)
+        log_fair_p2 = log_p2 - (log_total / 2)
+        fair_p1 = exp(log_fair_p1)
+        fair_p2 = exp(log_fair_p2)
+        denom = fair_p1 + fair_p2
+        if denom <= 0:
+            return no_vig_prob(over_american, under_american)
+        return round(fair_p1 / denom, 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return no_vig_prob(over_american, under_american)
+
+
+def devig_best(over_american, under_american, market_type="standard") -> float:
+    """
+    Choose the best devig method based on market type.
+    - standard props (PTS/REB/AST/spread): additive/proportional
+    - longshot props (HR/Futures/+200 to +1000): Shin method
+    - extreme longshots (+1000+): logarithmic
+    Returns fair probability for the OVER.
+    """
+    try:
+        o_prob = american_to_prob(over_american)
+        # Determine odds magnitude
+        o_val = float(over_american) if over_american else 0
+        if market_type == "longshot" or o_val >= 200:
+            return no_vig_prob_shin(over_american, under_american)
+        elif o_val >= 500:
+            return no_vig_prob_log(over_american, under_american)
+        else:
+            return no_vig_prob(over_american, under_american)
+    except (TypeError, ValueError):
+        return no_vig_prob(over_american, under_american)
+
+
+def compute_clv(placement_odds_american, closing_odds_american, side="OVER") -> float:
+    """
+    Compute Closing Line Value (CLV) — Buchdahl methodology.
+    CLV = implied prob at placement vs implied prob at close (no-vig).
+    Positive CLV = you got better odds than the market closed at = +EV.
+    CLV is a more reliable indicator of skill than win/loss over small samples.
+    Per Buchdahl: consistent +CLV over 50+ bets proves skill vs luck.
+
+    Returns CLV as a percentage (e.g. 0.05 = 5% CLV).
+    """
+    try:
+        placement_prob = american_to_prob(placement_odds_american)
+        closing_prob   = american_to_prob(closing_odds_american)
+        if placement_prob <= 0 or closing_prob <= 0:
+            return 0.0
+        # CLV = closing implied prob - placement implied prob
+        # Positive means you got better odds (lower implied prob = better odds)
+        clv = closing_prob - placement_prob
+        return round(clv, 4)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def compute_clv_novig(placement_over, placement_under,
+                      closing_over, closing_under, side="OVER") -> float:
+    """
+    CLV vs no-vig closing line (gold standard — Pinnacle methodology).
+    Removes vig from both placement and closing odds before comparing.
+    This is the most accurate CLV measure used by sharp shops.
+    """
+    try:
+        placement_fair = no_vig_prob_shin(placement_over, placement_under)
+        closing_fair   = no_vig_prob_shin(closing_over, closing_under)
+        if side.upper() == "UNDER":
+            placement_fair = 1 - placement_fair
+            closing_fair   = 1 - closing_fair
+        clv = closing_fair - placement_fair
+        return round(clv, 4)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def devig_odds(american_odds):
