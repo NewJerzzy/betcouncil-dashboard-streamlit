@@ -30,7 +30,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     get_weighted_average, get_recency_context, sample_size_confidence,
     compare_multibook_lines, make_display_df, compute_market_edge,
     compute_market_implied_projection, compute_sem_for_tier, compute_h2h_hit_rate,
-    devig_odds, compute_std_dev,
+    devig_odds, compute_std_dev, calculate_edge,
     compute_fair_prob, tier_badge, is_game_total_prop, classify_regime, parlay_prob,
     parlay_payout, poisson_prob_over)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
