@@ -5367,15 +5367,23 @@ EV_BOOK_LABELS = {
 
 def extract_ev_props_for_app(ev_data, sport_filter=None):
     """
-    Extract all book props from EV API data for use in app.py.
-    Returns list of dicts with BetCouncil-compatible fields + EV metadata.
+    Extract all book props + full signal data from EV API.
+    Single endpoint contains: book odds, Statcast, pitcher matchup,
+    hit rates, stadium factors, batter percentiles, BvP context.
+    Returns (props_list, signal_lookup) where signal_lookup is keyed
+    by (normalized_player, prop_name) → signal dict for S6/S7/S12.
     """
     props = []
+    # signal_lookup: one entry per player+prop (deduplicated across books)
+    # stored separately in session_state["ev_signal_lookup"]
+    signal_lookup = {}
+
     for item in (ev_data.get("data") or []):
         try:
             item_sport = _ev_infer_sport(item)
             if sport_filter and item_sport != sport_filter:
                 continue
+
             prop_key  = item.get("prop", "")
             prop_name = EV_PROP_MAP.get(prop_key, prop_key.title())
             handicap  = item.get("handicap")
@@ -5384,45 +5392,206 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
             except (ValueError, TypeError):
                 stat_line = None
 
+            player_raw  = item.get("player", "Unknown")
+            player_norm = normalize_name(player_raw)
+            sig_key     = (player_norm, prop_name)
+
+            # ── Full signal data (built once per player+prop) ──────────
+            savant       = item.get("savant", {}) or {}
+            pitcher_data = item.get("pitcherData", {}) or {}
+            batter_percs = item.get("batter_percs", {}) or {}
+            hit_rates    = item.get("hitRates", {}) or {}
+            homer_logs   = item.get("homerLogs", {}) or {}
+
+            # Pitcher matchup fields
+            pitcher_name = item.get("pitcher", "")
+            pitcher_lr   = item.get("pitcherLR", "")   # "R" or "L"
+
+            # Stadium: handedness-adjusted rank (L batter vs stadiumRankLeft etc.)
+            bats         = item.get("bats", "")         # "L" or "R" or "S"
+            stadium_rank = item.get("stadiumRank")
+            stadium_rank_l = item.get("stadiumRankLeft")
+            stadium_rank_r = item.get("stadiumRankRight")
+            # Pick handedness-adjusted rank when available
+            if bats == "L" and stadium_rank_l is not None:
+                adj_stadium_rank = stadium_rank_l
+            elif bats in ("R", "S") and stadium_rank_r is not None:
+                adj_stadium_rank = stadium_rank_r
+            else:
+                adj_stadium_rank = stadium_rank
+
+            # No-vig from sharp books (S6) ─ Pinnacle + Circa consensus
             book_odds = item.get("bookOdds", {})
+            pn_raw    = book_odds.get("pn")
+            circa_raw = book_odds.get("circa")
+            sharp_fv  = item.get("fairVal")   # pre-computed by EVSharps devig engine
+            sharp_ev  = item.get("ev")
+            sharp_implied = item.get("implied")
+
+            # Compute Pinnacle no-vig if both sides available
+            pn_novig = None
+            if pn_raw and "/" in str(pn_raw):
+                try:
+                    o_str, u_str = str(pn_raw).split("/", 1)
+                    def _am_to_dec(x):
+                        x = float(x)
+                        return (100/abs(x)+1) if x < 0 else (x/100+1)
+                    o_dec = _am_to_dec(o_str)
+                    u_dec = _am_to_dec(u_str)
+                    pn_novig = round((1/o_dec) / (1/o_dec + 1/u_dec), 4)
+                except (ValueError, ZeroDivisionError, TypeError):
+                    pn_novig = None
+
+            # Circa no-vig
+            circa_novig = None
+            if circa_raw and "/" in str(circa_raw):
+                try:
+                    o_str, u_str = str(circa_raw).split("/", 1)
+                    def _am_to_dec(x):
+                        x = float(x)
+                        return (100/abs(x)+1) if x < 0 else (x/100+1)
+                    o_dec = _am_to_dec(o_str)
+                    u_dec = _am_to_dec(u_str)
+                    circa_novig = round((1/o_dec) / (1/o_dec + 1/u_dec), 4)
+                except (ValueError, ZeroDivisionError, TypeError):
+                    circa_novig = None
+
+            # Consensus sharp no-vig
+            sharp_novigs = [v for v in [pn_novig, circa_novig] if v is not None]
+            consensus_novig = round(sum(sharp_novigs)/len(sharp_novigs), 4) if sharp_novigs else None
+
+            # S12 Statcast edge components
+            try: barrel_pct  = float(savant.get("barrels_per_bip", 0) or 0)
+            except: barrel_pct = 0.0
+            try: exit_velo   = float(savant.get("exit_velocity_avg", 0) or 0)
+            except: exit_velo = 0.0
+            try: hard_hit    = float(savant.get("hard_hit_percent", 0) or 0)
+            except: hard_hit = 0.0
+            try: hr_pct      = float(batter_percs.get("home_run_percentile", 0) or 0)
+            except: hr_pct = 0.0
+
+            statcast_edge = 0.0
+            statcast_notes = []
+            if prop_key == "hr":
+                if barrel_pct >= 15:
+                    statcast_edge += 0.02; statcast_notes.append(f"Barrel%{barrel_pct:.1f}≥15")
+                elif barrel_pct >= 10:
+                    statcast_edge += 0.01; statcast_notes.append(f"Barrel%{barrel_pct:.1f}≥10")
+                if exit_velo >= 92:
+                    statcast_edge += 0.01; statcast_notes.append(f"EV{exit_velo:.1f}mph")
+                if hr_pct >= 90:
+                    statcast_edge += 0.02; statcast_notes.append(f"HR-pct{hr_pct:.0f}th")
+                elif hr_pct >= 75:
+                    statcast_edge += 0.01; statcast_notes.append(f"HR-pct{hr_pct:.0f}th")
+                if hard_hit >= 50:
+                    statcast_edge += 0.01; statcast_notes.append(f"HardHit{hard_hit:.0f}%")
+
+            # Stadium rank edge (S12)
+            stadium_edge = 0.0
+            if adj_stadium_rank is not None and prop_key == "hr":
+                try:
+                    r = int(adj_stadium_rank)
+                    if r <= 5:    stadium_edge = 0.03
+                    elif r <= 15: stadium_edge = 0.01
+                    elif r >= 26: stadium_edge = -0.02
+                except (ValueError, TypeError):
+                    pass
+
+            # Pitcher ERA edge from pitcherData (replaces static MLB_PITCHER_ERA lookup)
+            try: pitcher_era_ev = float(pitcher_data.get("p_era") or pitcher_data.get("era") or 0)
+            except: pitcher_era_ev = 0.0
+            try: pitcher_xwoba  = float(pitcher_data.get("xwoba") or 0)
+            except: pitcher_xwoba = 0.0
+            try: pitcher_barrel = float(pitcher_data.get("barrels_per_bip") or pitcher_data.get("barrel_ct") or 0)
+            except: pitcher_barrel = 0.0
+
+            # L10 hit rate (S7 proxy when opponent game log unavailable)
+            l10_data = hit_rates.get("L10", {})
+            l10_rate = None
+            if l10_data and l10_data.get("t", 0) >= 3:
+                try: l10_rate = float(l10_data.get("p", 0)) / 100.0
+                except: pass
+
+            # Opponent rank (defensive signal for non-MLB)
+            opp_rank = item.get("oppRank")
+
+            if sig_key not in signal_lookup:
+                signal_lookup[sig_key] = {
+                    # Sharp no-vig (S6)
+                    "pn_novig":        pn_novig,
+                    "circa_novig":     circa_novig,
+                    "consensus_novig": consensus_novig,
+                    "sharp_fv":        sharp_fv,
+                    "sharp_ev":        sharp_ev,
+                    "sharp_implied":   sharp_implied,
+                    # Pitcher matchup
+                    "pitcher":         pitcher_name,
+                    "pitcher_lr":      pitcher_lr,
+                    "pitcher_era":     pitcher_era_ev if pitcher_era_ev > 0 else None,
+                    "pitcher_xwoba":   pitcher_xwoba if pitcher_xwoba > 0 else None,
+                    "pitcher_barrel":  pitcher_barrel if pitcher_barrel > 0 else None,
+                    # Statcast (S12)
+                    "statcast_edge":   statcast_edge,
+                    "statcast_notes":  statcast_notes,
+                    "barrel_pct":      barrel_pct,
+                    "exit_velo":       exit_velo,
+                    "hard_hit":        hard_hit,
+                    "hr_pct":          hr_pct,
+                    # Stadium (S12)
+                    "stadium_edge":    stadium_edge,
+                    "stadium_rank":    adj_stadium_rank,
+                    # H2H proxy (S7)
+                    "l10_rate":        l10_rate,
+                    "hit_rates":       hit_rates,
+                    # Context
+                    "opp_rank":        opp_rank,
+                    "bats":            bats,
+                    "game":            item.get("game", ""),
+                    "team":            item.get("team", ""),
+                    "opp":             item.get("opp", ""),
+                    # Raw data for StatsHub
+                    "_savant":         savant,
+                    "_batter_percs":   batter_percs,
+                    "_pitcher_data":   pitcher_data,
+                    "_homer_logs":     homer_logs,
+                }
+
+            # ── Per-book prop row ──────────────────────────────────────
             for bk_key, bk_label in EV_BOOK_LABELS.items():
                 raw = book_odds.get(bk_key)
                 if raw is None:
                     continue
                 o_odds, u_odds = _ev_parse_odds(raw)
                 props.append({
-                    # BetCouncil standard fields
-                    "Player":   item.get("player", "Unknown").title(),
-                    "Prop":     prop_name,
-                    "Line":     stat_line,
-                    "Side":     "UNDER" if item.get("under") else "OVER",
-                    "Sport":    item_sport,
-                    "Book":     bk_label,
-                    "source":   f"EV_{bk_key}",
-                    # Odds
+                    "Player":    player_raw.title(),
+                    "Prop":      prop_name,
+                    "Line":      stat_line,
+                    "Side":      "UNDER" if item.get("under") else "OVER",
+                    "Sport":     item_sport,
+                    "Book":      bk_label,
+                    "source":    f"EV_{bk_key}",
                     "OddsOver":  o_odds,
                     "OddsUnder": u_odds,
-                    # EV metadata
-                    "EV":        item.get("ev"),
-                    "FairValue": item.get("fairVal"),
+                    "EV":        sharp_ev,
+                    "FairValue": sharp_fv,
                     "Kelly":     item.get("kelly"),
-                    # Context
                     "Game":      item.get("game", ""),
                     "Team":      item.get("team", ""),
                     "Opp":       item.get("opp", ""),
-                    "OppRank":   item.get("oppRank"),
-                    # Deep link to place bet
+                    "OppRank":   opp_rank,
                     "_bet_link": (item.get("links") or {}).get(bk_key),
-                    # Statcast / analytics
-                    "_hit_rates":    item.get("hitRates", {}),
-                    "_savant":       item.get("savant", {}),
-                    "_batter_percs": item.get("batter_percs", {}),
-                    "_pitcher":      item.get("pitcherData", {}),
-                    "_stadium_rank": item.get("stadiumRank"),
+                    "_sig_key":  sig_key,   # pointer back to signal_lookup
+                    # Kept for StatsHub backward compat
+                    "_hit_rates":    hit_rates,
+                    "_savant":       savant,
+                    "_batter_percs": batter_percs,
+                    "_pitcher":      pitcher_data,
+                    "_stadium_rank": adj_stadium_rank,
                 })
         except Exception:
             continue
-    return props
+
+    return props, signal_lookup
 
 
 # ── FanDuel Direct (curl_cffi — bypasses SSL fingerprinting) ──
@@ -13875,14 +14044,18 @@ def load_sport_data(sport):
 
     # EV Sharps API — 20+ books (Hard Rock, DK, FD, MGM, Caesars, Pinnacle, Circa, etc.)
     ev_api_raw = ev_api_raw if isinstance(ev_api_raw, dict) else {}
-    _ev_board_props = extract_ev_props_for_app(ev_api_raw, sport_filter=sport) if ev_api_raw.get("data") else []
+    if ev_api_raw.get("data"):
+        _ev_board_props, _ev_signal_lookup = extract_ev_props_for_app(ev_api_raw, sport_filter=sport)
+    else:
+        _ev_board_props, _ev_signal_lookup = [], {}
+
     if _ev_board_props:
-        st.session_state["ev_api_props"] = _ev_board_props
-        st.session_state["ev_api_updated"] = ev_api_raw.get("updated", {})
+        st.session_state["ev_api_props"]    = _ev_board_props
+        st.session_state["ev_signal_lookup"] = _ev_signal_lookup
+        st.session_state["ev_api_updated"]  = ev_api_raw.get("updated", {})
         # Feed every book's line into alt sources for BetterLineNote detection
         for _evp in _ev_board_props:
             _ev_bk = _evp.get("Book", "")
-            # Map to a format all_alt_sources expects
             _ev_alt = {
                 "Player": _evp.get("Player", ""),
                 "Prop":   _evp.get("Prop", ""),
@@ -13891,7 +14064,7 @@ def load_sport_data(sport):
             }
             if _ev_alt["Line"] is not None:
                 all_alt_sources.append((_ev_alt, _ev_bk))
-        # Also store per-book odds for CLV display
+        # Per-book odds for CLV display
         _ev_book_lookup = {}
         for _evp in _ev_board_props:
             _k = (normalize_name(_evp.get("Player","")), _evp.get("Prop",""))
@@ -13904,10 +14077,11 @@ def load_sport_data(sport):
                 "bet_link":   _evp.get("_bet_link"),
             }
         st.session_state["ev_book_lookup"] = _ev_book_lookup
-        st.caption(f"📡 EV API: {len(_ev_board_props)} props from {len({p.get('Book') for p in _ev_board_props})} books")
+        st.caption(f"📡 EV API: {len(_ev_board_props)} props | {len(_ev_signal_lookup)} players | {len({p.get('Book') for p in _ev_board_props})} books")
     else:
-        st.session_state["ev_api_props"] = []
-        st.session_state["ev_book_lookup"] = {}
+        st.session_state["ev_api_props"]     = []
+        st.session_state["ev_signal_lookup"] = {}
+        st.session_state["ev_book_lookup"]   = {}
 
     # DFS platforms
     if ud_props_compare:
@@ -14369,18 +14543,62 @@ def load_sport_data(sport):
                     weather_adj, weather_note = weather_edge_adjustment(weather, stat_norm, side, sport)
         pitcher_adj = 0.0
         pitcher_name = ""
-        if sport == "MLB":
+        statcast_edge = 0.0
+        statcast_notes = []
+        stadium_edge = 0.0
+        ev_pn_novig = None
+        ev_circa_novig = None
+        ev_consensus_novig = None
+        ev_sharp_fv = None
+        ev_sharp_ev = None
+        ev_l10_rate = None
+
+        # ── EV API signal injection (S6 / S12 / pitcher) ──────────────
+        _ev_sig = st.session_state.get("ev_signal_lookup", {}).get(
+            (normalize_name(player), stat_raw), {}
+        )
+        if _ev_sig:
+            # S6 — live Pinnacle + Circa no-vig (replaces manual MLB_PITCHER_ERA lookup for no-vig)
+            ev_pn_novig       = _ev_sig.get("pn_novig")
+            ev_circa_novig    = _ev_sig.get("circa_novig")
+            ev_consensus_novig = _ev_sig.get("consensus_novig")
+            ev_sharp_fv       = _ev_sig.get("sharp_fv")
+            ev_sharp_ev       = _ev_sig.get("sharp_ev")
+
+            # S12 Statcast (MLB HR props)
+            statcast_edge  = _ev_sig.get("statcast_edge", 0.0)
+            statcast_notes = _ev_sig.get("statcast_notes", [])
+            stadium_edge   = _ev_sig.get("stadium_edge", 0.0)
+
+            # S7 proxy — L10 hit rate
+            ev_l10_rate = _ev_sig.get("l10_rate")
+
+            # Pitcher matchup from EV API (live ERA + xwOBA — more accurate than static dict)
+            if sport == "MLB" and _ev_sig.get("pitcher_era"):
+                pitcher_name  = _ev_sig.get("pitcher", "")
+                ev_pitcher_era = _ev_sig["pitcher_era"]
+                era_diff = ev_pitcher_era - LEAGUE_AVG_ERA
+                pitcher_adj = max(-0.08, min(0.08, era_diff / 100.0))
+                # Additional xwOBA-based pitcher adjustment
+                xwoba = _ev_sig.get("pitcher_xwoba", 0) or 0
+                if xwoba > 0:
+                    # League avg xwOBA ~.320; higher = hitter-friendly
+                    xwoba_adj = (xwoba - 0.320) * 0.15
+                    pitcher_adj = max(-0.08, min(0.08, pitcher_adj + xwoba_adj))
+
+        # Fallback: static pitcher ERA if EV API has no pitcher data
+        if sport == "MLB" and not pitcher_name:
             mlb_pitchers = st.session_state.get("mlb_pitchers", {})
-            team_full = MLB_PLAYER_TEAM_MAP.get(player,"")
+            team_full = MLB_PLAYER_TEAM_MAP.get(player, "")
             if team_full and mlb_pitchers:
                 opp_data = mlb_pitchers.get(team_full, {})
-                opp_pitcher = opp_data.get("pitcher","")
+                opp_pitcher = opp_data.get("pitcher", "")
                 if opp_pitcher:
                     pitcher_era = MLB_PITCHER_ERA.get(opp_pitcher, LEAGUE_AVG_ERA)
                     era_diff = pitcher_era - LEAGUE_AVG_ERA
-                    pitcher_adj = era_diff / 100.0
-                    pitcher_adj = max(-0.08, min(0.08, pitcher_adj))
+                    pitcher_adj = max(-0.08, min(0.08, era_diff / 100.0))
                     pitcher_name = opp_pitcher
+
         ud_line_val = None
         for ud_p in (ud_props_compare or []):
             if (normalize_name(ud_p.get("Player","")) == normalize_name(player) and ud_p.get("Prop","") == stat_raw):
@@ -14468,11 +14686,34 @@ def load_sport_data(sport):
         _stat_norm_check = stat_norm.strip().title()
         if _stat_norm_check in ALWAYS_OVER_PROPS:
             if final_edge < 0:
-                # Negative edge = model says UNDER — not a valid market
                 skipped_edge += 1
                 continue
-            # Force OVER regardless of signal direction
             pick_dir = "OVER"
+
+        # ── EV API S12 injections (Statcast + Stadium) ─────────────────
+        # Applied after calibration so they compound on top of the clean edge
+        if statcast_edge != 0.0 and sport == "MLB":
+            final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + statcast_edge))
+        if stadium_edge != 0.0 and sport == "MLB":
+            final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + stadium_edge))
+
+        # ── EV API S6 — Pinnacle/Circa no-vig override ─────────────────
+        # If sharp books strongly fade, down-tier. If they confirm, boost.
+        if ev_consensus_novig is not None:
+            _novig_side = ev_consensus_novig if best_side == "OVER" else (1 - ev_consensus_novig)
+            if _novig_side > 0.52:
+                final_edge = min(EDGE_CAP, final_edge * 1.05)   # confirms
+            elif _novig_side < 0.46:
+                final_edge = final_edge * 0.90                   # fades
+
+        # ── EV API S7 proxy — L10 hit rate when game logs unavailable ──
+        if ev_l10_rate is not None and not h2h_note and sport == "MLB":
+            if ev_l10_rate >= 0.70:
+                final_edge = min(EDGE_CAP, final_edge + 0.02)
+                h2h_note = f"L10 hit {ev_l10_rate:.0%} [EV API]"
+            elif ev_l10_rate <= 0.30:
+                final_edge = final_edge - 0.02
+                h2h_note = f"L10 hit {ev_l10_rate:.0%} [EV API]"
 
         if final_edge < min_edge:
             skipped_edge += 1
@@ -14702,6 +14943,18 @@ def load_sport_data(sport):
             "AN_Edge": round(float(an_edge), 3) if an_edge else None, "AN_Tier": an_tier,
             "AN_Tickets": an_tickets, "AN_Money": an_money,
             "AN_Confirms": (an_tier in ("SOVEREIGN", "ELITE") and get_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")),
+            # EV API signals
+            "EVPinnacleNoVig":   ev_pn_novig,
+            "EVCircaNoVig":      ev_circa_novig,
+            "EVConsensusNoVig":  ev_consensus_novig,
+            "EVSharpFV":         ev_sharp_fv,
+            "EVSharpEV":         ev_sharp_ev,
+            "EVStatcastEdge":    statcast_edge,
+            "EVStatcastNotes":   ", ".join(statcast_notes) if statcast_notes else "",
+            "EVStadiumEdge":     stadium_edge,
+            "EVPitcherERA":      _ev_sig.get("pitcher_era") if _ev_sig else None,
+            "EVPitcherXwOBA":    _ev_sig.get("pitcher_xwoba") if _ev_sig else None,
+            "EVL10Rate":         ev_l10_rate,
         })
     # Add H2H signal to each prop (uses cached game logs if available)
     for prop in enriched:
@@ -19605,7 +19858,7 @@ with tabs[8]:
         _ev_raw = fetch_ev_api_live()
         _ev_all_props = []
         if _ev_raw and _ev_raw.get("data"):
-            _ev_all_props = extract_ev_props_for_app(_ev_raw, sport_filter=_sport_ls)
+            _ev_all_props, _ev_sig_ls = extract_ev_props_for_app(_ev_raw, sport_filter=_sport_ls)
             # Feed each book's lines into the line shop lookup
             for _evp in _ev_all_props:
                 _ev_bk = _evp.get("Book", "")
