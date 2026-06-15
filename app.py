@@ -4600,7 +4600,7 @@ def resolve_clv_records(history):
         import streamlit as _st
         _ev_sig_lookup = _st.session_state.get("ev_signal_lookup", {})
         if not _ev_sig_lookup:
-            return history   # no EV data yet
+            return history, False   # no EV data yet
 
         changed = False
         for record in history:
