@@ -314,13 +314,33 @@ TIER_THRESHOLDS = {
 }
 
 SPORT_SIGNAL_WEIGHTS = {
-    "NBA":    {"base": 0.45, "defense": 0.30, "location": 0.15, "rest": 0.075, "pace": 0.025, "usage": 0.74},
-    "MLB":    {"base": 0.40, "defense": 0.15, "location": 0.10, "rest": 0.075, "pace": 0.00,  "pitcher": 0.15, "weather": 0.125, "usage": 0.74},
-    "NFL":    {"base": 0.40, "defense": 0.35, "location": 0.10, "rest": 0.10,  "pace": 0.05,  "usage": 0.74},
-    "NHL":    {"base": 0.50, "defense": 0.25, "location": 0.15, "rest": 0.075, "pace": 0.025, "usage": 0.74},
-    "WNBA":   {"base": 0.50, "defense": 0.25, "location": 0.15, "rest": 0.075, "pace": 0.025, "usage": 0.74},
-    "Soccer": {"base": 0.60, "defense": 0.20, "location": 0.15, "rest": 0.05,  "pace": 0.00,  "usage": 0.74},
-    "UFC":    {"base": 0.70, "defense": 0.10, "location": 0.10, "rest": 0.10,  "pace": 0.00,  "usage": 0.74},
+    # NBA: defense is the strongest signal (opponent pts allowed to position),
+    # pace matters significantly for counting stats (PTS/REB/AST),
+    # location is meaningful (~3pt HCA), rest is critical on B2B
+    "NBA":  {"base": 0.42, "defense": 0.28, "location": 0.13, "rest": 0.09, "pace": 0.08, "usage": 0.74},
+
+    # MLB HR: platoon-adjusted S1 now does heavy lifting, pitcher (S2) is the
+    # second-strongest signal, location matters (park factors already in S12),
+    # rest is minimal (baseball plays every day)
+    "MLB":  {"base": 0.45, "defense": 0.20, "location": 0.08, "rest": 0.04, "pace": 0.00, "pitcher": 0.15, "weather": 0.08, "usage": 0.74},
+
+    # NFL: defense is the dominant signal (passing/rushing D rank),
+    # location (home field) is the most significant HCA in pro sports,
+    # rest matters enormously (bye week, short week), usage = target share
+    "NFL":  {"base": 0.35, "defense": 0.38, "location": 0.13, "rest": 0.09, "pace": 0.05, "usage": 0.80},
+
+    # NHL: base stat rate is most predictive (shots on goal / goals),
+    # goalie quality is the key defensive signal (maps to defense weight),
+    # location modest, rest matters on back-to-backs
+    "NHL":  {"base": 0.48, "defense": 0.26, "location": 0.12, "rest": 0.09, "pace": 0.05, "usage": 0.74},
+
+    # WNBA: smaller league, high variance — base rate is most reliable,
+    # defense matters, pace significant in high-tempo games
+    "WNBA": {"base": 0.48, "defense": 0.24, "location": 0.13, "rest": 0.08, "pace": 0.07, "usage": 0.74},
+
+    # Soccer/UFC — lower data confidence, base dominates
+    "Soccer": {"base": 0.60, "defense": 0.20, "location": 0.12, "rest": 0.05, "pace": 0.03, "usage": 0.74},
+    "UFC":    {"base": 0.70, "defense": 0.10, "location": 0.10, "rest": 0.10, "pace": 0.00, "usage": 0.74},
 }
 
 SIGNAL_RELIABILITY = {
@@ -12524,7 +12544,62 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             base_edge = calculate_edge(prob, side, sport)
         fair_prob = prob
     else:
-        fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
+        # ── S1: Sport-specific stabilized base probability ─────────────
+        # NBA/WNBA: Usage-weighted EWMA — minutes-adjusted rolling avg
+        # already handled upstream; apply sample-size damping here
+        if sport in ("NBA", "WNBA"):
+            _ev_sig_nba = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), stat_key), {}
+            )
+            # Sample size confidence: damp edge toward 0 for small samples
+            _hit_rates = _ev_sig_nba.get("hit_rates", {}) if _ev_sig_nba else {}
+            _szn_games = _hit_rates.get("szn", {}).get("t", 0) if _hit_rates else 0
+            if 0 < _szn_games < 10:
+                _sample_damp = 0.75 + 0.025 * _szn_games   # 0.75 → 1.0 over 10 games
+            else:
+                _sample_damp = 1.0
+            fair_prob = compute_fair_prob(line, player_avg * _sample_damp, std_dev, side)
+
+        # NFL: target share / snap count adjustment
+        elif sport == "NFL":
+            _ev_sig_nfl = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), stat_key), {}
+            )
+            _hit_rates_nfl = (_ev_sig_nfl.get("hit_rates", {}) if _ev_sig_nfl else {})
+            _l5 = _hit_rates_nfl.get("L5", {}).get("p", 0) if _hit_rates_nfl else 0
+            _l10 = _hit_rates_nfl.get("L10", {}).get("p", 0) if _hit_rates_nfl else 0
+            # Blend model avg with recent hit rate trend
+            if _l5 > 0 and _l10 > 0:
+                _trend_factor = ((_l5 / 100.0) * 0.60 + (_l10 / 100.0) * 0.40)
+                _blended_avg  = player_avg * (0.70 + 0.30 * (_trend_factor / max(0.5, _trend_factor)))
+                _blended_avg  = max(player_avg * 0.80, min(player_avg * 1.20, _blended_avg))
+            else:
+                _blended_avg = player_avg
+            fair_prob = compute_fair_prob(line, _blended_avg, std_dev, side)
+
+        # NHL: goalie quality adjustment via EV signal
+        elif sport == "NHL":
+            _ev_sig_nhl = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), stat_key), {}
+            )
+            # oppRank in NHL context = goalie/defensive quality (1=best, 30=worst)
+            _opp_rank_nhl = _ev_sig_nhl.get("opp_rank") if _ev_sig_nhl else None
+            if _opp_rank_nhl is not None:
+                try:
+                    # Rank 1-5 = elite goalie → reduce scoring avg
+                    # Rank 26-30 = weak goalie → boost scoring avg
+                    _goalie_adj = (_opp_rank_nhl - 15.5) / 15.5 * 0.12
+                    _adj_avg    = player_avg * (1.0 + _goalie_adj)
+                    _adj_avg    = max(player_avg * 0.80, min(player_avg * 1.20, _adj_avg))
+                except (ValueError, TypeError):
+                    _adj_avg = player_avg
+            else:
+                _adj_avg = player_avg
+            fair_prob = compute_fair_prob(line, _adj_avg, std_dev, side)
+
+        else:
+            fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
+
         base_edge = compute_market_edge(fair_prob, side)
     signals["base"] = base_edge
     signals["fair_prob_base"] = fair_prob
@@ -12563,9 +12638,35 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             )
             if _ev_sig_s2k and _ev_sig_s2k.get("pitcher_xwoba"):
                 _p_xwoba    = _ev_sig_s2k["pitcher_xwoba"]
-                _LEAGUE_K   = 0.300   # league avg xwOBA against (lower = better pitcher)
+                _LEAGUE_K   = 0.300
                 def_adj     = (_LEAGUE_K - _p_xwoba) / _LEAGUE_K * 0.15
                 def_adj     = max(-0.12, min(0.12, def_adj))
+
+        # ── S2 NFL: Live opponent defensive rank ────────────────────────
+        elif sport == "NFL":
+            _ev_sig_nfl_s2 = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), stat_key), {}
+            )
+            _opp_rank_nfl = _ev_sig_nfl_s2.get("opp_rank") if _ev_sig_nfl_s2 else None
+            if _opp_rank_nfl is not None:
+                try:
+                    def_adj = (int(_opp_rank_nfl) - 15.5) / 15.5 * 0.15
+                    def_adj = max(-0.15, min(0.15, def_adj))
+                except (ValueError, TypeError):
+                    pass
+
+        # ── S2 NHL: Goalie quality via opponent rank ────────────────────
+        elif sport == "NHL":
+            _ev_sig_nhl_s2 = st.session_state.get("ev_signal_lookup", {}).get(
+                (normalize_name(player_name), stat_key), {}
+            )
+            _opp_rank_nhl = _ev_sig_nhl_s2.get("opp_rank") if _ev_sig_nhl_s2 else None
+            if _opp_rank_nhl is not None:
+                try:
+                    def_adj = (int(_opp_rank_nhl) - 15.5) / 15.5 * 0.12
+                    def_adj = max(-0.12, min(0.12, def_adj))
+                except (ValueError, TypeError):
+                    pass
 
         signals["defense"] = (-def_adj * weights.get("defense", 0.30)
                                if side.upper() == "OVER"
