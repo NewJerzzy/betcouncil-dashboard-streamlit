@@ -25,7 +25,8 @@ except ImportError:
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
-    no_vig_prob_shin, no_vig_prob_log, devig_best, compute_clv, compute_clv_novig,
+    no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, devig_best,
+    compute_clv, compute_clv_novig, EV_BEST_COMBOS, get_best_devig_combo,
     load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat,
     is_date_valid_for_today, adjusted_edge, find_player_avg, market_efficiency_score,
     get_weighted_average, get_recency_context, sample_size_confidence,
@@ -5996,34 +5997,32 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
             sharp_ev      = item.get("ev")
             sharp_implied = item.get("implied")
             sharp_kelly   = item.get("kelly")
-            # Use Shin method for HR/longshot props, additive for standard props
+            # Use best devig method per prop type:
+            # Probit = NBA/WNBA counting stats | Shin = HR/Goals/longshots | Additive = rest
             _is_longshot = prop_key in ("hr", "goals", "td")
+            _is_counting  = prop_key in ("pts","reb","ast","pra","dd","stl","blk","3pm","min","g","a","sog")
             pn_raw    = book_odds.get("pn")
             circa_raw = book_odds.get("circa")
             espn_raw  = book_odds.get("espn")
-            if _is_longshot:
-                # Shin method — better for asymmetric/longshot markets
-                pn_novig    = _novig_from_raw(pn_raw)    # raw uses additive, override below
-                circa_novig = _novig_from_raw(circa_raw)
-                espn_novig  = _novig_from_raw(espn_raw)
-                # Apply Shin if both sides available
-                if pn_raw and "/" in str(pn_raw):
-                    try:
-                        o_s, u_s = str(pn_raw).split("/", 1)
-                        pn_novig = round(no_vig_prob_shin(o_s.strip(), u_s.strip()), 4)
-                    except Exception:
-                        pass
-                if circa_raw and "/" in str(circa_raw):
-                    try:
-                        o_s, u_s = str(circa_raw).split("/", 1)
-                        circa_novig = round(no_vig_prob_shin(o_s.strip(), u_s.strip()), 4)
-                    except Exception:
-                        pass
-            else:
-                pn_novig    = _novig_from_raw(pn_raw)
-                circa_novig = _novig_from_raw(circa_raw)
-                espn_novig  = _novig_from_raw(espn_raw)
-            sharp_novigs    = [v for v in [pn_novig, circa_novig, espn_novig] if v is not None]
+
+            def _best_novig(raw):
+                if not raw or "/" not in str(raw):
+                    return None
+                try:
+                    o_s, u_s = str(raw).split("/", 1)
+                    if _is_counting:
+                        return round(no_vig_prob_probit(o_s.strip(), u_s.strip()), 4)
+                    elif _is_longshot:
+                        return round(no_vig_prob_shin(o_s.strip(), u_s.strip()), 4)
+                    else:
+                        return _novig_from_raw(raw)
+                except Exception:
+                    return _novig_from_raw(raw)
+
+            pn_novig      = _best_novig(pn_raw)
+            circa_novig   = _best_novig(circa_raw)
+            espn_novig    = _best_novig(espn_raw)
+            sharp_novigs  = [v for v in [pn_novig, circa_novig, espn_novig] if v is not None]
             consensus_novig = round(sum(sharp_novigs)/len(sharp_novigs), 4) if sharp_novigs else None
 
             barrel_pct        = _safe_float(savant.get("barrels_per_bip"))
