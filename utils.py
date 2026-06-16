@@ -7,6 +7,7 @@ import pickle
 from math import exp, factorial, log, sqrt, floor, ceil, pi
 import unicodedata
 from functools import lru_cache
+from config import SPORT_EWMA_DECAY
 
 
 def safe_float(val, default: float = 0.0) -> float:
