@@ -4024,8 +4024,7 @@ def fetch_dff_rosterfilter(sport, team, player_id, date_str=None):
         
         # Cache in session state
         cached[cache_key] = result
-        st.session_state["dff_cache"] = cached
-        
+
         # Persist to disk
         all_cached = load_json_data(DFF_PATH, {})
         all_cached[cache_key] = result
@@ -4244,7 +4243,6 @@ def fetch_dff_propstats(player_id, sport, metric, line, team="",
                 "url": _req_url, "status": r.status_code,
                 "time": datetime.now().strftime("%H:%M"),
             })
-            st.session_state["dff_url_log"] = _url_log[-20:]  # keep last 20
         if r.status_code not in (200, 304):
             st.session_state.setdefault("errors",[]).append({
                 "source": "DFF PropStats",
@@ -5333,7 +5331,6 @@ def get_bovada_game_line(matchup, bovada_data=None):
 # File: auto_scraped_props.json in your Gist
 # To remove: delete this function + the 3 lines that call it
 # ═══════════════════════════════════════════════════════════════
-@st.cache_data(ttl=1800)
 
 def log_error_to_session(source, error, error_type="error"):
     """Log errors to session_state so they appear in the System tab."""
@@ -8393,9 +8390,7 @@ def fetch_nba_rolling_averages():
                     pass
             continue
     if not rolling:
-        st.session_state["nba_api_status"] = "FAILED — likely blocked by hosting"
-    else:
-        st.session_state["nba_api_status"] = f"OK ({len(rolling)} players)"
+        print("[WARN] fetch_nba_rolling_averages: FAILED — likely blocked by hosting")
     if rolling:
         with open(cache_path, "wb") as f:
             pickle.dump(rolling, f)
@@ -9215,9 +9210,7 @@ def scrape_prizepicks(sport):
             odds_type = attrs.get("odds_type", "standard")
             all_props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks", "OddsType": odds_type})
     if all_props:
-        st.session_state["pp_status"] = "ok"
         return all_props
-    st.session_state["pp_status"] = "unavailable"
     # Try Gist from local auto scraper FIRST
     try:
         _gist_props = fetch_auto_scraped_props(sport)
@@ -9226,13 +9219,9 @@ def scrape_prizepicks(sport):
                         if "prizepicks" in str(p.get("source","")).lower()
                         or p.get("Book","") == "PrizePicks"]
             if _pp_gist:
-                st.session_state["pp_status"] = "ok"
-                st.session_state["pp_source"]  = "gist_scraper"
                 return _pp_gist
             elif _gist_props:
                 # Use all auto-scraped props as board
-                st.session_state["pp_status"] = "fallback"
-                st.session_state["pp_source"]  = "gist_scraper"
                 return _gist_props
     except (KeyError, TypeError, ValueError) as _e:
             print(f"[WARN] {_e}")
@@ -9773,7 +9762,6 @@ def fetch_public_betting(sport):
         if public_betting:
             with open(cache_path, "wb") as f:
                 pickle.dump(public_betting, f)
-            st.session_state["public_betting_data"] = public_betting
         return public_betting
     except (KeyError, TypeError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_public_betting", "error": str(e)[:100]})
@@ -9965,13 +9953,7 @@ def fetch_game_lines(sport):
     # Also provides Circa/BetOnline/Pinnacle market data
     if ODDS_API_KEY:
         try:
-            _oapi_key = f'oddsapi_lines_{sport}'
-            if _oapi_key in st.session_state:
-                odds_games, odds_home, odds_away = st.session_state[_oapi_key]
-            else:
-                odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
-                if odds_games:
-                    st.session_state[_oapi_key] = (odds_games, odds_home, odds_away)
+            odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
             if odds_games:
                 odds_lookup = {g["Matchup"]: g for g in odds_games}
 
@@ -10880,10 +10862,6 @@ def fetch_parlayplay_props(sport):
                     "HomeTeam": home_team,
                     "AwayTeam": away_team,
                 })
-        if alt_lines_store:
-            existing = st.session_state.get("parlayplay_alt_lines", {})
-            existing.update(alt_lines_store)
-            st.session_state["parlayplay_alt_lines"] = existing
         if props:
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
@@ -12891,7 +12869,6 @@ def fetch_pinnacle_lines(sport):
             with open(cache_path, "rb") as f:
                 cached = pickle.load(f)
             if cached:
-                st.session_state[cache_key] = cached
                 return cached
 
     if not ODDSPAPI_KEY:
@@ -12994,10 +12971,9 @@ def fetch_pinnacle_lines(sport):
                                     "odds_away": outcomes[1].get("price"),
                                 }
 
-        # Cache to disk and session
+        # Cache to disk
         with open(cache_path, "wb") as f:
             pickle.dump(pinnacle_data, f)
-        st.session_state[cache_key] = pinnacle_data
         n_props = len(pinnacle_data["props"])
         n_games = len(pinnacle_data["games"])
         return pinnacle_data
@@ -19807,7 +19783,6 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
                 "K":        stat.get("strikeOuts", 0),
                 "AB":       stat.get("atBats", 0),
             })
-        st.session_state[cache_key] = logs
         return logs
     except (requests.RequestException, ValueError, KeyError):
         return []
@@ -19930,7 +19905,6 @@ def fetch_nhl_player_game_logs(player_name, last_n=15):
                 "SOG":       g.get("shots", 0),
                 "TOI":       g.get("toi","0:00"),
             })
-        st.session_state[cache_key] = logs
         return logs
     except (requests.RequestException, ValueError, KeyError):
         return []
@@ -19977,7 +19951,6 @@ def fetch_wnba_player_game_logs(player_name, last_n=15):
                 "AST":       row[idx.get("AST",0)] or 0,
                 "MIN":       row[idx.get("MIN",0)] or 0,
             })
-        st.session_state[cache_key] = logs
         return logs
     except (requests.RequestException, ValueError, KeyError):
         return []
