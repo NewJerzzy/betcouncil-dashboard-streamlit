@@ -119,26 +119,92 @@ def no_vig_prob_log(over_american, under_american) -> float:
         return no_vig_prob(over_american, under_american)
 
 
-def devig_best(over_american, under_american, market_type="standard") -> float:
+def no_vig_prob_probit(over_american, under_american) -> float:
     """
-    Choose the best devig method based on market type.
-    - standard props (PTS/REB/AST/spread): additive/proportional
-    - longshot props (HR/Futures/+200 to +1000): Shin method
-    - extreme longshots (+1000+): logarithmic
-    Returns fair probability for the OVER.
+    Probit devig — best method for NBA/WNBA counting stats (PTS/REB/AST).
+    Maps implied probs to standard normal Z-space, strips vig in Z-space,
+    converts back. Outperforms additive for symmetric counting stat markets.
+    Validated by EVSharps cheat sheet: Probit is their default method.
     """
     try:
-        o_prob = american_to_prob(over_american)
-        # Determine odds magnitude
-        o_val = float(over_american) if over_american else 0
-        if market_type == "longshot" or o_val >= 200:
-            return no_vig_prob_shin(over_american, under_american)
-        elif o_val >= 500:
-            return no_vig_prob_log(over_american, under_american)
-        else:
+        p_over  = american_to_prob(over_american)
+        p_under = american_to_prob(under_american)
+        total   = p_over + p_under
+        if total <= 0:
             return no_vig_prob(over_american, under_american)
+        # Normalize then map to Z-space
+        z_over = scipy_stats.norm.ppf(min(max(p_over / total, 0.0001), 0.9999))
+        fair_p = float(scipy_stats.norm.cdf(z_over))
+        return round(fair_p, 4)
+    except Exception:
+        return no_vig_prob(over_american, under_american)
+
+
+# EVSharps BEST book+devig combinations by sport (from cheat sheet HTML analysis)
+# Format: {book: [("prop", "devig_combo"), ...]}
+EV_BEST_COMBOS = {
+    "NBA": {
+        "fd":   [("reb","pn+circa+hr"),("ast","espn+hr"),("3ptm","pn+dk"),("pts","circa"),("blk","hr"),("pts+ast","dk+espn"),("pts+reb","espn"),("reb+ast","dk+espn")],
+        "dk":   [("reb","pn+fd"),("reb+ast","espn"),("pts","fd"),("pts+ast","fd"),("pts+reb+ast","pn"),("dd","pn")],
+        "mgm":  [("pts+reb+ast","pn+fd"),("3ptm","fd+dk"),("pts","fd+dk"),("pts+reb","fd"),("reb+ast","fd")],
+        "espn": [("reb","pn+espn+mgm"),("pts","fd"),("pts+ast","fd"),("pts+reb","fd"),("pts+reb+ast","pn"),("ast","fd+dk")],
+        "hr":   [("reb","fd+dk"),("pts","fd"),("pts","pn"),("pts+ast","fd"),("pts+ast","dk"),("3ptm","circa"),("reb+ast","dk+espn")],
+        "b365": [("3ptm","dk"),("pts","fd"),("pts+ast","fd"),("pts+ast","dk"),("ast","fd+espn+mgm")],
+        "fn":   [("pts","circa"),("pts","dk"),("reb","dk"),("reb+ast","dk"),("3ptm","circa"),("ast","circa")],
+        "br":   [("pts","fd"),("reb","fd+dk"),("pts+reb+ast","pn+dk"),("3ptm","dk"),("ast","dk"),("blk","mgm")],
+        "bv":   [("reb","pn"),("reb","fd"),("pts","pn"),("pts+ast","dk"),("dd","pn"),("dd","mgm"),("ast","pn")],
+        "cz":   [("pts","pn"),("reb","fd"),("ast","hr")],
+    },
+    "MLB": {},
+    "NFL": {},
+    "NHL": {},
+    "WNBA": {},
+}
+
+# Prop types that use Probit devig (counting stats — symmetric, normal distribution)
+PROBIT_PROPS = {"pts","reb","ast","pra","pts+reb","pts+ast","reb+ast","pts+reb+ast","dd","td","stl","blk","3ptm","to","min","g","a","sog","pim"}
+# Prop types that use Shin devig (longshot/asymmetric)
+SHIN_PROPS   = {"hr","goals","td_scorer","first_basket","anytime_td"}
+
+
+def devig_best(over_american, under_american, market_type="standard", prop_key="") -> float:
+    """
+    Auto-select devig method by market/prop type.
+    Probit:      NBA/WNBA counting stats (PTS/REB/AST etc.) — EVSharps default
+    Shin:        HR, TD scorers, goals, longshots (+200 to +800)
+    Logarithmic: Extreme longshots (+500+)
+    Additive:    Everything else
+    """
+    try:
+        prop_lower = (prop_key or "").lower().replace(" ","").replace("+","").replace("_","")
+        o_val = float(over_american) if over_american else 0
+
+        # Probit for counting stats
+        if any(p in prop_lower for p in ["pts","reb","ast","pra","dd","stl","blk","min","3pt"]):
+            return no_vig_prob_probit(over_american, under_american)
+
+        # Shin for longshot/asymmetric markets
+        if market_type == "longshot" or prop_lower in ["hr","goals","td"] or o_val >= 200:
+            return no_vig_prob_shin(over_american, under_american)
+
+        # Log for extreme longshots
+        if o_val >= 500:
+            return no_vig_prob_log(over_american, under_american)
+
+        return no_vig_prob(over_american, under_american)
     except (TypeError, ValueError):
         return no_vig_prob(over_american, under_american)
+
+
+def get_best_devig_combo(sport, book, prop):
+    """Return the best sharp devig combination for a given sport/book/prop per EVSharps data."""
+    sport_combos = EV_BEST_COMBOS.get(sport.upper(), {})
+    book_combos  = sport_combos.get(book.lower(), [])
+    prop_lower   = prop.lower().replace(" ","").replace("_","")
+    for p, devig in book_combos:
+        if p.replace("+","") == prop_lower or p == prop_lower:
+            return devig
+    return None
 
 
 def compute_clv(placement_odds_american, closing_odds_american, side="OVER") -> float:
