@@ -5414,9 +5414,10 @@ def fetch_auto_scraped_props(sport="NBA"):
             log_error_to_session("fetch_auto_scraped_props", f"Gist stale (date: {gist_date}, today: {date.today().isoformat()})", "warning")
             return []
 
-        # Filter by sport
+        # Filter by sport — case-insensitive to handle lowercase/uppercase mismatches
         all_props = gist_content.get("props", [])
-        props = [p for p in all_props if p.get("Sport") == sport]
+        sport_upper = sport.upper()
+        props = [p for p in all_props if p.get("Sport", "").upper() == sport_upper]
 
         if props:
             log_error_to_session("fetch_auto_scraped_props", f"Loaded {len(props)} {sport} props from Gist", "info")
