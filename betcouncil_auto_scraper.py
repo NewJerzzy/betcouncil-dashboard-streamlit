@@ -2559,7 +2559,7 @@ def push_to_gist(all_props, all_lines, token, gist_id):
     if not token or not gist_id:
         print("❌ No GitHub token/Gist ID")
         return False
-    books   = list({p["Book"] for p in all_props + all_lines})
+    books   = list({p.get("Book", p.get("book", p.get("source", "Unknown"))) for p in all_props + all_lines})
     # Trim to stay under GitHub Gist 1MB limit
     max_props = 15000
     if len(all_props) > max_props:
@@ -2743,7 +2743,7 @@ def main():
     # Summary
     print(f"\n{'='*50}")
     print(f"TOTAL: {len(all_props)} props + {len(all_lines)} lines")
-    books_found = {p["Book"] for p in all_props + all_lines}
+    books_found = {p.get("Book", p.get("book", p.get("source", "Unknown"))) for p in all_props + all_lines}
     for book in sorted(books_found):
         count = len([x for x in all_props+all_lines if x.get("Book")==book])
         print(f"  {book:15} {count}")
@@ -2751,7 +2751,7 @@ def main():
     # Sample
     print("\nSample props:")
     for p in all_props[:5]:
-        print(f"  {p['Book']:12} {p['Player']:25} {p['Prop']:20} {p['Line']}")
+        print(f"  {p.get('Book',p.get('book','?')):12} {p.get('Player','?'):25} {p.get('Prop','?'):20} {p.get('Line','?')}")
 
     # Push
     if not args.no_push and (all_props or all_lines):
