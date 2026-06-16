@@ -2070,6 +2070,11 @@ def save_json_data(path, data):
 def get_api_counter(counter_path):
     today = date.today().strftime("%Y-%m-%d")
     current_month = date.today().strftime("%Y-%m")
+    # Use session_state as in-memory cache to avoid disk reads on every budget check
+    _ss_key = f"_api_counter_{counter_path}"
+    cached = st.session_state.get(_ss_key)
+    if cached and cached.get("date") == today and cached.get("month") == current_month:
+        return cached
     if os.path.exists(counter_path):
         try:
             with open(counter_path, "r") as f:
@@ -2080,16 +2085,21 @@ def get_api_counter(counter_path):
             if counter.get("month") != current_month:
                 counter["month"] = current_month
                 counter["monthly_count"] = 0 if "monthly_count" in counter else 0
+            st.session_state[_ss_key] = counter
             return counter
         except (ValueError, KeyError, TypeError, AttributeError):
             pass
-    return {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
+    counter = {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
+    st.session_state[_ss_key] = counter
+    return counter
 
 def increment_api_counter(counter_path):
     counter = get_api_counter(counter_path)
     counter["count"] += 1
     counter["monthly_count"] = counter.get("monthly_count", 0) + 1
     save_json_data(counter_path, counter)
+    # Refresh session cache with updated count
+    st.session_state[f"_api_counter_{counter_path}"] = counter
     return counter
 
 def should_skip_api_call(counter_path, daily_limit=None, monthly_limit=None):
@@ -8318,11 +8328,6 @@ def scan_all_sports_best_plays():
 @st.cache_data(ttl=1800)
 def fetch_nba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nba_rolling_avgs.pkl")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
     nba_headers = {
         "Host": "stats.nba.com",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -8399,11 +8404,6 @@ def fetch_nba_rolling_averages():
 @st.cache_data(ttl=1800)
 def fetch_wnba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "wnba_rolling_avgs.pkl")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
     nba_headers = {
         "Host": "stats.wnba.com",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -8464,11 +8464,6 @@ def fetch_wnba_rolling_averages():
 @st.cache_data(ttl=1800)
 def fetch_mlb_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
     rolling = {}
     for player_name, player_id in MLB_PLAYER_IDS.items():
         player_avgs = PLAYER_AVERAGES.get("MLB", {}).get(player_name, {})
@@ -8529,11 +8524,6 @@ def fetch_mlb_rolling_averages():
 @st.cache_data(ttl=1800)
 def fetch_nhl_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nhl_rolling_avgs.pkl")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
     rolling = {}
     for player_name, player_id in NHL_PLAYER_IDS.items():
         url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
@@ -11545,6 +11535,7 @@ def fetch_espn_predictor(sport, event_id):
         return predictor
     except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
         return {}
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     athlete_id = ESPN_ATHLETE_IDS.get(sport, {}).get(player_name)
     if not athlete_id:
@@ -14541,39 +14532,25 @@ def load_sport_data(sport):
 
     # Merge RotoWire injuries into main injuries dict
     # RotoWire supplements ESPN with editorial injury intelligence
+    def _merge_injury_source(injuries, source_list, source_label):
+        """Merge a list of injury dicts into the combined injuries dict (in-place)."""
+        if not source_list or not isinstance(injuries, dict):
+            return
+        for item in source_list:
+            pname = normalize_name(item.get("player", ""))
+            if pname and item.get("status") in ("OUT", "DOUBTFUL", "QUESTIONABLE") and pname not in injuries:
+                injuries[pname] = {
+                    "status": item["status"],
+                    "note":   item.get("note", ""),
+                    "source": source_label,
+                }
+
     rw_injuries = rw_injuries_raw or []
-    if rw_injuries and isinstance(injuries, dict):
-        for rw in rw_injuries:
-            pname = normalize_name(rw.get("player",""))
-            if pname and rw.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE"):
-                if pname not in injuries:
-                    injuries[pname] = {
-                        "status": rw["status"],
-                        "note":   rw.get("note",""),
-                        "source": "RotoWire",
-                    }
-    # Merge CBS Sports injuries — Tier 2 backup
     cbs_injuries = cbs_injuries_raw or []
-    if cbs_injuries and isinstance(injuries, dict):
-        for ci in cbs_injuries:
-            pname = normalize_name(ci.get("player",""))
-            if pname and ci.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE") and pname not in injuries:
-                injuries[pname] = {
-                    "status": ci["status"],
-                    "note":   ci.get("note",""),
-                    "source": "CBS Sports",
-                }
-    # Merge ESPN injuries — Tier 4 (dedicated endpoint, same ESPN infra)
     espn_injuries = espn_injuries_raw or []
-    if espn_injuries and isinstance(injuries, dict):
-        for ei in espn_injuries:
-            pname = normalize_name(ei.get("player",""))
-            if pname and ei.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE") and pname not in injuries:
-                injuries[pname] = {
-                    "status": ei["status"],
-                    "note":   ei.get("note",""),
-                    "source": "ESPN",
-                }
+    _merge_injury_source(injuries, rw_injuries,   "RotoWire")
+    _merge_injury_source(injuries, cbs_injuries,  "CBS Sports")
+    _merge_injury_source(injuries, espn_injuries, "ESPN")
     st.session_state["espn_injuries"] = espn_injuries
     # Market intelligence data
     if kalshi_raw:
@@ -16653,9 +16630,11 @@ with tabs[0]:
         all_sharp = sharp_alerts_s + steam_moves_s
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.5rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e8a020;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">⚡ Sharp Money</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         if all_sharp:
+            _sharp_html = []
             for _sa in all_sharp[:4]:
                 _sa_c = {"line_move":"#e8a020","steam":"#e04040","public_vs_sharp":"#378add"}.get(_sa.get("type",""),"#6a7a8a")
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.05rem;color:#e8f0f8;">{_sa.get("message","")}</div>', unsafe_allow_html=True)
+                _sharp_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.05rem;color:#e8f0f8;">{_sa.get("message","")}</div>')
+            st.markdown("".join(_sharp_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
 
@@ -16939,12 +16918,14 @@ with tabs[0]:
                        if p.get("Edge",0) < 0
                        and p.get("Sport","") == _cur_sport][:5]
         if avoid_props:
+            _fade_html = []
             for ap in avoid_props:
                 _ap_avg = ap.get("Avg", 0) or 0
                 _ap_line = ap.get("Line", 0) or 0
                 _ap_edge = ap.get("EdgePct","—")
                 _ap_reason = ap.get("PinnacleNote","") or f"Model projects avg {_ap_avg:.1f} vs line {_ap_line} — line is too high"
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">FADE {_ap_edge}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ap_reason[:90]}</div></div>', unsafe_allow_html=True)
+                _fade_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">FADE {_ap_edge}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ap_reason[:90]}</div></div>')
+            st.markdown("".join(_fade_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:var(--color-text-tertiary);font-size:1.05rem;">✅ No strong fades today — all props show positive or neutral edge.</div>', unsafe_allow_html=True)
 
@@ -17134,11 +17115,13 @@ with tabs[0]:
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         avoid_games = [g for g in game_analysis if g.get("best_edge",0) < -0.05][:3]
         if avoid_games:
+            _ag_html = []
             for ag in avoid_games:
                 bb = ag.get("best_bet",{})
                 _ag_reason = bb.get("note","") or "Model finds negative value — public is overloading this side"
                 _ag_edge = ag.get("best_edge",0)
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">AVOID {_ag_edge:+.1%}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ag_reason[:90]}</div></div>', unsafe_allow_html=True)
+                _ag_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">AVOID {_ag_edge:+.1%}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ag_reason[:90]}</div></div>')
+            st.markdown("".join(_ag_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:var(--color-text-tertiary);font-size:1.05rem;">✅ No strong game fades today — all detected edges are positive.</div>', unsafe_allow_html=True)
 
@@ -17223,14 +17206,18 @@ with tabs[0]:
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Alt Line Upgrades</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         alt_upgrades = st.session_state.get("alt_line_upgrades", [])
         if alt_upgrades:
+            _au_html = []
             for au in alt_upgrades[:5]:
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{au.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:1.0rem;">Alt EV: {au.get("AltEV","—")}</span></div>', unsafe_allow_html=True)
+                _au_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{au.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:1.0rem;">Alt EV: {au.get("AltEV","—")}</span></div>')
+            st.markdown("".join(_au_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:#8a9ab0;font-size:1.05rem;padding:0.3rem 0;">Load board to check for alt line upgrades.</div>', unsafe_allow_html=True)
         _alt_ups = st.session_state.get("alt_line_upgrades", [])
         if _alt_ups:
+            _au2_html = []
             for _au in _alt_ups[:5]:
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_au.get("player","")}</span><span style="color:#22c55e;">⚡ {_au.get("edge_gain","")}</span></div><div style="font-size:1.0rem;color:#8a9ab0;">{_au.get("current_line","")} → {_au.get("better_line","")} on {_au.get("source","")}</div></div>', unsafe_allow_html=True)
+                _au2_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_au.get("player","")}</span><span style="color:#22c55e;">⚡ {_au.get("edge_gain","")}</span></div><div style="font-size:1.0rem;color:#8a9ab0;">{_au.get("current_line","")} → {_au.get("better_line","")} on {_au.get("source","")}</div></div>')
+            st.markdown("".join(_au2_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;">✅ All lines optimal — no upgrades today.</div>', unsafe_allow_html=True)
 
@@ -17238,15 +17225,19 @@ with tabs[0]:
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Arbitrage Opportunities</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
         arb_opps = st.session_state.get("arb_opportunities", [])
         if arb_opps:
+            _arb_html = []
             for arb in arb_opps[:5]:
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{arb.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:1.0rem;">ROI: {arb.get("ROI","—")}</span></div>', unsafe_allow_html=True)
+                _arb_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{arb.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:1.0rem;">ROI: {arb.get("ROI","—")}</span></div>')
+            st.markdown("".join(_arb_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:#8a9ab0;font-size:1.05rem;padding:0.3rem 0;">Load board to scan for arbitrage opportunities.</div>', unsafe_allow_html=True)
         _arb_opps = st.session_state.get("arb_opportunities", [])
         if _arb_opps:
+            _arb2_html = []
             for _arb in _arb_opps[:5]:
                 _profit = float(_arb.get("Arb Pct", 0) or 0)
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_arb.get("Player","")}</span><span style="color:#22c55e;font-weight:700;">+{_profit:.1f}%</span></div><div style="font-size:1.0rem;color:#8a9ab0;">{_arb.get("Book1","")} {_arb.get("Line1","")} vs {_arb.get("Book2","")} {_arb.get("Line2","")}</div></div>', unsafe_allow_html=True)
+                _arb2_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_arb.get("Player","")}</span><span style="color:#22c55e;font-weight:700;">+{_profit:.1f}%</span></div><div style="font-size:1.0rem;color:#8a9ab0;">{_arb.get("Book1","")} {_arb.get("Line1","")} vs {_arb.get("Book2","")} {_arb.get("Line2","")}</div></div>')
+            st.markdown("".join(_arb2_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;">No arbitrage opportunities found today.</div>', unsafe_allow_html=True)
 
@@ -17257,9 +17248,11 @@ with tabs[0]:
                            and float(p.get("Line",0) or 0) < 100
                            and float(p.get("Avg",0) or 0) > 0]
         if all_sports_best:
+            _asb_html = []
             for ap in all_sports_best[:5]:
                 tier_c = TIER_COLORS.get(ap.get("Tier",""), "#6a7a8a")
-                st.markdown(f'<div style="background:var(--color-background-secondary);border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:{tier_c};font-size:1.15rem;font-weight:700;">{ap.get("Sport","")}</span> <span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;margin-left:0.5rem;">{ap.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span> <span style="color:{tier_c};font-size:1.0rem;margin-left:0.5rem;">{ap.get("EdgePct","—")}</span></div>', unsafe_allow_html=True)
+                _asb_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:{tier_c};font-size:1.15rem;font-weight:700;">{ap.get("Sport","")}</span> <span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;margin-left:0.5rem;">{ap.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span> <span style="color:{tier_c};font-size:1.0rem;margin-left:0.5rem;">{ap.get("EdgePct","—")}</span></div>')
+            st.markdown("".join(_asb_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:#8a9ab0;font-size:1.05rem;padding:0.3rem 0;">Load boards across sports to see the best plays of the day.</div>', unsafe_allow_html=True)
 
@@ -18606,13 +18599,16 @@ with tabs[3]:
                 if h.get("outcome")=="WIN": tier_stats_roi[t]["w"]+=1
                 elif h.get("outcome")=="LOSS": tier_stats_roi[t]["l"]+=1
                 tier_stats_roi[t]["net"]+=float(h.get("net",0) or 0)
+            _tier_roi_html = []
             for t in ["SOVEREIGN","ELITE","APPROVED","LEAN"]:
                 if t in tier_stats_roi:
                     d = tier_stats_roi[t]
                     total = d["w"]+d["l"]
                     hr = d["w"]/total if total>0 else 0
                     nc = "#22c55e" if d["net"]>=0 else "#e04040"
-                    st.markdown(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{t}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>', unsafe_allow_html=True)
+                    _tier_roi_html.append(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{t}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>')
+            if _tier_roi_html:
+                st.markdown("".join(_tier_roi_html), unsafe_allow_html=True)
         with roi_col2:
             st.markdown("**By Sport**")
             sport_stats_roi = {}
@@ -18623,11 +18619,14 @@ with tabs[3]:
                 if h.get("outcome")=="WIN": sport_stats_roi[s]["w"]+=1
                 elif h.get("outcome")=="LOSS": sport_stats_roi[s]["l"]+=1
                 sport_stats_roi[s]["net"]+=float(h.get("net",0) or 0)
+            _sport_roi_html = []
             for s, d in sorted(sport_stats_roi.items(), key=lambda x: x[1]["net"], reverse=True):
                 total = d["w"]+d["l"]
                 hr = d["w"]/total if total>0 else 0
                 nc = "#22c55e" if d["net"]>=0 else "#e04040"
-                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{s}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>', unsafe_allow_html=True)
+                _sport_roi_html.append(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{s}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>')
+            if _sport_roi_html:
+                st.markdown("".join(_sport_roi_html), unsafe_allow_html=True)
 
 # ----- TAB 4: HISTORY -----
 with tabs[4]:
