@@ -658,6 +658,46 @@ PLAYOFF_DEFENSE_WARNING = (
     "matchup defense before trusting these numbers."
 )
 
+WNBA_POWER_RATINGS = {
+    "New York Liberty": 112.0, "Las Vegas Aces": 111.0,
+    "Connecticut Sun": 109.0, "Minnesota Lynx": 108.5,
+    "Seattle Storm": 107.0, "Dallas Wings": 106.0,
+    "Chicago Sky": 105.0, "Phoenix Mercury": 104.5,
+    "Atlanta Dream": 104.0, "Indiana Fever": 103.5,
+    "Washington Mystics": 102.0, "Los Angeles Sparks": 101.0,
+    "Toronto Tempo": 103.0, "Golden State Valkyries": 102.5,
+}
+
+MLB_POWER_RATINGS = {
+    "Los Angeles Dodgers": 112.0, "New York Yankees": 110.5,
+    "Atlanta Braves": 109.0, "Philadelphia Phillies": 108.5,
+    "Houston Astros": 108.0, "San Diego Padres": 107.5,
+    "Cleveland Guardians": 107.0, "Baltimore Orioles": 106.5,
+    "Minnesota Twins": 106.0, "Arizona Diamondbacks": 105.5,
+    "San Francisco Giants": 104.5, "Seattle Mariners": 104.0,
+    "Boston Red Sox": 103.5, "Tampa Bay Rays": 103.0,
+    "Texas Rangers": 102.5, "Miami Marlins": 100.0,
+    "Colorado Rockies": 97.0, "Chicago White Sox": 98.0,
+    "Oakland Athletics": 97.5, "Kansas City Royals": 101.0,
+    "Toronto Blue Jays": 102.0, "Chicago Cubs": 103.0,
+    "St. Louis Cardinals": 102.5, "Milwaukee Brewers": 104.0,
+    "Pittsburgh Pirates": 99.0, "Cincinnati Reds": 100.5,
+    "Detroit Tigers": 101.5, "New York Mets": 103.5,
+    "Washington Nationals": 99.5, "Los Angeles Angels": 100.0,
+}
+
+NHL_POWER_RATINGS = {
+    "Florida Panthers": 110.0, "Vancouver Canucks": 109.0,
+    "Colorado Avalanche": 108.5, "Boston Bruins": 108.0,
+    "Dallas Stars": 107.5, "Carolina Hurricanes": 107.0,
+    "Edmonton Oilers": 106.5, "New York Rangers": 106.0,
+    "Tampa Bay Lightning": 105.5, "Vegas Golden Knights": 105.0,
+    "Toronto Maple Leafs": 104.5, "New Jersey Devils": 104.0,
+    "Minnesota Wild": 103.5, "Winnipeg Jets": 103.0,
+    "Pittsburgh Penguins": 101.0, "Montreal Canadiens": 100.0,
+    "Buffalo Sabres": 99.5, "Chicago Blackhawks": 98.0,
+}
+
 NBA_PLAYER_POSITIONS = {
     "Nikola Jokic": "C", "LeBron James": "SF", "Stephen Curry": "PG",
     "Giannis Antetokounmpo": "PF", "Luka Doncic": "PG",
@@ -2250,6 +2290,7 @@ def compute_prop_correlation_score(props):
 # When drifting → size down automatically.
 # ═══════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_signal_attribution(history=None):
     """
     Compute per-signal win rate and ROI from resolved bets.
@@ -4841,6 +4882,7 @@ def compute_market_agreement_score(prop, public_betting=None):
 
 
 # ── 3. Per-Signal Historical ROI Audit ─────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_signal_roi_audit(history=None):
     """
     For each signal type, compute:
@@ -6721,6 +6763,7 @@ SIGNAL_LABELS = {
 }
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_signal_correlation_matrix(performance_data=None):
     """
     Signal Correlation Matrix.
@@ -6811,6 +6854,7 @@ def compute_signal_correlation_matrix(performance_data=None):
     return matrix_rows, len(resolved), warnings
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_signal_lift_analysis(performance_data=None):
     """
     Signal Lift Analysis.
@@ -6878,6 +6922,7 @@ def compute_signal_lift_analysis(performance_data=None):
     return results, len(resolved)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_signal_stability(performance_data=None, window_days=30):
     """
     Signal Stability Analysis.
@@ -8210,46 +8255,9 @@ def fetch_alternate_lines(sport, matchup):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_alternate_lines", "error": str(e)[:100]})
     return alternates
 
+@st.cache_data(ttl=900, show_spinner=False)
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
-    # Power ratings for all sports
-    WNBA_POWER_RATINGS = {
-        "New York Liberty": 112.0, "Las Vegas Aces": 111.0,
-        "Connecticut Sun": 109.0, "Minnesota Lynx": 108.5,
-        "Seattle Storm": 107.0, "Dallas Wings": 106.0,
-        "Chicago Sky": 105.0, "Phoenix Mercury": 104.5,
-        "Atlanta Dream": 104.0, "Indiana Fever": 103.5,
-        "Washington Mystics": 102.0, "Los Angeles Sparks": 101.0,
-        "Toronto Tempo": 103.0, "Golden State Valkyries": 102.5,
-    }
-    MLB_POWER_RATINGS = {
-        "Los Angeles Dodgers": 112.0, "New York Yankees": 110.5,
-        "Atlanta Braves": 109.0, "Philadelphia Phillies": 108.5,
-        "Houston Astros": 108.0, "San Diego Padres": 107.5,
-        "Cleveland Guardians": 107.0, "Baltimore Orioles": 106.5,
-        "Minnesota Twins": 106.0, "Arizona Diamondbacks": 105.5,
-        "San Francisco Giants": 104.5, "Seattle Mariners": 104.0,
-        "Boston Red Sox": 103.5, "Tampa Bay Rays": 103.0,
-        "Texas Rangers": 102.5, "Miami Marlins": 100.0,
-        "Colorado Rockies": 97.0, "Chicago White Sox": 98.0,
-        "Oakland Athletics": 97.5, "Kansas City Royals": 101.0,
-        "Toronto Blue Jays": 102.0, "Chicago Cubs": 103.0,
-        "St. Louis Cardinals": 102.5, "Milwaukee Brewers": 104.0,
-        "Pittsburgh Pirates": 99.0, "Cincinnati Reds": 100.5,
-        "Detroit Tigers": 101.5, "New York Mets": 103.5,
-        "Washington Nationals": 99.5, "Los Angeles Angels": 100.0,
-    }
-    NHL_POWER_RATINGS = {
-        "Florida Panthers": 110.0, "Vancouver Canucks": 109.0,
-        "Colorado Avalanche": 108.5, "Boston Bruins": 108.0,
-        "Dallas Stars": 107.5, "Carolina Hurricanes": 107.0,
-        "Edmonton Oilers": 106.5, "New York Rangers": 106.0,
-        "Tampa Bay Lightning": 105.5, "Vegas Golden Knights": 105.0,
-        "Toronto Maple Leafs": 104.5, "New Jersey Devils": 104.0,
-        "Minnesota Wild": 103.5, "Winnipeg Jets": 103.0,
-        "Pittsburgh Penguins": 101.0, "Montreal Canadiens": 100.0,
-        "Buffalo Sabres": 99.5, "Chicago Blackhawks": 98.0,
-    }
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     # Soccer/UFC/Tennis/Golf have no power rating data — skip game line analysis
     if sport in ("Soccer", "UFC", "Tennis", "Golf"):
@@ -14342,6 +14350,19 @@ def check_prediction_stability(board, sport):
         return []
 
 
+def _merge_rolling(season_avgs, rolling, weight=0.7):
+    """Merge rolling averages into season_avgs in-place. weight=rolling share."""
+    rnd = 2
+    for player, stats in rolling.items():
+        if player in season_avgs:
+            merged = {
+                k: round(v * weight + season_avgs[player].get(k, v) * (1 - weight), rnd)
+                for k, v in stats.items() if k != "n_games"
+            }
+            season_avgs[player] = {**season_avgs[player], **merged}
+        else:
+            season_avgs[player] = stats
+
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
     min_edge = st.session_state.min_edge
@@ -14386,55 +14407,26 @@ def load_sport_data(sport):
         season_avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
     elif sport == "WNBA":
         wnba_rolling = fetch_wnba_rolling_averages()
-        season_avgs = PLAYER_AVERAGES.get("WNBA", {})
-        for player, stats in wnba_rolling.items():
-            if player in season_avgs:
-                merged = {}
-                for stat, val in stats.items():
-                    if stat == "n_games":
-                        continue
-                    season_val = season_avgs[player].get(stat, val)
-                    merged[stat] = round(val * 0.7 + season_val * 0.3, 1)
-                season_avgs[player] = {**season_avgs[player], **merged}
-            else:
-                season_avgs[player] = stats
+        season_avgs = dict(PLAYER_AVERAGES.get("WNBA", {}))
+        _merge_rolling(season_avgs, wnba_rolling)
     elif sport == "MLB":
         mlb_rolling = fetch_mlb_rolling_averages()
         season_avgs = dict(PLAYER_AVERAGES.get("MLB", {}))
-        for player, stats in mlb_rolling.items():
-            if player in season_avgs:
-                merged = {}
-                for stat, val in stats.items():
-                    if stat == "n_games":
-                        continue
-                    season_val = season_avgs[player].get(stat, val)
-                    merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
-                season_avgs[player] = {**season_avgs[player], **merged}
+        _merge_rolling(season_avgs, mlb_rolling)
         mlb_pitchers = fetch_mlb_probable_pitchers()
         # ── MLB confirmed lineup check ──────────────────────────
         _mlb_lineups = fetch_mlb_confirmed_lineups()
         if _mlb_lineups:
             st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
         # FantasyLabs lineup feed — batting order + starter confirmation
-        # Works for all 5 sports with Referer header
         _fl_lineups = fetch_fantasylabs_lineups(sport)
         if _fl_lineups:
             st.session_state["fantasylabs_lineups"] = _fl_lineups
-
-
         st.session_state["mlb_pitchers"] = mlb_pitchers
     elif sport == "NHL":
         nhl_rolling = fetch_nhl_rolling_averages()
         season_avgs = dict(PLAYER_AVERAGES.get("NHL", {}))
-        for player, stats in nhl_rolling.items():
-            if player in season_avgs:
-                merged = {}
-                for stat, val in stats.items():
-                    if stat == "n_games":
-                        continue
-                    season_val = season_avgs[player].get(stat, val)
-                    merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
-                season_avgs[player] = {**season_avgs[player], **merged}
+        _merge_rolling(season_avgs, nhl_rolling)
     elif sport == "NFL":
         nfl_rolling = fetch_nfl_rolling_averages()
         if not nfl_rolling:
@@ -14444,15 +14436,7 @@ def load_sport_data(sport):
                 if avg:
                     nfl_rolling[player_name] = avg
         season_avgs = dict(PLAYER_AVERAGES.get("NFL", {}))
-        for player, stats in nfl_rolling.items():
-            if player in season_avgs:
-                merged = {}
-                for stat, val in stats.items():
-                    if stat == "n_games":
-                        continue
-                    season_val = season_avgs[player].get(stat, val)
-                    merged[stat] = round(val * 0.7 + season_val * 0.3, 2)
-                season_avgs[player] = {**season_avgs[player], **merged}
+        _merge_rolling(season_avgs, nfl_rolling)
     elif sport == "Soccer":
         soccer_rolling = fetch_soccer_rolling_averages()
         season_avgs = dict(PLAYER_AVERAGES.get("Soccer", {}))
@@ -14555,50 +14539,23 @@ def load_sport_data(sport):
     if oddspapi_props_raw:
         st.session_state[f"oddspapi_props_{sport}"] = oddspapi_props_raw
     elif not oddspapi_props_raw:
-        # OddsPAPI failed — try FanDuel + DraftKings direct via curl_cffi
+        # OddsPAPI failed — try direct endpoints via curl_cffi
         _direct_props = []
-        try:
-            _fd_direct = fetch_fanduel_direct(sport)
-            if _fd_direct:
-                _direct_props.extend(_fd_direct)
-                st.caption(f"📡 FanDuel: {len(_fd_direct)} props loaded directly")
-        except (requests.RequestException, KeyError, ValueError) as _e:
-            print(f"[WARN] {_e}")
-        try:
-            _dk_direct = fetch_draftkings_direct(sport)
-            if _dk_direct:
-                _direct_props.extend(_dk_direct)
-                st.caption(f"📡 DraftKings: {len(_dk_direct)} props loaded directly")
-        except (ValueError, TypeError, ZeroDivisionError) as _e:
-            print(f"[WARN] {_e}")
-        try:
-            _mgm_direct = fetch_betmgm_direct(sport)
-            if _mgm_direct:
-                _direct_props.extend(_mgm_direct)
-                st.caption(f"📡 BetMGM: {len(_mgm_direct)} props loaded directly")
-        except (ValueError, TypeError, ZeroDivisionError) as _e:
-            print(f"[WARN] {_e}")
-        try:
-            _czr_direct = fetch_caesars_direct(sport)
-            if _czr_direct:
-                _direct_props.extend(_czr_direct)
-                st.caption(f"📡 Caesars: {len(_czr_direct)} props loaded directly")
-        except (ValueError, TypeError, ZeroDivisionError) as _e:
-            print(f"[WARN] {_e}")
-        try:
-            _br_direct = fetch_betrivers_direct(sport)
-            if _br_direct:
-                _direct_props.extend(_br_direct)
-                st.caption(f"📡 BetRivers: {len(_br_direct)} props loaded directly")
-        except (ValueError, TypeError, ZeroDivisionError) as _e:
-            print(f"[WARN] {_e}")
-        try:
-            _betr_direct = fetch_betr_direct(sport)
-            if _betr_direct:
-                _direct_props.extend(_betr_direct)
-                st.caption(f"\U0001f4e1 Betr: {len(_betr_direct)} props loaded directly")
-        except (ValueError, TypeError, ZeroDivisionError) as _e:
-            print(f"[WARN] {_e}")
+        for _fn, _label, _icon in [
+            (fetch_fanduel_direct,    "FanDuel",    "📡"),
+            (fetch_draftkings_direct, "DraftKings", "📡"),
+            (fetch_betmgm_direct,     "BetMGM",     "📡"),
+            (fetch_caesars_direct,    "Caesars",     "📡"),
+            (fetch_betrivers_direct,  "BetRivers",  "📡"),
+            (fetch_betr_direct,       "Betr",       "📡"),
+        ]:
+            try:
+                _r = _fn(sport)
+                if _r:
+                    _direct_props.extend(_r)
+                    st.caption(f"{_icon} {_label}: {len(_r)} props loaded directly")
+            except (requests.RequestException, KeyError, ValueError, TypeError, ZeroDivisionError) as _e:
+                print(f"[WARN] {_label}: {_e}")
         if _direct_props:
             st.session_state[f"oddspapi_props_{sport}"] = _direct_props
     if public_betting:
