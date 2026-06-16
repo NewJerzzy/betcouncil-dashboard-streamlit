@@ -17073,16 +17073,23 @@ with tabs[0]:
                 </div>
                 """, unsafe_allow_html=True)
             else:
+                # Identify which props are recommended as singles
+                _single_plays = [p for p in parlay_props if p.get("Edge",0) >= 0.08]
+                _single_html = ""
+                for _sp in _single_plays[:3]:
+                    _single_html += f'<div style="color:#e8f0f8;font-size:0.9rem;padding:0.2rem 0;">· {_sp.get("Player","")} {_sp.get("Side","")} {_sp.get("Line","")} {_sp.get("Prop","")} <span style="color:#22c55e;">({_sp.get("Edge",0):+.1%} edge)</span></div>'
                 st.markdown(f"""
                 <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-left:3px solid #e8a020;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">
                     <div style="color:#e8a020;font-weight:600;margin-bottom:0.4rem;">⚠️ Singles Only — Skip the Parlay Today</div>
                     <div style="color:var(--color-text-secondary);font-size:0.95rem;line-height:1.6;">
-                        The individual props above show positive edge, but combining them into a parlay
-                        drops the combined probability to <strong>{combined:.1%}</strong>, well below the
-                        <strong>{be:.1%}</strong> breakeven needed for a {len(parlay_props)}-pick parlay to be profitable.
-                        <br><br>
-                        <span style="color:var(--color-text-primary);">Take them as singles.</span>
-                        The edge is real — a parlay just multiplies the variance against you at this probability.
+                        These props have positive edge individually, but combining them drops the
+                        combined probability to <strong>{combined:.1%}</strong> — below the
+                        <strong>{be:.1%}</strong> breakeven needed for a {len(parlay_props)}-pick parlay.<br><br>
+                        <strong style="color:var(--color-text-primary);">Recommended as singles:</strong>
+                        {_single_html if _single_html else "<div style='color:#8a9ab0;'>Take the top edge plays individually.</div>"}
+                        <br><div style="color:#6a7a8a;font-size:0.85rem;margin-top:0.3rem;">
+                        Note: The Best +EV Props section below shows the same plays ranked by individual edge — those are your singles targets.
+                        </div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
