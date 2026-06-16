@@ -54,7 +54,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 # === API BASE URLS ===
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-ESPN_CORE_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
 # === SPORT MAPPINGS ===
 ODDS_API_SPORT_MAP = {
@@ -65,14 +64,6 @@ ODDS_API_SPORT_MAP = {
     "NFL": "americanfootball_nfl",
 }
 
-ESPN_CORE_SPORT_MAP = {
-    "NBA": "basketball/nba",
-    "MLB": "baseball/mlb",
-    "NHL": "hockey/nhl",
-    "WNBA": "basketball/wnba",
-    "NFL": "football/nfl",
-}
-
 CBS_SPORT_MAP = {
     "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
     "WNBA": "WNBA", "NFL": "NFL",
@@ -81,15 +72,6 @@ CBS_SPORT_MAP = {
 # === BOOKS ===
 ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "Betr", "DraftKings", "BetMGM", "Bovada"]
 DISABLED_BOOKS = ["Sleeper", "BetOnline", "FanDuel", "Caesars"]
-
-# === TIER COLORS ===
-TIER_COLORS = {
-    "SOVEREIGN": "#ffd700",
-    "ELITE": "#00ff88",
-    "APPROVED": "#58a6ff",
-    "LEAN": "#ff8c00",
-    "PASS": "#ff4444",
-}
 
 DAILY_RISK_CONTROLS = {
     "max_daily_loss_pct": 0.15,
@@ -1420,7 +1402,6 @@ ODDS_API_BOOKS_ALT_LINES = "fanduel,draftkings,betmgm,caesars"
 
 # Unified API budgets
 
-TIER_COLORS = {"SOVEREIGN": "#e8a020", "ELITE": "#0ea5a0", "APPROVED": "#4a90d9", "LEAN": "#7a8a9a", "PASS": "#e04040"}
 TIER_DESCRIPTIONS = {"SOVEREIGN": "Edge ≥ 15%", "ELITE": "Edge ≥ 10%", "APPROVED": "Edge ≥ 5%", "LEAN": "Edge ≥ 2%", "PASS": "Edge < 2%"}
 
 
@@ -8291,7 +8272,7 @@ def scan_all_sports_best_plays():
         try:
             status.write(f"Scanning {sport} board...")
             progress.progress(idx / len(active_sports))
-            props = scrape_prizepicks(sport)
+            props = scrape_prizepicks_with_gist_fallback(sport)
             if not props:
                 props = fetch_underdog_props(sport)
             games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
@@ -9070,6 +9051,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
     return requests.get(url, headers=headers or {}, timeout=timeout)
 
 
+@st.cache_data(ttl=900)
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
     league = league_ids.get(sport.upper())
@@ -12228,84 +12210,6 @@ def parse_bet_screenshot_ocr(image_bytes):
 
         # Claude Vision disabled — no credits. Skip to OCR.space
         raise Exception("Claude Vision disabled")
-        api_resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key":         st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "")),
-                "anthropic-version": "2023-06-01",
-                "content-type":      "application/json",
-            },
-            json={
-                "model": "claude-sonnet-4-6",
-                "max_tokens": 1024,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type":       "base64",
-                                "media_type": media_type,
-                                "data":       img_b64,
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": """Extract all player props from this betting slip image.
-Return ONLY a JSON array, no other text, like this:
-[
-  {"player": "Nikola Jokic", "prop": "Points", "line": 27.5, "side": "OVER", "sport": "NBA"},
-  {"player": "Jayson Tatum", "prop": "Rebounds", "line": 8.5, "side": "OVER", "sport": "NBA"}
-]
-
-Rules:
-- Extract every player prop shown
-- side is OVER or UNDER (MORE=OVER, LESS=UNDER)
-- line is a number
-- sport: NBA, MLB, NHL, NFL, or WNBA
-- If sport unclear, use NBA
-- Include only active/pending props, skip settled ones
-- Return empty array [] if no props found"""
-                        }
-                    ]
-                }]
-            },
-            timeout=30
-        )
-
-        if api_resp.status_code == 200:
-            content = api_resp.json().get("content", [{}])[0].get("text","")
-            st.session_state["ocr_raw_text"] = content
-            # Parse JSON from response
-            clean = content.strip()
-            if "```" in clean:
-                clean = re.sub(r"```[a-z]*", "", clean).replace("```","").strip()
-            picks = _json.loads(clean)
-            result = []
-            for p in picks:
-                player = str(p.get("player","")).strip()
-                prop   = str(p.get("prop","")).strip()
-                line   = p.get("line",0)
-                side   = str(p.get("side","OVER")).upper()
-                sport  = str(p.get("sport","NBA")).upper()
-                if player and prop and line:
-                    result.append({
-                        "player": player,
-                        "prop":   prop,
-                        "line":   float(line),
-                        "side":   side,
-                        "sport":  sport,
-                        "book":   "PrizePicks",
-                    })
-            return result
-        else:
-            # Fallback to pytesseract if Claude fails
-            st.session_state["vision_debug"] = {
-                "status_code": api_resp.status_code,
-                "api_key_truncated": f"{st.secrets.get('ANTHROPIC_API_KEY', '')[:12]}...",
-                "response_body_truncated": api_resp.text[:300] if hasattr(api_resp, 'text') else str(api_resp)[:300]
-            }
-            raise Exception(f"Claude API error: {api_resp.status_code}")
 
     except Exception as e:
         # Fallback: OCR.space API (free 25k/month) then multi-sport parser
