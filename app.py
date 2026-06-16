@@ -5432,26 +5432,31 @@ def fetch_auto_scraped_props(sport="NBA"):
         log_error_to_session("fetch_auto_scraped_props", f"Unexpected: {str(e)[:100]}", "error")
         return []
 def scrape_prizepicks_with_gist_fallback(sport):
-    """Try PrizePicks direct, then Gist fallback, then empty."""
-    pp_props = scrape_prizepicks(sport)
+    """
+    Priority order:
+    1. Gist (from scraper script) — if data is fresh (<2 hours), use it. Zero ScrapeOps credits.
+    2. PrizePicks direct (curl_cffi) — if Gist is stale or empty.
+    3. ScrapeOps proxy — only if curl_cffi fails (inside scrape_prizepicks).
+    This preserves ScrapeOps credits and uses the scraper script as primary.
+    """
+    # Try Gist first — it's free and populated by the scraper script
+    gist_props = fetch_auto_scraped_props(sport)
+    if gist_props and len(gist_props) > 0:
+        st.session_state["pp_source"] = "gist_scraper"
+        st.session_state["pp_status"] = "ok"
+        return gist_props
 
+    # Gist empty or stale — try direct scrape (curl_cffi → ScrapeOps fallback)
+    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"Gist empty for {sport}, trying direct...", "warning")
+    pp_props = scrape_prizepicks(sport)
     if pp_props:
         st.session_state["pp_source"] = "prizepicks_direct"
         st.session_state["pp_status"] = "ok"
         return pp_props
 
-    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"PrizePicks direct failed for {sport}, trying Gist...", "warning")
-
-    gist_props = fetch_auto_scraped_props(sport)
-    if gist_props:
-        st.session_state["pp_source"] = "gist_scraper"
-        st.session_state["pp_status"] = "ok"
-        log_error_to_session("scrape_prizepicks_with_gist_fallback", f"Using {len(gist_props)} props from Gist", "info")
-        return gist_props
-
     st.session_state["pp_status"] = "unavailable"
     st.session_state["pp_source"] = "none"
-    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"PrizePicks unavailable for {sport} (direct + Gist failed)", "error")
+    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"PrizePicks unavailable for {sport}", "error")
     return []
 
 
