@@ -140,25 +140,65 @@ def no_vig_prob_probit(over_american, under_american) -> float:
         return no_vig_prob(over_american, under_american)
 
 
-# EVSharps BEST book+devig combinations by sport (from cheat sheet HTML analysis)
-# Format: {book: [("prop", "devig_combo"), ...]}
+# EVSharps BEST book+devig combinations — extracted from record.js (Probit method, 100+ bet samples)
+# Format: {sport: {book: [(prop, devig_combo), ...]}}  ordered by ROI descending
 EV_BEST_COMBOS = {
     "NBA": {
-        "fd":   [("reb","pn+circa+hr"),("ast","espn+hr"),("3ptm","pn+dk"),("pts","circa"),("blk","hr"),("pts+ast","dk+espn"),("pts+reb","espn"),("reb+ast","dk+espn")],
-        "dk":   [("reb","pn+fd"),("reb+ast","espn"),("pts","fd"),("pts+ast","fd"),("pts+reb+ast","pn"),("dd","pn")],
-        "mgm":  [("pts+reb+ast","pn+fd"),("3ptm","fd+dk"),("pts","fd+dk"),("pts+reb","fd"),("reb+ast","fd")],
-        "espn": [("reb","pn+espn+mgm"),("pts","fd"),("pts+ast","fd"),("pts+reb","fd"),("pts+reb+ast","pn"),("ast","fd+dk")],
-        "hr":   [("reb","fd+dk"),("pts","fd"),("pts","pn"),("pts+ast","fd"),("pts+ast","dk"),("3ptm","circa"),("reb+ast","dk+espn")],
-        "b365": [("3ptm","dk"),("pts","fd"),("pts+ast","fd"),("pts+ast","dk"),("ast","fd+espn+mgm")],
+        "fd":   [("reb","circa"),("reb","dk"),("reb","pn+circa+hr"),("3ptm","pn+dk"),("3ptm","pn"),("3ptm","espn"),("3ptm","circa"),("ast","circa"),("ast","espn+hr"),("blk","hr"),("pts","circa"),("pts","dk+espn"),("pts+ast","dk+espn"),("pts+reb","espn"),("reb+ast","dk+espn"),("reb+ast","hr")],
+        "dk":   [("dd","pn"),("pts","fd"),("pts","espn+hr"),("pts+ast","fd"),("pts+reb","hr"),("pts+reb+ast","pn"),("pts+reb+ast","fd"),("reb","pn"),("reb","pn+fd"),("reb+ast","espn")],
+        "mgm":  [("3ptm","fd+dk"),("ast","pn"),("dd","espn"),("pts","fd+dk"),("pts","fd"),("pts+ast","fd"),("pts+reb","fd"),("pts+reb+ast","pn+fd"),("reb+ast","fd")],
+        "espn": [("ast","bv"),("ast","fd+dk"),("blk","hr"),("pts","fd"),("pts+ast","fd"),("pts+reb","fd"),("pts+reb+ast","pn"),("reb","pn+espn+mgm")],
+        "hr":   [("reb+ast","dk+espn"),("reb","fd+dk"),("pts+reb+ast","mgm"),("pts+reb","fd+dk"),("pts+ast","fd"),("pts+ast","dk"),("pts","espn"),("pts","fd"),("pts","pn"),("3ptm","circa")],
+        "b365": [("3ptm","dk"),("ast","fd+espn+mgm"),("pts","fd"),("pts+ast","bv"),("pts+ast","fd"),("pts+ast","dk")],
         "fn":   [("pts","circa"),("pts","dk"),("reb","dk"),("reb+ast","dk"),("3ptm","circa"),("ast","circa")],
         "br":   [("pts","fd"),("reb","fd+dk"),("pts+reb+ast","pn+dk"),("3ptm","dk"),("ast","dk"),("blk","mgm")],
         "bv":   [("reb","pn"),("reb","fd"),("pts","pn"),("pts+ast","dk"),("dd","pn"),("dd","mgm"),("ast","pn")],
         "cz":   [("pts","pn"),("reb","fd"),("ast","hr")],
     },
-    "MLB": {},
-    "NFL": {},
-    "NHL": {},
-    "WNBA": {},
+    "MLB": {
+        "best": [("hr","pn+fd"),("hr","pn+circa"),("hr","pn+circa+espn"),("double","fd"),("double","px")],
+        "fd":   [("k","fd+dk"),("double","espn"),("double","b365"),("double","dk"),("double","mgm")],
+        "dk":   [("double","fd"),("hr","kal"),("h","fd+espn+mgm"),("double","px"),("k","nv+circa")],
+        "mgm":  [("hr","pn+fd"),("double","px"),("er","dk"),("double","fd+dk"),("double","dk")],
+        "espn": [("double","hr"),("hr","kal"),("double","fd"),("double","dk"),("k","espn+hr")],
+        "br":   [("double","b365"),("double","fd+dk"),("double","fd"),("double","dk+espn"),("double","espn+hr")],
+        "hr":   [("double","fd+espn+mgm"),("double","fd"),("k","kal"),("outs","nv"),("k","pn+fd")],
+        "bv":   [("tb","pn+dk"),("double","fd"),("tb","kal"),("rbi","dk+espn"),("double","dk+espn")],
+        "cz":   [("tb","pn+dk"),("tb","dk+espn"),("double","mgm"),("tb","hr"),("tb","espn+hr")],
+        "bol":  [("hr","b365"),("k","espn+hr"),("tb","pn+dk"),("h+r+rbi","dk+espn"),("tb","pn+espn+hr")],
+        "fn":   [("hr","px"),("k","re+pn"),("k","dk"),("rbi","dk"),("k","kal")],
+        "re":   [("k","espn+hr"),("tb","espn+hr"),("tb","espn"),("tb","hr"),("h","nv")],
+        "b365": [("hr","re+fd+dk+espn"),("hr","fd+dk"),("hr","fd+espn+mgm"),("double","fd"),("k","nv")],
+        "nv":   [("hr","pn+circa"),("hr","pn"),("hr","pn+circa+hr"),("hr","re+pn"),("tb","kal")],
+        "px":   [("hr","pn+circa"),("hr","kal"),("double","b365"),("double","dk"),("single","hr")],
+        "kal":  [("hr","pn+circa"),("hr","pn+circa+hr"),("hr","pn+circa+espn+hr"),("hr","re+pn"),("hr","fd+dk")],
+    },
+    "NHL": {
+        "best": [("sog","px"),("sv","mgm"),("atgs","re+fd+dk"),("atgs","bv"),("pts","circa+espn")],
+        "fd":   [("atgs","dk"),("atgs","b365"),("atgs","dk+espn"),("atgs","circa"),("sog","pn+espn")],
+        "mgm":  [("pts","bol"),("atgs","dk+espn"),("sog","pn+espn"),("atgs","fd"),("sog","pn")],
+        "fn":   [("atgs","fd"),("atgs","bv"),("atgs","pn+circa+hr"),("ast","re+pn"),("atgs","pn")],
+        "br":   [("atgs","fd+dk"),("atgs","re+fd+dk"),("atgs","bv"),("atgs","fd+dk+bol"),("atgs","re+fd+dk+espn")],
+        "b365": [("atgs","re+fd+dk"),("atgs","fd+dk"),("atgs","re+fd+dk+espn"),("atgs","bv"),("atgs","fd")],
+        "bv":   [("pts","hr"),("ast","pn+espn"),("sog","fd+espn+mgm"),("sog","dk+espn"),("ast","pn+espn+hr")],
+        "dk":   [("pts","re+fd+dk"),("atgs","pn+circa+espn+hr"),("atgs","fd"),("atgs","pn+circa+hr"),("atgs","pn+espn")],
+        "espn": [("atgs","hr"),("pts","hr"),("pts","pn+dk"),("sog","fd+dk"),("pts","mgm")],
+        "cz":   [("sog","pn+espn+hr"),("sog","espn"),("atgs","pn+espn+hr"),("pts","dk"),("sog","espn+hr")],
+        "hr":   [("pts","bol"),("sog","circa"),("pts","pn+dk"),("sog","pn"),("sog","fd")],
+        "re":   [("atgs","b365"),("sog","dk"),("ast","pn"),("ast","pn+dk"),("pts","dk")],
+    },
+    "NFL": {},  # insufficient data in probit method for 100+ samples
+    "WNBA": {
+        "best": [("3ptm","fd+dk"),("reb","fd+dk"),("pts","fd+dk"),("reb","re+fd+dk"),("reb","re+fd+dk+espn")],
+        "fd":   [("3ptm","re+fd+dk"),("pts","fd+espn+mgm"),("reb","re+fd+dk"),("reb","dk"),("pts","mgm")],
+        "dk":   [("reb","re+fd+dk"),("reb","fd"),("reb","re+espn"),("reb","bol"),("reb","espn")],
+        "cz":   [("reb","fd"),("reb","bol"),("reb","dk"),("reb","dk+espn"),("reb","re")],
+        "fn":   [("3ptm","bol"),("pts","espn+hr"),("reb","fd"),("reb","re+espn"),("pts","hr")],
+        "br":   [("3ptm","espn"),("3ptm","re+espn"),("pts","dk"),("pts","dk+espn"),("3ptm","re")],
+        "hr":   [("pts","mgm"),("reb","dk"),("3ptm","re"),("pts","dk+espn"),("pts","dk")],
+        "espn": [("reb","dk"),("pts","re+espn"),("pts","mgm"),("pts","dk"),("reb","re")],
+        "mgm":  [("reb","re+fd+dk"),("reb","fd+dk"),("reb","fd"),("reb","dk"),("pts","fd+dk")],
+    },
 }
 
 # Prop types that use Probit devig (counting stats — symmetric, normal distribution)
