@@ -2584,12 +2584,19 @@ def push_to_gist(all_props, all_lines, token, gist_id):
         "lines":       all_lines[:1000],  # cap lines too
     }
 
-    # Verify size before pushing
+    # Verify size before pushing — GitHub Gist file limit is ~1MB
     import json as _json
+    # Strip placeholder fields that waste bytes and are never used by app.py
+    for _p in all_props:
+        _p.pop("OverOdds", None)
+        _p.pop("UnderOdds", None)
     payload_str = _json.dumps(payload)
-    if len(payload_str) > 950000:
-        payload["props"] = all_props[:10000]
+    if len(payload_str) > 980000:
+        payload["props"] = all_props[:15000]
         payload["lines"] = all_lines[:1000]
+        payload_str = _json.dumps(payload)
+    if len(payload_str) > 980000:
+        payload["props"] = all_props[:10000]
         payload_str = _json.dumps(payload)
         print(f"  ⚠️  Trimmed to fit Gist limit: {len(payload['props'])} props")
 
