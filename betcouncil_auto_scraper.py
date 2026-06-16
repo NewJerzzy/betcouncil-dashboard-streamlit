@@ -2561,7 +2561,7 @@ def push_to_gist(all_props, all_lines, token, gist_id):
         return False
     books   = list({p["Book"] for p in all_props + all_lines})
     # Trim to stay under GitHub Gist 1MB limit
-    max_props = 6000
+    max_props = 15000
     if len(all_props) > max_props:
         # Keep proportional mix of sports
         from collections import defaultdict
@@ -2587,9 +2587,9 @@ def push_to_gist(all_props, all_lines, token, gist_id):
     # Verify size before pushing
     import json as _json
     payload_str = _json.dumps(payload)
-    if len(payload_str) > 900000:
-        payload["props"] = all_props[:1500]
-        payload["lines"] = all_lines[:500]
+    if len(payload_str) > 950000:
+        payload["props"] = all_props[:10000]
+        payload["lines"] = all_lines[:1000]
         payload_str = _json.dumps(payload)
         print(f"  ⚠️  Trimmed to fit Gist limit: {len(payload['props'])} props")
 
