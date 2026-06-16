@@ -466,41 +466,45 @@ def login_underdog(cfg):
 
 # ── Prop Scrapers ─────────────────────────────────────────────
 def scrape_prizepicks(sport):
-    """PrizePicks — no login, curl_cffi bypass."""
+    """PrizePicks — no login, curl_cffi bypass. Loops all sports when ALL is passed."""
     print(f"\n  PrizePicks {sport}:")
-    cfg_s = SPORT_MAP.get(sport, SPORT_MAP["NBA"])
+    sports_to_fetch = list(SPORT_MAP.keys()) if sport == "ALL" else [sport]
     props = []
     try:
         from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         session = requests
-    try:
-        r = session.get(
-            "https://partner-api.prizepicks.com/projections",
-            params={"league_id": cfg_s["pp_id"], "per_page": 250,
-                    "single_stat": "true", "game_mode": "pickem"},
-            headers={"User-Agent": UA, "Referer": "https://app.prizepicks.com/",
-                     "Origin": "https://app.prizepicks.com"},
-            timeout=20
-        )
-        print(f"    Status: {r.status_code}")
-        if r.status_code == 200:
-            data     = r.json()
-            included = {i["id"]: i for i in data.get("included",[]) if i.get("type")=="new_player"}
-            for proj in data.get("data",[]):
-                attrs  = proj.get("attributes",{})
-                pid    = proj.get("relationships",{}).get("new_player",{}).get("data",{}).get("id","")
-                pname  = included.get(pid,{}).get("attributes",{}).get("name","") or attrs.get("description","")
-                stat   = attrs.get("stat_type","")
-                line   = attrs.get("line_score")
-                if pname and line is not None:
-                    props.append({"Player":pname,"Prop":stat,"Line":float(line),
-                                  "Side":"OVER","OverOdds":"—","UnderOdds":"—",
-                                  "Book":"PrizePicks","Sport":sport,"source":"prizepicks_auto"})
-            print(f"    Props: {len(props)}")
-    except Exception as e:
-        print(f"    Error: {e}")
+    for sp in sports_to_fetch:
+        cfg_s = SPORT_MAP.get(sp, SPORT_MAP["NBA"])
+        try:
+            r = session.get(
+                "https://partner-api.prizepicks.com/projections",
+                params={"league_id": cfg_s["pp_id"], "per_page": 250,
+                        "single_stat": "true", "game_mode": "pickem"},
+                headers={"User-Agent": UA, "Referer": "https://app.prizepicks.com/",
+                         "Origin": "https://app.prizepicks.com"},
+                timeout=20
+            )
+            print(f"    [{sp}] Status: {r.status_code}")
+            if r.status_code == 200:
+                data     = r.json()
+                included = {i["id"]: i for i in data.get("included",[]) if i.get("type")=="new_player"}
+                before   = len(props)
+                for proj in data.get("data",[]):
+                    attrs  = proj.get("attributes",{})
+                    pid    = proj.get("relationships",{}).get("new_player",{}).get("data",{}).get("id","")
+                    pname  = included.get(pid,{}).get("attributes",{}).get("name","") or attrs.get("description","")
+                    stat   = attrs.get("stat_type","")
+                    line   = attrs.get("line_score")
+                    if pname and line is not None:
+                        props.append({"Player":pname,"Prop":stat,"Line":float(line),
+                                      "Side":"OVER","OverOdds":"—","UnderOdds":"—",
+                                      "Book":"PrizePicks","Sport":sp,"source":"prizepicks_auto"})
+                print(f"    [{sp}] Props: {len(props) - before}")
+        except Exception as e:
+            print(f"    [{sp}] Error: {e}")
+    print(f"    Total Props: {len(props)}")
     return props
 
 def scrape_underdog(sport):
