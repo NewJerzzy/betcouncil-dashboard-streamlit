@@ -5599,6 +5599,24 @@ def compute_ev_line_movement(current_data, previous_snapshot):
                 "team":          item.get("team", ""),
             }
 
+            # ── Pinnacle drift — soft books lagging behind Pinnacle ────────
+            pn_curr = _parse_american(current.get("pn"))
+            pn_prev = previous_snapshot.get((player_norm, prop_key, "pn"))
+            if pn_curr and pn_prev and abs(pn_curr - pn_prev) >= 5:
+                lagging = []
+                for soft_bk in ("dk", "fd", "mgm", "cz", "espn", "hr"):
+                    soft_curr = _parse_american(current.get(soft_bk))
+                    if soft_curr and abs(soft_curr - pn_curr) > 15:
+                        lagging.append(EV_BOOK_LABELS.get(soft_bk, soft_bk))
+                if lagging:
+                    sharp_alerts.append(
+                        f"🚨 {player_raw.title()} {prop_name} | PINNACLE DRIFT "
+                        f"{pn_prev:+.0f}→{pn_curr:+.0f} | Lagging: {', '.join(lagging)}"
+                    )
+                    if sig_key in movement_lookup:
+                        movement_lookup[sig_key]["s8_vector"] = 2
+                        movement_lookup[sig_key]["sharp_flag"] = True
+
             # ── Build sharp alert string ────────────────────────────────
             if sharp_moved or (len(moved_books) >= 3):
                 bk_labels   = [EV_BOOK_LABELS.get(b[0], b[0].upper()) for b in moved_books]
@@ -15207,6 +15225,25 @@ def load_sport_data(sport):
             blended_under_prob = round((1 - consensus_prob) * 0.60 + under_prob * 0.40, 4)
             over_prob = max(0.20, min(0.80, blended_over_prob))
             under_prob = max(0.20, min(0.80, blended_under_prob))
+            over_edge  = calculate_edge(over_prob,  "OVER",  sport)
+            under_edge = calculate_edge(under_prob, "UNDER", sport)
+
+        # ── Pinnacle Ensemble Blend — P_final = W_user*P_user + W_pin*P_pin ──
+        # Pinnacle closing line = their internal model output summarized into one number.
+        # We weight Pinnacle no-vig at 0.35, our model at 0.65.
+        # When Pinnacle and our model agree, confidence increases.
+        # When they diverge, Pinnacle pulls the probability toward market fair value.
+        if ev_consensus_novig is not None:
+            _W_user = 0.65
+            _W_pin  = 0.35
+            _pin_over_prob  = float(ev_consensus_novig)
+            _pin_under_prob = 1.0 - _pin_over_prob
+            _ensemble_over  = round(_W_user * over_prob  + _W_pin * _pin_over_prob,  4)
+            _ensemble_under = round(_W_user * under_prob + _W_pin * _pin_under_prob, 4)
+            _ensemble_over  = max(0.15, min(0.85, _ensemble_over))
+            _ensemble_under = max(0.15, min(0.85, _ensemble_under))
+            over_prob  = _ensemble_over
+            under_prob = _ensemble_under
             over_edge  = calculate_edge(over_prob,  "OVER",  sport)
             under_edge = calculate_edge(under_prob, "UNDER", sport)
         if fairness_grade == "BAD":
