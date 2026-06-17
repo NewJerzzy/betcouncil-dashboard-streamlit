@@ -15228,20 +15228,41 @@ def load_sport_data(sport):
             over_edge  = calculate_edge(over_prob,  "OVER",  sport)
             under_edge = calculate_edge(under_prob, "UNDER", sport)
 
-        # ── Pinnacle Ensemble Blend — P_final = W_user*P_user + W_pin*P_pin ──
-        # Pinnacle closing line = their internal model output summarized into one number.
-        # We weight Pinnacle no-vig at 0.35, our model at 0.65.
-        # When Pinnacle and our model agree, confidence increases.
-        # When they diverge, Pinnacle pulls the probability toward market fair value.
-        if ev_consensus_novig is not None:
-            _W_user = 0.65
-            _W_pin  = 0.35
-            _pin_over_prob  = float(ev_consensus_novig)
-            _pin_under_prob = 1.0 - _pin_over_prob
-            _ensemble_over  = round(_W_user * over_prob  + _W_pin * _pin_over_prob,  4)
-            _ensemble_under = round(_W_user * under_prob + _W_pin * _pin_under_prob, 4)
-            _ensemble_over  = max(0.15, min(0.85, _ensemble_over))
-            _ensemble_under = max(0.15, min(0.85, _ensemble_under))
+        # ── Multi-Sharp Ensemble — P_final = W_user*P_user + W_pin*P_pin + W_circa*P_circa ──
+        # Circa co-equal sharp anchor for NFL/props. Pinnacle leads MLB/NHL.
+        # Prop markets are Pinnacle's weakest area — our model has sovereign advantage here.
+        _ev_sig_local = st.session_state.get("ev_signal_lookup", {}).get(
+            (normalize_name(player), stat_raw), {}
+        )
+        _pn_nv    = _ev_sig_local.get("pn_novig")    if _ev_sig_local else ev_pn_novig
+        _circa_nv = _ev_sig_local.get("circa_novig") if _ev_sig_local else ev_circa_novig
+
+        if _pn_nv is not None or _circa_nv is not None:
+            # Sport-specific sharp weights (Circa originates NFL; Pinnacle leads MLB)
+            if sport == "NFL":
+                _w_pin, _w_circa = 0.20, 0.25
+            elif sport == "MLB":
+                _w_pin, _w_circa = 0.25, 0.15
+            else:
+                _w_pin, _w_circa = 0.22, 0.13
+
+            # Only use weights for books that have data
+            _w_pin_used   = _w_pin   if _pn_nv    is not None else 0.0
+            _w_circa_used = _w_circa if _circa_nv is not None else 0.0
+            _w_user = max(0.50, 1.0 - _w_pin_used - _w_circa_used)
+
+            # Normalize weights to sum to 1
+            _total_w = _w_user + _w_pin_used + _w_circa_used
+            _w_user       /= _total_w
+            _w_pin_used   /= _total_w
+            _w_circa_used /= _total_w
+
+            _pin_p   = float(_pn_nv)    if _pn_nv    is not None else over_prob
+            _circa_p = float(_circa_nv) if _circa_nv is not None else over_prob
+
+            _ensemble_over = (_w_user * over_prob + _w_pin_used * _pin_p + _w_circa_used * _circa_p)
+            _ensemble_over  = round(max(0.15, min(0.85, _ensemble_over)), 4)
+            _ensemble_under = round(1.0 - _ensemble_over, 4)
             over_prob  = _ensemble_over
             under_prob = _ensemble_under
             over_edge  = calculate_edge(over_prob,  "OVER",  sport)
