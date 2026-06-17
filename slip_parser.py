@@ -16,6 +16,16 @@ def _parse_pp_ocr_inline(raw_text):
 
     raw_text = re.sub(r"WORLDCUP", "WORLD CUP", raw_text, flags=re.I)
 
+    # Save original for prop extraction (footer strip below may remove stat tokens)
+    _raw_for_props = raw_text
+
+    # Strip PrizePicks footer noise for player name extraction
+    # Two-column OCR puts stats AFTER the footer, so we preserve them in _raw_for_props
+    raw_text = re.sub(r"Slide for Refund.*?(?=\d{1,2}:\d{2}|$)", "", raw_text, flags=re.I|re.S).strip()
+    raw_text = re.sub(r"Self refund available[^\n]*", "", raw_text, flags=re.I).strip()
+    raw_text = re.sub(r"PRIZEPICKS\s+\w+\s+\d+,\s+\d{4}.*", "", raw_text, flags=re.I).strip()
+    raw_text = re.sub(r"\b\d{2}:\d{2}:\d{2}\b", "", raw_text).strip()  # countdown timer HH:MM:SS
+
     SPORTS = ["WORLD CUP","NBA","WNBA","MLB","NHL","NFL","TENNIS","PGA","MMA","UFC","SOCCER"]
     SKIP_POS = {"P","C","G","F","PG","SG","SF","PF","G-F","C-F","IF","SP","RP","OF","SS","1B","2B","3B",
                 "DH","LF","CF","RF","MIDFIELDER","DEFENDER","GOALKEEPER","FORWARD"}
@@ -25,7 +35,8 @@ def _parse_pp_ocr_inline(raw_text):
         "BKN","CHA","DAL","DEN","GSW","IND","MEM","NOP","OKC","ORL","PHX","POR","SAC","SAS","UTA","WAS",
         "CON","LVA","LA","NYL","NY","USA","PAR",
         "MLB","NBA","NHL","NFL","WNBA","MMA","UFC","PGA","TENNIS","SOCCER",
-        "AZ","GSV","GSW","NYL","CHI","CHA"}
+        "AZ","GSV","GSW","NYL","CHI","CHA",
+        "SLIDE","SELF","REFUND","REMAINING","TIME","PICK"}
     # Sorted longest-first so compound props match before their substrings
     PROPS = sorted([
         "Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds",
@@ -68,7 +79,11 @@ def _parse_pp_ocr_inline(raw_text):
     # ── PLAYER EXTRACTION ────────────────────────────────────────────────────
     players = []
 
-    if len(sport_matches) >= 2:
+    # If all sport tags cluster at the start (<20 chars), they're header badges not
+    # player separators (happens in two-column OCR reads). Treat entire body as Layout B.
+    _tags_spread = len(sport_matches) >= 2 and not all(m.start() < 25 for m in sport_matches)
+
+    if _tags_spread:
         # Layout A: each player block is bracketed by sport tags
         # Layout: "MLB {matchup} {time} {Player} {TEAM}•{POS}•#{N} {stats} MLB ..."
         # The last player comes AFTER the last sport tag (handled by tail extraction)
@@ -137,7 +152,7 @@ def _parse_pp_ocr_inline(raw_text):
             players.append({"player": _tname, "sport": _last_sm.group(1).upper(), "book": "PrizePicks"})
 
     else:
-        # Layout B: single sport tag at header — scan for "Firstname Lastname" patterns
+        # Layout B: single sport tag at header OR clustered badges — scan for "Firstname Lastname" patterns
         # Strip everything up to and including the slip type line
         body = raw_text
         if _tm:
@@ -162,12 +177,15 @@ def _parse_pp_ocr_inline(raw_text):
                 players.append({"player": name, "sport": header_sport, "book": "PrizePicks"})
 
     # ── PROP / LINE EXTRACTION ────────────────────────────────────────────────
-    _has_final = bool(re.search(r"\bFinal\b", raw_text, re.I))
+    # Use original raw text (pre-footer-strip) for prop extraction so two-column
+    # OCR layouts (where stats appear after the footer) still get their lines
+    _prop_source = _raw_for_props
+    _has_final = bool(re.search(r"\bFinal\b", _prop_source, re.I))
     if _has_final:
-        _final_matches = list(re.finditer(r"\bFinal\b", raw_text, re.I))
-        clean = raw_text[_final_matches[-1].end():]
+        _final_matches = list(re.finditer(r"\bFinal\b", _prop_source, re.I))
+        clean = _prop_source[_final_matches[-1].end():]
     else:
-        clean = raw_text
+        clean = _prop_source
 
     # Strip time tokens and fix comma-numbers before scanning for lines
     clean = re.sub(r"\b\d{1,2}:\d{2}(?:am|pm)\b", "", clean, flags=re.I)
