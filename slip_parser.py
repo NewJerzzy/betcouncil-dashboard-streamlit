@@ -211,6 +211,35 @@ def _parse_pp_ocr_inline(raw_text):
         prop_name = re.sub(r"RBls", "RBIs", prop_name)
         metrics.append({"prop": prop_name, "actual": actual, "line": line, "result": result, "side": "OVER"})
 
+    # ── NAME SANITY FILTER ───────────────────────────────────────────────────
+    # Reject garbled names from OCR artifacts: prop words, month fragments, keywords
+    _INVALID_NAME_TOKENS = {
+        "OVER","UNDER","MORE","LESS","PRIZEPICKS","UNDERDOG","PARLAY","PLAY",
+        "AM","PM","JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC",
+        "MON","TUE","WED","THU","FRI","SAT","SUN",
+        "RUNS","HITS","KS","PRA","RBI","RBIS","FS","HITTER","PITCHER","FANTASY",
+        "1ST","2ND","3RD","INNING","ALLOWED","POINTS","REBOUNDS","ASSISTS","STRIKEOUTS"
+    }
+    _PROP_SUBSTRINGS = ["hits", "runs", "rbis", "rbl", "strikeout", "pitcherfs", "hitterfs"]
+
+    def _is_valid_name(name):
+        if not name or len(name.strip()) < 4:
+            return False
+        for part in re.split(r"\s+", name.strip()):
+            if part in ("+", ""):
+                continue
+            clean = re.sub(r"[^a-zA-Z]", "", part).upper()
+            if not clean:
+                continue
+            if clean in _INVALID_NAME_TOKENS:
+                return False
+            if part == part.upper() and len(clean) > 4:
+                return False
+        name_flat = name.lower().replace(" ", "").replace("+", "")
+        return not any(s in name_flat and len(name_flat) > len(s) + 2 for s in _PROP_SUBSTRINGS)
+
+    players = [p for p in players if _is_valid_name(p["player"])]
+
     # ── PENDING DETECTION ────────────────────────────────────────────────────
     _is_pending = not _has_final and not _header_win
     _overall = "PENDING" if _is_pending else ("WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS")

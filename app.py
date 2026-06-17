@@ -19476,6 +19476,9 @@ with tabs[5]:
         )
         if slip_imgs:
             if st.button("🔍 Parse Screenshot", key="parse_slip_screenshot"):
+                # Clear stale picks from previous parse before starting fresh
+                st.session_state["analyzer_picks"] = []
+                st.session_state["ocr_raw_text"] = ""
                 all_parsed = []
                 with st.spinner("Reading screenshot..."):
                     for img_file in slip_imgs:
