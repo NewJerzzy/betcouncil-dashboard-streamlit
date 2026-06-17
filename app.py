@@ -19743,6 +19743,7 @@ with tabs[5]:
                     "line_note": line_note,
                     "confidence": confidence,
                     "data_source": data_source,
+                    "board_matched": board_match is not None,
                 })
 
             st.session_state["analyzer_results"] = results
@@ -19830,7 +19831,9 @@ with tabs[5]:
                 f'<div style="font-size:8px;color:var(--color-text-tertiary);text-transform:uppercase">2-pick EV</div>'
                 f'<div style="font-size:17px;font-weight:700;color:#22c55e">{r["ev_2"]}</div></div>'
                 f'</div>'
-                f'<div style="font-size:14px;color:#6a7a8a">📡 {r["data_source"]} | Confidence: {r["confidence"]}'
+                f'<div style="font-size:14px;color:{"#e8a020" if not r.get("board_matched") else "#6a7a8a"}>'  
+                f'{"⚠️ NO BOARD DATA — load the board for real scores | " if not r.get("board_matched") else "📡 "}'  
+                f'{r["data_source"]} | Confidence: {r["confidence"]}'
                 f'{" | " + r["sharp_flag"] if r["sharp_flag"] else ""}'
                 f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
                 f'{"<div style=\"font-size:14px;color:#22c55e;margin-top:4px\">⚡ " + r["better_line"] + "</div>" if r["better_line"] else ""}'
