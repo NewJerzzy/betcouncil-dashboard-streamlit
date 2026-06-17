@@ -19513,7 +19513,7 @@ with tabs[5]:
         with st.expander("🔍 OCR Debug — what was extracted", expanded=True):
             raw = st.session_state.get("ocr_raw_text", "")
             if raw:
-                st.text(raw[:800])
+                st.markdown(f'<pre style="color:#e0e0e0;background:#1a1a2e;padding:10px;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;">{raw[:800]}</pre>', unsafe_allow_html=True)
             else:
                 st.caption("Upload a screenshot to see extracted text.")
 
@@ -20518,12 +20518,12 @@ with tabs[7]:
                 st.session_state["ocr_raw_text"] = ""
                 st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                 st.rerun()
-        with st.expander("\U0001f50d OCR Debug \u2014 Raw Text Extracted"):
+        with st.expander("🔍 OCR Debug — Raw Text Extracted"):
             raw_ocr = st.session_state.get("ocr_raw_text", "")
             if raw_ocr:
-                st.text(raw_ocr)
+                st.markdown(f'<pre style="color:#e0e0e0;background:#1a1a2e;padding:10px;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;">{raw_ocr[:1200]}</pre>', unsafe_allow_html=True)
             else:
-                st.caption("Upload a screenshot to see extracted text.")
+                st.caption("No OCR text yet — upload a screenshot above.")
         # ── PASTE TEXT SLIP ─────────────────────────────
         st.markdown("---")
         st.markdown("### 📋 Paste Bet Slip Text")

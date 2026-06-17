@@ -24,12 +24,13 @@ def _parse_pp_ocr_inline(raw_text):
         "MIA","MIL","MIN","NYM","NYY","OAK","PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH",
         "BKN","CHA","DAL","DEN","GSW","IND","MEM","NOP","OKC","ORL","PHX","POR","SAC","SAS","UTA","WAS",
         "CON","LVA","LA","NYL","NY","USA","PAR",
-        "MLB","NBA","NHL","NFL","WNBA","MMA","UFC","PGA","TENNIS","SOCCER"}
+        "MLB","NBA","NHL","NFL","WNBA","MMA","UFC","PGA","TENNIS","SOCCER",
+        "AZ","GSV","GSW","NYL","CHI","CHA"}
     # Sorted longest-first so compound props match before their substrings
     PROPS = sorted([
         "Pts+Rebs+Asts","Pts+Rebs","Pts+Asts","Assists","Points","Rebounds",
         "Strikeouts","Ks","Total Bases","Hits Allowed","Hits+Runs+RBIs","Hits+Runs+RBls",
-        "H+R+RBI","RBIs","Earned Runs Allowed","Fantasy Score","Pitcher FS","Hitter FS",
+        "1st Inning Runs Allowed","H+R+RBI","RBIs","Earned Runs Allowed","Fantasy Score","Pitcher FS","Hitter FS","PRA",
         "Passes Attempted","Goals","Goalie Saves","Saves","Break Points Won","Strokes",
         "Aces","Total Games Won","Runs","Turnovers","Blocks","Steals","3-Pointers","Hits",
     ], key=len, reverse=True)
@@ -68,62 +69,73 @@ def _parse_pp_ocr_inline(raw_text):
     players = []
 
     if len(sport_matches) >= 2:
-        # Layout A: sport tag appears between each player block
+        # Layout A: each player block is bracketed by sport tags
+        # Layout: "MLB {matchup} {time} {Player} {TEAM}•{POS}•#{N} {stats} MLB ..."
+        # The last player comes AFTER the last sport tag (handled by tail extraction)
+
+        def _clean_seg(seg):
+            """Strip times, bullets, arrows, jersey numbers, trailing stat section."""
+            seg = re.sub(r"\bFinal\b", "", seg, flags=re.I)
+            seg = re.sub(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", "", seg, flags=re.I)  # day names
+            seg = re.sub(r"\b\d{1,2}:\d{2}(?:\s*[aApP][mM])?\b", "", seg)  # times
+            seg = re.sub(r"[\u2022\xB7\u2191\u2193\u2B06\u2B07\u25B2\u25BC]", " ", seg)  # bullets/arrows
+            seg = re.sub(r"#\d+(?:/\s*#?\d+)?", "", seg)   # jersey #s
+            seg = re.sub(r"\s+\d+(?:\s+[\d.]+).*$", "", seg)  # trailing stats: "0 0.5 Prop..."
+            seg = re.sub(r"[/\\]", " ", seg)                 # slash separators
+            seg = re.sub(r"\s+", " ", seg).strip()
+            return seg
+
+        def _extract_name(seg):
+            """Extract player name(s) from cleaned segment, handling combo picks (A + B)."""
+            if " + " in seg:
+                names = []
+                for part in seg.split(" + "):
+                    ws = part.split()
+                    nw = []
+                    for w in reversed(ws):
+                        cw = re.sub(r"[^a-zA-Z\'\.-]", "", w)
+                        if not cw: continue
+                        cup = cw.upper().rstrip(".")
+                        if cup in BANNED or cup in SKIP_POS:
+                            if nw: break
+                            continue
+                        if cw[0].isupper():
+                            nw.insert(0, cw)
+                        if len(nw) >= 2: break
+                    if nw:
+                        names.append(" ".join(nw))
+                return " + ".join(names) if names else ""
+            # Single player
+            pwords = []
+            for w in reversed(seg.split()):
+                cw = re.sub(r"[^a-zA-Z\'\.-]", "", w)
+                if not cw or len(cw) < 1: continue
+                cup = cw.upper().rstrip(".")
+                if cup in SKIP_POS or cup in BANNED:
+                    if len(pwords) >= 2: break
+                    continue
+                if cw in PROP_WORDS and len(pwords) >= 2: break
+                if cw[0].isupper():
+                    pwords.insert(0, cw)
+                if len(pwords) >= 2: break
+            return " ".join(pwords) if len(pwords) >= 2 else ""
+
         for idx, sm in enumerate(sport_matches):
             sport = sm.group(1).upper()
             prev_end = sport_matches[idx-1].end() if idx > 0 else 0
-            seg = raw_text[prev_end:sm.start()].strip()
-            seg = re.sub(r".*?Play\s+.*?\$[\d,.]+.*?(?:Leaderboard|Show details|\bv\b)", "", seg, flags=re.I).strip()
-            seg = re.sub(r"\bFinal\b", "", seg, flags=re.I).strip()
-            # Strip stat/line section (everything from first digit onward — stats follow player info)
-            seg = re.sub(r"\d.*$", "", seg).strip()
-            # Strip arrows, bullets, jersey numbers
-            seg = re.sub(r"[\u2191\u2193\u2B06\u2B07\u25B2\u25BC#\u2022\xB7]", " ", seg)
-            seg = re.sub(r"\s+", " ", seg).strip()
-            words = seg.split()
-            pwords = []
-            for w in reversed(words):
-                cw = re.sub(r"[^a-zA-Z\'-]", "", w)
-                if not cw or len(cw) < 2:
-                    continue
-                if cw.upper() in SKIP_POS or cw.upper() in BANNED:
-                    if len(pwords) >= 2:
-                        break
-                    continue
-                # Stop if we hit a standalone prop word (e.g. "Hitter", "Points")
-                if cw in PROP_WORDS and len(pwords) >= 2:
-                    break
-                if cw[0].isupper():
-                    pwords.insert(0, cw)
-                if len(pwords) >= 2 and all(len(x) >= 2 for x in pwords):
-                    break
-            pname = " ".join(pwords) if len(pwords) >= 2 else ""
-            pname = re.sub(r"^Final\s+", "", pname, flags=re.I).strip()
+            seg = raw_text[prev_end:sm.start()]
+            seg = _clean_seg(seg)
+            pname = _extract_name(seg)
             if pname:
                 players.append({"player": pname, "sport": sport, "book": "PrizePicks"})
 
-
-        # Also extract the player after the LAST sport tag (loop only covers segments before tags)
+        # Tail: last player appears AFTER the final sport tag
         _last_sm = sport_matches[-1]
-        _tail = raw_text[_last_sm.end():].strip()
-        _tail = re.sub(r'\d.*$', '', _tail).strip()
-        _tail = re.sub(r'[\u2191\u2193\u2B06\u2B07\u25B2\u25BC#\u2022\xB7]', ' ', _tail)
-        _tail = re.sub(r'\bFinal\b', '', _tail, flags=re.I)
-        _tail = re.sub(r'\s+', ' ', _tail).strip()
-        _twords = _tail.split()
-        _tpwords = []
-        for _tw in reversed(_twords):
-            _tcw = re.sub(r'[^a-zA-Z\'-]', '', _tw)
-            if not _tcw or len(_tcw) < 2: continue
-            if _tcw.upper() in SKIP_POS or _tcw.upper() in BANNED:
-                if len(_tpwords) >= 2: break
-                continue
-            if _tcw in PROP_WORDS and len(_tpwords) >= 2: break
-            if _tcw[0].isupper(): _tpwords.insert(0, _tcw)
-            if len(_tpwords) >= 2 and all(len(x) >= 2 for x in _tpwords): break
-        _tname = ' '.join(_tpwords) if len(_tpwords) >= 2 else ''
-        if _tname and not any(p['player'] == _tname for p in players):
-            players.append({'player': _tname, 'sport': _last_sm.group(1).upper(), 'book': 'PrizePicks'})
+        _tail = _clean_seg(raw_text[_last_sm.end():])
+        _tname = _extract_name(_tail)
+        if _tname and not any(p["player"] == _tname for p in players):
+            players.append({"player": _tname, "sport": _last_sm.group(1).upper(), "book": "PrizePicks"})
+
     else:
         # Layout B: single sport tag at header — scan for "Firstname Lastname" patterns
         # Strip everything up to and including the slip type line
