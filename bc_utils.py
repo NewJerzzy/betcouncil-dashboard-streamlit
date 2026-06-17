@@ -10,7 +10,9 @@ from datetime import datetime, date, timedelta
 import unicodedata
 from functools import lru_cache
 from scipy import stats as scipy_stats
-from config import SPORT_EWMA_DECAY
+
+# Inline to avoid circular import through config.py (which imports streamlit)
+SPORT_EWMA_DECAY = {"NBA": 0.85, "MLB": 0.92, "NHL": 0.88, "WNBA": 0.85, "NFL": 0.80}
 
 
 def safe_float(val, default: float = 0.0) -> float:
