@@ -12186,6 +12186,174 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
         st.session_state[_opt_key] = _n_resolved
     return record
 
+
+# ═══════════════════════════════════════════════════════════
+# MODULE: STANDALONE PICK SCORER
+# Scores any player/prop/line WITHOUT requiring the board to be loaded.
+# Priority chain:
+#   1. Board cache hit       → full CLARITY scores (fastest)
+#   2. Session rolling avgs  → weighted recent model
+#   3. Live BDL fetch (NBA)  → real season avg via API
+#   4. MLB Savant-style est  → stat-specific derivation
+#   5. PLAYER_AVERAGES dict  → hardcoded star table
+#   6. Line-anchored fallback→ avg = line, z=0, prob from context
+# ═══════════════════════════════════════════════════════════
+def score_pick_standalone(player, stat, line, side, sport):
+    """
+    Score a single pick using the full CLARITY pipeline, no board required.
+    Returns a dict with edge, prob, avg, tier, ev_2, confidence, data_source.
+    """
+    import math
+
+    stat_norm = STAT_NORMALIZE.get((sport, stat), stat)
+
+    # ── 1. Board cache hit ───────────────────────────────────────────────────
+    board = st.session_state.get("board", [])
+    if board:
+        norm_p = normalize_name(player)
+        for b in board:
+            if normalize_name(b.get("Player", "")) == norm_p and b.get("Prop", "").lower() == stat.lower():
+                board_line = float(b.get("Line", line) or line)
+                edge = float(b.get("Edge", 0) or 0)
+                prob = float(b.get("Prob", 0.5) or 0.5)
+                # Adjust edge if line differs
+                line_diff = round(float(line) - board_line, 1)
+                if line_diff != 0:
+                    adj = 0.03 * abs(line_diff)
+                    if side == "OVER" and line_diff > 0:
+                        edge = max(-0.15, edge - adj)
+                    elif side == "OVER" and line_diff < 0:
+                        edge = min(0.30, edge + adj)
+                return {
+                    "edge": edge, "prob": prob,
+                    "avg": float(b.get("Avg", 0) or 0),
+                    "tier": get_tier(edge, sport),
+                    "ev_2": f"{calculate_prizepicks_ev(prob, 2):+.1%}",
+                    "confidence": b.get("SEM", "Full model"),
+                    "data_source": "📊 Full model (board)",
+                    "board_matched": True,
+                }
+
+    # ── Resolve player average from best available source ───────────────────
+    avg = 0.0
+    data_source_label = "📚 Historical averages"
+    confidence_label = "Static table"
+
+    # ── 2. Session rolling avgs (loaded when board was last run) ─────────────
+    _rolling = st.session_state.get("rolling_avgs", {})
+    _season  = st.session_state.get("season_avgs_cache", {})
+    if player in _rolling or normalize_name(player) in {normalize_name(k) for k in _rolling}:
+        _rp = _rolling.get(player) or next((v for k, v in _rolling.items() if normalize_name(k) == normalize_name(player)), None)
+        if _rp and isinstance(_rp, dict):
+            _val = _rp.get(stat_norm, 0)
+            if _val and float(_val) > 0:
+                avg = float(_val)
+                data_source_label = "📈 Rolling avg (session)"
+                confidence_label = f"L{_rp.get('n_games', 10)} games"
+
+    # ── 3. Live BDL fetch for NBA ────────────────────────────────────────────
+    if avg == 0.0 and sport == "NBA":
+        try:
+            live = fetch_player_season_avg_bdl(player, sport)
+            if live:
+                _val = live.get(stat_norm, 0)
+                if _val and float(_val) > 0:
+                    avg = float(_val)
+                    data_source_label = "🌐 Live BDL season avg"
+                    confidence_label = "2025 season"
+        except Exception:
+            pass
+
+    # ── 4. PLAYER_AVERAGES hardcoded table ───────────────────────────────────
+    if avg == 0.0:
+        sport_avgs = PLAYER_AVERAGES.get(sport, {})
+        player_data, using_default = find_player_avg(player, sport_avgs)
+        if not using_default and player_data:
+            _val = player_data.get(stat_norm, player_data.get(stat[:3].upper(), 0))
+            if _val and float(_val) > 0:
+                avg = float(_val)
+                data_source_label = "📚 Season avg table"
+                confidence_label = "2025 estimates"
+
+    # ── 5. MLB stat derivation for common prop types ─────────────────────────
+    if avg == 0.0 and sport == "MLB":
+        _mlb_defaults = {
+            "SO": 5.5, "H": 0.9, "HR": 0.08, "RBI": 0.7, "R": 0.7,
+            "ER": 2.5, "Hitter FS": 20.0, "Pitcher FS": 28.0,
+            "H+R+RBI": 2.2, "Hits+Runs+RBIs": 2.2, "1st Inning Runs Allowed": 0.4,
+        }
+        _val = _mlb_defaults.get(stat_norm) or _mlb_defaults.get(stat)
+        if _val:
+            avg = float(_val)
+            data_source_label = "📊 MLB league avg"
+            confidence_label = "League baseline"
+
+    # ── 6. WNBA/NFL/NHL league baselines ─────────────────────────────────────
+    if avg == 0.0:
+        _baselines = {
+            "WNBA": {"PTS": 11.0, "REB": 5.0, "AST": 2.5, "PRA": 18.0},
+            "NFL":  {"PASS_YDS": 220, "RUSH_YDS": 55, "REC_YDS": 45, "TD": 0.6},
+            "NHL":  {"PTS": 0.6, "GOALS": 0.25, "ASSISTS": 0.35, "SOG": 2.8},
+        }
+        _val = _baselines.get(sport, {}).get(stat_norm, 0)
+        if _val:
+            avg = float(_val)
+            data_source_label = "📊 League baseline"
+            confidence_label = "League avg only"
+
+    # ── 7. Last resort: anchor to line ───────────────────────────────────────
+    if avg == 0.0:
+        avg = float(line) if float(line) > 0 else 1.0
+        data_source_label = "⚠️ Line-anchored (no avg found)"
+        confidence_label = "No data"
+
+    # ── Run CLARITY edge model ───────────────────────────────────────────────
+    try:
+        std_dev = compute_std_dev(None, sport) or None
+        edge, prob, _ = compute_multi_signal_edge(
+            line=float(line),
+            player_avg=avg,
+            opp_def_rating=112.0,   # neutral — no opponent context without board
+            is_home=False,
+            teammate_out_boost=0.0,
+            side=side,
+            stat_key=stat_norm,
+            pace_adj=0.0,
+            days_rest=2,
+            odds_type="standard",
+            sport=sport,
+            std_dev=std_dev,
+            player_name=player,
+        )
+        edge = round(max(-0.15, min(0.30, edge)), 4)
+    except Exception:
+        # Fallback z-score if model call fails
+        diff = avg - float(line) if side == "OVER" else float(line) - avg
+        std = compute_std_dev(None, sport) or 4.0
+        z = diff / std if std > 0 else 0.0
+        try:
+            from scipy import stats as _sp
+            prob = float(_sp.norm.cdf(z))
+        except Exception:
+            prob = 0.5 + z * 0.08
+        prob = max(0.20, min(0.80, prob))
+        edge = round(calculate_edge(prob, side, sport), 4)
+
+    tier = get_tier(edge, sport)
+    ev_2 = f"{calculate_prizepicks_ev(prob, 2):+.1%}"
+
+    return {
+        "edge": edge,
+        "prob": round(prob, 4),
+        "avg": round(avg, 1),
+        "tier": tier,
+        "ev_2": ev_2,
+        "confidence": confidence_label,
+        "data_source": data_source_label,
+        "board_matched": False,
+    }
+
+
 # ═══════════════════════════════════════════════════════════
 # MODULE: OCR — bet screenshot parsing
 # Future extraction target: ocr.py
@@ -19648,9 +19816,23 @@ with tabs[5]:
                 stat = pick["stat"]
                 line = pick["line"]
                 side = pick["side"]
-                sport = pick.get("sport", "NBA")
+                sport = pick.get("sport", "MLB")
 
-                # Try to find this prop in the loaded board first
+                # Score via full standalone pipeline (board → rolling → BDL → table → baseline)
+                scored = score_pick_standalone(player, stat, line, side, sport)
+                edge        = scored["edge"]
+                prob        = scored["prob"]
+                avg         = scored["avg"]
+                tier        = scored["tier"]
+                ev_2        = scored["ev_2"]
+                confidence  = scored["confidence"]
+                data_source = scored["data_source"]
+                better_line = ""
+                dk_note     = ""
+                sharp_flag  = ""
+                line_note   = ""
+
+                # Check board for extra context (line diff note, sharp flag, better line)
                 board_match = None
                 if board:
                     norm_player = normalize_name(player)
@@ -19658,61 +19840,15 @@ with tabs[5]:
                         if normalize_name(b.get("Player","")) == norm_player and                            b.get("Prop","").lower() == stat.lower():
                             board_match = b
                             break
-
                 if board_match:
-                    # Use full model data
-                    edge = board_match.get("Edge", 0)
-                    prob = board_match.get("Prob", 0.5)
-                    avg = board_match.get("Avg", 0)
-                    tier = board_match.get("Tier", "LEAN")
-                    ev_2 = board_match.get("EV_2pick", "—")
                     better_line = board_match.get("BetterLineNote", "")
-                    dk_note = board_match.get("DKSalaryNote", "")
-                    sharp_flag = board_match.get("SharpFlag", "")
-                    signal_base = board_match.get("SignalBase", 0)
-                    signal_def = board_match.get("SignalDefense", 0)
-                    confidence = board_match.get("SEM", "—")
-                    data_source = "📊 Full model"
-
-                    # Check if the line matches
-                    board_line = board_match.get("Line", line)
-                    line_diff = round(float(line) - float(board_line), 1)
-                    line_note = ""
+                    dk_note     = board_match.get("DKSalaryNote", "")
+                    sharp_flag  = board_match.get("SharpFlag", "")
+                    board_line  = board_match.get("Line", line)
+                    line_diff   = round(float(line) - float(board_line), 1)
                     if line_diff != 0:
                         direction = "higher" if line_diff > 0 else "lower"
                         line_note = f"⚠️ Your line ({line}) is {abs(line_diff)} {direction} than board ({board_line})"
-                        # Adjust edge for line difference
-                        if side == "OVER" and line_diff > 0:
-                            edge = max(0, edge - 0.03 * abs(line_diff))
-                        elif side == "OVER" and line_diff < 0:
-                            edge = min(0.30, edge + 0.03 * abs(line_diff))
-                else:
-                    # No board match — use historical averages
-                    season_avgs = PLAYER_AVERAGES.get(sport, {})
-                    player_data = season_avgs.get(player, {})
-                    stat_key = stat.upper().replace(" ","_").replace("+","_").replace("-","_")
-                    avg = player_data.get(stat_key, player_data.get(stat[:3].upper(), 0))
-
-                    if avg > 0:
-                        diff = avg - line if side == "OVER" else line - avg
-                        std = compute_std_dev(None, sport) or 4.0
-                        z = diff / std if std > 0 else 0
-                        from scipy import stats as sp_stats
-                        prob = float(sp_stats.norm.cdf(z))
-                        edge = max(-0.15, min(0.25, prob - 0.577))
-                    else:
-                        prob = 0.5
-                        edge = 0.0
-                        avg = None
-
-                    tier = get_tier(edge, sport)
-                    ev_2 = f"{calculate_prizepicks_ev(prob, 2):+.1%}"
-                    better_line = ""
-                    dk_note = ""
-                    sharp_flag = ""
-                    line_note = ""
-                    confidence = "Historical avg only"
-                    data_source = "📚 Historical averages"
 
                 # Determine recommendation
                 if edge >= 0.08:
