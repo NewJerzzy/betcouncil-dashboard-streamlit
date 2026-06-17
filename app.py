@@ -8488,10 +8488,151 @@ def fetch_wnba_rolling_averages():
     return rolling
 
 @st.cache_data(ttl=1800)
+
+def fetch_mlb_full_roster_ids(force_refresh=False):
+    """
+    Fetch MLB player IDs for ALL active players across all 30 teams.
+    Returns {player_name: player_id} dict. Cached 24h.
+    Replaces the hardcoded MLB_PLAYER_IDS for rolling avg fetches.
+    """
+    cache_path = os.path.join(CACHE_DIR, "mlb_full_roster_ids.pkl")
+    if not force_refresh and os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 24:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    all_ids = dict(MLB_PLAYER_IDS)  # seed with known IDs
+    MLB_TEAM_IDS = [
+        133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,158,
+        108,109,110,111,112,113,114,115,116,117,118,119,120,121
+    ]
+    try:
+        for team_id in MLB_TEAM_IDS:
+            url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=active&season=2025"
+            try:
+                resp = requests.get(url, headers=HEADERS, timeout=8)
+                if resp.status_code != 200:
+                    continue
+                for p in resp.json().get("roster", []):
+                    name = p["person"]["fullName"]
+                    pid  = p["person"]["id"]
+                    if name not in all_ids:
+                        all_ids[name] = pid
+                time.sleep(0.15)
+            except Exception:
+                continue
+        if len(all_ids) > len(MLB_PLAYER_IDS):  # only cache if we got new data
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_ids, f)
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_mlb_full_roster_ids",
+            "error": str(e)[:100]
+        })
+    return all_ids
+
+
+def fetch_mlb_player_season_avg(player_name, player_id=None):
+    """
+    Fetch 2025 season averages for a single MLB player by name or ID.
+    Tries hitting + pitching. Returns stat dict or None.
+    Used by score_pick_standalone for on-demand MLB player lookup.
+    """
+    cache_key = f"mlb_season_{normalize_name(player_name)}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    # Resolve player ID
+    if not player_id:
+        all_ids = st.session_state.get("mlb_roster_ids", {}) or MLB_PLAYER_IDS
+        player_id = all_ids.get(player_name)
+        if not player_id:
+            # Try normalized name match
+            norm = normalize_name(player_name)
+            player_id = next((v for k, v in all_ids.items() if normalize_name(k) == norm), None)
+        if not player_id:
+            return None
+
+    result = {}
+    for group in ("hitting", "pitching"):
+        try:
+            url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+                   f"?stats=season&group={group}&season=2025&gameType=R")
+            resp = requests.get(url, headers=HEADERS, timeout=8)
+            if resp.status_code != 200:
+                continue
+            splits = resp.json().get("stats", [{}])[0].get("splits", [])
+            if not splits:
+                continue
+            s = splits[0]["stat"]
+            if group == "hitting":
+                g = int(s.get("gamesPlayed", 0) or 0)
+                if g == 0:
+                    continue
+                ab = int(s.get("atBats", 1) or 1)
+                result.update({
+                    "H":   round(int(s.get("hits", 0)) / g, 2),
+                    "HR":  round(int(s.get("homeRuns", 0)) / g, 3),
+                    "RBI": round(int(s.get("rbi", 0)) / g, 2),
+                    "R":   round(int(s.get("runs", 0)) / g, 2),
+                    "TB":  round(int(s.get("totalBases", 0)) / g, 2),
+                    "n_games": g,
+                    "_type": "hitter",
+                })
+                # Derive Hitter FS: H*3 + HR*4 + RBI*2 + R*2 + BB*2 + SB*5 (PrizePicks formula)
+                bb = round(int(s.get("baseOnBalls", 0)) / g, 2)
+                sb = round(int(s.get("stolenBases", 0)) / g, 2)
+                result["Hitter FS"] = round(
+                    result["H"] * 3 + result["HR"] * 4 +
+                    result["RBI"] * 2 + result["R"] * 2 +
+                    bb * 2 + sb * 5, 1
+                )
+                result["H+R+RBI"] = round(result["H"] + result["R"] + result["RBI"], 2)
+            else:
+                g = int(s.get("gamesPlayed", 0) or 0)
+                if g == 0:
+                    continue
+                result.update({
+                    "SO":  round(int(s.get("strikeOuts", 0)) / g, 2),
+                    "ER":  round(int(s.get("earnedRuns", 0)) / g, 2),
+                    "H":   round(int(s.get("hits", 0)) / g, 2),
+                    "n_games": g,
+                    "_type": "pitcher",
+                })
+                # Pitcher FS: SO*3 - ER*2 + IP*1 (simplified)
+                ip = round(float(s.get("inningsPitched", 0) or 0) / g, 2)
+                result["Pitcher FS"] = round(result["SO"] * 3 - result["ER"] * 2 + ip, 1)
+        except Exception:
+            continue
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+        return result
+    return None
+
+
 def fetch_mlb_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
     rolling = {}
-    for player_name, player_id in MLB_PLAYER_IDS.items():
+    # Use full active roster IDs (all 30 teams) instead of hardcoded 29-player list
+    all_roster_ids = st.session_state.get("mlb_roster_ids") or MLB_PLAYER_IDS
+    for player_name, player_id in all_roster_ids.items():
         player_avgs = PLAYER_AVERAGES.get("MLB", {}).get(player_name, {})
         is_pitcher = "SO" in player_avgs or "ER" in player_avgs
         group = "pitching" if is_pitcher else "hitting"
@@ -12264,7 +12405,34 @@ def score_pick_standalone(player, stat, line, side, sport):
         except Exception:
             pass
 
-    # ── 4. PLAYER_AVERAGES hardcoded table ───────────────────────────────────
+    # ── 4. MLB live season avg (statsapi.mlb.com, any active player) ───────────
+    if avg == 0.0 and sport == "MLB":
+        try:
+            mlb_stats = fetch_mlb_player_season_avg(player)
+            if mlb_stats:
+                # Map the requested stat to what we fetched
+                _stat_map = {
+                    "SO": "SO", "Strikeouts": "SO", "Ks": "SO",
+                    "H": "H", "Hits": "H", "HR": "HR", "Home Runs": "HR",
+                    "RBI": "RBI", "RBIs": "RBI", "R": "R", "Runs": "R",
+                    "ER": "ER", "Earned Runs Allowed": "ER",
+                    "Hitter FS": "Hitter FS", "Pitcher FS": "Pitcher FS",
+                    "H+R+RBI": "H+R+RBI", "Hits+Runs+RBIs": "H+R+RBI",
+                    "Hits+Runs+RBls": "H+R+RBI",
+                    "1st Inning Runs Allowed": "ER",
+                    "Total Bases": "TB",
+                }
+                _key = _stat_map.get(stat_norm) or _stat_map.get(stat) or stat_norm
+                _val = mlb_stats.get(_key, 0)
+                if _val and float(_val) > 0:
+                    avg = float(_val)
+                    n_g = mlb_stats.get("n_games", "?")
+                    data_source_label = f"⚾ MLB 2025 season avg"
+                    confidence_label = f"{n_g} games"
+        except Exception:
+            pass
+
+    # ── 5. PLAYER_AVERAGES hardcoded table ───────────────────────────────────
     if avg == 0.0:
         sport_avgs = PLAYER_AVERAGES.get(sport, {})
         player_data, using_default = find_player_avg(player, sport_avgs)
@@ -12275,7 +12443,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                 data_source_label = "📚 Season avg table"
                 confidence_label = "2025 estimates"
 
-    # ── 5. MLB stat derivation for common prop types ─────────────────────────
+    # ── 6. MLB league baseline (last resort for unknown MLB players) ──────────
     if avg == 0.0 and sport == "MLB":
         _mlb_defaults = {
             "SO": 5.5, "H": 0.9, "HR": 0.08, "RBI": 0.7, "R": 0.7,
@@ -12285,10 +12453,10 @@ def score_pick_standalone(player, stat, line, side, sport):
         _val = _mlb_defaults.get(stat_norm) or _mlb_defaults.get(stat)
         if _val:
             avg = float(_val)
-            data_source_label = "📊 MLB league avg"
-            confidence_label = "League baseline"
+            data_source_label = "📊 MLB league baseline"
+            confidence_label = "League avg only"
 
-    # ── 6. WNBA/NFL/NHL league baselines ─────────────────────────────────────
+    # ── 7. WNBA/NFL/NFL/NHL league baselines ───────────────────────────────────
     if avg == 0.0:
         _baselines = {
             "WNBA": {"PTS": 11.0, "REB": 5.0, "AST": 2.5, "PRA": 18.0},
@@ -12301,7 +12469,7 @@ def score_pick_standalone(player, stat, line, side, sport):
             data_source_label = "📊 League baseline"
             confidence_label = "League avg only"
 
-    # ── 7. Last resort: anchor to line ───────────────────────────────────────
+    # ── 8. Last resort: anchor to line ───────────────────────────────────────
     if avg == 0.0:
         avg = float(line) if float(line) > 0 else 1.0
         data_source_label = "⚠️ Line-anchored (no avg found)"
@@ -14573,6 +14741,10 @@ def load_sport_data(sport):
         season_avgs = dict(PLAYER_AVERAGES.get("WNBA", {}))
         _merge_rolling(season_avgs, wnba_rolling)
     elif sport == "MLB":
+        # Populate full MLB roster IDs (all 30 teams) — cached 24h
+        if "mlb_roster_ids" not in st.session_state or not st.session_state["mlb_roster_ids"]:
+            with st.spinner("Loading MLB roster IDs..."):
+                st.session_state["mlb_roster_ids"] = fetch_mlb_full_roster_ids()
         mlb_rolling = fetch_mlb_rolling_averages()
         season_avgs = dict(PLAYER_AVERAGES.get("MLB", {}))
         _merge_rolling(season_avgs, mlb_rolling)
