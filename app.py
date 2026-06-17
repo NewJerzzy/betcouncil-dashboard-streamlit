@@ -25,8 +25,10 @@ except ImportError:
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
-    no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, devig_best,
-    compute_clv, compute_clv_novig, EV_BEST_COMBOS, get_best_devig_combo,
+    no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
+    devig_best, compute_clv, compute_clv_novig,
+    kelly_with_edge_decay, compute_brier_score, compute_calibration_zscore,
+    EV_BEST_COMBOS, get_best_devig_combo,
     load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat,
     is_date_valid_for_today, adjusted_edge, find_player_avg, market_efficiency_score,
     get_weighted_average, get_recency_context, sample_size_confidence,
@@ -15629,6 +15631,14 @@ def load_sport_data(sport):
             "EVRLMNote":         ev_rlm_note,
             "EVSteamFlag":       ev_steam_flag,
             "EVSharpMove":       ev_sharp_move,
+            # Edge-decay Kelly (time-aware bet sizing)
+            "KellyDecay": kelly_with_edge_decay(
+                final_edge,
+                -110,   # default odds — refined when actual book odds available
+                time_to_lock_minutes=None,
+                pinnacle_open=(_ev_sig.get("pn_novig") is not None) if _ev_sig else False,
+                circa_open=(_ev_sig.get("circa_novig") is not None) if _ev_sig else False,
+            ),
         })
     # Add H2H signal to each prop (uses cached game logs if available)
     for prop in enriched:
@@ -18708,6 +18718,31 @@ with tabs[4]:
     _clv_sum = get_clv_summary(st.session_state.get("history", []))
     _clv_sum = _clv_sum or {"n_resolved": 0, "avg_clv": 0, "beat_rate": 0, "grade": "INSUFFICIENT"}
     if _clv_sum.get("n_resolved", 0) > 0:
+
+        # ── Brier Score + Calibration Z-Score ──────────────────────────────
+        _brier  = compute_brier_score(st.session_state.get("history", []))
+        _zscore = compute_calibration_zscore(st.session_state.get("history", []))
+        _bs_life = _brier.get("lifetime") or {}
+        if _bs_life:
+            st.markdown("### 🎯 Model Calibration — Brier Score & Z-Score")
+            st.caption("Brier Score: 0=perfect, 0.25=random coin flip. Alert if BS>0.25 or |Z|>2.0")
+            _bc1,_bc2,_bc3,_bc4 = st.columns(4)
+            _bs_val = _bs_life.get("brier_score",0)
+            _bs_color = "#22c55e" if _bs_val < 0.22 else ("#ffd700" if _bs_val < 0.25 else "#e04040")
+            _bc1.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Brier Score (All)</div><div style="font-size:22px;font-weight:700;color:{_bs_color}">{_bs_val:.3f}</div><div style="font-size:12px;color:{_bs_color}">{_bs_life.get("grade","")}</div></div>', unsafe_allow_html=True)
+            _bs_l30 = (_brier.get("L30") or {}).get("brier_score")
+            _bc2.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Brier L30</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_bs_l30:.3f if _bs_l30 else "—"}</div><div style="font-size:12px;color:#6a7a8a">30 day window</div></div>', unsafe_allow_html=True)
+            _ll = _bs_life.get("log_loss", 0)
+            _bc3.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Log Loss</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_ll:.3f}</div><div style="font-size:12px;color:#6a7a8a">lower=better</div></div>', unsafe_allow_html=True)
+            _z = _zscore.get("z_score")
+            _z_color = "#22c55e" if _z and abs(_z) <= 2.0 else "#e04040"
+            _z_label = _zscore.get("direction", "insufficient data")
+            _bc4.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">CLV Z-Score</div><div style="font-size:22px;font-weight:700;color:{_z_color}">{f"{_z:+.2f}" if _z else "—"}</div><div style="font-size:12px;color:{_z_color}">{_z_label}</div></div>', unsafe_allow_html=True)
+            if _bs_life.get("alert"):
+                st.warning("⚠️ Brier Score > 0.25 — model underperforming random. Throttle user weight by 10% and audit feature extraction.")
+            if _zscore.get("alert"):
+                st.warning(f"⚠️ CLV Z-Score |{_z:.2f}| > 2.0 — model is {_z_label}. Consider rebalancing sharp anchor weights.")
+            st.markdown("---")
         st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
         st.caption(
             f"CLV measures whether you beat the no-vig closing line (Pinnacle+Circa consensus). "
