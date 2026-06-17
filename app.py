@@ -12194,24 +12194,26 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 # _parse_pp_ocr_inline — moved to slip_parser.py
 def parse_bet_screenshot_ocr(image_bytes):
     """
-    Parse PrizePicks/prop screenshots using Claude vision API.
-    Replaces pytesseract OCR — no local Tesseract install needed.
+    Parse PrizePicks/prop screenshots via OCR.space then multi-sport parser.
+    Claude Vision disabled (no credits). fmt/media_type resolved before try/except.
     """
     import base64 as _b64, json as _json, io, re
-    try:
-        # Try Claude vision first (most accurate)
-        img_b64 = _b64.b64encode(image_bytes).decode()
 
-        # Detect image format
+    # Resolve image format OUTSIDE try/except so it's in scope for OCR.space fallback
+    _PIL = None
+    fmt = "png"
+    try:
         from PIL import Image as _PIL
         _img = _PIL.open(io.BytesIO(image_bytes))
-        fmt  = (_img.format or "PNG").lower()
-        if fmt == "jpeg": fmt = "jpeg"
-        elif fmt == "webp": fmt = "webp"
-        else: fmt = "png"
-        media_type = f"image/{fmt}"
+        fmt = (_img.format or "PNG").lower()
+        if fmt not in ("jpeg", "webp", "png"):
+            fmt = "png"
+    except Exception:
+        pass
+    media_type = f"image/{fmt}"
 
-        # Claude Vision disabled — no credits. Skip to OCR.space
+    try:
+        # Claude Vision disabled — no API credits. Jump straight to OCR.space.
         raise Exception("Claude Vision disabled")
 
     except Exception as e:
@@ -19503,11 +19505,15 @@ with tabs[5]:
                     else:
                         st.warning("Screenshot parsed but no pending picks found. Try the paste option below.")
                 else:
-                    st.error("Could not read screenshot. Try the OCR Debug in Log Bet tab, or paste the slip manually below.")
-        with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
+                    _has_key = bool(st.secrets.get("OCR_SPACE_API_KEY", ""))
+                    if not _has_key:
+                        st.error("OCR_SPACE_API_KEY not set in secrets — screenshot parsing disabled.")
+                    else:
+                        st.error("Could not read screenshot. Check OCR Debug below, or paste the slip manually.")
+        with st.expander("🔍 OCR Debug — what was extracted", expanded=True):
             raw = st.session_state.get("ocr_raw_text", "")
             if raw:
-                st.text(raw[:500])
+                st.text(raw[:800])
             else:
                 st.caption("Upload a screenshot to see extracted text.")
 
