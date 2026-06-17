@@ -12222,7 +12222,7 @@ def parse_bet_screenshot_ocr(image_bytes):
             if _ocr_key:
                 _ocr_resp = requests.post("https://api.ocr.space/parse/image",
                     data={"apikey": _ocr_key, "language": "eng", "scale": "true"},
-                    files={"filename": ("slip.png", image_bytes, "image/png")}, timeout=15)
+                    files={"filename": (f"slip.{fmt}", image_bytes, media_type)}, timeout=15)
                 _ocr_json = _ocr_resp.json()
                 if _ocr_json.get("ParsedResults"):
                     raw = _ocr_json["ParsedResults"][0].get("ParsedText", "")
@@ -19485,14 +19485,16 @@ with tabs[5]:
                     # Convert OCR results to analyzer format
                     analyzer_picks = []
                     for bet in all_parsed:
-                        if bet.get("outcome") in ("WIN", "LOSS"):
-                            continue  # Skip settled bets
+                        # Only skip bets that are already settled (WIN or LOSS from completed games)
+                        # PENDING bets (live/upcoming slips) should pass through for analysis
+                        if bet.get("outcome") in ("WIN", "LOSS") and not bet.get("overall_result") == "PENDING":
+                            continue
                         analyzer_picks.append({
                             "player": bet.get("player", ""),
                             "stat": bet.get("prop", ""),
                             "line": float(bet.get("line", 0) or 0),
                             "side": bet.get("side", "OVER"),
-                            "sport": bet.get("sport", "NBA"),
+                            "sport": bet.get("sport", "MLB"),
                         })
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
@@ -19525,8 +19527,7 @@ with tabs[5]:
                     line = line.strip()
                     if not line:
                         continue
-                    # Pattern: Player Name OVER/UNDER line Stat
-                    # or: Player Name MORE/LESS line Stat
+                    # Pattern 1: Standard format — Player OVER/UNDER line Stat
                     m = re.match(
                         r"([A-Za-z][A-Za-z\s\.'-]+?)\s+(OVER|UNDER|MORE|LESS)\s+([\d\.]+)\s+(.+)",
                         line, re.IGNORECASE
@@ -19542,8 +19543,32 @@ with tabs[5]:
                         parsed_picks.append({
                             "player": player, "stat": stat,
                             "line": line_val, "side": side,
-                            "sport": "NBA"
+                            "sport": "MLB"
                         })
+                        continue
+                    # Pattern 2: PrizePicks raw — "James Wood ↑ 6.5 Hitter FS"
+                    #             or "James Wood  6.5 Hitter FS" (arrow stripped by copy)
+                    m2 = re.match(
+                        r"([A-Za-z][A-Za-z\s\.'-]+?)\s+([↑↓⬆⬇▲▼])?\s*([\d\.]+)\s+(.+)",
+                        line
+                    )
+                    if m2:
+                        player = m2.group(1).strip()
+                        arrow = m2.group(2) or ""
+                        side = "UNDER" if arrow in "↓⬇▼" else "OVER"
+                        try:
+                            line_val = float(m2.group(3))
+                        except (ValueError, TypeError):
+                            continue
+                        stat = m2.group(4).strip()
+                        # Strip trailing jersey numbers or team codes
+                        stat = re.sub(r"\s*#\d+.*$", "", stat).strip()
+                        parsed_picks.append({
+                            "player": player, "stat": stat,
+                            "line": line_val, "side": side,
+                            "sport": "MLB"
+                        })
+                        continue
                 if parsed_picks:
                     st.session_state["analyzer_picks"] = parsed_picks
                     st.success(f"✅ Parsed {len(parsed_picks)} picks")

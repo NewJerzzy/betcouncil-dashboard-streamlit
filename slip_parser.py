@@ -102,7 +102,17 @@ def _parse_pp_ocr_inline(raw_text):
         metrics.append({"prop": prop_clean, "actual": actual, "line": line, "result": result, "side": "OVER"})
 
     # Step 3: Combine and apply header win override
-    _overall = "WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS"
+    # Detect pending slip: no "Final" keyword AND no actual results recorded
+    _has_final = bool(re.search(r"\bFinal\b", raw_text, re.I))
+    _is_pending = not _has_final and not _header_win
+    _overall = "PENDING" if _is_pending else ("WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS")
+
+    # Detect OVER/UNDER from arrow characters in raw text for each pick
+    # PrizePicks uses ↑ for MORE (OVER) and ↓ for LESS (UNDER)
+    _arrow_sides = []
+    for _arrow_m in re.finditer(r"[↑↓⬆⬇▲▼]", raw_text):
+        _arrow_sides.append("OVER" if _arrow_m.group() in "↑⬆▲" else "UNDER")
+
     out = []
     for i in range(min(len(players), len(metrics))):
         entry = {**players[i], **metrics[i]}
@@ -110,7 +120,14 @@ def _parse_pp_ocr_inline(raw_text):
         entry["payout"] = _payout if i == 0 else 0.0
         entry["slip_type"] = _slip_type
         entry["overall_result"] = _overall
-        if _header_win:
+        # Apply arrow-derived side if available
+        if i < len(_arrow_sides):
+            entry["side"] = _arrow_sides[i]
+        if _is_pending:
+            entry["result"] = "PENDING"
+            entry["outcome"] = "PENDING"
+            entry["actual"] = None  # No result yet
+        elif _header_win:
             entry["result"] = "WIN"
             entry["outcome"] = "WIN"
         elif not entry.get("result") or entry.get("result") not in ("WIN","LOSS"):
