@@ -208,13 +208,43 @@ PROBIT_PROPS = {"pts","reb","ast","pra","pts+reb","pts+ast","reb+ast","pts+reb+a
 SHIN_PROPS   = {"hr","goals","td_scorer","first_basket","anytime_td"}
 
 
+def no_vig_prob_power(over_american, under_american) -> float:
+    """
+    Power/Exponential oversum devig — solves for exponent k such that:
+    p_fav^k + p_dog^k = 1
+    Corrects for Favourite-Longshot Bias: sharp books hide more vig on underdogs.
+    Superior to linear normalization for asymmetric markets.
+    """
+    try:
+        p_over  = american_to_prob(over_american)
+        p_under = american_to_prob(under_american)
+        total   = p_over + p_under
+        if total <= 1.0:
+            return no_vig_prob(over_american, under_american)
+        # Binary search for k such that p_over^k + p_under^k = 1
+        lo, hi = 0.5, 3.0
+        for _ in range(50):
+            k   = (lo + hi) / 2
+            val = p_over**k + p_under**k
+            if val > 1.0:
+                lo = k
+            else:
+                hi = k
+        k = (lo + hi) / 2
+        fair_p = p_over**k / (p_over**k + p_under**k)
+        return round(float(fair_p), 4)
+    except Exception:
+        return no_vig_prob(over_american, under_american)
+
+
 def devig_best(over_american, under_american, market_type="standard", prop_key="") -> float:
     """
-    Auto-select devig method by market/prop type.
-    Probit:      NBA/WNBA counting stats (PTS/REB/AST etc.) — EVSharps default
-    Shin:        HR, TD scorers, goals, longshots (+200 to +800)
-    Logarithmic: Extreme longshots (+500+)
-    Additive:    Everything else
+    Auto-select best devig method by market/prop type.
+    Power:   Asymmetric markets (spreads, totals, game lines)
+    Probit:  NBA/WNBA counting stats (PTS/REB/AST) — EVSharps default
+    Shin:    HR/TD scorers/goals/longshots (+200 to +800)
+    Log:     Extreme longshots (+500+)
+    Additive: Fallback
     """
     try:
         prop_lower = (prop_key or "").lower().replace(" ","").replace("+","").replace("_","")
@@ -224,17 +254,161 @@ def devig_best(over_american, under_american, market_type="standard", prop_key="
         if any(p in prop_lower for p in ["pts","reb","ast","pra","dd","stl","blk","min","3pt"]):
             return no_vig_prob_probit(over_american, under_american)
 
-        # Shin for longshot/asymmetric markets
-        if market_type == "longshot" or prop_lower in ["hr","goals","td"] or o_val >= 200:
+        # Shin for longshot/asymmetric props
+        if market_type == "longshot" or prop_lower in ["hr","goals","td"] or (200 <= o_val < 500):
             return no_vig_prob_shin(over_american, under_american)
 
         # Log for extreme longshots
         if o_val >= 500:
             return no_vig_prob_log(over_american, under_american)
 
-        return no_vig_prob(over_american, under_american)
+        # Power for near-even markets (spreads, game totals, -200 to +200)
+        return no_vig_prob_power(over_american, under_american)
     except (TypeError, ValueError):
         return no_vig_prob(over_american, under_american)
+
+
+def kelly_with_edge_decay(edge, odds_american, time_to_lock_minutes=None,
+                          pinnacle_open=True, circa_open=True,
+                          fraction=0.25) -> float:
+    """
+    Kelly criterion with edge decay and liquidity multiplier.
+    Early lines (high uncertainty): scale down — edge hasn't matured yet.
+    Late lines (high liquidity, both sharp books open): scale up to 0.5x Kelly.
+
+    Args:
+        edge:                 Model edge (e.g. 0.08 = 8%)
+        odds_american:        American odds for the bet
+        time_to_lock_minutes: Minutes until game/prop locks (None = unknown)
+        pinnacle_open:        Pinnacle still accepting bets at high limits
+        circa_open:           Circa still accepting bets at high limits
+        fraction:             Base fractional Kelly (default 0.25 = quarter Kelly)
+
+    Returns:
+        Recommended bet size as fraction of bankroll (e.g. 0.03 = 3%)
+    """
+    try:
+        odds = float(odds_american)
+        b    = (odds / 100) if odds > 0 else (100 / abs(odds))
+        p    = max(0.01, min(0.99, 0.524 + edge))   # implied win prob from edge
+        q    = 1.0 - p
+        kelly_full = (b * p - q) / b
+        if kelly_full <= 0:
+            return 0.0
+
+        # Edge decay multiplier based on time to lock
+        if time_to_lock_minutes is None:
+            decay_mult = 1.0   # unknown — use base fraction
+        elif time_to_lock_minutes > 240:
+            decay_mult = 0.60  # >4hr before lock: high uncertainty
+        elif time_to_lock_minutes > 60:
+            decay_mult = 0.80  # 1-4hr: maturing
+        elif time_to_lock_minutes > 20:
+            decay_mult = 1.00  # 20-60min: solid signal
+        else:
+            decay_mult = 1.20  # <20min: fully verified market
+
+        # Liquidity multiplier: both sharp books open = higher confidence
+        if pinnacle_open and circa_open:
+            liquidity_mult = min(2.0, 1.0 + (decay_mult - 1.0) * 0.5 + 0.2)
+            final_fraction = min(0.50, fraction * liquidity_mult)
+        else:
+            final_fraction = fraction * decay_mult
+
+        return round(kelly_full * final_fraction, 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def compute_brier_score(history) -> dict:
+    """
+    Brier Score: mean squared error of probability predictions vs outcomes.
+    BS = (1/N) * sum((P_pred - outcome)^2)
+    Range: 0 (perfect) to 1 (worst). A fair coin flip = 0.25.
+    Alert threshold: BS > 0.25 means model is worse than random.
+
+    Also computes Log Loss and rolling Z-score vs closing market.
+    Returns dict with lifetime, L30, L7 windows.
+    """
+    def _brier_window(records):
+        if not records:
+            return None
+        scores = []
+        log_losses = []
+        for r in records:
+            outcome = r.get("outcome", "")
+            prob    = r.get("prob") or r.get("Prob")
+            if outcome not in ("WIN", "LOSS") or prob is None:
+                continue
+            try:
+                p   = float(str(prob).replace("%","")) / (100 if "%" in str(prob) else 1)
+                p   = max(0.01, min(0.99, p))
+                y   = 1.0 if outcome == "WIN" else 0.0
+                scores.append((p - y) ** 2)
+                log_losses.append(-(y * log(p) + (1 - y) * log(1 - p)))
+            except (ValueError, TypeError):
+                continue
+        if not scores:
+            return None
+        bs  = round(sum(scores) / len(scores), 4)
+        ll  = round(sum(log_losses) / len(log_losses), 4)
+        n   = len(scores)
+        # Alert: if BS > 0.25, model underperforming random
+        alert = bs > 0.25
+        grade = "ELITE" if bs < 0.20 else "GOOD" if bs < 0.22 else "FAIR" if bs < 0.25 else "NEEDS WORK"
+        return {"brier_score": bs, "log_loss": ll, "n": n, "alert": alert, "grade": grade}
+
+    if not history:
+        return {}
+
+    from datetime import datetime, timedelta
+    now = datetime.now()
+
+    def _filter_window(days):
+        cutoff = now - timedelta(days=days)
+        return [r for r in history if r.get("timestamp") and
+                _parse_dt(r["timestamp"]) >= cutoff]
+
+    def _parse_dt(ts):
+        try:
+            return datetime.fromisoformat(str(ts)[:19])
+        except Exception:
+            return datetime.min
+
+    return {
+        "lifetime": _brier_window(history),
+        "L30":      _brier_window(_filter_window(30)),
+        "L7":       _brier_window(_filter_window(7)),
+    }
+
+
+def compute_calibration_zscore(history) -> dict:
+    """
+    Z-score of model predictions vs closing market (Pinnacle no-vig).
+    Z > 2.0 = model significantly overestimates edge (danger)
+    Z < -2.0 = model underestimates edge (opportunity)
+    """
+    clv_values = [
+        r.get("clv_capture", {}).get("clv_vs_novig")
+        for r in (history or [])
+        if r.get("clv_capture", {}).get("clv_resolved")
+        and r.get("clv_capture", {}).get("clv_vs_novig") is not None
+    ]
+    if len(clv_values) < 10:
+        return {"z_score": None, "n": len(clv_values), "alert": False}
+    n    = len(clv_values)
+    mean = sum(clv_values) / n
+    var  = sum((v - mean)**2 for v in clv_values) / n
+    std  = var**0.5 if var > 0 else 0.001
+    z    = round(mean / (std / n**0.5), 3)
+    return {
+        "z_score":   z,
+        "mean_clv":  round(mean, 4),
+        "std_clv":   round(std, 4),
+        "n":         n,
+        "alert":     abs(z) > 2.0,
+        "direction": "overconfident" if z < -2.0 else "underconfident" if z > 2.0 else "calibrated",
+    }
 
 
 def get_best_devig_combo(sport, book, prop):
