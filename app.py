@@ -19476,8 +19476,9 @@ with tabs[5]:
         )
         if slip_imgs:
             if st.button("🔍 Parse Screenshot", key="parse_slip_screenshot"):
-                # Clear stale picks from previous parse before starting fresh
+                # Clear stale picks AND previous analysis results before starting fresh
                 st.session_state["analyzer_picks"] = []
+                st.session_state["analyzer_results"] = []
                 st.session_state["ocr_raw_text"] = ""
                 all_parsed = []
                 with st.spinner("Reading screenshot..."):
@@ -19580,6 +19581,7 @@ with tabs[5]:
                         continue
                 if parsed_picks:
                     st.session_state["analyzer_picks"] = parsed_picks
+                    st.session_state["analyzer_results"] = []
                     st.success(f"✅ Parsed {len(parsed_picks)} picks")
                     st.rerun()
                 else:
@@ -19631,6 +19633,8 @@ with tabs[5]:
 
         if st.button("🗑️ Clear Slip", key="clear_slip"):
             st.session_state["analyzer_picks"] = []
+            st.session_state["analyzer_results"] = []
+            st.session_state["ocr_raw_text"] = ""
             st.rerun()
 
         st.markdown("---")
