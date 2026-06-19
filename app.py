@@ -14708,10 +14708,10 @@ def fetch_draftkings_direct(sport):
 
     # League IDs and player prop subcategory IDs
     league_map = {
-        "NBA":  {"leagueId": "42648", "subCatId": "16477"},
-        "MLB":  {"leagueId": "84240", "subCatId": "16477"},
-        "NHL":  {"leagueId": "42133", "subCatId": "16477"},
-        "WNBA": {"leagueId": "92483", "subCatId": "16477"},
+        "NBA":  {"leagueId": "42648",    "subCatId": "16477"},  # NBA player props
+        "MLB":  {"leagueId": "84240",    "subCatId": "11145"},  # MLB player props (fixed Jun 2026)
+        "NHL":  {"leagueId": "42133",    "subCatId": "16477"},
+        "WNBA": {"leagueId": "92483",    "subCatId": "16477"},
         "NFL":  {"leagueId": "88670775", "subCatId": "16477"},
     }
     cfg = league_map.get(sport, league_map["NBA"])
@@ -14799,6 +14799,66 @@ def fetch_draftkings_direct(sport):
                     })
 
         # Cache
+        # Event-level fallback (declanwalpole pattern):
+        # If subcat query returned nothing, fetch today's events and pull all markets
+        if not props:
+            try:
+                events_url = f"https://sportsbook-nash.draftkings.com/sites/US-SB/api/sportscontent/dkusny/v1/leagues/{lid}/eventgroups"
+                r_ev = session.get(events_url, headers=headers, timeout=12)
+                if r_ev.status_code == 200:
+                    ev_data = r_ev.json()
+                    for eg in ev_data.get("eventGroups", []):
+                        for ev in eg.get("events", []):
+                            eid = ev.get("eventId") or ev.get("id")
+                            if not eid:
+                                continue
+                            # Per-event endpoint — exposes ALL markets/subcategories
+                            ev_url = f"https://sportsbook.draftkings.com/sites/US-SB/api/v3/event/{eid}"
+                            r_e = session.get(ev_url, headers=headers, timeout=10)
+                            if r_e.status_code != 200:
+                                continue
+                            e_data = r_e.json()
+                            for cat in e_data.get("eventCategories", []):
+                                for mg in cat.get("componentizedOffers", []):
+                                    grp_name = mg.get("subcategoryName", "")
+                                    for mkt_group in mg.get("offers", []):
+                                        for mkt in (mkt_group if isinstance(mkt_group, list) else [mkt_group]):
+                                            if mkt.get("isSuspended") or not mkt.get("isOpen"):
+                                                continue
+                                            mkt_label = mkt.get("label", "")
+                                            for outcome in mkt.get("outcomes", []):
+                                                if outcome.get("hidden"):
+                                                    continue
+                                                o_label = outcome.get("label", "")
+                                                parts = outcome.get("participants", [])
+                                                player = parts[0].get("name", "") if parts else ""
+                                                if not player:
+                                                    player = o_label
+                                                line = outcome.get("line") or outcome.get("points") or outcome.get("handicap")
+                                                odds_am = outcome.get("oddsAmerican", "") or outcome.get("displayOdds", {}).get("american", "—")
+                                                side = "UNDER" if "Under" in o_label else "OVER"
+                                                if line is None:
+                                                    _lm2 = _re.search(r"([\d.]+)", o_label)
+                                                    if _lm2:
+                                                        try: line = float(_lm2.group(1))
+                                                        except (ValueError, TypeError): pass
+                                                if player and line is not None:
+                                                    try:
+                                                        props.append({
+                                                            "Player": player, "Prop": mkt_label or grp_name,
+                                                            "Line": float(str(line).replace("+", "")),
+                                                            "Side": side,
+                                                            "OverOdds": str(odds_am) if side == "OVER" else "—",
+                                                            "UnderOdds": str(odds_am) if side == "UNDER" else "—",
+                                                            "Book": "DraftKings", "Sport": sport,
+                                                            "source": "draftkings_event_level",
+                                                        })
+                                                    except (ValueError, TypeError):
+                                                        continue
+                            time.sleep(0.2)  # be gentle
+            except (IOError, ValueError, KeyError) as _ef:
+                print(f"[WARN] DK event-level fallback: {_ef}")
+
         if props:
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
@@ -15261,6 +15321,133 @@ def fetch_betr_direct(sport):
 
 # ── BetRivers Direct (Kambi backend) ──────────────────────────
 # DUPLICATE fetch_betrivers_direct removed (was identical to L13535)
+
+
+# ── Superbook Direct (sharp book, Circa-adjacent) ─────────────
+def fetch_superbook_direct(sport):
+    """
+    Fetch Superbook props via their public API.
+    Superbook carries strong sharp signal weight (Circa Sports ownership group).
+    Used as additional devig source alongside Pinnacle/Circa.
+    """
+    try:
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Origin": "https://co.superbook.com",
+        "Referer": "https://co.superbook.com/sports",
+    }
+    props = []
+
+    cache_path = os.path.join(CACHE_DIR, f"superbook_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            try:
+                with open(cache_path, "rb") as f:
+                    cached = pickle.load(f)
+                if cached:
+                    return cached
+            except Exception:
+                pass
+
+    sport_map = {
+        "NBA": "basketball/nba", "MLB": "baseball/mlb",
+        "NHL": "ice-hockey/nhl", "NFL": "american-football/nfl",
+        "WNBA": "basketball/wnba",
+    }
+    sb_sport = sport_map.get(sport)
+    if not sb_sport:
+        return []
+
+    try:
+        # Superbook uses Kambi backend (same as BetRivers)
+        # Offering endpoint returns all available markets
+        kambi_url = (
+            f"https://eu-offering-api.kambicdn.com/offering/v2018/superbook"
+            f"/listView/{sb_sport}.json"
+            f"?lang=en_US&market=US&client_id=2&channel_id=1"
+            f"&ncids=1&category=player-props&useCombined=true"
+        )
+        r = session.get(kambi_url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+        events = data.get("events", [])
+
+        for event in events:
+            ev_info = event.get("event", {})
+            for betOffer in event.get("betOffers", []):
+                if not betOffer.get("open", True):
+                    continue
+                market_name = betOffer.get("criterion", {}).get("label", "")
+                for outcome in betOffer.get("outcomes", []):
+                    if outcome.get("status") != "OPEN":
+                        continue
+                    label = outcome.get("label", "")
+                    participant = outcome.get("participant", label)
+                    odds_eu = outcome.get("odds", 0)  # European format *1000
+                    odds_dec = odds_eu / 1000 if odds_eu > 1000 else odds_eu
+                    line = outcome.get("line")
+                    if line is not None:
+                        line = line / 1000  # Kambi stores lines *1000
+
+                    # Parse Over/Under
+                    side = "OVER"
+                    player = participant
+                    if " Over " in label:
+                        side = "OVER"
+                        player = label.split(" Over ")[0].strip()
+                    elif " Under " in label:
+                        side = "UNDER"
+                        player = label.split(" Under ")[0].strip()
+                    elif label.startswith("Over"):
+                        side = "OVER"
+                    elif label.startswith("Under"):
+                        side = "UNDER"
+
+                    if not player or line is None:
+                        continue
+
+                    # Convert decimal odds to American
+                    try:
+                        d = float(odds_dec)
+                        if d >= 2.0:
+                            odds_am = f"+{int((d - 1) * 100)}"
+                        else:
+                            odds_am = f"{int(-100 / (d - 1))}"
+                    except (ValueError, ZeroDivisionError):
+                        odds_am = "—"
+
+                    try:
+                        props.append({
+                            "Player": player.strip(),
+                            "Prop": market_name,
+                            "Line": float(line),
+                            "Side": side,
+                            "OverOdds": odds_am if side == "OVER" else "—",
+                            "UnderOdds": odds_am if side == "UNDER" else "—",
+                            "Book": "Superbook",
+                            "Sport": sport,
+                            "source": "superbook_direct",
+                        })
+                    except (ValueError, TypeError):
+                        continue
+
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+
+    except (IOError, ValueError, KeyError) as _e:
+        print(f"[WARN] Superbook: {_e}")
+
+    return props
+
 # ── Feature 1: Practice Participation Tracker ──────────────────
 def fetch_nfl_practice_participation():
     """
@@ -15843,6 +16030,7 @@ def load_sport_data(sport):
             (fetch_betmgm_direct,     "BetMGM",     "📡"),
             (fetch_caesars_direct,    "Caesars",     "📡"),
             (fetch_betrivers_direct,  "BetRivers",  "📡"),
+            (fetch_superbook_direct,  "Superbook",  "📡"),
             (fetch_betr_direct,       "Betr",       "📡"),
         ]:
             try:
