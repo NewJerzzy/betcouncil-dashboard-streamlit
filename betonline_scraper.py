@@ -50,8 +50,109 @@ SPORT_MAP = {
 # Props that are always OVER only
 ALWAYS_OVER = {"home runs", "pitcher wins", "wins", "saves"}
 
+def get_game_lines(sport="NBA"):
+    """Get game lines (Spread/ML/Total) for a sport.
+
+    CONFIRMED 2026-06-20 via real captured response body (not a guess): the live
+    endpoint is POST api-offering.betonline.ag/api/offering/Sports/offering-by-league
+    (note capital S in "Sports" — the old get-linked-events/get-event endpoints this
+    file previously guessed at used lowercase "sports" and were never confirmed
+    against a real response).
+
+    Confirmed real response schema:
+      GameOffering.GamesDescription[] -- list of {GameDate, Game: {...}}
+      Game.GameId, AwayTeam, HomeTeam, AwayPitcher/HomePitcher (MLB), GameDateTime
+      Game.AwayLine / Game.HomeLine -- each has SpreadLine, MoneyLine, TotalLine
+        SpreadLine: {Point, Line}  -- Point is the spread number, Line is American odds
+        MoneyLine: {Line}          -- Line is American odds directly
+      Game.TotalLine.TotalLine.{Over,Under}.{Point,Line} -- total/over-under
+
+    NOT confirmed: the exact POST request body this endpoint expects (only the
+    response was captured, not request headers/payload). The body below is a
+    best-effort guess based on the existing menu-discovery pattern in this file
+    (sport/league key naming) and has NOT been verified — if this returns a 4xx,
+    that's the next thing to check via a full Copy-as-cURL capture of this exact
+    request, not the response parsing below, which IS verified against real data.
+
+    NOTE: this endpoint returns GAME LINES only (Spread/ML/Total). Player props are
+    not present in this response — Game.AdditionalMarketCount in the real capture
+    (typically 5) implies they're a separate per-game request, not yet captured.
+    get_props_for_game() below remains unconfirmed/guesswork until that capture
+    happens.
+    """
+    sport_key, league_key = SPORT_MAP.get(sport, ("basketball", "nba"))
+    games = []
+
+    try:
+        r = requests.post(
+            "https://api-offering.betonline.ag/api/offering/Sports/offering-by-league",
+            headers=HEADERS,
+            json={"sport": sport_key, "league": league_key},
+            timeout=10
+        )
+        if r.status_code != 200:
+            print(f"  offering-by-league error: {r.status_code}")
+            return []
+
+        data = r.json()
+        offering = data.get("GameOffering", {}) if isinstance(data, dict) else {}
+        games_desc = offering.get("GamesDescription", []) or []
+
+        for gd in games_desc:
+            g = gd.get("Game", {})
+            if not g:
+                continue
+
+            def _ml(line_block):
+                ml = (line_block or {}).get("MoneyLine", {}) or {}
+                v = ml.get("Line")
+                return v if v not in (None, 0) else None
+
+            def _spread(line_block):
+                sp = (line_block or {}).get("SpreadLine", {}) or {}
+                pt, ln = sp.get("Point"), sp.get("Line")
+                if pt in (None, 0) and ln in (None, 0):
+                    return None, None
+                return pt, ln
+
+            away_line = g.get("AwayLine", {})
+            home_line = g.get("HomeLine", {})
+            total_block = (g.get("TotalLine", {}) or {}).get("TotalLine", {}) or {}
+
+            away_spread_pt, away_spread_ln = _spread(away_line)
+            home_spread_pt, home_spread_ln = _spread(home_line)
+
+            games.append({
+                "GameId":      g.get("GameId"),
+                "AwayTeam":    g.get("AwayTeam", ""),
+                "HomeTeam":    g.get("HomeTeam", ""),
+                "AwayPitcher": g.get("AwayPitcher", ""),
+                "HomePitcher": g.get("HomePitcher", ""),
+                "WagerCutOff": g.get("WagerCutOff", ""),
+                "AwaySpreadPoint": away_spread_pt, "AwaySpreadOdds": away_spread_ln,
+                "HomeSpreadPoint": home_spread_pt, "HomeSpreadOdds": home_spread_ln,
+                "AwayML": _ml(away_line), "HomeML": _ml(home_line),
+                "TotalPoint": total_block.get("Point"),
+                "TotalOverOdds":  (total_block.get("Over", {}) or {}).get("Line"),
+                "TotalUnderOdds": (total_block.get("Under", {}) or {}).get("Line"),
+                "Book": "BetOnline", "Sport": sport, "source": "betonline_api",
+            })
+
+        print(f"  Found {len(games)} games with lines for {sport}")
+        return games
+
+    except Exception as e:
+        print(f"  offering-by-league error: {e}")
+        return []
+
+
 def get_game_ids(sport="NBA"):
-    """Get today's game IDs from BetOnline menu."""
+    """Get today's game IDs from BetOnline menu.
+
+    UNCONFIRMED — kept as a fallback for player-prop discovery (get_props_for_game
+    still needs real game IDs to query, until that endpoint is itself confirmed).
+    Prefer get_game_lines() above for game-line data; its schema is verified.
+    """
     sport_key, league_key = SPORT_MAP.get(sport, ("basketball","nba"))
     try:
         r = requests.post(
@@ -200,8 +301,8 @@ def get_event_details(game_id, sport="NBA"):
     return None
 
 
-def push_to_gist(props, sport):
-    """Push props to GitHub Gist for BetCouncil to read."""
+def push_to_gist(props, lines, sport):
+    """Push props and game lines to GitHub Gist for BetCouncil to read."""
     if not GITHUB_TOKEN or GITHUB_TOKEN == "YOUR_GITHUB_TOKEN_HERE":
         print("  ⚠️  Fill in GITHUB_TOKEN before pushing")
         return False
@@ -211,8 +312,10 @@ def push_to_gist(props, sport):
         "date":       date.today().isoformat(),
         "timestamp":  datetime.now().isoformat(),
         "prop_count": len(props),
+        "line_count": len(lines),
         "book":       "BetOnline",
         "props":      props,
+        "lines":      lines,
     }
 
     r = requests.patch(
@@ -223,7 +326,7 @@ def push_to_gist(props, sport):
         timeout=10
     )
     if r.status_code == 200:
-        print(f"  ✅ Pushed {len(props)} props to Gist")
+        print(f"  ✅ Pushed {len(props)} props + {len(lines)} game lines to Gist")
         return True
     else:
         print(f"  ❌ Gist push failed: {r.status_code}")
@@ -235,55 +338,36 @@ def scrape(sport="NBA", no_push=False):
     print(f"BetOnline {sport} | {datetime.now().strftime('%H:%M:%S')}")
     print(f"{'='*50}")
 
-    # Get game IDs
+    # Game lines — CONFIRMED endpoint/schema (see get_game_lines docstring)
+    lines = get_game_lines(sport)
+    for l in lines[:5]:
+        print(f"  {l['AwayTeam']:25} @ {l['HomeTeam']:25} "
+              f"ML {l['AwayML']}/{l['HomeML']}  Total {l['TotalPoint']}")
+
+    # Player props — UNCONFIRMED, best-effort only (see get_game_ids/
+    # get_props_for_game docstrings). Kept separate from the confirmed lines
+    # above so a prop-fetch failure never hides working game-line data.
     games = get_game_ids(sport)
-
-    if not games:
-        # Fallback: try known game ID format
-        print("  No games from menu — trying get-event directly")
-        # Try today's games via alternate endpoint
-        r = requests.post(
-            f"{BASE_URL}/get-event",
-            headers=HEADERS,
-            json={"sport": SPORT_MAP[sport][0], "league": SPORT_MAP[sport][1]},
-            timeout=10
-        )
-        if r.status_code == 200:
-            data = r.json()
-            print(f"  get-event returned: {len(str(data)):,} chars")
-            print(f"  Preview: {str(data)[:200]}")
-        return []
-
     all_props = []
-    for game in games:
-        gid     = game["gameID"]
-        matchup = game.get("matchup", str(gid))
-        print(f"\n  Game: {matchup} ({gid})")
+    if games:
+        for game in games:
+            gid     = game["gameID"]
+            matchup = game.get("matchup", str(gid))
+            print(f"\n  Game: {matchup} ({gid})")
+            props = get_props_for_game(gid, sport)
+            print(f"    Props: {len(props)} (unconfirmed endpoint)")
+            all_props.extend(props)
+            time.sleep(0.5)
+    else:
+        print("  No games from menu — player props unavailable this run "
+              "(menu endpoint itself is unconfirmed; game lines above are unaffected)")
 
-        # Try get-linked-events first
-        props = get_props_for_game(gid, sport)
+    print(f"\nTotal: {len(lines)} games with lines, {len(all_props)} props")
 
-        # If empty, try get-event
-        if not props:
-            ev_data = get_event_details(gid, sport)
-            if ev_data:
-                print(f"    get-event returned data — parsing...")
-                print(f"    Preview: {str(ev_data)[:150]}")
+    if not no_push and (lines or all_props):
+        push_to_gist(all_props, lines, sport)
 
-        print(f"    Props: {len(props)}")
-        all_props.extend(props)
-        time.sleep(0.5)
-
-    print(f"\nTotal: {len(all_props)} props")
-
-    # Show sample
-    for p in all_props[:5]:
-        print(f"  {p['Player']:25} {p['Prop']:20} {p['Line']} {p['Side']}")
-
-    if not no_push and all_props:
-        push_to_gist(all_props, sport)
-
-    return all_props
+    return lines, all_props
 
 
 if __name__ == "__main__":
