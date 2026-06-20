@@ -7056,6 +7056,34 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             live = live_ratings.get(team, hard)
             blended_ratings[team] = round(live * live_weight + hard * hard_weight, 1)
         power_ratings = blended_ratings
+
+    # Elo nudge — small additive adjustment, not a full re-blend, so a cold
+    # Elo system (early season, most teams still at ELO_DEFAULT_RATING) can't
+    # distort the proven hard/live blend above. Contributes 0 for any team
+    # with no game history yet (elo_to_def_adj(1500)==0). sport must be in
+    # ELO_K_FACTOR or this is skipped (NBA/NFL/WNBA/NHL/Soccer only).
+    if sport in ELO_K_FACTOR:
+        elo_ratings = get_elo_ratings(sport)
+        if elo_ratings:
+            for team in power_ratings:
+                elo_val = elo_ratings.get(team)
+                if elo_val is not None:
+                    power_ratings[team] = round(power_ratings[team] + elo_to_def_adj(elo_val) * 6.0, 1)
+
+    # Real FPI nudge — separate from live_ratings above, which despite its
+    # "FPI" name is actually a win-pct-derived proxy, not real ESPN FPI.
+    # This pulls the genuine FPI metric (HTML-table scrape of espn.com,
+    # more fragile than the JSON-based proxy) as a small additive nudge.
+    # Weighted low (×0.3) since it's the least-tested new source here —
+    # flagged for your review before raising this weight. NFL/NCF only
+    # (fetch_espn_fpi's current scope).
+    if sport == "NFL":
+        fpi_real = fetch_espn_fpi(sport)
+        if fpi_real:
+            for team in power_ratings:
+                fpi_data = fpi_real.get(team)
+                if isinstance(fpi_data, dict) and fpi_data.get("fpi") is not None:
+                    power_ratings[team] = round(power_ratings[team] + fpi_data["fpi"] * 0.3, 1)
     
     public_data = st.session_state.get("public_betting_data", {})
     game_public = None
@@ -12329,6 +12357,19 @@ def score_pick_standalone(player, stat, line, side, sport):
                 if _live:
                     data_source_label = f"🎾 Tennis ESPN ({_live.get('_tour','ATP/WTA')})"
                     confidence_label = f"{_live.get('n_games','?')} matches"
+                    # Merge in this-match live context (opponent, set scores,
+                    # status) without touching the existing season-avg keys.
+                    try:
+                        _tour_lower = str(_live.get("_tour", "atp")).lower()
+                        _t_board = fetch_tennis_scoreboard(_tour_lower)
+                        _t_match = _t_board.get(normalize_name(player)) if _t_board else None
+                        if _t_match:
+                            _live["live_opponent"] = _t_match.get("opponent")
+                            _live["live_status"] = _t_match.get("status")
+                            _live["live_sets"] = _t_match.get("sets")
+                            _live["live_round"] = _t_match.get("round")
+                    except Exception:
+                        pass
                 _stat_lookup = {
                     "Aces": "Aces", "Double Faults": "Double Faults",
                     "Games Won": "Games Won", "Break Points Won": "Break Points Won",
@@ -12340,6 +12381,20 @@ def score_pick_standalone(player, stat, line, side, sport):
                 if _live:
                     data_source_label = "⛳ PGA ESPN 2025"
                     confidence_label = f"{_live.get('n_games','?')} rounds"
+                    # Merge in this-week live context (made cut, position,
+                    # score, tournament) without touching the existing
+                    # season-avg keys.
+                    try:
+                        _g_board = fetch_golf_scoreboard()
+                        _g_match = _g_board.get(normalize_name(player)) if _g_board else None
+                        if _g_match:
+                            _live["live_made_cut"] = _g_match.get("made_cut")
+                            _live["live_position"] = _g_match.get("position")
+                            _live["live_score"] = _g_match.get("score")
+                            _live["live_thru"] = _g_match.get("thru")
+                            _live["live_tournament"] = _g_match.get("tournament")
+                    except Exception:
+                        pass
                 _stat_lookup = {
                     "Strokes": "Strokes", "Birdies": "Birdies",
                     "Bogeys": "Bogeys", "Eagles": "Eagles",
@@ -15246,6 +15301,39 @@ def load_sport_data(sport):
         st.session_state["ev_api_props"]     = []
         st.session_state["ev_signal_lookup"] = {}
         st.session_state["ev_book_lookup"]   = {}
+
+    # ── Parlay Savant — additional MLB book source for line-shopping ───
+    # Sanity-check only: feeds into the same all_alt_sources comparison the
+    # EV API uses above (BetterLineNote detection), never overrides EV API
+    # data. Limited to the highest-volume prop types to avoid one page load
+    # firing 18+ requests — each call is independently cached 10min.
+    if sport == "MLB":
+        _ps_props_to_check = ["Hits", "Home Runs", "Total Bases", "Strikeouts", "RBI"]
+        _ps_total_loaded = 0
+        for _ps_prop_name in _ps_props_to_check:
+            _ps_slug = PARLAYSAVANT_MLB_PROP_MAP.get(_ps_prop_name)
+            if not _ps_slug:
+                continue
+            for _ps_position in ("batter", "pitcher"):
+                try:
+                    _ps_data = fetch_parlaysavant_props(
+                        sport="mlb", position=_ps_position, prop=_ps_slug)
+                except Exception:
+                    _ps_data = {}
+                if not _ps_data:
+                    continue
+                for _ps_entry in _ps_data.values():
+                    _ps_alt = {
+                        "Player": _ps_entry.get("name", ""),
+                        "Prop":   _ps_prop_name,
+                        "Line":   _ps_entry.get("line"),
+                        "Side":   "OVER",
+                    }
+                    if _ps_alt["Line"] is not None:
+                        all_alt_sources.append((_ps_alt, "ParlaySavant"))
+                        _ps_total_loaded += 1
+        if _ps_total_loaded:
+            st.caption(f"📊 Parlay Savant cross-check: {_ps_total_loaded} MLB prop lines")
 
     # ── EV Movement — snapshot delta engine (S8/S9) ────────────────────
     # Computes line movement from successive /api/ev snapshots.
@@ -19265,6 +19353,25 @@ with tabs[3]:
                                     if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                     resolved += 1
                                     st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
+                                    # Elo update — only fires for games the user had a lock on
+                                    # (this hook point, not every completed game in the league),
+                                    # so coverage builds up slowly. A comprehensive version would
+                                    # hook the outer ESPN event loop instead and update from every
+                                    # finished game regardless of locks — bigger change (extra Gist
+                                    # writes on every refresh), left for your review before doing that.
+                                    # Guarded by event id so re-resolving doesn't double-count.
+                                    _elo_event_id = event.get("id")
+                                    if _elo_event_id and sport_key in ELO_K_FACTOR:
+                                        _elo_done = st.session_state.setdefault("_elo_processed_games", set())
+                                        if _elo_event_id not in _elo_done:
+                                            if home_score > away_score:
+                                                _elo_score_a = 1.0
+                                            elif home_score < away_score:
+                                                _elo_score_a = 0.0
+                                            else:
+                                                _elo_score_a = 0.5
+                                            update_elo_after_game(sport_key, home_name, away_name, _elo_score_a)
+                                            _elo_done.add(_elo_event_id)
                     except (ValueError, TypeError, ZeroDivisionError): continue
 
             if resolved == 0:
