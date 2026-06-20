@@ -163,6 +163,25 @@ def _parse_pp_ocr_inline(raw_text):
         body = re.sub(r"[•·]", " ", body)
         # Remove standalone all-caps tokens that are team codes / positions
         body = re.sub(r"\b([A-Z]{1,4})\b", lambda m: " " if m.group(1) in BANNED or m.group(1) in SKIP_POS else m.group(1), body)
+        # Remove title-case status/noise words (e.g. "Final") that the all-caps strip above
+        # misses because OCR renders them title-case, not all-caps. Without this, "Final"
+        # gets glued onto the next title-case run and swallowed into the player name match.
+        body = re.sub(r"\bFinal\b", " ", body, flags=re.I)
+        # Strip known prop labels (e.g. "Total Bases", "Fantasy Score", "3-Pointers") before
+        # name matching. Without this, a prop label sitting directly next to the following
+        # player's name (no separator left after OCR/footer cleanup) merges into one
+        # title-case run and gets misread as part of the player name, e.g.
+        # "Total Bases Shohei Ohtani" or "3-Pointers Nikola Jokic".
+        for _p in PROPS:
+            body = re.sub(r"\b" + re.escape(_p) + r"\b", " ", body, flags=re.I)
+        # Strip single-word prop labels too (e.g. "Points" as a standalone, or as the lead
+        # word swallowed into "Points Stephen Curry"). These must go BEFORE name matching,
+        # not just be filtered after: re.finditer finds non-overlapping matches, so a match
+        # like "Points Stephen Curry" consumes the whole span — even if rejected post-hoc
+        # for containing "Points", the real name "Stephen Curry" was already consumed and
+        # never gets a second chance to match on its own.
+        for _pw in sorted(PROP_WORDS, key=len, reverse=True):
+            body = re.sub(r"\b" + re.escape(_pw) + r"(?:ers|s)?\b", " ", body, flags=re.I)
         body = re.sub(r"\s+", " ", body).strip()
 
         # Find "Firstname Lastname" — title-cased, at least 2 words, ≥2 chars each
@@ -173,6 +192,11 @@ def _parse_pp_ocr_inline(raw_text):
             # Skip if any part is a banned word
             if any(p.upper() in BANNED or p.upper() in SKIP_POS for p in parts):
                 continue
+            # Skip if the whole phrase is actually a prop label (e.g. "Total Bases",
+            # "Fantasy Score") rather than a player name — mirrors the PROP_WORDS
+            # filtering already used in the Layout A name extractor.
+            if any(p in PROP_WORDS for p in parts) or name in PROPS:
+                continue
             if len(parts) >= 2 and all(len(p) >= 2 for p in parts):
                 players.append({"player": name, "sport": header_sport, "book": "PrizePicks"})
 
@@ -181,18 +205,18 @@ def _parse_pp_ocr_inline(raw_text):
     # OCR layouts (where stats appear after the footer) still get their lines
     _prop_source = _raw_for_props
     _has_final = bool(re.search(r"\bFinal\b", _prop_source, re.I))
-    if _has_final:
-        _final_matches = list(re.finditer(r"\bFinal\b", _prop_source, re.I))
-        clean = _prop_source[_final_matches[-1].end():]
-    else:
-        clean = _prop_source
+    # NOTE: settled multi-pick slips show "Final" once PER LEG (each pick's game has its
+    # own status marker), not once as a single header banner. The previous version assumed
+    # a single occurrence and truncated everything before the LAST "Final", which silently
+    # discarded every earlier leg's prop/line data on 2+ pick settled slips. Strip each
+    # occurrence in place instead so all legs' data survives.
+    clean = re.sub(r"\bFinal\b", " ", _prop_source, flags=re.I)
 
     # Strip time tokens and fix comma-numbers before scanning for lines
     clean = re.sub(r"\b\d{1,2}:\d{2}(?:am|pm)\b", "", clean, flags=re.I)
     clean = re.sub(r"\$([\d,]+)", lambda m: "$" + m.group(1).replace(",", ""), clean)
     clean = re.sub(r"&\s*'t", "", clean)
     clean = re.sub(r"\b\d+/\d+\b", "", clean)
-    clean = re.sub(r"\bFinal\b", "", clean, flags=re.I)
     clean = re.sub(r"\s+", " ", clean).strip()
 
     props_re = r"\b(" + "|".join(re.escape(p) for p in PROPS) + r")\b"
