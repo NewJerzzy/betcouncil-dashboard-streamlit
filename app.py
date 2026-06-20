@@ -16990,8 +16990,19 @@ with st.sidebar:
             # Show which source the props came from
             sources = list(set(p.get("source","Unknown") for p in board if p.get("source")))
             source_str = " + ".join(sources) if sources else "Unknown"
-            # Update PrizePicks status based on actual source
-            if any("prizepicks" in s.lower() for s in sources):
+            # Update PrizePicks status based on actual source. IMPORTANT: the auto
+            # scraper (betcouncil_auto_scraper.py) tags its PrizePicks props with
+            # source="prizepicks_auto", which contains "prizepicks" and was
+            # previously satisfying this check WITHOUT setting pp_source to
+            # "gist_scraper" — causing the sidebar to wrongly display "Connected
+            # via ScrapeOps" even when ScrapeOps' free tier is exhausted and the
+            # data actually came from the Gist-backed auto scraper. Fixed by
+            # explicitly setting pp_source here too, matching the same value the
+            # display logic checks for at the gist_scraper branch below.
+            if any("prizepicks_auto" in s.lower() or "gist" in s.lower() for s in sources):
+                st.session_state["pp_status"] = "ok"
+                st.session_state["pp_source"] = "gist_scraper"
+            elif any("prizepicks" in s.lower() for s in sources):
                 st.session_state["pp_status"] = "ok"
             elif sources:
                 st.session_state["pp_status"] = "fallback"
