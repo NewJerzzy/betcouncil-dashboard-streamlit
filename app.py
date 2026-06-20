@@ -13524,9 +13524,15 @@ def fetch_dk_nba_draftgroup_id():
 @st.cache_data(ttl=900)
 def fetch_sleeper_props(sport):
     """
-    Fetch player props from Sleeper DFS - free public API.
-    Available in California. Returns props in standard format.
+    CONFIRMED DEAD 2026-06-20: Sleeper's public API (api.sleeper.app/v1/) was
+    verified live and returns player ID/bio/injury data only — no props, lines,
+    or odds anywhere in the schema. The /projections/{sport}/2025/1 endpoint this
+    function used to call is from Sleeper's deprecated DFS product and no longer
+    returns usable data. No live replacement endpoint exists for player props on
+    Sleeper's current public API. Returns [] immediately rather than attempting
+    a request to a confirmed-dead endpoint.
     """
+    return []
     sport_map = {"NBA": "nba", "MLB": "mlb", "NFL": "nfl", "NHL": "nhl"}
     sport_key = sport_map.get(sport)
     if not sport_key:
