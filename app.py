@@ -7162,6 +7162,23 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 base_total = 44.5
                 power_adj = ((h_power + a_power) / 2 - 104.0) * 0.5
                 fair_total = base_total + power_adj
+            elif sport == "Soccer":
+                # No team-level expected-goals source exists yet in this
+                # codebase (fetch_soccer_rolling_averages is keyed by player,
+                # not team — PLAYER_AVERAGES_SOCCER has no team field to
+                # aggregate from). This is a league-average baseline, same
+                # tier as the HARDCODED FALLBACKS pattern used elsewhere,
+                # not real team-specific xG — flagged for a real source
+                # (e.g. team-level ESPN stats) as a follow-up.
+                # Mirrors the NHL branch's point-estimate pattern (this
+                # function computes fair_total as a divergence point
+                # estimate for every sport, not a probability CDF — true
+                # Skellam-as-probability would be a paradigm change
+                # affecting all sports here, not a soccer-only swap).
+                _league_avg_goals = 1.35  # typical top-5-league goals/team/game
+                home_expected = _league_avg_goals * 1.05  # S3-style home boost
+                away_expected = _league_avg_goals * 0.95  # S3-style away reduction
+                fair_total = home_expected + away_expected
             if fair_total is not None:
                 total_edge = fair_total - total_val
                 total_edge_pct = total_edge / 50.0
@@ -7173,6 +7190,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     total_edge_pct = total_edge / 30.0
                 elif sport == "WNBA":
                     total_edge_pct = total_edge / 30.0  # WNBA ~165pt range, similar scale to NFL
+                elif sport == "Soccer":
+                    total_edge_pct = total_edge / 4.0  # goal totals are small-range (~2.5 line)
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
@@ -12812,7 +12831,16 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
                 _sample_damp = 0.75 + 0.025 * _szn_games   # 0.75 → 1.0 over 10 games
             else:
                 _sample_damp = 1.0
-            fair_prob = compute_fair_prob(line, player_avg * _sample_damp, std_dev, side)
+            _avg_adj = player_avg * _sample_damp
+            # Negative Binomial for overdispersed counting stats — 3PT makes
+            # run hotter-variance than a normal/Poisson assumption captures.
+            # stat_key is "THREE_PT" for NBA (via STAT_NORMALIZE) but WNBA has
+            # no such mapping yet, so also check the raw label as a fallback.
+            _is_three = stat_key == "THREE_PT" or str(stat_key).upper() in ("3-PT MADE", "3PM", "THREES")
+            if _is_three and std_dev is not None and std_dev > 0 and (std_dev ** 2) > _avg_adj:
+                fair_prob = compute_fair_prob_negbinom(line, _avg_adj, std_dev, side)
+            else:
+                fair_prob = compute_fair_prob(line, _avg_adj, std_dev, side)
 
         # NFL: target share / snap count adjustment
         elif sport == "NFL":
@@ -12849,7 +12877,12 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
                     _adj_avg = player_avg
             else:
                 _adj_avg = player_avg
-            fair_prob = compute_fair_prob(line, _adj_avg, std_dev, side)
+            # Negative Binomial for overdispersed counting stats — SOG runs
+            # hotter-variance than a normal/Poisson assumption captures.
+            if stat_key == "SOG" and std_dev is not None and std_dev > 0 and (std_dev ** 2) > _adj_avg:
+                fair_prob = compute_fair_prob_negbinom(line, _adj_avg, std_dev, side)
+            else:
+                fair_prob = compute_fair_prob(line, _adj_avg, std_dev, side)
 
         else:
             fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
