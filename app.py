@@ -19077,6 +19077,61 @@ with tabs[3]:
         else:
             resolved = 0
             skipped = []
+
+            # Comprehensive Elo update — runs once per "Check Results" click,
+            # independent of whether locks are props or game-lines, updates
+            # from EVERY completed game across all 4 leagues (not just games
+            # the user has a bet on). Dedup via a Gist-persisted processed-
+            # game-id set per sport, loaded/saved once per click (not once
+            # per game) so this stays cheap.
+            _elo_sport_map = {"NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
+                               "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl")}
+            for _elo_sport, (_elo_es, _elo_el) in _elo_sport_map.items():
+                if _elo_sport not in ELO_K_FACTOR:
+                    continue
+                try:
+                    _elo_sb = requests.get(
+                        f"https://site.web.api.espn.com/apis/site/v2/sports/{_elo_es}/{_elo_el}/scoreboard",
+                        headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+                    if _elo_sb.status_code != 200:
+                        continue
+                    _elo_events = _elo_sb.json().get("events", [])
+                    if not _elo_events:
+                        continue
+                    _elo_processed_key = f"elo_processed_{_elo_sport.lower()}"
+                    _elo_processed = set(load_from_gist(_elo_processed_key, []) or [])
+                    _elo_new = False
+                    for _elo_event in _elo_events:
+                        if not _elo_event.get("status", {}).get("type", {}).get("completed"):
+                            continue
+                        _elo_eid = _elo_event.get("id")
+                        if not _elo_eid or _elo_eid in _elo_processed:
+                            continue
+                        _elo_comps = _elo_event.get("competitions", [{}])[0]
+                        _elo_teams = _elo_comps.get("competitors", [])
+                        if len(_elo_teams) < 2:
+                            continue
+                        _elo_home, _elo_away = _elo_teams[0], _elo_teams[1]
+                        _elo_h_name = _elo_home.get("team", {}).get("displayName", "")
+                        _elo_a_name = _elo_away.get("team", {}).get("displayName", "")
+                        if not _elo_h_name or not _elo_a_name:
+                            continue
+                        _elo_h_score = float(_elo_home.get("score", 0) or 0)
+                        _elo_a_score = float(_elo_away.get("score", 0) or 0)
+                        if _elo_h_score > _elo_a_score:
+                            _elo_score_a = 1.0
+                        elif _elo_h_score < _elo_a_score:
+                            _elo_score_a = 0.0
+                        else:
+                            _elo_score_a = 0.5
+                        update_elo_after_game(_elo_sport, _elo_h_name, _elo_a_name, _elo_score_a)
+                        _elo_processed.add(_elo_eid)
+                        _elo_new = True
+                    if _elo_new:
+                        save_to_gist(_elo_processed_key, list(_elo_processed))
+                except (ValueError, KeyError, TypeError, AttributeError, requests.RequestException):
+                    continue
+
             espn_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             sport_map = {
                 "NBA": "basketball/nba",
@@ -19353,25 +19408,6 @@ with tabs[3]:
                                     if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                     resolved += 1
                                     st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
-                                    # Elo update — only fires for games the user had a lock on
-                                    # (this hook point, not every completed game in the league),
-                                    # so coverage builds up slowly. A comprehensive version would
-                                    # hook the outer ESPN event loop instead and update from every
-                                    # finished game regardless of locks — bigger change (extra Gist
-                                    # writes on every refresh), left for your review before doing that.
-                                    # Guarded by event id so re-resolving doesn't double-count.
-                                    _elo_event_id = event.get("id")
-                                    if _elo_event_id and sport_key in ELO_K_FACTOR:
-                                        _elo_done = st.session_state.setdefault("_elo_processed_games", set())
-                                        if _elo_event_id not in _elo_done:
-                                            if home_score > away_score:
-                                                _elo_score_a = 1.0
-                                            elif home_score < away_score:
-                                                _elo_score_a = 0.0
-                                            else:
-                                                _elo_score_a = 0.5
-                                            update_elo_after_game(sport_key, home_name, away_name, _elo_score_a)
-                                            _elo_done.add(_elo_event_id)
                     except (ValueError, TypeError, ZeroDivisionError): continue
 
             if resolved == 0:
