@@ -511,6 +511,79 @@ def compute_fair_prob(line, avg, std_dev, side="OVER"):
     return round(max(0.20, min(0.80, prob)), 4)
 
 
+def compute_fair_prob_negbinom(line, avg, std_dev, side="OVER"):
+    """Negative Binomial fair probability — better fit than the normal approximation
+    for overdispersed counting stats (3PT attempts, shots on goal, strikeouts) where
+    empirical variance exceeds the mean. Falls back to compute_fair_prob (normal
+    approx) automatically when variance <= mean, since NB is undefined there and
+    normal/Poisson already fit cleanly in that regime.
+    std_dev should come from compute_std_dev() on real game-log values so the
+    variance reflects actual observed dispersion, not an assumed constant."""
+    if avg <= 0:
+        return 0.5
+    if std_dev is None or std_dev <= 0:
+        return compute_fair_prob(line, avg, std_dev, side)
+    variance = std_dev ** 2
+    if variance <= avg:
+        return compute_fair_prob(line, avg, std_dev, side)
+    r = (avg ** 2) / (variance - avg)
+    p = r / (r + avg)
+    adjusted_line = line + 0.5 if (line == int(line)) else line
+    k = math.floor(adjusted_line)
+    if side.upper() == "OVER":
+        prob = scipy_stats.nbinom.sf(k, r, p)
+    else:
+        prob = scipy_stats.nbinom.cdf(k, r, p)
+    return round(max(0.20, min(0.80, prob)), 4)
+
+
+def compute_fair_prob_skellam(line, mu_a, mu_b, side="OVER"):
+    """Skellam distribution fair probability for goal/run differential markets
+    (soccer/hockey spreads and totals on the margin) — models the difference of
+    two independent Poisson-distributed scoring rates. mu_a/mu_b are each team's
+    expected goals/runs for the game (xG-style inputs, not season averages)."""
+    if mu_a <= 0 or mu_b <= 0:
+        return 0.5
+    adjusted_line = line + 0.5 if (line == int(line)) else line
+    k = math.floor(adjusted_line)
+    if side.upper() == "OVER":
+        prob = scipy_stats.skellam.sf(k, mu_a, mu_b)
+    else:
+        prob = scipy_stats.skellam.cdf(k, mu_a, mu_b)
+    return round(max(0.20, min(0.80, prob)), 4)
+
+
+ELO_DEFAULT_RATING = 1500.0
+ELO_K_FACTOR = {"NFL": 20, "NBA": 20, "WNBA": 20, "NHL": 20, "Soccer": 20}
+
+
+def elo_expected_score(rating_a, rating_b):
+    """Standard Elo win-probability formula for team A vs team B."""
+    return 1.0 / (1.0 + 10 ** ((rating_b - rating_a) / 400.0))
+
+
+def elo_update(rating_a, rating_b, score_a, k=20):
+    """Incremental Elo update after a game result.
+    score_a: 1.0 = team A win, 0.5 = draw/tie, 0.0 = team A loss.
+    Returns (new_rating_a, new_rating_b). Seeds at ELO_DEFAULT_RATING (1500) for
+    unseen teams — this is a forward-updating tracker, not a historical backfill,
+    so ratings are most reliable after the first several weeks of a season as they
+    converge, same cold-start behavior as any live Elo system."""
+    expected_a = elo_expected_score(rating_a, rating_b)
+    expected_b = 1.0 - expected_a
+    score_b = 1.0 - score_a
+    new_a = rating_a + k * (score_a - expected_a)
+    new_b = rating_b + k * (score_b - expected_b)
+    return round(new_a, 1), round(new_b, 1)
+
+
+def elo_to_def_adj(rating, league_avg=1500.0, scale=400.0):
+    """Convert an Elo rating into a def_adj-style multiplier consistent with the
+    existing (opp_rank-15.5)/15.5-style adjustments elsewhere in S2 — keeps Elo
+    pluggable into the same edge pipeline without changing its shape."""
+    return round((rating - league_avg) / scale, 4)
+
+
 def tier_badge(tier):
     """Reusable HTML tier badge — use in any markdown block."""
     styles = {
