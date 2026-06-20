@@ -14068,6 +14068,54 @@ def fetch_caesars_direct(sport):
         "Origin": "https://sportsbook.caesars.com",
         "Referer": "https://sportsbook.caesars.com/",
     }
+
+    # AUTH REQUIREMENT confirmed via real DevTools cURL capture, 2026-06-20: this
+    # endpoint requires THREE additional headers the prior version never sent —
+    # "authorization: Bearer <JWT>", "sessionid: <same JWT>", and "x-aws-waf-token"
+    # (an AWS WAF challenge token, separate mechanism from the JWT). Their absence
+    # is the likely real cause of this function returning nothing, more so than the
+    # parsing bug fixed in the previous commit.
+    #
+    # IMPORTANT — this JWT is NOT a generic API key. Decoding it shows a "sub" claim
+    # matching the account's player ID format seen elsewhere (e.g. the
+    # excluded-players/player-id/ endpoint) — this is a real, personal, LOGGED-IN
+    # account session token, not an anonymous read-only credential. That changes the
+    # risk profile versus FanDuel's PerimeterX token: this ties scraper traffic
+    # directly to the account, subject to the same ~24h expiry pattern (per its JWT
+    # "exp" claim) AND to whatever rate-limiting or ToS exposure applies to an
+    # account's session being used for repeated automated requests. This is a
+    # decision worth making deliberately, not silently baking into a scheduled
+    # scraper — hence reading it from configurable secrets/cache below, never
+    # hardcoded, and documented here so the tradeoff is visible.
+    czr_bearer = ""
+    czr_waf_token = ""
+    try:
+        czr_bearer = st.secrets.get("CAESARS_SESSION_TOKEN", "")
+        czr_waf_token = st.secrets.get("CAESARS_WAF_TOKEN", "")
+    except Exception:
+        pass
+    if not czr_bearer:
+        czr_token_cache = os.path.join(CACHE_DIR, "caesars_session_token.txt")
+        if os.path.exists(czr_token_cache):
+            try:
+                age_mins = (time.time() - os.path.getmtime(czr_token_cache)) / 60
+                if age_mins < 1200:  # JWT observed ~24h (1440min) validity; refresh well before
+                    with open(czr_token_cache, "r") as f:
+                        cached_lines = f.read().strip().split("\n")
+                        czr_bearer = cached_lines[0] if cached_lines else ""
+                        czr_waf_token = cached_lines[1] if len(cached_lines) > 1 else ""
+            except (IOError, OSError, IndexError):
+                pass
+    if not czr_bearer:
+        # No valid session token configured — expected state until the account
+        # session is deliberately wired in. Returning [] cleanly rather than
+        # attempting an unauthenticated request that's confirmed to fail.
+        return []
+
+    headers["authorization"] = f"Bearer {czr_bearer}"
+    headers["sessionid"] = czr_bearer
+    if czr_waf_token:
+        headers["x-aws-waf-token"] = czr_waf_token
     props = []
 
     cache_path = os.path.join(CACHE_DIR, f"caesars_direct_{sport}.pkl")
