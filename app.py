@@ -14027,7 +14027,36 @@ def fetch_betmgm_direct(sport):
 
 # ── Caesars Direct (curl_cffi) ─────────────────────────────────
 def fetch_caesars_direct(sport):
-    """Fetch Caesars props directly via api.americanwagering.com."""
+    """Fetch Caesars props directly via api.americanwagering.com.
+
+    Parsing rewritten 2026-06-20 based on a real captured response body from the
+    SCHEDULE|Batter Props tab (105-523kB responses, status 200 — confirmed these
+    requests are NOT blocked the way FanDuel's PerimeterX-gated endpoint is).
+
+    CONFIRMED real structure (differs meaningfully from this function's prior
+    assumption):
+    - Markets are nested under event["keyMarketGroups"][i]["markets"], NOT a flat
+      event["markets"] list.
+    - Player name is in market["metadata"]["player"] — a clean string, no parsing
+      needed. The previous version tried to extract player name from
+      selection["name"], which only ever contains the count/line text (e.g. "|2+|"),
+      never a player name — that was a real bug, not just an inefficiency.
+    - market["metadata"]["marketTypeCode"] gives a clean machine-readable prop type
+      (e.g. "player-alt-hits") — more reliable than keyword-matching market name.
+    - Selections use a count-based format for alt-line markets: selection["name"]
+      is "|N+|" (e.g. "|1+|", "|2+|", "|3+|"), selection["type"] is the literal
+      string "over", and selection["price"]["a"] is American odds. The line value
+      is derived as N-0.5 (e.g. "2+" implies a 1.5 line, OVER side) since Caesars
+      doesn't expose a separate numeric line field for these markets — confirmed
+      from the real "Hits" market data (1+/2+/3+ with no other line field present).
+
+    NOT yet confirmed: the exact request URL for the captured response (only the
+    response body was captured, not headers/URL) — the competitions+tab discovery
+    path below is the pre-existing best-effort structure and has NOT been verified
+    request-side. If this returns no data, that URL path is the next thing to
+    re-verify via a full cURL capture (Copy as cURL), not the parsing logic below,
+    which IS verified against real response data.
+    """
     try:
         session = cf.Session(impersonate="chrome124")
     except ImportError:
@@ -14057,6 +14086,19 @@ def fetch_caesars_direct(sport):
     czr_sport = sport_map.get(sport, "basketball")
     base_url = f"https://api.americanwagering.com/regions/us/locations/az/brands/czr/sb/v4/sports/{czr_sport}"
 
+    # Player-prop tabs differ by sport — confirmed from real capture for MLB
+    # ("SCHEDULE|Batter Props" / "SCHEDULE|Pitcher Props"). Other sports' exact tab
+    # names are a best-effort guess based on the MLB pattern, not individually
+    # confirmed yet.
+    prop_tabs_by_sport = {
+        "MLB": ["SCHEDULE%7CBatter%20Props", "SCHEDULE%7CPitcher%20Props"],
+        "NBA": ["SCHEDULE%7CPlayer%20Props"],
+        "WNBA": ["SCHEDULE%7CPlayer%20Props"],
+        "NHL": ["SCHEDULE%7CPlayer%20Props"],
+        "NFL": ["SCHEDULE%7CPlayer%20Props"],
+    }
+    tabs_to_try = prop_tabs_by_sport.get(sport, ["SCHEDULE%7CPlayer%20Props"])
+
     try:
         # Step 1: Get competitions (league IDs)
         r1 = session.get(f"{base_url}/competitions", headers=headers, timeout=15)
@@ -14066,7 +14108,6 @@ def fetch_caesars_direct(sport):
         comps = r1.json()
         comp_list = comps if isinstance(comps, list) else comps.get("competitions", [])
 
-        # Find the right competition for this sport
         target_names = {
             "NBA": ["nba"], "MLB": ["mlb", "major league"],
             "NHL": ["nhl", "national hockey"], "WNBA": ["wnba"],
@@ -14074,91 +14115,80 @@ def fetch_caesars_direct(sport):
         }
         targets = target_names.get(sport, ["nba"])
         comp_id = None
-
         for comp in comp_list:
             cname = (comp.get("name", "") or "").lower()
             cid = comp.get("id", "")
             if any(t in cname for t in targets):
                 comp_id = cid
                 break
-
         if not comp_id and comp_list:
             comp_id = comp_list[0].get("id", "")
-
         if not comp_id:
             return []
 
-        # Step 2: Get player props for this competition
-        prop_markets = [
-            "Player Points", "Player Rebounds", "Player Assists",
-            "Player Pts + Reb + Ast", "Player 3-Pointers",
-            "Player Steals", "Player Blocks",
-            "Pitcher Strikeouts", "Player Hits", "Player Home Runs",
-            "Player RBIs", "Player Total Bases",
-            "Player Goals", "Player Shots", "Player Saves",
-            "Player Passing Yards", "Player Rushing Yards",
-            "Player Receiving Yards", "Player Touchdowns",
-        ]
+        # Step 2: Get player props for this competition — try each known tab
+        for tab in tabs_to_try:
+            r2 = session.get(
+                f"{base_url}/competitions/{comp_id}/tabs/{tab}",
+                headers=headers, timeout=15
+            )
+            if r2.status_code != 200:
+                continue
 
-        r2 = session.get(
-            f"{base_url}/competitions/{comp_id}/tabs/SCHEDULE%7CPlayer%20Props",
-            headers=headers, timeout=15
-        )
-
-        if r2.status_code == 200:
             data = r2.json()
-            events = data.get("events", [])
-            if not events:
-                events = data.get("competitions", [{}])[0].get("events", []) if data.get("competitions") else []
+            for comp_block in data.get("competitions", []):
+                for event in comp_block.get("events", []):
+                    for group in event.get("keyMarketGroups", []):
+                        for market in group.get("markets", []):
+                            meta = market.get("metadata", {}) or {}
+                            player = meta.get("player", "")
+                            mkt_name = (market.get("name", "") or "").strip("|")
+                            if not player:
+                                continue
 
-            for event in events:
-                for market in event.get("markets", []):
-                    mname = market.get("name", "")
-                    for sel in market.get("selections", []):
-                        full_name = sel.get("name", "")
-                        odds_d = sel.get("price", {}).get("d") or sel.get("price", {}).get("decimal")
-                        odds_a = sel.get("price", {}).get("a") or sel.get("price", {}).get("american")
-                        handicap = sel.get("points") or sel.get("handicap") or sel.get("line")
+                            for sel in market.get("selections", []):
+                                sel_name = (sel.get("name", "") or "").strip("|")
+                                sel_type = sel.get("type", "")
+                                price = sel.get("price", {}) or {}
+                                odds_a = price.get("a")
+                                if odds_a is None:
+                                    continue
 
-                        player = full_name
-                        side = "OVER"
-                        if " Over " in full_name:
-                            player = full_name.split(" Over ")[0].strip()
-                            side = "OVER"
-                        elif " Under " in full_name:
-                            player = full_name.split(" Under ")[0].strip()
-                            side = "UNDER"
+                                line, side = None, "OVER"
+                                m_count = re.match(r"^(\d+)\+$", sel_name)
+                                m_overunder = re.match(r"^(Over|Under)\s+([\d.]+)$", sel_name, re.I)
+                                if m_count:
+                                    line = float(m_count.group(1)) - 0.5
+                                    side = "OVER"
+                                elif m_overunder:
+                                    side = m_overunder.group(1).upper()
+                                    line = float(m_overunder.group(2))
+                                elif sel_type.lower() in ("over", "under"):
+                                    side = sel_type.upper()
+                                    # Fall back to a points/handicap field if present,
+                                    # since not every market uses the count-string format.
+                                    line = sel.get("points") or sel.get("handicap") or sel.get("line")
 
-                        if not player or handicap is None:
-                            continue
+                                if line is None:
+                                    continue
 
-                        try:
-                            line_f = float(str(handicap).replace("+", ""))
-                        except (ValueError, TypeError):
-                            continue
-
-                        odds_str = "—"
-                        if odds_a is not None:
-                            odds_str = f"{'+' if float(odds_a) > 0 else ''}{int(float(odds_a))}"
-                        elif odds_d is not None:
-                            d = float(odds_d)
-                            odds_str = f"+{int((d-1)*100)}" if d >= 2 else f"{int(-100/(d-1))}"
-
-                        props.append({
-                            "Player": player, "Prop": mname,
-                            "Line": line_f, "Side": side,
-                            "OverOdds": odds_str if side == "OVER" else "—",
-                            "UnderOdds": odds_str if side == "UNDER" else "—",
-                            "Book": "Caesars", "Sport": sport,
-                            "source": "caesars_direct",
-                        })
+                                odds_str = f"{'+' if odds_a > 0 else ''}{int(odds_a)}"
+                                props.append({
+                                    "Player": player, "Prop": mkt_name,
+                                    "Line": float(line), "Side": side,
+                                    "OverOdds": odds_str if side == "OVER" else "—",
+                                    "UnderOdds": odds_str if side == "UNDER" else "—",
+                                    "Book": "Caesars", "Sport": sport,
+                                    "source": "caesars_direct",
+                                })
+            time.sleep(0.2)
 
         if props:
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
     except (IOError, ValueError) as _e:
-            print(f"[WARN] {_e}")
+        print(f"[WARN] fetch_caesars_direct: {_e}")
 
     return props
 
