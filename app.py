@@ -964,7 +964,7 @@ def save_to_gist(data_type, data):
     now = time.time()
     last = st.session_state["gist_last_write"].get(data_type, 0)
     # Immediate write for critical types or if >30s since last write
-    should_write = data_type in ("history", "bankroll") or (now - last) > 30
+    should_write = data_type in ("history", "bankroll", "signal_performance", "injury_performance") or (now - last) > 30
     if not should_write:
         return True  # queued — will write on next flush
     return _flush_gist_write(data_type, data, now)
@@ -5616,6 +5616,7 @@ def record_injury_performance(lock, outcome, injuries):
     existing = load_json_data(INJURY_PERFORMANCE_PATH, [])
     existing.append(record)
     save_json_data(INJURY_PERFORMANCE_PATH, existing)
+    save_to_gist("injury_performance", existing)
 
 def analyze_injury_performance():
     data = load_json_data(INJURY_PERFORMANCE_PATH, [])
@@ -5681,6 +5682,7 @@ def record_signal_performance(lock, outcome):
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
     performance.append(record)
     save_json_data(SIGNAL_PERFORMANCE_PATH, performance)
+    save_to_gist("signal_performance", performance)
 
 def analyze_signal_performance():
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
@@ -16636,6 +16638,34 @@ if "persistence_loaded" not in st.session_state:
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
     st.session_state.day_start_br = st.session_state.bankroll
+    # signal_performance.json lives only on local CACHE_DIR, which is ephemeral on
+    # Streamlit Cloud — it resets on every redeploy/restart, silently losing logged
+    # bet outcomes that feed the System tab's "Resolved Bets" count and signal health
+    # analysis. Gist-back it the same way history already is, so it survives restarts.
+    gist_sig_perf = load_from_gist("signal_performance", None)
+    _local_sig_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _gist_sig_perf  = gist_sig_perf if isinstance(gist_sig_perf, list) else []
+    _seen_sig_keys = set()
+    _merged_sig_perf = []
+    for r in _gist_sig_perf + _local_sig_perf:
+        _key = (r.get("timestamp",""), r.get("sport",""), r.get("tier",""), r.get("outcome",""))
+        if _key not in _seen_sig_keys:
+            _seen_sig_keys.add(_key)
+            _merged_sig_perf.append(r)
+    if len(_merged_sig_perf) > len(_local_sig_perf):
+        save_json_data(SIGNAL_PERFORMANCE_PATH, _merged_sig_perf)
+    gist_inj_perf = load_from_gist("injury_performance", None)
+    _local_inj_perf = load_json_data(INJURY_PERFORMANCE_PATH, [])
+    _gist_inj_perf  = gist_inj_perf if isinstance(gist_inj_perf, list) else []
+    _seen_inj_keys = set()
+    _merged_inj_perf = []
+    for r in _gist_inj_perf + _local_inj_perf:
+        _key = (r.get("timestamp",""), r.get("player",""), r.get("outcome",""))
+        if _key not in _seen_inj_keys:
+            _seen_inj_keys.add(_key)
+            _merged_inj_perf.append(r)
+    if len(_merged_inj_perf) > len(_local_inj_perf):
+        save_json_data(INJURY_PERFORMANCE_PATH, _merged_inj_perf)
     st.session_state.persistence_loaded = True
 
 # =========================
