@@ -36,7 +36,8 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     compute_market_implied_projection, compute_sem_for_tier, compute_h2h_hit_rate,
     devig_odds, compute_std_dev, calculate_edge,
     compute_fair_prob, tier_badge, is_game_total_prop, classify_regime, parlay_prob,
-    parlay_payout, poisson_prob_over)
+    parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
+    ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
 
@@ -1023,6 +1024,32 @@ def load_from_gist(data_type: str, default):
 def save_json_data(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def get_elo_ratings(sport="NFL"):
+    """Load persisted Elo ratings dict {team_abbr: rating} for a sport from
+    Gist, seeding any unseen team at ELO_DEFAULT_RATING. Falls back to an
+    empty dict (all teams will seed at default on first use) if Gist is
+    unavailable — never raises, never blocks the rest of the app."""
+    data = load_from_gist(f"elo_{sport.lower()}", None)
+    return data if isinstance(data, dict) else {}
+
+
+def update_elo_after_game(sport, team_a, team_b, score_a):
+    """Run one Elo update and persist both teams' new ratings to Gist.
+    score_a: 1.0 team_a win, 0.5 draw, 0.0 team_a loss.
+    Returns (new_rating_a, new_rating_b). Call once per completed game —
+    calling twice for the same game will double-count it."""
+    ratings = get_elo_ratings(sport)
+    rating_a = ratings.get(team_a, ELO_DEFAULT_RATING)
+    rating_b = ratings.get(team_b, ELO_DEFAULT_RATING)
+    k = ELO_K_FACTOR.get(sport, 20)
+    new_a, new_b = elo_update(rating_a, rating_b, score_a, k=k)
+    ratings[team_a] = new_a
+    ratings[team_b] = new_b
+    save_to_gist(f"elo_{sport.lower()}", ratings)
+    return new_a, new_b
+
 
 def get_api_counter(counter_path):
     today = date.today().strftime("%Y-%m-%d")
@@ -7576,267 +7603,6 @@ def fetch_wnba_player_season_avg(player_name):
         return None
 
 
-# ── SOCCER: player season stats via API-Sports ───────────────────────────────
-# Leagues: EPL=39, La Liga=140, Serie A=135, Bundesliga=78, Ligue 1=61, MLS=253
-SOCCER_LEAGUE_IDS = [39, 140, 135, 78, 61, 253]
-
-def fetch_soccer_player_stats(player_name):
-    """
-    Fetch 2024/25 season stats for any soccer player via API-Sports.
-    Tries top 6 leagues. Cached 12h. Returns stat dict or None.
-    """
-    if not API_SPORTS_KEY:
-        return None
-    cache_path = os.path.join(CACHE_DIR, f"soccer_stats_{normalize_name(player_name)}.pkl")
-    cached = _load_cache(cache_path, 12)
-    if cached:
-        return cached
-    try:
-        hdrs = {"x-apisports-key": API_SPORTS_KEY}
-        # Search player by name
-        r = requests.get(
-            f"https://v3.football.api-sports.io/players",
-            params={"search": player_name, "season": 2024},
-            headers=hdrs, timeout=10
-        )
-        if r.status_code != 200:
-            return None
-        players_data = r.json().get("response", [])
-        if not players_data:
-            return None
-        # Find best match
-        norm = normalize_name(player_name)
-        match = next(
-            (p for p in players_data
-             if normalize_name(p["player"]["name"]) == norm),
-            players_data[0]
-        )
-        stats_list = match.get("statistics", [])
-        if not stats_list:
-            return None
-        # Aggregate across leagues (player may appear in multiple)
-        goals_per_game, assists_per_game, shots_per_game = 0.0, 0.0, 0.0
-        total_games = 0
-        for s in stats_list:
-            g = s.get("games", {})
-            appeared = g.get("appearences", 0) or 0
-            if appeared == 0:
-                continue
-            goals = s.get("goals", {}).get("total", 0) or 0
-            assists = s.get("goals", {}).get("assists", 0) or 0
-            shots = s.get("shots", {}).get("total", 0) or 0
-            goals_per_game   += goals / appeared * appeared
-            assists_per_game += assists / appeared * appeared
-            shots_per_game   += shots / appeared * appeared
-            total_games      += appeared
-        if total_games == 0:
-            return None
-        result = {
-            "GOALS":   round(goals_per_game / total_games, 3),
-            "ASSISTS": round(assists_per_game / total_games, 3),
-            "SHOTS":   round(shots_per_game / total_games, 2),
-            "n_games": total_games,
-        }
-        _save_cache(cache_path, result)
-        return result
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_soccer_player_stats", "error": str(e)[:100]})
-        return None
-
-
-# ── TENNIS: player stats via API-Sports ──────────────────────────────────────
-def fetch_tennis_player_stats(player_name):
-    """
-    Fetch current season tennis stats (aces, first-serve %, games won) via API-Sports.
-    Falls back to ATP/WTA rankings for context. Cached 12h.
-    """
-    if not API_SPORTS_KEY:
-        return None
-    cache_path = os.path.join(CACHE_DIR, f"tennis_stats_{normalize_name(player_name)}.pkl")
-    cached = _load_cache(cache_path, 12)
-    if cached:
-        return cached
-    try:
-        hdrs = {"x-apisports-key": API_SPORTS_KEY}
-        r = requests.get(
-            f"{_API_SPORTS_TENNIS}/players",
-            params={"search": player_name},
-            headers=hdrs, timeout=10
-        )
-        if r.status_code != 200:
-            return None
-        players_data = r.json().get("response", [])
-        if not players_data:
-            return None
-        norm = normalize_name(player_name)
-        match = next(
-            (p for p in players_data
-             if normalize_name(p.get("name", "")) == norm),
-            players_data[0]
-        )
-        pid = match.get("id")
-        if not pid:
-            return None
-        # Get player statistics
-        r2 = requests.get(
-            f"{_API_SPORTS_TENNIS}/players/statistics",
-            params={"id": pid, "season": 2025},
-            headers=hdrs, timeout=10
-        )
-        if r2.status_code != 200:
-            return None
-        stats = r2.json().get("response", [{}])
-        if not stats:
-            return None
-        s = stats[0]
-        ranking = match.get("ranking", 50)
-        # Derive per-match averages from available stats
-        # API-Sports tennis gives: aces, double_faults, first_serve_pct, etc.
-        result = {
-            "Aces":           float(s.get("aces", {}).get("average", 5.0) or 5.0),
-            "Double Faults":  float(s.get("doubleFaults", {}).get("average", 3.0) or 3.0),
-            "Games Won":      float(s.get("games", {}).get("won", 10.0) or 10.0),
-            "Total Games Won":float(s.get("games", {}).get("won", 10.0) or 10.0),
-            "ranking":        int(ranking),
-            "n_games":        int(s.get("matches", {}).get("played", 10) or 10),
-        }
-        _save_cache(cache_path, result)
-        return result
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_tennis_player_stats", "error": str(e)[:100]})
-        return None
-
-
-# ── PGA/GOLF: player stats via API-Sports + ESPN current week ────────────────
-def fetch_golf_player_stats(player_name):
-    """
-    Fetch PGA Tour season stats for a player via API-Sports.
-    Stats: scoring avg, driving distance, GIR%, putts per round.
-    Cached 24h (golf stats change slowly).
-    """
-    if not API_SPORTS_KEY:
-        return None
-    cache_path = os.path.join(CACHE_DIR, f"golf_stats_{normalize_name(player_name)}.pkl")
-    cached = _load_cache(cache_path, 24)
-    if cached:
-        return cached
-    try:
-        hdrs = {"x-apisports-key": API_SPORTS_KEY}
-        r = requests.get(
-            f"{_API_SPORTS_GOLF}/players",
-            params={"search": player_name, "season": 2025},
-            headers=hdrs, timeout=10
-        )
-        if r.status_code != 200:
-            return None
-        players_data = r.json().get("response", [])
-        if not players_data:
-            return None
-        norm = normalize_name(player_name)
-        match = next(
-            (p for p in players_data
-             if normalize_name(p.get("name", "")) == norm),
-            players_data[0]
-        )
-        pid = match.get("id")
-        if not pid:
-            return None
-        r2 = requests.get(
-            f"{_API_SPORTS_GOLF}/players/statistics",
-            params={"id": pid, "season": 2025},
-            headers=hdrs, timeout=10
-        )
-        if r2.status_code != 200:
-            return None
-        stats_list = r2.json().get("response", [])
-        if not stats_list:
-            return None
-        s = stats_list[0]
-        result = {
-            "Strokes":          float(s.get("scoring", {}).get("average", 70.5) or 70.5),
-            "scoring_avg":      float(s.get("scoring", {}).get("average", 70.5) or 70.5),
-            "driving_distance": float(s.get("driving", {}).get("distance", 290) or 290),
-            "gir_pct":          float(s.get("greens", {}).get("inRegulation", 0.65) or 0.65),
-            "putts_per_round":  float(s.get("putting", {}).get("average", 29) or 29),
-            "n_rounds":         int(s.get("rounds", {}).get("played", 40) or 40),
-        }
-        _save_cache(cache_path, result)
-        return result
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_golf_player_stats", "error": str(e)[:100]})
-        return None
-
-
-# ── UFC/MMA: fighter stats via API-Sports ────────────────────────────────────
-def fetch_ufc_fighter_stats(player_name):
-    """
-    Fetch UFC fighter career stats via API-Sports.
-    Stats: sig strikes/min, takedown avg, sub attempts, win method breakdown.
-    Cached 48h (fight stats change only after a bout).
-    """
-    if not API_SPORTS_KEY:
-        return None
-    cache_path = os.path.join(CACHE_DIR, f"ufc_stats_{normalize_name(player_name)}.pkl")
-    cached = _load_cache(cache_path, 48)
-    if cached:
-        return cached
-    try:
-        hdrs = {"x-apisports-key": API_SPORTS_KEY}
-        r = requests.get(
-            f"{_API_SPORTS_MMA}/fighters",
-            params={"search": player_name},
-            headers=hdrs, timeout=10
-        )
-        if r.status_code != 200:
-            return None
-        fighters = r.json().get("response", [])
-        if not fighters:
-            return None
-        norm = normalize_name(player_name)
-        match = next(
-            (f for f in fighters
-             if normalize_name(f.get("name", "")) == norm),
-            fighters[0]
-        )
-        fid = match.get("id")
-        if not fid:
-            return None
-        r2 = requests.get(
-            f"{_API_SPORTS_MMA}/fighters/statistics",
-            params={"id": fid},
-            headers=hdrs, timeout=10
-        )
-        if r2.status_code != 200:
-            return None
-        stats = r2.json().get("response", [{}])
-        if not stats:
-            return None
-        s = stats[0]
-        result = {
-            "SIG_STR":      float(s.get("strikes", {}).get("significant", {}).get("average", 40) or 40),
-            "TAKEDOWNS":    float(s.get("takedowns", {}).get("average", 1.5) or 1.5),
-            "SUB_ATTEMPTS": float(s.get("submissions", {}).get("average", 0.5) or 0.5),
-            "CONTROL_TIME": float(s.get("control", {}).get("average", 5.0) or 5.0),
-            "n_fights":     int(s.get("fights", {}).get("total", 10) or 10),
-            # PrizePicks UFC props
-            "Significant Strikes": float(s.get("strikes", {}).get("significant", {}).get("average", 40) or 40),
-            "Takedowns":           float(s.get("takedowns", {}).get("average", 1.5) or 1.5),
-        }
-        _save_cache(cache_path, result)
-        return result
-    except Exception as e:
-        st.session_state.setdefault("errors", []).append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "source": "fetch_ufc_fighter_stats", "error": str(e)[:100]})
-        return None
-
-
 def fetch_mlb_full_roster_ids(force_refresh=False):
     """
     Fetch MLB player IDs for ALL active players across all 30 teams.
@@ -8373,6 +8139,221 @@ def fetch_golf_player_stats(player_name):
         except Exception:
             pass
     return result
+
+
+def fetch_golf_scoreboard():
+    """
+    Live PGA Tour tournament leaderboard from ESPN (free, no key).
+    Complements fetch_golf_player_stats (season averages) with this-week
+    context: current round, score, position, cut status, tee time.
+    Cached 30min — leaderboard moves during live rounds.
+    """
+    data = _espn_get(
+        "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard",
+        "golf_pga_scoreboard", ttl_hours=0.5
+    )
+    if not data:
+        return {}
+    events = data.get("events", [])
+    if not events:
+        return {}
+    event = events[0]  # current/most recent tournament
+    leaderboard = {}
+    for comp in event.get("competitions", []):
+        for competitor in comp.get("competitors", []):
+            athlete = competitor.get("athlete", {})
+            name = athlete.get("displayName", "")
+            if not name:
+                continue
+            leaderboard[normalize_name(name)] = {
+                "name": name,
+                "position": competitor.get("status", {}).get("position", {}).get("displayName", ""),
+                "score": competitor.get("score", "E"),
+                "thru": competitor.get("status", {}).get("thru", 0),
+                "made_cut": not competitor.get("status", {}).get("cutEliminated", False),
+                "tournament": event.get("name", ""),
+            }
+    return leaderboard
+
+
+def fetch_tennis_scoreboard(tour="atp"):
+    """
+    Live ATP/WTA match scoreboard from ESPN (free, no key).
+    Complements fetch_tennis_player_stats (season averages) with this-match
+    context: opponent, set scores, surface, round.
+    tour: 'atp' or 'wta'. Cached 15min — matches move fast live.
+    """
+    data = _espn_get(
+        f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard",
+        f"tennis_{tour}_scoreboard", ttl_hours=0.25
+    )
+    if not data:
+        return {}
+    matches = {}
+    for event in data.get("events", []):
+        for comp in event.get("competitions", []):
+            competitors = comp.get("competitors", [])
+            if len(competitors) != 2:
+                continue
+            for i, competitor in enumerate(competitors):
+                athlete = competitor.get("athlete", {})
+                name = athlete.get("displayName", "")
+                if not name:
+                    continue
+                opponent = competitors[1 - i].get("athlete", {}).get("displayName", "")
+                matches[normalize_name(name)] = {
+                    "name": name,
+                    "opponent": opponent,
+                    "status": comp.get("status", {}).get("type", {}).get("description", ""),
+                    "sets": [l.get("displayValue", "") for l in competitor.get("linescores", [])],
+                    "round": event.get("name", ""),
+                    "tour": tour.upper(),
+                }
+    return matches
+
+
+def fetch_espn_fpi(sport="NFL"):
+    """
+    ESPN Football Power Index — free, no key, team-strength rating updated
+    daily. Returns {team_abbr: {"fpi": float, "rank": int, "off": float,
+    "def": float}}. Server-rendered HTML table, no JSON endpoint found, so
+    this parses the two side-by-side tables (team names + stat columns) by
+    row position. sport: 'NFL' or 'NCF' (college).
+    Cached 6h — FPI updates daily, not live.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"espn_fpi_{sport.lower()}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    sport_path = "nfl" if sport.upper() == "NFL" else "college-football"
+    try:
+        from bs4 import BeautifulSoup
+        url = f"https://www.espn.com/{sport_path}/fpi/_/view"
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        tables = soup.find_all("table")
+        if len(tables) < 2:
+            return {}
+        # First table: team name + link (gives abbreviation via href slug).
+        # Second table: FPI numeric columns in the same row order.
+        team_rows = tables[0].find_all("tr")[1:]  # skip header
+        stat_rows = tables[1].find_all("tr")[1:]
+        teams = []
+        for row in team_rows:
+            link = row.find("a", href=True)
+            if not link:
+                continue
+            href = link["href"]
+            # href like /nfl/team/_/name/lar/los-angeles-rams
+            parts = [p for p in href.split("/") if p]
+            abbr = parts[parts.index("name") + 1].upper() if "name" in parts else None
+            if abbr:
+                teams.append(abbr)
+        ratings = {}
+        for abbr, row in zip(teams, stat_rows):
+            cells = [c.get_text(strip=True) for c in row.find_all("td")]
+            if len(cells) < 3:
+                continue
+            try:
+                ratings[abbr] = {
+                    "fpi": float(cells[1]),
+                    "rank": int(cells[2]),
+                    "off": float(cells[4]) if len(cells) > 4 else None,
+                    "def": float(cells[5]) if len(cells) > 5 else None,
+                    "_source": "ESPN FPI",
+                }
+            except (ValueError, IndexError):
+                continue
+        if ratings:
+            with open(cache_path, "wb") as f:
+                pickle.dump(ratings, f)
+        return ratings
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_espn_fpi", "error": str(e)[:100]})
+        return {}
+
+
+# Maps GEM/PrizePicks-style prop names to Parlay Savant's URL prop slugs (MLB)
+PARLAYSAVANT_MLB_PROP_MAP = {
+    "Hits": "hits", "Singles": "singles", "Doubles": "doubles", "Triples": "triples",
+    "Home Runs": "home-runs", "Total Bases": "total-bases", "RBI": "rbi", "Runs": "runs",
+    "H+R+RBI": "h-r-rbi", "Walks": "walks", "Stolen Bases": "stolen-bases",
+    "Strikeouts": "strikeouts", "Innings Pitched": "innings-pitched",
+    "Hits Allowed": "hits-allowed", "Earned Runs": "earned-runs",
+}
+
+
+def fetch_parlaysavant_props(sport="mlb", position="batter", prop="hits"):
+    """
+    Line-shop a prop across 15-25+ books via Parlay Savant (free to browse,
+    no login required for the table itself). Returns consensus line, best
+    over/under price+book, and hold% per player — useful as a no-vig
+    cross-check or backup when the EV Sharps API doesn't carry a player/prop.
+    Cached 10min — odds move during the slate.
+    prop: see PARLAYSAVANT_MLB_PROP_MAP for valid slugs.
+    """
+    cache_path = os.path.join(
+        CACHE_DIR, f"parlaysavant_{sport}_{position}_{prop}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < (10 / 60):
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    try:
+        from bs4 import BeautifulSoup
+        url = (f"https://www.parlaysavant.com/props"
+               f"?sport={sport}&position={position}&prop={prop}")
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = soup.find("table")
+        if not table:
+            return {}
+        props = {}
+        for row in table.find_all("tr")[1:]:
+            cells = row.find_all("td")
+            if len(cells) < 7:
+                continue
+            name_link = cells[0].find("a")
+            if not name_link:
+                continue
+            player_name = name_link.get_text(strip=True)
+            try:
+                line = float(cells[1].get_text(strip=True))
+            except (ValueError, IndexError):
+                continue
+            props[normalize_name(player_name)] = {
+                "name": player_name,
+                "line": line,
+                "over_odds": cells[2].get_text(strip=True),
+                "under_odds": cells[3].get_text(strip=True),
+                "best_over": cells[4].get_text(strip=True),
+                "best_under": cells[5].get_text(strip=True),
+                "hold_pct": cells[6].get_text(strip=True),
+                "_source": "ParlaySavant",
+            }
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+        return props
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_parlaysavant_props", "error": str(e)[:100]})
+        return {}
 
 
 def fetch_soccer_player_stats(player_name):
