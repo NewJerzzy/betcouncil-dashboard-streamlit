@@ -4662,11 +4662,29 @@ def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
     }
 
     sport_id_header = {"MLB": "Baseball"}.get(sport, sport)
+    # Headers corrected 2026-06-21 against a real captured browser request —
+    # the previous version returned the documented broken signature (Price:
+    # "Infinity", MarketIdentifier: null) even when replaying a genuinely
+    # real, human-clicked request's exact body, which ruled out bot
+    # detection as the cause and pointed at the request itself. Comparison
+    # found: "Origin" was being sent here but is NOT present in the real
+    # browser's request (likely flagged as inconsistent for what should be
+    # a same-origin call); "http-loader" and "request-id" were both present
+    # in the real request and completely absent here. request-id looks like
+    # an Application Insights-style trace ID (format "|<8char>.<6char>") —
+    # exact generation algorithm unconfirmed, but a similarly-shaped random
+    # value is a reasonable approximation worth testing against omitting it
+    # entirely, which is the known-broken state.
+    import random as _bo_random
+    import string as _bo_string
+    _bo_op_id = ''.join(_bo_random.choices(_bo_string.ascii_letters + _bo_string.digits, k=8))
+    _bo_req_id = ''.join(_bo_random.choices(_bo_string.ascii_letters + _bo_string.digits, k=6))
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
-        "Origin": "https://bl.widget-prod.sportcast.app",
         "Referer": f"https://bl.widget-prod.sportcast.app/markets?key={key}&fixtureId={fixture_id}&odds=AmericanPrice&brand=betonline",
+        "http-loader": "false",
+        "request-id": f"|{_bo_op_id}.{_bo_req_id}",
         "sc-fixtureid": str(fixture_id),
         "sc-sportid": sport_id_header,
         "User-Agent": BETONLINE_HEADERS["User-Agent"],
