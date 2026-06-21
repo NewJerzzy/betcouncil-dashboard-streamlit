@@ -249,7 +249,7 @@ def fetch_weather_for_game(city, is_outdoor=True):
             current = data.get("current_condition", [{}])[0]
             weather = {"city": city, "wind_speed_mph": int(current.get("windspeedMiles", 0)),
                        "wind_dir": current.get("winddir16Point", "N"), "temp_f": int(current.get("temp_F", 70)),
-                       "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.now().strftime("%H:%M"),
+                       "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.datetime.now().strftime("%H:%M"),
                        "source": "wttr.in"}
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
@@ -895,13 +895,202 @@ def fetch_mlb_confirmed_lineups():
                                 "players": lineup,
                                 "confirmed": len(lineup) >= 9,
                                 "source": "MLB Stats API",
-                                "fetched_at": datetime.now().strftime("%H:%M"),
+                                "fetched_at": datetime.datetime.now().strftime("%H:%M"),
                             }
             except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         return lineups
     except (requests.RequestException, ValueError, KeyError):
         return {}
+
+# ── Sleeper MLB Scoreboard (verified live, June 2026) ─────────
+# NOT the old DFS lines/projections API (that's confirmed dead, see
+# app.py fetch_sleeper_props). This is Sleeper's live scoreboard API,
+# powering their in-app game center. No auth required. Verified via
+# real browser DevTools capture against:
+#   https://api.sleeper.app/scores/mlb/date/{YYYY-MM-DD}
+#   https://api.sleeper.app/plays/mlb/regular/{year}/game/{game_id}
+SLEEPER_BASE = "https://api.sleeper.app"
+
+def fetch_sleeper_mlb_scoreboard(date_str=None):
+    """
+    Fetch today's (or given date's) MLB games from Sleeper's live scoreboard API.
+
+    Single call returns, for every game: lineups (once posted), live in-game
+    state (inning/half/outs/balls/strikes/baserunners), score by inning,
+    probable pitchers, venue, and both forecast + live weather.
+
+    Use cases:
+      1. Lineup backup — when statsapi.mlb.com is unreachable/rate-limited,
+         this provides the same lineup data (player name, batting order)
+         keyed the same way as fetch_mlb_confirmed_lineups().
+      2. Live win-probability inputs — inning/half/outs/balls/strikes/
+         runners/score are all present per in-progress game, refreshed
+         on each call. No model is built here; this just surfaces the
+         raw state needed to feed one.
+
+    Returns dict keyed by Sleeper game_id:
+      {
+        game_id: {
+          "status": "pre_game" | "in_game" | "complete",
+          "sportradar_game_id": str,
+          "start_time_utc": str,           # ISO8601
+          "venue": {"name", "city", "state", "surface", "stadium_type"},
+          "weather": {"condition", "temp_f", "wind_mph", "wind_dir"} or None,
+          "away": {team, name, score, record, probable_pitcher, lineup: [...]},
+          "home": {team, name, score, record, probable_pitcher, lineup: [...]},
+          "live": {                         # only meaningful when status == "in_game"
+            "inning": int, "half": "T"|"B"|"E", "outs": int,
+            "balls": int, "strikes": int, "runners": [...],
+            "current_pitcher": str, "current_batter": str,
+          },
+          "source": "Sleeper", "fetched_at": "HH:MM",
+        },
+        ...
+      }
+    Returns {} on any failure (mirrors fetch_mlb_confirmed_lineups behavior).
+    """
+    try:
+        date_str = date_str or date.today().strftime("%Y-%m-%d")
+        url = f"{SLEEPER_BASE}/scores/mlb/date/{date_str}"
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            return {}
+        games = r.json()
+        if not isinstance(games, list):
+            return {}
+
+        def _team_block(side):
+            t = meta.get(f"{side}_team", {}) or {}
+            lineup = []
+            for p in t.get("lineup", []) or []:
+                # Sleeper appends in-game substitutions to the same array with
+                # later inning/order values (confirmed via real capture: Reds @
+                # Yankees box score showed relief pitchers/pinch hitters mixed
+                # into away_team.lineup post-game). Keep only the starting 9.
+                name = p.get("player_name", "")
+                order = p.get("order")
+                if name and isinstance(order, int) and 0 <= order <= 9 and p.get("inning") == 0:
+                    lineup.append({
+                        "name": name,
+                        "batting_order": order,
+                        "sequence": p.get("sequence", 0),
+                    })
+            lineup.sort(key=lambda p: p["batting_order"])
+            return {
+                "team": t.get("team", ""),
+                "name": t.get("name", ""),
+                "score": t.get("score", 0),
+                "record": t.get("record", ""),
+                "probable_pitcher": t.get("probable_pitcher_name", ""),
+                "lineup": lineup,
+                "confirmed": len(lineup) >= 9,
+            }
+
+        out = {}
+        for g in games:
+            try:
+                meta = g.get("metadata", {}) or {}
+                game_id = g.get("game_id")
+                if not game_id:
+                    continue
+                venue = meta.get("venue", {}) or {}
+                fc = meta.get("current_weather") or meta.get("forecast") or {}
+                weather = None
+                if fc:
+                    wind = fc.get("wind", {}) or {}
+                    weather = {
+                        "condition": fc.get("condition", ""),
+                        "temp_f": fc.get("temp_f"),
+                        "wind_mph": wind.get("speed_mph"),
+                        "wind_dir": wind.get("direction"),
+                    }
+                out[game_id] = {
+                    "status": g.get("status", ""),
+                    "sportradar_game_id": meta.get("sportradar_game_id", ""),
+                    "start_time_utc": meta.get("date_time", ""),
+                    "venue": {
+                        "name": venue.get("name", ""),
+                        "city": venue.get("city", ""),
+                        "state": venue.get("state", ""),
+                        "surface": venue.get("surface", ""),
+                        "stadium_type": venue.get("stadium_type", ""),
+                    },
+                    "weather": weather,
+                    "away": _team_block("away"),
+                    "home": _team_block("home"),
+                    "live": {
+                        "inning": meta.get("current_inning"),
+                        "half": meta.get("current_inning_half"),
+                        "outs": meta.get("current_outs"),
+                        "balls": meta.get("current_balls"),
+                        "strikes": meta.get("current_strikes"),
+                        "runners": meta.get("current_runners", []) or [],
+                        "current_pitcher": (meta.get("current_inning_pitcher") or "").strip(),
+                        "current_batter": (meta.get("current_inning_hitter") or "").strip(),
+                    } if g.get("status") == "in_game" else None,
+                    "source": "Sleeper",
+                    "fetched_at": datetime.datetime.now().strftime("%H:%M"),
+                }
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        return out
+    except (requests.RequestException, ValueError, KeyError):
+        return {}
+
+
+def fetch_sleeper_mlb_playbyplay(game_id, season="2026", limit=25, provider="sportradar"):
+    """
+    Fetch pitch-level play-by-play for a single MLB game from Sleeper.
+    Use for granular in-game tracking beyond what the scoreboard summary gives
+    (pitch velocity/location/type, exit velo, launch angle per play).
+
+    Verified via real capture against:
+      https://api.sleeper.app/plays/mlb/regular/{season}/game/{game_id}?limit={limit}&provider=sportradar
+
+    Returns list of play dicts (raw Sleeper schema, newest first) or [] on failure.
+    """
+    try:
+        url = (f"{SLEEPER_BASE}/plays/mlb/regular/{season}/game/{game_id}"
+               f"?limit={limit}&provider={provider}")
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return data.get("plays", []) if isinstance(data, dict) else []
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
+def fetch_mlb_confirmed_lineups_with_fallback():
+    """
+    Same contract as fetch_mlb_confirmed_lineups(), but falls back to Sleeper's
+    scoreboard API when statsapi.mlb.com returns nothing (rate-limited / down —
+    the "Max retries exceeded" failure mode already seen against statsapi).
+    Statsapi stays primary since it's the longer-trusted source; Sleeper only
+    fills in teams statsapi failed to return.
+    """
+    lineups = fetch_mlb_confirmed_lineups()
+    try:
+        sleeper_games = fetch_sleeper_mlb_scoreboard()
+        for g in sleeper_games.values():
+            for side in ("away", "home"):
+                team_block = g[side]
+                abbr = team_block["team"]
+                if abbr and abbr not in lineups and team_block["lineup"]:
+                    lineups[abbr] = {
+                        "players": [
+                            {"name": p["name"], "position": "", "batting_order": p["batting_order"]}
+                            for p in team_block["lineup"]
+                        ],
+                        "confirmed": team_block["confirmed"],
+                        "source": "Sleeper (fallback)",
+                        "fetched_at": g["fetched_at"],
+                    }
+    except Exception:
+        pass
+    return lineups
+
 # ═══════════════════════════════════════════════════════════════
 # NFL READINESS SUITE
 # Practice participation, inactives, O-line monitoring,
@@ -1537,7 +1726,7 @@ def fetch_nfl_inactives():
                         inactives[team_abbr] = team_inactives
         # Persist with timestamp
         if inactives:
-            stamped = {"inactives": inactives, "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+            stamped = {"inactives": inactives, "fetched_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
             save_json_data(NFL_INACTIVES_PATH, stamped)
             return inactives
         # Fall back to stored
@@ -1624,5 +1813,17 @@ def fetch_nhl_starting_goalies():
         return goalies
     except (requests.RequestException, ValueError, KeyError):
         return {}
+
+
+# ═══════════════════════════════════════════════════════════════
+# SLEEPER LIVE DATA (free, no auth)
+# Verified 2026-06-20 via manual DevTools capture against sleeper.com/scores.
+# NOTE: this is NOT the same Sleeper API as the old DFS lines/projections
+# endpoints (api.sleeper.app/lines/v1/..., api.sleeper.app/projections/...)
+# referenced by the now-dead fetch_sleeper_props() in app.py — those are
+# confirmed deprecated. This is a separate, undocumented part of Sleeper's
+# API that powers their live scoreboard: real sportradar-sourced game
+# state, lineups, and pitch-by-pitch play data. No login required.
+# ═══════════════════════════════════════════════════════════════
 
 
