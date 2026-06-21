@@ -14584,6 +14584,22 @@ def fetch_caesars_direct(sport):
     except Exception:
         pass
     if not czr_bearer:
+        # Picks up tokens pushed by caesars-harvester.js (local Playwright tool
+        # run manually after logging into the account), so the daily refresh no
+        # longer requires copy-pasting into Streamlit secrets by hand. Same
+        # ~24h staleness window as the local file cache below, since it's
+        # captured from the same JWT.
+        gist_tokens = load_from_gist("caesars_tokens", None)
+        if gist_tokens:
+            try:
+                captured_at = gist_tokens.get("captured_at", "")
+                age_mins = (time.time() - datetime.fromisoformat(captured_at.replace("Z", "+00:00")).timestamp()) / 60
+            except (ValueError, TypeError):
+                age_mins = 9999
+            if age_mins < 1200:
+                czr_bearer = gist_tokens.get("bearer_jwt", "")
+                czr_waf_token = gist_tokens.get("waf_token", "")
+    if not czr_bearer:
         czr_token_cache = os.path.join(CACHE_DIR, "caesars_session_token.txt")
         if os.path.exists(czr_token_cache):
             try:
