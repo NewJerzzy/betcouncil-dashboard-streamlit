@@ -9382,8 +9382,18 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
         return resp.status_code == 200 and "html" not in ct and not resp.text.strip().startswith("<")
 
     # ── 1. ScrapeOps ────────────────────────────────────────
-    # Skip if quota exhausted (flagged in session state)
+    # Skip if quota exhausted. Checked in two layers: session_state (instant,
+    # for repeat calls within this run) then Gist (persists across cold
+    # starts/redeploys — without this, every fresh session silently re-pays
+    # the full ~20s timeout to rediscover exhaustion that was already known
+    # from an earlier session, the same class of bug fixed in load_from_gist
+    # on 2026-06-21). Scoped by month since ScrapeOps quota resets monthly.
     _so_exhausted = st.session_state.get("scrapeops_exhausted", False)
+    if not _so_exhausted:
+        _so_gist = load_from_gist("scrapeops_status", None)
+        if _so_gist and _so_gist.get("exhausted") and _so_gist.get("month") == datetime.now().strftime("%Y-%m"):
+            _so_exhausted = True
+            st.session_state["scrapeops_exhausted"] = True
     if SCRAPEOPS_KEY and not _so_exhausted:
         try:
             encoded = quote(url, safe='')
@@ -9395,6 +9405,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
             # 403/429 = quota exhausted — flag and skip for rest of session
             if r.status_code in (403, 429, 402):
                 st.session_state["scrapeops_exhausted"] = True
+                save_to_gist("scrapeops_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
                 _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}"))
             elif _is_valid(r):
                 return r
