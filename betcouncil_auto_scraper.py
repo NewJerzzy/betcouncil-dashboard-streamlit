@@ -1981,9 +1981,23 @@ def scrape_betrivers_curlffi(sport):
     kambi_sport = sport_map.get(sport, "basketball/nba")
 
     try:
-        r1 = session.get(
-            f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all/matches.json",
-            params={"lang": "en_US", "market": "US-AZ"}, headers=headers, timeout=15)
+        r1 = None
+        for attempt in range(3):
+            r1 = session.get(
+                f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all/matches.json",
+                params={"lang": "en_US", "market": "US-AZ"}, headers=headers, timeout=15)
+            if r1.status_code != 429:
+                break
+            # 429s observed specifically on WNBA when --all scrapes NBA/MLB/NHL/
+            # WNBA back-to-back with no delay between sports — all four hit this
+            # same Kambi host in quick succession, and by WNBA's turn (last in
+            # the list) the cumulative request rate trips the limit. Retrying
+            # with backoff is more robust than reordering sports or adding a
+            # blind static delay, since it self-corrects regardless of which
+            # sport happens to be last or how many books run before it.
+            wait_s = 5 * (attempt + 1)
+            print(f"    Events: 429, retrying in {wait_s}s (attempt {attempt + 1}/3)...")
+            time.sleep(wait_s)
         print(f"    Events: {r1.status_code}")
         if r1.status_code != 200: return props
 
