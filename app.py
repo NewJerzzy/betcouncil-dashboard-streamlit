@@ -4503,6 +4503,30 @@ def fetch_betonline_lines(sport="NBA"):
 # values from a fresh capture — it is NOT wired into the main pipeline.
 # ═══════════════════════════════════════════════════════════════
 
+# DEFERRED 2026-06-21 — automated key harvesting does not work, confirmed
+# via live testing, do not re-attempt without new information:
+#   - 401 on api-offering.betonline.ag fixed (needed gsetting/Accept-Language/
+#     utc-offset headers) — game-list fetch works fine, 15/15 real MLB games
+#     returned correctly.
+#   - The actual blocker is downstream: Playwright (headless Chromium) can
+#     navigate to a real betonline.ag game page (200, page loads, hydration
+#     completes) but iframe#SGP-EventView never appears in the DOM within 20s,
+#     tested with domcontentloaded+sleep+scroll AND networkidle+scroll — same
+#     result both ways. This is consistent with Cloudflare/BetOnline serving
+#     degraded content to a detected headless browser (no SGP panel at all),
+#     not a load-timing issue — ruled out via two different wait strategies
+#     producing the identical failure.
+#   - fetch_betonline_prop_price() below still works and is correct — it was
+#     validated against a real captured cURL with a real key and returned a
+#     real price. The harvester (get_betonline_game_ids/harvest_betonline_prop_keys
+#     in betcouncil_auto_scraper.py, run locally with --betonline-props) is
+#     what's blocked — it cannot supply that key automatically. Same bucket
+#     as FanDuel props: needs a real, stealth-hardened browser fingerprint
+#     (or a non-headless/human-assisted session) to get past bot detection —
+#     not pursued further as of this date, not worth the time against a
+#     secondary soft-book confirmation signal.
+# ═══════════════════════════════════════════════════════════════
+
 BETONLINE_PROP_PRICE_URL = "https://bl.widget-prod.sportcast.app/public/RequestBetPriceUI"
 BETONLINE_PROP_SPORT_CODES = {
     "MLB": 9,   # confirmed via sc-sportid: "Baseball" header

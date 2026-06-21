@@ -2651,6 +2651,18 @@ def push_to_gist(all_props, all_lines, token, gist_id):
 # fetch_betonline_lines() in app.py) — this also tests, for free, whether
 # that GameId equals the fixtureId in the harvested iframe src.
 
+# DEFERRED 2026-06-21 — confirmed via live testing that headless Playwright
+# cannot reach the SGP iframe on betonline.ag game pages (game-list fetch
+# above works fine post-header-fix; iframe#SGP-EventView never appears in
+# DOM within 20s, tested two different wait strategies, same result both
+# times — consistent with bot detection serving degraded content, not a
+# timing bug). Same bucket as FanDuel props. See app.py's
+# fetch_betonline_prop_price() comment block for the full chain of evidence.
+# Do not re-run/re-attempt this harvester without a stealth-hardened browser
+# fingerprint or a non-headless approach — plain headless + scroll + sleep
+# tuning has already been tried and ruled out.
+# ═══════════════════════════════════════════════════════════════
+
 BETONLINE_GAME_URL = "https://www.betonline.ag/sportsbook/{sport_path}/{league_path}/game/{game_id}"
 
 
