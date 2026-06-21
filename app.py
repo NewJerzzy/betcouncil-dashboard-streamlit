@@ -5518,6 +5518,160 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
 
 
 # ── FanDuel Direct (curl_cffi — bypasses SSL fingerprinting) ──
+def _get_fanduel_px_context():
+    """Shared PerimeterX token lookup — secrets, then Gist (harvester push),
+    then short-lived local cache. Used by both fetch_fanduel_direct and
+    fetch_fanduel_event_ids so the chain only lives in one place."""
+    px_context = ""
+    try:
+        px_context = st.secrets.get("FANDUEL_PX_CONTEXT", "")
+    except Exception:
+        pass
+    if not px_context:
+        # Picks up tokens pushed by fanduel-harvester-cdp.js (local Playwright
+        # tool, CDP-attached to an already-logged-in browser). A forensic test
+        # on 2026-06-21 found the x-px-context token on the PRICING domain
+        # (smp.{state}.sportsbook.fanduel.com, which getMarketPrices actually
+        # uses) held ONE value across 15+ requests over a 90-second window —
+        # this contradicts the original "expires within minutes" assumption.
+        # True long-term lifespan is still unconfirmed, so the freshness
+        # window here is a cautious guess (20 min), not a verified figure.
+        gist_tokens = load_from_gist("fanduel_tokens", None)
+        if gist_tokens:
+            try:
+                captured_at = gist_tokens.get("captured_at", "")
+                age_mins = (time.time() - datetime.fromisoformat(captured_at.replace("Z", "+00:00")).timestamp()) / 60
+            except (ValueError, TypeError):
+                age_mins = 9999
+            if age_mins < 20:
+                px_context = gist_tokens.get("px_context", "")
+    if not px_context:
+        fd_token_cache = os.path.join(CACHE_DIR, "fanduel_px_context.txt")
+        if os.path.exists(fd_token_cache):
+            try:
+                age_mins = (time.time() - os.path.getmtime(fd_token_cache)) / 60
+                if age_mins < 10:
+                    with open(fd_token_cache, "r") as f:
+                        px_context = f.read().strip()
+            except (IOError, OSError):
+                pass
+    return px_context
+
+
+def _get_fanduel_state():
+    state = "az"
+    try:
+        state = (st.secrets.get("FANDUEL_STATE", "az") or "az").lower()
+    except Exception:
+        pass
+    return state
+
+
+# FanDuel competitionId per sport — these are FanDuel-internal IDs required by
+# the navigation/facet/v1.0/search endpoint, NOT generic league identifiers.
+# MLB confirmed via real DevTools capture 2026-06-21 (scan.az.sportsbook.
+# fanduel.com/api/sports/navigation/facet/v1.0/search, full request/response
+# captured). Other sports intentionally left unconfirmed rather than guessed —
+# wrong IDs would silently return another sport's events or nothing at all,
+# worse than just returning []. Capture each via the same method
+# (fanduel-navfacet-request-capture.js while on that sport's schedule page)
+# before adding here.
+FANDUEL_COMPETITION_IDS = {
+    "MLB": 11196870,
+}
+
+
+def fetch_fanduel_event_ids(sport):
+    """Fetch today's FanDuel event IDs for a sport via the navigation/facet
+    endpoint, confirmed via real capture to return a clean per-sport event
+    list (16 distinct IDs for MLB, no unrelated/stale events mixed in —
+    unlike content-managed-page which mixes in long-running futures markets).
+    Feeds fetch_fanduel_direct's event_ids param, which previously had no
+    caller supplying it and so always returned [] regardless of token
+    validity."""
+    competition_id = FANDUEL_COMPETITION_IDS.get(sport.upper())
+    if not competition_id:
+        return []
+
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    px_context = _get_fanduel_px_context()
+    if not px_context:
+        return []
+    state = _get_fanduel_state()
+
+    cache_path = os.path.join(CACHE_DIR, f"fanduel_event_ids_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 10:
+            try:
+                with open(cache_path, "rb") as f:
+                    cached = pickle.load(f)
+                if cached:
+                    return cached
+            except (IOError, ValueError):
+                pass
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "origin": f"https://{state}.sportsbook.fanduel.com",
+        "referer": f"https://{state}.sportsbook.fanduel.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "x-application": "FhMFpcPWXMeyZxOx",
+        "x-px-context": px_context,
+    }
+    body = {
+        "filter": {
+            "competitionIds": [competition_id],
+            "contentGroup": {"language": "en", "regionCode": "NAMERICA"},
+            "marketLevels": ["AVB_EVENT"],
+            "maxResults": 0,
+            "productTypes": ["SPORTSBOOK"],
+            "selectBy": "FIRST_TO_START",
+        },
+        "facets": [{"type": "COMPETITION"}, {"type": "EVENT", "next": {"type": "IN_PLAY"}}],
+        "currencyCode": "USD",
+    }
+
+    try:
+        r = session.post(
+            f"https://scan.{state}.sportsbook.fanduel.com/api/sports/navigation/facet/v1.0/search",
+            headers=headers, json=body, timeout=15
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    except (requests.RequestException, KeyError, ValueError, TypeError):
+        return []
+
+    event_ids = set()
+    def _walk(obj):
+        if isinstance(obj, dict):
+            eid = obj.get("eventId")
+            if isinstance(eid, int):
+                event_ids.add(eid)
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+    _walk(data)
+    result = list(event_ids)
+
+    try:
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+    except (IOError, OSError):
+        pass
+
+    return result
+
+
 def fetch_fanduel_direct(sport, event_ids=None):
     """Fetch FanDuel props directly using curl_cffi. Fallback when OddsPAPI is down.
 
@@ -5571,49 +5725,11 @@ def fetch_fanduel_direct(sport, event_ids=None):
         return []
 
     FD_KEY = "FhMFpcPWXMeyZxOx"
-    px_context = ""
-    try:
-        px_context = st.secrets.get("FANDUEL_PX_CONTEXT", "")
-    except Exception:
-        pass
-    if not px_context:
-        # Picks up tokens pushed by fanduel-harvester-cdp.js (local Playwright
-        # tool, CDP-attached to an already-logged-in browser). A forensic test
-        # on 2026-06-21 found the x-px-context token on the PRICING domain
-        # (smp.{state}.sportsbook.fanduel.com, which getMarketPrices actually
-        # uses) held ONE value across 15+ requests over a 90-second window —
-        # this contradicts the original "expires within minutes" assumption
-        # noted in this function's docstring, at least at that timescale. True
-        # long-term lifespan is still unconfirmed, so the freshness window
-        # here is a cautious guess (20 min), not a verified figure — tighten
-        # or loosen once we see real-world success/failure data.
-        gist_tokens = load_from_gist("fanduel_tokens", None)
-        if gist_tokens:
-            try:
-                captured_at = gist_tokens.get("captured_at", "")
-                age_mins = (time.time() - datetime.fromisoformat(captured_at.replace("Z", "+00:00")).timestamp()) / 60
-            except (ValueError, TypeError):
-                age_mins = 9999
-            if age_mins < 20:
-                px_context = gist_tokens.get("px_context", "")
-    if not px_context:
-        fd_token_cache = os.path.join(CACHE_DIR, "fanduel_px_context.txt")
-        if os.path.exists(fd_token_cache):
-            try:
-                age_mins = (time.time() - os.path.getmtime(fd_token_cache)) / 60
-                if age_mins < 10:  # PerimeterX tokens observed to expire well before this
-                    with open(fd_token_cache, "r") as f:
-                        px_context = f.read().strip()
-            except (IOError, OSError):
-                pass
+    px_context = _get_fanduel_px_context()
     if not px_context:
         return []
 
-    state = "az"
-    try:
-        state = (st.secrets.get("FANDUEL_STATE", "az") or "az").lower()
-    except Exception:
-        pass
+    state = _get_fanduel_state()
 
     headers = {
         "accept": "application/json",
@@ -15677,7 +15793,14 @@ def load_sport_data(sport):
             (fetch_betr_direct,       "Betr",       "📡"),
         ]:
             try:
-                _r = _fn(sport)
+                if _fn is fetch_fanduel_direct:
+                    # Needs event_ids — previously never supplied, so this
+                    # always returned [] regardless of token validity. Fixed
+                    # 2026-06-21 via the confirmed navigation/facet capture.
+                    _fd_event_ids = fetch_fanduel_event_ids(sport)
+                    _r = _fn(sport, _fd_event_ids)
+                else:
+                    _r = _fn(sport)
                 if _r:
                     _direct_props.extend(_r)
                     st.caption(f"{_icon} {_label}: {len(_r)} props loaded directly")
