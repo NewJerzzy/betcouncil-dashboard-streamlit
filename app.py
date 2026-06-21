@@ -9579,6 +9579,40 @@ def scrape_prizepicks(sport):
         # Fallback 4: basic API
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
     ]
+
+    # ── Real-browser header capture, 2026-06-21 ──────────────────────────
+    # CDP-attached capture of this EXACT endpoint (fallback 2 above) loading
+    # successfully in a real, logged-in browser session, no captcha/block,
+    # showed two concrete gaps vs what this function was sending: (1) a
+    # custom "x-device-info" header was present and is completely absent
+    # here, (2) the real x-device-id was a per-install UUID, not a static
+    # string — sending the literal same "betcouncil-v46" on every single
+    # request across every session is itself a plausible bot signature.
+    # Notably the real request had NO cookie at all, confirming this is
+    # genuinely stateless — no PerimeterX/Caesars-style token harvest needed
+    # here, just closer header fidelity.
+    _device_id_path = os.path.join(CACHE_DIR, "pp_device_id.txt")
+    if os.path.exists(_device_id_path):
+        try:
+            with open(_device_id_path, "r") as f:
+                _device_id = f.read().strip()
+        except (IOError, OSError):
+            _device_id = ""
+    else:
+        _device_id = ""
+    if not _device_id:
+        import uuid as _uuid
+        _device_id = str(_uuid.uuid4())
+        try:
+            with open(_device_id_path, "w") as f:
+                f.write(_device_id)
+        except (IOError, OSError):
+            pass
+    _device_info = (
+        f"anonymousId=,name=,os=windows,osVersion=Windows NT 10.0; Win64; x64,"
+        f"platform=web,appVersion=,gameMode=prizepools,stateCode={state_code}"
+    )
+
     pp_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
         "Referer": "https://app.prizepicks.com/",
@@ -9594,7 +9628,8 @@ def scrape_prizepicks(sport):
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
         "Cache-Control": "no-cache",
-        "x-device-id": "betcouncil-v46",
+        "x-device-id": _device_id,
+        "x-device-info": _device_info,
     }
     all_props = []
     seen = set()
@@ -9638,7 +9673,8 @@ def scrape_prizepicks(sport):
                         "sec-fetch-dest": "empty",
                         "sec-fetch-mode": "cors",
                         "sec-fetch-site": "same-site",
-                        "x-device-id": "betcouncil-v46",
+                        "x-device-id": _device_id,
+                        "x-device-info": _device_info,
                     }
                     _cffi_resp = cffi_requests.get(
                         url, headers=_cffi_headers,
