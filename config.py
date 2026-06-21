@@ -39,8 +39,8 @@ CBS_SPORT_MAP = {
 }
 
 # === BOOKS ===
-ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "Betr", "DraftKings", "BetMGM", "Bovada"]
-DISABLED_BOOKS = ["Sleeper", "BetOnline", "FanDuel", "Caesars"]
+ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "Betr", "DraftKings", "BetMGM", "Bovada", "BetOnline"]
+DISABLED_BOOKS = ["Sleeper", "FanDuel", "Caesars"]
 
 DAILY_RISK_CONTROLS = {
     "max_daily_loss_pct": 0.15,

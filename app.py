@@ -4320,6 +4320,134 @@ def get_bovada_game_line(matchup, bovada_data=None):
 
 
 # ═══════════════════════════════════════════════════════════════
+# BETONLINE GAME LINES
+# Confirmed working 2026-06-21 via real DevTools capture — no cookies,
+# no auth required. (The old scrape_betonline() in betcouncil_auto_scraper.py
+# guessed at get-menu + get-linked-events and never worked; this is a
+# completely different, verified endpoint.)
+# Endpoint: api-offering.betonline.ag/api/offering/Sports/offering-by-league
+# One POST returns ALL of a league's games for the day, each with full
+# MoneyLine/SpreadLine/TotalLine for both teams (American odds).
+# Unlike www.betonline.ag (which fronts Cloudflare and blocks anonymous
+# requests — confirmed via 403 testing), api-offering.betonline.ag showed
+# zero Cloudflare friction across every capture, so this is called live,
+# the same way Bovada is, with no session cookie / local relay needed.
+# That said, this sandbox can't reach betonline.ag to test the call from
+# Streamlit Cloud's own IP — if it gets blocked in production, this will
+# just fail gracefully like every other scraper here (returns cached/[]).
+# Sharpness: same tier as Bovada — useful soft-book comparison point,
+# and already wired into the SHARP_BOOKS consensus checks via OddsAPI's
+# betonlineag feed, so this gives a second, independent confirmation path.
+# Player props (Batter Props, Home Run, etc.) are NOT covered here — those
+# live behind bl.widget-prod.sportcast.app and the actual price-fetch call
+# for them was never confirmed (always returned null/Infinity in testing).
+# ═══════════════════════════════════════════════════════════════
+
+BETONLINE_PATH = os.path.join(CACHE_DIR, "betonline_lines.json")
+BETONLINE_BASE = "https://api-offering.betonline.ag/api/offering/Sports/offering-by-league"
+BETONLINE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain",
+    "Content-Type": "application/json-patch+json",
+    "Origin": "https://www.betonline.ag",
+    "Referer": "https://www.betonline.ag/",
+}
+BETONLINE_SPORT_MAP = {
+    "NBA":  ("basketball", "nba"),
+    "MLB":  ("baseball",   "mlb"),
+    "NHL":  ("hockey",     "nhl"),
+    "WNBA": ("basketball", "wnba"),
+    "NFL":  ("football",   "nfl"),
+}
+
+
+@st.cache_data(ttl=1800)
+def fetch_betonline_lines(sport="NBA"):
+    """
+    Fetch BetOnline game lines — ML, spread, total — for every game in a
+    league, one call. No auth required.
+
+    Returns list of dicts in the same shape as fetch_bovada_lines():
+      {matchup, home, away, home_ml, away_ml,
+       spread, spread_odds, total, over_odds, under_odds,
+       start_time, sport, source}
+    """
+    sport_path, league_path = BETONLINE_SPORT_MAP.get(sport, ("basketball", "nba"))
+    sport_cap = sport_path.capitalize()
+
+    payload = {
+        "Sport": sport_path, "League": league_path, "ScheduleText": None,
+        "filterTime": 0, "type": "prematch",
+        "sport": sport_cap, "league": league_path,
+    }
+
+    try:
+        r = requests.post(BETONLINE_BASE, headers=BETONLINE_HEADERS, json=payload, timeout=12)
+        if r.status_code != 200:
+            return load_json_data(BETONLINE_PATH, [])
+
+        data = r.json()
+        offering = (data or {}).get("GameOffering", {}) or {}
+        games_desc = offering.get("GamesDescription", []) or []
+        if not games_desc:
+            return load_json_data(BETONLINE_PATH, [])
+
+        def _ml(line_block):
+            v = ((line_block or {}).get("MoneyLine", {}) or {}).get("Line")
+            return v if v not in (None, 0) else None
+
+        def _spread(line_block):
+            sp = (line_block or {}).get("SpreadLine", {}) or {}
+            pt, ln = sp.get("Point"), sp.get("Line")
+            if pt in (None, 0) and ln in (None, 0):
+                return None, None
+            return pt, ln
+
+        games = []
+        for gd in games_desc:
+            g = gd.get("Game", {}) or {}
+            if not g:
+                continue
+            home_team = g.get("HomeTeam", "")
+            away_team = g.get("AwayTeam", "")
+            if not home_team or not away_team:
+                continue
+
+            away_line = g.get("AwayLine", {})
+            home_line = g.get("HomeLine", {})
+            total_block = (g.get("TotalLine", {}) or {}).get("TotalLine", {}) or {}
+            spread_point, spread_odds = _spread(home_line)
+
+            games.append({
+                "matchup":     f"{away_team} @ {home_team}",
+                "home":        home_team,
+                "away":        away_team,
+                "home_ml":     _ml(home_line),
+                "away_ml":     _ml(away_line),
+                "spread":      spread_point,
+                "spread_odds": spread_odds,
+                "total":       total_block.get("Point"),
+                "over_odds":   (total_block.get("Over", {}) or {}).get("Line"),
+                "under_odds":  (total_block.get("Under", {}) or {}).get("Line"),
+                "start_time":  g.get("WagerCutOff", ""),
+                "sport":       sport,
+                "source":      "BetOnline",
+                "game_id":     g.get("GameId"),
+            })
+
+        if games:
+            save_json_data(BETONLINE_PATH, games)
+        return games or load_json_data(BETONLINE_PATH, [])
+
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "source": "BetOnline", "error": str(e)[:80],
+            "time":   datetime.now().strftime("%H:%M"),
+        })
+        return load_json_data(BETONLINE_PATH, [])
+
+
+# ═══════════════════════════════════════════════════════════════
 # AUTO SCRAPER GIST READER
 # Reads props pushed by betcouncil_auto_scraper.py
 # File: auto_scraped_props.json in your Gist
@@ -16817,6 +16945,11 @@ def load_sport_data(sport):
     _bovada = fetch_bovada_lines(sport)
     if _bovada:
         st.session_state["bovada_lines"] = _bovada
+
+    # BetOnline game lines — all sports, no auth required
+    _betonline = fetch_betonline_lines(sport)
+    if _betonline:
+        st.session_state["betonline_lines"] = _betonline
 
     # Auto scraper props (MyBookie/BetOnline from local machine)
     _auto_props = fetch_auto_scraped_props(sport)
