@@ -3276,6 +3276,36 @@ def fetch_dff_propstats(player_id, sport, metric, line, team="",
                          opponent="", position="", direction="over",
                          location="ALL", last_n=10,
                          wplayer="", woplayer=""):
+    """Cached wrapper around _fetch_dff_propstats_live — previously every call
+    hit dailyfantasyfuel.com live with no caching at all, once per prop, with
+    a 15s timeout. That was the single largest contributor to multi-minute
+    board loads on a board with 100+ props."""
+    cache_key = hashlib.md5(
+        f"dff_{player_id}_{sport}_{metric}_{line}_{direction}_{location}_{last_n}_{team}_{opponent}_{wplayer}_{woplayer}".encode()
+    ).hexdigest()
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}_dffprop.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 3:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    result = _fetch_dff_propstats_live(
+        player_id, sport, metric, line, team=team, opponent=opponent,
+        position=position, direction=direction, location=location,
+        last_n=last_n, wplayer=wplayer, woplayer=woplayer,
+    )
+    try:
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+    except OSError:
+        pass
+    return result
+
+
+def _fetch_dff_propstats_live(player_id, sport, metric, line, team="",
+                         opponent="", position="", direction="over",
+                         location="ALL", last_n=10,
+                         wplayer="", woplayer=""):
     """
     Fetch DFF PropStats for a player/metric combination.
     
@@ -7415,7 +7445,8 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
         "x-nba-stats-token": "true",
         "Referer": "https://www.nba.com/"
     }
-    for season_type in ["Playoffs", "Regular+Season"]:
+    _season_types = ["Playoffs", "Regular+Season"] if date.today().month in (4, 5, 6) else ["Regular+Season"]
+    for season_type in _season_types:
         url = f"https://stats.nba.com/stats/teamgamelogs?Season=2025-26&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
         try:
             resp = requests.get(url, headers=nba_headers, timeout=8)
@@ -16310,6 +16341,64 @@ def load_sport_data(sport):
         if _mb:
             _game_analysis_by_matchup[_mb.lower()] = _ga
 
+    # ── Parallel prefetch for the three per-prop live-network calls below ──
+    # These used to run inline, once per prop, fully sequential — on a board
+    # with 100+ props that meant 100+ blocking network round-trips back to
+    # back. Collecting the unique players/teams that actually need a live
+    # lookup first and fetching them concurrently turns that into a handful
+    # of parallel batches instead.
+    _bdl_avg_prefetch  = {}
+    _bdl_logs_prefetch = {}
+    _team_def_prefetch = {}
+    if sport == "NBA" and BDL_API_KEY:
+        _needs_bdl_avg = set()
+        for _p in props:
+            _pl = _p.get("Player","")
+            if not _pl or _pl in season_avgs:
+                continue
+            _, _ud = find_player_avg(_pl, season_avgs)
+            if _ud:
+                _needs_bdl_avg.add(_pl)
+        if _needs_bdl_avg:
+            with ThreadPoolExecutor(max_workers=8) as _ex:
+                _futs = {_ex.submit(fetch_player_season_avg_bdl, _pl, sport): _pl for _pl in _needs_bdl_avg}
+                for _fut in _futs:
+                    try:
+                        _bdl_avg_prefetch[_futs[_fut]] = _fut.result()
+                    except Exception:
+                        _bdl_avg_prefetch[_futs[_fut]] = None
+    if BDL_API_KEY:
+        _needs_logs = set()
+        for _p in props:
+            _pl = _p.get("Player","")
+            if not _pl:
+                continue
+            _pteam = PLAYER_TEAM_MAP.get(_pl, "")
+            if _pteam and any(_pteam in _g.get("Matchup","") for _g in games):
+                _needs_logs.add(_pl)
+        if _needs_logs:
+            with ThreadPoolExecutor(max_workers=8) as _ex:
+                _futs = {_ex.submit(fetch_player_game_logs, _pl, sport, 20): _pl for _pl in _needs_logs}
+                for _fut in _futs:
+                    try:
+                        _bdl_logs_prefetch[_futs[_fut]] = _fut.result()
+                    except Exception:
+                        _bdl_logs_prefetch[_futs[_fut]] = []
+    if sport == "NBA":
+        _unique_teams = set()
+        for _g in games:
+            for _tok in _g.get("Matchup","").replace("@","vs").split():
+                if _tok != "vs" and len(_tok) <= 3 and _tok.isalpha():
+                    _unique_teams.add(_tok)
+        if _unique_teams:
+            with ThreadPoolExecutor(max_workers=8) as _ex:
+                _futs = {_ex.submit(fetch_team_recent_defense, sport, _t, 10): _t for _t in _unique_teams}
+                for _fut in _futs:
+                    try:
+                        _team_def_prefetch[_futs[_fut]] = _fut.result()
+                    except Exception:
+                        _team_def_prefetch[_futs[_fut]] = None
+
     for p in props:
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
@@ -16372,7 +16461,7 @@ def load_sport_data(sport):
                 skipped_def += 1
                 # Try live BDL lookup before using static defaults
                 if BDL_API_KEY and sport == "NBA":
-                    live_avg = fetch_player_season_avg_bdl(player, sport)
+                    live_avg = _bdl_avg_prefetch.get(player)
                     if live_avg:
                         avg_dict = live_avg
                         using_default = False
@@ -16405,7 +16494,7 @@ def load_sport_data(sport):
                         if (p2 != player_team and len(p2) <= 3 and p2.isalpha()):
                             opp_team_abbrev = p2
                             season_def = team_defense.get(p2, 112.0)
-                            recent_def = fetch_team_recent_defense(sport, p2, 10)
+                            recent_def = _team_def_prefetch.get(p2)
                             if recent_def and recent_def.get("def_rating_recent"):
                                 recent_rating = recent_def["def_rating_recent"]
                                 is_playoff_month = date.today().month in [4,5,6]
@@ -16523,7 +16612,7 @@ def load_sport_data(sport):
         h2h_note = ""
         if opp_abbr:
             try:
-                game_logs = fetch_player_game_logs(player, sport, 20)
+                game_logs = _bdl_logs_prefetch.get(player, [])
                 if game_logs:
                     h2h_rate, h2h_games, _ = compute_h2h_hit_rate(game_logs, opp_abbr, stat_norm, line)
                     if h2h_games >= 3:
