@@ -9685,10 +9685,20 @@ def scrape_prizepicks(sport):
                         if "html" not in content_type and not _cffi_resp.text.strip().startswith("<"):
                             data = _cffi_resp.json()
                             _cffi_success = True
+                            log_error_to_session("scrape_prizepicks_cffi", f"200 OK on {url[-40:]}", "info")
+                        else:
+                            log_error_to_session("scrape_prizepicks_cffi", f"200 but HTML/captcha body on {url[-40:]}", "warning")
+                    else:
+                        # Previously this branch was completely silent — added
+                        # 2026-06-21 specifically to verify whether the
+                        # x-device-info header fix actually changes the
+                        # response (was a 403 before; if still 403, the header
+                        # fix didn't help and the real blocker is elsewhere).
+                        log_error_to_session("scrape_prizepicks_cffi", f"HTTP {_cffi_resp.status_code} on {url[-40:]}", "warning")
                 except ImportError:
-                    pass
-                except (requests.RequestException, KeyError, ValueError):
-                    pass
+                    log_error_to_session("scrape_prizepicks_cffi", "curl_cffi not installed", "warning")
+                except (requests.RequestException, KeyError, ValueError) as _cffi_e:
+                    log_error_to_session("scrape_prizepicks_cffi", f"{type(_cffi_e).__name__}: {str(_cffi_e)[:80]} on {url[-40:]}", "warning")
 
                 # ── Attempt 2: ScrapeOps residential proxy ──
                 if not _cffi_success:
