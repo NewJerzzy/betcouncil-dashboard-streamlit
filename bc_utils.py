@@ -695,8 +695,12 @@ def detect_season_regime(sport="NBA"):
     """
     month = date.today().month
 
-    if sport in ("NBA", "WNBA"):
-        if month in (10, 11):
+    if sport == "NBA":
+        if month in (7, 8, 9):
+            regime = "Off-season"
+            desc   = "No NBA games — current-season signals are stale"
+            adj    = {"base": -0.06}
+        elif month in (10, 11):
             regime = "Early Season"
             desc   = "First month — small sample, base stats less reliable"
             adj    = {"base": -0.04, "defense": -0.03}
@@ -705,6 +709,27 @@ def detect_season_regime(sport="NBA"):
             desc   = "Playoffs — defense weight increases, pace less predictive"
             adj    = {"defense": 0.04, "pace": -0.02}
         elif month in (3,):
+            regime = "Late Season"
+            desc   = "Late season — rest signal strengthens"
+            adj    = {"rest": 0.02}
+        else:
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
+    elif sport == "WNBA":
+        if month in (11, 12, 1, 2, 3, 4):
+            regime = "Off-season"
+            desc   = "No WNBA games — current-season signals are stale"
+            adj    = {"base": -0.06}
+        elif month in (5,):
+            regime = "Early Season"
+            desc   = "First month — small sample, base stats less reliable"
+            adj    = {"base": -0.04, "defense": -0.03}
+        elif month in (9, 10):
+            regime = "Playoffs"
+            desc   = "Playoffs — defense weight increases, pace less predictive"
+            adj    = {"defense": 0.04, "pace": -0.02}
+        elif month in (8,):
             regime = "Late Season"
             desc   = "Late season — rest signal strengthens"
             adj    = {"rest": 0.02}
@@ -724,6 +749,27 @@ def detect_season_regime(sport="NBA"):
         elif month in (9,):
             regime = "Late Season"
             desc   = "Late MLB — rest signal strengthens"
+            adj    = {"rest": 0.02}
+        else:
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
+    elif sport == "NHL":
+        if month in (7, 8, 9):
+            regime = "Off-season"
+            desc   = "No NHL games — current-season signals are stale"
+            adj    = {"base": -0.06}
+        elif month in (10, 11):
+            regime = "Early Season"
+            desc   = "Early NHL — small sample, base stats less reliable"
+            adj    = {"base": -0.04}
+        elif month in (4, 5, 6):
+            regime = "Playoffs"
+            desc   = "NHL Playoffs — defense weight increases, pace less predictive"
+            adj    = {"defense": 0.05, "pace": -0.02}
+        elif month in (3,):
+            regime = "Late Season"
+            desc   = "Late NHL — rest signal strengthens"
             adj    = {"rest": 0.02}
         else:
             regime = "Mid Season"
