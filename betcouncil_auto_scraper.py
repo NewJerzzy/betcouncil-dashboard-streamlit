@@ -1839,7 +1839,43 @@ def scrape_draftkings_curlffi(sport):
     return props
 
 
-def scrape_caesars_curlffi(sport):
+def load_caesars_tokens_from_gist(token, gist_id):
+    """Read the Caesars bearer_jwt/waf_token pushed by caesars-harvester-cdp.js.
+    This standalone script previously only ever wrote to the Gist (props
+    push), never read from it — that's the actual gap that left this
+    function's auth headers empty even after the harvester started working
+    in app.py, since that fix never touched this separate code path."""
+    if not token or not gist_id:
+        return None
+    try:
+        r = requests.get(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
+            timeout=10
+        )
+        if r.status_code != 200:
+            return None
+        files = r.json().get("files", {})
+        file_data = files.get("betcouncil_caesars_tokens.json", {})
+        content = (file_data.get("content") or "").strip()
+        if not content:
+            # Same cross-file truncation issue fixed in app.py's load_from_gist
+            # on 2026-06-21 — fall back to raw_url if bulk content is empty.
+            raw_url = file_data.get("raw_url", "")
+            if not raw_url:
+                return None
+            raw_resp = requests.get(raw_url, headers={"Authorization": f"token {token}"}, timeout=15)
+            if raw_resp.status_code != 200:
+                return None
+            content = raw_resp.text.strip()
+            if not content:
+                return None
+        return json.loads(content)
+    except (requests.RequestException, KeyError, ValueError, TypeError):
+        return None
+
+
+def scrape_caesars_curlffi(sport, token="", gist_id=""):
     """Caesars props via curl_cffi + api.americanwagering.com."""
     print(f"\n  Caesars {sport} (curl_cffi):")
     props = []
@@ -1852,6 +1888,17 @@ def scrape_caesars_curlffi(sport):
 
     headers = {"User-Agent": UA, "Accept": "application/json",
                "Origin": "https://sportsbook.caesars.com", "Referer": "https://sportsbook.caesars.com/"}
+
+    czr_tokens = load_caesars_tokens_from_gist(token, gist_id)
+    if czr_tokens and czr_tokens.get("bearer_jwt"):
+        headers["authorization"] = f"Bearer {czr_tokens['bearer_jwt']}"
+        headers["sessionid"] = czr_tokens["bearer_jwt"]
+        if czr_tokens.get("waf_token"):
+            headers["x-aws-waf-token"] = czr_tokens["waf_token"]
+        print("    Using harvested Caesars session token from Gist")
+    else:
+        print("    No Caesars token in Gist — run caesars-harvester-cdp.js first")
+
     sport_map = {"NBA": "basketball", "MLB": "baseball", "NHL": "icehockey",
                  "WNBA": "basketball", "NFL": "americanfootball"}
     czr_sport = sport_map.get(sport, "basketball")
@@ -2915,7 +2962,7 @@ def main():
 
         if use("czr") or use("caesars"):
             try:
-                czr_props = scrape_caesars_curlffi(sport)
+                czr_props = scrape_caesars_curlffi(sport, token, gist)
                 all_props += czr_props
             except Exception:
                 print("    Caesars: WAF blocked, skipping")
