@@ -2665,7 +2665,10 @@ def get_betonline_game_ids(sport="MLB"):
     }
     headers = {
         "User-Agent": UA, "Accept": "application/json, text/plain",
+        "Accept-Language": "en-US,en;q=0.9",
         "Content-Type": "application/json-patch+json",
+        "gsetting": "bolnasite",
+        "utc-offset": "420",
         "Origin": "https://www.betonline.ag", "Referer": "https://www.betonline.ag/",
     }
     try:
