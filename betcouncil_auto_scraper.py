@@ -2659,9 +2659,14 @@ def get_betonline_game_ids(sport="MLB"):
         r = requests.post("https://api-offering.betonline.ag/api/offering/Sports/offering-by-league",
                            headers=headers, json=payload, timeout=12)
         if r.status_code != 200:
+            print(f"  ❌ offering-by-league returned status {r.status_code}: {r.text[:200]}")
             return []
         data = r.json()
         games_desc = ((data or {}).get("GameOffering", {}) or {}).get("GamesDescription", []) or []
+        if not games_desc:
+            print(f"  ⚠️  offering-by-league returned 200 but no games. "
+                  f"Top-level keys: {list((data or {}).keys())}")
+            return []
         out = []
         for gd in games_desc:
             g = gd.get("Game", {}) or {}
