@@ -836,13 +836,20 @@ def scrape_betonline(sport):
     return props
 
 def scrape_mybookie(sport, cookies):
-    """MyBookie props using session cookies."""
+    """MyBookie props using session cookies. Uses curl_cffi (Chrome TLS
+    impersonation) rather than plain requests — confirmed 2026-06-21 that a
+    genuinely fresh, valid session cookie (including cf_clearance) still got
+    403'd via plain requests. Cloudflare binds cf_clearance validity to the
+    TLS fingerprint it was issued under; plain Python requests has a
+    different handshake signature than a real browser, so even a correct
+    cookie value gets rejected. Same fix already proven working elsewhere in
+    this file for Caesars/BetRivers."""
     print(f"\n  MyBookie {sport}:")
     cfg_s  = SPORT_MAP.get(sport, SPORT_MAP["NBA"])
     props  = []
     cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
     headers = {
-        "User-Agent": UA,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Cookie": cookie_str,
         "Referer":  "https://engine.mybookie.ag/sports/nba",
         "Origin":   "https://engine.mybookie.ag",
@@ -853,10 +860,11 @@ def scrape_mybookie(sport, cookies):
         "X-XSRF-TOKEN":  cookies.get("XSRF-TOKEN",""),
     }
     try:
-        r = requests.get(
+        from curl_cffi import requests as cf
+        r = cf.get(
             "https://engine.mybookie.ag/sports_api/leagues-lines",
             params={"sport":cfg_s["sport"],"league":cfg_s["league"]},
-            headers=headers, timeout=15
+            headers=headers, impersonate="chrome124", timeout=15
         )
         print(f"    leagues-lines: {r.status_code}")
         if r.status_code in (401, 403):
@@ -873,10 +881,10 @@ def scrape_mybookie(sport, cookies):
         games = [g for g in games if g]
         print(f"    Games: {len(games)}")
         for gid in games[:10]:
-            rp = requests.get(
+            rp = cf.get(
                 "https://engine.mybookie.ag/sports_api/props-market-list",
                 params={"gameID":gid,"isLive":"false"},
-                headers=headers, timeout=15
+                headers=headers, impersonate="chrome124", timeout=15
             )
             if rp.status_code == 200:
                 data2  = rp.json()
