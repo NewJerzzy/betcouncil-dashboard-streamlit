@@ -54,6 +54,19 @@ import sys
 from datetime import datetime, date
 from pathlib import Path
 
+# Windows redirects stdout/stderr through the system codepage (cp1252) instead
+# of UTF-8 when output isn't a real console (e.g. `> output.txt`, or piped).
+# This script prints emoji (✅❌⚠️) throughout for status — under cp1252 those
+# raise UnicodeEncodeError and crash the run, but ONLY when redirected, which
+# is exactly when you need the output most for debugging. Force UTF-8 so any
+# print() anywhere in this file is safe regardless of how it's invoked.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── Config ───────────────────────────────────────────────────
 SCRIPT_DIR  = Path(__file__).parent
 CONFIG_FILE = SCRIPT_DIR / "config.json"
