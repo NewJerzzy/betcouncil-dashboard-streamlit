@@ -4369,7 +4369,10 @@ BETONLINE_BASE = "https://api-offering.betonline.ag/api/offering/Sports/offering
 BETONLINE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain",
+    "Accept-Language": "en-US,en;q=0.9",
     "Content-Type": "application/json-patch+json",
+    "gsetting": "bolnasite",
+    "utc-offset": "420",
     "Origin": "https://www.betonline.ag",
     "Referer": "https://www.betonline.ag/",
 }
@@ -4405,6 +4408,10 @@ def fetch_betonline_lines(sport="NBA"):
     try:
         r = requests.post(BETONLINE_BASE, headers=BETONLINE_HEADERS, json=payload, timeout=12)
         if r.status_code != 200:
+            st.session_state.setdefault("errors", []).append({
+                "source": "BetOnline", "error": f"status {r.status_code}: {r.text[:100]}",
+                "time":   datetime.now().strftime("%H:%M"),
+            })
             return load_json_data(BETONLINE_PATH, [])
 
         data = r.json()
