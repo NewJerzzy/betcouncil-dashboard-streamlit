@@ -184,8 +184,15 @@ def _parse_pp_ocr_inline(raw_text):
             body = re.sub(r"\b" + re.escape(_pw) + r"(?:ers|s)?\b", " ", body, flags=re.I)
         body = re.sub(r"\s+", " ", body).strip()
 
-        # Find "Firstname Lastname" — title-cased, at least 2 words, ≥2 chars each
-        name_re = re.compile(r"\b([A-Z][a-z']+(?:\s+[A-Z][a-z']+)+)\b")
+        # Find "Firstname Lastname" — title-cased, at least 2 words, ≥2 chars each.
+        # Each word allows ONE internal capital+lowercase run (Mc/Le/De/Van/Mac
+        # prefixes) so camelCase names like LeBron, McDavid, DeAndre match too —
+        # previously the plain [A-Z][a-z']+ pattern broke on the second internal
+        # capital and silently failed to match these names at all. Still requires
+        # a lowercase letter in every word, so bare acronyms (NBA, MLB) can't match
+        # on their own (and BANNED/PROP_WORDS filtering below catches them anyway).
+        _NAME_WORD = r"[A-Z](?:[a-z']+[A-Z][a-z']*|[a-z']+)"
+        name_re = re.compile(rf"\b({_NAME_WORD}(?:\s+{_NAME_WORD})+)\b")
         for m in name_re.finditer(body):
             name = m.group(1).strip()
             parts = name.split()

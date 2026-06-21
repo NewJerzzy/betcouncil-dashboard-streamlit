@@ -40,6 +40,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
+from scrapers import fetch_sleeper_mlb_scoreboard
 
 # --- API Keys ---
 # --- Config (extracted 2026-06-19 to reduce app.py size) ---
@@ -7926,8 +7927,20 @@ def fetch_mlb_rolling_averages():
         is_pitcher = "SO" in player_avgs or "ER" in player_avgs
         group = "pitching" if is_pitcher else "hitting"
         url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season=2025&gameType=R")
+        resp = None
+        for _attempt in range(2):  # one retry on transient connection failures
+            try:
+                resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+                break
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as _conn_e:
+                if _attempt == 0:
+                    time.sleep(1.0)
+                    continue
+                st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": f"statsapi unreachable after retry: {str(_conn_e)[:80]}"})
+                resp = None
+        if resp is None:
+            continue
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -10102,6 +10115,42 @@ def fetch_game_lines(sport):
         if tomorrow_games:
             today_games = tomorrow_games
 
+    # ── Definitive ESPN abbrev → full-name fragment mapping ──
+    # Covers every MLB team + all major sports. Hoisted out of the
+    # ODDS_API_KEY block below so the BetOnline fallback pass (which
+    # doesn't depend on that secret) can reuse the same matching logic.
+    TEAM_ABBREV_TO_FRAGMENT = {
+        # MLB
+        "ARI":"Arizona","ATL":"Atlanta Braves","BAL":"Baltimore",
+        "BOS":"Boston Red","CHC":"Chicago Cubs","CWS":"Chicago White",
+        "CIN":"Cincinnati","CLE":"Cleveland","COL":"Colorado",
+        "DET":"Detroit","HOU":"Houston Astros","KC":"Kansas City",
+        "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
+        "MIA":"Miami","MIL":"Milwaukee","MIN":"Minnesota",
+        "NYM":"New York Mets","NYY":"New York Yankees",
+        "OAK":"Oakland","ATH":"Athletics",
+        "PHI":"Philadelphia","PIT":"Pittsburgh",
+        "SD":"San Diego","SEA":"Seattle","SF":"San Francisco",
+        "STL":"St. Louis","TB":"Tampa Bay","TEX":"Texas",
+        "TOR":"Toronto","WSH":"Washington Nationals",
+        # NBA
+        "GSW":"Golden State","LAL":"Los Angeles Lakers",
+        "LAC":"Los Angeles Clippers","NYK":"New York Knicks",
+        "NOP":"New Orleans","SAS":"San Antonio",
+        "OKC":"Oklahoma","UTA":"Utah","MEM":"Memphis",
+        # NFL
+        "NE":"New England","NO":"New Orleans Saints",
+        "GB":"Green Bay","KC":"Kansas City Chiefs",
+        "LAR":"Los Angeles Rams","LAC":"Los Angeles Chargers",
+        "NYG":"New York Giants","NYJ":"New York Jets",
+        "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers",
+        # NHL
+        "TBL":"Tampa Bay Lightning","TOR":"Toronto",
+        "WSH":"Washington Capitals","NJD":"New Jersey",
+        "LAK":"Los Angeles Kings","SJS":"San Jose",
+        "CBJ":"Columbus","VGK":"Vegas Golden",
+    }
+
     # ── OddsAPI overlay — runs regardless of ESPN results ──
     # Fills in ML/spread/total whenever ESPN returns "N/A"
     # Also provides Circa/BetOnline/Pinnacle market data
@@ -10110,40 +10159,6 @@ def fetch_game_lines(sport):
             odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
             if odds_games:
                 odds_lookup = {g["Matchup"]: g for g in odds_games}
-
-                # Definitive ESPN abbrev → OddsAPI full name fragment mapping
-                # Covers every MLB team + all major sports
-                TEAM_ABBREV_TO_FRAGMENT = {
-                    # MLB
-                    "ARI":"Arizona","ATL":"Atlanta Braves","BAL":"Baltimore",
-                    "BOS":"Boston Red","CHC":"Chicago Cubs","CWS":"Chicago White",
-                    "CIN":"Cincinnati","CLE":"Cleveland","COL":"Colorado",
-                    "DET":"Detroit","HOU":"Houston Astros","KC":"Kansas City",
-                    "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
-                    "MIA":"Miami","MIL":"Milwaukee","MIN":"Minnesota",
-                    "NYM":"New York Mets","NYY":"New York Yankees",
-                    "OAK":"Oakland","ATH":"Athletics",
-                    "PHI":"Philadelphia","PIT":"Pittsburgh",
-                    "SD":"San Diego","SEA":"Seattle","SF":"San Francisco",
-                    "STL":"St. Louis","TB":"Tampa Bay","TEX":"Texas",
-                    "TOR":"Toronto","WSH":"Washington Nationals",
-                    # NBA
-                    "GSW":"Golden State","LAL":"Los Angeles Lakers",
-                    "LAC":"Los Angeles Clippers","NYK":"New York Knicks",
-                    "NOP":"New Orleans","SAS":"San Antonio",
-                    "OKC":"Oklahoma","UTA":"Utah","MEM":"Memphis",
-                    # NFL
-                    "NE":"New England","NO":"New Orleans Saints",
-                    "GB":"Green Bay","KC":"Kansas City Chiefs",
-                    "LAR":"Los Angeles Rams","LAC":"Los Angeles Chargers",
-                    "NYG":"New York Giants","NYJ":"New York Jets",
-                    "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers",
-                    # NHL
-                    "TBL":"Tampa Bay Lightning","TOR":"Toronto",
-                    "WSH":"Washington Capitals","NJD":"New Jersey",
-                    "LAK":"Los Angeles Kings","SJS":"San Jose",
-                    "CBJ":"Columbus","VGK":"Vegas Golden",
-                }
 
                 for game in today_games:
                     matchup = game.get("Matchup","")
@@ -10220,6 +10235,65 @@ def fetch_game_lines(sport):
                         today_games.append(odds_game)
         except (ValueError, KeyError, TypeError, AttributeError):
             pass
+
+    # ── BetOnline overlay — independent of ODDS_API_KEY ──
+    # Fills any ML/spread/total still "N/A" after the ESPN+OddsAPI passes
+    # above. This is the real fix for the "No Market" Game Lines bug when
+    # its cause is an empty/invalid ODDS_API_KEY secret (that overlay
+    # silently no-ops if ODDS_API_KEY isn't set) — BetOnline doesn't need
+    # any key, so it still runs. Uses fetch_betonline_lines() directly
+    # (not session_state) so this works even on the very first load before
+    # the normal sport-scan populates session_state["betonline_lines"].
+    try:
+        bol_games = fetch_betonline_lines(sport)
+        if bol_games:
+            for game in today_games:
+                still_missing = any(
+                    game.get(k) in ("N/A", None, "")
+                    for k in ("Home ML", "Away ML", "Spread", "Total")
+                )
+                if not still_missing:
+                    continue
+                matchup = game.get("Matchup", "")
+                esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
+                best_match = None
+                for bol_game in bol_games:
+                    home2 = (bol_game.get("home", "") or "").upper()
+                    away2 = (bol_game.get("away", "") or "").upper()
+                    both = home2 + " " + away2
+                    matched = False
+                    for abbr in esp_parts:
+                        if not abbr or len(abbr) < 2:
+                            continue
+                        if abbr in home2 or abbr in away2:
+                            matched = True; break
+                        frag = TEAM_ABBREV_TO_FRAGMENT.get(abbr, "").upper()
+                        if frag and frag in both:
+                            matched = True; break
+                        if len(home2) >= 3 and home2[:3] in abbr:
+                            matched = True; break
+                        if len(away2) >= 3 and away2[:3] in abbr:
+                            matched = True; break
+                    if matched:
+                        best_match = bol_game
+                        break
+                if best_match:
+                    if game.get("Home ML") in ("N/A", None, ""):
+                        game["Home ML"] = best_match.get("home_ml") or "N/A"
+                    if game.get("Away ML") in ("N/A", None, ""):
+                        game["Away ML"] = best_match.get("away_ml") or "N/A"
+                    if game.get("HomeML", "N/A") in ("N/A", None, ""):
+                        game["HomeML"] = game.get("Home ML", "N/A")
+                    if game.get("AwayML", "N/A") in ("N/A", None, ""):
+                        game["AwayML"] = game.get("Away ML", "N/A")
+                    if game.get("Spread") in ("N/A", None, "") and best_match.get("spread") is not None:
+                        game["Spread"] = best_match.get("spread")
+                    if game.get("Total") in ("N/A", None, "") and best_match.get("total") is not None:
+                        game["Total"] = best_match.get("total")
+                    if game.get("Odds Source") in ("ESPN", "N/A", ""):
+                        game["Odds Source"] = "BetOnline"
+    except Exception:
+        pass
 
     if not today_games:
         return [], playoff, home_teams, away_teams
@@ -13892,6 +13966,44 @@ def fetch_mlb_confirmed_lineups():
         return lineups
     except (requests.RequestException, ValueError, KeyError):
         return {}
+
+
+def fetch_mlb_confirmed_lineups_with_fallback():
+    """
+    Same contract as fetch_mlb_confirmed_lineups(), but fills in any team
+    statsapi.mlb.com didn't return (rate-limited / "Max retries exceeded" /
+    down — the known failure mode against statsapi) using Sleeper's live
+    scoreboard API as a second, independent source. statsapi stays primary
+    since it's the longer-trusted source; Sleeper only fills gaps.
+
+    Confirmed via real DevTools capture 2026-06-21 (api.sleeper.app, no
+    auth). Note: Sleeper's lineup array mixes starting 9 with in-game
+    substitutions appended later — fetch_sleeper_mlb_scoreboard() already
+    filters to batting_order 0-9 + inning==0 to keep only starters.
+    """
+    lineups = fetch_mlb_confirmed_lineups()
+    try:
+        sleeper_games = fetch_sleeper_mlb_scoreboard()
+        for g in (sleeper_games or {}).values():
+            for side in ("away", "home"):
+                team_block = g.get(side, {}) or {}
+                abbr = team_block.get("team", "")
+                sleeper_lineup = team_block.get("lineup", [])
+                if abbr and abbr not in lineups and sleeper_lineup:
+                    lineups[abbr] = {
+                        "players": [
+                            {"name": p.get("name", ""), "position": "",
+                             "batting_order": p.get("batting_order", 0)}
+                            for p in sleeper_lineup
+                        ],
+                        "confirmed": len(sleeper_lineup) >= 9,
+                        "source": "Sleeper (fallback)",
+                        "fetched_at": g.get("fetched_at", ""),
+                    }
+    except Exception:
+        pass
+    return lineups
+
 # ═══════════════════════════════════════════════════════════════
 # NFL READINESS SUITE
 # Practice participation, inactives, O-line monitoring,
@@ -15189,8 +15301,8 @@ def load_sport_data(sport):
         season_avgs = dict(PLAYER_AVERAGES.get("MLB", {}))
         _merge_rolling(season_avgs, mlb_rolling)
         mlb_pitchers = fetch_mlb_probable_pitchers()
-        # ── MLB confirmed lineup check ──────────────────────────
-        _mlb_lineups = fetch_mlb_confirmed_lineups()
+        # ── MLB confirmed lineup check (statsapi primary, Sleeper fallback) ──
+        _mlb_lineups = fetch_mlb_confirmed_lineups_with_fallback()
         if _mlb_lineups:
             st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
         # FantasyLabs lineup feed — batting order + starter confirmation
