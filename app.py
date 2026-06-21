@@ -4458,23 +4458,28 @@ BETONLINE_SPORT_MAP = {
     "NHL":  ("hockey",     "nhl"),
     "WNBA": ("basketball", "wnba"),
     "NFL":  ("football",   "nfl"),
+    # Soccer = EPL only, matching the existing "soccer/leagues/eng.1"
+    # convention already used elsewhere in this codebase (line ~718) —
+    # confirmed working via live probe 2026-06-21 (10 real games returned).
+    "Soccer": ("soccer", "epl"),
 }
 
 
-@st.cache_data(ttl=1800)
-def fetch_betonline_lines(sport="NBA"):
-    """
-    Fetch BetOnline game lines — ML, spread, total — for every game in a
-    league, one call. No auth required.
+# Sports needing more than one BetOnline league call merged together.
+# Tennis splits into separate ATP/WTA tours on BetOnline (no single
+# "tennis" league covers both) — confirmed via live probe 2026-06-21
+# (27 WTA games, real data, alongside the already-working ATP call).
+BETONLINE_MULTI_LEAGUE = {
+    "Tennis": [("tennis", "atp"), ("tennis", "wta")],
+}
 
-    Returns list of dicts in the same shape as fetch_bovada_lines():
-      {matchup, home, away, home_ml, away_ml,
-       spread, spread_odds, total, over_odds, under_odds,
-       start_time, sport, source}
-    """
-    sport_path, league_path = BETONLINE_SPORT_MAP.get(sport, ("basketball", "nba"))
+
+def _fetch_betonline_one_league(sport_path, league_path, sport):
+    """Single-league BetOnline game-lines fetch — the core logic extracted
+    so fetch_betonline_lines() can call this once for normal sports or
+    multiple times (merged) for sports like Tennis that span more than one
+    BetOnline league."""
     sport_cap = sport_path.capitalize()
-
     payload = {
         "Sport": sport_path, "League": league_path, "ScheduleText": None,
         "filterTime": 0, "type": "prematch",
@@ -4488,13 +4493,13 @@ def fetch_betonline_lines(sport="NBA"):
                 "source": "BetOnline", "error": f"status {r.status_code}: {r.text[:100]}",
                 "time":   datetime.now().strftime("%H:%M"),
             })
-            return load_json_data(BETONLINE_PATH, [])
+            return []
 
         data = r.json()
         offering = (data or {}).get("GameOffering", {}) or {}
         games_desc = offering.get("GamesDescription", []) or []
         if not games_desc:
-            return load_json_data(BETONLINE_PATH, [])
+            return []
 
         def _ml(line_block):
             v = ((line_block or {}).get("MoneyLine", {}) or {}).get("Line")
@@ -4538,17 +4543,38 @@ def fetch_betonline_lines(sport="NBA"):
                 "source":      "BetOnline",
                 "game_id":     g.get("GameId"),
             })
-
-        if games:
-            save_json_data(BETONLINE_PATH, games)
-        return games or load_json_data(BETONLINE_PATH, [])
+        return games
 
     except Exception as e:
         st.session_state.setdefault("errors", []).append({
             "source": "BetOnline", "error": str(e)[:80],
             "time":   datetime.now().strftime("%H:%M"),
         })
-        return load_json_data(BETONLINE_PATH, [])
+        return []
+
+
+@st.cache_data(ttl=1800)
+def fetch_betonline_lines(sport="NBA"):
+    """
+    Fetch BetOnline game lines — ML, spread, total — for every game in a
+    league, one call (or merged across leagues for Tennis). No auth required.
+
+    Returns list of dicts in the same shape as fetch_bovada_lines():
+      {matchup, home, away, home_ml, away_ml,
+       spread, spread_odds, total, over_odds, under_odds,
+       start_time, sport, source}
+    """
+    if sport in BETONLINE_MULTI_LEAGUE:
+        games = []
+        for sport_path, league_path in BETONLINE_MULTI_LEAGUE[sport]:
+            games.extend(_fetch_betonline_one_league(sport_path, league_path, sport))
+    else:
+        sport_path, league_path = BETONLINE_SPORT_MAP.get(sport, ("basketball", "nba"))
+        games = _fetch_betonline_one_league(sport_path, league_path, sport)
+
+    if games:
+        save_json_data(BETONLINE_PATH, games)
+    return games or load_json_data(BETONLINE_PATH, [])
 
 
 # ═══════════════════════════════════════════════════════════════
