@@ -21982,6 +21982,14 @@ with tabs[7]:
                     if bet.get("outcome") not in ("WIN","LOSS"):
                         continue
                     bet_date_str = datetime.combine(parsed_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                    _raw_date = str(bet.get("date","")).strip()
+                    if _raw_date:
+                        for _fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%b %d, %Y", "%B %d, %Y"):
+                            try:
+                                bet_date_str = datetime.strptime(_raw_date, _fmt).strftime("%Y-%m-%d %H:%M")
+                                break
+                            except ValueError:
+                                continue
                     try:
                         log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str)
                         submitted += 1
@@ -22007,7 +22015,7 @@ with tabs[7]:
         # ── PASTE TEXT SLIP ─────────────────────────────
         st.markdown("---")
         st.markdown("### 📋 Paste Bet Slip Text")
-        st.caption("Paste Bovada or MyBookie text slips here — copy the text from the app or confirmation email.")
+        st.caption("Paste Bovada or MyBookie text slips here — extracted bets are reviewed below before logging, same as screenshots.")
         pasted_slip = st.text_area(
             "Paste slip text (Bovada or MyBookie)",
             height=180,
@@ -22022,29 +22030,9 @@ with tabs[7]:
                 else:
                     _parsed = parse_mybookie_slip_text(pasted_slip)
                 if _parsed:
-                    # Auto-log all parsed bets
-                    _logged = 0
-                    for _bet in _parsed:
-                        try:
-                            log_manual_bet(
-                                _bet.get("player",""),
-                                _bet.get("prop","Moneyline"),
-                                _bet.get("line",0),
-                                _bet.get("side",""),
-                                _bet.get("sport","MLB"),
-                                _bet.get("outcome","PENDING"),
-                                _bet.get("wager",0),
-                                _bet.get("pick_count",1),
-                                _bet.get("bet_type","game"),
-                                _bet.get("source","Bovada"),
-                                _bet.get("date",""),
-                            )
-                            _logged += 1
-                        except Exception as _e:
-                            st.caption(f"⚠️ Could not log: {_bet.get('player','')} — {str(_e)[:50]}")
-                    if _logged > 0:
-                        st.success(f"✅ Logged {_logged} bet(s) from {_slip_src} slip — Outcome: {_parsed[0].get('outcome','?')}")
-                        st.rerun()
+                    st.session_state["parsed_bets"] = _parsed
+                    st.success(f"✅ Found {len(_parsed)} bet(s) from {_slip_src} slip — review below")
+                    st.rerun()
                 else:
                     st.warning(f"Could not parse {_slip_src} slip. Check format and try again.")
             else:
