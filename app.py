@@ -5629,13 +5629,15 @@ def _get_fanduel_state():
 # the navigation/facet/v1.0/search endpoint, NOT generic league identifiers.
 # MLB confirmed via real DevTools capture 2026-06-21 (scan.az.sportsbook.
 # fanduel.com/api/sports/navigation/facet/v1.0/search, full request/response
-# captured). Other sports intentionally left unconfirmed rather than guessed —
-# wrong IDs would silently return another sport's events or nothing at all,
-# worse than just returning []. Capture each via the same method
-# (fanduel-navfacet-request-capture.js while on that sport's schedule page)
-# before adding here.
+# captured). WNBA confirmed same day/method. NBA/NHL intentionally left out —
+# both seasons just ended in June, nothing to capture until they're back.
+# NFL similarly held off until closer to its September start. Capture each
+# via the same method (fanduel-navfacet-request-capture.js while on that
+# sport's schedule page) once in season — wrong/guessed IDs would silently
+# return another sport's events or nothing at all, worse than just [].
 FANDUEL_COMPETITION_IDS = {
     "MLB": 11196870,
+    "WNBA": 11295025,
 }
 
 
