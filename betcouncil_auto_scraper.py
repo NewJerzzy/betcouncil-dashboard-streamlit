@@ -2735,8 +2735,9 @@ def harvest_betonline_prop_keys(sport="MLB", max_games=15):
                     sport_path=info["sport"], league_path=info["league"], game_id=g["game_id"]
                 )
                 try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=15000)
+                    page.goto(url, wait_until="networkidle", timeout=30000)
+                    page.mouse.wheel(0, 1500)  # trigger loading="lazy" on the SGP iframe
+                    iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=20000)
                     src = iframe_el.get_attribute("src") or ""
                     qs = parse_qs(urlparse(src).query)
                     key = (qs.get("key") or [None])[0]
