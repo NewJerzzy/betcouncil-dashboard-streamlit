@@ -1016,10 +1016,28 @@ def load_from_gist(data_type: str, default):
         file_data = files.get(f"betcouncil_{data_type}.json", {})
         content = (file_data.get("content") or "").strip()
         if not content:
-            return None
+            # GitHub's bulk gist response can return empty content for ANY
+            # file regardless of that file's own size, once another file in
+            # the same gist is large enough to push the total response past
+            # GitHub's inline-content limit. Confirmed 2026-06-21: a 405-byte
+            # caesars_tokens file came back empty purely because
+            # auto_scraped_props.json (2.5MB) sat alongside it in the same
+            # gist — every data_type using this function was silently
+            # affected, not just the large file. Always fall back to
+            # raw_url rather than trusting an empty content field as "no data".
+            raw_url = file_data.get("raw_url", "")
+            if not raw_url:
+                return None
+            raw_resp = requests.get(raw_url, headers=headers, timeout=15)
+            if raw_resp.status_code != 200:
+                return None
+            content = raw_resp.text.strip()
+            if not content:
+                return None
         return json.loads(content)
     except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError):
         return None
+
 
 # load_json_data — moved to bc_utils.py
 def save_json_data(path, data):
