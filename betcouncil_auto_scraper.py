@@ -2616,6 +2616,151 @@ def push_to_gist(all_props, all_lines, token, gist_id):
     print(f"\n❌ Gist push failed: {r.status_code}")
     return False
 
+
+# ── BetOnline Player Prop Keys (Playwright harvester) ──────────
+# www.betonline.ag is Cloudflare-protected (confirmed via 403 testing —
+# see BETONLINE_BASE comment in app.py), so the per-game "Key" that
+# unlocks bl.widget-prod.sportcast.app/public/RequestBetPriceUI can't be
+# pulled with plain requests. A real headless browser solves Cloudflare
+# automatically, same as login_fanduel()/login_betmgm() above — no
+# CF-specific code needed here, Playwright just handles it.
+#
+# Confirmed via live DevTools 2026-06-21: the key lives in the static
+# rendered DOM, in <iframe id="SGP-EventView" src="https://bl.widget-prod
+# .sportcast.app/markets?key=...&fixtureId=...">, inside the
+# "panel-row eventView-sgp" SGP panel on every game page. It's the same
+# key across reloads/different players (confirmed stable, not a
+# short-lived token like Caesars' WAF token) — so this only needs to run
+# once per game per day, not on a tight refresh loop.
+#
+# Game IDs come from the existing offering-by-league endpoint (no CF
+# block, already used by scrape_betonline() above and
+# fetch_betonline_lines() in app.py) — this also tests, for free, whether
+# that GameId equals the fixtureId in the harvested iframe src.
+
+BETONLINE_GAME_URL = "https://www.betonline.ag/sportsbook/{sport_path}/{league_path}/game/{game_id}"
+
+
+def get_betonline_game_ids(sport="MLB"):
+    """Today's BetOnline GameIds for a sport, via the un-blocked offering-by-league endpoint."""
+    info = SPORT_MAP.get(sport, SPORT_MAP["MLB"])
+    sport_path, league_path = info["sport"], info["league"]
+    payload = {
+        "Sport": sport_path, "League": league_path, "ScheduleText": None,
+        "filterTime": 0, "type": "prematch",
+        "sport": sport_path.capitalize(), "league": league_path,
+    }
+    headers = {
+        "User-Agent": UA, "Accept": "application/json, text/plain",
+        "Content-Type": "application/json-patch+json",
+        "Origin": "https://www.betonline.ag", "Referer": "https://www.betonline.ag/",
+    }
+    try:
+        r = requests.post("https://api-offering.betonline.ag/api/offering/Sports/offering-by-league",
+                           headers=headers, json=payload, timeout=12)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        games_desc = ((data or {}).get("GameOffering", {}) or {}).get("GamesDescription", []) or []
+        out = []
+        for gd in games_desc:
+            g = gd.get("Game", {}) or {}
+            gid = g.get("GameId")
+            if gid:
+                out.append({"game_id": gid, "home": g.get("HomeTeam",""), "away": g.get("AwayTeam","")})
+        return out
+    except Exception as e:
+        print(f"  ❌ get_betonline_game_ids error: {e}")
+        return []
+
+
+def harvest_betonline_prop_keys(sport="MLB", max_games=15):
+    """
+    Visit each game's BetOnline page with a real headless browser, pull the
+    SGP iframe src, and parse out the sportcast widget key + fixtureId.
+
+    Returns list of:
+      {game_id, home, away, key, fixture_id, fixture_id_matches_game_id, harvested_at}
+    """
+    info = SPORT_MAP.get(sport, SPORT_MAP["MLB"])
+    games = get_betonline_game_ids(sport)[:max_games]
+    if not games:
+        print(f"  No BetOnline games found for {sport}")
+        return []
+
+    results = []
+    try:
+        from playwright.sync_api import sync_playwright
+        from urllib.parse import urlparse, parse_qs
+        import time as _t
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
+            )
+            ctx = browser.new_context(user_agent=UA, viewport={"width": 1280, "height": 900})
+            ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+            page = ctx.new_page()
+
+            for g in games:
+                url = BETONLINE_GAME_URL.format(
+                    sport_path=info["sport"], league_path=info["league"], game_id=g["game_id"]
+                )
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=15000)
+                    src = iframe_el.get_attribute("src") or ""
+                    qs = parse_qs(urlparse(src).query)
+                    key = (qs.get("key") or [None])[0]
+                    fixture_id = (qs.get("fixtureId") or [None])[0]
+                    if key:
+                        results.append({
+                            "game_id":    g["game_id"],
+                            "home":       g["home"],
+                            "away":       g["away"],
+                            "key":        key,
+                            "fixture_id": fixture_id,
+                            "fixture_id_matches_game_id": str(fixture_id) == str(g["game_id"]),
+                            "harvested_at": datetime.now().isoformat(),
+                        })
+                        print(f"  ✅ {g['away']} @ {g['home']}: key captured (fixtureId match: {str(fixture_id) == str(g['game_id'])})")
+                    else:
+                        print(f"  ⚠️  {g['away']} @ {g['home']}: iframe found but no key in src")
+                except Exception as e:
+                    print(f"  ⚠️  {g['away']} @ {g['home']}: {str(e)[:100]}")
+                _t.sleep(1.5)  # don't hammer Cloudflare
+
+            browser.close()
+    except ImportError:
+        print("  ❌ Playwright not installed. Run: pip install playwright && playwright install chromium")
+    except Exception as e:
+        print(f"  ❌ harvest_betonline_prop_keys error: {e}")
+
+    return results
+
+
+def push_betonline_prop_keys(keys_data, token, gist_id):
+    """Push harvested keys to their own Gist file, separate from auto_scraped_props.json."""
+    if not token or not gist_id or not keys_data:
+        return False
+    payload = {
+        "harvested_at": datetime.now().isoformat(),
+        "keys": keys_data,
+    }
+    r = requests.patch(
+        f"https://api.github.com/gists/{gist_id}",
+        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
+        json={"files": {"betonline_prop_keys.json": {"content": json.dumps(payload, indent=2)}}},
+        timeout=15
+    )
+    if r.status_code == 200:
+        print(f"\n✅ Pushed {len(keys_data)} BetOnline prop keys to Gist")
+        return True
+    print(f"\n❌ BetOnline prop keys Gist push failed: {r.status_code}")
+    return False
+
+
 # ── Main ──────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description="BetCouncil Auto Scraper v2.0")
@@ -2623,12 +2768,27 @@ def main():
     parser.add_argument("--all",     action="store_true")
     parser.add_argument("--no-push", action="store_true")
     parser.add_argument("--books",   default="", help="Comma-separated: dk,fd,mgm,czr,mb,bo,pp,ud,sl,bov")
+    parser.add_argument("--betonline-props", action="store_true",
+                         help="Harvest BetOnline player-prop widget keys (Cloudflare-gated, needs real browser) and exit")
+    parser.add_argument("--max-games", type=int, default=15, help="Max games to harvest per sport (--betonline-props only)")
     args = parser.parse_args()
 
     cfg    = load_config()
     token  = cfg.get("github_token","")
     gist   = cfg.get("gist_id","")
     sports = ["NBA","MLB","NHL","WNBA"] if args.all else [args.sport]
+
+    if args.betonline_props:
+        all_keys = []
+        for sp in sports:
+            print(f"\n{'='*50}\nHarvesting BetOnline prop keys: {sp}\n{'='*50}")
+            all_keys.extend(harvest_betonline_prop_keys(sp, max_games=args.max_games))
+        print(f"\nTotal keys harvested: {len(all_keys)}")
+        if all_keys and not args.no_push:
+            push_betonline_prop_keys(all_keys, token, gist)
+        elif all_keys:
+            print(json.dumps(all_keys, indent=2))
+        return
 
     # Determine which books to scrape
     book_filter = [b.strip().lower() for b in args.books.split(",")] if args.books else []
