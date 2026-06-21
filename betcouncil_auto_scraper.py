@@ -2673,6 +2673,12 @@ def get_betonline_game_ids(sport="MLB"):
             gid = g.get("GameId")
             if gid:
                 out.append({"game_id": gid, "home": g.get("HomeTeam",""), "away": g.get("AwayTeam","")})
+        if not out:
+            sample = games_desc[0]
+            sample_game = sample.get("Game", {}) if isinstance(sample, dict) else None
+            print(f"  ⚠️  Got {len(games_desc)} game entries but extracted 0 GameIds. "
+                  f"Entry-level keys: {list(sample.keys()) if isinstance(sample, dict) else type(sample)}. "
+                  f"'Game' sub-dict keys: {list(sample_game.keys()) if isinstance(sample_game, dict) else 'NO Game KEY'}")
         return out
     except Exception as e:
         print(f"  ❌ get_betonline_game_ids error: {e}")
