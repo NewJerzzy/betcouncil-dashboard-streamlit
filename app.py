@@ -4469,6 +4469,129 @@ def fetch_betonline_lines(sport="NBA"):
 
 
 # ═══════════════════════════════════════════════════════════════
+# BETONLINE PLAYER PROP PRICING (sportcast widget)
+# Confirmed working 2026-06-21 via real DevTools "Copy as cURL" capture.
+# Endpoint: bl.widget-prod.sportcast.app/public/RequestBetPriceUI
+# Unlike fetch_betonline_lines() above, this does NOT return all props in
+# one call — each call prices exactly ONE selection. Confirmed pattern:
+# send MarketDetails as a single-element list (one market, one
+# BetSelection) and PayLoad.Price / PayLoad.PriceDetails.AmericanPrice
+# comes back populated. Sending multiple selections in one call has not
+# been confirmed to return per-selection prices (the response shape only
+# has one top-level Price/PriceDetails block), so until that's tested,
+# call this once per selection.
+#
+# STILL UNRESOLVED — this function cannot run standalone yet:
+#   1. "Key" (fixture session ticket, e.g. "0f833f77-...") — origin
+#      unconfirmed. Lives in the widget iframe URL
+#      (bl.widget-prod.sportcast.app/markets?key=...&fixtureId=...&brand=betonline)
+#      on the live BetOnline page. Need either (a) confirmation this Key
+#      is static/long-lived per fixture (in which case it can be scraped
+#      once from the iframe src and cached), or (b) the upstream call
+#      that mints it, if it's short-lived like Caesars' WAF token.
+#   2. FixtureId — need to confirm whether this equals the "GameId" field
+#      fetch_betonline_lines() already returns from the game-lines feed.
+#      If so, no new scraping needed for this value. Unconfirmed.
+#   3. Sport (numeric) — only "Baseball" = 9 confirmed via sc-sportid
+#      header. NBA/NFL/NHL/WNBA codes unknown, do not guess.
+#   4. MarketId / MarketLabelId / GlobalIdLong / GlobalIdShort per prop
+#      type (e.g. "Who will score a home run?" = MarketId 127899324,
+#      MarketLabelId 76) — each distinct prop market will need its own
+#      captured ID the same way this one was. Treat as a lookup table to
+#      build out market by market, not something to infer.
+# Until #1 and #2 are resolved this can only be called with hand-fed
+# values from a fresh capture — it is NOT wired into the main pipeline.
+# ═══════════════════════════════════════════════════════════════
+
+BETONLINE_PROP_PRICE_URL = "https://bl.widget-prod.sportcast.app/public/RequestBetPriceUI"
+BETONLINE_PROP_SPORT_CODES = {
+    "MLB": 9,   # confirmed via sc-sportid: "Baseball" header
+    # "NBA": None, "NFL": None, "NHL": None, "WNBA": None,  # unconfirmed — do not guess
+}
+
+
+def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
+                                market_id=None, market_name=None, market_label_id=None,
+                                selection_id=None, selection_name=None, entity_id=None,
+                                global_id_long=None, global_id_short=None):
+    """
+    Price a single BetOnline player-prop selection via the sportcast widget.
+
+    All of fixture_id/key/market_id/market_label_id/selection_id/entity_id/
+    global_id_long/global_id_short must come from a live capture for now —
+    see the unresolved items in the section header above. This function
+    only handles the confirmed last-mile call (selection IDs in -> price
+    out); it does not discover those IDs itself.
+
+    Returns dict with american_price / decimal_price / raw, or None on
+    failure (null MarketIdentifier / "Infinity" price counts as failure —
+    that's the broken-request signature this whole feature was blocked on).
+    """
+    sport_code = BETONLINE_PROP_SPORT_CODES.get(sport)
+    if sport_code is None or not all([fixture_id, key, market_id, selection_id]):
+        return None
+
+    payload = {
+        "FixtureId": fixture_id,
+        "Key": key,
+        "Sport": sport_code,
+        "MarketDetails": [{
+            "MarketId": market_id,
+            "MarketName": market_name,
+            "MarketLabelId": market_label_id,
+            "BetSelections": [{
+                "Id": selection_id,
+                "Selection": selection_name,
+                "EntityId": entity_id,
+                "GlobalIdLong": global_id_long,
+                "GlobalIdShort": global_id_short,
+            }],
+        }],
+        "ReturnBetSlip": False,
+        "ReturnValidationMatrix": False,
+        "Culture": "en-GB",
+        "ReturnAllTranslations": False,
+        "ReturnMarkets": False,
+    }
+
+    sport_id_header = {"MLB": "Baseball"}.get(sport, sport)
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": "https://bl.widget-prod.sportcast.app",
+        "Referer": f"https://bl.widget-prod.sportcast.app/markets?key={key}&fixtureId={fixture_id}&odds=AmericanPrice&brand=betonline",
+        "sc-fixtureid": str(fixture_id),
+        "sc-sportid": sport_id_header,
+        "User-Agent": BETONLINE_HEADERS["User-Agent"],
+    }
+
+    try:
+        r = requests.post(BETONLINE_PROP_PRICE_URL, headers=headers, json=payload, timeout=10)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        pl = (data or {}).get("PayLoad", {}) or {}
+        price = pl.get("Price")
+        if price in (None, "Infinity", 0):
+            return None
+        details = pl.get("PriceDetails", {}) or {}
+        return {
+            "american_price": details.get("AmericanPrice"),
+            "decimal_price":  details.get("DecimalPriceRounded"),
+            "raw":            details.get("Raw"),
+            "selection":      selection_name,
+            "market":         market_name,
+            "source":         "BetOnline",
+        }
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "source": "BetOnline Props", "error": str(e)[:80],
+            "time":   datetime.now().strftime("%H:%M"),
+        })
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
 # AUTO SCRAPER GIST READER
 # Reads props pushed by betcouncil_auto_scraper.py
 # File: auto_scraped_props.json in your Gist
