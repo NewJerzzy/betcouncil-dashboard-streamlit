@@ -1070,6 +1070,64 @@ def update_elo_after_game(sport, team_a, team_b, score_a):
     return new_a, new_b
 
 
+def run_comprehensive_elo_update():
+    """Update Elo from EVERY completed game across all 4 leagues via ESPN
+    scoreboard, independent of whether the user has any active locks.
+    Deduped via a Gist-persisted processed-game-id set per sport, so safe
+    to call repeatedly without double-counting. Previously this exact logic
+    only ran when the user clicked "Check Results via ESPN" AND had at
+    least one active lock — meaning Elo silently stopped updating on any
+    day with zero locks, even with real games completing. Extracted
+    2026-06-21 so it can also run automatically, decoupled from both gates."""
+    _elo_sport_map = {"NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
+                       "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl")}
+    for _elo_sport, (_elo_es, _elo_el) in _elo_sport_map.items():
+        if _elo_sport not in ELO_K_FACTOR:
+            continue
+        try:
+            _elo_sb = requests.get(
+                f"https://site.web.api.espn.com/apis/site/v2/sports/{_elo_es}/{_elo_el}/scoreboard",
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            if _elo_sb.status_code != 200:
+                continue
+            _elo_events = _elo_sb.json().get("events", [])
+            if not _elo_events:
+                continue
+            _elo_processed_key = f"elo_processed_{_elo_sport.lower()}"
+            _elo_processed = set(load_from_gist(_elo_processed_key, []) or [])
+            _elo_new = False
+            for _elo_event in _elo_events:
+                if not _elo_event.get("status", {}).get("type", {}).get("completed"):
+                    continue
+                _elo_eid = _elo_event.get("id")
+                if not _elo_eid or _elo_eid in _elo_processed:
+                    continue
+                _elo_comps = _elo_event.get("competitions", [{}])[0]
+                _elo_teams = _elo_comps.get("competitors", [])
+                if len(_elo_teams) < 2:
+                    continue
+                _elo_home, _elo_away = _elo_teams[0], _elo_teams[1]
+                _elo_h_name = _elo_home.get("team", {}).get("displayName", "")
+                _elo_a_name = _elo_away.get("team", {}).get("displayName", "")
+                if not _elo_h_name or not _elo_a_name:
+                    continue
+                _elo_h_score = float(_elo_home.get("score", 0) or 0)
+                _elo_a_score = float(_elo_away.get("score", 0) or 0)
+                if _elo_h_score > _elo_a_score:
+                    _elo_score_a = 1.0
+                elif _elo_h_score < _elo_a_score:
+                    _elo_score_a = 0.0
+                else:
+                    _elo_score_a = 0.5
+                update_elo_after_game(_elo_sport, _elo_h_name, _elo_a_name, _elo_score_a)
+                _elo_processed.add(_elo_eid)
+                _elo_new = True
+            if _elo_new:
+                save_to_gist(_elo_processed_key, list(_elo_processed))
+        except (ValueError, KeyError, TypeError, AttributeError, requests.RequestException):
+            continue
+
+
 def get_api_counter(counter_path):
     """
     Reads the API usage counter for a given budget. Gist-backed (same
@@ -17531,6 +17589,19 @@ if "persistence_loaded" not in st.session_state:
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
     st.session_state.day_start_br = st.session_state.bankroll
+    # Comprehensive Elo update, decoupled from locks/button gate (was: only
+    # ran when "Check Results via ESPN" was clicked AND locks existed —
+    # meaning Elo silently stalled on any day with zero active locks).
+    # Throttled to once per 30 min per session via session_state timestamp
+    # (not Gist-backed) so this doesn't hit ESPN's scoreboard endpoint on
+    # every Streamlit rerun, which fires on nearly any widget interaction.
+    _elo_last_run = st.session_state.get("_elo_auto_last_run", 0)
+    if time.time() - _elo_last_run > 1800:
+        try:
+            run_comprehensive_elo_update()
+        except (requests.RequestException, KeyError, ValueError, TypeError):
+            pass
+        st.session_state["_elo_auto_last_run"] = time.time()
     # signal_performance.json lives only on local CACHE_DIR, which is ephemeral on
     # Streamlit Cloud — it resets on every redeploy/restart, silently losing logged
     # bet outcomes that feed the System tab's "Resolved Bets" count and signal health
@@ -19731,59 +19802,10 @@ with tabs[3]:
             resolved = 0
             skipped = []
 
-            # Comprehensive Elo update — runs once per "Check Results" click,
-            # independent of whether locks are props or game-lines, updates
-            # from EVERY completed game across all 4 leagues (not just games
-            # the user has a bet on). Dedup via a Gist-persisted processed-
-            # game-id set per sport, loaded/saved once per click (not once
-            # per game) so this stays cheap.
-            _elo_sport_map = {"NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
-                               "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl")}
-            for _elo_sport, (_elo_es, _elo_el) in _elo_sport_map.items():
-                if _elo_sport not in ELO_K_FACTOR:
-                    continue
-                try:
-                    _elo_sb = requests.get(
-                        f"https://site.web.api.espn.com/apis/site/v2/sports/{_elo_es}/{_elo_el}/scoreboard",
-                        headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-                    if _elo_sb.status_code != 200:
-                        continue
-                    _elo_events = _elo_sb.json().get("events", [])
-                    if not _elo_events:
-                        continue
-                    _elo_processed_key = f"elo_processed_{_elo_sport.lower()}"
-                    _elo_processed = set(load_from_gist(_elo_processed_key, []) or [])
-                    _elo_new = False
-                    for _elo_event in _elo_events:
-                        if not _elo_event.get("status", {}).get("type", {}).get("completed"):
-                            continue
-                        _elo_eid = _elo_event.get("id")
-                        if not _elo_eid or _elo_eid in _elo_processed:
-                            continue
-                        _elo_comps = _elo_event.get("competitions", [{}])[0]
-                        _elo_teams = _elo_comps.get("competitors", [])
-                        if len(_elo_teams) < 2:
-                            continue
-                        _elo_home, _elo_away = _elo_teams[0], _elo_teams[1]
-                        _elo_h_name = _elo_home.get("team", {}).get("displayName", "")
-                        _elo_a_name = _elo_away.get("team", {}).get("displayName", "")
-                        if not _elo_h_name or not _elo_a_name:
-                            continue
-                        _elo_h_score = float(_elo_home.get("score", 0) or 0)
-                        _elo_a_score = float(_elo_away.get("score", 0) or 0)
-                        if _elo_h_score > _elo_a_score:
-                            _elo_score_a = 1.0
-                        elif _elo_h_score < _elo_a_score:
-                            _elo_score_a = 0.0
-                        else:
-                            _elo_score_a = 0.5
-                        update_elo_after_game(_elo_sport, _elo_h_name, _elo_a_name, _elo_score_a)
-                        _elo_processed.add(_elo_eid)
-                        _elo_new = True
-                    if _elo_new:
-                        save_to_gist(_elo_processed_key, list(_elo_processed))
-                except (ValueError, KeyError, TypeError, AttributeError, requests.RequestException):
-                    continue
+            # Comprehensive Elo update — also runs automatically on a timer
+            # now (see near board-load above), this keeps the manual button
+            # path working too for an on-demand refresh.
+            run_comprehensive_elo_update()
 
             espn_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             sport_map = {
