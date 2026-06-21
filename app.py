@@ -5627,17 +5627,18 @@ def _get_fanduel_state():
 
 # FanDuel competitionId per sport — these are FanDuel-internal IDs required by
 # the navigation/facet/v1.0/search endpoint, NOT generic league identifiers.
-# MLB confirmed via real DevTools capture 2026-06-21 (scan.az.sportsbook.
-# fanduel.com/api/sports/navigation/facet/v1.0/search, full request/response
-# captured). WNBA confirmed same day/method. NBA/NHL intentionally left out —
+# MLB, WNBA, NFL confirmed via real DevTools capture 2026-06-21
+# (scan.az.sportsbook.fanduel.com/api/sports/navigation/facet/v1.0/search,
+# full request/response captured for each). NBA/NHL intentionally left out —
 # both seasons just ended in June, nothing to capture until they're back.
-# NFL similarly held off until closer to its September start. Capture each
-# via the same method (fanduel-navfacet-request-capture.js while on that
-# sport's schedule page) once in season — wrong/guessed IDs would silently
-# return another sport's events or nothing at all, worse than just [].
+# Capture each via the same method (fanduel-navfacet-request-capture.js
+# while on that sport's schedule page) once in season — wrong/guessed IDs
+# would silently return another sport's events or nothing at all, worse
+# than just [].
 FANDUEL_COMPETITION_IDS = {
     "MLB": 11196870,
     "WNBA": 11295025,
+    "NFL": 12282733,
 }
 
 
