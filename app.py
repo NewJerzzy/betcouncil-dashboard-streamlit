@@ -1053,28 +1053,46 @@ def update_elo_after_game(sport, team_a, team_b, score_a):
 
 
 def get_api_counter(counter_path):
+    """
+    Reads the API usage counter for a given budget. Gist-backed (same
+    pattern as signal_performance/injury_performance) so the count survives
+    Streamlit Cloud redeploys — previously this only lived in local
+    CACHE_DIR, which wipes on every redeploy, so the 80% hard-stop in
+    api_budget_check() never actually triggered: the app always thought it
+    was starting fresh while real upstream usage (e.g. The Odds API) kept
+    climbing across redeploys. Confirmed via real usage hitting 498/500
+    monthly credits despite the supposed 400/500 stop.
+    """
     today = date.today().strftime("%Y-%m-%d")
     current_month = date.today().strftime("%Y-%m")
-    # Use session_state as in-memory cache to avoid disk reads on every budget check
+    data_type = os.path.basename(counter_path).replace(".json", "")
+    # Use session_state as in-memory cache to avoid Gist/disk reads on every budget check
     _ss_key = f"_api_counter_{counter_path}"
     cached = st.session_state.get(_ss_key)
     if cached and cached.get("date") == today and cached.get("month") == current_month:
         return cached
-    if os.path.exists(counter_path):
+
+    counter = None
+    gist_counter = load_from_gist(data_type, None)
+    if isinstance(gist_counter, dict) and "count" in gist_counter:
+        counter = gist_counter
+    elif os.path.exists(counter_path):
         try:
             with open(counter_path, "r") as f:
                 counter = json.load(f)
-            if counter.get("date") != today:
-                counter["date"] = today
-                counter["count"] = 0
-            if counter.get("month") != current_month:
-                counter["month"] = current_month
-                counter["monthly_count"] = 0 if "monthly_count" in counter else 0
-            st.session_state[_ss_key] = counter
-            return counter
-        except (ValueError, KeyError, TypeError, AttributeError):
-            pass
-    counter = {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
+        except (ValueError, KeyError, TypeError, AttributeError, OSError):
+            counter = None
+
+    if counter is None:
+        counter = {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
+    else:
+        if counter.get("date") != today:
+            counter["date"] = today
+            counter["count"] = 0
+        if counter.get("month") != current_month:
+            counter["month"] = current_month
+            counter["monthly_count"] = 0
+
     st.session_state[_ss_key] = counter
     return counter
 
@@ -1082,7 +1100,9 @@ def increment_api_counter(counter_path):
     counter = get_api_counter(counter_path)
     counter["count"] += 1
     counter["monthly_count"] = counter.get("monthly_count", 0) + 1
-    save_json_data(counter_path, counter)
+    save_json_data(counter_path, counter)  # local fallback, kept for same-session reads
+    data_type = os.path.basename(counter_path).replace(".json", "")
+    save_to_gist(data_type, counter)  # the persistence that actually survives redeploys
     # Refresh session cache with updated count
     st.session_state[f"_api_counter_{counter_path}"] = counter
     return counter
