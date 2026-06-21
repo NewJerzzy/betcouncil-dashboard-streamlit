@@ -5577,6 +5577,26 @@ def fetch_fanduel_direct(sport, event_ids=None):
     except Exception:
         pass
     if not px_context:
+        # Picks up tokens pushed by fanduel-harvester-cdp.js (local Playwright
+        # tool, CDP-attached to an already-logged-in browser). A forensic test
+        # on 2026-06-21 found the x-px-context token on the PRICING domain
+        # (smp.{state}.sportsbook.fanduel.com, which getMarketPrices actually
+        # uses) held ONE value across 15+ requests over a 90-second window —
+        # this contradicts the original "expires within minutes" assumption
+        # noted in this function's docstring, at least at that timescale. True
+        # long-term lifespan is still unconfirmed, so the freshness window
+        # here is a cautious guess (20 min), not a verified figure — tighten
+        # or loosen once we see real-world success/failure data.
+        gist_tokens = load_from_gist("fanduel_tokens", None)
+        if gist_tokens:
+            try:
+                captured_at = gist_tokens.get("captured_at", "")
+                age_mins = (time.time() - datetime.fromisoformat(captured_at.replace("Z", "+00:00")).timestamp()) / 60
+            except (ValueError, TypeError):
+                age_mins = 9999
+            if age_mins < 20:
+                px_context = gist_tokens.get("px_context", "")
+    if not px_context:
         fd_token_cache = os.path.join(CACHE_DIR, "fanduel_px_context.txt")
         if os.path.exists(fd_token_cache):
             try:
