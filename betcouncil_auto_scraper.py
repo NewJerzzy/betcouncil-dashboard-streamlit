@@ -2918,6 +2918,7 @@ def harvest_betonline_fixture_ids(sport="MLB", max_games=15):
                 )
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    print(f"    Visited: {url}")
                     iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=30000)
                     src = iframe_el.get_attribute("src") or ""
                     qs = parse_qs(urlparse(src).query)
