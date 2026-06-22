@@ -2996,6 +2996,23 @@ def scrape_betonline_props(sport="MLB", max_games=15):
 
         # Get Initialize data — contains selections per market
         init_data = fetch_bo_initialize(fixture_id, key)
+        import json as _ij
+        if init_data:
+            print(f"    [DEBUG Init] top keys={list(init_data.keys())}")
+            pl = init_data.get("PayLoad") or {}
+            if isinstance(pl, dict):
+                print(f"    [DEBUG Init] PayLoad keys={list(pl.keys())}")
+                for k, v in pl.items():
+                    if isinstance(v, list):
+                        print(f"      .{k}: list[{len(v)}]", end="")
+                        if v and isinstance(v[0], dict):
+                            print(f" first keys={list(v[0].keys())[:8]}")
+                        else:
+                            print()
+            elif isinstance(pl, list):
+                print(f"    [DEBUG Init] PayLoad is list[{len(pl)}]")
+                if pl and isinstance(pl[0], dict):
+                    print(f"      first keys={list(pl[0].keys())[:8]}")
         init_payload = (init_data or {}).get("PayLoad") or {}
 
         for market in player_markets:
