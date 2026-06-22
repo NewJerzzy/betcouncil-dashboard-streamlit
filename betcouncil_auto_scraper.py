@@ -3089,11 +3089,13 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                         "https://bl.widget-prod.sportcast.app/public/RequestBetPriceUI",
                         headers=price_headers, json=payload, timeout=10
                     )
+                    print(f"        [PRICE] {sel_name}: status={pr.status_code}")
                     if pr.status_code != 200:
                         continue
                     pd_ = pr.json()
                     pl = (pd_ or {}).get("PayLoad") or {}
                     price = pl.get("Price")
+                    print(f"        [PRICE] raw={str(pd_)[:200]}")
                     if price in (None, "Infinity", 0, "0"):
                         continue
                     details = pl.get("PriceDetails") or {}
@@ -3115,7 +3117,8 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                         "market_id":   market_id,
                         "selection_id": sel_id,
                     })
-                except Exception:
+                except Exception as _pe:
+                    print(f"        [PRICE ERR] {sel_name}: {_pe}")
                     continue
 
     print(f"\n  BetOnline props total: {len(props)}")
