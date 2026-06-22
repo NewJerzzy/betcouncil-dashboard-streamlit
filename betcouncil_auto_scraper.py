@@ -2800,16 +2800,30 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
             headers=_bo_sportcast_headers(key, fixture_id), timeout=12
         )
         if r.status_code != 200:
+            print(f"      [DEBUG market {market_id}] status={r.status_code}")
             return []
         data = r.json()
         payload = (data or {}).get("PayLoad") or []
+        # Debug: print raw structure
+        if isinstance(payload, list) and payload:
+            first = payload[0]
+            print(f"      [DEBUG market {market_id}] PayLoad list len={len(payload)}, first keys={list(first.keys()) if isinstance(first, dict) else type(first).__name__}")
+            if isinstance(first, dict):
+                for k, v in first.items():
+                    if isinstance(v, list) and v:
+                        inner = v[0]
+                        print(f"        .{k}[0] keys={list(inner.keys()) if isinstance(inner, dict) else type(inner).__name__}")
+        elif isinstance(payload, dict):
+            print(f"      [DEBUG market {market_id}] PayLoad dict keys={list(payload.keys())}")
+        else:
+            print(f"      [DEBUG market {market_id}] PayLoad empty or unexpected: {type(payload).__name__}")
         # Find the matching market and return its selections
-        for market in payload:
+        for market in (payload if isinstance(payload, list) else []):
             if market.get("Id") == market_id:
                 return market.get("Selections") or market.get("BetSelections") or []
-        # If structure differs, return raw payload for inspection
         return payload
-    except Exception:
+    except Exception as e:
+        print(f"      [DEBUG market {market_id}] error: {e}")
         return []
 
 
