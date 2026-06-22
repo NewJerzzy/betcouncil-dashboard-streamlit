@@ -387,8 +387,8 @@ def login_mybookie(cfg):
         import time as _t
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox","--disable-blink-features=AutomationControlled"]
+                headless=False,
+                args=["--disable-blink-features=AutomationControlled"]
             )
             ctx = browser.new_context(user_agent=UA, viewport={"width":1280,"height":800})
             ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
