@@ -1051,6 +1051,26 @@ MLB_STADIUM_COORDS = {
     "BAL": (39.2838, -76.6218), "TOR": (43.6414, -79.3894),
 }
 
+# NFL division memberships — used for division game deflator
+NFL_DIVISIONS = {
+    # AFC East
+    "BUF": "AFC_EAST", "MIA": "AFC_EAST", "NE": "AFC_EAST", "NYJ": "AFC_EAST",
+    # AFC North
+    "BAL": "AFC_NORTH", "CIN": "AFC_NORTH", "CLE": "AFC_NORTH", "PIT": "AFC_NORTH",
+    # AFC South
+    "HOU": "AFC_SOUTH", "IND": "AFC_SOUTH", "JAC": "AFC_SOUTH", "TEN": "AFC_SOUTH",
+    # AFC West
+    "DEN": "AFC_WEST", "KC": "AFC_WEST", "LV": "AFC_WEST", "LAC": "AFC_WEST",
+    # NFC East
+    "DAL": "NFC_EAST", "NYG": "NFC_EAST", "PHI": "NFC_EAST", "WAS": "NFC_EAST",
+    # NFC North
+    "CHI": "NFC_NORTH", "DET": "NFC_NORTH", "GB": "NFC_NORTH", "MIN": "NFC_NORTH",
+    # NFC South
+    "ATL": "NFC_SOUTH", "CAR": "NFC_SOUTH", "NO": "NFC_SOUTH", "TB": "NFC_SOUTH",
+    # NFC West
+    "ARI": "NFC_WEST", "LAR": "NFC_WEST", "SF": "NFC_WEST", "SEA": "NFC_WEST",
+}
+
 NFL_OUTDOOR_STADIUMS = {
     "BUF": (42.7738, -78.7870, True),   # Highmark Stadium — very weather-affected
     "NE":  (42.0909, -71.2643, True),   # Gillette Stadium

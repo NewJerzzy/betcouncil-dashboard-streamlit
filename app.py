@@ -65,7 +65,7 @@ from config import (
     PROP_CORRELATION_PAIRS, KALSHI_SPORT_SERIES, GOLF_TOURNAMENT_MAP, DFF_HEADERS,
     DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP, BQ_WEIGHTS_DEFAULT,
     BOVADA_HEADERS, BOVADA_SPORT_MAP, SIGNAL_COLS, MLB_STADIUM_COORDS,
-    NFL_OUTDOOR_STADIUMS, FL_SPORT_MAP, FL_HEADERS, GAME_TIER_THRESHOLDS,
+    NFL_OUTDOOR_STADIUMS, NFL_DIVISIONS, FL_SPORT_MAP, FL_HEADERS, GAME_TIER_THRESHOLDS,
     BDL_PLAYER_IDS, ESPN_SLUG_MAP, PLAYER_HOME_SPLITS
 )
 import time as _time_mod
@@ -8084,13 +8084,81 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _park_mult_rl = MLB_PARK_FACTORS.get(
                         home_full, MLB_PARK_FACTORS.get(home_team, 1.0)
                     )
-                    # Favorite in hitter park → harder to cover RL → deflate edge slightly
-                    # Underdog in hitter park → easier cover of +1.5 → inflate edge
                     _park_rl_adj = (_park_mult_rl - 1.0) * 0.08
-                    if spread_edge > 0:  # home is favored
+                    if spread_edge > 0:
                         spread_edge_pct -= _park_rl_adj
-                    else:  # away is favored / home dog
+                    else:
                         spread_edge_pct += _park_rl_adj
+                if sport == "NFL":
+                    _game_date_str = game.get("Date", "")
+                    # ── 1. Division game deflator ─────────────────────────
+                    # Division games average 2.5 pts tighter ATS; reduce
+                    # edge confidence by ~0.015 when teams share a division.
+                    try:
+                        _h_div = NFL_DIVISIONS.get(home_team)
+                        _a_div = NFL_DIVISIONS.get(away_team)
+                        if _h_div and _h_div == _a_div:
+                            spread_edge_pct *= 0.85  # ~15% edge compression
+                    except Exception:
+                        pass
+                    # ── 2. Short week / Thursday penalty ─────────────────
+                    # Road favorites on Thursday (4-day turnaround) cover at
+                    # ~44% historically. Deflate road favorite edge by 20%.
+                    try:
+                        if "Thu" in _game_date_str:
+                            is_road_fav = (favored_team == away_team)
+                            if is_road_fav:
+                                spread_edge_pct *= 0.80
+                            else:
+                                # Home team also on short week — smaller penalty
+                                spread_edge_pct *= 0.90
+                    except Exception:
+                        pass
+                    # ── 3. Primetime road favorite fade ──────────────────
+                    # Road favorites in primetime slots (Thu/Mon night games)
+                    # cover at ~42%. Extra fade on top of short-week penalty.
+                    try:
+                        _is_primetime = "Thu" in _game_date_str or "Mon" in _game_date_str
+                        if _is_primetime and favored_team == away_team:
+                            spread_edge_pct *= 0.88
+                    except Exception:
+                        pass
+                    # ── 4. QB injury check ────────────────────────────────
+                    # If starting QB is on the inactives list, spread edge
+                    # is largely invalidated — collapse to near-zero.
+                    try:
+                        _nfl_inactives_se = fetch_nfl_inactives()
+                        _QB_KEYWORDS = ("quarterback", "qb")
+                        for _se_team, _se_side in [(home_team, "home"), (away_team, "away")]:
+                            _inactives = _nfl_inactives_se.get(_se_team, [])
+                            _qb_out = any(
+                                any(kw in str(p).lower() for kw in _QB_KEYWORDS)
+                                for p in _inactives
+                            )
+                            if _qb_out:
+                                # QB out → edge direction may flip; suppress
+                                if (_se_side == "home" and spread_edge > 0) or \
+                                   (_se_side == "away" and spread_edge < 0):
+                                    spread_edge_pct *= 0.30
+                                else:
+                                    spread_edge_pct *= 1.20  # favors other side
+                    except Exception:
+                        pass
+                    # ── 5. Defensive unit adjustment ──────────────────────
+                    # If the favored team faces an elite pass defense (top
+                    # quartile: <200 pass yds/g allowed), compress edge by 10%.
+                    # If they face a bottom quartile defense (>260), expand 10%.
+                    try:
+                        _def_ratings = fetch_nfl_defensive_ratings()
+                        _opp_team = away_team if favored_team == home_team else home_team
+                        _opp_def = _def_ratings.get(_opp_team, {})
+                        _pass_allowed = _opp_def.get("pass_yds_allowed_pg", 230.0)
+                        if _pass_allowed < 200:       # elite pass D
+                            spread_edge_pct *= 0.90
+                        elif _pass_allowed > 260:     # poor pass D
+                            spread_edge_pct *= 1.10
+                    except Exception:
+                        pass
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
@@ -8297,6 +8365,26 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _h_d = (_h_ou[0] - 5) * 1.0
                         _a_d = (_a_ou[0] - 5) * 1.0
                         fair_total += max(-5.0, min(5.0, (_h_d + _a_d) / 2))
+                except Exception:
+                    pass
+                # ── 6. NFL weather adjustment on totals ───────────────────
+                # Cold temp (<32°F) suppresses scoring; wind >15mph does too.
+                # Dome teams: no adjustment (get_nfl_weather returns None).
+                try:
+                    _nfl_wx = get_nfl_weather(home_team)
+                    if _nfl_wx:
+                        _temp  = _nfl_wx.get("temp_f", 60)
+                        _wind  = _nfl_wx.get("wind_speed_mph", 0)
+                        _wx_adj = 0.0
+                        # Cold penalty: each degree below 32 → -0.08 pts total
+                        if _temp < 32:
+                            _wx_adj += (_temp - 32) * 0.08  # negative
+                        elif _temp < 45:
+                            _wx_adj += (_temp - 45) * 0.04  # modest suppression
+                        # Wind penalty: each mph above 15 → -0.15 pts total
+                        if _wind > 15:
+                            _wx_adj -= (_wind - 15) * 0.15
+                        fair_total += max(-7.0, min(0.0, _wx_adj))  # weather only suppresses
                 except Exception:
                     pass
             elif sport == "Soccer":
@@ -16544,6 +16632,91 @@ def fetch_atsstats_nfl_matchups():
         return result
     except Exception:
         return {}
+
+
+# ── NFL defensive unit ratings ────────────────────────────────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_nfl_defensive_ratings() -> dict:
+    """
+    Fetches pass yards allowed per game, rush yards allowed per game,
+    sacks per game, and points allowed per game for every NFL team via
+    the ESPN statistics endpoint.
+    Returns: {team_abbr: {
+        "pass_yds_allowed_pg": float,
+        "rush_yds_allowed_pg": float,
+        "sacks_pg": float,
+        "pts_allowed_pg": float,
+    }}
+    Cached 6 hours. Returns {} off-season or on failure.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_defensive_ratings.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    season = date.today().year
+    if date.today().month < 9:
+        season -= 1
+    try:
+        r = requests.get(
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&season={season}",
+            headers=HEADERS, timeout=12,
+        )
+        if r.status_code != 200:
+            return {}
+        teams = (r.json().get("sports", [{}])[0]
+                          .get("leagues", [{}])[0]
+                          .get("teams", []))
+    except Exception:
+        return {}
+
+    DEFAULTS = {"pass_yds_allowed_pg": 230.0, "rush_yds_allowed_pg": 112.0,
+                "sacks_pg": 2.5, "pts_allowed_pg": 23.0}
+    result = {}
+    for entry in teams:
+        team = entry.get("team", {})
+        abbr = team.get("abbreviation", "")
+        tid  = team.get("id")
+        if not abbr or not tid:
+            continue
+        try:
+            sr = requests.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
+                f"/teams/{tid}/statistics?season={season}",
+                headers=HEADERS, timeout=8,
+            )
+            if sr.status_code != 200:
+                continue
+            cats = sr.json().get("results", {}).get("splits", {}).get("categories", [])
+            rec = dict(DEFAULTS)
+            for cat in cats:
+                name  = cat.get("name", "").lower()
+                stats = {s["name"]: float(s.get("value") or 0) for s in cat.get("stats", [])}
+                if "defensive" in name or "defense" in name:
+                    if stats.get("opponentPassingYardsPerGame"):
+                        rec["pass_yds_allowed_pg"] = stats["opponentPassingYardsPerGame"]
+                    if stats.get("opponentRushingYardsPerGame"):
+                        rec["rush_yds_allowed_pg"] = stats["opponentRushingYardsPerGame"]
+                    if stats.get("sacks"):
+                        games = stats.get("gamesPlayed", 17) or 17
+                        rec["sacks_pg"] = round(stats["sacks"] / games, 2)
+                elif "scoring" in name:
+                    if stats.get("opponentPointsPerGame"):
+                        rec["pts_allowed_pg"] = stats["opponentPointsPerGame"]
+            result[abbr] = rec
+        except Exception:
+            continue
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
 
 
 # ── NFL team scoring stats (James matchup formula input) ─────────────────────
