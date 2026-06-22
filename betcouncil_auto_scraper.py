@@ -2796,7 +2796,7 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
         r = requests.get(
             f"{SPORTCAST_BASE}/getmarketsV2/",
             params={"key": key, "fixtureId": fixture_id, "culture": "en-GB",
-                    "returnFilters": "false", "marketLabel": market_id},
+                    "returnFilters": "true", "marketLabel": market_id},
             headers=_bo_sportcast_headers(key, fixture_id), timeout=12
         )
         if r.status_code != 200:
