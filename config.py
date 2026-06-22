@@ -1185,3 +1185,71 @@ PLAYER_HOME_SPLITS = {
 # BETCOUNCIL TELEMETRY
 # Zero-overhead timing. Results in System tab → Performance.
 # ═══════════════════════════════════════════════════════════════
+
+
+# ── Fetcher constants (moved from app.py) ──────────────────────────────────
+BETONLINE_BASE = "https://api-offering.betonline.ag/api/offering/Sports/offering-by-league"
+BETONLINE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Content-Type": "application/json-patch+json",
+    "gsetting": "bolnasite",
+    "utc-offset": "420",
+    "Origin": "https://www.betonline.ag",
+    "Referer": "https://www.betonline.ag/",
+}
+BETONLINE_MULTI_LEAGUE = {
+    "Tennis": [("tennis", "atp"), ("tennis", "wta")],
+}
+_SOCCER_LEAGUE_BASELINES = {
+    "eng.1": 2.72,   # EPL
+    "esp.1": 2.62,   # La Liga
+    "ger.1": 3.08,   # Bundesliga
+    "ita.1": 2.54,   # Serie A
+    "fra.1": 2.71,   # Ligue 1
+    "usa.1": 2.93,   # MLS
+    "uefa.champions": 2.85,  # UCL
+}
+_TENNIS_SURFACE_BASELINES_BO3 = {
+    "hard":  22.8,
+    "clay":  24.4,   # longer rallies → more deuce games
+    "grass": 21.2,   # fast surface → dominant servers → shorter points
+    "indoor hard": 22.5,
+    "carpet": 21.0,
+}
+_TENNIS_SURFACE_BASELINES_BO5 = {
+    "hard":  36.5,
+    "clay":  39.2,
+    "grass": 34.8,
+    "indoor hard": 36.0,
+    "carpet": 34.5,
+}
+_ATP_GRAND_SLAMS = {
+    "australian open", "roland garros", "french open",
+    "wimbledon", "us open",
+}
+_SLAM_SURFACE = {
+    "australian open": "hard",
+    "roland garros":   "clay",
+    "french open":     "clay",
+    "wimbledon":       "grass",
+    "us open":         "hard",
+}
+_SOCCER_LEAGUE_KEYS = ["eng.1", "esp.1", "ger.1", "ita.1", "fra.1", "usa.1", "uefa.champions"]
+_UFC_WEIGHTCLASS_BASELINES = {
+    "heavyweight":        2.05,
+    "light heavyweight":  2.18,
+    "middleweight":       2.22,
+    "welterweight":       2.28,
+    "lightweight":        2.25,
+    "featherweight":      2.30,
+    "bantamweight":       2.35,
+    "flyweight":          2.40,
+    "women's strawweight": 2.45,
+    "women's flyweight":  2.38,
+    "women's bantamweight": 2.30,
+    "women's featherweight": 2.28,
+}
+_UFC_ROUND_DEFAULT = 2.25   # overall UFC avg
+_UFC_CHAMPIONSHIP_ROUNDS = 5  # title fights go 5 rounds
