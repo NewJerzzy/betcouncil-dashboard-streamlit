@@ -8117,6 +8117,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 pace_adj = (avg_pace - 99.5) * 1.5
                 off_adj = ((h_power + a_power) / 2 - 112.0) * 0.8
                 fair_total = base_total + pace_adj + off_adj
+                # ── ATS Stats NBA L10 O/U momentum nudge ──────────────────
+                try:
+                    _nba_ats = fetch_atsstats_nba_matchups()
+                    _h_nba = _nba_ats.get(home_full, _nba_ats.get(home_team, {}))
+                    _a_nba = _nba_ats.get(away_full, _nba_ats.get(away_team, {}))
+                    if _h_nba and _a_nba:
+                        _h_ou = _h_nba.get("l10_ou", (5, 5))
+                        _a_ou = _a_nba.get("l10_ou", (5, 5))
+                        # Each Over beyond neutral = +/-1.5 NBA points; cap ±7.5
+                        _h_d = (_h_ou[0] - 5) * 1.5
+                        _a_d = (_a_ou[0] - 5) * 1.5
+                        fair_total += max(-7.5, min(7.5, (_h_d + _a_d) / 2))
+                except Exception:
+                    pass
             elif sport == "WNBA":
                 # WNBA totals — pace-adjusted, base ~165 per 2025 season
                 h_power = power_ratings.get(home_team, 106.0)
@@ -8203,6 +8217,28 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 except Exception:
                     pass
                 fair_total = base_total + era_adj + park_adj + wind_adj_total + l10_ou_adj
+                # ── James matchup formula blend ────────────────────────────
+                # Formula: home_runs = (home_RS × away_RA) / league_avg
+                #          away_runs = (away_RS × home_RA) / league_avg
+                # Blend 40% James / 60% ERA-based to smooth small-sample noise.
+                try:
+                    _run_stats = fetch_mlb_team_run_stats()
+                    _LEAGUE_AVG_RS = 4.25
+                    _h_rs = _run_stats.get(h_full2, _run_stats.get(home_full, {}))
+                    _a_rs = _run_stats.get(a_full2, _run_stats.get(away_full, {}))
+                    if _h_rs and _a_rs:
+                        _h_rs_pg = _h_rs.get("rs_pg", _LEAGUE_AVG_RS)
+                        _h_ra_pg = _h_rs.get("ra_pg", _LEAGUE_AVG_RS)
+                        _a_rs_pg = _a_rs.get("rs_pg", _LEAGUE_AVG_RS)
+                        _a_ra_pg = _a_rs.get("ra_pg", _LEAGUE_AVG_RS)
+                        _james_home = (_h_rs_pg * _a_ra_pg) / _LEAGUE_AVG_RS
+                        _james_away = (_a_rs_pg * _h_ra_pg) / _LEAGUE_AVG_RS
+                        _james_total = _james_home + _james_away
+                        # Clamp James projection to sane range (6–14 runs)
+                        _james_total = max(6.0, min(14.0, _james_total))
+                        fair_total = round(fair_total * 0.60 + _james_total * 0.40, 2)
+                except Exception:
+                    pass
             elif sport == "NHL":
                 h_gf = NHL_TEAM_GOALS_FOR.get(home_full, NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT))
                 h_ga = NHL_TEAM_GOALS_AGAINST.get(home_full, NHL_TEAM_GOALS_AGAINST.get(home_team, NHL_GOALS_DEFAULT))
@@ -8211,6 +8247,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 home_expected = (h_gf + a_ga) / 2
                 away_expected = (a_gf + h_ga) / 2
                 fair_total = home_expected + away_expected
+                # ── ATS Stats NHL L10 O/U momentum nudge ──────────────────
+                try:
+                    _nhl_ats = fetch_atsstats_nhl_matchups()
+                    _h_nhl = _nhl_ats.get(home_full, _nhl_ats.get(home_team, {}))
+                    _a_nhl = _nhl_ats.get(away_full, _nhl_ats.get(away_team, {}))
+                    if _h_nhl and _a_nhl:
+                        _h_ou = _h_nhl.get("l10_ou", (5, 5))
+                        _a_ou = _a_nhl.get("l10_ou", (5, 5))
+                        # Each Over beyond neutral = +/-0.08 goals; cap ±0.4
+                        _h_d = (_h_ou[0] - 5) * 0.08
+                        _a_d = (_a_ou[0] - 5) * 0.08
+                        fair_total += max(-0.4, min(0.4, (_h_d + _a_d) / 2))
+                except Exception:
+                    pass
             elif sport == "NFL":
                 h_power = power_ratings.get(home_team, 104.0)
                 a_power = power_ratings.get(away_team, 104.0)
@@ -16107,6 +16157,324 @@ def fetch_atsstats_mlb_matchups():
         return result
     except Exception:
         return {}
+
+
+# ── ATS Stats NBA matchup scraper ────────────────────────────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_atsstats_nba_matchups():
+    """
+    Scrapes atsstats.com/free-nba-stats/ for today's NBA matchup data.
+    Returns dict keyed by display team name: {
+        "l10_su": (w, l),
+        "l10_ou": (o, u),
+        "forecast_total": float | None,
+        "win_pct": float,
+    }
+    Dormant off-season (returns {}). Cached 6 hours.
+    """
+    # Normalise ATS display names → full names used in power_ratings
+    _NBA_NAME_MAP = {
+        "OKC Thunder": "Oklahoma City Thunder",
+        "GS Warriors": "Golden State Warriors",
+        "LA Lakers": "Los Angeles Lakers",
+        "LA Clippers": "Los Angeles Clippers",
+        "NY Knicks": "New York Knicks",
+        "NJ Nets": "Brooklyn Nets",
+        "NO Pelicans": "New Orleans Pelicans",
+        "SA Spurs": "San Antonio Spurs",
+        "UTAH Jazz": "Utah Jazz",
+        "PHX Suns": "Phoenix Suns",
+        "MEM Grizzlies": "Memphis Grizzlies",
+        "MIL Bucks": "Milwaukee Bucks",
+        "MIN Timberwolves": "Minnesota Timberwolves",
+        "CLE Cavaliers": "Cleveland Cavaliers",
+        "IND Pacers": "Indiana Pacers",
+        "MIA Heat": "Miami Heat",
+        "ATL Hawks": "Atlanta Hawks",
+        "PHI 76ers": "Philadelphia 76ers",
+        "BOS Celtics": "Boston Celtics",
+        "CHI Bulls": "Chicago Bulls",
+        "DET Pistons": "Detroit Pistons",
+        "TOR Raptors": "Toronto Raptors",
+        "ORL Magic": "Orlando Magic",
+        "CHA Hornets": "Charlotte Hornets",
+        "WAS Wizards": "Washington Wizards",
+        "DEN Nuggets": "Denver Nuggets",
+        "POR Trail Blazers": "Portland Trail Blazers",
+        "DAL Mavericks": "Dallas Mavericks",
+        "HOU Rockets": "Houston Rockets",
+        "SAC Kings": "Sacramento Kings",
+    }
+    try:
+        from bs4 import BeautifulSoup
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        }
+        resp = requests.get("https://www.atsstats.com/free-nba-stats/", headers=headers, timeout=12)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        result = {}
+        tables = soup.find_all("table")
+        for tbl in tables:
+            rows = tbl.find_all("tr")
+            row_map = {}
+            for row in rows:
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 3:
+                    label = cells[1].get_text(strip=True)
+                    left  = cells[0].get_text(strip=True)
+                    right = cells[2].get_text(strip=True)
+                    row_map[label] = (left, right)
+            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
+                continue
+            teams = []
+            for row in rows:
+                for img in row.find_all("img"):
+                    alt = img.get("alt", "").strip()
+                    if alt and alt not in teams:
+                        teams.append(alt)
+                if len(teams) >= 2:
+                    break
+            if len(teams) < 2:
+                for b in tbl.find_all("b"):
+                    txt = b.get_text(strip=True)
+                    if txt and txt not in teams and len(txt) > 3:
+                        teams.append(txt)
+                    if len(teams) >= 2:
+                        break
+            if len(teams) < 2:
+                continue
+
+            def _pr(s):
+                parts = s.replace(" ", "").split("-")
+                try: return (int(parts[0]), int(parts[1]))
+                except: return (5, 5)
+
+            def _pf(s):
+                try: return float(s.strip())
+                except: return None
+
+            l10su_l, l10su_r = row_map.get("L10(SU)", ("5-5", "5-5"))
+            l10ou_l, l10ou_r = row_map.get("L10(O/U)", ("5-5", "5-5"))
+            fc_l, fc_r = row_map.get("Forecast", ("", ""))
+            home_pct = away_pct = 0.5
+            for k, (lv, rv) in row_map.items():
+                if "%" in lv and "%" in rv:
+                    try: home_pct = float(lv.replace("%","")) / 100
+                    except: pass
+                    try: away_pct = float(rv.replace("%","")) / 100
+                    except: pass
+                    break
+            fc_home = _pf(fc_l)
+            fc_away = _pf(fc_r)
+            fc_total = round(fc_home + fc_away, 1) if fc_home and fc_away else None
+            for raw, rec in [(teams[0], {"l10_su": _pr(l10su_l), "l10_ou": _pr(l10ou_l),
+                                          "forecast_total": fc_total, "win_pct": home_pct}),
+                             (teams[1], {"l10_su": _pr(l10su_r), "l10_ou": _pr(l10ou_r),
+                                          "forecast_total": fc_total, "win_pct": away_pct})]:
+                key = _NBA_NAME_MAP.get(raw, raw)
+                result[key] = rec
+        return result
+    except Exception:
+        return {}
+
+
+# ── ATS Stats NHL matchup scraper ────────────────────────────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_atsstats_nhl_matchups():
+    """
+    Scrapes atsstats.com/free-nhl-stats/ for today's NHL matchup data.
+    Same structure as NBA/MLB scrapers. Dormant off-season. Cached 6 hours.
+    """
+    _NHL_NAME_MAP = {
+        "BOS Bruins": "Boston Bruins",
+        "BUF Sabres": "Buffalo Sabres",
+        "CGY Flames": "Calgary Flames",
+        "CAR Hurricanes": "Carolina Hurricanes",
+        "CHI Blackhawks": "Chicago Blackhawks",
+        "COL Avalanche": "Colorado Avalanche",
+        "CBJ Blue Jackets": "Columbus Blue Jackets",
+        "DAL Stars": "Dallas Stars",
+        "DET Red Wings": "Detroit Red Wings",
+        "EDM Oilers": "Edmonton Oilers",
+        "FLA Panthers": "Florida Panthers",
+        "LA Kings": "Los Angeles Kings",
+        "MIN Wild": "Minnesota Wild",
+        "MTL Canadiens": "Montreal Canadiens",
+        "NSH Predators": "Nashville Predators",
+        "NJ Devils": "New Jersey Devils",
+        "NY Islanders": "New York Islanders",
+        "NYR Rangers": "New York Rangers",
+        "OTT Senators": "Ottawa Senators",
+        "PHI Flyers": "Philadelphia Flyers",
+        "PIT Penguins": "Pittsburgh Penguins",
+        "SJS Sharks": "San Jose Sharks",
+        "SEA Kraken": "Seattle Kraken",
+        "STL Blues": "St. Louis Blues",
+        "TB Lightning": "Tampa Bay Lightning",
+        "TOR Maple Leafs": "Toronto Maple Leafs",
+        "VAN Canucks": "Vancouver Canucks",
+        "VGK Golden Knights": "Vegas Golden Knights",
+        "WSH Capitals": "Washington Capitals",
+        "WPG Jets": "Winnipeg Jets",
+        "UTA Hockey Club": "Utah Hockey Club",
+    }
+    try:
+        from bs4 import BeautifulSoup
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        }
+        resp = requests.get("https://www.atsstats.com/free-nhl-stats/", headers=headers, timeout=12)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        result = {}
+        tables = soup.find_all("table")
+        for tbl in tables:
+            rows = tbl.find_all("tr")
+            row_map = {}
+            for row in rows:
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 3:
+                    label = cells[1].get_text(strip=True)
+                    left  = cells[0].get_text(strip=True)
+                    right = cells[2].get_text(strip=True)
+                    row_map[label] = (left, right)
+            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
+                continue
+            teams = []
+            for row in rows:
+                for img in row.find_all("img"):
+                    alt = img.get("alt", "").strip()
+                    if alt and alt not in teams:
+                        teams.append(alt)
+                if len(teams) >= 2:
+                    break
+            if len(teams) < 2:
+                for b in tbl.find_all("b"):
+                    txt = b.get_text(strip=True)
+                    if txt and txt not in teams and len(txt) > 3:
+                        teams.append(txt)
+                    if len(teams) >= 2:
+                        break
+            if len(teams) < 2:
+                continue
+
+            def _pr(s):
+                parts = s.replace(" ", "").split("-")
+                try: return (int(parts[0]), int(parts[1]))
+                except: return (5, 5)
+
+            def _pf(s):
+                try: return float(s.strip())
+                except: return None
+
+            l10su_l, l10su_r = row_map.get("L10(SU)", ("5-5", "5-5"))
+            l10ou_l, l10ou_r = row_map.get("L10(O/U)", ("5-5", "5-5"))
+            fc_l, fc_r = row_map.get("Forecast", ("", ""))
+            home_pct = away_pct = 0.5
+            for k, (lv, rv) in row_map.items():
+                if "%" in lv and "%" in rv:
+                    try: home_pct = float(lv.replace("%","")) / 100
+                    except: pass
+                    try: away_pct = float(rv.replace("%","")) / 100
+                    except: pass
+                    break
+            fc_home = _pf(fc_l)
+            fc_away = _pf(fc_r)
+            fc_total = round(fc_home + fc_away, 1) if fc_home and fc_away else None
+            for raw, rec in [(teams[0], {"l10_su": _pr(l10su_l), "l10_ou": _pr(l10ou_l),
+                                          "forecast_total": fc_total, "win_pct": home_pct}),
+                             (teams[1], {"l10_su": _pr(l10su_r), "l10_ou": _pr(l10ou_r),
+                                          "forecast_total": fc_total, "win_pct": away_pct})]:
+                key = _NHL_NAME_MAP.get(raw, raw)
+                result[key] = rec
+        return result
+    except Exception:
+        return {}
+
+
+# ── MLB team RS/RA fetcher (James matchup formula input) ─────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_mlb_team_run_stats() -> dict:
+    """
+    Fetches runs-scored and runs-allowed per game for every MLB team via
+    statsapi.mlb.com.  Used by the James matchup total projector.
+    Returns: {team_name: {"rs_pg": float, "ra_pg": float}}
+    Mirrors the fetch_mlb_team_woba_splits pattern. Cached 6 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, "mlb_team_run_stats.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    season = date.today().year
+    try:
+        teams_r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/teams?sportId=1&season={season}",
+            headers=HEADERS, timeout=10,
+        )
+        if teams_r.status_code != 200:
+            return {}
+        teams = teams_r.json().get("teams", [])
+    except Exception:
+        return {}
+
+    LEAGUE_RS_DEFAULT = 4.25  # 2026 MLB avg runs/game/team
+    result = {}
+    for team in teams:
+        tid   = team.get("id")
+        tname = team.get("name", "")
+        if not tid or not tname:
+            continue
+        try:
+            rs_pg = ra_pg = None
+            # Runs scored
+            hr = requests.get(
+                f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
+                f"?stats=season&group=hitting&season={season}&gameType=R",
+                headers=HEADERS, timeout=8,
+            )
+            if hr.status_code == 200:
+                splits = hr.json().get("stats", [{}])[0].get("splits", [])
+                if splits:
+                    s = splits[0].get("stat", {})
+                    runs   = s.get("runs", 0) or 0
+                    games  = s.get("gamesPlayed", 1) or 1
+                    rs_pg  = round(float(runs) / float(games), 3)
+            # Runs allowed
+            pr = requests.get(
+                f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
+                f"?stats=season&group=pitching&season={season}&gameType=R",
+                headers=HEADERS, timeout=8,
+            )
+            if pr.status_code == 200:
+                splits = pr.json().get("stats", [{}])[0].get("splits", [])
+                if splits:
+                    s = splits[0].get("stat", {})
+                    runs   = s.get("runs", 0) or 0
+                    games  = s.get("gamesPlayed", 1) or 1
+                    ra_pg  = round(float(runs) / float(games), 3)
+            result[tname] = {
+                "rs_pg": rs_pg if rs_pg else LEAGUE_RS_DEFAULT,
+                "ra_pg": ra_pg if ra_pg else LEAGUE_RS_DEFAULT,
+            }
+        except Exception:
+            continue
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
 
 
 # ── Feature 2: NFL Inactives System ────────────────────────────
