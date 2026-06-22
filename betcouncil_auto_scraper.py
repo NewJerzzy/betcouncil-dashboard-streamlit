@@ -2667,7 +2667,6 @@ def push_to_gist(all_props, all_lines, token, gist_id):
     }
 
     # Verify size before pushing — GitHub Gist file limit is ~1MB
-    import json as _json
     # Strip placeholder fields that waste bytes and are never used by app.py
     for _p in all_props:
         _p.pop("OverOdds", None)
@@ -2800,25 +2799,17 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
             headers=_bo_sportcast_headers(key, fixture_id), timeout=12
         )
         if r.status_code != 200:
-            print(f"      [DEBUG market {market_id}] status={r.status_code}")
             return []
         data = r.json()
-        import json as _j
-        print(f"      [DEBUG market {market_id}] RAW: {_j.dumps(data)[:600]}")
         payload = (data or {}).get("PayLoad") or []
         # Debug: print raw structure
         if isinstance(payload, list) and payload:
             first = payload[0]
-            print(f"      [DEBUG market {market_id}] PayLoad list len={len(payload)}, first keys={list(first.keys()) if isinstance(first, dict) else type(first).__name__}")
             if isinstance(first, dict):
                 for k, v in first.items():
                     if isinstance(v, list) and v:
                         inner = v[0]
                         print(f"        .{k}[0] keys={list(inner.keys()) if isinstance(inner, dict) else type(inner).__name__}")
-        elif isinstance(payload, dict):
-            print(f"      [DEBUG market {market_id}] PayLoad dict keys={list(payload.keys())}")
-        else:
-            print(f"      [DEBUG market {market_id}] PayLoad empty or unexpected: {type(payload).__name__}")
         # Selections live in Filter.Items, not Selections/BetSelections
         for market in (payload if isinstance(payload, list) else []):
             items = (market.get("Filter") or {}).get("Items") or []
@@ -2826,7 +2817,6 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
                 return items
         return []
     except Exception as e:
-        print(f"      [DEBUG market {market_id}] error: {e}")
         return []
 
 
@@ -2935,7 +2925,6 @@ def harvest_betonline_fixture_ids(sport="MLB", max_games=15):
                 )
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                    print(f"    Visited: {url}")
                     iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=30000)
                     src = iframe_el.get_attribute("src") or ""
                     qs = parse_qs(urlparse(src).query)
@@ -2995,12 +2984,9 @@ def scrape_betonline_props(sport="MLB", max_games=15):
 
         # Get Initialize data — contains selections per market
         init_data = fetch_bo_initialize(fixture_id, key)
-        import json as _ij
         if init_data:
-            print(f"    [DEBUG Init] top keys={list(init_data.keys())}")
             pl = init_data.get("PayLoad") or {}
             if isinstance(pl, dict):
-                print(f"    [DEBUG Init] PayLoad keys={list(pl.keys())}")
                 for k, v in pl.items():
                     if isinstance(v, list):
                         print(f"      .{k}: list[{len(v)}]", end="")
@@ -3009,7 +2995,6 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                         else:
                             print()
             elif isinstance(pl, list):
-                print(f"    [DEBUG Init] PayLoad is list[{len(pl)}]")
                 if pl and isinstance(pl[0], dict):
                     print(f"      first keys={list(pl[0].keys())[:8]}")
         init_payload = (init_data or {}).get("PayLoad") or {}
@@ -3092,13 +3077,11 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                         "https://bl.widget-prod.sportcast.app/public/RequestBetPriceUI",
                         headers=price_headers, json=payload, timeout=10
                     )
-                    print(f"        [PRICE] {sel_name}: status={pr.status_code}")
                     if pr.status_code != 200:
                         continue
                     pd_ = pr.json()
                     pl = (pd_ or {}).get("PayLoad") or {}
                     price = pl.get("Price")
-                    print(f"        [PRICE] raw={str(pd_)[:200]}")
                     if price in (None, "Infinity", 0, "0"):
                         continue
                     details = pl.get("PriceDetails") or {}
@@ -3121,7 +3104,6 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                         "selection_id": sel_id,
                     })
                 except Exception as _pe:
-                    print(f"        [PRICE ERR] {sel_name}: {_pe}")
                     continue
 
     print(f"\n  BetOnline props total: {len(props)}")
