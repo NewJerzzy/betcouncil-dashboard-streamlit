@@ -2699,7 +2699,15 @@ def push_to_gist(all_props, all_lines, token, gist_id):
     return False
 
 
-# ── BetOnline Player Prop Keys (Playwright harvester) ──────────
+# ── BetOnline Player Props (Playwright + sportcast API) ────────
+# Resolution 2026-06-22: headed Chromium + --disable-blink-features=
+# AutomationControlled + navigator.webdriver evasion bypasses bot
+# detection. SPORTCAST_KEY is a global site constant embedded in raw
+# HTML (confirmed via cloudscraper), fixtureId comes from the SGP
+# iframe src rendered by headed Playwright. All downstream calls
+# (getmarketsV2, Initialize, RequestBetPriceUI) hit plain requests —
+# no browser needed after fixtureId is harvested.
+#
 # www.betonline.ag is Cloudflare-protected (confirmed via 403 testing —
 # see BETONLINE_BASE comment in app.py), so the per-game "Key" that
 # unlocks bl.widget-prod.sportcast.app/public/RequestBetPriceUI can't be
@@ -2720,19 +2728,104 @@ def push_to_gist(all_props, all_lines, token, gist_id):
 # fetch_betonline_lines() in app.py) — this also tests, for free, whether
 # that GameId equals the fixtureId in the harvested iframe src.
 
-# DEFERRED 2026-06-21 — confirmed via live testing that headless Playwright
-# cannot reach the SGP iframe on betonline.ag game pages (game-list fetch
-# above works fine post-header-fix; iframe#SGP-EventView never appears in
-# DOM within 20s, tested two different wait strategies, same result both
-# times — consistent with bot detection serving degraded content, not a
-# timing bug). Same bucket as FanDuel props. See app.py's
-# fetch_betonline_prop_price() comment block for the full chain of evidence.
-# Do not re-run/re-attempt this harvester without a stealth-hardened browser
-# fingerprint or a non-headless approach — plain headless + scroll + sleep
-# tuning has already been tried and ruled out.
+# RESOLVED 2026-06-22 — headed Chromium with AutomationControlled disabled
+# and navigator.webdriver patched renders the SGP iframe correctly.
+# SPORTCAST_KEY is global (confirmed: same value across all game pages,
+# embedded as SPORTCAST_KEY in the raw HTML config block). fixtureId comes
+# from iframe#SGP-EventView src. All downstream sportcast calls use plain
+# requests — no browser needed after fixtureId is in hand.
 # ═══════════════════════════════════════════════════════════════
 
 BETONLINE_GAME_URL = "https://www.betonline.ag/sportsbook/{sport_path}/{league_path}/game/{game_id}"
+SPORTCAST_BASE = "https://bl.widget-prod.sportcast.app/public"
+# Global BetOnline sportcast key — confirmed 2026-06-22 to be a static
+# site-wide constant embedded in every game page's raw HTML config block
+# (SPORTCAST_KEY field). Same value across all games, all sports. Extract
+# fresh via cloudscraper if it ever changes (see _get_bo_sportcast_key).
+_BO_SPORTCAST_KEY_CACHE = {"key": None, "fetched_at": 0}
+
+
+def _get_bo_sportcast_key():
+    """Return SPORTCAST_KEY, fetching fresh via cloudscraper if cache is stale (>6h)."""
+    import time as _t
+    if _BO_SPORTCAST_KEY_CACHE["key"] and _t.time() - _BO_SPORTCAST_KEY_CACHE["fetched_at"] < 21600:
+        return _BO_SPORTCAST_KEY_CACHE["key"]
+    try:
+        import cloudscraper, re as _re
+        scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
+        r = scraper.get("https://www.betonline.ag/sportsbook/baseball/mlb", timeout=20)
+        m = _re.search(r'"SPORTCAST_KEY"\s*:\s*"([^"]+)"', r.text)
+        if m:
+            _BO_SPORTCAST_KEY_CACHE["key"] = m.group(1)
+            _BO_SPORTCAST_KEY_CACHE["fetched_at"] = _t.time()
+            return _BO_SPORTCAST_KEY_CACHE["key"]
+    except Exception:
+        pass
+    # Hardcoded fallback — update if sportcast key ever rotates
+    return "0f833f77-d3e2-476b-8484-141fccb8d8de"
+
+
+def _bo_sportcast_headers(key, fixture_id):
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": UA,
+        "Referer": f"https://bl.widget-prod.sportcast.app/markets?key={key}&fixtureId={fixture_id}&odds=AmericanPrice&brand=betonline",
+    }
+
+
+def fetch_bo_markets(fixture_id, key):
+    """Return list of all markets for this fixture from getmarketsV2 (marketLabel=0)."""
+    try:
+        r = requests.get(
+            f"{SPORTCAST_BASE}/getmarketsV2/",
+            params={"key": key, "fixtureId": fixture_id, "culture": "en-GB",
+                    "returnFilters": "false", "marketLabel": 0},
+            headers=_bo_sportcast_headers(key, fixture_id), timeout=12
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return (data or {}).get("PayLoad") or []
+    except Exception:
+        return []
+
+
+def fetch_bo_market_selections(fixture_id, key, market_id):
+    """Return selections for a specific market (getmarketsV2 with marketLabel=market_id)."""
+    try:
+        r = requests.get(
+            f"{SPORTCAST_BASE}/getmarketsV2/",
+            params={"key": key, "fixtureId": fixture_id, "culture": "en-GB",
+                    "returnFilters": "false", "marketLabel": market_id},
+            headers=_bo_sportcast_headers(key, fixture_id), timeout=12
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        payload = (data or {}).get("PayLoad") or []
+        # Find the matching market and return its selections
+        for market in payload:
+            if market.get("Id") == market_id:
+                return market.get("Selections") or market.get("BetSelections") or []
+        # If structure differs, return raw payload for inspection
+        return payload
+    except Exception:
+        return []
+
+
+def fetch_bo_initialize(fixture_id, key):
+    """Fetch Initialize endpoint — returns full fixture data including selections."""
+    try:
+        r = requests.get(
+            f"{SPORTCAST_BASE}/Initialize",
+            params={"key": key, "fixtureId": fixture_id, "isConsumerId": "false"},
+            headers=_bo_sportcast_headers(key, fixture_id), timeout=15
+        )
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
 
 
 def get_betonline_game_ids(sport="MLB"):
@@ -2782,13 +2875,17 @@ def get_betonline_game_ids(sport="MLB"):
         return []
 
 
-def harvest_betonline_prop_keys(sport="MLB", max_games=15):
+def harvest_betonline_fixture_ids(sport="MLB", max_games=15):
     """
-    Visit each game's BetOnline page with a real headless browser, pull the
-    SGP iframe src, and parse out the sportcast widget key + fixtureId.
+    Visit each BetOnline game page with a headed stealth Chromium browser,
+    extract fixtureId from the SGP iframe src.
+
+    Uses headed mode (headless=False) + --disable-blink-features=
+    AutomationControlled + navigator.webdriver patch — confirmed working
+    2026-06-22. SPORTCAST_KEY is global so we don't need it per game.
 
     Returns list of:
-      {game_id, home, away, key, fixture_id, fixture_id_matches_game_id, harvested_at}
+      {game_id, home, away, fixture_id, harvested_at}
     """
     info = SPORT_MAP.get(sport, SPORT_MAP["MLB"])
     games = get_betonline_game_ids(sport)[:max_games]
@@ -2804,70 +2901,208 @@ def harvest_betonline_prop_keys(sport="MLB", max_games=15):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
+                headless=False,
+                args=["--disable-blink-features=AutomationControlled"]
             )
-            ctx = browser.new_context(user_agent=UA, viewport={"width": 1280, "height": 900})
+            ctx = browser.new_context(
+                user_agent=UA,
+                viewport={"width": 1280, "height": 800},
+            )
             ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
             page = ctx.new_page()
 
             for g in games:
                 url = BETONLINE_GAME_URL.format(
-                    sport_path=info["sport"], league_path=info["league"], game_id=g["game_id"]
+                    sport_path=info["sport"], league_path=info["league"],
+                    game_id=g["game_id"]
                 )
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                    _t.sleep(3)  # let client-side hydration finish (React/Astro renders SGP panel post-load)
-                    page.mouse.wheel(0, 1500)  # trigger loading="lazy" on the SGP iframe
-                    iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=20000)
+                    iframe_el = page.wait_for_selector("iframe#SGP-EventView", timeout=30000)
                     src = iframe_el.get_attribute("src") or ""
                     qs = parse_qs(urlparse(src).query)
-                    key = (qs.get("key") or [None])[0]
                     fixture_id = (qs.get("fixtureId") or [None])[0]
-                    if key:
+                    if fixture_id:
                         results.append({
-                            "game_id":    g["game_id"],
-                            "home":       g["home"],
-                            "away":       g["away"],
-                            "key":        key,
-                            "fixture_id": fixture_id,
-                            "fixture_id_matches_game_id": str(fixture_id) == str(g["game_id"]),
+                            "game_id":      g["game_id"],
+                            "home":         g["home"],
+                            "away":         g["away"],
+                            "fixture_id":   fixture_id,
                             "harvested_at": datetime.now().isoformat(),
                         })
-                        print(f"  ✅ {g['away']} @ {g['home']}: key captured (fixtureId match: {str(fixture_id) == str(g['game_id'])})")
+                        print(f"  ✅ {g['away']} @ {g['home']}: fixtureId={fixture_id}")
                     else:
-                        print(f"  ⚠️  {g['away']} @ {g['home']}: iframe found but no key in src")
+                        print(f"  ⚠️  {g['away']} @ {g['home']}: iframe found but no fixtureId in src")
                 except Exception as e:
-                    print(f"  ⚠️  {g['away']} @ {g['home']}: {str(e)[:100]}")
-                _t.sleep(1.5)  # don't hammer Cloudflare
+                    print(f"  ⚠️  {g['away']} @ {g['home']}: {str(e)[:120]}")
+                _t.sleep(1.0)
 
             browser.close()
     except ImportError:
-        print("  ❌ Playwright not installed. Run: pip install playwright && playwright install chromium")
+        print("  ❌ Playwright not installed. Run: pip install playwright && python -m playwright install chromium")
     except Exception as e:
-        print(f"  ❌ harvest_betonline_prop_keys error: {e}")
+        print(f"  ❌ harvest_betonline_fixture_ids error: {e}")
 
     return results
 
 
-def push_betonline_prop_keys(keys_data, token, gist_id):
-    """Push harvested keys to their own Gist file, separate from auto_scraped_props.json."""
-    if not token or not gist_id or not keys_data:
+def scrape_betonline_props(sport="MLB", max_games=15):
+    """
+    Full BetOnline player prop pipeline:
+      1. Headed Playwright → fixtureId per game
+      2. Plain requests → getmarketsV2 → player market list
+      3. Plain requests → Initialize → selections + entity IDs
+      4. Plain requests → RequestBetPriceUI → price per selection
+    Returns list of prop dicts in standard BetCouncil format.
+    """
+    print(f"\n  Harvesting BetOnline fixtureIds for {sport}...")
+    game_fixtures = harvest_betonline_fixture_ids(sport, max_games)
+    if not game_fixtures:
+        print(f"  No fixtureIds harvested for {sport}")
+        return []
+
+    key = _get_bo_sportcast_key()
+    props = []
+    sport_code = {"MLB": 9}.get(sport)
+
+    for gf in game_fixtures:
+        fixture_id = gf["fixture_id"]
+        home, away = gf["home"], gf["away"]
+        print(f"\n  {away} @ {home} (fixtureId={fixture_id})")
+
+        # Get all markets
+        markets = fetch_bo_markets(fixture_id, key)
+        player_markets = [m for m in markets if m.get("IsPlayerMarket")]
+        print(f"    {len(player_markets)} player markets found")
+
+        # Get Initialize data — contains selections per market
+        init_data = fetch_bo_initialize(fixture_id, key)
+        init_payload = (init_data or {}).get("PayLoad") or {}
+
+        for market in player_markets:
+            market_id = market.get("Id")
+            market_name = market.get("Label", "")
+            market_label_id = market.get("LabelId")
+            if not market_id:
+                continue
+
+            # Get selections for this market
+            selections = fetch_bo_market_selections(fixture_id, key, market_id)
+            if not selections:
+                # Try to find selections in Initialize payload
+                init_markets = init_payload.get("Markets") or []
+                for im in init_markets:
+                    if im.get("Id") == market_id or im.get("LabelId") == market_label_id:
+                        selections = im.get("Selections") or im.get("BetSelections") or []
+                        break
+
+            if not selections:
+                print(f"    ⚠️  No selections for {market_name}")
+                continue
+
+            print(f"    {market_name}: {len(selections)} selections")
+
+            for sel in selections:
+                sel_id = sel.get("Id") or sel.get("SelectionId")
+                sel_name = sel.get("Name") or sel.get("Selection") or sel.get("Label", "")
+                entity_id = sel.get("EntityId")
+                global_id_long = sel.get("GlobalIdLong") or sel.get("BetId")
+                global_id_short = sel.get("GlobalIdShort")
+                if not sel_id or not sport_code:
+                    continue
+
+                # Price via RequestBetPriceUI
+                import random as _r, string as _s
+                op_id = ''.join(_r.choices(_s.ascii_letters + _s.digits, k=8))
+                req_id = ''.join(_r.choices(_s.ascii_letters + _s.digits, k=6))
+                payload = {
+                    "FixtureId": int(fixture_id),
+                    "Key": key,
+                    "Sport": sport_code,
+                    "MarketDetails": [{
+                        "MarketId": market_id,
+                        "MarketName": market_name,
+                        "MarketLabelId": market_label_id,
+                        "BetSelections": [{
+                            "Id": sel_id,
+                            "Selection": sel_name,
+                            "EntityId": entity_id,
+                            "GlobalIdLong": global_id_long,
+                            "GlobalIdShort": global_id_short,
+                        }],
+                    }],
+                    "ReturnBetSlip": False,
+                    "ReturnValidationMatrix": False,
+                    "Culture": "en-GB",
+                    "ReturnAllTranslations": False,
+                    "ReturnMarkets": False,
+                }
+                price_headers = {
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "application/json",
+                    "Referer": f"https://bl.widget-prod.sportcast.app/markets?key={key}&fixtureId={fixture_id}&odds=AmericanPrice&brand=betonline",
+                    "http-loader": "false",
+                    "request-id": f"|{op_id}.{req_id}",
+                    "sc-fixtureid": str(fixture_id),
+                    "sc-sportid": {"MLB": "Baseball"}.get(sport, sport),
+                    "User-Agent": UA,
+                }
+                try:
+                    pr = requests.post(
+                        "https://bl.widget-prod.sportcast.app/public/RequestBetPriceUI",
+                        headers=price_headers, json=payload, timeout=10
+                    )
+                    if pr.status_code != 200:
+                        continue
+                    pd_ = pr.json()
+                    pl = (pd_ or {}).get("PayLoad") or {}
+                    price = pl.get("Price")
+                    if price in (None, "Infinity", 0, "0"):
+                        continue
+                    details = pl.get("PriceDetails") or {}
+                    american = details.get("AmericanPrice")
+                    if not american:
+                        continue
+                    props.append({
+                        "book":        "BetOnline",
+                        "sport":       sport,
+                        "home":        home,
+                        "away":        away,
+                        "player":      sel_name,
+                        "market":      market_name,
+                        "line":        None,
+                        "over_odds":   american if american > 0 else None,
+                        "under_odds":  american if american < 0 else None,
+                        "american_odds": american,
+                        "fixture_id":  fixture_id,
+                        "market_id":   market_id,
+                        "selection_id": sel_id,
+                    })
+                except Exception:
+                    continue
+
+    print(f"\n  BetOnline props total: {len(props)}")
+    return props
+
+
+def push_betonline_props(props_data, token, gist_id):
+    """Push scraped BetOnline props to Gist (betonline_props.json)."""
+    if not token or not gist_id or not props_data:
         return False
     payload = {
-        "harvested_at": datetime.now().isoformat(),
-        "keys": keys_data,
+        "scraped_at": datetime.now().isoformat(),
+        "props": props_data,
     }
     r = requests.patch(
         f"https://api.github.com/gists/{gist_id}",
         headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
-        json={"files": {"betonline_prop_keys.json": {"content": json.dumps(payload, indent=2)}}},
+        json={"files": {"betonline_props.json": {"content": json.dumps(payload, indent=2)}}},
         timeout=15
     )
     if r.status_code == 200:
-        print(f"\n✅ Pushed {len(keys_data)} BetOnline prop keys to Gist")
+        print(f"\n✅ Pushed {len(props_data)} BetOnline props to Gist")
         return True
-    print(f"\n❌ BetOnline prop keys Gist push failed: {r.status_code}")
+    print(f"\n❌ BetOnline props Gist push failed: {r.status_code}")
     return False
 
 
@@ -2889,15 +3124,15 @@ def main():
     sports = ["NBA","MLB","NHL","WNBA"] if args.all else [args.sport]
 
     if args.betonline_props:
-        all_keys = []
+        all_props = []
         for sp in sports:
-            print(f"\n{'='*50}\nHarvesting BetOnline prop keys: {sp}\n{'='*50}")
-            all_keys.extend(harvest_betonline_prop_keys(sp, max_games=args.max_games))
-        print(f"\nTotal keys harvested: {len(all_keys)}")
-        if all_keys and not args.no_push:
-            push_betonline_prop_keys(all_keys, token, gist)
-        elif all_keys:
-            print(json.dumps(all_keys, indent=2))
+            print(f"\n{'='*50}\nScraping BetOnline props: {sp}\n{'='*50}")
+            all_props.extend(scrape_betonline_props(sp, max_games=args.max_games))
+        print(f"\nTotal props scraped: {len(all_props)}")
+        if all_props and not args.no_push:
+            push_betonline_props(all_props, token, gist)
+        elif all_props:
+            print(json.dumps(all_props[:5], indent=2))
         return
 
     # Determine which books to scrape
