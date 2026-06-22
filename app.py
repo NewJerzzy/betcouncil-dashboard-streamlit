@@ -3888,6 +3888,7 @@ def _capture_clv_closing_lines():
                     "edge":           bet.get("edge", 0),
                     "prob":           placement_prob,
                     "clv_pre_close":  True,
+                    "source":         bet.get("source", ""),
                 })
                 updated = True
 
@@ -6448,6 +6449,7 @@ def record_clv(lock, current_props):
         "side": side, "clv": round(clv, 1),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "sport": lock.get("sport", ""), "tier": lock.get("tier", ""),
+        "source": lock.get("source", lock.get("book", "")),
     })
     save_json_data(CLV_PATH, clv_data)
     return round(clv, 1)
@@ -13584,6 +13586,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
                     "tier":        tier or "",
                     "edge":        edge or 0,
                     "prob":        prob or 0.5,
+                    "source":      source or "",
                 })
                 save_json_data(CLV_PATH, _clv_data)
         except (ValueError, KeyError, TypeError, AttributeError):
@@ -21928,6 +21931,43 @@ with tabs[4]:
             f'<div style="font-size:12px;color:#6a7a8a">1000 bet threshold</div></div>',
             unsafe_allow_html=True
         )
+        st.markdown("---")
+        # ── Per-book CLV breakdown ─────────────────────────────────────────
+        _clv_by_book = {}
+        for _cr in _clv_top:
+            _bk = _cr.get("source", "") or "Unknown"
+            if not _bk:
+                _bk = "Unknown"
+            _cv = _cr.get("clv_vs_close") or _cr.get("clv", 0) or 0
+            if _bk not in _clv_by_book:
+                _clv_by_book[_bk] = {"vals": [], "beats": 0}
+            _clv_by_book[_bk]["vals"].append(float(_cv))
+            if float(_cv) > 0:
+                _clv_by_book[_bk]["beats"] += 1
+        if _clv_by_book:
+            st.markdown("**CLV by Book**")
+            _book_rows = []
+            for _bk, _bd in sorted(_clv_by_book.items()):
+                _n  = len(_bd["vals"])
+                _avg = sum(_bd["vals"]) / _n if _n else 0
+                _br  = _bd["beats"] / _n if _n else 0
+                _book_rows.append({"Book": _bk, "Bets": _n,
+                                   "Avg CLV": f"{_avg:+.2%}", "Beat Rate": f"{_br:.0%}"})
+            _bk_html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+            _bk_html += '<tr style="color:#6a7a8a;text-transform:uppercase;font-size:10px;">'
+            for _hdr in ["Book","Bets","Avg CLV","Beat Rate"]:
+                _bk_html += f'<th style="padding:4px 8px;text-align:left;">{_hdr}</th>'
+            _bk_html += "</tr>"
+            for _row in _book_rows:
+                _rc = "#22c55e" if "+" in _row["Avg CLV"] else "#e04040"
+                _bk_html += f'<tr style="border-top:1px solid #1a2a3a;">'
+                _bk_html += f'<td style="padding:4px 8px;color:#e8f0f8;">{_row["Book"]}</td>'
+                _bk_html += f'<td style="padding:4px 8px;color:#8a9ab0;">{_row["Bets"]}</td>'
+                _bk_html += f'<td style="padding:4px 8px;color:{_rc};font-weight:700;">{_row["Avg CLV"]}</td>'
+                _bk_html += f'<td style="padding:4px 8px;color:#8a9ab0;">{_row["Beat Rate"]}</td>'
+                _bk_html += "</tr>"
+            _bk_html += "</table>"
+            st.markdown(_bk_html, unsafe_allow_html=True)
         st.markdown("---")
 
 

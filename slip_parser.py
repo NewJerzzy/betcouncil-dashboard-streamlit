@@ -2,6 +2,65 @@
 import re
 import requests
 
+# ── CamelCase name corrections ────────────────────────────────────────────────
+# OCR engines often produce "Lebron" or "Mcavid" instead of "LeBron"/"McDavid".
+# Map lowercased full name → correct spelling. Applied before any name extraction.
+_CAMELCASE_NAMES = {
+    "lebron james":       "LeBron James",
+    "lebron":             "LeBron",
+    "connor mcdavid":     "Connor McDavid",
+    "mcdavid":            "McDavid",
+    "deandre ayton":      "DeAndre Ayton",
+    "deandre hunter":     "DeAndre Hunter",
+    "devante parker":     "DeVante Parker",
+    "devonta smith":      "DeVonta Smith",
+    "devin singletary":   "Devin Singletary",
+    "deshaun watson":     "Deshaun Watson",
+    "deshawn stevenson":  "DeShawn Stevenson",
+    "jalen mcmillan":     "Jalen McMillan",
+    "jevon mcnider":      "JeVon McNider",
+    "jarvis landry":      "Jarvis Landry",
+    "jakobi meyers":      "Jakobi Meyers",
+    "kadarius toney":     "Kadarius Toney",
+    "kj osborn":          "KJ Osborn",
+    "tj watt":            "TJ Watt",
+    "tj hockenson":       "TJ Hockenson",
+    "tj mcconnell":       "TJ McConnell",
+    "aj brown":           "AJ Brown",
+    "aj green":           "AJ Green",
+    "jt daniels":         "JT Daniels",
+    "dj moore":           "DJ Moore",
+    "dj uiagalelei":      "DJ Uiagalelei",
+    "malik mcdowell":     "Malik McDowell",
+    "mac jones":          "Mac Jones",
+    "mccaffrey":          "McCaffrey",
+    "christian mccaffrey": "Christian McCaffrey",
+    "demarvin leal":      "DeMarvion Overshown",
+    "jaquan brisker":     "Jaquan Brisker",
+    "myles mcbride":      "Miles McBride",
+    "andrew mccutchen":   "Andrew McCutchen",
+    "collin mchugh":      "Collin McHugh",
+    "lance mccullers":    "Lance McCullers",
+    "jake mccarthy":      "Jake McCarthy",
+    "michael mchenry":    "Michael McHenry",
+    "brendan mckay":      "Brendan McKay",
+    "lamar jackson":      "Lamar Jackson",
+    "desmond ridder":     "Desmond Ridder",
+    "devante adams":      "Davante Adams",
+    "davante adams":      "Davante Adams",
+}
+
+def _fix_camelcase(text: str) -> str:
+    """
+    Apply CamelCase corrections to OCR text before name extraction.
+    Case-insensitive replacement of known name variants.
+    """
+    for wrong, correct in _CAMELCASE_NAMES.items():
+        # Word-boundary aware, case-insensitive
+        text = re.sub(r"(?<![A-Za-z])" + re.escape(wrong) + r"(?![A-Za-z])",
+                      correct, text, flags=re.IGNORECASE)
+    return text
+
 
 def _parse_pp_ocr_inline(raw_text):
     """Parse single-line OCR text from PrizePicks screenshots. All sports.
@@ -15,6 +74,7 @@ def _parse_pp_ocr_inline(raw_text):
     import re
 
     raw_text = re.sub(r"WORLDCUP", "WORLD CUP", raw_text, flags=re.I)
+    raw_text = _fix_camelcase(raw_text)
 
     # Save original for prop extraction (footer strip below may remove stat tokens)
     _raw_for_props = raw_text
