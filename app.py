@@ -8191,15 +8191,29 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         pass
                 if sport == "UFC":
                     # ── UFC striking differential for spread/ML ───────────
-                    # Fighter with higher sig strikes and better takedown
-                    # defense → reduce opponent's spread edge.
                     try:
                         _f1s = fetch_ufc_fighter_stats(home_full or home_team) or {}
                         _f2s = fetch_ufc_fighter_stats(away_full or away_team) or {}
                         _f1_str = float(_f1s.get("SIG_STR", 35) or 35)
                         _f2_str = float(_f2s.get("SIG_STR", 35) or 35)
-                        _str_diff = (_f1_str - _f2_str) / 100.0  # normalise
-                        spread_edge_pct += _str_diff
+                        spread_edge_pct += (_f1_str - _f2_str) / 100.0
+                    except Exception:
+                        pass
+                if sport == "Tennis":
+                    # ── Tennis serve efficiency ML/spread signal ──────────
+                    try:
+                        _tc2 = fetch_tennis_tournament_context()
+                        _wta2 = fetch_tennis_scoreboard("wta")
+                        _tk2 = "wta" if (
+                            normalize_name(home_full or home_team) in _wta2 or
+                            normalize_name(away_full or away_team) in _wta2
+                        ) else "atp"
+                        _surf2 = _tc2.get(_tk2, {}).get("surface", "hard")
+                        _p1s2 = fetch_tennis_player_stats(home_full or home_team)
+                        _p2s2 = fetch_tennis_player_stats(away_full or away_team)
+                        spread_edge_pct += compute_tennis_ml_edge(
+                            _p1s2 or {}, _p2s2 or {}, surface=_surf2
+                        )
                     except Exception:
                         pass
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
@@ -8478,6 +8492,30 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     weightclass=_wc, is_title=_is_title,
                 )
                 fair_total = _ufc_proj["fair_rounds"]
+            elif sport == "Tennis":
+                # ── Tennis fair_total: projected games total ──────────────
+                # Serve %, break point conversion, and surface baseline
+                # determine expected games. Tour (ATP/WTA) and whether it's
+                # a Grand Slam (BO5 vs BO3) scale the baseline accordingly.
+                _t_ctx = fetch_tennis_tournament_context()
+                # Determine tour from matchup — check ATP scoreboard first
+                _tour_key = "atp"
+                _t_atp = fetch_tennis_scoreboard("atp")
+                _t_wta = fetch_tennis_scoreboard("wta")
+                _p1_norm = normalize_name(home_full or home_team)
+                _p2_norm = normalize_name(away_full or away_team)
+                if _p1_norm in _t_wta or _p2_norm in _t_wta:
+                    _tour_key = "wta"
+                _ctx = _t_ctx.get(_tour_key, {})
+                _surface    = _ctx.get("surface", "hard")
+                _is_bo5     = _ctx.get("is_slam", False)  # WTA Slams are BO3
+                _p1_stats = fetch_tennis_player_stats(home_full or home_team)
+                _p2_stats = fetch_tennis_player_stats(away_full or away_team)
+                _tennis_proj = compute_tennis_games_projection(
+                    _p1_stats or {}, _p2_stats or {},
+                    surface=_surface, is_best_of_5=_is_bo5,
+                )
+                fair_total = _tennis_proj["fair_games"]
             if fair_total is not None:
                 total_edge = fair_total - total_val
                 total_edge_pct = total_edge / 50.0
@@ -8493,6 +8531,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     total_edge_pct = total_edge / 4.0  # goal totals are small-range (~2.5 line)
                 elif sport == "UFC":
                     total_edge_pct = total_edge / 3.0  # rounds O/U ~2.5 line, tight range
+                elif sport == "Tennis":
+                    total_edge_pct = total_edge / 10.0  # games O/U ~22 line; 5-game range = big edge
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
@@ -8650,8 +8690,8 @@ def fetch_alternate_lines(sport, matchup):
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
-    # Soccer/UFC/Tennis/Golf have no power rating data — skip game line analysis
-    if sport in ("Soccer", "UFC", "Tennis", "Golf"):
+    # Golf has no game-level model yet — skip game line analysis
+    if sport in ("Golf",):
         return all_game_analysis
     power_ratings = power_map.get(sport, {})
     for game in games:
@@ -9542,6 +9582,177 @@ def fetch_tennis_scoreboard(tour="atp"):
                     "tour": tour.upper(),
                 }
     return matches
+
+
+# ── Tennis signal engine ──────────────────────────────────────────────────────
+# Surface baselines: expected total games per match (both players combined)
+# Best-of-3 format (most ATP/WTA events and all WTA Slams)
+_TENNIS_SURFACE_BASELINES_BO3 = {
+    "hard":  22.8,
+    "clay":  24.4,   # longer rallies → more deuce games
+    "grass": 21.2,   # fast surface → dominant servers → shorter points
+    "indoor hard": 22.5,
+    "carpet": 21.0,
+}
+# Best-of-5 format (ATP Grand Slams only)
+_TENNIS_SURFACE_BASELINES_BO5 = {
+    "hard":  36.5,
+    "clay":  39.2,
+    "grass": 34.8,
+    "indoor hard": 36.0,
+    "carpet": 34.5,
+}
+# Grand Slam tournaments (ATP best-of-5)
+_ATP_GRAND_SLAMS = {
+    "australian open", "roland garros", "french open",
+    "wimbledon", "us open",
+}
+# Surface by Grand Slam
+_SLAM_SURFACE = {
+    "australian open": "hard",
+    "roland garros":   "clay",
+    "french open":     "clay",
+    "wimbledon":       "grass",
+    "us open":         "hard",
+}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_tennis_tournament_context() -> dict:
+    """
+    Pulls current ATP and WTA tournament info from ESPN scoreboards.
+    Returns {tour: {"surface": str, "tournament": str, "is_slam": bool}}
+    Cached 1 hour — tournament surface doesn't change mid-event.
+    """
+    context = {}
+    for tour in ("atp", "wta"):
+        try:
+            data = _espn_get(
+                f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard",
+                f"tennis_{tour}_scoreboard_ctx", ttl_hours=1,
+            )
+            if not data:
+                continue
+            events = data.get("events", [])
+            if not events:
+                continue
+            event = events[0]
+            tournament = event.get("name", "").lower()
+            # Detect surface from tournament name
+            surface = "hard"  # default
+            for slam, surf in _SLAM_SURFACE.items():
+                if slam in tournament:
+                    surface = surf
+                    break
+            else:
+                if "clay" in tournament or "roland" in tournament or "french" in tournament:
+                    surface = "clay"
+                elif "grass" in tournament or "wimbledon" in tournament or "queen" in tournament:
+                    surface = "grass"
+                elif "indoor" in tournament or "covered" in tournament:
+                    surface = "indoor hard"
+            is_slam = any(s in tournament for s in _ATP_GRAND_SLAMS)
+            context[tour] = {
+                "surface":    surface,
+                "tournament": event.get("name", ""),
+                "is_slam":    is_slam and tour == "atp",  # WTA Slams are BO3
+            }
+        except Exception:
+            context[tour] = {"surface": "hard", "tournament": "", "is_slam": False}
+    return context
+
+
+def compute_tennis_games_projection(p1_stats: dict, p2_stats: dict,
+                                     surface: str = "hard",
+                                     is_best_of_5: bool = False) -> dict:
+    """
+    Project total games in a tennis match.
+
+    Model:
+      base    = surface baseline (BO3 or BO5)
+      serve_adj = serve dominance bonus — high 1st serve % → more holds →
+                  more tiebreaks → more games (+/- 1.5 games max per player)
+      bp_adj   = break point conversion penalty — high BP conversion → faster
+                 set endings → fewer games (-/+ 1.0 games max per player)
+      ace_adj  = ace rate proxy — dominant server holds faster → minor games boost
+
+    Returns: {"fair_games": float, "surface": str, "serve_adj": float,
+              "bp_adj": float, "is_best_of_5": bool}
+    """
+    baselines = _TENNIS_SURFACE_BASELINES_BO5 if is_best_of_5 else _TENNIS_SURFACE_BASELINES_BO3
+    base = baselines.get(surface.lower(), baselines["hard"])
+
+    def _serve_adj(stats):
+        if not stats:
+            return 0.0
+        pct = float(stats.get("1st Serve %", 62.0) or 62.0)
+        # Neutral = 62%; each % above → +0.06 games (more holds → tiebreaks)
+        return round((pct - 62.0) * 0.06, 2)
+
+    def _bp_adj(stats):
+        if not stats:
+            return 0.0
+        bp = float(stats.get("Break Points Won", 3.0) or 3.0)
+        # Neutral = 3 BP/match; each BP above → -0.20 games (breaks → shorter sets)
+        return round((bp - 3.0) * -0.20, 2)
+
+    def _ace_adj(stats):
+        if not stats:
+            return 0.0
+        aces = float(stats.get("Aces", 6.0) or 6.0)
+        # High aces → dominant service → slight games boost (more holds)
+        return round(max(-0.5, min(1.0, (aces - 6.0) * 0.05)), 2)
+
+    p1_sa = _serve_adj(p1_stats)
+    p2_sa = _serve_adj(p2_stats)
+    p1_bp = _bp_adj(p1_stats)
+    p2_bp = _bp_adj(p2_stats)
+    p1_ac = _ace_adj(p1_stats)
+    p2_ac = _ace_adj(p2_stats)
+
+    # Each player's serve adj adds to total (both hold more → more games)
+    # Each player's BP conversion reduces total (breaks end sets faster)
+    total_adj = (p1_sa + p2_sa) + (p1_bp + p2_bp) + (p1_ac + p2_ac)
+    fair_games = round(max(12.0, min(50.0, base + total_adj)), 1)
+
+    return {
+        "fair_games":   fair_games,
+        "surface":      surface,
+        "serve_adj":    round(p1_sa + p2_sa, 2),
+        "bp_adj":       round(p1_bp + p2_bp, 2),
+        "ace_adj":      round(p1_ac + p2_ac, 2),
+        "is_best_of_5": is_best_of_5,
+        "base":         base,
+    }
+
+
+def compute_tennis_ml_edge(p1_stats: dict, p2_stats: dict, surface: str = "hard") -> float:
+    """
+    Compute serve-efficiency advantage for spread/ML edge.
+    Returns a float: positive = p1 (home) advantage, negative = p2 advantage.
+    Scale: ±0.10 max before normalization.
+
+    Serve efficiency = (1st Serve %) × (1 - BP conversion rate vs them)
+    Higher = harder to break = stronger server.
+    """
+    def _eff(stats):
+        if not stats:
+            return 0.0
+        sp  = float(stats.get("1st Serve %", 62.0) or 62.0) / 100.0
+        bp  = float(stats.get("Break Points Won", 3.0) or 3.0)
+        # Normalise BP to a rate (proxy: 3 BP/match = ~0.35 break rate)
+        bp_rate = min(0.80, bp / 8.5)
+        # Efficiency: serve % × (opponent can't break easily)
+        eff = sp * (1.0 - bp_rate * 0.5)
+        return eff
+
+    # Surface bonus: clay favours grinders (high BP), grass favours big servers
+    surface_serve_mult = {"grass": 1.10, "hard": 1.00, "clay": 0.92,
+                          "indoor hard": 1.03, "carpet": 1.08}.get(surface.lower(), 1.00)
+
+    p1_eff = _eff(p1_stats) * surface_serve_mult
+    p2_eff = _eff(p2_stats) * surface_serve_mult
+    return round(max(-0.12, min(0.12, (p1_eff - p2_eff) * 0.8)), 4)
 
 
 def fetch_espn_fpi(sport="NFL"):
