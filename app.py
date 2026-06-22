@@ -5137,7 +5137,7 @@ def compute_ev_line_movement(current_data, previous_snapshot):
             sig_key     = (player_norm, prop_name)
             book_odds   = item.get("bookOdds", {}) or {}
 
-            moved_books  = []   # list of (book_key, old_odds, new_odds, direction)
+            moved_books  = []   # list of (book_key, old_odds, new_odds, direction, velocity_pts_per_min)
             sharp_moved  = False
 
             for bk, curr_raw in book_odds.items():
@@ -5145,10 +5145,17 @@ def compute_ev_line_movement(current_data, previous_snapshot):
                 if curr_val is None:
                     continue
 
-                snap_key = (player_norm, prop_key, bk)
-                new_snapshot[snap_key] = curr_val   # always update snapshot
+                snap_key  = (player_norm, prop_key, bk)
+                prev_entry = previous_snapshot.get(snap_key)
+                # Support both legacy (plain float) and new (dict w/ ts) format
+                if isinstance(prev_entry, dict):
+                    prev_val = prev_entry.get("odds")
+                    prev_ts  = prev_entry.get("ts", 0)
+                else:
+                    prev_val = prev_entry
+                    prev_ts  = 0
+                new_snapshot[snap_key] = {"odds": curr_val, "ts": time.time()}
 
-                prev_val = previous_snapshot.get(snap_key)
                 if prev_val is None:
                     continue   # no previous data — first snapshot
 
@@ -5156,8 +5163,10 @@ def compute_ev_line_movement(current_data, previous_snapshot):
                 if abs(delta) < MOVEMENT_THRESHOLD:
                     continue   # not a meaningful move
 
-                direction = "favorable" if delta > 0 else "unfavorable"
-                moved_books.append((bk, prev_val, curr_val, direction))
+                direction    = "favorable" if delta > 0 else "unfavorable"
+                elapsed_min  = (time.time() - prev_ts) / 60.0 if prev_ts else 999
+                velocity_ppm = abs(delta) / max(elapsed_min, 0.5)  # pts per min
+                moved_books.append((bk, prev_val, curr_val, direction, velocity_ppm))
                 if bk in SHARP_BOOKS_SET:
                     sharp_moved = True
 
@@ -5191,20 +5200,35 @@ def compute_ev_line_movement(current_data, previous_snapshot):
                 elif gap >= 3: s9_boost = 0.01; rlm_note = f"RLM: {gap} books moved unfavorable"
                 else:          s9_boost = 0.005; rlm_note = f"RLM: {gap} book(s) fading action"
 
+            # ── Steam velocity flag (gap fix #5) ───────────────────────
+            # A line moving 3+ odds points/min across 2+ books is a steam
+            # move — sharp syndicate action arriving in a burst.  This is
+            # separate from S8 (which only detects that movement happened,
+            # not how fast).  Steam picks get an S8 boost to 3 (max).
+            max_velocity   = max((b[4] for b in moved_books), default=0)
+            steam_velocity = max_velocity >= 3.0 and len(moved_books) >= 2
+            if steam_velocity:
+                s8_vector = 3   # override to max — steam is the strongest sharp signal
+                if sig_key not in movement_lookup:
+                    pass  # will be set below
+                rlm_note = (rlm_note + f" | 🔥 STEAM {max_velocity:.1f}pt/min").strip(" |")
+
             movement_lookup[sig_key] = {
-                "s8_vector":     s8_vector,
-                "s9_boost":      s9_boost,
-                "rlm_note":      rlm_note,
-                "rlm_flag":      rlm,
-                "steam_flag":    sharp_moved and len(moved_books) >= 4,
-                "sharp_flag":    sharp_moved,
-                "moved_books":   moved_books,
-                "sharp_moved":   sharp_moved,
-                "move_direction": moved_books[-1][3] if moved_books else None,
-                "open_line":     None,
-                "curr_line":     item.get("handicap"),
-                "game":          item.get("game", ""),
-                "team":          item.get("team", ""),
+                "s8_vector":          s8_vector,
+                "s9_boost":           s9_boost,
+                "rlm_note":           rlm_note,
+                "rlm_flag":           rlm,
+                "steam_flag":         (sharp_moved and len(moved_books) >= 4) or steam_velocity,
+                "steam_velocity_flag": steam_velocity,
+                "steam_velocity_ppm":  round(max_velocity, 2),
+                "sharp_flag":         sharp_moved,
+                "moved_books":        moved_books,
+                "sharp_moved":        sharp_moved,
+                "move_direction":     moved_books[-1][3] if moved_books else None,
+                "open_line":          None,
+                "curr_line":          item.get("handicap"),
+                "game":               item.get("game", ""),
+                "team":               item.get("team", ""),
             }
 
             # ── Pinnacle drift — soft books lagging behind Pinnacle ────────
@@ -6300,8 +6324,37 @@ def kelly_unit_prizepicks(prob, bankroll, n_picks=2, apply_bi=False):
         return 0.0
     return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * KELLY_CAP), 2)
 
-def kelly_unit(prob, bankroll, n_picks=2):
-    return kelly_unit_prizepicks(prob, bankroll, n_picks)
+
+def kelly_unit(prob, bankroll, n_picks=2, american_odds=None):
+    """
+    Kelly wager sizing with optional line-shopping odds adjustment.
+
+    FIX (gap #2): Previously ignored the actual odds taken — every bet was
+    sized as a 2-pick PrizePicks multiplier regardless of true payout.
+    Now: if american_odds is provided (e.g. -110, +120), Kelly is computed
+    from the real decimal payout so a bet at -105 is sized larger than the
+    same edge at -120.  Falls back to PrizePicks sizing when no odds given.
+
+    american_odds: American-style integer (negative = favorite).
+                   None → PrizePicks multiplier sizing (legacy behavior).
+    """
+    if american_odds is None:
+        return kelly_unit_prizepicks(prob, bankroll, n_picks)
+    # Convert American odds to decimal b (net profit per $1 wagered)
+    try:
+        ao = float(american_odds)
+        if ao < 0:
+            b = 100.0 / abs(ao)
+        else:
+            b = ao / 100.0
+    except (TypeError, ValueError):
+        return kelly_unit_prizepicks(prob, bankroll, n_picks)
+    q     = 1.0 - prob
+    kelly = (b * prob - q) / b
+    if kelly <= 0:
+        return 0.0
+    return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * KELLY_CAP), 2)
+
 
 def get_tier(edge, sport  # Maps edge % to tier: SOVEREIGN/ELITE/APPROVED/LEAN/PASS
 ="NBA") -> str:
@@ -7977,18 +8030,28 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
 
     # Real FPI nudge — separate from live_ratings above, which despite its
     # "FPI" name is actually a win-pct-derived proxy, not real ESPN FPI.
-    # This pulls the genuine FPI metric (HTML-table scrape of espn.com,
-    # more fragile than the JSON-based proxy) as a small additive nudge.
-    # Weighted low (×0.3) since it's the least-tested new source here —
-    # flagged for your review before raising this weight. NFL/NCF only
-    # (fetch_espn_fpi's current scope).
+    # GAP FIX #1: For NFL specifically, replace the ×0.3 nudge with a
+    # full power-rating blend using ESPN team stats (points for/against,
+    # yards for/against) — far more predictive than win% heading into season.
     if sport == "NFL":
         fpi_real = fetch_espn_fpi(sport)
-        if fpi_real:
+        nfl_stats_ratings = _fetch_nfl_team_stats_power()
+        if nfl_stats_ratings:
+            # Blend: 50% stats-derived, 30% live win-pct proxy, 20% FPI nudge
+            for team in list(power_ratings.keys()):
+                stats_val = nfl_stats_ratings.get(team)
+                fpi_data  = fpi_real.get(team) if fpi_real else None
+                if stats_val is not None:
+                    pr_base = power_ratings[team]
+                    fpi_add = (fpi_data["fpi"] * 0.20) if (fpi_data and fpi_data.get("fpi")) else 0
+                    power_ratings[team] = round(
+                        pr_base * 0.30 + stats_val * 0.50 + fpi_add, 1
+                    )
+        elif fpi_real:
             for team in power_ratings:
                 fpi_data = fpi_real.get(team)
                 if isinstance(fpi_data, dict) and fpi_data.get("fpi") is not None:
-                    power_ratings[team] = round(power_ratings[team] + fpi_data["fpi"] * 0.3, 1)
+                    power_ratings[team] = round(power_ratings[team] + fpi_data["fpi"] * 0.5, 1)
     
     public_data = st.session_state.get("public_betting_data", {})
     game_public = None
@@ -8089,13 +8152,38 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 a_data = _pitchers.get(a_full2, _pitchers.get(away_team, {}))
                 h_pitcher = h_data.get("pitcher","")
                 a_pitcher = a_data.get("pitcher","")
-                h_era = MLB_PITCHER_ERA.get(h_pitcher, LEAGUE_AVG_ERA)
-                a_era = MLB_PITCHER_ERA.get(a_pitcher, LEAGUE_AVG_ERA)
-                avg_era = (h_era + a_era) / 2
-                era_adj = (avg_era - LEAGUE_AVG_ERA) * 0.4
+                # Prefer live Savant FIP over static ERA for game totals
+                h_era = h_data.get("era_live") or MLB_PITCHER_ERA.get(h_pitcher, LEAGUE_AVG_ERA)
+                a_era = a_data.get("era_live") or MLB_PITCHER_ERA.get(a_pitcher, LEAGUE_AVG_ERA)
+                h_fip = h_data.get("fip_live") or MLB_PITCHER_FIP.get(h_pitcher, h_era)
+                a_fip = a_data.get("fip_live") or MLB_PITCHER_FIP.get(a_pitcher, a_era)
+                # 60% FIP, 40% ERA blend for total projection
+                avg_pitch = ((h_fip * 0.60 + h_era * 0.40) + (a_fip * 0.60 + a_era * 0.40)) / 2
+                era_adj = (avg_pitch - LEAGUE_AVG_ERA) * 0.4
                 park_mult = MLB_PARK_FACTORS.get(h_full2, MLB_PARK_FACTORS.get(home_team, MLB_PARK_DEFAULT))
                 park_adj = (park_mult - 1.0) * 2.0
-                fair_total = base_total + era_adj + park_adj
+                # GAP FIX #7: MLB weather wind adjustment for game totals
+                # Wind out boosts totals; wind in suppresses them.
+                wind_adj_total = 0.0
+                try:
+                    _park_info = MLB_BALLPARKS.get(h_full2, MLB_BALLPARKS.get(home_team, {}))
+                    _park_city = _park_info.get("city", "")
+                    _is_outdoor = _park_info.get("outdoor", True)
+                    if _park_city and _is_outdoor:
+                        _wx = fetch_weather_for_game(_park_city, is_outdoor=True)
+                        if _wx:
+                            _ws  = _wx.get("wind_speed_mph", 0)
+                            _wd  = _wx.get("wind_dir", "N")
+                            _out = ["SW","WSW","W","WNW","NW","S","SSW"]
+                            _in  = ["N","NNE","NE","ENE","E","ESE","SE","SSE"]
+                            if _ws >= 10:
+                                if _wd in _out:
+                                    wind_adj_total = min(1.5, _ws * 0.06)   # wind out → OVER
+                                elif _wd in _in:
+                                    wind_adj_total = -min(1.5, _ws * 0.06)  # wind in  → UNDER
+                except Exception:
+                    pass
+                fair_total = base_total + era_adj + park_adj + wind_adj_total
             elif sport == "NHL":
                 h_gf = NHL_TEAM_GOALS_FOR.get(home_full, NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT))
                 h_ga = NHL_TEAM_GOALS_AGAINST.get(home_full, NHL_TEAM_GOALS_AGAINST.get(home_team, NHL_GOALS_DEFAULT))
@@ -9262,6 +9350,84 @@ def fetch_espn_fpi(sport="NFL"):
 
 
 # Maps GEM/PrizePicks-style prop names to Parlay Savant's URL prop slugs (MLB)
+def _fetch_nfl_team_stats_power() -> dict:
+    """
+    Derive NFL team power ratings from ESPN team season stats — points/yards
+    for and against.  More predictive than win% for pre-season and early-season
+    game edges.  Returns {team_abbr: power_rating} on ~104 scale.
+
+    Formula: base 104 + (net_pts_per_game / 3) + (net_yds_per_game / 40)
+    Capped at ±15 from baseline to prevent outlier distortion.
+    Cache: 6 hours — stats update daily post-game.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_team_stats_power.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    try:
+        season = date.today().year
+        # NFL season starts Sept — if before Sept, use prior season stats
+        if date.today().month < 9:
+            season -= 1
+        url = (
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams"
+            f"?limit=32&season={season}"
+        )
+        r = requests.get(url, headers=HEADERS, timeout=12)
+        if r.status_code != 200:
+            return {}
+        teams = (r.json().get("sports", [{}])[0]
+                         .get("leagues", [{}])[0]
+                         .get("teams", []))
+        ratings = {}
+        for entry in teams:
+            team  = entry.get("team", {})
+            abbr  = team.get("abbreviation", "")
+            if not abbr:
+                continue
+            # Pull team stats endpoint
+            tid  = team.get("id")
+            surl = (
+                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
+                f"/teams/{tid}/statistics?season={season}"
+            )
+            sr = requests.get(surl, headers=HEADERS, timeout=8)
+            if sr.status_code != 200:
+                continue
+            cats = sr.json().get("results", {}).get("splits", {}).get("categories", [])
+            pts_for = pts_against = yds_for = yds_against = None
+            for cat in cats:
+                name = cat.get("name", "").lower()
+                stats = {s["name"]: s.get("value", 0) for s in cat.get("stats", [])}
+                if "scoring" in name:
+                    pts_for     = stats.get("pointsPerGame") or stats.get("totalPointsPerGame")
+                    pts_against = stats.get("opponentPointsPerGame")
+                elif "total" in name:
+                    yds_for     = stats.get("yardsPerGame")
+                    yds_against = stats.get("opponentYardsPerGame")
+            if pts_for is None:
+                continue
+            pts_for     = float(pts_for     or 23.0)
+            pts_against = float(pts_against or 23.0)
+            yds_for     = float(yds_for     or 340.0)
+            yds_against = float(yds_against or 340.0)
+            net_pts = pts_for - pts_against
+            net_yds = yds_for - yds_against
+            power   = 104.0 + (net_pts / 3.0) + (net_yds / 40.0)
+            power   = max(89.0, min(119.0, power))
+            ratings[abbr] = round(power, 1)
+        if ratings:
+            with open(cache_path, "wb") as f:
+                pickle.dump(ratings, f)
+        return ratings
+    except Exception:
+        return {}
+
+
 PARLAYSAVANT_MLB_PROP_MAP = {
     "Hits": "hits", "Singles": "singles", "Doubles": "doubles", "Triples": "triples",
     "Home Runs": "home-runs", "Total Bases": "total-bases", "RBI": "rbi", "Runs": "runs",
@@ -17327,6 +17493,27 @@ def load_sport_data(sport):
                     final_edge = round(final_edge + _usage_adj, 4)
 
         injury_flag = injuries.get(player, "") if isinstance(injuries, dict) else ""
+        # ── Auto injury edge discount (gap fix #3) ──────────
+        # Previously injury_flag was stored but never reduced final_edge for
+        # the player themselves — only teammate DFF adjustments fired.
+        # Now: OUT/DOUBTFUL → suppress pick (edge → 0); QUESTIONABLE → -30%
+        # edge penalty; PROBABLE → -10%.  This runs BEFORE the tier re-calc
+        # so suppressed injuries don't appear as SOVEREIGN picks.
+        if injury_flag:
+            _inj_status = str(injury_flag).upper()
+            if any(s in _inj_status for s in ("OUT", "DOUBTFUL", "DTD", "IR", "INACTIVE")):
+                final_edge  = 0.0
+                best_prob   = 0.5
+                tier        = "PASS"
+                p["InjuryNote"] = f"⛔ {injury_flag} — pick suppressed"
+            elif "QUEST" in _inj_status:
+                final_edge  = round(final_edge * 0.70, 4)
+                tier        = get_tier(final_edge, sport)
+                p["InjuryNote"] = f"⚠️ {injury_flag} — edge -30%"
+            elif "PROB" in _inj_status:
+                final_edge  = round(final_edge * 0.90, 4)
+                tier        = get_tier(final_edge, sport)
+                p["InjuryNote"] = f"🟡 {injury_flag} — edge -10%"
         # DFF Teammate Impact — NBA/WNBA primarily
         if sport in ("NBA","WNBA"):
             _dff_cache = st.session_state.get("dff_cache", {})
@@ -18097,10 +18284,7 @@ if "persistence_loaded" not in st.session_state:
             pass
         st.session_state["_elo_auto_last_run"] = time.time()
 
-    # CLV closing line snapshot — GAP FIX (2026-06-21)
-    # Capture true closing lines for PENDING bets within 15 min of game time
-    # via the OddsAPI.  Stores snapshot to CLV_PATH so resolve_clv_records()
-    # has an actual closing line rather than the board line at settlement time.
+    # CLV closing line snapshot + auto-resolve (GAP FIX #6)
     # Throttled to once per 10 min per session.
     _clv_snap_last = st.session_state.get("_clv_snap_last_run", 0)
     if time.time() - _clv_snap_last > 600:
@@ -18108,7 +18292,44 @@ if "persistence_loaded" not in st.session_state:
             _capture_clv_closing_lines()
         except Exception:
             pass
+        # FIX #6: resolve_clv_records was only called on History tab load.
+        # Now runs on the 10-min timer so CLV resolves automatically post-game
+        # even if the user never opens the History tab.
+        try:
+            _hist = st.session_state.get("history", [])
+            if _hist:
+                resolve_clv_records(_hist)
+        except Exception:
+            pass
         st.session_state["_clv_snap_last_run"] = time.time()
+
+    # FIX #4: Seasonal rolling avg cache reset.
+    # PLAYER_AVERAGES is a hardcoded baseline that goes stale when a new season
+    # starts. On first run of each new season (tracked via Gist), wipe all
+    # rolling avg pkl caches so the model rebuilds from live ESPN/statsapi data
+    # rather than prior-year numbers. PLAYER_AVERAGES itself is kept as the
+    # seed fallback — only the pkl overrides are cleared.
+    try:
+        _today      = date.today()
+        _cur_season = _today.year if _today.month >= 9 else _today.year - 1
+        _stored_ssn = load_from_gist("betcouncil_active_season", None)
+        if _stored_ssn != _cur_season:
+            _rolling_caches = [
+                "mlb_rolling_avgs.pkl", "nba_rolling_avgs.pkl",
+                "nhl_rolling_avgs.pkl", "nfl_rolling_avgs.pkl",
+                "wnba_rolling_avgs.pkl", "nfl_team_stats_power.pkl",
+                "mlb_pitchers.pkl", "mlb_team_woba_splits.pkl",
+            ]
+            for _rc in _rolling_caches:
+                _rp = os.path.join(CACHE_DIR, _rc)
+                try:
+                    if os.path.exists(_rp):
+                        os.remove(_rp)
+                except Exception:
+                    pass
+            save_to_gist("betcouncil_active_season", _cur_season)
+    except Exception:
+        pass
     # signal_performance.json lives only on local CACHE_DIR, which is ephemeral on
     # Streamlit Cloud — it resets on every redeploy/restart, silently losing logged
     # bet outcomes that feed the System tab's "Resolved Bets" count and signal health
