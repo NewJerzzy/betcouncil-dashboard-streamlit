@@ -3015,6 +3015,8 @@ def scrape_betonline_props(sport="MLB", max_games=15):
         init_payload = (init_data or {}).get("PayLoad") or {}
 
         for market in player_markets:
+            if market.get("LabelId") == 226:  # Batter Props: 3-level hierarchy, skip for now
+                continue
             market_id = market.get("Id")
             market_name = market.get("Label", "")
             market_label_id = market.get("LabelId")
@@ -3058,11 +3060,12 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                     "Sport": sport_code,
                     "MarketDetails": [{
                         "MarketId": market_id,
-                        "MarketName": market_name,
+                        "MarketName": market.get("UntranslatedLabel", market_name),
                         "MarketLabelId": market_label_id,
+                        "AllowOrCombo": False,
                         "BetSelections": [{
                             "Id": sel_id,
-                            "Selection": sel_name,
+                            "Selection": sel.get("Value", sel_name),
                             "EntityId": entity_id,
                             "GlobalIdLong": global_id_long,
                             "GlobalIdShort": global_id_short,
