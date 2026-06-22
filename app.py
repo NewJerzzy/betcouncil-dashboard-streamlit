@@ -6974,6 +6974,31 @@ def compute_optimized_weights(sport):
         "sample_factor": round(min(1.0, len(sport_data)/200), 3),
     }
     save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
+
+    # ── CLV feedback blend ──────────────────────────────────────────────
+    # Once CLV data is sufficient, blend CLV-derived adjustments into the
+    # W/L-optimized weights (40% CLV / 60% W/L).  CLV is a better
+    # predictor of skill; W/L is noisier but covers more bets early on.
+    clv_adjs = compute_clv_signal_feedback(sport)
+    if clv_adjs:
+        clv_blended = {}
+        base_wts = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+        for key, wt in optimized.items():
+            clv_adj = clv_adjs.get(key, 0.0)
+            # Apply CLV adjustment on top of W/L-optimized weight
+            clv_wt  = max(0.01, min(0.55, wt + clv_adj))
+            # 60% W/L-optimized, 40% CLV-adjusted
+            clv_blended[key] = round(wt * 0.60 + clv_wt * 0.40, 3)
+        # Re-normalise
+        _tot = sum(clv_blended.values())
+        if _tot > 0:
+            clv_blended = {k: round(v / _tot, 3) for k, v in clv_blended.items()}
+        existing[sport]["weights"]          = clv_blended
+        existing[sport]["clv_adjustments"]  = clv_adjs
+        existing[sport]["clv_blend_active"] = True
+        save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
+        return clv_blended
+
     return optimized
 
 def get_active_weights(sport):
@@ -6982,8 +7007,113 @@ def get_active_weights(sport):
     if sport_data and sport_data.get("weights"):
         n_bets = sport_data.get("n_bets", 0)
         if n_bets >= WEIGHT_OPTIMIZER_MIN_BETS:
-            return sport_data["weights"], f"📊 Data-driven ({n_bets} bets)", "optimized"
+            clv_active = sport_data.get("clv_blend_active", False)
+            label = f"📊 CLV+W/L blend ({n_bets} bets)" if clv_active else f"📊 Data-driven ({n_bets} bets)"
+            return sport_data["weights"], label, "optimized"
     return SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]), "⚠️ Hardcoded assumptions (insufficient data)", "hardcoded"
+
+
+def compute_clv_signal_feedback(sport: str) -> dict:
+    """
+    CLV-based signal weight feedback loop (Buchdahl methodology).
+
+    Core insight: W/L is noisy (variance-driven); CLV vs closing no-vig
+    is skill-driven. Signals that fire on bets with positive CLV are
+    genuinely predictive. Signals that fire on negative-CLV bets are
+    adding noise, even if those bets happened to win.
+
+    Algorithm:
+      1. Load CLV-resolved records for the sport
+      2. Match each CLV record to its history entry (player+prop+date)
+         to recover which signals were active at placement
+      3. For each signal, compute avg CLV when fired vs not fired
+      4. CLV lift = avg_clv_with - avg_clv_without
+      5. Translate to weight adjustment: 1pp CLV lift → +4% weight boost
+      6. Blend with W/L optimizer: 40% CLV / 60% W/L (at ≥30 CLV records)
+
+    Returns {weight_key: clv_adjustment} or {} if insufficient data.
+    Minimum: 30 resolved CLV records with linked signal data.
+    """
+    CLV_MIN_RECORDS = 30
+    CLV_SCALE       = 0.04   # 1pp CLV lift → 4% weight adjustment
+    CLV_MAX_ADJ     = 0.10   # cap per-signal CLV adjustment
+
+    # Signal key map: signals_active key → weight key
+    _SIG_MAP = {
+        "base_positive":    "base",
+        "defense_positive": "defense",
+        "location_home":    "location",
+        "back_to_back":     "rest",
+        "usage_boost":      "usage",
+        "sharp_flag":       "pace",
+    }
+
+    try:
+        clv_data  = load_json_data(CLV_PATH, [])
+        history   = load_json_data(HISTORY_PATH, [])
+    except Exception:
+        return {}
+
+    # Only use resolved records with valid CLV for this sport
+    resolved = [
+        c for c in clv_data
+        if c.get("sport") == sport
+        and c.get("clv_vs_close") is not None
+        and isinstance(c.get("clv_vs_close"), (int, float))
+    ]
+    if len(resolved) < CLV_MIN_RECORDS:
+        return {}
+
+    # Build history index: (normalized_player, prop, date) → signals_active
+    hist_index = {}
+    for h in history:
+        sa = h.get("signals_active", {})
+        if not sa:
+            continue
+        key = (
+            normalize_name(h.get("player", "")),
+            h.get("prop", ""),
+            str(h.get("timestamp", ""))[:10],
+        )
+        hist_index[key] = sa
+
+    # For each CLV record, look up which signals were active
+    tagged = []
+    for rec in resolved:
+        key = (
+            normalize_name(rec.get("player", "")),
+            rec.get("prop", ""),
+            str(rec.get("timestamp", ""))[:10],
+        )
+        sa = hist_index.get(key)
+        if sa is None:
+            continue
+        tagged.append({
+            "clv":     float(rec["clv_vs_close"]),
+            "signals": sa,
+        })
+
+    if len(tagged) < CLV_MIN_RECORDS:
+        return {}
+
+    overall_clv = sum(t["clv"] for t in tagged) / len(tagged)
+
+    adjustments = {}
+    for sig_key, weight_key in _SIG_MAP.items():
+        fired     = [t["clv"] for t in tagged if t["signals"].get(sig_key)]
+        not_fired = [t["clv"] for t in tagged if not t["signals"].get(sig_key)]
+        if len(fired) < 10:
+            continue
+        avg_with    = sum(fired) / len(fired)
+        avg_without = sum(not_fired) / len(not_fired) if not_fired else overall_clv
+        clv_lift    = avg_with - avg_without
+        adj = max(-CLV_MAX_ADJ, min(CLV_MAX_ADJ, clv_lift * CLV_SCALE))
+        adjustments[weight_key] = round(adj, 4)
+
+    return adjustments
+
+
+
 
 # market_efficiency_score — moved to bc_utils.py
 def calculate_lock_quality_score(prop):
