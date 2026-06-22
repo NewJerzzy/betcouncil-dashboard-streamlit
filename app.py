@@ -8183,7 +8183,26 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                                     wind_adj_total = -min(1.5, _ws * 0.06)  # wind in  → UNDER
                 except Exception:
                     pass
-                fair_total = base_total + era_adj + park_adj + wind_adj_total
+                # ── ATS Stats L10 O/U momentum adjustment ─────────────────
+                # If both teams trend heavily Over or Under in their last 10,
+                # apply a small directional nudge to fair_total.
+                # Scale: each O/U win beyond 5 (neutral) = +/-0.12 runs.
+                # Max combined adjustment capped at +/-0.6 runs.
+                l10_ou_adj = 0.0
+                try:
+                    _ats_data = fetch_atsstats_mlb_matchups()
+                    _h_ats = _ats_data.get(h_full2, _ats_data.get(home_full, {}))
+                    _a_ats = _ats_data.get(a_full2, _ats_data.get(away_full, {}))
+                    if _h_ats and _a_ats:
+                        h_ou = _h_ats.get("l10_ou", (5, 5))
+                        a_ou = _a_ats.get("l10_ou", (5, 5))
+                        # Overs minus 5 (neutral), scaled by 0.12 per game
+                        h_ou_delta = (h_ou[0] - 5) * 0.12
+                        a_ou_delta = (a_ou[0] - 5) * 0.12
+                        l10_ou_adj = max(-0.6, min(0.6, (h_ou_delta + a_ou_delta) / 2))
+                except Exception:
+                    pass
+                fair_total = base_total + era_adj + park_adj + wind_adj_total + l10_ou_adj
             elif sport == "NHL":
                 h_gf = NHL_TEAM_GOALS_FOR.get(home_full, NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT))
                 h_ga = NHL_TEAM_GOALS_AGAINST.get(home_full, NHL_TEAM_GOALS_AGAINST.get(home_team, NHL_GOALS_DEFAULT))
@@ -15958,6 +15977,136 @@ def get_practice_trend(player_name, participation_data=None):
         participation_data = load_json_data(NFL_PRACTICE_PATH, {})
     pdata = participation_data.get(player_name, {})
     return pdata.get("trend", "")
+
+
+# ── ATS Stats MLB matchup scraper ────────────────────────────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_atsstats_mlb_matchups():
+    """
+    Scrapes atsstats.com/free-mlb-stats/ for today's MLB matchup data.
+    Returns dict keyed by team name (full): {
+        "l10_su": (w, l),        # last 10 straight up
+        "l10_ou": (o, u),        # last 10 over/under
+        "forecast_total": float, # site's projected game total
+        "win_pct": float,        # site's model win probability (0-1)
+    }
+    Cached 6 hours. Returns {} on any failure.
+    """
+    try:
+        from bs4 import BeautifulSoup
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        resp = requests.get("https://www.atsstats.com/free-mlb-stats/", headers=headers, timeout=12)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        result = {}
+
+        # Each game block is a table with class containing "raymond" or similar;
+        # the site renders each matchup as a nested table. We look for rows that
+        # contain the L10(SU) and L10(O/U) labels and extract values per team.
+        tables = soup.find_all("table")
+        for tbl in tables:
+            rows = tbl.find_all("tr")
+            row_map = {}
+            for row in rows:
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 3:
+                    label = cells[1].get_text(strip=True)
+                    left  = cells[0].get_text(strip=True)
+                    right = cells[2].get_text(strip=True)
+                    row_map[label] = (left, right)
+
+            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
+                continue
+
+            # Extract team names from header rows (bold text or img alt)
+            teams = []
+            for row in rows:
+                imgs = row.find_all("img")
+                for img in imgs:
+                    alt = img.get("alt", "").strip()
+                    if alt and alt not in teams:
+                        teams.append(alt)
+                if len(teams) >= 2:
+                    break
+
+            if len(teams) < 2:
+                # Try bold text
+                bolds = tbl.find_all("b")
+                for b in bolds:
+                    txt = b.get_text(strip=True)
+                    if txt and txt not in teams and len(txt) > 3:
+                        teams.append(txt)
+                    if len(teams) >= 2:
+                        break
+
+            if len(teams) < 2:
+                continue
+
+            home_team, away_team = teams[0], teams[1]
+
+            def _parse_record(s):
+                """Parse '4-6' or '4-6-1' → (wins, losses)."""
+                parts = s.replace(" ", "").split("-")
+                try:
+                    return (int(parts[0]), int(parts[1]))
+                except Exception:
+                    return (5, 5)
+
+            def _parse_pct(s):
+                """Parse '45.13%' → 0.4513."""
+                try:
+                    return float(s.replace("%", "").strip()) / 100.0
+                except Exception:
+                    return 0.5
+
+            def _parse_forecast(s):
+                """Parse forecast cell like '4.26' (per-team runs)."""
+                try:
+                    return float(s.strip())
+                except Exception:
+                    return None
+
+            l10su_l, l10su_r   = row_map.get("L10(SU)",   ("5-5", "5-5"))
+            l10ou_l, l10ou_r   = row_map.get("L10(O/U)",  ("5-5", "5-5"))
+            forecast_l, forecast_r = row_map.get("Forecast", ("", ""))
+            pct_l, pct_r       = row_map.get("45.13%", ("", "")) or \
+                                  next(((v[0], v[1]) for k, v in row_map.items() if "%" in k), ("", ""))
+
+            # Resolve win% — label key varies; grab any cell that looks like a %
+            home_pct = away_pct = 0.5
+            for k, (lv, rv) in row_map.items():
+                if "%" in lv and "%" in rv:
+                    home_pct = _parse_pct(lv)
+                    away_pct = _parse_pct(rv)
+                    break
+
+            forecast_home = _parse_forecast(forecast_l)
+            forecast_away = _parse_forecast(forecast_r)
+            forecast_total = None
+            if forecast_home is not None and forecast_away is not None:
+                forecast_total = round(forecast_home + forecast_away, 2)
+
+            result[home_team] = {
+                "l10_su":         _parse_record(l10su_l),
+                "l10_ou":         _parse_record(l10ou_l),
+                "forecast_total": forecast_total,
+                "win_pct":        home_pct,
+            }
+            result[away_team] = {
+                "l10_su":         _parse_record(l10su_r),
+                "l10_ou":         _parse_record(l10ou_r),
+                "forecast_total": forecast_total,
+                "win_pct":        away_pct,
+            }
+
+        return result
+    except Exception:
+        return {}
 
 
 # ── Feature 2: NFL Inactives System ────────────────────────────
