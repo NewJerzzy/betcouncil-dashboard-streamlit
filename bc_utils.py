@@ -687,11 +687,60 @@ def load_json_data(path, default):
     return default
 
 
+def _espn_has_games_in_window(sport: str, days: int = 7) -> bool:
+    """
+    Check ESPN scoreboard to see if the given sport has any scheduled games
+    in the next `days` days.  Used to detect off-season gaps inside months
+    that are normally active (e.g. NBA June post-Finals).
+    Returns True if at least one upcoming/live event is found.
+    """
+    _sport_map = {
+        "NBA":  ("basketball", "nba"),
+        "NHL":  ("hockey",     "nhl"),
+        "MLB":  ("baseball",   "mlb"),
+        "NFL":  ("football",   "nfl"),
+        "WNBA": ("basketball", "wnba"),
+    }
+    if sport not in _sport_map:
+        return True  # assume active for unknown sports
+    es, el = _sport_map[sport]
+    try:
+        import requests as _req
+        from datetime import timedelta as _td
+        today = date.today()
+        # ESPN scoreboard accepts a date range via &dates=YYYYMMDD-YYYYMMDD
+        start_str = today.strftime("%Y%m%d")
+        end_str   = (today + _td(days=days)).strftime("%Y%m%d")
+        url = (
+            f"https://site.web.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard"
+            f"?dates={start_str}-{end_str}&limit=10"
+        )
+        r = _req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        if r.status_code != 200:
+            return True  # network issue — assume active to avoid false suppression
+        events = r.json().get("events", [])
+        # Filter to non-completed events (scheduled or live)
+        live_or_upcoming = [
+            e for e in events
+            if not e.get("status", {}).get("type", {}).get("completed", False)
+        ]
+        return len(live_or_upcoming) > 0
+    except Exception:
+        return True  # fail open — never suppress if check errors
+
+
 def detect_season_regime(sport="NBA"):
     """
     Detect current season phase and return weight adjustments.
     Used by enrichment loop (S weight modifiers) and History tab display.
     Returns: {regime, description, adjustments, month}
+
+    GAP FIX (2026-06-21): Months 4-6 for NBA and NHL always returned
+    "Playoffs" even post-Finals / post-Stanley Cup when there are zero
+    active games.  Now we verify with a live ESPN 7-day schedule check
+    before committing to a Playoffs classification.  If no games are found
+    in the window, we return "Off-Season" so signal generation is suppressed
+    rather than firing stale Playoff-weighted picks.
     """
     month = date.today().month
 
@@ -705,9 +754,15 @@ def detect_season_regime(sport="NBA"):
             desc   = "First month — small sample, base stats less reliable"
             adj    = {"base": -0.04, "defense": -0.03}
         elif month in (4, 5, 6):
-            regime = "Playoffs"
-            desc   = "Playoffs — defense weight increases, pace less predictive"
-            adj    = {"defense": 0.04, "pace": -0.02}
+            # Verify games are actually scheduled before calling this Playoffs
+            if _espn_has_games_in_window("NBA", days=7):
+                regime = "Playoffs"
+                desc   = "Playoffs — defense weight increases, pace less predictive"
+                adj    = {"defense": 0.04, "pace": -0.02}
+            else:
+                regime = "Off-season"
+                desc   = "NBA season complete — no games in next 7 days, signals suppressed"
+                adj    = {"base": -0.06}
         elif month in (3,):
             regime = "Late Season"
             desc   = "Late season — rest signal strengthens"
@@ -764,9 +819,15 @@ def detect_season_regime(sport="NBA"):
             desc   = "Early NHL — small sample, base stats less reliable"
             adj    = {"base": -0.04}
         elif month in (4, 5, 6):
-            regime = "Playoffs"
-            desc   = "NHL Playoffs — defense weight increases, pace less predictive"
-            adj    = {"defense": 0.05, "pace": -0.02}
+            # Verify games are actually scheduled before calling this Playoffs
+            if _espn_has_games_in_window("NHL", days=7):
+                regime = "Playoffs"
+                desc   = "NHL Playoffs — defense weight increases, pace less predictive"
+                adj    = {"defense": 0.05, "pace": -0.02}
+            else:
+                regime = "Off-season"
+                desc   = "NHL season complete — no games in next 7 days, signals suppressed"
+                adj    = {"base": -0.06}
         elif month in (3,):
             regime = "Late Season"
             desc   = "Late NHL — rest signal strengthens"

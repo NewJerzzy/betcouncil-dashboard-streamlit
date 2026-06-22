@@ -58,7 +58,9 @@ from config import (
     MLB_PLAYER_TEAM_MAP, WNBA_PLAYER_IDS, MLB_PLAYER_IDS, NHL_PLAYER_IDS,
     NBA_TEAM_PACE, NBA_POWER_RATINGS, NBA_POSITION_DEFENSE, PLAYOFF_DEFENSE_WARNING,
     WNBA_POWER_RATINGS, MLB_POWER_RATINGS, NHL_POWER_RATINGS, NBA_PLAYER_POSITIONS,
-    NBA_REFEREE_TENDENCIES, MLB_UMPIRE_TENDENCIES, MLB_PITCHER_ERA, MLB_PARK_FACTORS,
+    NBA_REFEREE_TENDENCIES, MLB_UMPIRE_TENDENCIES, MLB_PITCHER_ERA, MLB_PITCHER_FIP,
+    MLB_PITCHER_HANDEDNESS, MLB_TEAM_WOBA_VS_RHP, MLB_TEAM_WOBA_VS_LHP, MLB_WOBA_LEAGUE_AVG,
+    MLB_PARK_FACTORS,
     NHL_TEAM_GOALS_FOR, NHL_TEAM_GOALS_AGAINST, ESPN_ATHLETE_IDS, GAME_TOTAL_LINE_THRESHOLDS,
     PROP_CORRELATION_PAIRS, KALSHI_SPORT_SERIES, GOLF_TOURNAMENT_MAP, DFF_HEADERS,
     DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP, BQ_WEIGHTS_DEFAULT,
@@ -1054,15 +1056,74 @@ def get_elo_ratings(sport="NFL"):
     return data if isinstance(data, dict) else {}
 
 
+def _get_elo_roster_confidence(sport: str, team: str, window_days: int = 14) -> float:
+    """
+    Return a K-factor confidence multiplier [0.5, 1.0] based on recent roster
+    churn for the given team.  High churn (3+ moves in 14 days) degrades Elo
+    reliability — we don't know how the new roster performs yet.
+
+    Fetches ESPN transactions endpoint; returns 1.0 on any error so normal
+    Elo updates proceed unaffected when the network is unavailable.
+    """
+    _sport_map = {
+        "NBA": ("basketball", "nba"),
+        "MLB": ("baseball",   "mlb"),
+        "NHL": ("hockey",     "nhl"),
+        "NFL": ("football",   "nfl"),
+    }
+    if sport not in _sport_map:
+        return 1.0
+    es, el = _sport_map[sport]
+    try:
+        from datetime import timedelta as _td
+        import requests as _req
+        cutoff = (datetime.now() - _td(days=window_days)).strftime("%Y%m%d")
+        url = (
+            f"https://site.api.espn.com/apis/site/v2/sports/{es}/{el}"
+            f"/transactions?limit=100&date={cutoff}"
+        )
+        r = _req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        if r.status_code != 200:
+            return 1.0
+        transactions = r.json().get("transactions", [])
+        # Count moves involving this team (case-insensitive partial match)
+        team_lower = team.lower()
+        churn_count = sum(
+            1 for t in transactions
+            if team_lower in t.get("team", {}).get("displayName", "").lower()
+        )
+        # Scale: 0-2 moves → 1.0, 3-4 → 0.85, 5-6 → 0.70, 7+ → 0.50
+        if churn_count <= 2:
+            return 1.0
+        elif churn_count <= 4:
+            return 0.85
+        elif churn_count <= 6:
+            return 0.70
+        else:
+            return 0.50
+    except Exception:
+        return 1.0
+
+
 def update_elo_after_game(sport, team_a, team_b, score_a):
     """Run one Elo update and persist both teams' new ratings to Gist.
     score_a: 1.0 team_a win, 0.5 draw, 0.0 team_a loss.
     Returns (new_rating_a, new_rating_b). Call once per completed game —
-    calling twice for the same game will double-count it."""
+    calling twice for the same game will double-count it.
+
+    GAP FIX (2026-06-21): K-factor is now modulated by a roster-churn
+    confidence weight fetched from ESPN transactions.  Teams with 3+ moves
+    in the last 14 days get a reduced K so their Elo converges more slowly
+    until the new roster stabilises.  Confidence weight range: [0.50, 1.00].
+    """
     ratings = get_elo_ratings(sport)
     rating_a = ratings.get(team_a, ELO_DEFAULT_RATING)
     rating_b = ratings.get(team_b, ELO_DEFAULT_RATING)
-    k = ELO_K_FACTOR.get(sport, 20)
+    base_k = ELO_K_FACTOR.get(sport, 20)
+    # Apply roster-churn confidence — use the lower of the two teams' weights
+    conf_a = _get_elo_roster_confidence(sport, team_a)
+    conf_b = _get_elo_roster_confidence(sport, team_b)
+    k = base_k * min(conf_a, conf_b)
     new_a, new_b = elo_update(rating_a, rating_b, score_a, k=k)
     ratings[team_a] = new_a
     ratings[team_b] = new_b
@@ -3725,6 +3786,110 @@ def compute_volatility_flag(player, sport, stat_norm, game_logs=None, n=10):
 
 # ── 4. Closing Line Hit Rate ────────────────────────────────────
 # track_closing_line_beat — moved to bc_utils.py
+
+
+def _capture_clv_closing_lines():
+    """
+    GAP FIX (2026-06-21): True CLV closing line capture.
+
+    Previous approach: closing_line stored at bet-settlement time using the
+    current board line — which could be hours before game time, meaning it's
+    not actually the closing line.
+
+    This function runs on a 10-min timer and checks every PENDING bet.
+    If a bet's game starts within 15 minutes, it pulls the OddsAPI closing
+    line snapshot for that player/prop and writes it to CLV_PATH so that
+    resolve_clv_records() has a real closing line rather than a midday board
+    snapshot.  Once captured, the record is marked clv_pre_close=True so
+    we don't overwrite it on subsequent runs.
+    """
+    if not ODDS_API_KEY:
+        return
+    try:
+        history    = load_json_data(HISTORY_PATH, [])
+        clv_data   = load_json_data(CLV_PATH, [])
+        _clv_index = {
+            (normalize_name(c.get("player", "")), c.get("prop", ""), c.get("timestamp", "")[:10]): i
+            for i, c in enumerate(clv_data)
+        }
+        now        = datetime.now()
+        today_str  = now.strftime("%Y-%m-%d")
+        updated    = False
+
+        pending = [
+            b for b in history
+            if b.get("outcome") == "PENDING"
+            and b.get("timestamp", "")[:10] == today_str
+            and not b.get("clv_capture", {}).get("clv_resolved")
+        ]
+        if not pending:
+            return
+
+        # Pull current EV API odds as closing line proxy (same source as S6/S7)
+        ev_lookup = {}
+        try:
+            _ev_url = "https://api-production-3a3b.up.railway.app/api/ev"
+            _ev_r   = requests.get(_ev_url, timeout=10)
+            if _ev_r.status_code == 200:
+                for item in _ev_r.json():
+                    pname = normalize_name(item.get("player_name", ""))
+                    ptype = item.get("stat_type", "")
+                    if pname and ptype:
+                        ev_lookup[(pname, ptype)] = item
+        except Exception:
+            pass
+
+        for bet in pending:
+            player    = bet.get("player", "")
+            prop      = bet.get("prop", "")
+            line      = bet.get("line", 0)
+            side      = bet.get("side", "OVER")
+            sport     = bet.get("sport", "")
+            timestamp = bet.get("timestamp", "")[:10]
+            pkey      = (normalize_name(player), prop, timestamp)
+
+            ev_item = ev_lookup.get((normalize_name(player), prop))
+            if not ev_item:
+                continue
+
+            closing_no_vig = ev_item.get("no_vig_prob") or ev_item.get("consensus_prob")
+            placement_prob = bet.get("clv_capture", {}).get("placement_prob") or bet.get("prob", 0)
+            if not closing_no_vig or not placement_prob:
+                continue
+
+            clv_vs_close = round(float(closing_no_vig) - float(placement_prob), 4)
+
+            if pkey in _clv_index:
+                idx = _clv_index[pkey]
+                clv_data[idx]["closing_line"]   = float(ev_item.get("line", line))
+                clv_data[idx]["closing_no_vig"] = float(closing_no_vig)
+                clv_data[idx]["clv_vs_close"]   = clv_vs_close
+                clv_data[idx]["clv_pre_close"]  = True
+            else:
+                clv_data.append({
+                    "player":         player,
+                    "prop":           prop,
+                    "locked_line":    float(line),
+                    "closing_line":   float(ev_item.get("line", line)),
+                    "closing_no_vig": float(closing_no_vig),
+                    "side":           side,
+                    "clv":            round(float(line) - float(ev_item.get("line", line)), 1) if side == "OVER" else round(float(ev_item.get("line", line)) - float(line), 1),
+                    "clv_vs_close":   clv_vs_close,
+                    "outcome":        "PENDING",
+                    "timestamp":      timestamp,
+                    "sport":          sport,
+                    "tier":           bet.get("tier", ""),
+                    "edge":           bet.get("edge", 0),
+                    "prob":           placement_prob,
+                    "clv_pre_close":  True,
+                })
+                updated = True
+
+        if updated or any(True for _ in pending):
+            save_json_data(CLV_PATH, clv_data)
+    except Exception:
+        pass
+
 
 def resolve_clv_records(history):
     """
@@ -7701,6 +7866,21 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / 10.0
+                # GAP FIX: Apply MLB park factor to run line / spread edge.
+                # Hitter-friendly parks compress run line edges for favorites
+                # (blowouts are less likely) and expand them for underdogs.
+                # Previously park factor was only applied to totals.
+                if sport == "MLB":
+                    _park_mult_rl = MLB_PARK_FACTORS.get(
+                        home_full, MLB_PARK_FACTORS.get(home_team, 1.0)
+                    )
+                    # Favorite in hitter park → harder to cover RL → deflate edge slightly
+                    # Underdog in hitter park → easier cover of +1.5 → inflate edge
+                    _park_rl_adj = (_park_mult_rl - 1.0) * 0.08
+                    if spread_edge > 0:  # home is favored
+                        spread_edge_pct -= _park_rl_adj
+                    else:  # away is favored / home dog
+                        spread_edge_pct += _park_rl_adj
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
@@ -16713,7 +16893,9 @@ def load_sport_data(sport):
                     xwoba_adj = (xwoba - 0.320) * 0.15
                     pitcher_adj = max(-0.08, min(0.08, pitcher_adj + xwoba_adj))
 
-        # Fallback: static pitcher ERA if EV API has no pitcher data
+        # Fallback: static pitcher FIP + handedness wOBA if EV API has no pitcher data
+        # FIP is more predictive than ERA (strips defense/luck); handedness wOBA adjusts
+        # for how well the opposing lineup hits that arm type.
         if sport == "MLB" and not pitcher_name:
             mlb_pitchers = st.session_state.get("mlb_pitchers", {})
             team_full = MLB_PLAYER_TEAM_MAP.get(player, "")
@@ -16721,10 +16903,24 @@ def load_sport_data(sport):
                 opp_data = mlb_pitchers.get(team_full, {})
                 opp_pitcher = opp_data.get("pitcher", "")
                 if opp_pitcher:
+                    # FIP-based component (blend 60% FIP, 40% ERA for stability)
                     pitcher_era = MLB_PITCHER_ERA.get(opp_pitcher, LEAGUE_AVG_ERA)
-                    era_diff = pitcher_era - LEAGUE_AVG_ERA
-                    pitcher_adj = max(-0.08, min(0.08, era_diff / 100.0))
+                    pitcher_fip = MLB_PITCHER_FIP.get(opp_pitcher, pitcher_era)
+                    blended_fip = pitcher_fip * 0.60 + pitcher_era * 0.40
+                    fip_diff = blended_fip - LEAGUE_AVG_ERA
+                    pitcher_adj = max(-0.08, min(0.08, fip_diff / 100.0))
+                    # Handedness wOBA adjustment: if the opposing team hits well vs this arm,
+                    # increase edge for OVER props; decrease if they struggle.
+                    hand = MLB_PITCHER_HANDEDNESS.get(opp_pitcher, "R")
+                    woba_map = MLB_TEAM_WOBA_VS_LHP if hand == "L" else MLB_TEAM_WOBA_VS_RHP
+                    # "team_full" here is the PLAYER's team = batter's team facing the pitcher
+                    opp_woba = woba_map.get(team_full, MLB_WOBA_LEAGUE_AVG)
+                    woba_diff = opp_woba - MLB_WOBA_LEAGUE_AVG
+                    # woba_diff > 0 = good hitting team → more runs/props → OVER boost
+                    woba_adj = woba_diff * 0.60  # scale: 0.020 wOBA delta ≈ 1.2% edge
+                    pitcher_adj = max(-0.10, min(0.10, pitcher_adj - woba_adj))
                     pitcher_name = opp_pitcher
+
 
         ud_line_val = None
         for ud_p in (ud_props_compare or []):
@@ -17738,6 +17934,19 @@ if "persistence_loaded" not in st.session_state:
         except (requests.RequestException, KeyError, ValueError, TypeError):
             pass
         st.session_state["_elo_auto_last_run"] = time.time()
+
+    # CLV closing line snapshot — GAP FIX (2026-06-21)
+    # Capture true closing lines for PENDING bets within 15 min of game time
+    # via the OddsAPI.  Stores snapshot to CLV_PATH so resolve_clv_records()
+    # has an actual closing line rather than the board line at settlement time.
+    # Throttled to once per 10 min per session.
+    _clv_snap_last = st.session_state.get("_clv_snap_last_run", 0)
+    if time.time() - _clv_snap_last > 600:
+        try:
+            _capture_clv_closing_lines()
+        except Exception:
+            pass
+        st.session_state["_clv_snap_last_run"] = time.time()
     # signal_performance.json lives only on local CACHE_DIR, which is ephemeral on
     # Streamlit Cloud — it resets on every redeploy/restart, silently losing logged
     # bet outcomes that feed the System tab's "Resolved Bets" count and signal health

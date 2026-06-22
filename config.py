@@ -737,6 +737,68 @@ MLB_PITCHER_ERA = {
     "Lance Lynn": 4.20,
 }
 
+# FIP (Fielding Independent Pitching) — more predictive than ERA for future performance
+# Captures HR+BB+K only; strips out defense/luck components.
+# Sourced from 2024-25 season stats; update each offseason.
+MLB_PITCHER_FIP = {
+    "Justin Verlander": 3.45, "Gerrit Cole": 2.95, "Zack Wheeler": 3.05,
+    "Shane Bieber": 3.20, "Dylan Cease": 3.30, "Pablo Lopez": 3.60,
+    "Logan Webb": 3.50, "Tarik Skubal": 2.75, "Paul Skenes": 2.65,
+    "Framber Valdez": 3.25, "Corbin Burnes": 2.90, "Spencer Strider": 2.80,
+    "Luis Castillo": 3.55, "Yoshinobu Yamamoto": 2.95, "Kevin Gausman": 3.10,
+    "Sandy Alcantara": 3.40, "Max Fried": 3.20, "Hunter Brown": 3.70,
+    "George Kirby": 3.35, "Chris Sale": 3.45, "Sonny Gray": 3.80,
+    "Blake Snell": 3.10, "Tony Gonsolin": 4.10, "Joe Ryan": 3.65,
+    "Nestor Cortes": 4.05, "Jordan Montgomery": 3.90, "Miles Mikolas": 4.25,
+    "Lance Lynn": 4.35,
+}
+
+# Pitcher handedness — used to select opposing lineup wOBA split
+MLB_PITCHER_HANDEDNESS = {
+    "Justin Verlander": "R", "Gerrit Cole": "R", "Zack Wheeler": "R",
+    "Shane Bieber": "R", "Dylan Cease": "R", "Pablo Lopez": "R",
+    "Logan Webb": "L", "Tarik Skubal": "L", "Paul Skenes": "R",
+    "Framber Valdez": "L", "Corbin Burnes": "R", "Spencer Strider": "R",
+    "Luis Castillo": "R", "Yoshinobu Yamamoto": "R", "Kevin Gausman": "R",
+    "Sandy Alcantara": "R", "Max Fried": "L", "Hunter Brown": "R",
+    "George Kirby": "R", "Chris Sale": "L", "Sonny Gray": "R",
+    "Blake Snell": "L", "Tony Gonsolin": "R", "Joe Ryan": "R",
+    "Nestor Cortes": "L", "Jordan Montgomery": "L", "Miles Mikolas": "R",
+    "Lance Lynn": "R",
+}
+
+# Team wOBA vs RHP and LHP — handedness split for lineup quality vs SP
+# Higher wOBA = better hitting team vs that hand = more run support expected
+# Source: 2024-25 season FanGraphs splits; update each offseason.
+MLB_TEAM_WOBA_VS_RHP = {
+    "New York Yankees": 0.338, "Los Angeles Dodgers": 0.346, "Atlanta Braves": 0.341,
+    "Houston Astros": 0.330, "Philadelphia Phillies": 0.337, "Texas Rangers": 0.328,
+    "Baltimore Orioles": 0.334, "San Diego Padres": 0.319, "Cleveland Guardians": 0.323,
+    "Minnesota Twins": 0.326, "Arizona Diamondbacks": 0.321, "Seattle Mariners": 0.312,
+    "Tampa Bay Rays": 0.310, "Toronto Blue Jays": 0.327, "Boston Red Sox": 0.339,
+    "Cincinnati Reds": 0.315, "Chicago Cubs": 0.320, "San Francisco Giants": 0.309,
+    "St. Louis Cardinals": 0.313, "Milwaukee Brewers": 0.317, "Detroit Tigers": 0.308,
+    "Kansas City Royals": 0.314, "Pittsburgh Pirates": 0.306, "Miami Marlins": 0.299,
+    "New York Mets": 0.325, "Los Angeles Angels": 0.303, "Oakland Athletics": 0.297,
+    "Washington Nationals": 0.302, "Colorado Rockies": 0.311, "Chicago White Sox": 0.296,
+}
+
+MLB_TEAM_WOBA_VS_LHP = {
+    "New York Yankees": 0.331, "Los Angeles Dodgers": 0.340, "Atlanta Braves": 0.333,
+    "Houston Astros": 0.324, "Philadelphia Phillies": 0.329, "Texas Rangers": 0.321,
+    "Baltimore Orioles": 0.327, "San Diego Padres": 0.313, "Cleveland Guardians": 0.316,
+    "Minnesota Twins": 0.319, "Arizona Diamondbacks": 0.314, "Seattle Mariners": 0.305,
+    "Tampa Bay Rays": 0.303, "Toronto Blue Jays": 0.320, "Boston Red Sox": 0.332,
+    "Cincinnati Reds": 0.308, "Chicago Cubs": 0.313, "San Francisco Giants": 0.302,
+    "St. Louis Cardinals": 0.306, "Milwaukee Brewers": 0.310, "Detroit Tigers": 0.301,
+    "Kansas City Royals": 0.307, "Pittsburgh Pirates": 0.299, "Miami Marlins": 0.292,
+    "New York Mets": 0.318, "Los Angeles Angels": 0.296, "Oakland Athletics": 0.290,
+    "Washington Nationals": 0.295, "Colorado Rockies": 0.304, "Chicago White Sox": 0.289,
+}
+
+# Neutral wOBA baseline (league average ~0.318)
+MLB_WOBA_LEAGUE_AVG = 0.318
+
 MLB_PARK_FACTORS = {
     "Colorado Rockies": 1.15, "Cincinnati Reds": 1.08,
     "Texas Rangers": 1.06, "Chicago Cubs": 1.05,
