@@ -8267,6 +8267,38 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 base_total = 44.5
                 power_adj = ((h_power + a_power) / 2 - 104.0) * 0.5
                 fair_total = base_total + power_adj
+                # ── James matchup formula (NFL pts scored/allowed) ─────────
+                try:
+                    _nfl_scoring = fetch_nfl_team_scoring_stats()
+                    _NFL_LEAGUE_AVG_PTS = 23.0
+                    _h_sc = _nfl_scoring.get(home_team, {})
+                    _a_sc = _nfl_scoring.get(away_team, {})
+                    if _h_sc and _a_sc:
+                        _h_pts = _h_sc.get("pts_for_pg",  _NFL_LEAGUE_AVG_PTS)
+                        _h_pa  = _h_sc.get("pts_against_pg", _NFL_LEAGUE_AVG_PTS)
+                        _a_pts = _a_sc.get("pts_for_pg",  _NFL_LEAGUE_AVG_PTS)
+                        _a_pa  = _a_sc.get("pts_against_pg", _NFL_LEAGUE_AVG_PTS)
+                        _james_home = (_h_pts * _a_pa) / _NFL_LEAGUE_AVG_PTS
+                        _james_away = (_a_pts * _h_pa) / _NFL_LEAGUE_AVG_PTS
+                        _james_total = max(30.0, min(65.0, _james_home + _james_away))
+                        # Blend 40% James / 60% power-rating-based
+                        fair_total = round(fair_total * 0.60 + _james_total * 0.40, 1)
+                except Exception:
+                    pass
+                # ── ATS Stats NFL L10 O/U momentum nudge ──────────────────
+                try:
+                    _nfl_ats = fetch_atsstats_nfl_matchups()
+                    _h_nfl = _nfl_ats.get(home_full, _nfl_ats.get(home_team, {}))
+                    _a_nfl = _nfl_ats.get(away_full, _nfl_ats.get(away_team, {}))
+                    if _h_nfl and _a_nfl:
+                        _h_ou = _h_nfl.get("l10_ou", (5, 5))
+                        _a_ou = _a_nfl.get("l10_ou", (5, 5))
+                        # Each Over beyond neutral = +/-1.0 NFL point; cap ±5
+                        _h_d = (_h_ou[0] - 5) * 1.0
+                        _a_d = (_a_ou[0] - 5) * 1.0
+                        fair_total += max(-5.0, min(5.0, (_h_d + _a_d) / 2))
+                except Exception:
+                    pass
             elif sport == "Soccer":
                 # No team-level expected-goals source exists yet in this
                 # codebase (fetch_soccer_rolling_averages is keyed by player,
@@ -16395,6 +16427,197 @@ def fetch_atsstats_nhl_matchups():
         return result
     except Exception:
         return {}
+
+
+# ── ATS Stats NFL matchup scraper ────────────────────────────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_atsstats_nfl_matchups():
+    """
+    Scrapes atsstats.com/free-nfl-stats/ for today's NFL matchup data.
+    Same structure as NBA/NHL scrapers. Dormant off-season. Cached 6 hours.
+    """
+    _NFL_NAME_MAP = {
+        "ARI Cardinals": "Arizona Cardinals",
+        "ATL Falcons": "Atlanta Falcons",
+        "BAL Ravens": "Baltimore Ravens",
+        "BUF Bills": "Buffalo Bills",
+        "CAR Panthers": "Carolina Panthers",
+        "CHI Bears": "Chicago Bears",
+        "CIN Bengals": "Cincinnati Bengals",
+        "CLE Browns": "Cleveland Browns",
+        "DAL Cowboys": "Dallas Cowboys",
+        "DEN Broncos": "Denver Broncos",
+        "DET Lions": "Detroit Lions",
+        "GB Packers": "Green Bay Packers",
+        "HOU Texans": "Houston Texans",
+        "IND Colts": "Indianapolis Colts",
+        "JAC Jaguars": "Jacksonville Jaguars",
+        "KC Chiefs": "Kansas City Chiefs",
+        "LV Raiders": "Las Vegas Raiders",
+        "LAC Chargers": "Los Angeles Chargers",
+        "LAR Rams": "Los Angeles Rams",
+        "MIA Dolphins": "Miami Dolphins",
+        "MIN Vikings": "Minnesota Vikings",
+        "NE Patriots": "New England Patriots",
+        "NO Saints": "New Orleans Saints",
+        "NY Giants": "New York Giants",
+        "NY Jets": "New York Jets",
+        "PHI Eagles": "Philadelphia Eagles",
+        "PIT Steelers": "Pittsburgh Steelers",
+        "SF 49ers": "San Francisco 49ers",
+        "SEA Seahawks": "Seattle Seahawks",
+        "TB Buccaneers": "Tampa Bay Buccaneers",
+        "TEN Titans": "Tennessee Titans",
+        "WSH Commanders": "Washington Commanders",
+    }
+    try:
+        from bs4 import BeautifulSoup
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        }
+        resp = requests.get("https://www.atsstats.com/free-nfl-stats/", headers=headers, timeout=12)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        result = {}
+        tables = soup.find_all("table")
+        for tbl in tables:
+            rows = tbl.find_all("tr")
+            row_map = {}
+            for row in rows:
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 3:
+                    label = cells[1].get_text(strip=True)
+                    left  = cells[0].get_text(strip=True)
+                    right = cells[2].get_text(strip=True)
+                    row_map[label] = (left, right)
+            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
+                continue
+            teams = []
+            for row in rows:
+                for img in row.find_all("img"):
+                    alt = img.get("alt", "").strip()
+                    if alt and alt not in teams:
+                        teams.append(alt)
+                if len(teams) >= 2:
+                    break
+            if len(teams) < 2:
+                for b in tbl.find_all("b"):
+                    txt = b.get_text(strip=True)
+                    if txt and txt not in teams and len(txt) > 3:
+                        teams.append(txt)
+                    if len(teams) >= 2:
+                        break
+            if len(teams) < 2:
+                continue
+
+            def _pr(s):
+                parts = s.replace(" ", "").split("-")
+                try: return (int(parts[0]), int(parts[1]))
+                except: return (5, 5)
+
+            def _pf(s):
+                try: return float(s.strip())
+                except: return None
+
+            l10su_l, l10su_r = row_map.get("L10(SU)", ("5-5", "5-5"))
+            l10ou_l, l10ou_r = row_map.get("L10(O/U)", ("5-5", "5-5"))
+            fc_l, fc_r = row_map.get("Forecast", ("", ""))
+            home_pct = away_pct = 0.5
+            for k, (lv, rv) in row_map.items():
+                if "%" in lv and "%" in rv:
+                    try: home_pct = float(lv.replace("%", "")) / 100
+                    except: pass
+                    try: away_pct = float(rv.replace("%", "")) / 100
+                    except: pass
+                    break
+            fc_home = _pf(fc_l)
+            fc_away = _pf(fc_r)
+            fc_total = round(fc_home + fc_away, 1) if fc_home and fc_away else None
+            for raw, rec in [(teams[0], {"l10_su": _pr(l10su_l), "l10_ou": _pr(l10ou_l),
+                                          "forecast_total": fc_total, "win_pct": home_pct}),
+                             (teams[1], {"l10_su": _pr(l10su_r), "l10_ou": _pr(l10ou_r),
+                                          "forecast_total": fc_total, "win_pct": away_pct})]:
+                key = _NFL_NAME_MAP.get(raw, raw)
+                result[key] = rec
+        return result
+    except Exception:
+        return {}
+
+
+# ── NFL team scoring stats (James matchup formula input) ─────────────────────
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_nfl_team_scoring_stats() -> dict:
+    """
+    Fetches points-scored and points-allowed per game for every NFL team via
+    ESPN team statistics endpoint.  Used by the James matchup total projector.
+    Returns: {team_abbr: {"pts_for_pg": float, "pts_against_pg": float}}
+    Mirrors _fetch_nfl_team_stats_power but returns raw scoring data.
+    Cached 6 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_team_scoring_stats.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    season = date.today().year
+    if date.today().month < 9:
+        season -= 1
+    try:
+        r = requests.get(
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&season={season}",
+            headers=HEADERS, timeout=12,
+        )
+        if r.status_code != 200:
+            return {}
+        teams = (r.json().get("sports", [{}])[0]
+                          .get("leagues", [{}])[0]
+                          .get("teams", []))
+    except Exception:
+        return {}
+
+    NFL_PTS_DEFAULT = 23.0
+    result = {}
+    for entry in teams:
+        team = entry.get("team", {})
+        abbr = team.get("abbreviation", "")
+        tid  = team.get("id")
+        if not abbr or not tid:
+            continue
+        try:
+            sr = requests.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
+                f"/teams/{tid}/statistics?season={season}",
+                headers=HEADERS, timeout=8,
+            )
+            if sr.status_code != 200:
+                continue
+            cats = sr.json().get("results", {}).get("splits", {}).get("categories", [])
+            pts_for = pts_against = None
+            for cat in cats:
+                name  = cat.get("name", "").lower()
+                stats = {s["name"]: s.get("value", 0) for s in cat.get("stats", [])}
+                if "scoring" in name:
+                    pts_for     = stats.get("pointsPerGame") or stats.get("totalPointsPerGame")
+                    pts_against = stats.get("opponentPointsPerGame")
+            result[abbr] = {
+                "pts_for_pg":     float(pts_for     or NFL_PTS_DEFAULT),
+                "pts_against_pg": float(pts_against or NFL_PTS_DEFAULT),
+            }
+        except Exception:
+            continue
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
 
 
 # ── MLB team RS/RA fetcher (James matchup formula input) ─────────────────────
