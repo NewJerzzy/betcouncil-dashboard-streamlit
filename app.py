@@ -8216,6 +8216,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         )
                     except Exception:
                         pass
+                if sport == "Golf":
+                    # ── Golf SG differential for H2H spread edge ─────────
+                    try:
+                        _p1g = fetch_golf_player_stats(home_full or home_team) or {}
+                        _p2g = fetch_golf_player_stats(away_full or away_team) or {}
+                        def _sg_net(s):
+                            b  = float(s.get("Birdies", 3.8) or 3.8)
+                            bo = float(s.get("Bogeys",  3.2) or 3.2)
+                            e  = float(s.get("Eagles",  0.1) or 0.1)
+                            return (b - bo + e * 2) - 0.6
+                        _sg_diff = (_sg_net(_p1g) - _sg_net(_p2g)) * 0.06
+                        spread_edge_pct += max(-0.08, min(0.08, _sg_diff))
+                    except Exception:
+                        pass
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
@@ -8516,6 +8530,60 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     surface=_surface, is_best_of_5=_is_bo5,
                 )
                 fair_total = _tennis_proj["fair_games"]
+            elif sport == "Golf":
+                # ── Golf fair_total: H2H strokes projection ───────────────
+                # BetOnline Golf matchups are 2-ball/3-ball H2H — the posted
+                # "total" is the combined strokes O/U for the matchup pairing.
+                # Model: scoring avg + strokes-gained proxy (birdies - bogeys
+                # ratio vs tour average) + live tournament position momentum.
+                # Tour avg per round: ~70.5 (PGA field avg scoring).
+                _PGA_FIELD_AVG = 70.5
+                _p1_golf = fetch_golf_player_stats(home_full or home_team)
+                _p2_golf = fetch_golf_player_stats(away_full or away_team)
+                _p1_scoring = float((_p1_golf or {}).get("Strokes", _PGA_FIELD_AVG))
+                _p2_scoring = float((_p2_golf or {}).get("Strokes", _PGA_FIELD_AVG))
+                # Strokes-gained proxy: (birdies - bogeys) vs tour avg
+                # Tour avg: ~3.8 birdies, ~3.2 bogeys → net +0.6/round
+                def _sg_proxy(stats):
+                    if not stats:
+                        return 0.0
+                    b  = float(stats.get("Birdies", 3.8) or 3.8)
+                    bo = float(stats.get("Bogeys",  3.2) or 3.2)
+                    e  = float(stats.get("Eagles",  0.1) or 0.1)
+                    net = (b - bo + e * 2) - (3.8 - 3.2 + 0.2)  # vs tour avg
+                    return round(net * 0.4, 3)   # scale: 1 net birdie = ~0.4 strokes gained
+                _p1_sg = _sg_proxy(_p1_golf)
+                _p2_sg = _sg_proxy(_p2_golf)
+                # Adjust each player's projected score
+                _p1_proj = _p1_scoring - _p1_sg
+                _p2_proj = _p2_scoring - _p2_sg
+                # Live tournament context: position momentum ±0.3 strokes
+                try:
+                    _g_board = fetch_golf_scoreboard()
+                    for _pname, _pstats, _padj in [
+                        (home_full or home_team, _p1_golf, "_p1_proj"),
+                        (away_full or away_team, _p2_golf, "_p2_proj"),
+                    ]:
+                        _gp = _g_board.get(normalize_name(_pname), {})
+                        if not _gp:
+                            continue
+                        pos_str = str(_gp.get("position", "") or "")
+                        try:
+                            pos_n = int(pos_str.replace("T","").replace("t","") or 99)
+                            if pos_n <= 5:
+                                if _padj == "_p1_proj": _p1_proj -= 0.3
+                                else:                   _p2_proj -= 0.3
+                            elif pos_n > 40:
+                                if _padj == "_p1_proj": _p1_proj += 0.25
+                                else:                   _p2_proj += 0.25
+                        except (ValueError, TypeError):
+                            pass
+                except Exception:
+                    pass
+                # fair_total = combined projected strokes (H2H pairing)
+                fair_total = round(_p1_proj + _p2_proj, 1)
+                # Clamp to realistic H2H total range (130–148 combined)
+                fair_total = max(130.0, min(148.0, fair_total))
             if fair_total is not None:
                 total_edge = fair_total - total_val
                 total_edge_pct = total_edge / 50.0
@@ -8526,13 +8594,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 elif sport == "NFL":
                     total_edge_pct = total_edge / 30.0
                 elif sport == "WNBA":
-                    total_edge_pct = total_edge / 30.0  # WNBA ~165pt range, similar scale to NFL
+                    total_edge_pct = total_edge / 30.0
                 elif sport == "Soccer":
-                    total_edge_pct = total_edge / 4.0  # goal totals are small-range (~2.5 line)
+                    total_edge_pct = total_edge / 4.0
                 elif sport == "UFC":
-                    total_edge_pct = total_edge / 3.0  # rounds O/U ~2.5 line, tight range
+                    total_edge_pct = total_edge / 3.0
                 elif sport == "Tennis":
-                    total_edge_pct = total_edge / 10.0  # games O/U ~22 line; 5-game range = big edge
+                    total_edge_pct = total_edge / 10.0
+                elif sport == "Golf":
+                    total_edge_pct = total_edge / 8.0  # H2H total ~140; 4-stroke range = big edge
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
@@ -8690,9 +8760,6 @@ def fetch_alternate_lines(sport, matchup):
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
-    # Golf has no game-level model yet — skip game line analysis
-    if sport in ("Golf",):
-        return all_game_analysis
     power_ratings = power_map.get(sport, {})
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings, mlb_pitchers=mlb_pitchers)
