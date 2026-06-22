@@ -3132,6 +3132,214 @@ def push_betonline_props(props_data, token, gist_id):
 
 
 # ── Main ──────────────────────────────────────────────────────
+# ── VSiN Intelligence Layer ───────────────────────────────────────────────────
+# Scrapes VSiN data.vsin.com for:
+#   - Vegas line tracker (8 books, opening+current lines, RLM detection)
+#   - Betting splits (handle % + bet % for spread/ML/total)
+#   - Makinen daily ratings (score proj, eff runs, starter/bullpen grade)
+#   - Team summary (season ATS/ML/OU ROI per team)
+#   - DK handle splits (DraftKings-sourced, sorted by handle)
+#   - Makinen power ratings (all 30 teams ranked PR/ER/SP/BP)
+
+def fetch_vsin_intelligence(sport="MLB", token=None, gist_id=None):
+    """
+    Run all VSiN scrapers in parallel and push results to Gist.
+    Returns unified vsin_data dict.
+    """
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    try:
+        from vsin_scraper import VSiNScraper, merge_lines_and_splits
+    except ImportError:
+        print("    VSiN: vsin_scraper.py not found — skipping")
+        return {}
+
+    try:
+        from vsin_extended import VSiNExtended, team_trend_signal
+    except ImportError:
+        print("    VSiN: vsin_extended.py not found — skipping extended")
+        VSiNExtended = None
+
+    try:
+        from vsin_picks_and_ratings import VSiNPicksAndRatings, power_ratings_lookup
+    except ImportError:
+        print("    VSiN: vsin_picks_and_ratings.py not found — skipping ratings")
+        VSiNPicksAndRatings = None
+
+    print(f"\n    VSiN Intelligence | {sport} | {datetime.now().strftime('%H:%M:%S')}")
+
+    vsin_data = {
+        "sport":         sport,
+        "timestamp":     datetime.now().isoformat(),
+        "lines":         [],
+        "splits":        [],
+        "merged":        [],
+        "makinen":       [],
+        "team_summary":  [],
+        "dk_splits":     [],
+        "power_ratings": [],
+        "rlm_alerts":    [],
+        "ats_signals":   {},
+    }
+
+    # --- Parallel fetch ---
+    def _fetch_lines():
+        try:
+            s = VSiNScraper()
+            lines = s.scrape_lines(sport)
+            print(f"      Lines: {len(lines)} games")
+            return lines
+        except Exception as e:
+            print(f"      Lines error: {e}")
+            return []
+
+    def _fetch_splits():
+        try:
+            s = VSiNScraper()
+            splits = s.scrape_splits(sport)
+            print(f"      Splits: {len(splits)} records")
+            return splits
+        except Exception as e:
+            print(f"      Splits error: {e}")
+            return []
+
+    def _fetch_makinen():
+        if VSiNExtended is None:
+            return []
+        try:
+            ext = VSiNExtended()
+            mak = ext.scrape_makinen(sport)
+            print(f"      Makinen: {len(mak)} games")
+            return mak
+        except Exception as e:
+            print(f"      Makinen error: {e}")
+            return []
+
+    def _fetch_team_summary():
+        if VSiNExtended is None:
+            return []
+        try:
+            ext = VSiNExtended()
+            ts = ext.scrape_team_summary(sport)
+            print(f"      Team summary: {len(ts)} teams")
+            return ts
+        except Exception as e:
+            print(f"      Team summary error: {e}")
+            return []
+
+    def _fetch_dk_splits():
+        if VSiNExtended is None:
+            return []
+        try:
+            ext = VSiNExtended()
+            dk = ext.scrape_dk_splits("spread_handle")
+            print(f"      DK splits: {len(dk)} games")
+            return dk
+        except Exception as e:
+            print(f"      DK splits error: {e}")
+            return []
+
+    def _fetch_power_ratings():
+        if VSiNPicksAndRatings is None:
+            return []
+        try:
+            pr = VSiNPicksAndRatings()
+            ratings = pr.scrape_power_ratings(sport)
+            print(f"      Power ratings: {len(ratings)} teams")
+            return ratings
+        except Exception as e:
+            print(f"      Power ratings error: {e}")
+            return []
+
+    tasks = {
+        "lines":         _fetch_lines,
+        "splits":        _fetch_splits,
+        "makinen":       _fetch_makinen,
+        "team_summary":  _fetch_team_summary,
+        "dk_splits":     _fetch_dk_splits,
+        "power_ratings": _fetch_power_ratings,
+    }
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {executor.submit(fn): key for key, fn in tasks.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                vsin_data[key] = future.result() or []
+            except Exception as e:
+                print(f"      VSiN {key} error: {e}")
+
+    # --- Merge lines + splits ---
+    if vsin_data["lines"] and vsin_data["splits"]:
+        vsin_data["merged"] = merge_lines_and_splits(
+            vsin_data["lines"], vsin_data["splits"]
+        )
+    else:
+        vsin_data["merged"] = vsin_data["lines"]
+
+    # --- Extract RLM alerts ---
+    vsin_data["rlm_alerts"] = [
+        g for g in vsin_data["merged"]
+        if g.get("rlm", {}).get("rlm_detected")
+    ]
+    if vsin_data["rlm_alerts"]:
+        print(f"      ⚡ RLM detected: {len(vsin_data['rlm_alerts'])} games")
+        for g in vsin_data["rlm_alerts"]:
+            rlm = g["rlm"]
+            print(f"        {g['away_team']} @ {g['home_team']} — "
+                  f"{rlm['rlm_strength']} toward {rlm['rlm_direction']} "
+                  f"({rlm['public_pct_vs_line']}% public)")
+
+    # --- ATS signals from team summary ---
+    if vsin_data["team_summary"] and VSiNExtended:
+        signals = [team_trend_signal(t) for t in vsin_data["team_summary"]]
+        vsin_data["ats_signals"] = {
+            "ats_hot":    [s["team"] for s in signals if s["ats_hot"]],
+            "ats_cold":   [s["team"] for s in signals if s["ats_cold"]],
+            "over_lean":  [s["team"] for s in signals if s["ou_lean"] == "over"],
+            "under_lean": [s["team"] for s in signals if s["ou_lean"] == "under"],
+        }
+
+    # --- Push to Gist ---
+    if token and gist_id:
+        _push_vsin_to_gist(vsin_data, token, gist_id)
+
+    print(f"    VSiN: {len(vsin_data['merged'])} merged games, "
+          f"{len(vsin_data['rlm_alerts'])} RLM alerts, "
+          f"{len(vsin_data['power_ratings'])} teams rated")
+
+    return vsin_data
+
+
+def _push_vsin_to_gist(vsin_data, token, gist_id):
+    """Push VSiN intelligence to dedicated Gist key: vsin_intelligence.json"""
+    try:
+        payload_str = json.dumps(vsin_data, indent=2)
+        # Trim if over 900KB
+        if len(payload_str) > 900000:
+            vsin_data["makinen"] = vsin_data["makinen"][:20]
+            vsin_data["merged"]  = vsin_data["merged"][:50]
+            payload_str = json.dumps(vsin_data, indent=2)
+
+        r = requests.patch(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={
+                "Authorization": f"token {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+            json={"files": {"vsin_intelligence.json": {"content": payload_str}}},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            print(f"    ✅ VSiN pushed to Gist ({len(payload_str)//1024}KB)")
+        else:
+            print(f"    ❌ VSiN Gist push failed: {r.status_code}")
+    except Exception as e:
+        print(f"    ❌ VSiN Gist push error: {e}")
+
+
+
 def main():
     parser = argparse.ArgumentParser(description="BetCouncil Auto Scraper v2.0")
     parser.add_argument("--sport",   default="NBA")
@@ -3283,11 +3491,20 @@ def main():
     for p in all_props[:5]:
         print(f"  {p.get('Book',p.get('book','?')):12} {p.get('Player','?'):25} {p.get('Prop','?'):20} {p.get('Line','?')}")
 
-    # Push
+    # Push props
     if not args.no_push and (all_props or all_lines):
         push_to_gist(all_props, all_lines, token, gist)
     elif args.no_push:
         print("\nTest mode — not pushing")
+
+    # VSiN Intelligence Layer
+    print("\n── VSiN Intelligence ──")
+    for sport in sports:
+        fetch_vsin_intelligence(
+            sport=sport,
+            token=token if not args.no_push else None,
+            gist_id=gist if not args.no_push else None,
+        )
 
     print("\n✅ Done")
 
