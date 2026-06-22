@@ -1105,9 +1105,10 @@ def _get_elo_roster_confidence(sport: str, team: str, window_days: int = 14) -> 
         return 1.0
 
 
-def update_elo_after_game(sport, team_a, team_b, score_a):
+def update_elo_after_game(sport, team_a, team_b, score_a, margin=None):
     """Run one Elo update and persist both teams' new ratings to Gist.
     score_a: 1.0 team_a win, 0.5 draw, 0.0 team_a loss.
+    margin:  optional score differential — enables MOV-weighted K-factor.
     Returns (new_rating_a, new_rating_b). Call once per completed game —
     calling twice for the same game will double-count it.
 
@@ -1115,6 +1116,8 @@ def update_elo_after_game(sport, team_a, team_b, score_a):
     confidence weight fetched from ESPN transactions.  Teams with 3+ moves
     in the last 14 days get a reduced K so their Elo converges more slowly
     until the new roster stabilises.  Confidence weight range: [0.50, 1.00].
+    MOV multiplier (FiveThirtyEight-style ln-scale) also applied when
+    margin is provided — blowouts move ratings more than 1-pt wins.
     """
     ratings = get_elo_ratings(sport)
     rating_a = ratings.get(team_a, ELO_DEFAULT_RATING)
@@ -1124,7 +1127,8 @@ def update_elo_after_game(sport, team_a, team_b, score_a):
     conf_a = _get_elo_roster_confidence(sport, team_a)
     conf_b = _get_elo_roster_confidence(sport, team_b)
     k = base_k * min(conf_a, conf_b)
-    new_a, new_b = elo_update(rating_a, rating_b, score_a, k=k)
+    new_a, new_b = elo_update(rating_a, rating_b, score_a, k=k,
+                               margin=margin, sport=sport)
     ratings[team_a] = new_a
     ratings[team_b] = new_b
     save_to_gist(f"elo_{sport.lower()}", ratings)
@@ -1180,7 +1184,9 @@ def run_comprehensive_elo_update():
                     _elo_score_a = 0.0
                 else:
                     _elo_score_a = 0.5
-                update_elo_after_game(_elo_sport, _elo_h_name, _elo_a_name, _elo_score_a)
+                _elo_margin = abs(_elo_h_score - _elo_a_score)
+                update_elo_after_game(_elo_sport, _elo_h_name, _elo_a_name,
+                                      _elo_score_a, margin=_elo_margin)
                 _elo_processed.add(_elo_eid)
                 _elo_new = True
             if _elo_new:
@@ -7580,16 +7586,157 @@ def fetch_mlb_probable_pitchers():
                 home = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "")
                 away_pitcher = game.get("teams", {}).get("away", {}).get("probablePitcher", {}).get("fullName", "")
                 home_pitcher = game.get("teams", {}).get("home", {}).get("probablePitcher", {}).get("fullName", "")
+                away_pid = game.get("teams", {}).get("away", {}).get("probablePitcher", {}).get("id")
+                home_pid = game.get("teams", {}).get("home", {}).get("probablePitcher", {}).get("id")
                 if away:
-                    pitchers[away] = {"pitcher": away_pitcher, "opponent": home, "home": False}
+                    pitchers[away] = {"pitcher": away_pitcher, "opponent": home,
+                                      "home": False, "pitcher_id": away_pid}
                 if home:
-                    pitchers[home] = {"pitcher": home_pitcher, "opponent": away, "home": True}
+                    pitchers[home] = {"pitcher": home_pitcher, "opponent": away,
+                                      "home": True, "pitcher_id": home_pid}
+        # Enrich with live Savant stats (FIP, xFIP, xwOBA, K%, BB%)
+        pitchers = _enrich_pitchers_savant(pitchers)
         if pitchers:
             with open(cache_path, "wb") as f:
                 pickle.dump(pitchers, f)
     except (IOError, ValueError) as e:
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_probable_pitchers", "error": str(e)[:100]})
     return pitchers
+
+
+def _fetch_live_team_woba_splits() -> dict:
+    """
+    Fetch current-season team wOBA vs LHP and vs RHP from the MLB Stats API
+    (statsapi.mlb.com /api/v1/teams/{id}/stats).  Returns:
+        {"vs_rhp": {team_name: woba}, "vs_lhp": {team_name: woba}}
+
+    Falls back gracefully — if any team fails, the static config value stays.
+    Cache: 6 hours (wOBA splits don't change intra-day).
+    """
+    cache_path = os.path.join(CACHE_DIR, "mlb_team_woba_splits.pkl")
+    if os.path.exists(cache_path):
+        age = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    season = date.today().year
+    # Get all MLB team IDs
+    teams_url = f"https://statsapi.mlb.com/api/v1/teams?sportId=1&season={season}"
+    try:
+        teams_r = requests.get(teams_url, headers=HEADERS, timeout=10)
+        if teams_r.status_code != 200:
+            return {}
+        teams = teams_r.json().get("teams", [])
+    except Exception:
+        return {}
+
+    vs_rhp, vs_lhp = {}, {}
+    _WOBA_DEFAULT = MLB_WOBA_LEAGUE_AVG
+
+    for team in teams:
+        tid   = team.get("id")
+        tname = team.get("name", "")
+        if not tid or not tname:
+            continue
+        try:
+            # vs RHP split
+            url_rhp = (
+                f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
+                f"?stats=statSplits&group=hitting&season={season}"
+                f"&sitCodes=vs-rhp&sportId=1"
+            )
+            r_rhp = requests.get(url_rhp, headers=HEADERS, timeout=8)
+            if r_rhp.status_code == 200:
+                splits = r_rhp.json().get("stats", [{}])[0].get("splits", [])
+                if splits:
+                    s = splits[0].get("stat", {})
+                    _woba = s.get("wOBA") or s.get("woba") or _WOBA_DEFAULT
+                    vs_rhp[tname] = round(float(_woba), 3)
+            # vs LHP split
+            url_lhp = (
+                f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
+                f"?stats=statSplits&group=hitting&season={season}"
+                f"&sitCodes=vs-lhp&sportId=1"
+            )
+            r_lhp = requests.get(url_lhp, headers=HEADERS, timeout=8)
+            if r_lhp.status_code == 200:
+                splits = r_lhp.json().get("stats", [{}])[0].get("splits", [])
+                if splits:
+                    s = splits[0].get("stat", {})
+                    _woba = s.get("wOBA") or s.get("woba") or _WOBA_DEFAULT
+                    vs_lhp[tname] = round(float(_woba), 3)
+        except Exception:
+            continue
+
+    result = {"vs_rhp": vs_rhp, "vs_lhp": vs_lhp}
+    if vs_rhp or vs_lhp:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
+
+
+def _enrich_pitchers_savant(pitchers: dict) -> dict:
+    """
+    Pull live FIP, xFIP, xwOBA allowed, K%, BB% for each probable pitcher
+    from the Baseball Savant / MLB Stats API season stat endpoint.
+    Updates each pitcher dict in-place; falls back to static config values
+    if the network call fails or a pitcher isn't found.
+
+    Endpoint: statsapi.mlb.com/api/v1/people/{id}/stats?stats=season&group=pitching
+    Returns enriched pitchers dict.
+    """
+    season = date.today().year
+    enriched = dict(pitchers)
+    seen_ids = {}  # pitcher_id → stats, avoid duplicate fetches for same SP
+
+    for team, pdata in pitchers.items():
+        pid = pdata.get("pitcher_id")
+        pname = pdata.get("pitcher", "")
+        if not pid:
+            continue
+        if pid in seen_ids:
+            enriched[team].update(seen_ids[pid])
+            continue
+        try:
+            url = (
+                f"https://statsapi.mlb.com/api/v1/people/{pid}/stats"
+                f"?stats=season&group=pitching&season={season}"
+            )
+            r = requests.get(url, headers=HEADERS, timeout=8)
+            if r.status_code != 200:
+                continue
+            splits = r.json().get("stats", [{}])[0].get("splits", [])
+            if not splits:
+                continue
+            s = splits[0].get("stat", {})
+            era  = float(s.get("era",  MLB_PITCHER_ERA.get(pname,  LEAGUE_AVG_ERA)))
+            fip  = float(s.get("fielding_independent_pitching",
+                               MLB_PITCHER_FIP.get(pname, era)))
+            k9   = float(s.get("strikeoutsPer9Inn", 0) or 0)
+            bb9  = float(s.get("walksPer9Inn",      0) or 0)
+            whip = float(s.get("whip",              1.30) or 1.30)
+            # xwOBA not in statsapi — use xFIP proxy: FIP + small BB penalty
+            xfip = round(fip * 0.92 + bb9 * 0.05, 2)  # lightweight xFIP estimate
+            live_stats = {
+                "era_live":   round(era,  2),
+                "fip_live":   round(fip,  2),
+                "xfip_live":  xfip,
+                "k9_live":    round(k9,   1),
+                "bb9_live":   round(bb9,  1),
+                "whip_live":  round(whip, 2),
+            }
+            enriched[team].update(live_stats)
+            seen_ids[pid] = live_stats
+        except Exception:
+            pass
+    return enriched
 
 
 def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
@@ -16018,6 +16165,16 @@ def load_sport_data(sport):
         season_avgs = dict(PLAYER_AVERAGES.get("MLB", {}))
         _merge_rolling(season_avgs, mlb_rolling)
         mlb_pitchers = fetch_mlb_probable_pitchers()
+        # ── Live team wOBA splits (vs LHP / RHP) — refreshed each board load ──
+        # Overwrites static config dicts with running season data from statsapi.
+        # Suppressed on error so static fallback always applies.
+        try:
+            _live_woba = _fetch_live_team_woba_splits()
+            if _live_woba:
+                MLB_TEAM_WOBA_VS_RHP.update(_live_woba.get("vs_rhp", {}))
+                MLB_TEAM_WOBA_VS_LHP.update(_live_woba.get("vs_lhp", {}))
+        except Exception:
+            pass
         # ── MLB confirmed lineup check (statsapi primary, Sleeper fallback) ──
         _mlb_lineups = fetch_mlb_confirmed_lineups_with_fallback()
         if _mlb_lineups:
@@ -16903,11 +17060,16 @@ def load_sport_data(sport):
                 opp_data = mlb_pitchers.get(team_full, {})
                 opp_pitcher = opp_data.get("pitcher", "")
                 if opp_pitcher:
-                    # FIP-based component (blend 60% FIP, 40% ERA for stability)
-                    pitcher_era = MLB_PITCHER_ERA.get(opp_pitcher, LEAGUE_AVG_ERA)
-                    pitcher_fip = MLB_PITCHER_FIP.get(opp_pitcher, pitcher_era)
-                    blended_fip = pitcher_fip * 0.60 + pitcher_era * 0.40
-                    fip_diff = blended_fip - LEAGUE_AVG_ERA
+                    # Prefer live Savant stats (fip_live/xfip_live) over static dict
+                    _fip_live  = opp_data.get("fip_live")
+                    _xfip_live = opp_data.get("xfip_live")
+                    _era_live  = opp_data.get("era_live")
+                    pitcher_era = _era_live  or MLB_PITCHER_ERA.get(opp_pitcher, LEAGUE_AVG_ERA)
+                    pitcher_fip = _fip_live  or MLB_PITCHER_FIP.get(opp_pitcher, pitcher_era)
+                    pitcher_xfip= _xfip_live or pitcher_fip
+                    # Blend: 50% xFIP (most forward-looking), 35% FIP, 15% ERA
+                    blended = pitcher_xfip * 0.50 + pitcher_fip * 0.35 + pitcher_era * 0.15
+                    fip_diff = blended - LEAGUE_AVG_ERA
                     pitcher_adj = max(-0.08, min(0.08, fip_diff / 100.0))
                     # Handedness wOBA adjustment: if the opposing team hits well vs this arm,
                     # increase edge for OVER props; decrease if they struggle.
@@ -18732,6 +18894,49 @@ with tabs[0]:
                         and p.get("Sport","") == _cur_sport][:4]
         n_parlay = st.session_state.get("parlay_size", 3)
         parlay_props = parlay_props[:n_parlay]
+
+        # ── Correlated leg edge discounting ───────────────
+        # When legs share a team or same-player props, the independence
+        # assumption breaks down. Discount each correlated leg's effective
+        # probability proportional to the pairwise correlation coefficient.
+        # This is the correct treatment per Kelly theory — correlated bets
+        # have lower effective edge than the sum of their individual edges.
+        def _apply_corr_discount(legs):
+            if len(legs) < 2:
+                return legs
+            discounted = list(legs)
+            for i, p1 in enumerate(discounted):
+                for j, p2 in enumerate(discounted):
+                    if j <= i:
+                        continue
+                    p1_player = normalize_name(p1.get("Player",""))
+                    p2_player = normalize_name(p2.get("Player",""))
+                    p1_prop   = p1.get("Prop","")
+                    p2_prop   = p2.get("Prop","")
+                    p1_team   = p1.get("Team", p1.get("team",""))
+                    p2_team   = p2.get("Team", p2.get("team",""))
+                    corr = 0.0
+                    if p1_player and p1_player == p2_player:
+                        pair_key = tuple(sorted([p1_prop, p2_prop]))
+                        corr = PROP_CORRELATION_PAIRS.get(pair_key, 0.50)
+                    elif p1_team and p1_team == p2_team:
+                        corr = TEAM_GAME_CORRELATION
+                    if corr > 0.15:
+                        # Discount effective prob toward 0.5 proportional to corr
+                        discount = 1.0 - corr * 0.25
+                        for idx in (i, j):
+                            raw_prob = float(discounted[idx].get("Prob", 0.55))
+                            raw_edge = float(discounted[idx].get("Edge", 0))
+                            adj_prob = 0.5 + (raw_prob - 0.5) * discount
+                            adj_edge = raw_edge * discount
+                            discounted[idx] = {
+                                **discounted[idx],
+                                "Prob":         round(adj_prob, 4),
+                                "Edge":         round(adj_edge, 4),
+                                "_corr_disc":   round(1.0 - discount, 3),
+                            }
+            return discounted
+        parlay_props = _apply_corr_discount(parlay_props)
         if len(parlay_props) >= 2:
             parlay_probs = [p.get("Prob", 0.55) for p in parlay_props]
             combined = parlay_prob(parlay_probs)

@@ -554,7 +554,16 @@ def compute_fair_prob_skellam(line, mu_a, mu_b, side="OVER"):
 
 
 ELO_DEFAULT_RATING = 1500.0
-ELO_K_FACTOR = {"NFL": 20, "NBA": 20, "WNBA": 20, "NHL": 20, "Soccer": 20}
+ELO_K_FACTOR = {"NFL": 20, "NBA": 20, "WNBA": 20, "NHL": 20, "Soccer": 20, "MLB": 20}
+
+# Margin-of-victory multiplier caps per sport — prevents extreme blowouts
+# from dominating the Elo signal (a 50-pt NBA blowout shouldn't move ratings 5x).
+ELO_MOV_CAP = {"NFL": 28, "NBA": 35, "WNBA": 30, "NHL": 5, "Soccer": 5, "MLB": 12}
+
+# Sport-specific MOV scale factors — tuned so that a "normal" margin
+# produces a multiplier near 1.0 and an extreme margin caps near 2.0.
+ELO_MOV_SCALE = {"NFL": 14.0, "NBA": 17.5, "WNBA": 15.0, "NHL": 2.5,
+                 "Soccer": 2.5, "MLB": 6.0}
 
 
 def elo_expected_score(rating_a, rating_b):
@@ -562,18 +571,40 @@ def elo_expected_score(rating_a, rating_b):
     return 1.0 / (1.0 + 10 ** ((rating_b - rating_a) / 400.0))
 
 
-def elo_update(rating_a, rating_b, score_a, k=20):
+def elo_update(rating_a, rating_b, score_a, k=20, margin=None, sport=None):
     """Incremental Elo update after a game result.
     score_a: 1.0 = team A win, 0.5 = draw/tie, 0.0 = team A loss.
+    margin:  absolute score differential (e.g. 7 for NFL, 14 for NBA).
+             When provided, applies a log-scale MOV multiplier to K so that
+             blowouts update the rating more than 1-point wins.
+    sport:   used to select the correct MOV cap and scale.
+
+    MOV multiplier formula (FiveThirtyEight-style):
+        mov_mult = ln(|margin| + 1) / scale
+    Capped at 2.0 to prevent extreme outliers from dominating.
+
     Returns (new_rating_a, new_rating_b). Seeds at ELO_DEFAULT_RATING (1500) for
     unseen teams — this is a forward-updating tracker, not a historical backfill,
     so ratings are most reliable after the first several weeks of a season as they
     converge, same cold-start behavior as any live Elo system."""
+    import math as _math
     expected_a = elo_expected_score(rating_a, rating_b)
     expected_b = 1.0 - expected_a
-    score_b = 1.0 - score_a
-    new_a = rating_a + k * (score_a - expected_a)
-    new_b = rating_b + k * (score_b - expected_b)
+    score_b    = 1.0 - score_a
+
+    # Margin-of-victory K multiplier
+    if margin is not None and sport is not None and score_a != 0.5:
+        _cap   = ELO_MOV_CAP.get(sport, 20)
+        _scale = ELO_MOV_SCALE.get(sport, 10.0)
+        _mov   = min(abs(float(margin)), _cap)
+        # ln(mov+1) / scale → 1.0 at average margin, up to ~2.0 at blowout
+        mov_mult = min(2.0, max(0.5, _math.log(_mov + 1) / _math.log(_scale + 1)))
+        k_eff = k * mov_mult
+    else:
+        k_eff = k
+
+    new_a = rating_a + k_eff * (score_a - expected_a)
+    new_b = rating_b + k_eff * (score_b - expected_b)
     return round(new_a, 1), round(new_b, 1)
 
 

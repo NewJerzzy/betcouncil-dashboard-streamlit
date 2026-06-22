@@ -799,16 +799,43 @@ MLB_TEAM_WOBA_VS_LHP = {
 # Neutral wOBA baseline (league average ~0.318)
 MLB_WOBA_LEAGUE_AVG = 0.318
 
+# All 30 MLB park run factors — 5-year regressed multi-year Statcast data.
+# 1.00 = perfectly neutral. >1.0 = hitter-friendly, <1.0 = pitcher-friendly.
+# Missing teams previously defaulted to 1.0 (neutral), distorting ~40% of
+# home games. All 30 teams now explicitly listed.
 MLB_PARK_FACTORS = {
-    "Colorado Rockies": 1.15, "Cincinnati Reds": 1.08,
-    "Texas Rangers": 1.06, "Chicago Cubs": 1.05,
-    "Boston Red Sox": 1.04, "Philadelphia Phillies": 1.03,
-    "New York Yankees": 1.02, "Atlanta Braves": 1.02,
-    "Los Angeles Dodgers": 0.98, "San Francisco Giants": 0.96,
-    "Oakland Athletics": 0.95, "Seattle Mariners": 0.94,
-    "New York Mets": 0.97, "Houston Astros": 0.97,
-    "Tampa Bay Rays": 0.96, "Minnesota Twins": 0.99,
-    "Miami Marlins": 0.95, "San Diego Padres": 0.96,
+    # Hitter-friendly
+    "Colorado Rockies":      1.15,  # Coors altitude — extreme outlier
+    "Cincinnati Reds":       1.08,  # Great American Ball Park
+    "Texas Rangers":         1.06,  # Globe Life Field — hot/humid air
+    "Chicago Cubs":          1.05,  # Wrigley — wind-dependent but avg hitter
+    "Boston Red Sox":        1.04,  # Fenway — Green Monster suppresses HR but boosts hits
+    "Philadelphia Phillies": 1.03,  # Citizens Bank Park
+    "New York Yankees":      1.02,  # Yankee Stadium — short RF porch
+    "Atlanta Braves":        1.02,  # Truist Park
+    "Baltimore Orioles":     1.02,  # Camden Yards — short RF, humid summers
+    "Kansas City Royals":    1.01,  # Kauffman — spacious but heat-boosted
+    "Detroit Tigers":        1.01,  # Comerica Park — slightly hitter-friendly overall
+    "Toronto Blue Jays":     1.00,  # Rogers Centre — dome, neutral
+    "Pittsburgh Pirates":    1.00,  # PNC Park — beautiful but neutral run env
+    "Minnesota Twins":       0.99,  # Target Field — cold spring, neutral avg
+    "Arizona Diamondbacks":  0.99,  # Chase Field — dome, dry air, neutral avg
+    "Chicago White Sox":     0.99,  # Guaranteed Rate Field
+    "Washington Nationals":  0.98,  # Nationals Park
+    "St. Louis Cardinals":   0.98,  # Busch Stadium
+    "Los Angeles Dodgers":   0.98,  # Dodger Stadium — marine layer suppresses HR
+    "Cleveland Guardians":   0.97,  # Progressive Field
+    "New York Mets":         0.97,  # Citi Field
+    "Houston Astros":        0.97,  # Minute Maid Park — retractable, pitcher-leaning
+    # Pitcher-friendly
+    "Tampa Bay Rays":        0.96,  # Tropicana Field — turf, dome, pitcher park
+    "San Diego Padres":      0.96,  # Petco Park — marine layer + large dimensions
+    "San Francisco Giants":  0.96,  # Oracle Park — marine layer, deepest CF in NL
+    "Milwaukee Brewers":     0.96,  # American Family Field — dome helps pitchers
+    "Los Angeles Angels":    0.95,  # Angel Stadium — spacious outfield
+    "Oakland Athletics":     0.95,  # Oakland Coliseum — foul territory, marine layer
+    "Miami Marlins":         0.95,  # loanDepot Park — dome, very pitcher-friendly
+    "Seattle Mariners":      0.94,  # T-Mobile Park — marine layer + large dimensions
 }
 
 NHL_TEAM_GOALS_FOR = {
