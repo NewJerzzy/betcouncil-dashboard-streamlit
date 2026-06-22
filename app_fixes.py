@@ -305,3 +305,154 @@ def update_sidebar_status_message():
 # 5. Test: Load app and check System tab for error messages
 #
 # ═══════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════
+# VSiN INTELLIGENCE — GIST READER
+# Reads vsin_intelligence.json pushed by betcouncil_auto_scraper.py
+# ═══════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
+    """
+    Fetch VSiN intelligence data from Gist (vsin_intelligence.json).
+    Returns unified dict with lines, splits, makinen, team_summary,
+    power_ratings, rlm_alerts, ats_signals.
+    TTL: 10 minutes.
+    """
+    empty = {
+        "sport": sport, "timestamp": None,
+        "lines": [], "splits": [], "merged": [],
+        "makinen": [], "team_summary": [], "dk_splits": [],
+        "power_ratings": [], "rlm_alerts": [], "ats_signals": {},
+    }
+    try:
+        GITHUB_TOKEN   = st.secrets.get("GITHUB_TOKEN", "")
+        GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
+        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+            return empty
+
+        r = requests.get(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization": f"token {GITHUB_TOKEN}"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return empty
+
+        files = r.json().get("files", {})
+        if "vsin_intelligence.json" not in files:
+            return empty
+
+        file_obj = files["vsin_intelligence.json"]
+        if file_obj.get("size", 0) > 900000:
+            raw = requests.get(file_obj["raw_url"], timeout=10)
+            data = raw.json() if raw.status_code == 200 else empty
+        else:
+            content = file_obj.get("content", "")
+            data = json.loads(content) if content else empty
+
+        # Filter to requested sport
+        if data.get("sport", "").upper() != sport.upper():
+            return empty
+        return data
+
+    except Exception as e:
+        log_error_to_session("fetch_vsin_intelligence", str(e), "warning")
+        return empty
+
+
+def get_vsin_team_signal(vsin_data: dict, team_name: str) -> dict:
+    """
+    Look up VSiN signals for a specific team.
+    Returns dict with power_rating, makinen_proj, ats_hot/cold, ou_lean.
+    """
+    result = {
+        "power_rating": None, "pr_rank": None,
+        "starter_rating": None, "bullpen_rating": None,
+        "ml_roi_pct": None, "rl_roi_pct": None, "ou_roi_pct": None,
+        "ats_hot": False, "ats_cold": False, "ou_lean": None,
+    }
+
+    # Power ratings lookup
+    for team in vsin_data.get("power_ratings", []):
+        if team.get("team", "").lower() in team_name.lower() or \
+           team_name.lower() in team.get("team", "").lower():
+            result["power_rating"]   = team.get("power_rating")
+            result["pr_rank"]        = team.get("pr_rank")
+            result["starter_rating"] = team.get("starter_rating")
+            result["bullpen_rating"] = team.get("bullpen_rating")
+            break
+
+    # Team summary lookup
+    for team in vsin_data.get("team_summary", []):
+        if team.get("team", "").lower() in team_name.lower() or \
+           team_name.lower() in team.get("team", "").lower():
+            result["ml_roi_pct"] = team.get("ml_roi_pct")
+            result["rl_roi_pct"] = team.get("rl_roi_pct")
+            result["ou_roi_pct"] = team.get("ou_roi_pct")
+            break
+
+    # ATS signals
+    signals = vsin_data.get("ats_signals", {})
+    result["ats_hot"]  = team_name in signals.get("ats_hot", [])
+    result["ats_cold"] = team_name in signals.get("ats_cold", [])
+    if team_name in signals.get("over_lean", []):
+        result["ou_lean"] = "over"
+    elif team_name in signals.get("under_lean", []):
+        result["ou_lean"] = "under"
+
+    return result
+
+
+def get_vsin_game_signal(vsin_data: dict, away_team: str, home_team: str) -> dict:
+    """
+    Look up VSiN signals for a specific matchup.
+    Returns dict with rlm, makinen projections, public splits.
+    """
+    result = {
+        "rlm_detected": False, "rlm_direction": None,
+        "rlm_strength": None, "public_pct": None,
+        "away_score_proj": None, "home_score_proj": None,
+        "projected_total": None, "makinen_favorite": None,
+        "spread_bet_pct_home": None, "ml_bet_pct_home": None,
+        "handle_pct_home": None,
+    }
+
+    from difflib import SequenceMatcher
+    def sim(a, b):
+        return SequenceMatcher(None, (a or "").lower(), (b or "").lower()).ratio()
+
+    # RLM from merged
+    for g in vsin_data.get("rlm_alerts", []):
+        if sim(g.get("away_team",""), away_team) > 0.6 or \
+           sim(g.get("home_team",""), home_team) > 0.6:
+            rlm = g.get("rlm", {})
+            result["rlm_detected"]  = rlm.get("rlm_detected", False)
+            result["rlm_direction"] = rlm.get("rlm_direction")
+            result["rlm_strength"]  = rlm.get("rlm_strength")
+            result["public_pct"]    = rlm.get("public_pct_vs_line")
+            break
+
+    # Splits from merged
+    for g in vsin_data.get("merged", []):
+        ah = sim(g.get("away_team",""), away_team)
+        hh = sim(g.get("home_team",""), home_team)
+        if ah > 0.6 and hh > 0.6:
+            result["spread_bet_pct_home"] = g.get("spread_bet_pct_home")
+            result["ml_bet_pct_home"]     = g.get("ml_bet_pct_home")
+            result["handle_pct_home"]     = g.get("spread_handle_pct_home")
+            break
+
+    # Makinen projections
+    for g in vsin_data.get("makinen", []):
+        ah = sim(g.get("away_team",""), away_team)
+        hh = sim(g.get("home_team",""), home_team)
+        if ah > 0.5 and hh > 0.5:
+            result["away_score_proj"]  = g.get("away_score_proj")
+            result["home_score_proj"]  = g.get("home_score_proj")
+            result["projected_total"]  = g.get("projected_total")
+            result["makinen_favorite"] = g.get("makinen_favorite")
+            break
+
+    return result
