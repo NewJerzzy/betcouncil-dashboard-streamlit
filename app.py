@@ -47,7 +47,7 @@ from scrapers import fetch_sleeper_mlb_scoreboard
 from config import (
     GITHUB_TOKEN, GITHUB_GIST_ID, ODDS_API_KEY, ODDSPAPI_KEY,
     ANTHROPIC_API_KEY, OCR_SPACE_API_KEY, SCRAPEOPS_KEY, BDL_API_KEY,
-    RAPIDAPI_KEY, REQUEST_TIMEOUT, CACHE_DIR, ODDS_API_BASE,
+    RAPIDAPI_KEY, REQUEST_TIMEOUT, CACHE_DIR, HEADERS, ODDS_API_BASE,
     ODDS_API_SPORT_MAP, CBS_SPORT_MAP, ACTIVE_BOOKS, DISABLED_BOOKS,
     DAILY_RISK_CONTROLS, ACTION_NETWORK_SPORT_MAP, ACTION_NETWORK_LEAGUE_IDS, ACTION_NETWORK_PROP_TYPE_MAP,
     AN_GRADE_TO_TIER, ODDS_API_PROP_MARKETS, ODDS_API_STAT_MAP, API_BUDGETS,
@@ -310,7 +310,6 @@ for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "game_lines_*.pkl")):
 for _stale in _glob_startup.glob(os.path.join(CACHE_DIR, "mlb_pitchers.pkl")):
     try: os.remove(_stale)
     except (requests.RequestException, KeyError, ValueError): pass
-HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 AVERAGES_LAST_UPDATED = "2025-05-13"
 
 # Daily risk controls
