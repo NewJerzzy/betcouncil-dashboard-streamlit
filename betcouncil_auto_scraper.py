@@ -2819,13 +2819,12 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
             print(f"      [DEBUG market {market_id}] PayLoad dict keys={list(payload.keys())}")
         else:
             print(f"      [DEBUG market {market_id}] PayLoad empty or unexpected: {type(payload).__name__}")
-        # Find the matching market and return its selections
+        # Selections live in Filter.Items, not Selections/BetSelections
         for market in (payload if isinstance(payload, list) else []):
-            sels = market.get("Selections") or market.get("BetSelections") or market.get("Bets") or []
-            if sels:
-                return sels
-        # If payload itself is the selections list, return it
-        return payload
+            items = (market.get("Filter") or {}).get("Items") or []
+            if items:
+                return items
+        return []
     except Exception as e:
         print(f"      [DEBUG market {market_id}] error: {e}")
         return []
@@ -3039,10 +3038,12 @@ def scrape_betonline_props(sport="MLB", max_games=15):
             print(f"    {market_name}: {len(selections)} selections")
 
             for sel in selections:
-                sel_id = sel.get("Id") or sel.get("SelectionId")
-                sel_name = sel.get("Name") or sel.get("Selection") or sel.get("Label", "")
+                sel_id = sel.get("Id")
+                # Value is "Kerry Carpenter (DET)" — strip team suffix
+                raw_name = sel.get("Value") or sel.get("Name") or sel.get("Label", "")
+                sel_name = raw_name.split(" (")[0].strip() if " (" in raw_name else raw_name
                 entity_id = sel.get("EntityId")
-                global_id_long = sel.get("GlobalIdLong") or sel.get("BetId")
+                global_id_long = sel.get("GlobalIdLong")
                 global_id_short = sel.get("GlobalIdShort")
                 if not sel_id or not sport_code:
                     continue
