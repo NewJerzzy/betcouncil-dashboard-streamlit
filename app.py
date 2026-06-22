@@ -7950,6 +7950,17 @@ def get_game_tier(edge, sport="NBA") -> str:
     if edge >= thresholds["LEAN"]:      return "LEAN"
     return "PASS"
 
+# Soccer league goal baselines — must be defined before analyze_game_edge
+_SOCCER_LEAGUE_BASELINES = {
+    "eng.1": 2.72,   # EPL
+    "esp.1": 2.62,   # La Liga
+    "ger.1": 3.08,   # Bundesliga
+    "ita.1": 2.54,   # Serie A
+    "fra.1": 2.71,   # Ligue 1
+    "usa.1": 2.93,   # MLS
+    "uefa.champions": 2.85,  # UCL
+}
+
 
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, mlb_pitchers=None):
     if power_ratings is None:
@@ -8159,6 +8170,36 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                             spread_edge_pct *= 0.90
                         elif _pass_allowed > 260:     # poor pass D
                             spread_edge_pct *= 1.10
+                    except Exception:
+                        pass
+                if sport == "Soccer":
+                    # ── Soccer GF/GA differential adjustment ─────────────
+                    # Refine spread edge using actual team goal differentials.
+                    # Strong attack vs weak defense → expand edge; vice versa.
+                    try:
+                        _soc_t = fetch_soccer_team_goals("eng.1")
+                        _hs = _soc_t.get(home_full, _soc_t.get(home_team, {}))
+                        _as = _soc_t.get(away_full, _soc_t.get(away_team, {}))
+                        if _hs and _as:
+                            # Net GD per game for each side
+                            _h_gd = _hs.get("gf_pg", 1.36) - _hs.get("ga_pg", 1.36)
+                            _a_gd = _as.get("gf_pg", 1.36) - _as.get("ga_pg", 1.36)
+                            _gd_diff = _h_gd - _a_gd
+                            # ±0.5 GD/game → ±0.04 edge adjustment
+                            spread_edge_pct += _gd_diff * 0.08
+                    except Exception:
+                        pass
+                if sport == "UFC":
+                    # ── UFC striking differential for spread/ML ───────────
+                    # Fighter with higher sig strikes and better takedown
+                    # defense → reduce opponent's spread edge.
+                    try:
+                        _f1s = fetch_ufc_fighter_stats(home_full or home_team) or {}
+                        _f2s = fetch_ufc_fighter_stats(away_full or away_team) or {}
+                        _f1_str = float(_f1s.get("SIG_STR", 35) or 35)
+                        _f2_str = float(_f2s.get("SIG_STR", 35) or 35)
+                        _str_diff = (_f1_str - _f2_str) / 100.0  # normalise
+                        spread_edge_pct += _str_diff
                     except Exception:
                         pass
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
@@ -8390,22 +8431,53 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 except Exception:
                     pass
             elif sport == "Soccer":
-                # No team-level expected-goals source exists yet in this
-                # codebase (fetch_soccer_rolling_averages is keyed by player,
-                # not team — PLAYER_AVERAGES_SOCCER has no team field to
-                # aggregate from). This is a league-average baseline, same
-                # tier as the HARDCODED FALLBACKS pattern used elsewhere,
-                # not real team-specific xG — flagged for a real source
-                # (e.g. team-level ESPN stats) as a follow-up.
-                # Mirrors the NHL branch's point-estimate pattern (this
-                # function computes fair_total as a divergence point
-                # estimate for every sport, not a probability CDF — true
-                # Skellam-as-probability would be a paradigm change
-                # affecting all sports here, not a soccer-only swap).
-                _league_avg_goals = 1.35  # typical top-5-league goals/team/game
-                home_expected = _league_avg_goals * 1.05  # S3-style home boost
-                away_expected = _league_avg_goals * 0.95  # S3-style away reduction
-                fair_total = home_expected + away_expected
+                # ── Soccer fair_total: James matchup formula ──────────────
+                # ESPN team GF/GA per game. Falls back to league baseline.
+                _SOCCER_LEAGUE_AVG_PT = 2.72 / 2  # per-team avg (EPL default)
+                _soc_league = "eng.1"
+                _soc_teams = fetch_soccer_team_goals(_soc_league)
+                _h_soc = _soc_teams.get(home_full, _soc_teams.get(home_team, {}))
+                _a_soc = _soc_teams.get(away_full, _soc_teams.get(away_team, {}))
+                if _h_soc and _a_soc:
+                    _h_gf = _h_soc.get("gf_pg", _SOCCER_LEAGUE_AVG_PT)
+                    _h_ga = _h_soc.get("ga_pg", _SOCCER_LEAGUE_AVG_PT)
+                    _a_gf = _a_soc.get("gf_pg", _SOCCER_LEAGUE_AVG_PT)
+                    _a_ga = _a_soc.get("ga_pg", _SOCCER_LEAGUE_AVG_PT)
+                    _home_exp = (_h_gf * _a_ga) / max(_SOCCER_LEAGUE_AVG_PT, 0.1)
+                    _away_exp = (_a_gf * _h_ga) / max(_SOCCER_LEAGUE_AVG_PT, 0.1)
+                    _home_exp += 0.15   # home field boost
+                    _away_exp -= 0.10
+                    fair_total = round(max(1.0, min(7.0, _home_exp + _away_exp)), 2)
+                    # Clean sheet suppressor: >35% CS rate → -0.15 goals each
+                    _cs_adj = 0.0
+                    if _h_soc.get("cs_rate", 0) > 0.35:
+                        _cs_adj -= 0.15
+                    if _a_soc.get("cs_rate", 0) > 0.35:
+                        _cs_adj -= 0.15
+                    fair_total = round(fair_total + _cs_adj, 2)
+                else:
+                    _league_total = _SOCCER_LEAGUE_BASELINES.get(_soc_league, 2.72)
+                    fair_total = round((_league_total / 2) * 1.12 + (_league_total / 2) * 0.88, 2)
+            elif sport == "UFC":
+                # ── UFC fair_total: projected rounds ─────────────────────
+                _ufc_f1 = home_full or home_team
+                _ufc_f2 = away_full or away_team
+                _f1_stats = fetch_ufc_fighter_stats(_ufc_f1)
+                _f2_stats = fetch_ufc_fighter_stats(_ufc_f2)
+                _ufc_card = fetch_ufc_fight_card()
+                _wc = ""
+                _is_title = False
+                for _fight in _ufc_card:
+                    if (normalize_name(_ufc_f1) in normalize_name(_fight.get("fighter1", "")) or
+                        normalize_name(_ufc_f1) in normalize_name(_fight.get("fighter2", ""))):
+                        _wc = _fight.get("weightclass", "")
+                        _is_title = _fight.get("is_title", False)
+                        break
+                _ufc_proj = compute_ufc_round_projection(
+                    _f1_stats or {}, _f2_stats or {},
+                    weightclass=_wc, is_title=_is_title,
+                )
+                fair_total = _ufc_proj["fair_rounds"]
             if fair_total is not None:
                 total_edge = fair_total - total_val
                 total_edge_pct = total_edge / 50.0
@@ -8419,6 +8491,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     total_edge_pct = total_edge / 30.0  # WNBA ~165pt range, similar scale to NFL
                 elif sport == "Soccer":
                     total_edge_pct = total_edge / 4.0  # goal totals are small-range (~2.5 line)
+                elif sport == "UFC":
+                    total_edge_pct = total_edge / 3.0  # rounds O/U ~2.5 line, tight range
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
@@ -10005,6 +10079,208 @@ def fetch_wnba_player_stats(player_name):
     except Exception:
         pass
     return result
+
+# ── Soccer team goals for/against per game ────────────────────────────────────
+# League baselines (goals/game total, both teams combined, 2025-26 season)
+_SOCCER_LEAGUE_KEYS = ["eng.1", "esp.1", "ger.1", "ita.1", "fra.1", "usa.1", "uefa.champions"]
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_soccer_team_goals(league_key: str = "eng.1") -> dict:
+    """
+    Fetch goals-for and goals-against per game for all teams in a soccer league.
+    Uses ESPN team statistics endpoint.
+    Returns: {team_display_name: {"gf_pg": float, "ga_pg": float, "cs_rate": float}}
+    Cached 6 hours. Falls back to league baseline on failure.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"soccer_team_goals_{league_key.replace('.','_')}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    try:
+        teams_r = requests.get(
+            f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_key}/teams?limit=30",
+            headers=HEADERS, timeout=10,
+        )
+        if teams_r.status_code != 200:
+            return {}
+        teams = (teams_r.json().get("sports", [{}])[0]
+                              .get("leagues", [{}])[0]
+                              .get("teams", []))
+    except Exception:
+        return {}
+
+    league_avg_per_team = _SOCCER_LEAGUE_BASELINES.get(league_key, 2.7) / 2
+    result = {}
+    for entry in teams:
+        team = entry.get("team", {})
+        name = team.get("displayName", "")
+        tid  = team.get("id")
+        if not name or not tid:
+            continue
+        try:
+            sr = requests.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_key}"
+                f"/teams/{tid}/statistics",
+                headers=HEADERS, timeout=8,
+            )
+            if sr.status_code != 200:
+                continue
+            cats = sr.json().get("results", {}).get("splits", {}).get("categories", [])
+            gf = ga = gp = cs = None
+            for cat in cats:
+                cname = cat.get("name", "").lower()
+                stats = {s["name"]: float(s.get("value") or 0) for s in cat.get("stats", [])}
+                if "general" in cname or "scoring" in cname or "goals" in cname:
+                    gf = gf or stats.get("goalsFor") or stats.get("goals")
+                    ga = ga or stats.get("goalsAgainst")
+                    gp = gp or stats.get("gamesPlayed") or stats.get("played")
+                    cs = cs or stats.get("cleanSheets")
+            if gf is not None and gp and gp > 0:
+                result[name] = {
+                    "gf_pg":   round(float(gf) / float(gp), 3),
+                    "ga_pg":   round(float(ga or 0) / float(gp), 3),
+                    "cs_rate": round(float(cs or 0) / float(gp), 3),
+                }
+        except Exception:
+            continue
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
+
+
+# ── UFC round projection ──────────────────────────────────────────────────────
+# Weightclass round baselines — avg rounds completed before finish/decision
+_UFC_WEIGHTCLASS_BASELINES = {
+    "heavyweight":        2.05,
+    "light heavyweight":  2.18,
+    "middleweight":       2.22,
+    "welterweight":       2.28,
+    "lightweight":        2.25,
+    "featherweight":      2.30,
+    "bantamweight":       2.35,
+    "flyweight":          2.40,
+    "women's strawweight": 2.45,
+    "women's flyweight":  2.38,
+    "women's bantamweight": 2.30,
+    "women's featherweight": 2.28,
+}
+_UFC_ROUND_DEFAULT = 2.25   # overall UFC avg
+_UFC_CHAMPIONSHIP_ROUNDS = 5  # title fights go 5 rounds
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ufc_fight_card() -> list:
+    """
+    Fetch upcoming UFC event and fight card from ESPN MMA scoreboard.
+    Returns list of dicts: {matchup, fighter1, fighter2, weightclass, is_title}
+    Cached 1 hour.
+    """
+    try:
+        r = requests.get(
+            "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard",
+            headers=HEADERS, timeout=10,
+        )
+        if r.status_code != 200:
+            return []
+        events = r.json().get("events", [])
+        card = []
+        for event in events:
+            for comp in event.get("competitions", []):
+                comps = comp.get("competitors", [])
+                if len(comps) < 2:
+                    continue
+                f1 = comps[0].get("athlete", {}).get("displayName", "") or \
+                     comps[0].get("team", {}).get("displayName", "")
+                f2 = comps[1].get("athlete", {}).get("displayName", "") or \
+                     comps[1].get("team", {}).get("displayName", "")
+                if not f1 or not f2:
+                    continue
+                details = comp.get("details", [{}])
+                weightclass = ""
+                is_title = False
+                for d in details:
+                    txt = str(d.get("type", {}).get("description", "") or "").lower()
+                    if "weight" in txt or "class" in txt:
+                        weightclass = txt
+                    if "title" in txt or "championship" in txt:
+                        is_title = True
+                card.append({
+                    "matchup":    f"{f1} vs {f2}",
+                    "fighter1":   f1,
+                    "fighter2":   f2,
+                    "weightclass": weightclass,
+                    "is_title":   is_title,
+                })
+        return card
+    except Exception:
+        return []
+
+
+def compute_ufc_round_projection(fighter1_stats: dict, fighter2_stats: dict,
+                                  weightclass: str = "", is_title: bool = False) -> dict:
+    """
+    Project expected rounds for a UFC fight.
+
+    Formula (Pythagorean finish-rate blend):
+      finish_prob = (f1_finish_rate + f2_finish_rate) / 2
+      rounds_if_finish  = baseline × 0.55   (early finish)
+      rounds_if_decision = max_rounds × 0.92 (decision goes ~4.6/5 or ~2.75/3)
+      projected = finish_prob × rounds_if_finish + (1-finish_prob) × rounds_if_decision
+
+    Returns: {"fair_rounds": float, "finish_prob": float, "pace_factor": float}
+    """
+    max_rounds = _UFC_CHAMPIONSHIP_ROUNDS if is_title else 3
+    wc_key = weightclass.lower().strip() if weightclass else ""
+    baseline = next(
+        (v for k, v in _UFC_WEIGHTCLASS_BASELINES.items() if k in wc_key),
+        _UFC_ROUND_DEFAULT
+    )
+    if is_title:
+        baseline = baseline * (5 / 3)  # scale baseline to 5-round context
+
+    # Finish rate proxy — KD/15min and sub attempts/15min as finish indicators
+    def _finish_rate(stats):
+        if not stats:
+            return 0.40  # league avg ~40% finish rate
+        kd  = float(stats.get("KD", stats.get("KNOCKDOWNS", 0)) or 0)
+        sub = float(stats.get("SUB_ATT", stats.get("SUB_ATTEMPTS", 0)) or 0)
+        # KD > 0.2/fight → striker finish threat; sub > 0.8 → grappler finish threat
+        finish = min(0.85, 0.35 + kd * 0.3 + sub * 0.2)
+        return finish
+
+    f1_fr = _finish_rate(fighter1_stats)
+    f2_fr = _finish_rate(fighter2_stats)
+    avg_finish_prob = (f1_fr + f2_fr) / 2
+
+    rounds_if_finish  = baseline * 0.55
+    rounds_if_decision = max_rounds * 0.92
+    fair_rounds = avg_finish_prob * rounds_if_finish + (1 - avg_finish_prob) * rounds_if_decision
+
+    # Pace factor — high sig strikes from both = faster finish
+    f1_pace = float((fighter1_stats or {}).get("SIG_STR", 35) or 35)
+    f2_pace = float((fighter2_stats or {}).get("SIG_STR", 35) or 35)
+    avg_pace = (f1_pace + f2_pace) / 2
+    # High pace (>50 strikes/min for both) → more likely early finish
+    pace_factor = max(-0.4, min(0.3, (avg_pace - 40) * -0.02))
+    fair_rounds = round(max(1.0, min(float(max_rounds), fair_rounds + pace_factor)), 2)
+
+    return {
+        "fair_rounds":   fair_rounds,
+        "finish_prob":   round(avg_finish_prob, 3),
+        "pace_factor":   round(pace_factor, 3),
+        "max_rounds":    max_rounds,
+        "weightclass":   weightclass,
+    }
+
 
 def fetch_soccer_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "soccer_rolling_avgs.pkl")
