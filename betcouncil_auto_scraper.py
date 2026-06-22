@@ -2803,6 +2803,8 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
             print(f"      [DEBUG market {market_id}] status={r.status_code}")
             return []
         data = r.json()
+        import json as _j
+        print(f"      [DEBUG market {market_id}] RAW: {_j.dumps(data)[:600]}")
         payload = (data or {}).get("PayLoad") or []
         # Debug: print raw structure
         if isinstance(payload, list) and payload:
