@@ -18123,7 +18123,97 @@ with tabs[9]:
         st.write(f"Props loaded: {len(st.session_state.board_data)}")
         st.write(f"Session time: {get_session_time()}")
     st.markdown("---")
-    st.markdown("### \U0001f6e1\ufe0f Daily Risk Controls")
+
+    # ── VSiN Intelligence Panel ───────────────────────────────
+    st.markdown("### 🎯 VSiN Intelligence")
+    _sport_vsin = st.session_state.get("last_sport", "MLB")
+    _vsin = fetch_vsin_intelligence(_sport_vsin)
+    _vsin_ts = _vsin.get("timestamp")
+
+    if not _vsin.get("merged") and not _vsin.get("power_ratings"):
+        st.caption("No VSiN data yet — run `python betcouncil_auto_scraper.py --all` to populate.")
+    else:
+        _v1, _v2, _v3, _v4 = st.columns(4)
+        with _v1:
+            st.metric("Games w/ Lines", len(_vsin.get("merged", [])))
+        with _v2:
+            st.metric("⚡ RLM Alerts", len(_vsin.get("rlm_alerts", [])))
+        with _v3:
+            st.metric("Teams Rated", len(_vsin.get("power_ratings", [])))
+        with _v4:
+            if _vsin_ts:
+                st.metric("Last Updated", _vsin_ts[11:16] + " UTC")
+            else:
+                st.metric("Last Updated", "—")
+
+        # RLM Alerts
+        if _vsin.get("rlm_alerts"):
+            st.markdown("**⚡ Reverse Line Movement Alerts**")
+            _rlm_rows = []
+            for _g in _vsin["rlm_alerts"]:
+                _r = _g.get("rlm", {})
+                _rlm_rows.append({
+                    "Game": f"{_g.get('away_team','?')} @ {_g.get('home_team','?')}",
+                    "Time": _g.get("game_time", ""),
+                    "Direction": _r.get("rlm_direction", ""),
+                    "Strength": _r.get("rlm_strength", ""),
+                    "Public %": f"{_r.get('public_pct_vs_line',0):.0f}%",
+                })
+            import pandas as pd
+            st.dataframe(pd.DataFrame(_rlm_rows), use_container_width=True, hide_index=True)
+
+        # ATS Signals
+        _ats = _vsin.get("ats_signals", {})
+        if _ats.get("ats_hot") or _ats.get("ats_cold"):
+            _ac1, _ac2 = st.columns(2)
+            with _ac1:
+                if _ats.get("ats_hot"):
+                    st.success("ATS Hot (>=8% ROI): " + ", ".join(_ats["ats_hot"]))
+                if _ats.get("over_lean"):
+                    st.info("**Over Lean** (58%+): " + ", ".join(_ats["over_lean"]))
+            with _ac2:
+                if _ats.get("ats_cold"):
+                    st.error("ATS Cold (<=-12% ROI): " + ", ".join(_ats["ats_cold"]))
+                if _ats.get("under_lean"):
+                    st.info("Under Lean (<=42%): " + ", ".join(_ats.get("under_lean", [])))
+
+        # Top Power Ratings
+        if _vsin.get("power_ratings"):
+            with st.expander("📊 Makinen Power Rankings (Top 10)"):
+                _pr_rows = []
+                for _t in _vsin["power_ratings"][:10]:
+                    _pr_rows.append({
+                        "Rank": _t.get("composite_rank"),
+                        "Team": _t.get("team"),
+                        "PR": _t.get("power_rating"),
+                        "Eff Runs": _t.get("eff_runs"),
+                        "Starter": _t.get("starter_rating"),
+                        "Bullpen": _t.get("bullpen_rating"),
+                    })
+                import pandas as pd
+                st.dataframe(pd.DataFrame(_pr_rows), use_container_width=True, hide_index=True)
+
+        # Makinen Game Projections
+        if _vsin.get("makinen"):
+            with st.expander(f"📈 Makinen Game Projections ({len(_vsin['makinen'])} games)"):
+                _mak_rows = []
+                for _g in _vsin["makinen"]:
+                    _mak_rows.append({
+                        "Game": f"{_g.get('away_team','?')} @ {_g.get('home_team','?')}",
+                        "Time": _g.get("game_time", ""),
+                        "Away Proj": _g.get("away_score_proj"),
+                        "Home Proj": _g.get("home_score_proj"),
+                        "Proj Total": _g.get("projected_total"),
+                        "Eff Line": f"{_g.get('eff_line','')} {_g.get('eff_line_dir','')}",
+                        "Favorite": _g.get("makinen_favorite", ""),
+                        "Starter Δ": f"{_g.get('away_starter_rtg','?')} vs {_g.get('home_starter_rtg','?')}",
+                    })
+                import pandas as pd
+                st.dataframe(pd.DataFrame(_mak_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    st.markdown("### 🛡️ Daily Risk Controls")
     st.write(f"Max locks/day: {DAILY_RISK_CONTROLS['max_locks_per_day']}")
     st.write(f"Stop-loss: -{DAILY_RISK_CONTROLS['max_daily_loss_pct']:.0%}")
     st.write(f"Stop-win: +{DAILY_RISK_CONTROLS['stop_win_pct']:.0%}")
