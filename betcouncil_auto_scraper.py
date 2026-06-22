@@ -2819,8 +2819,10 @@ def fetch_bo_market_selections(fixture_id, key, market_id):
             print(f"      [DEBUG market {market_id}] PayLoad empty or unexpected: {type(payload).__name__}")
         # Find the matching market and return its selections
         for market in (payload if isinstance(payload, list) else []):
-            if market.get("Id") == market_id:
-                return market.get("Selections") or market.get("BetSelections") or []
+            sels = market.get("Selections") or market.get("BetSelections") or market.get("Bets") or []
+            if sels:
+                return sels
+        # If payload itself is the selections list, return it
         return payload
     except Exception as e:
         print(f"      [DEBUG market {market_id}] error: {e}")
@@ -3002,7 +3004,7 @@ def scrape_betonline_props(sport="MLB", max_games=15):
                 continue
 
             # Get selections for this market
-            selections = fetch_bo_market_selections(fixture_id, key, market_id)
+            selections = fetch_bo_market_selections(fixture_id, key, market_label_id or market_id)
             if not selections:
                 # Try to find selections in Initialize payload
                 init_markets = init_payload.get("Markets") or []
