@@ -863,6 +863,10 @@ def fetch_fanduel_event_ids(sport):
 
     px_context = _get_fanduel_px_context()
     if not px_context:
+        st.warning(
+            "🔒 FanDuel PerimeterX token missing or expired — FanDuel props blocked. "
+            "Run the Playwright session harvester, or set FANDUEL_PX_CONTEXT in secrets."
+        )
         return []
     state = _get_fanduel_state()
 
@@ -988,6 +992,10 @@ def fetch_fanduel_direct(sport, event_ids=None):
     FD_KEY = "FhMFpcPWXMeyZxOx"
     px_context = _get_fanduel_px_context()
     if not px_context:
+        st.warning(
+            "🔒 FanDuel PerimeterX token missing or expired — FanDuel props blocked. "
+            "Run the Playwright session harvester, or set FANDUEL_PX_CONTEXT in secrets."
+        )
         return []
 
     state = _get_fanduel_state()
@@ -5370,6 +5378,11 @@ def fetch_caesars_direct(sport):
         # No valid session token configured — expected state until the account
         # session is deliberately wired in. Returning [] cleanly rather than
         # attempting an unauthenticated request that's confirmed to fail.
+        st.warning(
+            "🔑 Caesars JWT expired or not configured — re-run caesars-harvester.js "
+            "after logging into sportsbook.caesars.com, or paste the token into "
+            "CAESARS_SESSION_TOKEN in Streamlit secrets. Skipping Caesars scrape."
+        )
         return []
 
     headers["authorization"] = f"Bearer {czr_bearer}"

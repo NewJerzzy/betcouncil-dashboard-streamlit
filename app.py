@@ -7389,7 +7389,7 @@ def scan_all_sports_best_plays():
             progress.progress(idx / len(active_sports))
             # Skip NBA/NHL during off-season — avoids empty boards and errors
             _scan_regime = detect_season_regime(sport)
-            if _scan_regime.get("regime") == "Off Season":
+            if _scan_regime.get("regime") == "Off-season":
                 continue
             props = scrape_prizepicks_with_gist_fallback(sport)
             if not props:
@@ -13337,7 +13337,7 @@ with st.sidebar:
             st.info(f"ℹ️ Board loaded {_load_count}x this session — each load uses proxy credits. Reload only when needed.")
         # Off-season guard: warn but still allow load in case pre-season props exist
         _lb_regime = detect_season_regime(sport_sel)
-        if _lb_regime.get("regime") == "Off Season":
+        if _lb_regime.get("regime") == "Off-season":
             st.info(
                 f"⚠️ {sport_sel} is currently in off-season — "
                 "props may be unavailable or stale. Board load continues; "
