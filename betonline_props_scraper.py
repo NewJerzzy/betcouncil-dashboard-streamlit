@@ -340,15 +340,28 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         print(f"  [BOL] Page loaded, waiting 8s for line data...", file=sys.stderr)
         await asyncio.sleep(8)
 
-        # Now navigate into each game to trigger get-contests (player props)
-        # Get all game links visible on the page
-        game_links = await page.evaluate("""
-            () => Array.from(document.querySelectorAll('a[href]'))
-                .map(a => a.href)
-                .filter(h => h.includes('/game/') || 
-                             (h.includes('/baseball/') && h.split('/').length > 5))
-                .slice(0, 6)
-        """)
+        # Build game URLs from lines we already scraped (GameId field)
+        # Only use games with AdditionalMarkets > 0 (confirmed to have props)
+        seen_ids = set()
+        game_links = []
+        for g in all_lines:
+            gid = g.get("GameId")
+            extra = g.get("AdditionalMarkets", 0)
+            if gid and extra > 0 and gid not in seen_ids:
+                seen_ids.add(gid)
+                game_links.append(
+                    f"https://www.betonline.ag/sportsbook/baseball/mlb/{gid}"
+                )
+
+        # Fallback: extract from page DOM if no lines with AdditionalMarkets
+        if not game_links:
+            raw = await page.evaluate("""
+                () => Array.from(document.querySelectorAll('a[href]'))
+                    .map(a => a.href)
+                    .filter(h => /\/sportsbook\/[a-z]+\/[a-z]+\/\d{8,}/.test(h))
+                    .slice(0, 6)
+            """)
+            game_links = raw
 
         print(f"  [BOL] Found {len(game_links)} game links, navigating...", file=sys.stderr)
 
