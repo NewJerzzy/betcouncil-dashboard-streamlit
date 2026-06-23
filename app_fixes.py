@@ -9,6 +9,11 @@ from datetime import date, timedelta
 import streamlit as st
 import logging
 import pandas as pd
+try:
+    from config import GITHUB_TOKEN, GITHUB_GIST_ID
+except ImportError:
+    GITHUB_TOKEN   = st.secrets.get('GITHUB_TOKEN', '')
+    GITHUB_GIST_ID = st.secrets.get('GITHUB_GIST_ID', '')
 
 # Configure logging for error visibility
 logger = logging.getLogger("betcouncil")
@@ -76,8 +81,6 @@ def fetch_auto_scraped_props(sport: str, _use_cache: bool = True) -> list:
     props = []
     
     try:
-        GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
-        GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
         GIST_API = "https://api.github.com/gists"
         
         if not GITHUB_TOKEN or not GITHUB_GIST_ID:
@@ -327,8 +330,6 @@ def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
         "power_ratings": [], "rlm_alerts": [], "ats_signals": {},
     }
     try:
-        GITHUB_TOKEN   = st.secrets.get("GITHUB_TOKEN", "")
-        GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
         if not GITHUB_TOKEN or not GITHUB_GIST_ID:
             return empty
 
