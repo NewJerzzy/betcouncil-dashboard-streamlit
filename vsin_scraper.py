@@ -4,6 +4,11 @@ import re
 import time
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+try:
+    from team_canon import merge_by_canon, canon
+    _USE_CANON = True
+except ImportError:
+    _USE_CANON = False
 
 import requests
 
@@ -446,38 +451,50 @@ class VSiNScraper:
 # ---------------------------------------------------------------------------
 
 def merge_lines_and_splits(lines: list, splits: list) -> list:
-    """Join line tracker data with betting splits on fuzzy team name match."""
-    used = set()
-    merged = []
-
-    for lg in lines:
-        best_i = None
-        best_score = 0.0
-        for i, sg in enumerate(splits):
-            if i in used:
-                continue
-            score = max(
-                _sim(lg.get("home_team"), sg.get("home_team")),
-                _sim(lg.get("away_team"), sg.get("away_team")),
-            )
-            if score > best_score:
-                best_score = score
-                best_i = i
-
-        game = dict(lg)
-        if best_i is not None and best_score >= 0.65:
-            used.add(best_i)
-            sg = splits[best_i]
-            for k in [
+    """Join line tracker data with betting splits using canonical team name matching."""
+    if _USE_CANON:
+        # Use canonical merge (declansx pattern) — handles abbreviations, affixes, sport scope
+        sport = lines[0].get("sport", "MLB") if lines else "MLB"
+        merged = merge_by_canon(
+            lines, splits,
+            sport=sport,
+            fields_to_merge=[
                 "spread_bet_pct_home", "spread_handle_pct_home",
                 "ml_bet_pct_home", "ml_handle_pct_home",
                 "total_over_bet_pct", "total_over_handle_pct",
-            ]:
-                if game.get(k) is None:
-                    game[k] = sg.get(k)
+            ],
+        )
+    else:
+        # Fallback: original SequenceMatcher merge
+        used = set()
+        merged = []
+        for lg in lines:
+            best_i = None
+            best_score = 0.0
+            for i, sg in enumerate(splits):
+                if i in used:
+                    continue
+                score = max(
+                    _sim(lg.get("home_team"), sg.get("home_team")),
+                    _sim(lg.get("away_team"), sg.get("away_team")),
+                )
+                if score > best_score:
+                    best_score = score
+                    best_i = i
+            game = dict(lg)
+            if best_i is not None and best_score >= 0.65:
+                used.add(best_i)
+                sg = splits[best_i]
+                for k in ["spread_bet_pct_home","spread_handle_pct_home",
+                          "ml_bet_pct_home","ml_handle_pct_home",
+                          "total_over_bet_pct","total_over_handle_pct"]:
+                    if game.get(k) is None:
+                        game[k] = sg.get(k)
+            merged.append(game)
 
+    # Attach RLM signal to every merged game
+    for game in merged:
         game["rlm"] = detect_rlm(game)
-        merged.append(game)
 
     return merged
 
