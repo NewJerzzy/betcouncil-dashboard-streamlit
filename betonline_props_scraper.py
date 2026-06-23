@@ -369,26 +369,91 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
             try:
                 print(f"  [BOL] Game {i+1}/{min(4, len(game_links))}: {link}", file=sys.stderr)
                 await page.goto(link, wait_until="domcontentloaded", timeout=20000)
-                # Click "More Wagers" to trigger get-contests-by-contest-type2
-                more_wagers_selectors = [
-                    "button:has-text('More Wagers')",
-                    "button:has-text('Additional Markets')",
-                    "[class*='more-wagers']",
-                    "[class*='additional-markets']",
-                    "button:has-text('All Wagers')",
-                    "span:has-text('More Wagers')"
-                ]
-                for selector in more_wagers_selectors:
+                # ── Click the player-props / "All Wagers" tab ────────────────
+                # BetOnline is an Angular SPA — tabs are NOT always <button>.
+                # They can be <li>, <a>, <div>, or even <span> elements.
+                # Three escalating strategies so this survives DOM changes.
+
+                await asyncio.sleep(2)  # Let Angular render tabs
+                clicked = False
+
+                # Strategy 1: Playwright get_by_text — type-agnostic, most reliable
+                for label in ["All Wagers", "More Wagers", "Player Props",
+                               "Additional Markets", "All Markets", "Props"]:
                     try:
-                        button = await page.wait_for_selector(selector, timeout=3000)
-                        if button and await button.is_visible():
-                            await button.click()
-                            await asyncio.sleep(3)
+                        loc = page.get_by_text(label, exact=True).first
+                        if await loc.is_visible(timeout=2000):
+                            await loc.click()
+                            await asyncio.sleep(4)
+                            clicked = True
+                            print(f"    [BOL] Clicked '{label}' tab (get_by_text)", file=sys.stderr)
                             break
                     except Exception:
-                        continue
+                        pass
 
-                await asyncio.sleep(6)
+                if not clicked:
+                    # Strategy 2: CSS selectors covering div/li/a/button/span
+                    # BetOnline game-page tabs commonly use non-button elements
+                    more_wagers_selectors = [
+                        "a:has-text('All Wagers')",
+                        "li:has-text('All Wagers')",
+                        "div:has-text('All Wagers')",
+                        "a:has-text('More Wagers')",
+                        "li:has-text('More Wagers')",
+                        "div:has-text('More Wagers')",
+                        "a:has-text('Player Props')",
+                        "li:has-text('Player Props')",
+                        "div:has-text('Player Props')",
+                        "button:has-text('All Wagers')",
+                        "button:has-text('Player Props')",
+                        "span:has-text('All Wagers')",
+                        "[class*='tab']:has-text('Wagers')",
+                        "[class*='tab']:has-text('Props')",
+                        "[class*='contest-type']",
+                        "[class*='market-type']",
+                        "[class*='wager-type']",
+                    ]
+                    for selector in more_wagers_selectors:
+                        try:
+                            button = await page.wait_for_selector(selector, timeout=2000)
+                            if button and await button.is_visible():
+                                await button.click()
+                                await asyncio.sleep(4)
+                                clicked = True
+                                print(f"    [BOL] Clicked via CSS: {selector}", file=sys.stderr)
+                                break
+                        except Exception:
+                            continue
+
+                if not clicked:
+                    # Strategy 3: JS evaluation — walk every leaf element, click first match
+                    result = await page.evaluate("""
+                        () => {
+                            const targets = [
+                                'All Wagers', 'More Wagers', 'Player Props',
+                                'Additional Markets', 'All Markets', 'Props'
+                            ];
+                            const all = [...document.querySelectorAll('*')];
+                            for (const txt of targets) {
+                                const el = all.find(e =>
+                                    e.children.length === 0 &&
+                                    e.textContent.trim() === txt &&
+                                    e.offsetParent !== null
+                                );
+                                if (el) { el.click(); return txt; }
+                            }
+                            return null;
+                        }
+                    """)
+                    if result:
+                        await asyncio.sleep(4)
+                        clicked = True
+                        print(f"    [BOL] JS-clicked '{result}'", file=sys.stderr)
+
+                if not clicked:
+                    print(f"    [BOL] No wagers tab found on {link} — waiting for any props", file=sys.stderr)
+
+                await asyncio.sleep(4)  # Wait for API response regardless
 
                 # Dismiss any popups
                 for sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
