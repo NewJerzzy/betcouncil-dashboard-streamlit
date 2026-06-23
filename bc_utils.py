@@ -24,6 +24,18 @@ def safe_float(val, default: float = 0.0) -> float:
 
 
 
+# ── Team name canonicalization (declansx pattern) ────────────────────────────
+try:
+    from team_canon import canon as canon_team, match_teams, match_players, canon_game_key, merge_by_canon
+    _TEAM_CANON_AVAILABLE = True
+except ImportError:
+    _TEAM_CANON_AVAILABLE = False
+    def canon_team(name, sport=""): return name
+    def match_teams(a, b, sport="", threshold=0.82): return a.lower().strip() == b.lower().strip()
+    def match_players(a, b, threshold=0.88): return a.lower().strip() == b.lower().strip()
+    def merge_by_canon(primary, secondary, **kwargs): return primary
+
+
 @lru_cache(maxsize=4096)
 def normalize_name(s: str) -> str:
     if not s:
