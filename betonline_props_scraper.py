@@ -114,11 +114,14 @@ def parse_game_lines(data: dict, sport: str) -> list:
                 return sl.get("Point"), sl.get("Line")
             return None, None
 
-        def get_total(line_obj):
+        def get_total(line_obj, game_obj=None):
             if not isinstance(line_obj, dict):
                 return None, None, None
-            tl = line_obj.get("TotalLine", {})
-            if isinstance(tl, dict):
+            tl = line_obj.get("TotalLine") or {}
+            # BetOnline sometimes puts TotalLine at game level, not under HomeLine/AwayLine
+            if not tl and isinstance(game_obj, dict):
+                tl = game_obj.get("TotalLine") or {}
+            if isinstance(tl, dict) and tl:
                 pt = tl.get("Point")
                 ov = tl.get("Over", {}).get("Line") if isinstance(tl.get("Over"), dict) else None
                 un = tl.get("Under", {}).get("Line") if isinstance(tl.get("Under"), dict) else None
@@ -132,7 +135,7 @@ def parse_game_lines(data: dict, sport: str) -> list:
         home_ml = get_ml(home_line)
         away_spr, away_spr_odds = get_spread(away_line)
         home_spr, home_spr_odds = get_spread(home_line)
-        total_pt, total_over, total_under = get_total(home_line)
+        total_pt, total_over, total_under = get_total(home_line, game)
 
         # Team totals
         away_tt = away_line.get("TeamTotalLine", {}) if isinstance(away_line, dict) else {}

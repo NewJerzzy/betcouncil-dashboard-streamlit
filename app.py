@@ -7387,6 +7387,10 @@ def scan_all_sports_best_plays():
         try:
             status.write(f"Scanning {sport} board...")
             progress.progress(idx / len(active_sports))
+            # Skip NBA/NHL during off-season — avoids empty boards and errors
+            _scan_regime = detect_season_regime(sport)
+            if _scan_regime.get("regime") == "Off Season":
+                continue
             props = scrape_prizepicks_with_gist_fallback(sport)
             if not props:
                 props = fetch_underdog_props(sport)
@@ -13331,6 +13335,14 @@ with st.sidebar:
             st.warning("⚠️ ScrapeOps credits exhausted — using ScraperAPI fallback for PrizePicks.")
         elif _load_count > 5:
             st.info(f"ℹ️ Board loaded {_load_count}x this session — each load uses proxy credits. Reload only when needed.")
+        # Off-season guard: warn but still allow load in case pre-season props exist
+        _lb_regime = detect_season_regime(sport_sel)
+        if _lb_regime.get("regime") == "Off Season":
+            st.info(
+                f"⚠️ {sport_sel} is currently in off-season — "
+                "props may be unavailable or stale. Board load continues; "
+                "no error will be raised if nothing is returned."
+            )
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             _enrich_t0 = _time_mod.perf_counter()
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
