@@ -356,6 +356,25 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
             try:
                 print(f"  [BOL] Game {i+1}/{min(4, len(game_links))}: {link}", file=sys.stderr)
                 await page.goto(link, wait_until="domcontentloaded", timeout=20000)
+                # Click "More Wagers" to trigger get-contests-by-contest-type2
+                more_wagers_selectors = [
+                    "button:has-text('More Wagers')",
+                    "button:has-text('Additional Markets')",
+                    "[class*='more-wagers']",
+                    "[class*='additional-markets']",
+                    "button:has-text('All Wagers')",
+                    "span:has-text('More Wagers')"
+                ]
+                for selector in more_wagers_selectors:
+                    try:
+                        button = await page.wait_for_selector(selector, timeout=3000)
+                        if button and await button.is_visible():
+                            await button.click()
+                            await asyncio.sleep(3)
+                            break
+                    except Exception:
+                        continue
+
                 await asyncio.sleep(6)
 
                 # Dismiss any popups
