@@ -3973,7 +3973,16 @@ def fetch_game_lines(sport):
     # ── OddsAPI overlay — runs regardless of ESPN results ──
     # Fills in ML/spread/total whenever ESPN returns "N/A"
     # Also provides Circa/BetOnline/Pinnacle market data
-    if ODDS_API_KEY:
+    # Budget guard: skip OddsAPI if key absent or monthly credits exhausted (≥498/500)
+    _use_odds_api = bool(ODDS_API_KEY)
+    if _use_odds_api:
+        try:
+            _oa_ok, _oa_msg = api_budget_check("ODDS_API")
+            if not _oa_ok:
+                _use_odds_api = False
+        except Exception:
+            pass  # api_budget_check unavailable — fall back to key-only guard
+    if _use_odds_api:
         try:
             odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
             if odds_games:

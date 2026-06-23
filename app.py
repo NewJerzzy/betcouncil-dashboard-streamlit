@@ -7550,9 +7550,10 @@ def fetch_mlb_rolling_averages():
         resp = None
         for _attempt in range(2):  # one retry on transient connection failures
             try:
-                resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+                resp = requests.get(url, headers=HEADERS, timeout=10)
                 break
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as _conn_e:
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                    requests.exceptions.RetryError, requests.exceptions.ChunkedEncodingError) as _conn_e:
                 if _attempt == 0:
                     time.sleep(1.0)
                     continue
@@ -7604,9 +7605,12 @@ def fetch_mlb_rolling_averages():
         except Exception as e:
             st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": str(e)[:100]})
             continue
-    if rolling:
-        with open(cache_path, "wb") as f:
-            pickle.dump(rolling, f)
+    try:
+        if rolling:
+            with open(cache_path, "wb") as f:
+                pickle.dump(rolling, f)
+    except Exception:
+        pass
     return rolling
 
 

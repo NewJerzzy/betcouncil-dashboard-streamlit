@@ -853,7 +853,7 @@ def detect_season_regime(sport="NBA"):
             desc   = "Full weights active"
             adj    = {}
     elif sport == "NHL":
-        if month in (7, 8, 9):
+        if month in (7, 8):
             regime = "Off-season"
             desc   = "No NHL games — current-season signals are stale"
             adj    = {"base": -0.06}
