@@ -41,6 +41,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import COLORS, TIER_COLORS
 from scrapers import fetch_sleeper_mlb_scoreboard
+from app_fixes import fetch_vsin_intelligence, get_vsin_team_signal, get_vsin_game_signal
 
 # --- API Keys ---
 # --- Config (extracted 2026-06-19 to reduce app.py size) ---
