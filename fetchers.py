@@ -5588,6 +5588,7 @@ def fetch_draftkings_direct(sport):
 def fetch_betmgm_direct(sport):
     """Fetch BetMGM props directly using curl_cffi."""
     try:
+        from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         return []
@@ -5726,6 +5727,187 @@ def fetch_betmgm_direct(sport):
             print(f"[WARN] {_e}")
 
     return props
+
+
+# ── Caesars Playwright token harvester ───────────────────────────────────────
+
+def harvest_caesars_tokens(max_wait: int = 90) -> dict:
+    """
+    Playwright-based Caesars JWT + AWS WAF token harvester.
+
+    WHY: fetch_caesars_direct() requires two auth headers — "authorization:
+    Bearer <JWT>" and "x-aws-waf-token" — that Caesars injects client-side
+    after a real browser login.  The JWT carries a ~24h "exp" claim and must
+    be refreshed whenever it expires; previously that required a manual
+    DevTools copy-paste.  This function automates that refresh by launching
+    a real headed Chromium session, navigating to sportsbook.caesars.com, and
+    intercepting the outgoing requests that carry those headers.
+
+    HOW: Playwright's page.on("request", ...) fires for every outgoing XHR.
+    Requests to api.americanwagering.com always include the freshly-generated
+    auth headers — we read them via request.all_headers() and stop as soon
+    as we see a valid Bearer token (len > 50 chars, starts with "Bearer ").
+
+    Automation masking applied (same pattern as fetch_fanduel_game_lines_playwright):
+      --disable-blink-features=AutomationControlled (launch arg)
+      navigator.webdriver = undefined               (add_init_script)
+      window.chrome, navigator.plugins, languages   (add_init_script)
+
+    Headless: defaults to headed (False) — Caesars WAF challenge passes more
+    reliably in headed mode.  Set env var CAESARS_HEADLESS=1 to force headless.
+    Auto-falls back to headless=True if headed launch raises (no $DISPLAY).
+
+    Persists tokens in two places so fetch_caesars_direct() can pick them up
+    immediately on retry without re-running Playwright:
+      1. Gist key "caesars_tokens"
+             → {"bearer_jwt": "…", "waf_token": "…", "captured_at": "…"}
+             (exact shape load_from_gist("caesars_tokens", None) returns)
+      2. CACHE_DIR/caesars_session_token.txt
+             → bearer_jwt on line 1, waf_token on line 2
+
+    Returns the harvested dict on success, {} on any failure (errors are
+    logged via log_error_to_session, never raised).
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as _PWTimeout
+    except ImportError:
+        log_error_to_session(
+            "harvest_caesars_tokens",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return {}
+
+    harvested: dict = {}
+    _stop = {"done": False}
+
+    def _on_request(request):
+        """Intercept every outgoing request; grab auth headers from Caesars API calls."""
+        if _stop["done"]:
+            return
+        if "americanwagering.com" not in request.url:
+            return
+        try:
+            hdrs = request.all_headers()
+        except Exception:
+            return
+        auth = hdrs.get("authorization", "")
+        # Real JWTs are several hundred characters; reject stubs / basic auth
+        if not auth.startswith("Bearer ") or len(auth) < 60:
+            return
+        harvested["bearer_jwt"]  = auth[len("Bearer "):]
+        harvested["waf_token"]   = hdrs.get("x-aws-waf-token", "")
+        harvested["captured_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        _stop["done"] = True
+
+    try:
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("CAESARS_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                # No display available (e.g. Streamlit Cloud) — fall back to headless
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 720},
+            )
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = ctx.new_page()
+            page.on("request", _on_request)
+
+            # Navigate to the AZ sportsbook — the az subdomain is the default;
+            # if the org switches states, update FANDUEL_STATE-style env var.
+            try:
+                page.goto(
+                    "https://sportsbook.caesars.com/us/az/bet",
+                    wait_until="networkidle",
+                    timeout=60_000,
+                )
+            except _PWTimeout:
+                # networkidle can time out on heavy pages; requests are still
+                # in-flight — the polling loop below will catch them.
+                pass
+            except Exception:
+                pass
+
+            # Poll until a valid token arrives or max_wait elapses
+            deadline = time.time() + max_wait
+            while not _stop["done"] and time.time() < deadline:
+                time.sleep(1)
+
+            ctx.close()
+            browser.close()
+
+    except Exception as _e:
+        log_error_to_session("harvest_caesars_tokens", str(_e)[:150], "warning")
+        return {}
+
+    if not harvested.get("bearer_jwt"):
+        log_error_to_session(
+            "harvest_caesars_tokens",
+            f"No Bearer token captured after {max_wait}s — "
+            "confirm the Caesars account is logged in at sportsbook.caesars.com "
+            "on the machine running Playwright",
+            "warning",
+        )
+        return {}
+
+    # ── Persist to Gist ──────────────────────────────────────────────────────
+    # File is named "caesars_tokens.json"; content is the JSON-serialised dict.
+    # load_from_gist("caesars_tokens", None) in app.py parses this back to a
+    # dict — that's the shape fetch_caesars_direct() reads from the Gist.
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        try:
+            _http.patch(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={
+                    "Authorization": f"token {GITHUB_TOKEN}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+                json={"files": {"caesars_tokens.json": {"content": json.dumps(harvested, indent=2)}}},
+                timeout=10,
+            )
+        except Exception as _ge:
+            log_error_to_session(
+                "harvest_caesars_tokens",
+                f"Gist write failed: {str(_ge)[:80]}",
+                "warning",
+            )
+
+    # ── Local file cache ─────────────────────────────────────────────────────
+    try:
+        czr_cache = os.path.join(CACHE_DIR, "caesars_session_token.txt")
+        with open(czr_cache, "w") as _f:
+            _f.write(harvested["bearer_jwt"])
+            if harvested.get("waf_token"):
+                _f.write("\n" + harvested["waf_token"])
+    except (IOError, OSError):
+        pass
+
+    return harvested
+
 
 def fetch_caesars_direct(sport):
     """Fetch Caesars props directly via api.americanwagering.com.
@@ -5871,6 +6053,17 @@ def fetch_caesars_direct(sport):
     try:
         # Step 1: Get competitions (league IDs)
         r1 = session.get(f"{base_url}/competitions", headers=headers, timeout=15)
+        if r1.status_code == 401:
+            # JWT expired — launch the Playwright harvester to refresh it, then
+            # retry once.  harvest_caesars_tokens() also persists the new token
+            # to the Gist and local cache so future calls don't need Playwright.
+            fresh = harvest_caesars_tokens()
+            if fresh.get("bearer_jwt"):
+                headers["authorization"] = f"Bearer {fresh['bearer_jwt']}"
+                headers["sessionid"]     = fresh["bearer_jwt"]
+                if fresh.get("waf_token"):
+                    headers["x-aws-waf-token"] = fresh["waf_token"]
+                r1 = session.get(f"{base_url}/competitions", headers=headers, timeout=15)
         if r1.status_code != 200:
             return []
 
