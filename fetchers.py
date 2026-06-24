@@ -5653,11 +5653,23 @@ def fetch_betrivers_direct(sport):
     return props
 
 def fetch_betr_direct(sport):
-    """Fetch Betr Picks props via GraphQL — no auth needed."""
+    """Fetch Betr Picks DFS projections via GraphQL (public, no auth required).
+
+    Endpoint: https://api.fantasy.betr.app/graphql
+    Verified live: returns player projection lines (hits, strikeouts, etc.)
+    Note: DFS projections only — OverOdds/UnderOdds are em-dash placeholders.
+
+    Early-exit guards:
+      - unsupported sport  -> silent []
+      - HTTP non-200       -> st.warning + []
+      - GraphQL-level error-> st.warning + []
+      - network/parse error-> st.warning + []
+    """
     league_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "WNBA": "WNBA", "NFL": "NFL"}
     league = league_map.get(sport)
     if not league:
         return []
+
     query = """query LeagueUpcomingEvents($league: League!) {
       getUpcomingEventsV2(league: $league) {
         name sport league
@@ -5673,18 +5685,37 @@ def fetch_betr_direct(sport):
         }
       }
     }"""
+
     props = []
     try:
         import requests as _req
-        r = _req.post("https://api.fantasy.betr.app/graphql",
-            json={"operationName": "LeagueUpcomingEvents", "query": query, "variables": {"league": league}},
+        r = _req.post(
+            "https://api.fantasy.betr.app/graphql",
+            json={
+                "operationName": "LeagueUpcomingEvents",
+                "query": query,
+                "variables": {"league": league},
+            },
             headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=12)
+            timeout=12,
+        )
         if r.status_code != 200:
+            st.warning(
+                f"⚠️ Betr: endpoint returned HTTP {r.status_code} — "
+                "projections unavailable. Try again later."
+            )
             return []
-        events = r.json().get("data", {}).get("getUpcomingEventsV2", []) or []
+
+        data = r.json()
+        gql_errors = data.get("errors")
+        if gql_errors:
+            st.warning(
+                f"⚠️ Betr GraphQL error: {gql_errors[0].get('message', gql_errors)}"
+            )
+            return []
+
+        events = (data.get("data") or {}).get("getUpcomingEventsV2") or []
         for event in events:
-            matchup = event.get("name", "")
             players_list = []
             for team in (event.get("teams") or []):
                 if team and team.get("players"):
@@ -5694,21 +5725,175 @@ def fetch_betr_direct(sport):
             for player in players_list:
                 if not player:
                     continue
-                full_name = f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
+                full_name = (
+                    f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
+                )
+                if not full_name:
+                    continue
                 for proj in (player.get("projections") or []):
                     if not proj:
                         continue
-                    line = proj.get("currentValue") or proj.get("value") or 0
+                    # currentValue is the live-updated line; fall back to static value
+                    line_raw = proj.get("currentValue") or proj.get("value")
+                    if line_raw is None:
+                        continue
                     prop_name = proj.get("label") or proj.get("name") or ""
-                    props.append({
-                        "Player": full_name, "Prop": prop_name,
-                        "Line": float(line) if line else 0.0,
-                        "Side": "OVER", "OverOdds": "\u2014", "UnderOdds": "\u2014",
-                        "Book": "Betr", "Sport": sport, "source": "betr_direct",
-                    })
-    except (ValueError, TypeError, ZeroDivisionError) as _e:
-            print(f"[WARN] {_e}")
+                    try:
+                        props.append({
+                            "Player":    full_name,
+                            "Prop":      prop_name,
+                            "Line":      float(line_raw),
+                            "Side":      "OVER",
+                            "OverOdds":  "—",
+                            "UnderOdds": "—",
+                            "Book":      "Betr",
+                            "Sport":     sport,
+                            "source":    "betr_direct",
+                        })
+                    except (ValueError, TypeError):
+                        continue
+
+    except Exception as _e:
+        st.warning(
+            f"⚠️ Betr: failed to fetch projections ({type(_e).__name__}: {_e}). "
+            "Check network connectivity."
+        )
+        return []
+
     return props
+
+
+# Alias so callers may use either name
+fetch_betr_lines = fetch_betr_direct
+
+
+def fetch_novig_lines(sport):
+    """Fetch NoVig (Odds API book key: us_ex) game lines via The Odds API v4.
+
+    NoVig is a no-vig odds comparison site; it appears as bookmaker key
+    "us_ex" on The Odds API.  Returns h2h / spreads / totals in a standard
+    game-line dict list (same shape as fetch_odds_api_game_lines output).
+    Results are cached for 20 minutes.
+
+    Early-exit guards:
+      - ODDS_API_KEY not set          -> st.warning + []
+      - sport not in ODDS_API_SPORT_MAP -> silent []
+      - HTTP 401 (bad key)            -> st.warning + []
+      - HTTP 422 (sport not carried)  -> st.warning + []
+      - other non-200                 -> st.warning + []
+      - network / parse error         -> st.warning + []
+    """
+    if not ODDS_API_KEY:
+        st.warning(
+            "⚠️ NoVig lines require an Odds API key. "
+            "Set the ODDS_API_KEY secret and reload."
+        )
+        return []
+
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"novig_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 20:
+            try:
+                with open(cache_path, "rb") as _f:
+                    cached = pickle.load(_f)
+                if cached:
+                    return cached
+            except Exception:
+                pass
+
+    url = (
+        f"{ODDS_API_BASE}/sports/{sport_key}/odds"
+        f"?apiKey={ODDS_API_KEY}"
+        f"&regions=us"
+        f"&markets=h2h,spreads,totals"
+        f"&oddsFormat=american"
+        f"&bookmakers=us_ex"
+    )
+    line_dicts = []
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code == 401:
+            st.warning(
+                "⚠️ NoVig (Odds API): invalid API key — "
+                "update the ODDS_API_KEY secret."
+            )
+            return []
+        if resp.status_code == 422:
+            st.warning(
+                f"⚠️ NoVig (Odds API): sport key ‘{sport_key}’ "
+                "not accepted — NoVig may not carry this sport."
+            )
+            return []
+        if resp.status_code != 200:
+            st.warning(
+                f"⚠️ NoVig (Odds API): HTTP {resp.status_code} — "
+                "rate-limited or service unavailable. Try again shortly."
+            )
+            return []
+
+        events = resp.json()
+        if not isinstance(events, list):
+            st.warning("⚠️ NoVig (Odds API): unexpected response format.")
+            return []
+
+        for event in events:
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            matchup = f"{away} @ {home}"
+            home_ml = away_ml = spread = total = "N/A"
+
+            for bm in event.get("bookmakers", []):
+                if bm.get("key") != "us_ex":
+                    continue
+                for mkt in bm.get("markets", []):
+                    mkey = mkt.get("key", "")
+                    outcomes = mkt.get("outcomes", [])
+                    if mkey == "h2h":
+                        for o in outcomes:
+                            if o.get("name") == home:
+                                home_ml = o.get("price", "N/A")
+                            elif o.get("name") == away:
+                                away_ml = o.get("price", "N/A")
+                    elif mkey == "spreads":
+                        for o in outcomes:
+                            if o.get("name") == home:
+                                pt = o.get("point")
+                                spread = f"{home} {pt:+.1f}" if pt is not None else "N/A"
+                    elif mkey == "totals":
+                        for o in outcomes:
+                            if o.get("name") == "Over":
+                                total = o.get("point", "N/A")
+                break  # only one us_ex entry per event
+
+            line_dicts.append({
+                "Matchup": matchup,
+                "HomeML":  home_ml,
+                "AwayML":  away_ml,
+                "Spread":  spread,
+                "Total":   total,
+                "Book":    "NoVig",
+                "Sport":   sport,
+                "source":  "novig_odds_api",
+            })
+
+        if line_dicts:
+            with open(cache_path, "wb") as _f:
+                pickle.dump(line_dicts, _f)
+
+    except Exception as _e:
+        st.warning(
+            f"⚠️ NoVig: failed to fetch lines ({type(_e).__name__}: {_e}). "
+            "Check network or Odds API status."
+        )
+        return []
+
+    return line_dicts
+
 
 def fetch_superbook_direct(sport):
     """
