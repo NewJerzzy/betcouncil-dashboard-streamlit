@@ -427,132 +427,150 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         print(f"  [BOL] Page loaded, waiting 8s for line data...", file=sys.stderr)
         await asyncio.sleep(8)
 
-        # Build game URLs from lines we already scraped (GameId field)
-        # Only use games with AdditionalMarkets > 0 (confirmed to have props)
-        seen_ids = set()
-        game_links = []
-        for g in all_lines:
-            gid = g.get("GameId")
-            extra = g.get("AdditionalMarkets", 0)
-            if gid and extra > 0 and gid not in seen_ids:
-                seen_ids.add(gid)
-                game_links.append(
-                    f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{cfg['league']}/{gid}"
-                )
-
-        # Fallback: extract from page DOM if no lines with AdditionalMarkets
-        if not game_links:
-            raw = await page.evaluate("""
-                () => Array.from(document.querySelectorAll('a[href]'))
-                    .map(a => a.href)
-                    .filter(h => /\/sportsbook\/[a-z]+\/[a-z]+\/\d{8,}/.test(h))
-                    .slice(0, 6)
-            """)
-            game_links = raw
-
-        print(f"  [BOL] Found {len(game_links)} game links, navigating...", file=sys.stderr)
-
-        for i, link in enumerate(game_links[:4]):
+        # ── Strategy A: Dedicated props-league pages ──────────────────────────
+        # BetOnline exposes /sportsbook/baseball/mlb-player-props etc. that
+        # fire get-contests-by-contest-type2 automatically on page load — no
+        # tab clicking needed. PROP_LEAGUES is defined at module level.
+        prop_league_slugs = PROP_LEAGUES.get(sport.upper(), [])
+        print(f"  [BOL] Strategy A — {len(prop_league_slugs)} props-league pages", file=sys.stderr)
+        for _slug in prop_league_slugs:
+            _prop_url = f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{_slug}"
+            print(f"  [BOL]   → {_prop_url}", file=sys.stderr)
             try:
-                print(f"  [BOL] Game {i+1}/{min(4, len(game_links))}: {link}", file=sys.stderr)
-                await page.goto(link, wait_until="domcontentloaded", timeout=20000)
-                # ── Click the player-props / "All Wagers" tab ────────────────
-                # BetOnline is an Angular SPA — tabs are NOT always <button>.
-                # They can be <li>, <a>, <div>, or even <span> elements.
-                # Three escalating strategies so this survives DOM changes.
-
-                await asyncio.sleep(2)  # Let Angular render tabs
-                clicked = False
-
-                # Strategy 1: Playwright get_by_text — type-agnostic, most reliable
-                for label in ["All Wagers", "More Wagers", "Player Props",
-                               "Additional Markets", "All Markets", "Props"]:
+                await page.goto(_prop_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)
+                for _sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
+                             ".driver-popover-next-btn"]:
                     try:
-                        loc = page.get_by_text(label, exact=True).first
-                        if await loc.is_visible(timeout=2000):
-                            await loc.click()
-                            await asyncio.sleep(4)
-                            clicked = True
-                            print(f"    [BOL] Clicked '{label}' tab (get_by_text)", file=sys.stderr)
-                            break
+                        _btn = page.locator(_sel).first
+                        if await _btn.is_visible(timeout=1000):
+                            await _btn.click()
                     except Exception:
                         pass
+                await asyncio.sleep(4)
+            except Exception as _e:
+                print(f"    [BOL] Props-league error: {_e}", file=sys.stderr)
 
-                if not clicked:
-                    # Strategy 2: CSS selectors covering div/li/a/button/span
-                    # BetOnline game-page tabs commonly use non-button elements
-                    more_wagers_selectors = [
-                        "a:has-text('All Wagers')",
-                        "li:has-text('All Wagers')",
-                        "div:has-text('All Wagers')",
-                        "a:has-text('More Wagers')",
-                        "li:has-text('More Wagers')",
-                        "div:has-text('More Wagers')",
-                        "a:has-text('Player Props')",
-                        "li:has-text('Player Props')",
-                        "div:has-text('Player Props')",
-                        "button:has-text('All Wagers')",
-                        "button:has-text('Player Props')",
-                        "span:has-text('All Wagers')",
-                        "[class*='tab']:has-text('Wagers')",
-                        "[class*='tab']:has-text('Props')",
-                        "[class*='contest-type']",
-                        "[class*='market-type']",
-                        "[class*='wager-type']",
-                    ]
-                    for selector in more_wagers_selectors:
+        # ── Strategy B: Per-game navigation + tab click (fallback) ───────────
+        # Only runs if Strategy A yielded nothing.
+        if not all_props:
+            print(f"  [BOL] Strategy A yielded 0 props; falling back to per-game nav", file=sys.stderr)
+
+            seen_ids = set()
+            game_links = []
+            for g in all_lines:
+                gid = g.get("GameId")
+                extra = g.get("AdditionalMarkets", 0)
+                if gid and extra > 0 and gid not in seen_ids:
+                    seen_ids.add(gid)
+                    game_links.append(
+                        f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{cfg['league']}/{gid}"
+                    )
+
+            if not game_links:
+                raw = await page.evaluate("""
+                    () => Array.from(document.querySelectorAll('a[href]'))
+                        .map(a => a.href)
+                        .filter(h => /\/sportsbook\/[a-z]+\/[a-z]+\/\d{8,}/.test(h))
+                        .slice(0, 6)
+                """)
+                game_links = raw
+
+            print(f"  [BOL] Found {len(game_links)} game links, navigating...", file=sys.stderr)
+
+            for i, link in enumerate(game_links[:4]):
+                try:
+                    print(f"  [BOL] Game {i+1}/{min(4, len(game_links))}: {link}", file=sys.stderr)
+                    await page.goto(link, wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(2)
+                    clicked = False
+
+                    for label in ["All Wagers", "More Wagers", "Player Props",
+                                   "Additional Markets", "All Markets", "Props"]:
                         try:
-                            button = await page.wait_for_selector(selector, timeout=2000)
-                            if button and await button.is_visible():
-                                await button.click()
+                            loc = page.get_by_text(label, exact=True).first
+                            if await loc.is_visible(timeout=2000):
+                                await loc.click()
                                 await asyncio.sleep(4)
                                 clicked = True
-                                print(f"    [BOL] Clicked via CSS: {selector}", file=sys.stderr)
+                                print(f"    [BOL] Clicked '{label}' tab (get_by_text)", file=sys.stderr)
                                 break
                         except Exception:
-                            continue
+                            pass
 
-                if not clicked:
-                    # Strategy 3: JS evaluation — walk every leaf element, click first match
-                    result = await page.evaluate("""
-                        () => {
-                            const targets = [
-                                'All Wagers', 'More Wagers', 'Player Props',
-                                'Additional Markets', 'All Markets', 'Props'
-                            ];
-                            const all = [...document.querySelectorAll('*')];
-                            for (const txt of targets) {
-                                const el = all.find(e =>
-                                    e.children.length === 0 &&
-                                    e.textContent.trim() === txt &&
-                                    e.offsetParent !== null
-                                );
-                                if (el) { el.click(); return txt; }
+                    if not clicked:
+                        more_wagers_selectors = [
+                            "a:has-text('All Wagers')",
+                            "li:has-text('All Wagers')",
+                            "div:has-text('All Wagers')",
+                            "a:has-text('More Wagers')",
+                            "li:has-text('More Wagers')",
+                            "div:has-text('More Wagers')",
+                            "a:has-text('Player Props')",
+                            "li:has-text('Player Props')",
+                            "div:has-text('Player Props')",
+                            "button:has-text('All Wagers')",
+                            "button:has-text('Player Props')",
+                            "span:has-text('All Wagers')",
+                            "[class*='tab']:has-text('Wagers')",
+                            "[class*='tab']:has-text('Props')",
+                            "[class*='contest-type']",
+                            "[class*='market-type']",
+                            "[class*='wager-type']",
+                        ]
+                        for selector in more_wagers_selectors:
+                            try:
+                                button = await page.wait_for_selector(selector, timeout=2000)
+                                if button and await button.is_visible():
+                                    await button.click()
+                                    await asyncio.sleep(4)
+                                    clicked = True
+                                    print(f"    [BOL] Clicked via CSS: {selector}", file=sys.stderr)
+                                    break
+                            except Exception:
+                                continue
+
+                    if not clicked:
+                        result = await page.evaluate("""
+                            () => {
+                                const targets = [
+                                    'All Wagers', 'More Wagers', 'Player Props',
+                                    'Additional Markets', 'All Markets', 'Props'
+                                ];
+                                const all = [...document.querySelectorAll('*')];
+                                for (const txt of targets) {
+                                    const el = all.find(e =>
+                                        e.children.length === 0 &&
+                                        e.textContent.trim() === txt &&
+                                        e.offsetParent !== null
+                                    );
+                                    if (el) { el.click(); return txt; }
+                                }
+                                return null;
                             }
-                            return null;
-                        }
-                    """)
-                    if result:
-                        await asyncio.sleep(4)
-                        clicked = True
-                        print(f"    [BOL] JS-clicked '{result}'", file=sys.stderr)
+                        """)
+                        if result:
+                            await asyncio.sleep(4)
+                            clicked = True
+                            print(f"    [BOL] JS-clicked '{result}'", file=sys.stderr)
 
-                if not clicked:
-                    print(f"    [BOL] No wagers tab found on {link} — waiting for any props", file=sys.stderr)
+                    if not clicked:
+                        print(f"    [BOL] No wagers tab found on {link}", file=sys.stderr)
 
-                await asyncio.sleep(4)  # Wait for API response regardless
+                    await asyncio.sleep(4)
 
-                # Dismiss any popups
-                for sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
-                            ".driver-popover-next-btn"]:
-                    try:
-                        btn = page.locator(sel).first
-                        if await btn.is_visible(timeout=1000):
-                            await btn.click()
-                    except Exception:
-                        pass
-            except Exception as e:
-                print(f"    Error: {e}", file=sys.stderr)
+                    for sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
+                                ".driver-popover-next-btn"]:
+                        try:
+                            btn = page.locator(sel).first
+                            if await btn.is_visible(timeout=1000):
+                                await btn.click()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"    Error: {e}", file=sys.stderr)
+        else:
+            print(f"  [BOL] Strategy A captured {len(all_props)} props — skipping per-game nav", file=sys.stderr)
 
         print(f"  [BOL] Done. Props: {len(all_props)} Lines: {len(all_lines)}", file=sys.stderr)
         await browser.close()
