@@ -212,13 +212,26 @@ def _parse_name_prop(name: str) -> tuple:
 def parse_player_props(data: dict, sport: str) -> list:
     """Extract player props from get-contests-by-contest-type2 or get-contests."""
     props = []
+    # ── Try top-level ContestOfferings first, then bare top level ─────────────
     co = data.get("ContestOfferings", {})
+    if not co:
+        # Some responses omit the wrapper — treat the root dict as ContestOfferings
+        co = data if isinstance(data, dict) else {}
     if not co:
         return props
 
     contest_type = co.get("ContestType", "")
     contest_id   = co.get("ContestTypeID", 0)
     date_groups  = co.get("DateGroup", []) or []
+
+    if not date_groups:
+        # Alternate key spellings seen in the wild
+        date_groups = (
+            co.get("DateGroups") or
+            co.get("dateGroup") or
+            co.get("Games") or
+            []
+        )
 
     for dg in date_groups:
         date_str = dg.get("Date", "")
@@ -285,7 +298,7 @@ def parse_player_props(data: dict, sport: str) -> list:
             _c_desc  = _contest.get("Description", "") or _contest.get("Name", "")
             _c_type  = _contest.get("ContestType", contest_type)
             _c_tid   = _contest.get("ContestTypeID", contest_id)
-            _teams_m = re.search(r'[(w+)]s+(.+?)s+@s+(.+)', _c_desc, re.I)
+            _teams_m = re.search(r'\[(\w+)\]\s+(.+?)\s+@\s+(.+)', _c_desc, re.I)
             _sport_tag2 = _teams_m.group(1).upper() if _teams_m else sport
             _away_team2 = _teams_m.group(2).strip() if _teams_m else ""
             _home_team2 = _teams_m.group(3).strip() if _teams_m else ""
@@ -366,10 +379,29 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                     print(f"    Lines: +{len(lines)} games", file=sys.stderr)
 
             elif "get-contests-by-contest-type2" in url or "get-contests" in url:
+                # ── Diagnostic raw dump ─────────────────────────────────────
+                # Save the first captured contest response alongside the output
+                # so we can inspect the actual API structure on failed runs.
+                import os as _os
+                _raw_path = _os.path.join(
+                    _os.path.dirname(_os.path.abspath(__file__)), "bol_contest_raw.json"
+                )
+                if not _os.path.exists(_raw_path):
+                    try:
+                        import json as _json
+                        with open(_raw_path, "w") as _rf:
+                            _json.dump({"url": url, "data": data}, _rf, indent=2)
+                        print(f"    [BOL] Raw contest dump → {_raw_path}", file=sys.stderr)
+                    except Exception:
+                        pass
+                # ── Parse props ─────────────────────────────────────────────
                 props = parse_player_props(data, sport)
                 if props:
                     all_props.extend(props)
                     print(f"    Props: +{len(props)} from {url.split('/')[-1]}", file=sys.stderr)
+                else:
+                    top_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+                    print(f"    [BOL] parse_player_props returned empty — top-level keys: {top_keys}", file=sys.stderr)
 
         page.on("response", on_response)
 
@@ -405,7 +437,7 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
             if gid and extra > 0 and gid not in seen_ids:
                 seen_ids.add(gid)
                 game_links.append(
-                    f"https://www.betonline.ag/sportsbook/baseball/mlb/{gid}"
+                    f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{cfg['league']}/{gid}"
                 )
 
         # Fallback: extract from page DOM if no lines with AdditionalMarkets
