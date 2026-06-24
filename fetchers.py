@@ -4751,99 +4751,89 @@ def fetch_game_lines(sport):
         "CBJ":"Columbus","VGK":"Vegas Golden",
     }
 
-    # ── OddsAPI overlay — runs regardless of ESPN results ──
-    # Fills in ML/spread/total whenever ESPN returns "N/A"
-    # Also provides Circa/BetOnline/Pinnacle market data
-    # Budget guard: skip OddsAPI if key absent or monthly credits exhausted (≥498/500)
-    _use_odds_api = bool(ODDS_API_KEY)
-    if _use_odds_api:
-        try:
-            _oa_ok, _oa_msg = api_budget_check("ODDS_API")
-            if not _oa_ok:
-                _use_odds_api = False
-        except Exception:
-            pass  # api_budget_check unavailable — fall back to key-only guard
-    if _use_odds_api:
-        try:
-            odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
-            if odds_games:
-                odds_lookup = {g["Matchup"]: g for g in odds_games}
+    # ── SBR/OddsAPI overlay — SBR primary (no key needed), OddsAPI fallback ──
+    # fetch_odds_api_game_lines() tries SBR first; falls back to OddsAPI
+    # only when ODDS_API_KEY is set and api_budget_check("ODDS_API") passes.
+    try:
+        odds_games, odds_home, odds_away = fetch_odds_api_game_lines(sport)
+        if odds_games:
+            odds_lookup = {g["Matchup"]: g for g in odds_games}
 
-                for game in today_games:
-                    matchup = game.get("Matchup","")
-                    home1 = home_teams.get(matchup, "")
-                    away1 = away_teams.get(matchup, "")
-                    best_match = None
+            for game in today_games:
+                matchup = game.get("Matchup","")
+                home1 = home_teams.get(matchup, "")
+                away1 = away_teams.get(matchup, "")
+                best_match = None
 
-                    # Get both team abbrevs from matchup "AWAY @ HOME"
-                    esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
+                # Get both team abbrevs from matchup "AWAY @ HOME"
+                esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
 
-                    for odds_matchup, odds_game in odds_lookup.items():
-                        home2 = odds_home.get(odds_matchup, "").upper()
-                        away2 = odds_away.get(odds_matchup, "").upper()
-                        both  = home2 + " " + away2
+                for odds_matchup, odds_game in odds_lookup.items():
+                    home2 = odds_home.get(odds_matchup, "").upper()
+                    away2 = odds_away.get(odds_matchup, "").upper()
+                    both  = home2 + " " + away2
 
-                        matched = False
-                        for abbr in esp_parts:
-                            if not abbr or len(abbr) < 2:
-                                continue
-                            # Direct: abbrev appears in full team name
-                            if abbr in home2 or abbr in away2:
-                                matched = True; break
-                            # Fragment lookup: known mapping
-                            frag = TEAM_ABBREV_TO_FRAGMENT.get(abbr,"").upper()
-                            if frag and frag in both:
-                                matched = True; break
-                            # Fallback: first 3 chars of OddsAPI name in abbrev
-                            if len(home2) >= 3 and home2[:3] in abbr:
-                                matched = True; break
-                            if len(away2) >= 3 and away2[:3] in abbr:
-                                matched = True; break
+                    matched = False
+                    for abbr in esp_parts:
+                        if not abbr or len(abbr) < 2:
+                            continue
+                        # Direct: abbrev appears in full team name
+                        if abbr in home2 or abbr in away2:
+                            matched = True; break
+                        # Fragment lookup: known mapping
+                        frag = TEAM_ABBREV_TO_FRAGMENT.get(abbr,"").upper()
+                        if frag and frag in both:
+                            matched = True; break
+                        # Fallback: first 3 chars of SBR name vs ESPN abbrev
+                        if len(home2) >= 3 and home2[:3] in abbr:
+                            matched = True; break
+                        if len(away2) >= 3 and away2[:3] in abbr:
+                            matched = True; break
 
-                        if matched:
-                            best_match = odds_game
-                            break
-                    if best_match:
-                        # Always store OddsAPI data as backup fields
-                        game["OddsAPI ML Home"] = best_match.get("Home ML", "N/A")
-                        game["OddsAPI ML Away"] = best_match.get("Away ML", "N/A")
-                        game["OddsAPI Spread"]  = best_match.get("Spread", "N/A")
-                        game["OddsAPI Total"]   = best_match.get("Total", "N/A")
-                        game["OddsAPI Source"]  = best_match.get("Odds Source", "OddsAPI")
-                        # Bovada-compatible fields (for steam detection)
-                        game["Bovada ML Home"]  = best_match.get("Home ML", "N/A")
-                        game["Bovada ML Away"]  = best_match.get("Away ML", "N/A")
-                        game["Bovada Spread"]   = best_match.get("Spread", "N/A")
-                        game["Bovada Total"]    = best_match.get("Total", "N/A")
-                        # ── Fill in ESPN N/A gaps with OddsAPI data ──
-                        # Set both "Home ML" (ESPN key) and "HomeML" (analysis key)
-                        _oddsapi_home_ml = best_match.get("Home ML", "N/A")
-                        _oddsapi_away_ml = best_match.get("Away ML", "N/A")
-                        if game.get("Home ML") in ("N/A", None, ""):
-                            game["Home ML"] = _oddsapi_home_ml
-                        if game.get("Away ML") in ("N/A", None, ""):
-                            game["Away ML"] = _oddsapi_away_ml
-                        # Also set HomeML/AwayML (no space) for analyze_game_edge compatibility
-                        if game.get("HomeML","N/A") in ("N/A", None, ""):
-                            game["HomeML"] = game.get("Home ML", "N/A")
-                        if game.get("AwayML","N/A") in ("N/A", None, ""):
-                            game["AwayML"] = game.get("Away ML", "N/A")
-                        if game.get("Spread") in ("N/A", None, ""):
-                            game["Spread"] = best_match.get("Spread", "N/A")
-                        if game.get("Total") in ("N/A", None, ""):
-                            game["Total"] = best_match.get("Total", "N/A")
-                        # Mark which source filled the data
-                        if game.get("Odds Source") in ("ESPN", "N/A", ""):
-                            game["Odds Source"] = best_match.get("Odds Source", "OddsAPI")
-                # Add any OddsAPI games ESPN missed entirely
-                espn_matchups = {g.get("Matchup","").lower() for g in today_games}
-                for odds_game in odds_games:
-                    om = odds_game.get("Matchup","").lower()
-                    home_word = om.split(" @ ")[-1][:4] if " @ " in om else ""
-                    if not any(home_word in m for m in espn_matchups if home_word):
-                        today_games.append(odds_game)
-        except (ValueError, KeyError, TypeError, AttributeError):
-            pass
+                    if matched:
+                        best_match = odds_game
+                        break
+                if best_match:
+                    # Always store SBR/OddsAPI data as backup fields
+                    game["OddsAPI ML Home"] = best_match.get("Home ML", "N/A")
+                    game["OddsAPI ML Away"] = best_match.get("Away ML", "N/A")
+                    game["OddsAPI Spread"]  = best_match.get("Spread", "N/A")
+                    game["OddsAPI Total"]   = best_match.get("Total", "N/A")
+                    game["OddsAPI Source"]  = best_match.get("Odds Source", "SBR")
+                    # Bovada-compatible fields (for steam detection)
+                    game["Bovada ML Home"]  = best_match.get("Home ML", "N/A")
+                    game["Bovada ML Away"]  = best_match.get("Away ML", "N/A")
+                    game["Bovada Spread"]   = best_match.get("Spread", "N/A")
+                    game["Bovada Total"]    = best_match.get("Total", "N/A")
+                    # ── Fill in ESPN N/A gaps with SBR/OddsAPI data ──
+                    # Set both "Home ML" (ESPN key) and "HomeML" (analysis key)
+                    _sbr_home_ml = best_match.get("Home ML", "N/A")
+                    _sbr_away_ml = best_match.get("Away ML", "N/A")
+                    if game.get("Home ML") in ("N/A", None, ""):
+                        game["Home ML"] = _sbr_home_ml
+                    if game.get("Away ML") in ("N/A", None, ""):
+                        game["Away ML"] = _sbr_away_ml
+                    # Also set HomeML/AwayML (no space) for analyze_game_edge compatibility
+                    if game.get("HomeML","N/A") in ("N/A", None, ""):
+                        game["HomeML"] = game.get("Home ML", "N/A")
+                    if game.get("AwayML","N/A") in ("N/A", None, ""):
+                        game["AwayML"] = game.get("Away ML", "N/A")
+                    if game.get("Spread") in ("N/A", None, ""):
+                        game["Spread"] = best_match.get("Spread", "N/A")
+                    if game.get("Total") in ("N/A", None, ""):
+                        game["Total"] = best_match.get("Total", "N/A")
+                    # Mark which source filled the data
+                    if game.get("Odds Source") in ("ESPN", "N/A", ""):
+                        game["Odds Source"] = best_match.get("Odds Source", "SBR")
+            # Add any SBR/OddsAPI games ESPN missed entirely
+            espn_matchups = {g.get("Matchup","").lower() for g in today_games}
+            for odds_game in odds_games:
+                om = odds_game.get("Matchup","").lower()
+                home_word = om.split(" @ ")[-1][:4] if " @ " in om else ""
+                if not any(home_word in m for m in espn_matchups if home_word):
+                    today_games.append(odds_game)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        pass
 
     # ── BetOnline overlay — independent of ODDS_API_KEY ──
     # Fills any ML/spread/total still "N/A" after the ESPN+OddsAPI passes
@@ -4912,15 +4902,23 @@ def fetch_alt_lines(sport):
     """
     Fetch alternate spread lines from OddsAPI.
     Used to find playable lines when the standard spread has no edge.
-    
-    Example: PHI -1.5 (run line) → no edge
-             PHI -0.5 → APPROVED edge (adjusted for easier cover)
-             PHI +1.5 → ELITE edge (can lose by 1 and still win)
-    
+
+    Example: PHI -1.5 (run line) -> no edge
+             PHI -0.5 -> APPROVED edge (adjusted for easier cover)
+             PHI +1.5 -> ELITE edge (can lose by 1 and still win)
+
     Returns dict: {matchup: {team: [{line, home_odds, away_odds}]}}
+    SBR does not expose alternate lines; OddsAPI is the only source.
+    Silently returns {} when key is absent or budget is exhausted.
     """
     if not ODDS_API_KEY:
         return {}
+    try:
+        _ok, _ = api_budget_check("ODDS_API")
+        if not _ok:
+            return {}
+    except Exception:
+        pass  # budget check unavailable — proceed with key-only guard
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return {}
@@ -4974,7 +4972,230 @@ def fetch_alt_lines(sport):
     except (requests.RequestException, ValueError, KeyError):
         return {}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SportsbookReview (SBR) scraper
+# Provides consensus game lines (ML, spread, totals) with no API key via
+# __NEXT_DATA__ JSON embedded in each SBR page.  cloudscraper handles
+# Cloudflare bot-detection; falls back to curl_cffi or plain requests if
+# cloudscraper is not installed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SBR_BASE = "https://www.sportsbookreview.com/betting-odds"
+
+_SBR_SPORT_SLUG = {
+    "MLB":  "mlb-baseball",
+    "NBA":  "nba-basketball",
+    "NFL":  "nfl-football",
+    "NHL":  "nhl-hockey",
+    "WNBA": "wnba-basketball",
+}
+
+_SBR_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.sportsbookreview.com/",
+}
+
+# Sportsbooks ranked by reliability; first available value wins per field
+_SBR_BOOK_PRIORITY = [
+    "draftkings", "fanduel", "betmgm", "caesars", "bet365",
+    "pointsbet", "betrivers", "pinnacle", "bovada", "betonline",
+]
+
+
+def _sbr_parse_rows(html):
+    """Extract gameRows list from SBR __NEXT_DATA__ JSON. Returns [] on error."""
+    import re as _re, json as _json
+    m = _re.search(
+        r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+        html, _re.DOTALL
+    )
+    if not m:
+        return []
+    try:
+        data = _json.loads(m.group(1))
+        tables = data["props"]["pageProps"]["oddsTables"]
+        rows = []
+        for tbl in tables:
+            rows.extend(tbl.get("oddsTableModel", {}).get("gameRows", []))
+        return rows
+    except (KeyError, ValueError, TypeError):
+        return []
+
+
+def _sbr_pick(odds_views, field):
+    """Return currentLine[field] from the highest-priority available sportsbook."""
+    book_map = {ov.get("sportsbook", ""): ov for ov in odds_views}
+    for book in _SBR_BOOK_PRIORITY:
+        ov = book_map.get(book)
+        if ov:
+            val = ov.get("currentLine", {}).get(field)
+            if val is not None:
+                return val
+    for ov in odds_views:
+        val = ov.get("currentLine", {}).get(field)
+        if val is not None:
+            return val
+    return None
+
+
+def _sbr_fmt_ml(val):
+    """Format a raw SBR money-line integer as signed American odds string."""
+    if val is None:
+        return "N/A"
+    try:
+        v = int(val)
+        return f"+{v}" if v > 0 else str(v)
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def _sbr_make_scraper():
+    """Return a scraper session that bypasses Cloudflare bot detection.
+
+    Preference order: cloudscraper -> curl_cffi -> plain requests.
+    """
+    try:
+        import cloudscraper
+        return cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+    except ImportError:
+        pass
+    try:
+        from curl_cffi import requests as _cf
+
+        class _Wrap:
+            def get(self, url, **kw):
+                return _cf.get(url, impersonate="chrome124", **kw)
+        return _Wrap()
+    except ImportError:
+        pass
+    import requests as _r
+    return _r.Session()
+
+
+def _sbr_fetch_games(sport):
+    """Fetch today's game lines from SportsbookReview.com (no API key required).
+
+    Scrapes three SBR pages per sport:
+      - /betting-odds/{slug}/                       -> money-line (homeOdds/awayOdds)
+      - /betting-odds/{slug}/pointspread/full-game/ -> spread (homeSpread/awaySpread)
+      - /betting-odds/{slug}/totals/full-game/      -> total (total field)
+
+    Returns (games, home_teams, away_teams) in the same shape as
+    fetch_odds_api_game_lines().  Results cached 20 minutes.
+    """
+    slug = _SBR_SPORT_SLUG.get(sport)
+    if not slug:
+        return [], {}, {}
+
+    cache_path = os.path.join(CACHE_DIR, f"sbr_games_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    scraper = _sbr_make_scraper()
+
+    def _get(url):
+        try:
+            r = scraper.get(url, headers=_SBR_HEADERS, timeout=15)
+            if r.status_code == 200:
+                return _sbr_parse_rows(r.text)
+        except Exception:
+            pass
+        return []
+
+    base = f"{_SBR_BASE}/{slug}"
+    ml_rows  = _get(f"{base}/")
+    sp_rows  = _get(f"{base}/pointspread/full-game/")
+    tot_rows = _get(f"{base}/totals/full-game/")
+
+    if not ml_rows:
+        return [], {}, {}
+
+    # Index spread + total rows by gameId for O(1) lookup
+    sp_by_id  = {r["gameView"]["gameId"]: r for r in sp_rows  if r.get("gameView", {}).get("gameId")}
+    tot_by_id = {r["gameView"]["gameId"]: r for r in tot_rows if r.get("gameView", {}).get("gameId")}
+
+    games, home_teams, away_teams = [], {}, {}
+    today_str = date.today().strftime("%a %b %d")
+
+    for row in ml_rows:
+        gv         = row.get("gameView", {})
+        gid        = gv.get("gameId")
+        away_short = gv.get("awayTeam", {}).get("shortName", "")
+        home_short = gv.get("homeTeam", {}).get("shortName", "")
+        away_full  = gv.get("awayTeam", {}).get("fullName", away_short)
+        home_full  = gv.get("homeTeam", {}).get("fullName", home_short)
+        matchup    = f"{away_short} @ {home_short}"
+
+        # Money line (from ML page)
+        ov_ml   = row.get("oddsViews", [])
+        home_ml = _sbr_fmt_ml(_sbr_pick(ov_ml, "homeOdds"))
+        away_ml = _sbr_fmt_ml(_sbr_pick(ov_ml, "awayOdds"))
+
+        # Spread (from pointspread page)
+        spread = "N/A"
+        sp_row = sp_by_id.get(gid, {})
+        if sp_row:
+            home_sp = _sbr_pick(sp_row.get("oddsViews", []), "homeSpread")
+            if home_sp is not None:
+                try:
+                    spread = f"{home_short} {float(home_sp):+.1f}"
+                except (TypeError, ValueError):
+                    pass
+
+        # Total (from totals page)
+        total = "N/A"
+        tot_row = tot_by_id.get(gid, {})
+        if tot_row:
+            tot_val = _sbr_pick(tot_row.get("oddsViews", []), "total")
+            if tot_val is not None:
+                try:
+                    total = float(tot_val)
+                except (TypeError, ValueError):
+                    pass
+
+        home_teams[matchup] = home_full
+        away_teams[matchup] = away_full
+        games.append({
+            "Matchup":    matchup,
+            "Status":     "Scheduled",
+            "Spread":     spread,
+            "Total":      total,
+            "Home ML":    home_ml,
+            "Away ML":    away_ml,
+            "Odds Source": "SBR",
+            "Date":       today_str,
+            "Sport":      sport,
+        })
+
+    result = (games, home_teams, away_teams)
+    if games:
+        try:
+            with open(cache_path, "wb") as _f:
+                pickle.dump(result, _f)
+        except Exception:
+            pass
+    return result
+
+
 def fetch_odds_api_game_lines(sport):
+    # ── SBR primary (no API key required) ──
+    sbr_games, sbr_home, sbr_away = _sbr_fetch_games(sport)
+    if sbr_games:
+        return sbr_games, sbr_home, sbr_away
+
+    # ── OddsAPI fallback (requires key + remaining budget) ──
     if not ODDS_API_KEY:
         return [], {}, {}
     sport_key = ODDS_API_SPORT_MAP.get(sport)
@@ -6685,44 +6906,47 @@ fetch_betr_lines = fetch_betr_direct
 
 
 def fetch_novig_lines(sport):
-    """Fetch NoVig (Odds API book key: us_ex) game lines via The Odds API v4.
+    """Fetch no-vig reference lines for devig and sharp-line comparison.
 
-    NoVig is a no-vig odds comparison site; it appears as bookmaker key
-    "us_ex" on The Odds API.  Returns h2h / spreads / totals in a standard
-    game-line dict list (same shape as fetch_odds_api_game_lines output).
-    Results are cached for 20 minutes.
+    Primary source: SBR consensus (no API key required).
+    Fallback: OddsAPI bookmaker key "us_ex" (NoVig) when ODDS_API_KEY is set
+    and api_budget_check("ODDS_API") passes.
 
-    Early-exit guards:
-      - ODDS_API_KEY not set          -> st.warning + []
-      - sport not in ODDS_API_SPORT_MAP -> silent []
-      - HTTP 401 (bad key)            -> st.warning + []
-      - HTTP 422 (sport not carried)  -> st.warning + []
-      - other non-200                 -> st.warning + []
-      - network / parse error         -> st.warning + []
+    Returns list of dicts with keys: Matchup, HomeML, AwayML, Spread,
+    Total, Book, Sport, source.
     """
+    # ── SBR primary (no API key required) ──
+    sbr_games, _, _ = _sbr_fetch_games(sport)
+    if sbr_games:
+        return [
+            {
+                "Matchup": g["Matchup"],
+                "HomeML":  g.get("Home ML", "N/A"),
+                "AwayML":  g.get("Away ML", "N/A"),
+                "Spread":  g.get("Spread", "N/A"),
+                "Total":   g.get("Total", "N/A"),
+                "Book":    "SBR-Consensus",
+                "Sport":   sport,
+                "source":  "sbr_scrape",
+            }
+            for g in sbr_games
+        ]
+
+    # ── OddsAPI/NoVig fallback ──
     if not ODDS_API_KEY:
-        st.warning(
-            "⚠️ NoVig lines require an Odds API key. "
-            "Set the ODDS_API_KEY secret and reload."
-        )
         return []
+    try:
+        _ok, _ = api_budget_check("ODDS_API")
+        if not _ok:
+            return []
+    except Exception:
+        pass
 
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return []
 
     cache_path = os.path.join(CACHE_DIR, f"novig_lines_{sport}.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 20:
-            try:
-                with open(cache_path, "rb") as _f:
-                    cached = pickle.load(_f)
-                if cached:
-                    return cached
-            except Exception:
-                pass
-
     url = (
         f"{ODDS_API_BASE}/sports/{sport_key}/odds"
         f"?apiKey={ODDS_API_KEY}"

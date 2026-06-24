@@ -10,3 +10,4 @@ pytesseract
 Pillow
 # deploy-trigger: shin-devig-clv
 # rebuild: power-devig-kelly-brier
+cloudscraper
