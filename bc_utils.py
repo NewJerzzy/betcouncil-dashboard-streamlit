@@ -808,8 +808,15 @@ def detect_season_regime(sport="NBA"):
             desc   = "First month — small sample, base stats less reliable"
             adj    = {"base": -0.04, "defense": -0.03}
         elif month in (4, 5, 6):
-            # Verify games are actually scheduled before calling this Playoffs
-            if _espn_has_games_in_window("NBA", days=7):
+            today = date.today()
+            # Hard cutoff: after June 20 the NBA Finals are over regardless of
+            # whether ESPN shows any residual events.  This is faster (no network)
+            # and more reliable than a live schedule check.
+            if today >= date(today.year, 6, 20):
+                regime = "Off-season"
+                desc   = "NBA Finals complete (est. June 20) — current-season signals suppressed"
+                adj    = {"base": -0.06}
+            elif _espn_has_games_in_window("NBA", days=7):
                 regime = "Playoffs"
                 desc   = "Playoffs — defense weight increases, pace less predictive"
                 adj    = {"defense": 0.04, "pace": -0.02}

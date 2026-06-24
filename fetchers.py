@@ -6441,6 +6441,185 @@ def harvest_caesars_tokens(max_wait: int = 90) -> dict:
     return harvested
 
 
+
+def harvest_draftkings_tokens(max_wait: int = 90) -> dict:
+    """
+    Playwright-based DraftKings Authorization + x-api-key harvester.
+
+    WHY: fetch_draftkings_direct() hits sportsbook-nash.draftkings.com which
+    does not require auth for public odds, but the richer api.draftkings.com
+    endpoints (used for live props and personalised offers) require two
+    client-side headers injected after a real browser session:
+      - "authorization: Bearer <JWT>"
+      - "x-api-key: <key>"
+    This function automates extraction by launching a real Chromium session,
+    navigating to sportsbook.draftkings.com, and intercepting outgoing XHR
+    requests to api.draftkings.com to grab those headers.
+
+    HOW: Playwright page.on("request", ...) fires for every outgoing request.
+    Any request to api.draftkings.com is inspected; we capture the first
+    request that carries a Bearer token (len > 50) and an x-api-key value.
+
+    Automation masking applied (same pattern as harvest_caesars_tokens):
+      --disable-blink-features=AutomationControlled (launch arg)
+      navigator.webdriver = undefined               (add_init_script)
+      window.chrome, navigator.plugins, languages   (add_init_script)
+
+    Headless: defaults to headed (False) — DraftKings bot detection is more
+    reliable to bypass in headed mode.  Set env var DRAFTKINGS_HEADLESS=1 to
+    force headless.  Auto-falls back to headless=True if headed launch raises
+    (no $DISPLAY available).
+
+    Persists tokens in two places so callers can pick them up immediately:
+      1. Gist key "draftkings_tokens"
+             → {"bearer_jwt": "…", "api_key": "…", "captured_at": "…"}
+      2. CACHE_DIR/draftkings_session_token.txt
+             → bearer_jwt on line 1, api_key on line 2
+
+    Returns the harvested dict on success, {} on any failure (errors are
+    logged via log_error_to_session, never raised).
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as _PWTimeout
+    except ImportError:
+        log_error_to_session(
+            "harvest_draftkings_tokens",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return {}
+
+    harvested: dict = {}
+    _stop = {"done": False}
+
+    def _on_request(request):
+        """Intercept every outgoing request; grab auth headers from DraftKings API calls."""
+        if _stop["done"]:
+            return
+        if "api.draftkings.com" not in request.url:
+            return
+        try:
+            hdrs = request.all_headers()
+        except Exception:
+            return
+        auth = hdrs.get("authorization", "")
+        api_key = hdrs.get("x-api-key", "")
+        # Real JWTs are several hundred characters; reject stubs / basic auth
+        if not auth.startswith("Bearer ") or len(auth) < 60:
+            return
+        harvested["bearer_jwt"]  = auth[len("Bearer "):]
+        harvested["api_key"]     = api_key
+        harvested["captured_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        _stop["done"] = True
+
+    try:
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("DRAFTKINGS_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                # No display available (e.g. Streamlit Cloud) — fall back to headless
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 720},
+            )
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = ctx.new_page()
+            page.on("request", _on_request)
+
+            # Navigate to the DraftKings sportsbook home page.
+            # networkidle can time out on heavy JS bundles — that's fine; our
+            # request listener will have fired well before the page is fully idle.
+            try:
+                page.goto(
+                    "https://sportsbook.draftkings.com",
+                    wait_until="networkidle",
+                    timeout=60_000,
+                )
+            except _PWTimeout:
+                pass
+            except Exception:
+                pass
+
+            # Poll until a valid token arrives or max_wait elapses
+            deadline = time.time() + max_wait
+            while not _stop["done"] and time.time() < deadline:
+                time.sleep(1)
+
+            ctx.close()
+            browser.close()
+
+    except Exception as _e:
+        log_error_to_session("harvest_draftkings_tokens", str(_e)[:150], "warning")
+        return {}
+
+    if not harvested.get("bearer_jwt"):
+        log_error_to_session(
+            "harvest_draftkings_tokens",
+            f"No Bearer token captured after {max_wait}s — "
+            "confirm a DraftKings account is logged in at sportsbook.draftkings.com "
+            "on the machine running Playwright",
+            "warning",
+        )
+        return {}
+
+    # ── Persist to Gist ──────────────────────────────────────────────────────
+    # File is named "draftkings_tokens.json"; content is the JSON-serialised dict.
+    # load_from_gist("draftkings_tokens", None) in app.py parses this back to a
+    # dict — that's the shape fetch_draftkings_direct() reads from the Gist.
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        try:
+            _http.patch(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={
+                    "Authorization": f"token {GITHUB_TOKEN}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+                json={"files": {"draftkings_tokens.json": {"content": json.dumps(harvested, indent=2)}}},
+                timeout=10,
+            )
+        except Exception as _ge:
+            log_error_to_session(
+                "harvest_draftkings_tokens",
+                f"Gist write failed: {str(_ge)[:80]}",
+                "warning",
+            )
+
+    # ── Local file cache ─────────────────────────────────────────────────────
+    try:
+        dk_cache = os.path.join(CACHE_DIR, "draftkings_session_token.txt")
+        with open(dk_cache, "w") as _f:
+            _f.write(harvested["bearer_jwt"])
+            if harvested.get("api_key"):
+                _f.write("\n" + harvested["api_key"])
+    except (IOError, OSError):
+        pass
+
+    return harvested
+
+
 def fetch_caesars_direct(sport):
     """Fetch Caesars props directly via api.americanwagering.com.
 
