@@ -7,6 +7,31 @@ import os, time, pickle, json, re
 from datetime import date, datetime, timedelta
 import requests
 import streamlit as st
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry as _Retry
+
+def _make_retry_session() -> requests.Session:
+    """Shared requests.Session with automatic retry.
+    Retries up to 2 times with 1-second exponential backoff on transient
+    server errors (429, 500, 502, 503, 504) and connection failures.
+    Does NOT retry on 4xx client errors (auth, not-found, etc.)."""
+    _s = requests.Session()
+    _r = _Retry(
+        total=2,
+        backoff_factor=1.0,
+        status_forcelist=[429, 500, 502, 503, 504],
+        raise_on_status=False,
+        allowed_methods=False,   # retry any HTTP verb
+    )
+    _s.mount("https://", HTTPAdapter(max_retries=_r))
+    _s.mount("http://",  HTTPAdapter(max_retries=_r))
+    return _s
+
+# Module-level retry session — shared across all fetchers.
+# requests.Session is thread-safe for concurrent reads (connection pool is
+# protected internally), so this is safe inside ThreadPoolExecutor workers.
+_http = _make_retry_session()
+
 
 try:
     from config import (
@@ -75,11 +100,11 @@ def fetch_kalshi_markets(sport="NBA"):
         try:
             url = f"https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker={series_ticker}&limit=50&status=open"
             # Try direct first — Kalshi is less protected than Covers
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
+            r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
             if r.status_code != 200 and SCRAPERAPI_KEY:
                 # Use ScraperAPI (free 1k/mo) not ScrapeOps for Kalshi
                 from urllib.parse import quote as _q
-                r = requests.get(
+                r = _http.get(
                     f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={_q(url,safe='')}",
                     timeout=15
                 )
@@ -132,10 +157,10 @@ def fetch_polymarket_markets(sport="NBA"):
     
     try:
         url = f"https://gamma-api.polymarket.com/markets?active=true&tag={tag}&limit=50&order=volume&ascending=false"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
         if r.status_code != 200:
             url2 = f"https://gamma-api.polymarket.com/markets?active=true&limit=50&tag=sports"
-            r = requests.get(url2, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            r = _http.get(url2, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
             return load_json_data(POLYMARKET_PATH, [])
         
@@ -210,7 +235,7 @@ def fetch_covers_consensus(sport="MLB"):
             "Authorization": f"Bearer {FIRECRAWL_KEY}",
             "Content-Type": "application/json",
         }
-        r = requests.post(url, json=payload, headers=headers, timeout=30)
+        r = _http.post(url, json=payload, headers=headers, timeout=30)
         if r.status_code != 200:
             return load_json_data(COVERS_PATH, [])
 
@@ -304,7 +329,7 @@ def fetch_golf_leaderboard():
     """
     try:
         url = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
             return []
         data = r.json()
@@ -367,7 +392,7 @@ def fetch_golf_odds(tournament_key="default"):
             "oddsFormat":  "american",
             "bookmakers":  "draftkings,fanduel,betmgm,pinnacle",
         }
-        r = requests.get(url, params=params, timeout=10)
+        r = _http.get(url, params=params, timeout=10)
         if r.status_code != 200:
             return {}
         events = r.json()
@@ -467,7 +492,7 @@ def fetch_bovada_lines(sport="NBA"):
     url = f"{BOVADA_BASE}/{sport_path}"
 
     try:
-        r = requests.get(
+        r = _http.get(
             url,
             headers=BOVADA_HEADERS,
             params={"lang": "en", "eventsLimit": 50, "preMatchOnly": "true"},
@@ -591,7 +616,7 @@ def _fetch_betonline_one_league(sport_path, league_path, sport):
     }
 
     try:
-        r = requests.post(BETONLINE_BASE, headers=BETONLINE_HEADERS, json=payload, timeout=12)
+        r = _http.post(BETONLINE_BASE, headers=BETONLINE_HEADERS, json=payload, timeout=12)
         if r.status_code != 200:
             return []
 
@@ -764,7 +789,7 @@ def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
     }
 
     try:
-        r = requests.post(BETONLINE_PROP_PRICE_URL, headers=headers, json=payload, timeout=10)
+        r = _http.post(BETONLINE_PROP_PRICE_URL, headers=headers, json=payload, timeout=10)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -791,7 +816,7 @@ def fetch_auto_scraped_props(sport="NBA"):
             log_error_to_session("fetch_auto_scraped_props", "GitHub credentials not configured", "warning")
             return []
 
-        r = requests.get(
+        r = _http.get(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
             headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"},
             timeout=10
@@ -813,7 +838,7 @@ def fetch_auto_scraped_props(sport="NBA"):
         if file_size > 900000:
             raw_url = file_obj.get("raw_url", "")
             if raw_url:
-                r_raw = requests.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=15)
+                r_raw = _http.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=15)
                 if r_raw.status_code == 200:
                     gist_content = r_raw.json()
                 else:
@@ -866,7 +891,7 @@ def fetch_ev_api_live():
     """
     url = "https://api-production-3a3b.up.railway.app/api/ev"
     try:
-        r = requests.get(url, timeout=15)
+        r = _http.get(url, timeout=15)
         if r.status_code == 200:
             return r.json()
         log_error_to_session("fetch_ev_api_live", f"EV API returned {r.status_code}", "warning")
@@ -898,7 +923,7 @@ def fetch_ev_movement(sport="mlb"):
 
     url = "https://api-production-3a3b.up.railway.app/api/movement"
     try:
-        r = requests.get(
+        r = _http.get(
             url,
             headers=_ev_auth_headers(),
             params={"sport": sport.lower()},
@@ -1280,13 +1305,13 @@ def _fetch_nws_weather(city):
         lat, lon = coords
         # NWS points endpoint
         points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
-        r1 = requests.get(points_url, headers={"User-Agent": "BetCouncil/1.0"}, timeout=8)
+        r1 = _http.get(points_url, headers={"User-Agent": "BetCouncil/1.0"}, timeout=8)
         if r1.status_code != 200:
             return None
         forecast_url = r1.json().get("properties", {}).get("forecastHourly")
         if not forecast_url:
             return None
-        r2 = requests.get(forecast_url, headers={"User-Agent": "BetCouncil/1.0"}, timeout=8)
+        r2 = _http.get(forecast_url, headers={"User-Agent": "BetCouncil/1.0"}, timeout=8)
         if r2.status_code != 200:
             return None
         periods = r2.json().get("properties", {}).get("periods", [])
@@ -1325,7 +1350,7 @@ def fetch_weather_for_game(city, is_outdoor=True):
     # Tier 1: wttr.in
     try:
         url = f"https://wttr.in/{city.replace(' ', '+')}?format=j1"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp = _http.get(url, headers=HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             current = data.get("current_condition", [{}])[0]
@@ -1361,7 +1386,7 @@ def fetch_fantasylabs_lineups(sport="MLB"):
     m, d, y = today.month, today.day, today.year
     url = f"https://d3ttxfuywgi7br.cloudfront.net/fantasy/{sport_slug}/lineups/{m}_{d}_{y}/default.json"
     try:
-        r = requests.get(url, headers=FL_HEADERS, timeout=10)
+        r = _http.get(url, headers=FL_HEADERS, timeout=10)
         if r.status_code != 200:
             return load_json_data(FANTASYLABS_PATH, {})
         data = r.json()
@@ -1404,7 +1429,7 @@ def fetch_mlb_probable_pitchers():
     url = f"https://statsapi.mlb.com/api/v1/schedule?date={today_str}&sportId=1&hydrate=probablePitcher,team"
     pitchers = {}
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
         for date_data in resp.json().get("dates", []):
@@ -1452,7 +1477,7 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
     for season_type in _season_types:
         url = f"https://stats.nba.com/stats/teamgamelogs?Season=2025-26&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=8)
+            resp = _http.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -1488,7 +1513,7 @@ def fetch_espn_fpi_ratings(sport="NBA"):
         return {}
     url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/teams?limit=50"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
             return {}
         data = resp.json()
@@ -1537,7 +1562,7 @@ def fetch_todays_referees(sport):
     try:
         today_str = date.today().strftime("%Y%m%d")
         url = f"https://site.web.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
         for event in resp.json().get("events", []):
@@ -1611,7 +1636,7 @@ def fetch_nba_rolling_averages():
     rolling = {}
     for url in urls:
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=8)
+            resp = _http.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -1681,7 +1706,7 @@ def fetch_wnba_rolling_averages():
     rolling = {}
     for url in urls:
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=15)
+            resp = _http.get(url, headers=nba_headers, timeout=15)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -1741,7 +1766,7 @@ def fetch_wnba_player_season_avg(player_name):
             "x-nba-stats-origin": "stats",
             "x-nba-stats-token": "true",
         }
-        r = requests.get(url, headers=hdrs, timeout=12)
+        r = _http.get(url, headers=hdrs, timeout=12)
         if r.status_code != 200:
             return None
         rs = r.json().get("resultSets", [{}])[0]
@@ -1799,7 +1824,7 @@ def fetch_mlb_full_roster_ids(force_refresh=False):
         for team_id in MLB_TEAM_IDS:
             url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=active&season=2025"
             try:
-                resp = requests.get(url, headers=HEADERS, timeout=8)
+                resp = _http.get(url, headers=HEADERS, timeout=8)
                 if resp.status_code != 200:
                     continue
                 for p in resp.json().get("roster", []):
@@ -1823,7 +1848,7 @@ def fetch_nhl_rolling_averages():
     for player_name, player_id in NHL_PLAYER_IDS.items():
         url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -1875,7 +1900,7 @@ def fetch_nba_team_defense():
     for season_type in seasons:
         url = f"https://stats.nba.com/stats/leaguedashteamstats?Season=2025-26&SeasonType={season_type}&MeasureType=Defense&PerMode=PerGame"
         try:
-            resp = requests.get(url, headers=nba_headers, timeout=8)
+            resp = _http.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -1923,7 +1948,7 @@ def fetch_nfl_rolling_averages():
         sport_path = "football/leagues/nfl"
         url = f"{ESPN_CORE_BASE}/sports/{sport_path}/seasons/{season}/athletes/{athlete_id}/eventlog?limit=10"
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
+            resp = _http.get(url, headers=HEADERS, timeout=15)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -1933,7 +1958,7 @@ def fetch_nfl_rolling_averages():
                 if not stats_ref:
                     continue
                 try:
-                    stats_resp = requests.get(stats_ref, headers=HEADERS, timeout=10)
+                    stats_resp = _http.get(stats_ref, headers=HEADERS, timeout=10)
                     if stats_resp.status_code != 200:
                         continue
                     stats_data = stats_resp.json()
@@ -2339,7 +2364,7 @@ def fetch_espn_fpi(sport="NFL"):
     try:
         from bs4 import BeautifulSoup
         url = f"https://www.espn.com/{sport_path}/fpi/_/view"
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
             return {}
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -2406,7 +2431,7 @@ def fetch_parlaysavant_props(sport="mlb", position="batter", prop="hits"):
         from bs4 import BeautifulSoup
         url = (f"https://www.parlaysavant.com/props"
                f"?sport={sport}&position={position}&prop={prop}")
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
             return {}
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -2770,7 +2795,7 @@ def fetch_soccer_team_goals(league_key: str = "eng.1") -> dict:
             except Exception:
                 pass
     try:
-        teams_r = requests.get(
+        teams_r = _http.get(
             f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_key}/teams?limit=30",
             headers=HEADERS, timeout=10,
         )
@@ -2791,7 +2816,7 @@ def fetch_soccer_team_goals(league_key: str = "eng.1") -> dict:
         if not name or not tid:
             continue
         try:
-            sr = requests.get(
+            sr = _http.get(
                 f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_key}"
                 f"/teams/{tid}/statistics",
                 headers=HEADERS, timeout=8,
@@ -2832,7 +2857,7 @@ def fetch_ufc_fight_card() -> list:
     Cached 1 hour.
     """
     try:
-        r = requests.get(
+        r = _http.get(
             "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard",
             headers=HEADERS, timeout=10,
         )
@@ -2969,7 +2994,7 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
     try:
-        r = requests.get(
+        r = _http.get(
             "https://api.balldontlie.io/v1/players",
             headers={"Authorization": BDL_API_KEY},
             params={"search": player_name, "per_page": 3},
@@ -2981,7 +3006,7 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
         if not players:
             return None
         pid = players[0]["id"]
-        r2 = requests.get(
+        r2 = _http.get(
             "https://api.balldontlie.io/v1/season_averages",
             headers={"Authorization": BDL_API_KEY},
             params={"season": season, "player_ids[]": pid},
@@ -3027,7 +3052,7 @@ def fetch_nba_averages_bdl():
     url = f"https://api.balldontlie.io/v1/season_averages?season=2025&{params}"
     headers = {"Authorization": BDL_API_KEY}
     try:
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = _http.get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return {}
         data = resp.json().get("data", [])
@@ -3082,10 +3107,10 @@ def fetch_underdog_props(sport):
     url = url_v1
     try:
         ud_headers = {**HEADERS, "Origin": "https://underdogfantasy.com", "Referer": "https://underdogfantasy.com/pick-em"}
-        resp = requests.get(url, headers=ud_headers, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, headers=ud_headers, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 400 or resp.status_code == 403:
             # Fall back to v2
-            resp = requests.get(url_v2, headers=ud_headers, timeout=REQUEST_TIMEOUT)
+            resp = _http.get(url_v2, headers=ud_headers, timeout=REQUEST_TIMEOUT)
             url = url_v2
         if resp.status_code != 200:
             return []
@@ -3366,7 +3391,7 @@ def scrape_prizepicks(sport):
                             f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}"
                             f"&url={_q(url, safe='')}&residential=true"
                         )
-                        resp = requests.get(_so_url, headers=pp_headers, timeout=20)
+                        resp = _http.get(_so_url, headers=pp_headers, timeout=20)
                         if resp.status_code == 200:
                             # Check for captcha response (returns HTML not JSON)
                             content_type = resp.headers.get("content-type", "")
@@ -3454,7 +3479,7 @@ def fetch_underdog_injuries(sport):
         return {}
     url = f"https://api.underdogfantasy.com/v2/news_items?sport_id={sport_id}"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
         injuries = {}
@@ -3504,7 +3529,7 @@ def fetch_espn_injuries(sport):
         return []
     try:
         url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/injuries"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
             return []
         data = r.json()
@@ -3563,7 +3588,7 @@ def fetch_espn_depth_charts(sport):
     try:
         # First get team list
         teams_url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/teams?limit=50"
-        r = requests.get(teams_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = _http.get(teams_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
             return {}
         teams = r.json().get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", [])
@@ -3577,7 +3602,7 @@ def fetch_espn_depth_charts(sport):
                 continue
             try:
                 dc_url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/teams/{team_id}/depthcharts"
-                rd = requests.get(dc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+                rd = _http.get(dc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
                 if rd.status_code != 200:
                     continue
                 dc_data = rd.json()
@@ -3628,7 +3653,7 @@ def fetch_cbs_injuries(sport):
         }
         for url in urls:
             try:
-                r = requests.get(url, headers=headers, timeout=8)
+                r = _http.get(url, headers=headers, timeout=8)
                 if r.status_code != 200:
                     continue
                 import xml.etree.ElementTree as ET
@@ -3695,7 +3720,7 @@ def fetch_rotowire_injuries(sport):
             "Accept": "application/rss+xml, application/xml, text/xml, */*",
         }
         # Direct request — RotoWire blocks proxies too, so no point routing through proxy
-        r = requests.get(url, headers=headers, timeout=10)
+        r = _http.get(url, headers=headers, timeout=10)
         if r.status_code != 200:
             return []
 
@@ -3759,7 +3784,7 @@ def fetch_rotowire_injuries(sport):
     else:
         url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/news"
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             if resp.status_code != 200:
                 injuries = {}
             else:
@@ -3802,7 +3827,7 @@ def fetch_public_betting(sport):
         "Referer": "https://www.actionnetwork.com/",
     }
     try:
-        resp = requests.get(url, headers=an_headers, timeout=15)
+        resp = _http.get(url, headers=an_headers, timeout=15)
         api_budget_increment("ACTION_NETWORK")
         if resp.status_code != 200:
             return {}
@@ -3976,7 +4001,7 @@ def fetch_game_lines(sport):
         date_str = target_date.strftime("%Y%m%d")
         url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
                 events = data.get("events", [])
@@ -4260,7 +4285,7 @@ def fetch_alt_lines(sport):
                f"&markets=alternate_spreads"
                f"&oddsFormat=american"
                f"&bookmakers=draftkings,fanduel,betmgm")
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDS_API")
         if resp.status_code != 200:
             return {}
@@ -4313,7 +4338,7 @@ def fetch_odds_api_game_lines(sport):
                 return pickle.load(f)
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDS_API")
         if resp.status_code != 200:
             return [], {}, {}
@@ -4498,7 +4523,7 @@ def fetch_parlayapi_props(sport):
         "player_rec_yds": "Receiving Yards", "player_receptions": "Receptions",
     }
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"{PARLAY_API_BASE}/sports/{sport_key}/props",
             headers={"X-API-Key": PARLAY_API_KEY},
             params={"bookmakers": "parlayplay,prizepicks,underdog", "dfsOdds": "midpoint"},
@@ -4561,7 +4586,7 @@ def fetch_parlayapi_arbitrage(sport):
     if not sport_key:
         return []
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"{PARLAY_API_BASE}/sports/{sport_key}/arbitrage",
             headers={"X-API-Key": PARLAY_API_KEY},
             params={"limit": 20},
@@ -4585,7 +4610,7 @@ def fetch_parlayapi_ev(sport):
     if not sport_key:
         return []
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"{PARLAY_API_BASE}/sports/{sport_key}/ev",
             headers={"X-API-Key": PARLAY_API_KEY},
             timeout=15
@@ -4611,7 +4636,7 @@ def fetch_espn_game_ids(sport):
     try:
         today_str = date.today().strftime("%Y%m%d")
         url = f"https://site.web.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
         for event in resp.json().get("events", []):
@@ -4646,7 +4671,7 @@ def fetch_espn_line_movement(sport, event_id):
     # Get game summary which includes odds/lines history
     url = f"https://site.web.api.espn.com/apis/site/v2/sports/{espn_sport}/{espn_league}/summary?event={event_id}&region=us&lang=en&contentorigin=espn"
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
+        resp = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=10)
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -4686,7 +4711,7 @@ def fetch_espn_predictor(sport, event_id):
         return {}
     url = f"{ESPN_CORE_BASE}/sports/{sport_path}/events/{event_id}/competitions/{event_id}/predictor"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return {}
         data = resp.json()
@@ -4715,7 +4740,7 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     season = 2025
     url = f"{ESPN_CORE_BASE}/sports/{sport_path}/seasons/{season}/athletes/{athlete_id}/eventlog?limit={n_games}"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -4725,7 +4750,7 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
             if not stats_ref:
                 continue
             try:
-                stats_resp = requests.get(stats_ref, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+                stats_resp = _http.get(stats_ref, headers=HEADERS, timeout=REQUEST_TIMEOUT)
                 if stats_resp.status_code != 200:
                     continue
                 stats_data = stats_resp.json()
@@ -4765,7 +4790,7 @@ def fetch_player_id_bdl(player_name):
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
     try:
-        r = requests.get(
+        r = _http.get(
             f"https://api.balldontlie.io/v1/players",
             headers={"Authorization": BDL_API_KEY},
             params={"search": player_name, "per_page": 5},
@@ -4802,7 +4827,7 @@ def fetch_player_game_logs(player_name, season=2025, last_n=15):
         return []
 
     try:
-        r = requests.get(
+        r = _http.get(
             f"https://api.balldontlie.io/v1/stats",
             headers={"Authorization": BDL_API_KEY},
             params={
@@ -4858,7 +4883,7 @@ def fetch_dk_nba_draftgroup_id():
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
     try:
-        r = requests.get(
+        r = _http.get(
             "https://www.draftkings.com/lobby/getcontests?sport=NBA",
             headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
             timeout=10
@@ -4911,7 +4936,7 @@ def fetch_sleeper_props(sport):
     try:
         # Sleeper projections endpoint
         url = f"https://api.sleeper.app/projections/{sport_key}/2025/1?season_type=regular&position[]=FLEX&position[]=QB&position[]=RB&position[]=WR&position[]=TE&position[]=K"
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = _http.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return []
 
@@ -4973,7 +4998,7 @@ def fetch_mlb_confirmed_lineups():
     try:
         today_str = date.today().strftime("%Y-%m-%d")
         schedule_url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}&hydrate=lineups,probablePitcher"
-        r = requests.get(schedule_url, timeout=10)
+        r = _http.get(schedule_url, timeout=10)
         if r.status_code != 200:
             return {}
         games = r.json().get("dates", [{}])[0].get("games", [])
@@ -4985,7 +5010,7 @@ def fetch_mlb_confirmed_lineups():
             # Get lineups from game feed
             feed_url = f"https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live?fields=gameData,liveData,boxscore,teams,batters,battingOrder,players,fullName,currentTeam,abbreviation"
             try:
-                rf = requests.get(feed_url, timeout=8)
+                rf = _http.get(feed_url, timeout=8)
                 if rf.status_code != 200:
                     continue
                 feed = rf.json()
@@ -5877,7 +5902,7 @@ def fetch_novig_lines(sport):
     )
     line_dicts = []
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _http.get(url, headers=HEADERS, timeout=15)
         if resp.status_code == 401:
             st.warning(
                 "⚠️ NoVig (Odds API): invalid API key — "
@@ -6100,7 +6125,7 @@ def fetch_nfl_practice_participation():
     """
     try:
         url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
             return {}
         data = r.json()
@@ -6173,7 +6198,7 @@ def fetch_atsstats_mlb_matchups():
                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        resp = requests.get("https://www.atsstats.com/free-mlb-stats/", headers=headers, timeout=12)
+        resp = _http.get("https://www.atsstats.com/free-mlb-stats/", headers=headers, timeout=12)
         if resp.status_code != 200:
             return {}
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -6332,7 +6357,7 @@ def fetch_atsstats_nba_matchups():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
-        resp = requests.get("https://www.atsstats.com/free-nba-stats/", headers=headers, timeout=12)
+        resp = _http.get("https://www.atsstats.com/free-nba-stats/", headers=headers, timeout=12)
         if resp.status_code != 200:
             return {}
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -6445,7 +6470,7 @@ def fetch_atsstats_nhl_matchups():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
-        resp = requests.get("https://www.atsstats.com/free-nhl-stats/", headers=headers, timeout=12)
+        resp = _http.get("https://www.atsstats.com/free-nhl-stats/", headers=headers, timeout=12)
         if resp.status_code != 200:
             return {}
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -6559,7 +6584,7 @@ def fetch_atsstats_nfl_matchups():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
-        resp = requests.get("https://www.atsstats.com/free-nfl-stats/", headers=headers, timeout=12)
+        resp = _http.get("https://www.atsstats.com/free-nfl-stats/", headers=headers, timeout=12)
         if resp.status_code != 200:
             return {}
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -6653,7 +6678,7 @@ def fetch_nfl_defensive_ratings() -> dict:
     if date.today().month < 9:
         season -= 1
     try:
-        r = requests.get(
+        r = _http.get(
             f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&season={season}",
             headers=HEADERS, timeout=12,
         )
@@ -6675,7 +6700,7 @@ def fetch_nfl_defensive_ratings() -> dict:
         if not abbr or not tid:
             continue
         try:
-            sr = requests.get(
+            sr = _http.get(
                 f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
                 f"/teams/{tid}/statistics?season={season}",
                 headers=HEADERS, timeout=8,
@@ -6730,7 +6755,7 @@ def fetch_nfl_team_scoring_stats() -> dict:
     if date.today().month < 9:
         season -= 1
     try:
-        r = requests.get(
+        r = _http.get(
             f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&season={season}",
             headers=HEADERS, timeout=12,
         )
@@ -6751,7 +6776,7 @@ def fetch_nfl_team_scoring_stats() -> dict:
         if not abbr or not tid:
             continue
         try:
-            sr = requests.get(
+            sr = _http.get(
                 f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
                 f"/teams/{tid}/statistics?season={season}",
                 headers=HEADERS, timeout=8,
@@ -6798,7 +6823,7 @@ def fetch_mlb_team_run_stats() -> dict:
                 pass
     season = date.today().year
     try:
-        teams_r = requests.get(
+        teams_r = _http.get(
             f"https://statsapi.mlb.com/api/v1/teams?sportId=1&season={season}",
             headers=HEADERS, timeout=10,
         )
@@ -6818,7 +6843,7 @@ def fetch_mlb_team_run_stats() -> dict:
         try:
             rs_pg = ra_pg = None
             # Runs scored
-            hr = requests.get(
+            hr = _http.get(
                 f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
                 f"?stats=season&group=hitting&season={season}&gameType=R",
                 headers=HEADERS, timeout=8,
@@ -6831,7 +6856,7 @@ def fetch_mlb_team_run_stats() -> dict:
                     games  = s.get("gamesPlayed", 1) or 1
                     rs_pg  = round(float(runs) / float(games), 3)
             # Runs allowed
-            pr = requests.get(
+            pr = _http.get(
                 f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
                 f"?stats=season&group=pitching&season={season}&gameType=R",
                 headers=HEADERS, timeout=8,
@@ -6869,7 +6894,7 @@ def fetch_nfl_inactives():
     try:
         today_str = date.today().strftime("%Y%m%d")
         url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={today_str}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
             return {}
         events = r.json().get("events", [])
@@ -6914,7 +6939,7 @@ def fetch_nhl_starting_goalies():
         today_str = date.today().strftime("%Y-%m-%d")
         # NHL schedule with goalie info
         url = f"https://api-web.nhle.com/v1/schedule/{today_str}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 BetCouncil/1.0"}, timeout=10)
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0 BetCouncil/1.0"}, timeout=10)
         if r.status_code != 200:
             return {}
 
@@ -6955,7 +6980,7 @@ def fetch_nhl_starting_goalies():
             for team_abbr, gdata in goalies.items():
                 try:
                     gc_url = f"https://api-web.nhle.com/v1/gamecenter/{gdata['game_id']}/landing"
-                    rg = requests.get(gc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+                    rg = _http.get(gc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
                     if rg.status_code == 200:
                         gc = rg.json()
                         side = "homeTeam" if gdata["home"] else "awayTeam"
