@@ -4390,6 +4390,63 @@ def scrape_prizepicks(sport):
         "x-device-id": _device_id,
         "x-device-info": _device_info,
     }
+    # ── _normalize_pp_gist — shared by Gist-first, chrome110 parse, and bottom fallback ──
+    def _normalize_pp_gist(p, _sport=sport):
+        """Normalize a Gist/API prop to the canonical live scrape output shape.
+
+        Live scrape produces: {Player, Prop, Line (float), Side, Sport, source, OddsType}
+        Gist and alternate sources may use different key casing or names.
+        """
+        player = p.get("Player") or p.get("player") or p.get("name", "")
+        prop   = p.get("Prop")   or p.get("prop")   or p.get("stat_type", "")
+        line   = p.get("Line")   or p.get("line",    0)
+        try:
+            line = float(line)
+        except (TypeError, ValueError):
+            line = 0.0
+        return {
+            "Player":   player,
+            "Prop":     prop,
+            "Line":     line,
+            "Side":     p.get("Side")  or p.get("side",      "OVER"),
+            "Sport":    p.get("Sport") or p.get("sport",     _sport),
+            "source":   "PrizePicks",
+            "OddsType": p.get("OddsType") or p.get("odds_type", "standard"),
+        }
+
+    # ── GIST-FIRST: Gist is the primary reliable source when ScrapeOps is exhausted ──
+    # fetch_auto_scraped_props() fetches the auto_scraped_props.json file from the
+    # configured GitHub Gist (pushed by the background auto-scraper).  It validates
+    # freshness (same-day date check) and filters by sport before returning.  This is
+    # much faster than the URL loop below and avoids burning curl_cffi retries on
+    # endpoints that have been 403-ing consistently.
+    try:
+        _gist_early = fetch_auto_scraped_props(sport)
+        if _gist_early:
+            _pp_early = [p for p in _gist_early
+                         if "prizepicks" in str(p.get("source", "")).lower()
+                         or p.get("Book", "") == "PrizePicks"]
+            if not _pp_early:
+                # Accept any source from Gist if no PrizePicks-tagged rows
+                _pp_early = _gist_early
+            _norm_early = [
+                _normalize_pp_gist(p) for p in _pp_early
+                if p.get("Player") or p.get("player") or p.get("name")
+            ]
+            if _norm_early:
+                log_error_to_session(
+                    "scrape_prizepicks",
+                    f"Gist-first: returned {len(_norm_early)} {sport} props",
+                    "info",
+                )
+                return _norm_early
+    except Exception as _gist_early_e:
+        log_error_to_session(
+            "scrape_prizepicks",
+            f"Gist-first attempt failed: {str(_gist_early_e)[:80]}",
+            "warning",
+        )
+
     all_props = []
     seen = set()
     for url in urls:
@@ -4529,34 +4586,123 @@ def scrape_prizepicks(sport):
             all_props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks", "OddsType": odds_type})
     if all_props:
         return all_props
-    # Try Gist from local auto scraper FIRST
-    def _normalize_pp_gist(p, _sport=sport):
-        """Normalize a Gist-fallback prop to match the live scrape output shape.
 
-        Live path produces:
-            {Player, Prop, Line (float), Side, Sport, source, OddsType}
-        Auto-scraped Gist props may use different key casing or names
-        (e.g. 'player'/'name', 'Book'/'source', 'odds_type'/'OddsType').
-        This normalizer collapses both into the canonical live format so
-        every downstream caller sees a consistent dict regardless of path.
-        """
-        player = p.get("Player") or p.get("player") or p.get("name", "")
-        prop   = p.get("Prop")   or p.get("prop")   or p.get("stat_type", "")
-        line   = p.get("Line")   or p.get("line",    0)
-        try:
-            line = float(line)
-        except (TypeError, ValueError):
-            line = 0.0
-        return {
-            "Player":   player,
-            "Prop":     prop,
-            "Line":     line,
-            "Side":     p.get("Side")  or p.get("side",      "OVER"),
-            "Sport":    p.get("Sport") or p.get("sport",     _sport),
-            "source":   "PrizePicks",
-            "OddsType": p.get("OddsType") or p.get("odds_type", "standard"),
+    # ── CHROME110 DIRECT: second fallback — curl_cffi chrome110 fingerprint ─────────────
+    # Targets https://api.prizepicks.com/projections directly with the exact Origin/Referer
+    # headers PrizePicks expects from app.prizepicks.com.  Uses chrome110 TLS fingerprint
+    # (distinct from chrome124 used above) to try a different fingerprint profile that may
+    # bypass Akamai bot detection.  Runs only after the URL loop fails so it does not add
+    # latency on the happy path.
+    try:
+        from curl_cffi import requests as _c110_req
+        _c110_url = (
+            f"https://api.prizepicks.com/projections"
+            f"?league_id={league}&per_page=250&single_stat=true&state_code={state_code}"
+        )
+        _c110_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Origin": "https://app.prizepicks.com",
+            "Referer": "https://app.prizepicks.com/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "sec-ch-ua": '"Chromium";v="110", "Google Chrome";v="110", "Not A;Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "x-device-id": _device_id,
+            "x-device-info": _device_info,
         }
+        _c110_resp = _c110_req.get(
+            _c110_url,
+            headers=_c110_headers,
+            impersonate="chrome110",
+            timeout=15,
+        )
+        if _c110_resp.status_code == 200:
+            _c110_ct = _c110_resp.headers.get("content-type", "")
+            if "html" not in _c110_ct and not _c110_resp.text.strip().startswith("<"):
+                _c110_data = _c110_resp.json()
+                _c110_props = []
+                _c110_seen: set = set()
+                for _proj in (_c110_data.get("data") or []):
+                    if _proj.get("type") != "projection":
+                        continue
+                    _attrs = _proj.get("attributes") or {}
+                    _rel   = _proj.get("relationships") or {}
+                    # League filter
+                    _proj_league = str(
+                        (_rel.get("league") or {}).get("data", {}).get("id", "")
+                        or _attrs.get("league_id", "")
+                    )
+                    if _proj_league and _proj_league not in (str(league), "", "None"):
+                        continue
+                    _pid  = (_rel.get("new_player") or {}).get("data", {}).get("id", "")
+                    _name = _attrs.get("display_name", "") or _attrs.get("name", "")
+                    _line = _attrs.get("line_score")
+                    _stat = _attrs.get("stat_type")
+                    if not _name or _line is None or not _stat:
+                        continue
+                    try:
+                        _line = float(_line)
+                    except (ValueError, TypeError):
+                        continue
+                    _key = (sport, _pid, _stat, _line)
+                    if _key in _c110_seen:
+                        continue
+                    _c110_seen.add(_key)
+                    _c110_props.append({
+                        "Player":   _name,
+                        "Prop":     _stat,
+                        "Line":     _line,
+                        "Side":     "OVER",
+                        "Sport":    sport,
+                        "source":   "PrizePicks",
+                        "OddsType": _attrs.get("odds_type", "standard"),
+                    })
+                if _c110_props:
+                    log_error_to_session(
+                        "scrape_prizepicks_chrome110",
+                        f"chrome110 direct: returned {len(_c110_props)} {sport} props",
+                        "info",
+                    )
+                    return _c110_props
+                else:
+                    log_error_to_session(
+                        "scrape_prizepicks_chrome110",
+                        "200 OK but 0 projections parsed",
+                        "warning",
+                    )
+            else:
+                log_error_to_session(
+                    "scrape_prizepicks_chrome110",
+                    "200 OK but response body is HTML/captcha",
+                    "warning",
+                )
+        else:
+            log_error_to_session(
+                "scrape_prizepicks_chrome110",
+                f"HTTP {_c110_resp.status_code} from api.prizepicks.com",
+                "warning",
+            )
+    except ImportError:
+        log_error_to_session(
+            "scrape_prizepicks_chrome110",
+            "curl_cffi not installed — skipping chrome110 attempt",
+            "warning",
+        )
+    except Exception as _c110_e:
+        log_error_to_session(
+            "scrape_prizepicks_chrome110",
+            f"{type(_c110_e).__name__}: {str(_c110_e)[:80]}",
+            "warning",
+        )
 
+    # ── GIST FALLBACK (existing path — do not break) ────────────────────────────────────
+    # Note: _normalize_pp_gist is now defined at the top of this function so the
+    # definition block that used to live here has been removed (same function, same logic).
     try:
         _gist_props = fetch_auto_scraped_props(sport)
         if _gist_props:
