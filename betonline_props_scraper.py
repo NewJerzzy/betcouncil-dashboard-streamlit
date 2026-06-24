@@ -369,8 +369,37 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         )
         page = await context.new_page()
 
-        # Accumulate ALL api-offering URLs seen during this session.
+        # Accumulate ALL api-offering URLs + captured request details.
         _api_urls_seen = []
+        _captured_headers = {}   # headers from offering-by-league, reused for direct calls
+        _offering_body = {}      # parsed POST body of offering-by-league (league/sport etc.)
+
+        async def on_request(request):
+            """Capture request bodies and headers from BOL API calls."""
+            url = request.url
+            if "api-offering.betonline.ag" not in url:
+                return
+            try:
+                raw_headers = request.headers
+                post_data   = request.post_data or ""
+                _api_urls_seen.append({
+                    "direction": "request",
+                    "url":       url,
+                    "method":    request.method,
+                    "body":      post_data[:500],   # first 500 chars
+                    "headers":   {k: v for k, v in raw_headers.items()
+                                  if k.lower() not in ("cookie",)},  # omit cookies
+                })
+                # Keep a copy of offering-by-league headers for direct API calls
+                if "offering-by-league" in url and not _captured_headers:
+                    _captured_headers.update(raw_headers)
+                    print(f"    [BOL] Captured {len(raw_headers)} headers from offering-by-league", file=sys.stderr)
+                    try:
+                        _offering_body.update(json.loads(post_data) if post_data else {})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         async def on_response(response):
             url = response.url
@@ -381,14 +410,14 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                 data = json.loads(body)
             except Exception:
                 return
-            # ── Record every BOL API URL + response metadata ────────────────
-            import os as _os2
+            # ── Record every BOL API response ────────────────────────────────
             _api_urls_seen.append({
-                "url":     url,
-                "method":  response.request.method,
-                "status":  response.status,
-                "bytes":   len(body),
-                "top_keys": list(data.keys()) if isinstance(data, dict) else str(type(data)),
+                "direction": "response",
+                "url":       url,
+                "method":    response.request.method,
+                "status":    response.status,
+                "bytes":     len(body),
+                "top_keys":  list(data.keys()) if isinstance(data, dict) else str(type(data)),
             })
 
             if "offering-by-league" in url:
@@ -397,10 +426,9 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                     all_lines.extend(lines)
                     print(f"    Lines: +{len(lines)} games", file=sys.stderr)
 
-            elif "get-contests-by-contest-type2" in url or "get-contests" in url:
-                # ── Diagnostic raw dump ─────────────────────────────────────
-                # Save the first captured contest response alongside the output
-                # so we can inspect the actual API structure on failed runs.
+            elif any(k in url for k in ["get-contests", "get-event",
+                                         "additional-market", "player-prop"]):
+                # ── Save first contest-like response for diagnostics ─────────
                 import os as _os
                 _raw_path = _os.path.join(
                     _os.path.dirname(_os.path.abspath(__file__)), "bol_contest_raw.json"
@@ -413,15 +441,16 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                         print(f"    [BOL] Raw contest dump → {_raw_path}", file=sys.stderr)
                     except Exception:
                         pass
-                # ── Parse props ─────────────────────────────────────────────
+                # ── Try to parse props ───────────────────────────────────────
                 props = parse_player_props(data, sport)
                 if props:
                     all_props.extend(props)
                     print(f"    Props: +{len(props)} from {url.split('/')[-1]}", file=sys.stderr)
                 else:
                     top_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-                    print(f"    [BOL] parse_player_props returned empty — top-level keys: {top_keys}", file=sys.stderr)
+                    print(f"    [BOL] contest endpoint hit, parse empty — keys: {top_keys}", file=sys.stderr)
 
+        page.on("request",  on_request)
         page.on("response", on_response)
 
         print(f"  [BOL] Loading {cfg['url']}", file=sys.stderr)
@@ -446,29 +475,115 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         print(f"  [BOL] Page loaded, waiting 8s for line data...", file=sys.stderr)
         await asyncio.sleep(8)
 
-        # ── Strategy A: Dedicated props-league pages ──────────────────────────
-        # BetOnline exposes /sportsbook/baseball/mlb-player-props etc. that
-        # fire get-contests-by-contest-type2 automatically on page load — no
-        # tab clicking needed. PROP_LEAGUES is defined at module level.
-        prop_league_slugs = PROP_LEAGUES.get(sport.upper(), [])
-        print(f"  [BOL] Strategy A — {len(prop_league_slugs)} props-league pages", file=sys.stderr)
-        for _slug in prop_league_slugs:
-            _prop_url = f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{_slug}"
-            print(f"  [BOL]   → {_prop_url}", file=sys.stderr)
-            try:
-                await page.goto(_prop_url, wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(5)
-                for _sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
-                             ".driver-popover-next-btn"]:
+        # ── Strategy A: Direct authenticated API fetch ──────────────────────
+        # Use page.request.post() which inherits the browser's Cloudflare-
+        # cleared cookies.  Try the known contest endpoint with several body
+        # formats, iterating over every SportCastId captured from game lines.
+        #
+        # Body formats tried (in order):
+        #   F1: {"SportcastFixtureId": id}
+        #   F2: {"sportcastId": id, "contestTypeId": 5}
+        #   F3: {"Id": id}
+        #   F4: {"fixtureId": id, "contestTypeId": 1}
+        _CONTEST_URL = "https://api-offering.betonline.ag/api/offering/Sports/get-contests-by-contest-type2"
+        _CONTEST_HEADERS = {
+            "Content-Type":  "application/json",
+            "Accept":        "application/json, text/plain, */*",
+            "Origin":        "https://www.betonline.ag",
+            "Referer":       "https://www.betonline.ag/",
+        }
+
+        # Collect SportCastIds (non-null) from captured lines
+        _sc_ids = list({
+            g["SportCastId"] for g in all_lines
+            if g.get("SportCastId") and g.get("AdditionalMarkets", 0) > 0
+        })
+        if not _sc_ids:
+            # Also include SportCastIds where AM > 0 even without checking
+            _sc_ids = list({g["SportCastId"] for g in all_lines if g.get("SportCastId")})
+
+        print(f"  [BOL] Strategy A — direct fetch for {len(_sc_ids)} SportCastIds", file=sys.stderr)
+
+        for _sc_id in _sc_ids[:6]:   # cap at 6 to avoid long runs
+            _fetched = False
+            _body_formats = [
+                {"SportcastFixtureId": _sc_id},
+                {"sportcastId": _sc_id, "contestTypeId": 5},
+                {"sportcastId": _sc_id, "contestTypeId": 1},
+                {"Id": _sc_id},
+                {"fixtureId": _sc_id},
+                {"SportcastId": _sc_id},
+            ]
+            for _fmt in _body_formats:
+                if _fetched:
+                    break
+                try:
+                    _resp = await page.request.post(
+                        _CONTEST_URL,
+                        headers=_CONTEST_HEADERS,
+                        data=json.dumps(_fmt),
+                    )
+                    _status = _resp.status
+                    _rbody  = await _resp.body()
                     try:
-                        _btn = page.locator(_sel).first
-                        if await _btn.is_visible(timeout=1000):
-                            await _btn.click()
+                        _rdata = json.loads(_rbody)
                     except Exception:
-                        pass
-                await asyncio.sleep(4)
-            except Exception as _e:
-                print(f"    [BOL] Props-league error: {_e}", file=sys.stderr)
+                        continue
+                    _top = list(_rdata.keys()) if isinstance(_rdata, dict) else type(_rdata).__name__
+                    print(f"    [BOL] Direct {_sc_id} fmt={list(_fmt.keys())} → {_status} keys={_top}", file=sys.stderr)
+                    # Record in URL dump
+                    _api_urls_seen.append({
+                        "direction": "direct_fetch",
+                        "url":       _CONTEST_URL,
+                        "sc_id":     _sc_id,
+                        "body_fmt":  list(_fmt.keys()),
+                        "status":    _status,
+                        "top_keys":  _top,
+                    })
+                    if _status == 200 and isinstance(_rdata, dict):
+                        # Save raw for inspection
+                        import os as _osA
+                        _rp = _osA.path.join(
+                            _osA.path.dirname(_osA.path.abspath(__file__)),
+                            "bol_contest_raw.json"
+                        )
+                        if not _osA.path.exists(_rp):
+                            with open(_rp, "w") as _rf:
+                                import json as _jA
+                                _jA.dump({"url": _CONTEST_URL, "body": _fmt, "data": _rdata}, _rf, indent=2)
+                        _props = parse_player_props(_rdata, sport)
+                        if _props:
+                            all_props.extend(_props)
+                            print(f"    [BOL] Direct fetch → {len(_props)} props! (sc={_sc_id}, fmt={list(_fmt.keys())})", file=sys.stderr)
+                            _fetched = True
+                        else:
+                            # Has data but parse returned empty — try next fmt only
+                            # if response looks truly empty (no ContestOfferings)
+                            if _rdata.get("ContestOfferings") or _rdata.get("Contests"):
+                                _fetched = True  # right endpoint, wrong parse — stop trying fmts
+                except Exception as _fe:
+                    print(f"    [BOL] Direct fetch error ({list(_fmt.keys())}): {_fe}", file=sys.stderr)
+
+        prop_league_slugs = PROP_LEAGUES.get(sport.upper(), [])
+        if prop_league_slugs:
+            print(f"  [BOL] Strategy A.2 — {len(prop_league_slugs)} props-league pages", file=sys.stderr)
+            for _slug in prop_league_slugs:
+                _prop_url = f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{_slug}"
+                print(f"  [BOL]   → {_prop_url}", file=sys.stderr)
+                try:
+                    await page.goto(_prop_url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(5)
+                    for _sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
+                                 ".driver-popover-next-btn"]:
+                        try:
+                            _btn = page.locator(_sel).first
+                            if await _btn.is_visible(timeout=1000):
+                                await _btn.click()
+                        except Exception:
+                            pass
+                    await asyncio.sleep(4)
+                except Exception as _e:
+                    print(f"    [BOL] Props-league error: {_e}", file=sys.stderr)
 
         # ── Strategy B: Per-game navigation + tab click (fallback) ───────────
         # Only runs if Strategy A yielded nothing.
