@@ -739,6 +739,34 @@ def fetch_bovada_props(sport: str = "MLB") -> list:
         log_error_to_session("fetch_bovada_props", str(_e)[:150], "warning")
         return []
 
+    # ── Log raw WS frame sample for shape validation ──────────────────────
+    # On the first real Playwright session, write the first raw WS frame to
+    # CACHE_DIR/bovada_ws_sample_{sport}.json so the operator can inspect the
+    # actual message shape in the System tab.  Overwrites on each successful
+    # run so the sample stays current.  Truncated to 4 KB to stay readable.
+    if ws_frames:
+        try:
+            _sample_path = os.path.join(CACHE_DIR, f"bovada_ws_sample_{sport}.json")
+            _sample_raw = ws_frames[0][:4096]
+            with open(_sample_path, "w") as _sf:
+                _sf.write(_sample_raw)
+            log_error_to_session(
+                "fetch_bovada_props",
+                f"WS frame sample written ({len(ws_frames)} frames collected, "
+                f"first frame {len(ws_frames[0])} chars). "
+                f"Sample: {ws_frames[0][:200]}",
+                "info",
+            )
+        except Exception:
+            pass
+    else:
+        log_error_to_session(
+            "fetch_bovada_props",
+            f"0 WS frames collected for {sport} — page may have loaded without WebSocket traffic "
+            f"(Cloudflare challenge still active, or sport has no live markets)",
+            "warning",
+        )
+
     # ── Parse collected WS frames ─────────────────────────────────────────
     def _parse_display_group(dg, event_competitors: list) -> list:
         """Extract player props from a single Bovada displayGroup dict."""
@@ -7862,7 +7890,40 @@ def fetch_betr_direct(sport):
                     # Decode stat type from base64-encoded marketId when present.
                     # e.g. marketId "NmEyZjc4..." → decoded "...:STRIKEOUTS:5.0:REGULAR"
                     # → stat_type = "STRIKEOUTS".  Integer marketIds → None.
-                    stat_type = _decode_stat_type(proj.get("marketId") or "")
+                    _raw_mid = proj.get("marketId") or ""
+                    stat_type = _decode_stat_type(_raw_mid)
+
+                    # ── marketId shape logger (first prop only) ─────────────────
+                    # Log a raw marketId sample on the very first projection so the
+                    # base64 decode assumption can be verified from the System tab.
+                    # Writes once per sport per session (guarded by props being empty).
+                    if not props and _raw_mid:
+                        try:
+                            import base64 as _b64_log
+                            _padded = _raw_mid + "=" * (-len(_raw_mid) % 4)
+                            _decoded_sample = _b64_log.b64decode(_padded).decode("utf-8", errors="replace")
+                        except Exception:
+                            _decoded_sample = "(not base64)"
+                        log_error_to_session(
+                            "fetch_betr_direct",
+                            f"marketId sample — raw: {_raw_mid[:80]} | "
+                            f"decoded: {_decoded_sample[:120]} | "
+                            f"stat_type extracted: {stat_type}",
+                            "info",
+                        )
+                        try:
+                            _mid_path = os.path.join(CACHE_DIR, f"betr_market_id_sample_{sport}.txt")
+                            with open(_mid_path, "w") as _mf:
+                                _mf.write(
+                                    f"raw:     {_raw_mid}
+"
+                                    f"decoded: {_decoded_sample}
+"
+                                    f"stat_type: {stat_type}
+"
+                                )
+                        except Exception:
+                            pass
 
                     try:
                         props.append({

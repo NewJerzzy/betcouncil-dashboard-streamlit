@@ -89,6 +89,100 @@ PROP_LEAGUES = {
     "NHL": [],
 }
 
+# ── NFL prop slug prober ───────────────────────────────────────────────────────
+# PROP_LEAGUES["NFL"] is empty until slugs are confirmed live.  These are the
+# plausible candidates based on BOL URL patterns.  _get_confirmed_prop_slugs()
+# probes each one with a lightweight HEAD request and caches confirmed slugs for
+# 24 h so the Playwright session only navigates to URLs that actually resolve.
+_NFL_PROP_SLUG_CANDIDATES = [
+    "nfl-player-props",
+    "nfl-passing-props",
+    "nfl-rushing-props",
+    "nfl-receiving-props",
+]
+
+_BOL_SLUG_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".cache", "bol_confirmed_slugs.json"
+)
+_BOL_SLUG_CACHE_TTL_H = 24  # hours
+
+
+def _probe_bol_slug(slug: str, sport_path: str) -> bool:
+    """Return True if the BOL page for this slug responds with HTTP 200.
+
+    Uses a plain GET (not Playwright) so this is fast and non-blocking.
+    A 404 means the slug doesn't exist on BOL; anything else (200, 30x)
+    is treated as present.
+    """
+    url = f"https://www.betonline.ag/sportsbook/{sport_path}/{slug}"
+    try:
+        import requests as _req
+        resp = _req.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+            allow_redirects=True,
+        )
+        return resp.status_code != 404
+    except Exception:
+        return False
+
+
+def _get_confirmed_prop_slugs(sport: str, cfg: dict) -> list:
+    """Probe candidate slugs and return those that actually resolve on BOL.
+
+    Results are cached to disk for _BOL_SLUG_CACHE_TTL_H hours so the
+    prober only fires once per day rather than on every scrape run.
+    """
+    sport = sport.upper()
+    # Fast path: PROP_LEAGUES already populated (manually confirmed slugs)
+    if PROP_LEAGUES.get(sport):
+        return PROP_LEAGUES[sport]
+
+    candidates = _NFL_PROP_SLUG_CANDIDATES if sport == "NFL" else []
+    if not candidates:
+        return []
+
+    # Check disk cache
+    try:
+        os.makedirs(os.path.dirname(_BOL_SLUG_CACHE_PATH), exist_ok=True)
+        if os.path.exists(_BOL_SLUG_CACHE_PATH):
+            age_h = (time.time() - os.path.getmtime(_BOL_SLUG_CACHE_PATH)) / 3600
+            if age_h < _BOL_SLUG_CACHE_TTL_H:
+                with open(_BOL_SLUG_CACHE_PATH) as _f:
+                    cached = json.load(_f)
+                if sport in cached:
+                    confirmed = cached[sport]
+                    print(
+                        f"  [BOL] Slug cache hit: {confirmed} (age {age_h:.1f}h)",
+                        file=sys.stderr,
+                    )
+                    return confirmed
+    except Exception:
+        pass
+
+    sport_path = cfg.get("sport", sport.lower())
+    print(
+        f"  [BOL] Probing {len(candidates)} {sport} slug candidates...",
+        file=sys.stderr,
+    )
+    confirmed = [s for s in candidates if _probe_bol_slug(s, sport_path)]
+    print(f"  [BOL] Confirmed slugs: {confirmed}", file=sys.stderr)
+
+    # Write cache
+    try:
+        existing = {}
+        if os.path.exists(_BOL_SLUG_CACHE_PATH):
+            with open(_BOL_SLUG_CACHE_PATH) as _f:
+                existing = json.load(_f)
+        existing[sport] = confirmed
+        with open(_BOL_SLUG_CACHE_PATH, "w") as _f:
+            json.dump(existing, _f)
+    except Exception:
+        pass
+
+    return confirmed
+
 
 # ── Parser: game lines from offering-by-league ────────────────────────────────
 
@@ -568,9 +662,10 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                 except Exception as _fe:
                     print(f"    [BOL] Direct fetch error ({list(_fmt.keys())}): {_fe}", file=sys.stderr)
 
-        prop_league_slugs = PROP_LEAGUES.get(sport.upper(), [])
+        # Use confirmed slugs: manually set in PROP_LEAGUES, or probed live from candidates
+        prop_league_slugs = _get_confirmed_prop_slugs(sport, cfg)
         if prop_league_slugs:
-            print(f"  [BOL] Strategy A.2 — {len(prop_league_slugs)} props-league pages", file=sys.stderr)
+            print(f"  [BOL] Strategy A.2 — {len(prop_league_slugs)} confirmed props-league pages", file=sys.stderr)
             for _slug in prop_league_slugs:
                 _prop_url = f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{_slug}"
                 print(f"  [BOL]   → {_prop_url}", file=sys.stderr)
