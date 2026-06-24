@@ -867,6 +867,29 @@ def fetch_bovada_props(sport: str = "MLB") -> list:
                                     seen_keys.add(key)
                                     props.append(row)
 
+        # Shape D: recursive DFS — catches any nesting depth Bovada may use.
+        # Only runs when shapes A/B/C found nothing in THIS frame to avoid
+        # double-counting rows already extracted by the faster paths above.
+        _before = len(props)
+        if len(props) == _before:
+            def _walk(obj, parent_comps=None):
+                if isinstance(obj, dict):
+                    if "displayGroups" in obj and obj not in (msg,):
+                        comps = (obj.get("competitors") or obj.get("teams")
+                                 or parent_comps or [])
+                        for dg in obj["displayGroups"]:
+                            for row in _parse_display_group(dg, comps):
+                                key = (row["Player"], row["Prop"], row["Line"])
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    props.append(row)
+                    for v in obj.values():
+                        _walk(v, obj.get("competitors") or obj.get("teams") or parent_comps)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        _walk(item, parent_comps)
+            _walk(msg)
+
     return props
 
 
@@ -1436,11 +1459,30 @@ def fetch_auto_scraped_props(sport="NBA"):
                 log_error_to_session("fetch_auto_scraped_props", f"JSON parse error: {str(e)[:100]}", "error")
                 return []
 
-        # Verify date
+        # Verify date freshness — two checks:
+        #   (a) date == today  (existing: catches yesterday's data)
+        #   (b) updated_at age — warn (not block) when data is same-day but >10h old
         gist_date = gist_content.get("date", "")
         if not is_date_valid_for_today(gist_date):
             log_error_to_session("fetch_auto_scraped_props", f"Gist stale (date: {gist_date}, today: {date.today().isoformat()})", "warning")
             return []
+        # Hour-based freshness from GitHub Gist updated_at timestamp
+        try:
+            _gist_json = r.json()
+            _updated_at = _gist_json.get("updated_at", "")
+            if _updated_at:
+                from datetime import datetime as _dt, timezone as _tz
+                _gist_ts = _dt.fromisoformat(_updated_at.replace("Z", "+00:00"))
+                _age_h = ((_dt.now(_tz.utc) - _gist_ts).total_seconds()) / 3600
+                if _age_h > 10:
+                    log_error_to_session(
+                        "fetch_auto_scraped_props",
+                        f"Gist is {_age_h:.1f}h old (updated_at: {_updated_at[:16]}) — "
+                        "auto-scraper may not have run today. Data returned but may be stale.",
+                        "warning",
+                    )
+        except Exception:
+            pass
 
         # Filter by sport — case-insensitive to handle lowercase/uppercase mismatches
         all_props = gist_content.get("props", [])
@@ -4361,11 +4403,15 @@ def scrape_prizepicks(sport):
         f"https://partner-api.prizepicks.com/projections?per_page=1000&league_id={league}",
         # Fallback 2: confirmed working URL May 2026
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}&game_mode=prizepools",
-        # Fallback 3: without game_mode
+        # Fallback 3: pickem game mode (separate market pool from prizepools)
+        f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}&game_mode=pickem",
+        # Fallback 4: without game_mode
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250&single_stat=true&in_game=true&state_code={state_code}",
-        # Fallback 4: basic API
+        # Fallback 5: basic API
         f"https://api.prizepicks.com/projections?league_id={league}&per_page=250",
     ]
+    # Last-known-good cache path — written on every successful fetch, read when all paths fail
+    _lkg_path = os.path.join(CACHE_DIR, f"pp_last_known_good_{sport}.pkl")
 
     # ── Real-browser header capture, 2026-06-21 ──────────────────────────
     # CDP-attached capture of this EXACT endpoint (fallback 2 above) loading
@@ -4534,6 +4580,10 @@ def scrape_prizepicks(sport):
                     f"Gist-first: returned {len(_norm_early)} {sport} props",
                     "info",
                 )
+                try:
+                    with open(_lkg_path, "wb") as _lf: pickle.dump(_norm_early, _lf)
+                except OSError:
+                    pass
                 return _norm_early
     except Exception as _gist_early_e:
         log_error_to_session(
@@ -4680,6 +4730,10 @@ def scrape_prizepicks(sport):
             odds_type = attrs.get("odds_type", "standard")
             all_props.append({"Player": name, "Prop": stat, "Line": line, "Side": "OVER", "Sport": sport, "source": "PrizePicks", "OddsType": odds_type})
     if all_props:
+        try:
+            with open(_lkg_path, "wb") as _lf: pickle.dump(all_props, _lf)
+        except OSError:
+            pass
         return all_props
 
     # ── CHROME110 DIRECT: second fallback — curl_cffi chrome110 fingerprint ─────────────
@@ -4763,6 +4817,10 @@ def scrape_prizepicks(sport):
                         f"chrome110 direct: returned {len(_c110_props)} {sport} props",
                         "info",
                     )
+                    try:
+                        with open(_lkg_path, "wb") as _lf: pickle.dump(_c110_props, _lf)
+                    except OSError:
+                        pass
                     return _c110_props
                 else:
                     log_error_to_session(
@@ -4819,14 +4877,26 @@ def scrape_prizepicks(sport):
                     return _normalized
     except (KeyError, TypeError, ValueError) as _e:
             print(f"[WARN] {_e}")
-    # Clear cache so next load retries PrizePicks
+    # ── Last-known-good: serve stale props with warning rather than bare [] ──
+    # All live paths failed. If we have a prior successful fetch, return it with
+    # a staleness warning so the UI degrades gracefully instead of going blank.
     try:
-        import glob
-        for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
-            os.remove(f)
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        if os.path.exists(_lkg_path):
+            _lkg_age_h = (time.time() - os.path.getmtime(_lkg_path)) / 3600
+            with open(_lkg_path, "rb") as _lf:
+                _lkg_data = pickle.load(_lf)
+            if _lkg_data:
+                log_error_to_session(
+                    "scrape_prizepicks",
+                    f"All live paths failed — serving last-known-good cache "
+                    f"({_lkg_age_h:.1f}h old, {len(_lkg_data)} props). "
+                    "Gist auto-scraper may be stale.",
+                    "warning",
+                )
+                return _lkg_data
+    except (OSError, pickle.UnpicklingError, EOFError):
         pass
-    return []  # Let wrapper handle Gist fallback
+    return []  # Truly nothing available
 
 def fetch_underdog_injuries(sport):
     sport_map = {"NBA": "NBA", "MLB": "MLB", "NFL": "NFL", "NHL": "NHL"}
@@ -7892,6 +7962,11 @@ def fetch_betr_direct(sport):
                     # → stat_type = "STRIKEOUTS".  Integer marketIds → None.
                     _raw_mid = proj.get("marketId") or ""
                     stat_type = _decode_stat_type(_raw_mid)
+                    # Fallback: when marketId is an integer (pure DFS) or decode fails,
+                    # use the human-readable label as stat_type for downstream mapping.
+                    # This ensures stat_type is always non-None for OPENED projections.
+                    if stat_type is None:
+                        stat_type = (proj.get("label") or proj.get("name") or "").upper().replace(" ", "_") or None
 
                     # ── marketId shape logger (first prop only) ─────────────────
                     # Log a raw marketId sample on the very first projection so the

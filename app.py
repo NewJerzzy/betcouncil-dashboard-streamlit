@@ -4327,32 +4327,88 @@ def log_error_to_session(source, error, error_type="error"):
 
 
 # is_date_valid_for_today — moved to bc_utils.py
+def _write_pp_lkg(sport: str, props: list) -> None:
+    """Write PrizePicks props to the last-known-good pickle cache."""
+    try:
+        lkg_path = os.path.join(CACHE_DIR, f"pp_last_known_good_{sport}.pkl")
+        import pickle as _pkl
+        with open(lkg_path, "wb") as _f:
+            _pkl.dump(props, _f)
+    except OSError:
+        pass
+
+
 def scrape_prizepicks_with_gist_fallback(sport):
     """
     Priority order:
-    1. Gist (from scraper script) — if data is fresh (<2 hours), use it. Zero ScrapeOps credits.
-    2. PrizePicks direct (curl_cffi) — if Gist is stale or empty.
-    3. ScrapeOps proxy — only if curl_cffi fails (inside scrape_prizepicks).
-    This preserves ScrapeOps credits and uses the scraper script as primary.
+    1. Gist (from auto-scraper)   — primary; Gist-first already baked into
+                                    scrape_prizepicks(), but we also call
+                                    fetch_auto_scraped_props() directly here
+                                    to capture the result for LKG caching.
+    2. scrape_prizepicks(sport)   — curl_cffi chrome124/chrome110 + Gist safety net.
+    3. Last-known-good cache      — stale pickle from last successful run,
+                                    surfaced with a visible st.warning banner
+                                    instead of silently returning [].
+
+    LKG is written on every successful return so it's always as fresh as
+    the most recent working fetch.
     """
-    # Try Gist first — it's free and populated by the scraper script
+    import pickle as _pkl
+
+    lkg_path = os.path.join(CACHE_DIR, f"pp_last_known_good_{sport}.pkl")
+
+    # ── 1. Gist direct ────────────────────────────────────────────────────────
     gist_props = fetch_auto_scraped_props(sport)
-    if gist_props and len(gist_props) > 0:
+    if gist_props:
         st.session_state["pp_source"] = "gist_scraper"
         st.session_state["pp_status"] = "ok"
+        _write_pp_lkg(sport, gist_props)
         return gist_props
 
-    # Gist empty or stale — try direct scrape (curl_cffi → ScrapeOps fallback)
-    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"Gist empty for {sport}, trying direct...", "warning")
+    # ── 2. Live scrape (curl_cffi → chrome110 → Gist safety-net) ─────────────
+    log_error_to_session(
+        "scrape_prizepicks_with_gist_fallback",
+        f"Gist empty for {sport} — trying live scrape...",
+        "warning",
+    )
     pp_props = scrape_prizepicks(sport)
     if pp_props:
         st.session_state["pp_source"] = "prizepicks_direct"
         st.session_state["pp_status"] = "ok"
+        _write_pp_lkg(sport, pp_props)
         return pp_props
 
+    # ── 3. Last-known-good ────────────────────────────────────────────────────
+    try:
+        if os.path.exists(lkg_path):
+            _lkg_age_h = (time.time() - os.path.getmtime(lkg_path)) / 3600
+            with open(lkg_path, "rb") as _f:
+                _lkg = _pkl.load(_f)
+            if _lkg:
+                st.warning(
+                    f"⚠️ **PrizePicks live data unavailable** — showing last cached "
+                    f"props ({_lkg_age_h:.0f}h old). Data may be stale. Refresh to retry.",
+                    icon="🟡",
+                )
+                st.session_state["pp_source"] = "last_known_good"
+                st.session_state["pp_status"] = "stale"
+                log_error_to_session(
+                    "scrape_prizepicks_with_gist_fallback",
+                    f"Serving LKG cache ({_lkg_age_h:.1f}h old, {len(_lkg)} props)",
+                    "warning",
+                )
+                return _lkg
+    except (OSError, _pkl.UnpicklingError, EOFError):
+        pass
+
+    # ── 4. Truly nothing ─────────────────────────────────────────────────────
     st.session_state["pp_status"] = "unavailable"
     st.session_state["pp_source"] = "none"
-    log_error_to_session("scrape_prizepicks_with_gist_fallback", f"PrizePicks unavailable for {sport}", "error")
+    log_error_to_session(
+        "scrape_prizepicks_with_gist_fallback",
+        f"PrizePicks unavailable for {sport} — all paths exhausted, no LKG cache",
+        "error",
+    )
     return []
 
 

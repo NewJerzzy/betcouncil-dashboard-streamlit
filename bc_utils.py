@@ -1250,3 +1250,190 @@ def compute_h2h_hit_rate(game_logs, opponent_abbr, stat, line):
     rate = hits / len(opp_games)
     return rate, len(opp_games), f"{hits}/{len(opp_games)} vs this opponent"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-book prop analytics
+# ─────────────────────────────────────────────────────────────────────────────
+
+def consensus_prop_line(lines_by_book: dict) -> dict:
+    """
+    Compute cross-book consensus fair line for a player prop.
+
+    Takes all available book lines for the same player+stat, returns the
+    median (robust to outliers) as the fair line, plus spread and confidence.
+
+    Args:
+        lines_by_book: {book_name: line_float}  e.g. {"DraftKings": 1.5, "FanDuel": 2.0}
+
+    Returns:
+        {fair_line, median_line, mean_line, spread, confidence, n_books, books}
+        confidence: 0–1, higher when books agree and more books are present.
+        Returns {} when fewer than 2 valid lines are available.
+    """
+    import statistics as _stats
+    if not lines_by_book:
+        return {}
+    vals = [float(v) for v in lines_by_book.values() if v is not None]
+    if len(vals) < 2:
+        return {}
+    n       = len(vals)
+    median  = _stats.median(vals)
+    mean    = round(sum(vals) / n, 2)
+    spread  = round(max(vals) - min(vals), 2)
+    # Confidence: penalised by spread relative to line and boosted by n_books
+    conf_raw  = 1 - (spread / (median + 0.001)) * (2 / max(n, 2))
+    confidence = round(max(0.0, min(1.0, conf_raw)), 3)
+    return {
+        "fair_line":   round(median, 2),
+        "median_line": round(median, 2),
+        "mean_line":   mean,
+        "spread":      spread,
+        "confidence":  confidence,
+        "n_books":     n,
+        "books":       list(lines_by_book.keys()),
+    }
+
+
+def detect_line_movement(
+    current_line: float,
+    previous_line: float,
+    side: str = "OVER",
+) -> dict:
+    """
+    Detect and classify line movement between two snapshots.
+
+    Args:
+        current_line:  latest line from the book
+        previous_line: line value from prior snapshot
+        side:          "OVER" or "UNDER" — context for "favorable"
+
+    Returns:
+        {moved, delta, direction, favorable, magnitude, is_sharp, abs_delta}
+        moved=False when lines are equal or either is None.
+    """
+    if current_line is None or previous_line is None:
+        return {"moved": False}
+    delta = round(current_line - previous_line, 3)
+    if delta == 0:
+        return {"moved": False, "delta": 0}
+    abs_delta = abs(delta)
+    # For OVER bets: line dropping = easier to go over = favorable
+    favorable  = (delta < 0) if side.upper() == "OVER" else (delta > 0)
+    is_sharp   = abs_delta >= 0.5          # threshold for meaningful sharp move
+    magnitude  = ("large"  if abs_delta >= 1.0 else
+                  "medium" if abs_delta >= 0.5 else "small")
+    return {
+        "moved":     True,
+        "delta":     delta,
+        "direction": "down" if delta < 0 else "up",
+        "favorable": favorable,
+        "magnitude": magnitude,
+        "is_sharp":  is_sharp,
+        "abs_delta": abs_delta,
+    }
+
+
+def prop_edge_score(
+    player_avg: float      = None,
+    line: float            = None,
+    hit_rate: float        = None,
+    regime_adj: float      = 0.0,
+    h2h_rate: float        = None,
+    consensus_line: float  = None,
+    line_movement: dict    = None,
+) -> dict:
+    """
+    Unified prop edge score that combines all available analytical signals.
+
+    Signal weights (sum to 1.0 across included signals only):
+      L2L gap      (player_avg vs line)    30% — core value signal
+      Hit rate     (rolling over/under %)  25% — historical edge
+      Regime adj   (season phase)          15% — context modifier
+      H2H rate     (vs this opponent)      15% — matchup specificity
+      Consensus gap (vs book median)       10% — market inefficiency signal
+      Line movement (directional)           5% — late-money confirmation
+
+    Confidence scales with how many signals are available (0 → 1).
+
+    Args:
+        player_avg:     rolling average for this stat (same units as line)
+        line:           current book line
+        hit_rate:       float 0–1, historical over rate for this player+stat near this line
+        regime_adj:     float from detect_season_regime() adj dict, e.g. 0.03 or -0.05
+        h2h_rate:       float 0–1, over rate vs this specific opponent
+        consensus_line: median line across all books (from consensus_prop_line)
+        line_movement:  dict from detect_line_movement()
+
+    Returns:
+        {edge, confidence, signals, recommendation}
+        edge:           float −1→1  (positive = OVER edge, negative = UNDER edge)
+        confidence:     float 0→1
+        recommendation: "OVER" / "UNDER" / "PASS"
+    """
+    signals      = {}
+    weighted_sum = 0.0
+    weight_total = 0.0
+
+    def _clamp(v, lo=-1.0, hi=1.0):
+        return max(lo, min(hi, v))
+
+    # 1. L2L gap — player average vs line (normalised)
+    if player_avg is not None and line and line > 0:
+        gap = _clamp((player_avg - line) / line)
+        signals["l2l_gap"] = round(gap, 3)
+        weighted_sum += gap * 0.30
+        weight_total += 0.30
+
+    # 2. Historical hit rate
+    if hit_rate is not None:
+        hr_signal = _clamp((hit_rate - 0.5) * 2)
+        signals["hit_rate"]        = round(hit_rate, 3)
+        signals["hit_rate_signal"] = round(hr_signal, 3)
+        weighted_sum += hr_signal * 0.25
+        weight_total += 0.25
+
+    # 3. Season regime adjustment
+    if regime_adj:
+        signals["regime_adj"] = regime_adj
+        weighted_sum += _clamp(regime_adj, -0.15, 0.15) * 0.15
+        weight_total += 0.15
+
+    # 4. H2H opponent rate
+    if h2h_rate is not None:
+        h2h_signal = _clamp((h2h_rate - 0.5) * 2)
+        signals["h2h_rate"] = round(h2h_rate, 3)
+        weighted_sum += h2h_signal * 0.15
+        weight_total += 0.15
+
+    # 5. Cross-book consensus gap
+    if consensus_line is not None and line and line > 0:
+        cg = _clamp((consensus_line - line) / line, -0.5, 0.5)
+        signals["consensus_gap"] = round(cg, 3)
+        weighted_sum += cg * 0.10
+        weight_total += 0.10
+
+    # 6. Line movement
+    if isinstance(line_movement, dict) and line_movement.get("moved"):
+        mv = 0.05 if line_movement.get("favorable") else -0.05
+        if line_movement.get("magnitude") == "large":
+            mv *= 2
+        signals["line_movement"]    = line_movement.get("direction")
+        signals["movement_favorable"] = line_movement.get("favorable")
+        weighted_sum += mv * 0.05
+        weight_total += 0.05
+
+    if weight_total == 0:
+        return {"edge": 0.0, "confidence": 0.0, "signals": {}, "recommendation": "PASS"}
+
+    edge       = round(weighted_sum / weight_total, 4)
+    confidence = round(min(weight_total, 1.0), 3)
+
+    # Recommendation gates: need meaningful edge AND enough signal
+    if edge >= 0.08 and confidence >= 0.4:
+        rec = "OVER"
+    elif edge <= -0.08 and confidence >= 0.4:
+        rec = "UNDER"
+    else:
+        rec = "PASS"
+
+    return {"edge": edge, "confidence": confidence, "signals": signals, "recommendation": rec}
