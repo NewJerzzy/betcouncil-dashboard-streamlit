@@ -15,8 +15,19 @@ from scipy import stats as scipy_stats
 SPORT_EWMA_DECAY = {"NBA": 0.85, "MLB": 0.92, "NHL": 0.88, "WNBA": 0.85, "NFL": 0.80}
 
 
+@lru_cache(maxsize=2048)
 def safe_float(val, default: float = 0.0) -> float:
-    """Type-safe float conversion with fallback."""
+    """Type-safe float conversion with fallback.
+
+    Handles all common bad-value cases:
+      - None            → default (short-circuit before float())
+      - ""  (empty str) → default (float("") raises ValueError)
+      - "abc" (non-num) → default (ValueError)
+      - lists / dicts   → lru_cache will TypeError before entry; wrapped below
+
+    lru_cache accelerates repeated calls with the same val (e.g. odds strings).
+    val must be hashable; mutable types are not valid inputs anyway.
+    """
     try:
         return float(val) if val is not None else default
     except (TypeError, ValueError):

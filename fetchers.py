@@ -25,11 +25,27 @@ try:
         PLAYER_AVERAGES_SOCCER, PLAYER_AVERAGES_UFC,
         DEFAULT_AVERAGES, STAT_NORMALIZE,
         BOVADA_SPORT_MAP, BOVADA_HEADERS,
+        # ── Additional constants used in fetchers but previously missing from import ──
+        BDL_API_KEY, BDL_PLAYER_IDS,
+        ESPN_ATHLETE_IDS, ESPN_SLUG_MAP,
+        FL_HEADERS, FL_SPORT_MAP,
+        KALSHI_SPORT_SERIES, MLB_STADIUM_COORDS,
+        NHL_PLAYER_IDS,
     )
 except ImportError:
     CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
     HEADERS = {"User-Agent": "Mozilla/5.0"}
     MLB_PLAYER_IDS = {}
+    # Stubs for the 9 previously-missing imports
+    BDL_API_KEY = ""
+    BDL_PLAYER_IDS = {}
+    ESPN_ATHLETE_IDS = {}
+    ESPN_SLUG_MAP = {}
+    FL_HEADERS = {}
+    FL_SPORT_MAP = {}
+    KALSHI_SPORT_SERIES = {}
+    MLB_STADIUM_COORDS = {}
+    NHL_PLAYER_IDS = {}
 
 try:
     from bc_utils import normalize_name, safe_float, load_json_data, save_json_data

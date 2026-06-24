@@ -730,49 +730,49 @@ ESPN_BET_PROVIDER_ID = 1002
 
 
 # ═══════════════════════════════════════════════════════════════
-# STATIC RESOURCE CACHE — @st.cache_resource
+# STATIC RESOURCE CACHE — @st.cache_resource(ttl=300)
 # These dicts are defined at module level and never change.
 # Wrapping in cache_resource avoids repeated dict lookups and
 # ensures a single shared instance across all Streamlit reruns.
 # ═══════════════════════════════════════════════════════════════
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_player_team_map():
     return PLAYER_TEAM_MAP
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_mlb_player_team_map():
     return MLB_PLAYER_TEAM_MAP
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_sport_signal_weights():
     return SPORT_SIGNAL_WEIGHTS
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_nba_power_ratings():
     return NBA_POWER_RATINGS
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_nba_team_pace():
     return NBA_TEAM_PACE
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_default_averages():
     return DEFAULT_AVERAGES
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_nba_position_defense():
     return NBA_POSITION_DEFENSE
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_nba_player_positions():
     return NBA_PLAYER_POSITIONS
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_espn_athlete_ids():
     return ESPN_ATHLETE_IDS
 
-@st.cache_resource
+@st.cache_resource(ttl=300)
 def get_action_network_sport_map():
     return ACTION_NETWORK_SPORT_MAP
 
