@@ -6791,34 +6791,59 @@ def fetch_betrivers_direct(sport):
     return props
 
 def fetch_betr_direct(sport):
-    """Fetch Betr Picks DFS projections via GraphQL (public, no auth required).
+    """Fetch Betr player props and DFS projections via GraphQL (public, no auth).
 
     Endpoint: https://api.fantasy.betr.app/graphql
-    Verified live: returns player projection lines (hits, strikeouts, etc.)
-    Note: DFS projections only — OverOdds/UnderOdds are em-dash placeholders.
+
+    Each Projection in the Betr response carries:
+      name/label   : human-readable stat name (e.g. "Pitching Strikeouts")
+      value        : static DFS projection line
+      currentValue : live-updated line (preferred when non-null)
+      type         : ProjectionType enum ("REGULAR" for all live markets)
+      marketId     : unique market ID.  Two formats exist:
+                       - Integer string (e.g. "1032606232847459352"):
+                           pure DFS market, no canonical stat type.
+                       - Base64 string (e.g. "NmEyZjc4..."):
+                           decodes to {eventId}:{playerId}:{STAT_TYPE}:{line}:{type}
+                           e.g. "....:STRIKEOUTS:5.0:REGULAR"
+                           The STAT_TYPE segment is the canonical stat type code.
+      marketStatus : "OPENED" | "CLOSED" | "SUSPENDED" etc.
+
+    Projections with a base64-encoded marketId carry an embedded statType (e.g.
+    STRIKEOUTS, HITS_ALLOWED).  All OPENED projections are returned as player
+    props in BetCouncil standard format; the decoded stat_type is included as an
+    extra metadata field for downstream deduplication and canonical mapping.
+
+    Over/Under odds are em-dash placeholders — Betr is a DFS platform and does
+    not publish American moneyline odds on this public endpoint.
+
+    Returns list of dicts: {Player, Prop, Line, Over, Under, Sport, Book, ...}
 
     Early-exit guards:
-      - unsupported sport  -> silent []
-      - HTTP non-200       -> st.warning + []
-      - GraphQL-level error-> st.warning + []
-      - network/parse error-> st.warning + []
+      - unsupported sport   -> silent []
+      - HTTP non-200        -> st.warning + []
+      - GraphQL-level error -> st.warning + []
+      - network/parse error -> st.warning + []
     """
     league_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "WNBA": "WNBA", "NFL": "NFL"}
     league = league_map.get(sport)
     if not league:
         return []
 
+    # marketId and marketStatus added so we can:
+    #   (a) filter out CLOSED/SUSPENDED lines, and
+    #   (b) decode the stat type from base64-encoded market IDs.
     query = """query LeagueUpcomingEvents($league: League!) {
       getUpcomingEventsV2(league: $league) {
         name sport league
         ... on TeamVersusEvent {
           teams { name players { firstName lastName position
-            projections { name label value currentValue type }
+            projections { name label value currentValue type marketId marketStatus }
           }}
         }
         ... on IndividualVersusEvent {
           players { firstName lastName position
-            projections { name label value currentValue type }
+            projections { name label value currentValue type marketId marketStatus }
           }
         }
       }
@@ -6826,7 +6851,31 @@ def fetch_betr_direct(sport):
 
     props = []
     try:
-        import requests as _req
+        import requests as _req, base64 as _b64
+
+        def _decode_stat_type(market_id):
+            """Extract canonical stat type from a base64-encoded Betr marketId.
+
+            Base64 marketIds decode to colon-delimited strings of the form:
+              {eventId}:{playerId}:{STAT_TYPE}:{line}:{projectionType}
+            The STAT_TYPE segment (index 2) is ALL_CAPS_WITH_UNDERSCORES.
+            Integer-only IDs are pure DFS markets — returns None for those.
+            """
+            if not market_id or str(market_id).isdigit():
+                return None
+            try:
+                padded = market_id + "=" * (-len(market_id) % 4)
+                decoded = _b64.b64decode(padded).decode("utf-8", errors="ignore")
+                parts = decoded.split(":")
+                if len(parts) >= 3:
+                    candidate = parts[2]
+                    # Stat type codes are ALL_CAPS; guard against decode noise
+                    if candidate and candidate.replace("_", "").isalpha() and candidate == candidate.upper():
+                        return candidate
+            except Exception:
+                pass
+            return None
+
         r = _req.post(
             "https://api.fantasy.betr.app/graphql",
             json={
@@ -6860,6 +6909,7 @@ def fetch_betr_direct(sport):
                     players_list.extend(team["players"])
             if event.get("players"):
                 players_list.extend(event["players"])
+
             for player in players_list:
                 if not player:
                     continue
@@ -6868,25 +6918,43 @@ def fetch_betr_direct(sport):
                 )
                 if not full_name:
                     continue
+
                 for proj in (player.get("projections") or []):
                     if not proj:
                         continue
+
+                    # Skip markets that are not open (CLOSED, SUSPENDED, etc.)
+                    mkt_status = proj.get("marketStatus") or ""
+                    if mkt_status and mkt_status != "OPENED":
+                        continue
+
                     # currentValue is the live-updated line; fall back to static value
                     line_raw = proj.get("currentValue") or proj.get("value")
                     if line_raw is None:
                         continue
+
                     prop_name = proj.get("label") or proj.get("name") or ""
+                    if not prop_name:
+                        continue
+
+                    # Decode stat type from base64-encoded marketId when present.
+                    # e.g. marketId "NmEyZjc4..." → decoded "...:STRIKEOUTS:5.0:REGULAR"
+                    # → stat_type = "STRIKEOUTS".  Integer marketIds → None.
+                    stat_type = _decode_stat_type(proj.get("marketId") or "")
+
                     try:
                         props.append({
-                            "Player":    full_name,
-                            "Prop":      prop_name,
-                            "Line":      float(line_raw),
-                            "Side":      "OVER",
-                            "OverOdds":  "—",
-                            "UnderOdds": "—",
-                            "Book":      "Betr",
-                            "Sport":     sport,
-                            "source":    "betr_direct",
+                            "Player":        full_name,
+                            "Prop":          prop_name,
+                            "Line":          float(line_raw),
+                            "Over":          "—",
+                            "Under":         "—",
+                            "Sport":         sport,
+                            "Book":          "Betr",
+                            "source":        "betr_direct",
+                            "stat_type":     stat_type,
+                            "market_id":     proj.get("marketId"),
+                            "market_status": mkt_status,
                         })
                     except (ValueError, TypeError):
                         continue
