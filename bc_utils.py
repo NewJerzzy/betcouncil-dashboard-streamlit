@@ -898,18 +898,40 @@ def detect_season_regime(sport="NBA"):
             desc   = "Full weights active"
             adj    = {}
     elif sport == "NFL":
-        if month in (9,):
-            regime = "Early Season"
-            desc   = "Early NFL — base signal less reliable"
-            adj    = {"base": -0.05}
-        elif month in (1,):
+        today = date.today()
+        day   = today.day
+        # Date-based NFL regime boundaries:
+        #   Preseason:      Aug 1  – Sep 5
+        #   Early season:   Sep 6  – Sep 30
+        #   Mid season:     Oct 1  – Nov 30
+        #   Late season:    Dec 1  – Jan 15  (includes wild-card week)
+        #   Playoffs:       Jan 16 – Feb 15  (divisional → Super Bowl)
+        #   Off-season:     Feb 16 – Jul 31
+        if month == 8 or (month == 9 and day <= 5):
+            regime = "Preseason"
+            desc   = "NFL Preseason — starters limited, signals unreliable"
+            adj    = {"base": -0.07}
+        elif (month == 9 and day >= 6) or month in (10, 11):
+            if month == 9:
+                regime = "Early Season"
+                desc   = "Early NFL regular season — small sample, base stats less reliable"
+                adj    = {"base": -0.05}
+            else:
+                regime = "Mid Season"
+                desc   = "NFL mid-season — full weights active"
+                adj    = {}
+        elif month == 12 or (month == 1 and day <= 15):
+            regime = "Late Season"
+            desc   = "Late NFL regular season — rest signal critical"
+            adj    = {"rest": 0.03}
+        elif (month == 1 and day >= 16) or (month == 2 and day <= 15):
             regime = "Playoffs"
             desc   = "NFL Playoffs — defense weight increases significantly"
             adj    = {"defense": 0.06}
-        elif month in (12,):
-            regime = "Late Season"
-            desc   = "Late NFL — rest critical"
-            adj    = {"rest": 0.03}
+        elif month in (3, 4, 5, 6, 7) or (month == 2 and day >= 16):
+            regime = "Off-season"
+            desc   = "NFL off-season — current-season signals are stale"
+            adj    = {"base": -0.06}
         else:
             regime = "Mid Season"
             desc   = "Full weights active"

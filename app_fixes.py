@@ -498,3 +498,42 @@ def fetch_vsin_picks_and_ratings(sport: str = "MLB", mode: str = "today") -> dic
     except Exception as e:
         log_error_to_session("fetch_vsin_picks_and_ratings", str(e), "warning")
         return empty
+
+
+def fetch_vsin_pro_picks(sport: str = "MLB", mode: str = "today") -> list:
+    """
+    Playwright-backed VSiN Pro Picks fetcher for BetCouncil.
+
+    Wraps fetch_vsin_propicks_playwright() from vsin_picks_and_ratings with
+    Streamlit-friendly error handling and falls back to the static HTTP path
+    (VSiNPicksAndRatings.scrape_picks) if Playwright is unavailable.
+
+    Args:
+        sport: Sport filter code, e.g. "MLB", "NBA", "NFL" (default "MLB").
+        mode:  "today" (today's picks) or "active" (all pending picks).
+
+    Returns:
+        List of pick dicts:
+          { sport, expert_name, expert_id, source_show, posted_date,
+            pick_date, game_time, game_id, result, record_w, record_l,
+            is_player_prop, is_pending, book,
+            pick_text, player, team, bet_type, direction,
+            line, odds, units, prop_stat, scraped_at, source }
+        Returns [] on any failure.
+    """
+    try:
+        from vsin_picks_and_ratings import (
+            fetch_vsin_propicks_playwright,
+            PROPICKS_URLS,
+            VSiNPicksAndRatings,
+        )
+        url = PROPICKS_URLS.get(mode, PROPICKS_URLS.get("today"))
+        picks = fetch_vsin_propicks_playwright(url=url, sport_filter=sport.upper())
+        if picks:
+            return picks
+        # Playwright returned nothing — fall back to static HTTP scraper
+        scraper = VSiNPicksAndRatings()
+        return scraper.scrape_picks(mode=mode, sport_filter=sport.upper())
+    except Exception as _e:
+        log_error_to_session("fetch_vsin_pro_picks", str(_e)[:200], "warning")
+        return []

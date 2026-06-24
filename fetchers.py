@@ -615,6 +615,233 @@ def fetch_bovada_lines(sport="NBA"):
         print(f"[WARN] Bovada ({sport}): {type(_e).__name__}: {_e}")
         return load_json_data(BOVADA_PATH, [])
 
+
+def fetch_bovada_props(sport: str = "MLB") -> list:
+    """
+    Fetch Bovada player props using Playwright WebSocket interception.
+
+    WHY WebSocket: Bovada streams its live odds via a WebSocket connection at
+    wss://ws.bovada.lv — player-prop markets are pushed through this channel
+    and are NOT available on the static coupon REST endpoint used by
+    fetch_bovada_lines().  A real browser session is required because Bovada's
+    Cloudflare challenge fires before the WS handshake.
+
+    HOW: Playwright's page.on("websocket", …) exposes every WS connection
+    opened by the page; ws.on("framereceived", …) fires for each incoming
+    text or binary frame.  We parse frames that are valid JSON and look for
+    the "displayGroups" payload shape that Bovada uses for odds data.
+    Any displayGroup whose description contains "PLAYER" (case-insensitive)
+    is treated as a player-prop group.
+
+    Fallback: if the WS channel delivers a top-level "events" list (same shape
+    as the REST coupon endpoint), we also scan those events for player-prop
+    displayGroups.  This makes the parser resilient to Bovada switching between
+    REST-over-WS and live-push formats.
+
+    Headless: defaults to headed (False) — Cloudflare passes reliably in
+    headed mode.  Set env var BOVADA_HEADLESS=1 to force headless.
+
+    Returns list of dicts in BetCouncil standard format:
+      {Player, Prop, Line, Over, Under, Sport, Book, source}
+    Returns [] on import error, unsupported sport, or any failure.
+    """
+    sport_path_map = {
+        "MLB":  "baseball/mlb",
+        "NBA":  "basketball/nba",
+        "NHL":  "hockey/nhl",
+        "WNBA": "basketball/wnba",
+        "NFL":  "football/nfl",
+    }
+    sport_path = sport_path_map.get(sport.upper())
+    if not sport_path:
+        return []
+
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as _PWTimeout
+    except ImportError:
+        log_error_to_session(
+            "fetch_bovada_props",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return []
+
+    props = []
+    ws_frames: list = []   # collect raw JSON payloads for later parsing
+
+    def _on_ws(ws):
+        """Attach a frame listener to every new WebSocket connection."""
+        if "bovada.lv" not in ws.url and "ws.bovada" not in ws.url:
+            return
+
+        def _on_frame(payload):
+            if isinstance(payload, (bytes, bytearray)):
+                try:
+                    payload = payload.decode("utf-8", errors="ignore")
+                except Exception:
+                    return
+            if not isinstance(payload, str) or not payload.startswith("{"):
+                return
+            ws_frames.append(payload)
+
+        ws.on("framereceived", lambda p: _on_frame(p.get("payload", p) if isinstance(p, dict) else p))
+
+    try:
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("BOVADA_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 720},
+            )
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins',   { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = ctx.new_page()
+            page.on("websocket", _on_ws)
+
+            target = f"https://www.bovada.lv/sports/{sport_path}"
+            try:
+                page.goto(target, wait_until="networkidle", timeout=60_000)
+            except _PWTimeout:
+                pass
+            except Exception:
+                pass
+
+            # Dwell to collect push frames that arrive after initial paint
+            time.sleep(6)
+            ctx.close()
+            browser.close()
+
+    except Exception as _e:
+        log_error_to_session("fetch_bovada_props", str(_e)[:150], "warning")
+        return []
+
+    # ── Parse collected WS frames ─────────────────────────────────────────
+    def _parse_display_group(dg, event_competitors: list) -> list:
+        """Extract player props from a single Bovada displayGroup dict."""
+        desc = (dg.get("description") or "").upper()
+        if "PLAYER" not in desc and "PROP" not in desc and "PARTICIPANT" not in desc:
+            return []
+        rows = []
+        for market in (dg.get("markets") or []):
+            prop_name = _clean_text(market.get("description") or "")
+            for outcome in (market.get("outcomes") or []):
+                odesc = outcome.get("description", "")
+                price = outcome.get("price") or {}
+                american = str(price.get("american") or price.get("handicap") or "—")
+                # Player name: prefer explicit participant list, else first competitor
+                participants = (
+                    outcome.get("participants")
+                    or outcome.get("competitors")
+                    or event_competitors
+                    or []
+                )
+                player_name = ""
+                if participants:
+                    player_name = _clean_text(
+                        participants[0].get("name") or participants[0].get("description") or ""
+                    )
+                if not player_name:
+                    player_name = _clean_text(odesc)
+
+                # Line: pointSpread or handicap field
+                line_raw = (
+                    outcome.get("pointSpread")
+                    or outcome.get("handicap")
+                    or market.get("line")
+                    or market.get("point")
+                )
+                try:
+                    line = float(str(line_raw).replace("+", "")) if line_raw is not None else None
+                except (ValueError, TypeError):
+                    line = None
+
+                if not player_name or line is None:
+                    continue
+
+                side = odesc.upper()
+                rows.append({
+                    "Player": player_name,
+                    "Prop":   prop_name,
+                    "Line":   line,
+                    "Over":   american if "OVER" in side else "—",
+                    "Under":  american if "UNDER" in side else "—",
+                    "Sport":  sport.upper(),
+                    "Book":   "Bovada",
+                    "source": "bovada_ws",
+                })
+        return rows
+
+    def _clean_text(s):
+        import re as _re
+        return _re.sub(r"\s+", " ", (s or "")).strip()
+
+    seen_keys: set = set()
+    for raw in ws_frames:
+        try:
+            msg = json.loads(raw)
+        except Exception:
+            continue
+
+        # Shape A: top-level dict with "displayGroups" (single event push)
+        if "displayGroups" in msg:
+            competitors = msg.get("competitors") or msg.get("teams") or []
+            for dg in msg["displayGroups"]:
+                for row in _parse_display_group(dg, competitors):
+                    key = (row["Player"], row["Prop"], row["Line"])
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        props.append(row)
+
+        # Shape B: list of events under "events" key (bulk REST-over-WS push)
+        for event in (msg.get("events") or []):
+            competitors = event.get("competitors") or []
+            for dg in (event.get("displayGroups") or []):
+                for row in _parse_display_group(dg, competitors):
+                    key = (row["Player"], row["Prop"], row["Line"])
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        props.append(row)
+
+        # Shape C: nested under arbitrary wrapper key
+        for val in msg.values():
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and "displayGroups" in item:
+                        competitors = item.get("competitors") or []
+                        for dg in item["displayGroups"]:
+                            for row in _parse_display_group(dg, competitors):
+                                key = (row["Player"], row["Prop"], row["Line"])
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    props.append(row)
+
+    return props
+
+
 def _fetch_betonline_one_league(sport_path, league_path, sport):
     """Single-league BetOnline game-lines fetch — the core logic extracted
     so fetch_betonline_lines() can call this once for normal sports or
@@ -1852,6 +2079,242 @@ def fetch_fanduel_game_lines_playwright(sport: str) -> list:
             pass
 
     return games
+
+
+
+# FanDuel player-props URL tab mapping (sport → tab-specific path fragment)
+_FD_PROPS_TAB_PATHS = {
+    "MLB":  "baseball?tab=player-props",
+    "NBA":  "basketball/nba?tab=player-props",
+    "NFL":  "football/nfl?tab=player-props",
+    "NHL":  "hockey/nhl?tab=player-props",
+    "WNBA": "basketball/wnba?tab=player-props",
+}
+
+
+def fetch_fanduel_props_playwright(sport: str) -> list:
+    """
+    Fetch FanDuel player props using headed Playwright Chromium.
+
+    Extends the fetch_fanduel_game_lines_playwright() pattern to the
+    player-props tab.  The same PerimeterX protection applies, so we
+    drive a real browser session.  We navigate to the sport's
+    player-props tab URL and intercept JSON responses from
+    api.sportsbook.fanduel.com.
+
+    Parser looks for responses that carry a "markets" array where the
+    market type or description suggests a player prop — specifically:
+      - marketType not in the game-line whitelist (_FD_GL_MARKET_TYPES)
+      - OR the response URL path contains "player" or "sgp"
+      - OR the market description contains a player name pattern
+
+    Returns list of BetCouncil standard prop dicts:
+      {Player, Prop, Line, Over, Under, Sport, Book, source}
+    Returns [] on import error, unsupported sport, or any failure.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as _PWTimeout
+    except ImportError:
+        log_error_to_session(
+            "fetch_fanduel_props_playwright",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return []
+
+    tab_path = _FD_PROPS_TAB_PATHS.get(sport.upper())
+    if not tab_path:
+        return []
+
+    # 30-minute cache
+    cache_path = os.path.join(CACHE_DIR, f"fanduel_props_playwright_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    props: list = []
+    seen_keys: set = set()
+
+    def _ingest_fd_props(data: dict, source_url: str):
+        """Parse a FanDuel API response for player prop markets."""
+        # Determine if this response is props-relevant
+        url_is_props = any(
+            kw in source_url.lower()
+            for kw in ("player", "sgp", "prop", "participant")
+        )
+
+        markets = []
+        # Shape 1: top-level "markets" list (offers endpoint)
+        if "markets" in data:
+            markets = data["markets"]
+        # Shape 2: nested under "attachments" → "markets"
+        attachments = data.get("attachments") or {}
+        if "markets" in attachments:
+            markets.extend(attachments["markets"].values()
+                           if isinstance(attachments["markets"], dict)
+                           else attachments["markets"])
+
+        for mkt in markets:
+            if not isinstance(mkt, dict):
+                continue
+            mkt_type = mkt.get("marketType") or mkt.get("bettingType") or ""
+            mkt_desc = mkt.get("marketName") or mkt.get("description") or ""
+
+            # Skip game-line markets unless the URL explicitly says props
+            if not url_is_props and mkt_type in _FD_GL_MARKET_TYPES:
+                continue
+
+            runners = (
+                mkt.get("runners")
+                or mkt.get("selections")
+                or mkt.get("outcomes")
+                or []
+            )
+            for runner in runners:
+                if not isinstance(runner, dict):
+                    continue
+
+                runner_name = (
+                    runner.get("runnerName")
+                    or runner.get("selectionName")
+                    or runner.get("description")
+                    or ""
+                ).strip()
+                handicap = runner.get("handicap") or runner.get("line")
+                win_run_line = runner.get("winRunLine") or runner.get("spreadLine")
+
+                line_raw = handicap if handicap is not None else win_run_line
+                try:
+                    line = float(str(line_raw).replace("+", "")) if line_raw is not None else None
+                except (ValueError, TypeError):
+                    line = None
+
+                # FanDuel runners for props: runnerName = "Over 1.5" or "Nicky Lopez Over"
+                # We need player name and direction separately
+                import re as _re
+                over_m = _re.search(r"(over|under)\s*([\d.]+)", runner_name, _re.I)
+                if over_m:
+                    direction = over_m.group(1).capitalize()
+                    if line is None:
+                        try:
+                            line = float(over_m.group(2))
+                        except (ValueError, TypeError):
+                            pass
+                    player = runner_name[:over_m.start()].strip(" -–")
+                else:
+                    direction = "Over"
+                    player = runner_name
+
+                if not player or line is None:
+                    continue
+
+                # Odds
+                prices = runner.get("winRunnerOdds") or runner.get("currentPrices") or {}
+                if isinstance(prices, dict):
+                    american = prices.get("americanDisplayOdds") or prices.get("american") or "—"
+                else:
+                    american = "—"
+
+                key = (player, mkt_desc, line, direction)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                props.append({
+                    "Player": player,
+                    "Prop":   mkt_desc,
+                    "Line":   line,
+                    "Over":   str(american) if direction == "Over" else "—",
+                    "Under":  str(american) if direction == "Under" else "—",
+                    "Sport":  sport.upper(),
+                    "Book":   "FanDuel",
+                    "source": "fanduel_props_playwright",
+                })
+
+    def _on_response(response):
+        url = response.url
+        if not any(d in url for d in (
+            "api.sportsbook.fanduel.com",
+            "sbapi.fanduel.com",
+            ".sportsbook.fanduel.com/api",
+        )):
+            return
+        if response.status != 200:
+            return
+        try:
+            ct = response.headers.get("content-type", "")
+            if "json" not in ct:
+                return
+            _ingest_fd_props(response.json(), url)
+        except Exception:
+            pass
+
+    try:
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("FANDUEL_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 720},
+            )
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = ctx.new_page()
+            page.on("response", _on_response)
+
+            target_url = f"https://sportsbook.fanduel.com/{tab_path}"
+            try:
+                page.goto(target_url, wait_until="networkidle", timeout=60_000)
+            except _PWTimeout:
+                pass
+            except Exception:
+                pass
+
+            # Dwell to capture deferred XHR calls after initial paint
+            time.sleep(5)
+            ctx.close()
+            browser.close()
+
+    except Exception as _e:
+        log_error_to_session(
+            "fetch_fanduel_props_playwright", str(_e)[:150], "warning"
+        )
+        return []
+
+    if props:
+        try:
+            with open(cache_path, "wb") as _f:
+                pickle.dump(props, _f)
+        except OSError:
+            pass
+
+    return props
 
 
 def record_clv(lock, current_props):
@@ -6262,6 +6725,73 @@ def fetch_betmgm_direct(sport):
 
 
 # ── Caesars Playwright token harvester ───────────────────────────────────────
+
+
+def fetch_nfl_injuries() -> list:
+    """
+    Fetch current NFL injury report from ESPN's public injuries endpoint.
+
+    Endpoint: https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries
+    Public, no authentication required, no rate limits documented.
+
+    Response shape (per team entry):
+      {
+        "team": {"displayName": "...", "abbreviation": "..."},
+        "injuries": [
+          {
+            "athlete": {"fullName": "...", "position": {"abbreviation": "..."}},
+            "status": "Questionable",
+            "shortComment": "Ankle",
+            "longComment": "..."
+          }
+        ]
+      }
+
+    Returns list of dicts:
+      {Player, Team, TeamAbbr, Position, Status, Comment, Sport, source}
+    Returns [] on any failure (no warnings raised — injuries are supplemental data).
+    """
+    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
+    try:
+        r = _http.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        injuries = []
+        for team_entry in (data.get("injuries") or []):
+            team_info  = team_entry.get("team") or {}
+            team_name  = team_info.get("displayName") or team_info.get("name") or ""
+            team_abbr  = team_info.get("abbreviation") or ""
+            for inj in (team_entry.get("injuries") or []):
+                athlete  = inj.get("athlete") or {}
+                position = (athlete.get("position") or {}).get("abbreviation") or ""
+                player   = (
+                    athlete.get("fullName")
+                    or athlete.get("displayName")
+                    or ""
+                )
+                status   = inj.get("status") or ""
+                comment  = inj.get("shortComment") or inj.get("longComment") or ""
+                if not player:
+                    continue
+                injuries.append({
+                    "Player":   player,
+                    "Team":     team_name,
+                    "TeamAbbr": team_abbr,
+                    "Position": position,
+                    "Status":   status,
+                    "Comment":  comment,
+                    "Sport":    "NFL",
+                    "source":   "espn_nfl_injuries",
+                })
+        return injuries
+    except Exception:
+        return []
+
 
 def harvest_caesars_tokens(max_wait: int = 90) -> dict:
     """

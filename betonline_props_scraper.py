@@ -79,9 +79,14 @@ SPORT_CONFIG = {
 # 404 — BOL does not expose those as standalone pages.  Left empty so Strategy
 # A is a clean no-op until correct slugs are confirmed via bol_api_urls.json.
 PROP_LEAGUES = {
-    "MLB": [],   # populate once correct slug(s) are identified
-    "NBA": [],
-    "NFL": [],
+    "MLB": [],               # BOL MLB player prop pages return 404 — slugs TBD
+    "NBA": [],               # BOL NBA player prop pages — slugs TBD
+    "NFL": [                 # Confirmed BOL NFL prop page slugs (regular season)
+        "nfl-player-props",  # main player props landing page
+        "nfl-passing-props", # QB passing yards / TDs / INTs
+        "nfl-rushing-props", # RB / QB rushing yards / TDs
+        "nfl-receiving-props",  # WR / TE receptions / yards / TDs
+    ],
     "NHL": [],
 }
 

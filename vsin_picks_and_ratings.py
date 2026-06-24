@@ -537,6 +537,101 @@ def expert_record_filter(picks: list, min_win_pct: float = 0.55) -> list:
     return filtered
 
 
+
+
+# ---------------------------------------------------------------------------
+# Playwright-based VSiN Pro Picks fetcher
+# ---------------------------------------------------------------------------
+
+def fetch_vsin_propicks_playwright(url: str = None, sport_filter: str = None) -> list:
+    """
+    Fetch VSiN Pro Picks from data.vsin.com/propicks/ using Playwright.
+
+    The Pro Picks page at data.vsin.com/propicks/ (and the /active/ and
+    /eventdate/ sub-pages) is server-side rendered — a plain HTTP GET returns
+    the full HTML including the picks table.  However, behind Cloudflare the
+    static fetch is often blocked (403 / challenge).  This function drives a
+    real Chromium session so the Cloudflare JS challenge runs and the page
+    loads normally.
+
+    After the initial navigation, we explicitly wait for the picks table
+    (<table> element inside the picks container) so we don't parse an
+    empty or partially-loaded page.
+
+    Args:
+        url:           Override URL (default: PROPICKS_URLS["active"]).
+        sport_filter:  Optional sport code (e.g. "MLB") to pass to parse_propicks.
+
+    Returns:
+        List of pick dicts in the same shape as parse_propicks() output.
+        Returns [] on import error, navigation failure, or parse error.
+    """
+    if sync_playwright is None:
+        import logging as _logging
+        _logging.getLogger("betcouncil.vsin").warning(
+            "[VSiN Playwright] playwright not installed — "
+            "pip install playwright && playwright install chromium"
+        )
+        return []
+
+    target_url = url or PROPICKS_URLS.get("active", "https://data.vsin.com/propicks/active/")
+
+    html = ""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=False,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
+            ctx = browser.new_context(
+                user_agent=HEADERS["User-Agent"],
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 800},
+            )
+            ctx.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+            )
+            page = ctx.new_page()
+
+            try:
+                page.goto(target_url, wait_until="domcontentloaded", timeout=60_000)
+            except Exception:
+                pass
+
+            # Wait for the picks table to appear — the page is server-rendered
+            # but Cloudflare may inject a challenge that replaces the body;
+            # after clearance the real content loads.
+            try:
+                page.wait_for_selector("table", timeout=20_000)
+            except Exception:
+                pass  # Proceed anyway; parse whatever is in the DOM
+
+            # Extra dwell for any remaining deferred JS (e.g. dynamic row insertion)
+            time.sleep(3)
+            html = page.content()
+
+            ctx.close()
+            browser.close()
+
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger("betcouncil.vsin").warning(
+            "[VSiN Playwright] navigation error: %s", _e
+        )
+        return []
+
+    if not html:
+        return []
+
+    return parse_propicks(html, sport_filter)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
