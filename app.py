@@ -971,54 +971,93 @@ def check_daily_risk_limits(sport=None):
 # MODULE: STORAGE — Gist, JSON, pickle persistence
 # Future extraction target: storage.py
 # ═══════════════════════════════════════════════════════════
+# Batch window: non-critical dirty writes are held for up to this many seconds
+# before being flushed. When the window expires (or a critical write triggers
+# flush), ALL dirty keys are written in a SINGLE Gist PATCH request instead of
+# one PATCH per key — reducing API calls proportionally to how many keys are
+# queued together.
+_GIST_BATCH_WINDOW = 5.0  # seconds
+
+# Keys that must be flushed immediately rather than held in the batch window.
+_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance"})
+
 def save_to_gist(data_type, data):
     """
-    Batched Gist writer — marks data as dirty in session state and writes
-    once per 30-second window rather than on every button press.
-    Falls back to immediate write for critical data types (history, bankroll).
-    Reduces Gist API calls by ~70% during active sessions.
+    Batched Gist writer — marks data as dirty and flushes once per batch window.
+
+    Non-critical writes (locks, props, etc.) are queued for up to
+    _GIST_BATCH_WINDOW seconds. When a critical write arrives, OR when the
+    window expires, ALL dirty keys are flushed in a SINGLE Gist PATCH request.
+    This replaces the previous per-key PATCH pattern and reduces API calls
+    proportionally to the number of keys written together.
     """
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return False
-    # Track dirty state
     if "gist_dirty" not in st.session_state:
         st.session_state["gist_dirty"] = {}
     if "gist_last_write" not in st.session_state:
         st.session_state["gist_last_write"] = {}
+    # Mark dirty
     st.session_state["gist_dirty"][data_type] = data
     now = time.time()
-    last = st.session_state["gist_last_write"].get(data_type, 0)
-    # Immediate write for critical types or if >30s since last write
-    should_write = data_type in ("history", "bankroll", "signal_performance", "injury_performance") or (now - last) > 30
-    if not should_write:
-        return True  # queued — will write on next flush
-    return _flush_gist_write(data_type, data, now)
+    # Open a new batch window the first time a key goes dirty
+    if "gist_batch_start" not in st.session_state:
+        st.session_state["gist_batch_start"] = now
+    batch_age = now - st.session_state.get("gist_batch_start", now)
+    is_critical = data_type in _GIST_CRITICAL_KEYS
+    # Flush ALL dirty keys in one PATCH when:
+    #   (a) a critical key was just written — don't delay history/bankroll
+    #   (b) the batch window has expired — coalesce whatever accumulated
+    if is_critical or batch_age >= _GIST_BATCH_WINDOW:
+        return _flush_batch_gist(st.session_state["gist_dirty"], now)
+    # Still within window — stay queued
+    return True
 
-def _flush_gist_write(data_type, data, now=None):
-    """Execute the actual Gist PATCH — called by save_to_gist or flush_all_gist_writes."""
-    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
-        return False
+def _flush_batch_gist(dirty, now=None):
+    """Write all keys in *dirty* in a SINGLE Gist PATCH request.
+
+    GitHub's Gist PATCH API accepts multiple files per request:
+        {"files": {"file1.json": {"content": "..."}, "file2.json": {"content": "..."}}}
+    This replaces N sequential PATCHes with one round-trip regardless of how
+    many keys are queued.
+    """
+    if not dirty or not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return not dirty  # empty dirty dict is a no-op success
+    now = now or time.time()
     try:
         headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        payload = {"files": {f"betcouncil_{data_type}.json": {"content": json.dumps(data, indent=2)}}}
-        resp = _http.patch(f"{GIST_API}/{GITHUB_GIST_ID}", headers=headers, json=payload, timeout=10)
+        files = {
+            f"betcouncil_{k}.json": {"content": json.dumps(v, indent=2)}
+            for k, v in dirty.items()
+        }
+        resp = _http.patch(
+            f"{GIST_API}/{GITHUB_GIST_ID}",
+            headers=headers,
+            json={"files": files},
+            timeout=15,
+        )
         if resp.status_code == 200:
             if "gist_last_write" not in st.session_state:
                 st.session_state["gist_last_write"] = {}
-            st.session_state["gist_last_write"][data_type] = now or time.time()
-            if "gist_dirty" in st.session_state:
-                st.session_state["gist_dirty"].pop(data_type, None)
+            for k in list(dirty.keys()):
+                st.session_state["gist_last_write"][k] = now
+            st.session_state["gist_dirty"].clear()
+            st.session_state["gist_batch_start"] = now  # reset window after flush
         return resp.status_code == 200
     except (requests.RequestException, json.JSONDecodeError, OSError):
         return False
 
+def _flush_gist_write(data_type, data, now=None):
+    """Single-key flush — kept for backward compatibility; delegates to batch."""
+    return _flush_batch_gist({data_type: data}, now)
+
 def flush_all_gist_writes():
-    """Flush all pending dirty Gist writes — call at end of session or on demand."""
+    """Flush all pending dirty Gist writes in ONE batch PATCH — call at session end."""
     dirty = st.session_state.get("gist_dirty", {})
-    results = {}
-    for data_type, data in list(dirty.items()):
-        results[data_type] = _flush_gist_write(data_type, data)
-    return results
+    if not dirty:
+        return {}
+    ok = _flush_batch_gist(dict(dirty))
+    return {k: ok for k in dirty}
 
 def load_from_gist(data_type: str, default):
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
@@ -11604,7 +11643,7 @@ def load_sport_data(sport):
             else:
                 return [], games, 0, 0, {}, {}
 
-    # ── SECTION: DATA ACQUISITION COMPLETE ──────────────���──────────────────────
+    # ── SECTION: DATA ACQUISITION COMPLETE ──────────────���──���───────────────────
     # All network I/O is done above via _fetch_parallel().
     # Below: pure computation — B2B detection, enrichment, game analysis.
     # injuries, public_betting, an_props, games already fetched in parallel above
@@ -14009,7 +14048,7 @@ with tabs[0]:
         # Note: intentionally AFTER Players to Avoid so
         # the "singles only" message doesn't contradict
         # the Best Bet Queue shown above.
-        # ═══════════════════════════════════════════════════
+        # ═════════════════════════��═════════════════════════
         # ── PARLAY OF THE DAY — PROPS ──────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--color-border-tertiary);"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:var(--color-border-tertiary);"></div></div>''', unsafe_allow_html=True)
         # Filter to current sport only, SOVEREIGN/ELITE tier

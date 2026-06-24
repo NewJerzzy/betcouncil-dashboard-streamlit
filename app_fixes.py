@@ -457,3 +457,44 @@ def get_vsin_game_signal(vsin_data: dict, away_team: str, home_team: str) -> dic
             break
 
     return result
+
+def fetch_vsin_picks_and_ratings(sport: str = "MLB", mode: str = "today") -> dict:
+    """
+    Module-level callable for VSiNPicksAndRatings.
+    Wraps VSiNPicksAndRatings.scrape_picks() and scrape_power_ratings() and
+    returns a unified dict so app.py callers don't need to import the class
+    directly.
+
+    Returns:
+        {
+            "picks":          list of pro-pick dicts,
+            "power_ratings":  list of Makinen power-rating dicts,
+            "ratings_lookup": dict keyed by team name for O(1) access,
+            "consensus":      dict keyed by game_id with consensus direction,
+            "sport":          the requested sport string,
+        }
+    On any failure returns the same shape with empty collections.
+    """
+    empty = {
+        "picks": [], "power_ratings": [],
+        "ratings_lookup": {}, "consensus": {}, "sport": sport,
+    }
+    try:
+        from vsin_picks_and_ratings import (
+            VSiNPicksAndRatings,
+            picks_consensus,
+            power_ratings_lookup,
+        )
+        scraper = VSiNPicksAndRatings()
+        picks   = scraper.scrape_picks(mode=mode, sport_filter=sport)
+        ratings = scraper.scrape_power_ratings(sport=sport)
+        return {
+            "picks":          picks,
+            "power_ratings":  ratings,
+            "ratings_lookup": power_ratings_lookup(ratings),
+            "consensus":      picks_consensus(picks, sport),
+            "sport":          sport,
+        }
+    except Exception as e:
+        log_error_to_session("fetch_vsin_picks_and_ratings", str(e), "warning")
+        return empty

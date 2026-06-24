@@ -3395,7 +3395,7 @@ def scrape_prizepicks(sport):
                         elif resp.status_code == 403:
                             # Bot protection — try next URL
                             continue
-                    except (requests.RequestException, ValueError, KeyError, TypeError):
+                    except (requests.RequestException, ValueError, KeyError, TypeError, OSError):
                         pass
             except (ValueError, KeyError, TypeError, AttributeError):
                 continue
@@ -3491,7 +3491,7 @@ def scrape_prizepicks(sport):
         import glob
         for f in glob.glob(os.path.join(CACHE_DIR, "pp_*.pkl")):
             os.remove(f)
-    except (ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return []  # Let wrapper handle Gist fallback
 
@@ -4103,13 +4103,16 @@ def fetch_game_lines(sport):
         "TOR":"Toronto","WSH":"Washington Nationals",
         # NBA
         "GSW":"Golden State","LAL":"Los Angeles Lakers",
-        "LAC":"Los Angeles Clippers","NYK":"New York Knicks",
+        "LAC":"Los Angeles","NYK":"New York Knicks",
         "NOP":"New Orleans","SAS":"San Antonio",
         "OKC":"Oklahoma","UTA":"Utah","MEM":"Memphis",
-        # NFL
+        # NFL — KC and LAC keys already defined above; omitting duplicates
+        # to prevent the NFL entry silently overwriting the MLB/NBA fragment.
+        # "Kansas City" (MLB KC key) matches both Royals and Chiefs.
+        # "Los Angeles" (NBA LAC key) matches both Clippers and Chargers.
         "NE":"New England","NO":"New Orleans Saints",
-        "GB":"Green Bay","KC":"Kansas City Chiefs",
-        "LAR":"Los Angeles Rams","LAC":"Los Angeles Chargers",
+        "GB":"Green Bay",
+        "LAR":"Los Angeles Rams",
         "NYG":"New York Giants","NYJ":"New York Jets",
         "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers",
         # NHL
@@ -5090,6 +5093,7 @@ def fetch_mlb_confirmed_lineups_with_fallback():
 def fetch_draftkings_direct(sport):
     """Fetch DraftKings props directly using curl_cffi. Fallback when OddsPAPI is down."""
     try:
+        from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
     except ImportError:
         return []
@@ -5634,7 +5638,7 @@ def fetch_caesars_direct(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(props, f)
 
-    except (IOError, ValueError) as _e:
+    except Exception as _e:
         print(f"[WARN] fetch_caesars_direct: {_e}")
 
     return props

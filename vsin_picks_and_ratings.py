@@ -96,15 +96,26 @@ def _fetch_playwright(url):
         return html
 
 def _fetch_html(url):
+    import logging as _logging
+    _log = _logging.getLogger("betcouncil.vsin")
     session = _make_session()
     try:
-        r = session.get(url, timeout=30)
+        r = session.get(url, timeout=20)
         if r.status_code == 403:
-            return _fetch_playwright(url)
+            try:
+                return _fetch_playwright(url)
+            except RuntimeError as _rte:
+                _log.warning("[VSiN] playwright unavailable on 403: %s", _rte)
+                return ""
         r.raise_for_status()
         return r.text
-    except Exception:
-        return _fetch_playwright(url)
+    except Exception as _e:
+        _log.warning("[VSiN] _fetch_html HTTP error (%s): %s", url, _e)
+        try:
+            return _fetch_playwright(url)
+        except RuntimeError as _rte:
+            _log.warning("[VSiN] playwright unavailable on fallback: %s", _rte)
+            return ""
 
 # ---------------------------------------------------------------------------
 # 1. Makinen Power Ratings
