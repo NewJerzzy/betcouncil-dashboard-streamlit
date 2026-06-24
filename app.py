@@ -359,6 +359,23 @@ ROLLING_DEFENSE_CACHE_HOURS = 12
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
 GIST_API = "https://api.github.com/gists"
+
+# ── Startup credential check ────────────────────────────────────────────────
+# Show a visible banner at app load when Gist persistence is unconfigured so
+# the operator knows immediately rather than discovering it via silent [] returns.
+if not GITHUB_GIST_ID:
+    st.error(
+        "⚠️ **GITHUB_GIST_ID not set** — Gist persistence disabled. "
+        "Props auto-scraping, lock history, and bankroll data will not be saved or loaded. "
+        "Add GITHUB_GIST_ID to Streamlit secrets to enable.",
+        icon="🔴",
+    )
+elif not GITHUB_TOKEN:
+    st.error(
+        "⚠️ **GITHUB_TOKEN not set** — Gist reads/writes will fail. "
+        "Add GITHUB_TOKEN to Streamlit secrets.",
+        icon="🔴",
+    )
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
 # OddsPapi constants
@@ -4303,7 +4320,8 @@ def log_error_to_session(source, error, error_type="error"):
             "error": str(error)[:200],
             "type": error_type
         })
-        st.session_state["errors"] = st.session_state["errors"][-50:]
+        # Cap at 500 entries — trim oldest to prevent unbounded session state growth
+        st.session_state["errors"] = st.session_state["errors"][-500:]
     except (KeyError, TypeError, ValueError) as _e:
             print(f"[WARN] {_e}")
 

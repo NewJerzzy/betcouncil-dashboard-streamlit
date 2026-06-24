@@ -38,7 +38,8 @@ def log_error_to_session(source: str, error: str, error_type: str = "error"):
             "type": error_type
         })
         # Keep only last 50 errors
-        st.session_state["errors"] = st.session_state["errors"][-50:]
+        # Cap at 500 — trim oldest to prevent unbounded growth
+        st.session_state["errors"] = st.session_state["errors"][-500:]
     except Exception as e:
         logger.error(f"Failed to log error: {e}", exc_info=True)
 

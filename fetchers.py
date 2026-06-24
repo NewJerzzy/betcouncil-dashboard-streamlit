@@ -4351,22 +4351,89 @@ def scrape_prizepicks(sport):
     # genuinely stateless — no PerimeterX/Caesars-style token harvest needed
     # here, just closer header fidelity.
     _device_id_path = os.path.join(CACHE_DIR, "pp_device_id.txt")
+
+    # ── device_id load: local file → Gist fallback → generate new ────────────
+    # Streamlit Cloud ephemeral filesystem resets on every redeploy, so
+    # CACHE_DIR/pp_device_id.txt is wiped each time.  We fall back to a Gist
+    # file (betcouncil_device_fingerprint.json) that survives redeploys, keeping
+    # the same UUID across deploys and avoiding a fingerprint reset that flags
+    # the scraper as a new device.
+    #   Read order:  local file  →  Gist  →  generate new UUID
+    #   Write order: local file  +  Gist (only when generating a new UUID)
+    def _read_device_id_from_gist() -> str:
+        """Fetch device_id from betcouncil_device_fingerprint.json in the Gist."""
+        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+            return ""
+        try:
+            _gr = _http.get(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={
+                    "Authorization": f"token {GITHUB_TOKEN}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+                timeout=8,
+            )
+            if _gr.status_code != 200:
+                return ""
+            _gf = _gr.json().get("files", {}).get("betcouncil_device_fingerprint.json", {})
+            _gc = _gf.get("content", "")
+            return json.loads(_gc).get("device_id", "") if _gc else ""
+        except Exception:
+            return ""
+
+    def _write_device_id_to_gist(did: str) -> None:
+        """Persist device_id to Gist so it survives Streamlit redeploys."""
+        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+            return
+        try:
+            _http.patch(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={
+                    "Authorization": f"token {GITHUB_TOKEN}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+                json={
+                    "files": {
+                        "betcouncil_device_fingerprint.json": {
+                            "content": json.dumps({"device_id": did})
+                        }
+                    }
+                },
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    # 1. Try local file (fast path — no network call)
+    _device_id = ""
     if os.path.exists(_device_id_path):
         try:
-            with open(_device_id_path, "r") as f:
-                _device_id = f.read().strip()
+            with open(_device_id_path, "r") as _f:
+                _device_id = _f.read().strip()
         except (IOError, OSError):
             _device_id = ""
-    else:
-        _device_id = ""
+
+    # 2. If local file missing/empty (e.g. after a redeploy), try Gist
+    if not _device_id:
+        _device_id = _read_device_id_from_gist()
+        if _device_id:
+            # Restore the local file so subsequent calls are fast
+            try:
+                with open(_device_id_path, "w") as _f:
+                    _f.write(_device_id)
+            except (IOError, OSError):
+                pass
+
+    # 3. Still empty — generate a new UUID and persist to both places
     if not _device_id:
         import uuid as _uuid
         _device_id = str(_uuid.uuid4())
         try:
-            with open(_device_id_path, "w") as f:
-                f.write(_device_id)
+            with open(_device_id_path, "w") as _f:
+                _f.write(_device_id)
         except (IOError, OSError):
             pass
+        _write_device_id_to_gist(_device_id)
     _device_info = (
         f"anonymousId=,name=,os=windows,osVersion=Windows NT 10.0; Win64; x64,"
         f"platform=web,appVersion=,gameMode=prizepools,stateCode={state_code}"

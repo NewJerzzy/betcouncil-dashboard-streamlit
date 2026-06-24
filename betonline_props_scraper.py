@@ -81,12 +81,11 @@ SPORT_CONFIG = {
 PROP_LEAGUES = {
     "MLB": [],               # BOL MLB player prop pages return 404 — slugs TBD
     "NBA": [],               # BOL NBA player prop pages — slugs TBD
-    "NFL": [                 # Confirmed BOL NFL prop page slugs (regular season)
-        "nfl-player-props",  # main player props landing page
-        "nfl-passing-props", # QB passing yards / TDs / INTs
-        "nfl-rushing-props", # RB / QB rushing yards / TDs
-        "nfl-receiving-props",  # WR / TE receptions / yards / TDs
-    ],
+    "NFL": [],  # Slugs TBD — UNVERIFIED (do not navigate until confirmed).
+                # Plausible candidates: nfl-player-props, nfl-passing-props,
+                # nfl-rushing-props, nfl-receiving-props.  BOL NFL prop pages
+                # may 404 exactly like the MLB slugs did.  Verify via
+                # bol_api_urls.json or a live nav test before populating.
     "NHL": [],
 }
 
