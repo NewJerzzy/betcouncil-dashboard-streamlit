@@ -313,12 +313,14 @@ def _parse_pp_ocr_inline(raw_text):
                 line = float(pre_nums[-1])
             elif post_nums:
                 line = float(post_nums[0])
-        result = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "LOSS")
+        # result_raw stores the OVER-side result; it is corrected for UNDER
+        # bets in the COMBINE loop below once entry["side"] is known.
+        result_raw = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "LOSS")
         prop_name = pm.group(1)
         # Normalize prop aliases
         prop_name = re.sub(r"(?i)^Ks$", "Strikeouts", prop_name)
         prop_name = re.sub(r"RBls", "RBIs", prop_name)
-        metrics.append({"prop": prop_name, "actual": actual, "line": line, "result": result, "side": "OVER"})
+        metrics.append({"prop": prop_name, "actual": actual, "line": line, "result": result_raw, "side": "OVER"})
 
     # ── NAME SANITY FILTER ───────────────────────────────────────────────────
     # Reject garbled names from OCR artifacts: prop words, month fragments, keywords
@@ -359,6 +361,13 @@ def _parse_pp_ocr_inline(raw_text):
 
     # ── COMBINE ──────────────────────────────────────────────────────────────
     out = []
+    if len(players) != len(metrics):
+        import warnings
+        warnings.warn(
+            f"[slip_parser] player/metric count mismatch: {len(players)} players, "
+            f"{len(metrics)} metrics — {abs(len(players)-len(metrics))} leg(s) will be dropped",
+            stacklevel=2,
+        )
     for i in range(min(len(players), len(metrics))):
         entry = {**players[i], **metrics[i]}
         entry["wager"] = _wager if i == 0 else 0.0
@@ -367,6 +376,15 @@ def _parse_pp_ocr_inline(raw_text):
         entry["overall_result"] = _overall
         if i < len(_arrow_sides):
             entry["side"] = _arrow_sides[i]
+        # Correct result for UNDER bets: flip WIN/LOSS when side is UNDER.
+        # The raw result was computed assuming OVER (actual >= line = WIN).
+        # For UNDER legs, WIN requires actual <= line.
+        _side = entry.get("side", "OVER")
+        _act  = entry.get("actual") or 0.0
+        _ln   = entry.get("line") or 0.0
+        _raw  = entry.get("result", "")
+        if _side == "UNDER" and not _is_pending and _ln > 0 and _act is not None:
+            entry["result"] = "WIN" if _act <= _ln else "LOSS"
         if _is_pending:
             entry["result"] = "PENDING"
             entry["outcome"] = "PENDING"
@@ -384,138 +402,201 @@ def _parse_pp_ocr_inline(raw_text):
 
 
 def parse_bovada_slip_text(text: str) -> list:
-    """Parse Bovada text slip into bet records."""
+    """Parse Bovada text slip into bet records.
+
+    Edge-case hardening:
+    - All float() / int() calls guarded against ValueError from bad OCR.
+    - Leg regex accepts both LF and CRLF line endings.
+    - Sport inferred from slip text rather than hardcoded to MLB.
+    """
     import re
     bets = []
     if not text or not any(x in text.lower() for x in ['parlay', 'straight bet', 'ref.']):
         return bets
-    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
-    tl = text.lower()
+    try:
+        lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+        tl = text.lower()
 
-    # Outcome
-    outcome = "PENDING"
-    if "winnings" in tl:
-        win_match = re.search(r'winnings\s*\$?\s*([\d.]+)', tl)
-        if win_match:
-            winnings = float(win_match.group(1))
-            outcome = "WIN" if winnings > 0 else "LOSS"
-    elif "\nloss\n" in tl or tl.strip().endswith("loss"):
-        outcome = "LOSS"
-    elif "\nwin\n" in tl or tl.strip().endswith("win"):
-        outcome = "WIN"
+        # Infer sport from text — fall back to MLB if unrecognisable
+        _SPORT_HINTS = [
+            (["nba", "basketball"], "NBA"),
+            (["nfl", "football"], "NFL"),
+            (["nhl", "hockey"], "NHL"),
+            (["soccer", "mls", "epl", "premier league"], "SOCCER"),
+            (["tennis"], "TENNIS"),
+            (["ufc", "mma"], "MMA"),
+        ]
+        sport = "MLB"
+        for hints, sname in _SPORT_HINTS:
+            if any(h in tl for h in hints):
+                sport = sname
+                break
 
-    # Wager
-    wager = 0.0
-    risk_match = re.search(r'risk\s*\$?\s*([\d.]+)', tl)
-    if risk_match:
-        wager = float(risk_match.group(1))
+        # Outcome
+        outcome = "PENDING"
+        if "winnings" in tl:
+            win_match = re.search(r'winnings\s*\$?\s*([\d.]+)', tl)
+            if win_match:
+                try:
+                    winnings = float(win_match.group(1))
+                    outcome = "WIN" if winnings > 0 else "LOSS"
+                except ValueError:
+                    pass
+        elif "\nloss\n" in tl or tl.strip().endswith("loss"):
+            outcome = "LOSS"
+        elif "\nwin\n" in tl or tl.strip().endswith("win"):
+            outcome = "WIN"
 
-    # Bet type
-    parlay_match = re.search(r'(\d+)\s+team\s+parlay', tl)
-    is_parlay = bool(parlay_match)
-    n_picks = int(parlay_match.group(1)) if parlay_match else 1
+        # Wager
+        wager = 0.0
+        risk_match = re.search(r'risk\s*\$?\s*([\d,]+(?:\.\d+)?)', tl)
+        if risk_match:
+            try:
+                wager = float(risk_match.group(1).replace(",", ""))
+            except ValueError:
+                pass
 
-    # Parse each leg
-    legs = re.findall(r'\*\s+(.+?)\s*\n(.+?)(?:\n|$)', text, re.MULTILINE)
-    date_str = ""
-    date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
-    if date_match:
-        date_str = date_match.group(1)
+        # Bet type
+        parlay_match = re.search(r'(\d+)\s+team\s+parlay', tl)
+        n_picks = 1
+        if parlay_match:
+            try:
+                n_picks = int(parlay_match.group(1))
+            except ValueError:
+                pass
 
-    for matchup, pick_line in legs:
-        matchup = matchup.strip()
-        pick_line = pick_line.strip()
-        pick_match = re.match(r'^(.+?)\s*\(([+-]?\d+)\)', pick_line)
-        if pick_match:
-            team_pick = pick_match.group(1).strip()
-            odds = pick_match.group(2)
-            market = "Moneyline" if "moneyline" in pick_line.lower() else pick_line.split(")")[-1].strip()
+        # Parse each leg — accept both LF and CRLF line endings
+        legs = re.findall(r'\*\s+(.+?)\s*\r?\n(.+?)(?:\r?\n|$)', text, re.MULTILINE)
+        date_str = ""
+        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
+        if date_match:
+            date_str = date_match.group(1)
+
+        for matchup, pick_line in legs:
+            matchup = matchup.strip()
+            pick_line = pick_line.strip()
+            pick_match = re.match(r'^(.+?)\s*\(([+-]?\d+)\)', pick_line)
+            if pick_match:
+                team_pick = pick_match.group(1).strip()
+                odds = pick_match.group(2)
+                market = "Moneyline" if "moneyline" in pick_line.lower() else pick_line.split(")")[-1].strip()
+                bets.append({
+                    "player": matchup, "prop": market, "line": 0,
+                    "side": team_pick, "sport": sport,
+                    "outcome": outcome, "wager": wager / max(1, n_picks),
+                    "pick_count": n_picks, "bet_type": "game",
+                    "source": "Bovada", "date": date_str,
+                    "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5
+                })
+
+        if not bets and outcome != "PENDING":
             bets.append({
-                "player": matchup, "prop": market, "line": 0,
-                "side": team_pick, "sport": "MLB",
-                "outcome": outcome, "wager": wager / max(1, n_picks),
-                "pick_count": n_picks, "bet_type": "game",
-                "source": "Bovada", "date": date_str,
-                "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5
+                "player": "Bovada Parlay", "prop": f"{n_picks}-Team Parlay",
+                "line": 0, "side": "WIN", "sport": sport,
+                "outcome": outcome, "wager": wager, "pick_count": n_picks,
+                "bet_type": "game", "source": "Bovada", "date": date_str,
+                "tier": "LEAN", "edge": 0, "prob": 0.5
             })
-
-    if not bets and outcome != "PENDING":
-        bets.append({
-            "player": "Bovada Parlay", "prop": f"{n_picks}-Team Parlay",
-            "line": 0, "side": "WIN", "sport": "MLB",
-            "outcome": outcome, "wager": wager, "pick_count": n_picks,
-            "bet_type": "game", "source": "Bovada", "date": date_str,
-            "tier": "LEAN", "edge": 0, "prob": 0.5
-        })
+    except Exception as _e:
+        import warnings
+        warnings.warn(f"[slip_parser] parse_bovada_slip_text failed: {type(_e).__name__}: {_e}", stacklevel=2)
     return bets
 
 
 def parse_mybookie_slip_text(text: str) -> list:
-    """Parse MyBookie text slip into bet records."""
+    """Parse MyBookie text slip into bet records.
+
+    Edge-case hardening:
+    - All float() calls guarded against ValueError from bad OCR.
+    - Sport inferred from slip text rather than hardcoded to MLB.
+    - Full function wrapped in try/except so a bad slip never crashes the caller.
+    """
     import re
     bets = []
     if not text:
         return bets
-    tl = text.lower()
+    try:
+      tl = text.lower()
 
-    # Outcome
-    outcome = "PENDING"
-    if "straight bet - win" in tl or tl.rstrip().endswith("win"):
-        outcome = "WIN"
-    elif "straight bet - loss" in tl or tl.rstrip().endswith("loss"):
-        outcome = "LOSS"
-    elif re.search(r'win:\s*0\.00', tl):
-        outcome = "LOSS"
-    elif re.search(r'win:\s*[1-9]', tl):
-        outcome = "WIN"
+      # Infer sport from text — fall back to MLB
+      _SPORT_HINTS = [
+          (["nba", "basketball"], "NBA"),
+          (["nfl", "football"], "NFL"),
+          (["nhl", "hockey"], "NHL"),
+          (["soccer", "mls", "epl", "premier league"], "SOCCER"),
+          (["tennis"], "TENNIS"),
+          (["ufc", "mma"], "MMA"),
+      ]
+      sport = "MLB"
+      for hints, sname in _SPORT_HINTS:
+          if any(h in tl for h in hints):
+              sport = sname
+              break
 
-    # Wager
-    wager = 0.0
-    risk_match = re.search(r'risk:\s*([\d.]+)', tl)
-    if risk_match:
-        wager = float(risk_match.group(1))
+      # Outcome
+      outcome = "PENDING"
+      if "straight bet - win" in tl or tl.rstrip().endswith("win"):
+          outcome = "WIN"
+      elif "straight bet - loss" in tl or tl.rstrip().endswith("loss"):
+          outcome = "LOSS"
+      elif re.search(r'win:\s*0\.00', tl):
+          outcome = "LOSS"
+      elif re.search(r'win:\s*[1-9]', tl):
+          outcome = "WIN"
 
-    lines = text.splitlines()
-    date_str = ""
-    team_odds_pattern = re.compile(r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*$')
-    legs = []
-    for i, line in enumerate(lines):
-        m = team_odds_pattern.match(line.strip())
-        if m:
-            team = m.group(1).strip()
-            odds = m.group(2).strip()
-            for j in range(i, min(i+5, len(lines))):
-                date_m = re.search(r'Game Date:\s*(.+)', lines[j])
-                if date_m and not date_str:
-                    date_str = date_m.group(1).strip()[:10]
-            legs.append({"team": team, "odds": odds})
+      # Wager
+      wager = 0.0
+      risk_match = re.search(r'risk:\s*([\d,]+(?:\.\d+)?)', tl)
+      if risk_match:
+          try:
+              wager = float(risk_match.group(1).replace(",", ""))
+          except ValueError:
+              pass
 
-    n_picks = max(1, len(legs))
-    for leg in legs:
-        bets.append({
-            "player": leg["team"],
-            "prop": "Moneyline",
-            "line": 0,
-            "side": leg["team"],
-            "sport": "MLB",
-            "outcome": outcome,
-            "wager": round(wager / n_picks, 2),
-            "pick_count": n_picks,
-            "bet_type": "game",
-            "source": "MyBookie",
-            "date": date_str,
-            "odds": leg["odds"],
-            "tier": "LEAN",
-            "edge": 0,
-            "prob": 0.5
-        })
+      lines = text.splitlines()
+      date_str = ""
+      team_odds_pattern = re.compile(r'^(.+?)\s*\(\s*.+?\s*\)\s*([+-]\d+)\s*$')
+      legs = []
+      for i, line in enumerate(lines):
+          m = team_odds_pattern.match(line.strip())
+          if m:
+              team = m.group(1).strip()
+              odds = m.group(2).strip()
+              for j in range(i, min(i+5, len(lines))):
+                  date_m = re.search(r'Game Date:\s*(.+)', lines[j])
+                  if date_m and not date_str:
+                      date_str = date_m.group(1).strip()[:10]
+              legs.append({"team": team, "odds": odds})
 
-    if not bets and outcome != "PENDING":
-        bets.append({
-            "player": "MyBookie Bet", "prop": "Moneyline",
-            "line": 0, "side": "WIN", "sport": "MLB",
-            "outcome": outcome, "wager": wager, "pick_count": 1,
-            "bet_type": "game", "source": "MyBookie", "date": date_str,
-            "tier": "LEAN", "edge": 0, "prob": 0.5
-        })
+      n_picks = max(1, len(legs))
+      for leg in legs:
+          bets.append({
+              "player": leg["team"],
+              "prop": "Moneyline",
+              "line": 0,
+              "side": leg["team"],
+              "sport": sport,
+              "outcome": outcome,
+              "wager": round(wager / n_picks, 2),
+              "pick_count": n_picks,
+              "bet_type": "game",
+              "source": "MyBookie",
+              "date": date_str,
+              "odds": leg["odds"],
+              "tier": "LEAN",
+              "edge": 0,
+              "prob": 0.5
+          })
+
+      if not bets and outcome != "PENDING":
+          bets.append({
+              "player": "MyBookie Bet", "prop": "Moneyline",
+              "line": 0, "side": "WIN", "sport": sport,
+              "outcome": outcome, "wager": wager, "pick_count": 1,
+              "bet_type": "game", "source": "MyBookie", "date": date_str,
+              "tier": "LEAN", "edge": 0, "prob": 0.5
+          })
+    except Exception as _e:
+        import warnings
+        warnings.warn(f"[slip_parser] parse_mybookie_slip_text failed: {type(_e).__name__}: {_e}", stacklevel=2)
     return bets

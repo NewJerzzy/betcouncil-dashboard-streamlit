@@ -13218,6 +13218,22 @@ if "persistence_loaded" not in st.session_state:
             _merged_inj_perf.append(r)
     if len(_merged_inj_perf) > len(_local_inj_perf):
         save_json_data(INJURY_PERFORMANCE_PATH, _merged_inj_perf)
+    # clv_tracking: Gist-backed so CLV data survives Streamlit Cloud restarts.
+    # Previously an orphan writer (reset was pushed to Gist but never loaded back).
+    gist_clv = load_from_gist("clv_tracking", None)
+    _local_clv = load_json_data(CLV_PATH, [])
+    _gist_clv  = gist_clv if isinstance(gist_clv, list) else []
+    _seen_clv_keys = set()
+    _merged_clv = []
+    for _cr in _gist_clv + _local_clv:
+        _ck = (_cr.get("timestamp",""), _cr.get("player",""), _cr.get("prop",""))
+        if _ck not in _seen_clv_keys:
+            _seen_clv_keys.add(_ck)
+            _merged_clv.append(_cr)
+    if _merged_clv:
+        if len(_merged_clv) > len(_local_clv):
+            save_json_data(CLV_PATH, _merged_clv)
+        st.session_state["clv_tracking"] = _merged_clv
     st.session_state.persistence_loaded = True
 
 # =========================
@@ -14855,7 +14871,7 @@ with tabs[1]:
                                     "prob":      _lk_prop.get("Prob",0.5),
                                 })
                                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                                st.session_state["_gist_dirty_locks"] = True  # batched
+                                save_to_gist("locks", st.session_state.locks)  # persists across restarts
                                 st.success(f"Locked {_lr['_player']} {_lr['_prop']}")
                                 st.rerun()
                             else:
@@ -14949,7 +14965,7 @@ with tabs[1]:
                             "prob": _lp.get("Prob",0.5),
                         })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                st.session_state["_gist_dirty_locks"] = True  # batched
+                save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"Locked {len(_pb_sel)} portfolio bets")
                 st.rerun()
 
@@ -14975,7 +14991,7 @@ with tabs[1]:
                                 "prob": _p.get("Prob",0.5),
                             })
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                st.session_state["_gist_dirty_locks"] = True  # batched
+                save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"Locked {len([p for p in _board if p.get('Tier') in ('SOVEREIGN','ELITE')])} plays")
                 st.rerun()
         with _qa2:
@@ -15160,7 +15176,7 @@ with tabs[2]:
                         }
                         st.session_state.locks.append(_new_game_lock)
                         save_json_data(LOCKS_PATH, st.session_state.locks)
-                        st.session_state["_gist_dirty_locks"] = True  # batched
+                        save_to_gist("locks", st.session_state.locks)  # persists across restarts
                         st.rerun()
 
         # Keep line movement and public betting data below
@@ -15401,7 +15417,7 @@ with tabs[3]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    st.session_state["_gist_dirty_locks"] = True  # batched
+                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
                     st.rerun()
             with btn_col3:
                 if st.button("❌ LOSS SLIP", key=f"loss_{slip_key}", use_container_width=True):
@@ -15417,7 +15433,7 @@ with tabs[3]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    st.session_state["_gist_dirty_locks"] = True  # batched
+                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
                     st.rerun()
             with btn_col4:
                 if st.button("↩ VOID", key=f"void_{slip_key}", use_container_width=True):
@@ -15425,7 +15441,7 @@ with tabs[3]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    st.session_state["_gist_dirty_locks"] = True  # batched
+                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
                     st.rerun()
 
             st.markdown("---")
@@ -15612,7 +15628,7 @@ with tabs[3]:
 
             if resolved > 0:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
-                st.session_state["_gist_dirty_locks"] = True  # batched
+                save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"✅ Auto-resolved {resolved} picks via ESPN box scores")
                 st.rerun()
 
@@ -15676,7 +15692,7 @@ with tabs[3]:
                             continue
                     if bdl_resolved > 0:
                         save_json_data(LOCKS_PATH, st.session_state.locks)
-                        st.session_state["_gist_dirty_locks"] = True  # batched
+                        save_to_gist("locks", st.session_state.locks)  # persists across restarts
                         resolved += bdl_resolved
 
             # Also resolve game line locks
@@ -16965,7 +16981,7 @@ with tabs[5]:
                             locked += 1
                 if locked:
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    st.session_state["_gist_dirty_locks"] = True  # batched
+                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
                     st.success(f"✅ Locked {locked} picks")
                     st.rerun()
 
