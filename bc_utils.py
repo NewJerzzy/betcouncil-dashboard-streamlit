@@ -941,6 +941,7 @@ def detect_season_regime(sport="NBA"):
         desc   = "Full weights active"
         adj    = {}
 
+    adj = {k: max(-0.10, min(0.10, float(v))) for k, v in adj.items()}
     return {
         "regime":      regime,
         "description": desc,
@@ -1011,10 +1012,21 @@ def track_closing_line_beat(bet_record, current_line):
 
 
 def is_date_valid_for_today(date_str):
-    """Check if date_str is today or yesterday."""
+    """Check if date_str is today or yesterday — anchored to US/Eastern time.
+
+    Bug fixed: date.today() returns UTC on Streamlit Cloud. At 8pm EST
+    (1am UTC next day) that flips the date and marks fresh Gist data stale.
+    """
     try:
-        from datetime import timedelta as _td
-        today = date.today()
+        from datetime import timedelta as _td, timezone as _tz, datetime as _dt
+        try:
+            import zoneinfo as _zi
+            _eastern = _zi.ZoneInfo("America/New_York")
+            _now_eastern = _dt.now(_eastern)
+        except Exception:
+            _eastern = _tz(_td(hours=-5))
+            _now_eastern = _dt.now(_eastern)
+        today     = _now_eastern.date()
         yesterday = today - _td(days=1)
         if "T" in str(date_str):
             date_obj = date.fromisoformat(str(date_str).split("T")[0])
@@ -1437,3 +1449,117 @@ def prop_edge_score(
         rec = "PASS"
 
     return {"edge": edge, "confidence": confidence, "signals": signals, "recommendation": rec}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Canonical cross-book stat-type normalization
+# ─────────────────────────────────────────────────────────────────────────────
+_CANONICAL_STAT_MAP: dict = {
+    "strikeouts": "Pitcher Strikeouts", "pitcher strikeouts": "Pitcher Strikeouts",
+    "pitcher_strikeouts": "Pitcher Strikeouts", "so": "Pitcher Strikeouts",
+    "k": "Pitcher Strikeouts", "ks": "Pitcher Strikeouts", "strikeout": "Pitcher Strikeouts",
+    "points": "Points", "pts": "Points", "point": "Points",
+    "rebounds": "Rebounds", "reb": "Rebounds", "rebound": "Rebounds",
+    "total rebounds": "Rebounds",
+    "assists": "Assists", "ast": "Assists", "assist": "Assists",
+    "pts+reb+ast": "Pts+Reb+Ast", "pra": "Pts+Reb+Ast",
+    "points+rebounds+assists": "Pts+Reb+Ast", "pts reb ast": "Pts+Reb+Ast",
+    "home runs": "Home Runs", "home run": "Home Runs", "hr": "Home Runs", "homers": "Home Runs",
+    "hits": "Hits", "hit": "Hits",
+    "rbis": "RBIs", "rbi": "RBIs", "runs batted in": "RBIs",
+    "total bases": "Total Bases", "tb": "Total Bases", "totalbases": "Total Bases",
+    "steals": "Steals", "stl": "Steals",
+    "stolen bases": "Stolen Bases", "sb": "Stolen Bases",
+    "blocks": "Blocked Shots", "blk": "Blocked Shots", "blocked shots": "Blocked Shots",
+    "3-pt made": "3-PT Made", "three pointers made": "3-PT Made",
+    "3pm": "3-PT Made", "threes": "3-PT Made", "3pointers": "3-PT Made",
+    "passing yards": "Pass Yds", "pass yards": "Pass Yds", "pass yds": "Pass Yds",
+    "passing_yards": "Pass Yds",
+    "rushing yards": "Rush Yds", "rush yards": "Rush Yds", "rush yds": "Rush Yds",
+    "rushing_yards": "Rush Yds",
+    "receiving yards": "Rec Yds", "rec yards": "Rec Yds", "rec yds": "Rec Yds",
+    "receptions": "Receptions", "recs": "Receptions",
+    "touchdowns": "Touchdowns", "tds": "Touchdowns", "td": "Touchdowns",
+    "goals": "Goals", "goal": "Goals",
+    "shots on goal": "Shots On Goal", "sog": "Shots On Goal", "shots": "Shots On Goal",
+    "saves": "Saves",
+    "fantasy points": "Fantasy Points", "fantasy": "Fantasy Points",
+    "turnovers": "Turnovers", "tov": "Turnovers",
+    "walks": "Walks", "bb": "Walks",
+    "innings pitched": "Innings Pitched", "ip": "Innings Pitched",
+    "runs": "Runs", "r": "Runs",
+}
+
+
+def normalize_stat_type(raw: str, sport: str = "") -> str:
+    """Map any book/source stat label to its canonical BetCouncil name.
+
+    Handles case variants, abbreviations, underscores, and plurals.
+    Unknown stats are returned title-cased as a graceful fallback.
+    """
+    if not raw:
+        return raw
+    key = raw.strip().lower().replace("-", " ").replace("_", " ")
+    canonical = _CANONICAL_STAT_MAP.get(key)
+    if canonical is None:
+        canonical = _CANONICAL_STAT_MAP.get(key.rstrip("s"))
+    return canonical if canonical else raw.strip().title()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regression-to-mean risk detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+def hot_streak_regression_risk(
+    recent_avg: float,
+    season_avg: float,
+    n_recent: int = 5,
+    threshold: float = 0.25,
+) -> dict:
+    """Flag when recent average is unsustainably above the season average.
+
+    Returns an edge_mult < 1.0 to discount OVER edge when a player is on a
+    hot streak that is likely to mean-revert. UNDER edge is unaffected.
+
+    Args:
+        recent_avg: Average over last N games (L5 or L10).
+        season_avg: Full-season baseline (true talent level).
+        n_recent:   Games in the recent sample (fewer = softer penalty).
+        threshold:  Gap fraction to trigger risk (default 0.25 = 25% above).
+
+    Returns:
+        {risk, gap_pct, edge_mult, note}
+    """
+    if not recent_avg or not season_avg or season_avg <= 0:
+        return {"risk": "NONE", "gap_pct": 0.0, "edge_mult": 1.0, "note": ""}
+
+    gap_pct = (recent_avg - season_avg) / season_avg
+    if gap_pct < threshold:
+        return {"risk": "NONE", "gap_pct": round(gap_pct, 3), "edge_mult": 1.0, "note": ""}
+
+    confidence = min(n_recent / 10, 1.0)
+
+    if gap_pct >= 0.50:
+        risk      = "HIGH"
+        edge_mult = max(0.70, 1.0 - 0.30 * confidence)
+        note      = (f"🔥 Hot streak: L{n_recent} avg {recent_avg:.1f} is "
+                     f"{gap_pct:.0%} above season avg {season_avg:.1f}. "
+                     "Regression likely — OVER edge discounted.")
+    elif gap_pct >= 0.35:
+        risk      = "MEDIUM"
+        edge_mult = max(0.80, 1.0 - 0.20 * confidence)
+        note      = (f"📈 Elevated: L{n_recent} avg {recent_avg:.1f} is "
+                     f"{gap_pct:.0%} above season avg {season_avg:.1f}. "
+                     "Moderate regression risk — discount applied.")
+    else:
+        risk      = "LOW"
+        edge_mult = max(0.92, 1.0 - 0.08 * confidence)
+        note      = (f"L{n_recent} avg {recent_avg:.1f} is {gap_pct:.0%} "
+                     f"above season avg {season_avg:.1f} — minor regression risk.")
+
+    return {
+        "risk":      risk,
+        "gap_pct":   round(gap_pct, 3),
+        "edge_mult": round(edge_mult, 3),
+        "note":      note,
+    }

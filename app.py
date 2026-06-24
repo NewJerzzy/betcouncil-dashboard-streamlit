@@ -42,6 +42,7 @@ except ImportError:
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
+    normalize_stat_type, hot_streak_regression_risk,
     no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
     devig_best, compute_clv, compute_clv_novig,
     kelly_with_edge_decay, compute_brier_score, compute_calibration_zscore,
@@ -11978,6 +11979,24 @@ def load_sport_data(sport):
                 mins_factor = player_mins / baseline_mins
                 mins_factor = max(0.80, min(1.20, mins_factor))
                 avg = round(avg * mins_factor, 1)
+
+        # ── Regression-to-mean risk ────────────────────────────────────────────
+        # When a player's recent L5/L10 avg is 25%+ above their season avg,
+        # the book line is likely inflated by the hot streak. Detect and store
+        # the risk so the final_edge multiplier can be applied after calibration.
+        _regression_risk = {"risk": "NONE", "edge_mult": 1.0, "note": ""}
+        _rolling_player = rolling_avgs.get(player, {})
+        _season_player_avg = season_avgs.get(player, {})
+        _recent_stat = _rolling_player.get(stat_norm)
+        _season_stat = (_season_player_avg.get(stat_norm)
+                        or avg_dict.get(stat_norm))
+        if _recent_stat and _season_stat and _season_stat > 0:
+            _n_recent = _rolling_player.get("n_games", 5)
+            _regression_risk = hot_streak_regression_risk(
+                _recent_stat, _season_stat,
+                n_recent=_n_recent, threshold=0.25
+            )
+
         player_team = PLAYER_TEAM_MAP.get(player, "")
         opp_def_rating = 112.0
         opp_team_abbrev = ""
@@ -12361,6 +12380,15 @@ def load_sport_data(sport):
         clv_mult, clv_note = get_clv_edge_adjustment(sport, get_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
+        # ── Regression-to-mean discount (applied last — after all other mults) ──
+        # Only penalises OVER edge. UNDER edge on a hot-streak player is
+        # actually supported by the regression thesis, so we leave it alone.
+        if _regression_risk["risk"] != "NONE" and _regression_risk["edge_mult"] < 1.0:
+            if best_side == "OVER" and final_edge > 0:
+                final_edge = round(final_edge * _regression_risk["edge_mult"], 4)
+                if _regression_risk["note"]:
+                    avg_dict["regression_note"] = _regression_risk["note"]
+                    avg_dict["regression_risk"] = _regression_risk["risk"]
         # ── Always-OVER props — markets that don't offer UNDER ──
         # Sportsbooks only offer OVER on these low-base-rate props
         ALWAYS_OVER_PROPS = {
