@@ -1225,6 +1225,324 @@ def fetch_fanduel_direct(sport, event_ids=None):
 
     return props
 
+
+# ── FanDuel Playwright game-lines fetcher ─────────────────────────────────
+# Helpers and constants are module-level so they can be reused by any future
+# FanDuel function without re-importing or re-defining.
+
+_FD_SPORT_URL_PATHS = {
+    "MLB":  "mlb-baseball",
+    "NBA":  "nba-basketball",
+    "NFL":  "nfl-football",
+    "NHL":  "nhl-hockey",
+    "WNBA": "wnba-basketball",
+}
+
+# Market types that represent game lines (ML / spread / total).
+# These are EXCLUDED from fetch_fanduel_direct (props) and INCLUDED here.
+_FD_GL_MARKET_TYPES = frozenset({
+    "MONEY_LINE",
+    "MATCH_HANDICAP_(2-WAY)",
+    "RUN_LINE",                        # MLB
+    "PUCK_LINE",                       # NHL
+    "TOTAL_POINTS_(OVER/UNDER)",       # NBA / NFL
+    "TOTAL_RUNS_(OVER/UNDER)",         # MLB
+    "TOTAL_GOALS_(OVER/UNDER)",        # NHL
+})
+
+
+def _fd_american_odds(runner: dict):
+    """Extract americanOdds int from a FanDuel runner dict, or None."""
+    try:
+        return int(
+            runner.get("winRunnerOdds", {})
+                  .get("americanDisplayOdds", {})
+                  .get("americanOdds", None)
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _fd_parse_event_name(name: str):
+    """
+    Parse a FanDuel event name string into (away_team, home_team).
+
+    FanDuel uses several separators depending on sport:
+      "Kansas City Royals @ Houston Astros"   →  Royals away, Astros home
+      "Boston Celtics v Denver Nuggets"        →  Celtics away, Nuggets home
+    Returns ("", "") when the name can't be split.
+    """
+    for sep in (" @ ", " at ", " v ", " vs ", " VS "):
+        if sep in name:
+            parts = name.split(sep, 1)
+            return parts[0].strip(), parts[1].strip()
+    return "", ""
+
+
+def _fd_ingest_response(data: object, events: dict) -> None:
+    """
+    Walk one deserialized FanDuel API response and update *events* in place.
+
+    *events* maps str(eventId) →
+        {"home", "away", "ml_h", "ml_a", "spread", "total", "status"}
+
+    Handles two confirmed response shapes:
+      1. event-page / content-managed-page:
+            {"attachments": {"events": {…}, "markets": {…}}}
+      2. navigation/facet: walked but rarely contains odds — captured for
+            team names only.
+    """
+    if not isinstance(data, dict):
+        return
+    attachments = data.get("attachments") or {}
+
+    # ── Event metadata — extract team names from event.name ──────────────
+    raw_events = attachments.get("events") or {}
+    if isinstance(raw_events, dict):
+        for eid_str, ev in raw_events.items():
+            entry = events.setdefault(str(eid_str), {
+                "home": "", "away": "",
+                "ml_h": None, "ml_a": None,
+                "spread": "N/A", "total": "N/A",
+                "status": "Scheduled",
+            })
+            if not entry["home"]:
+                name = ev.get("name") or ev.get("eventName") or ""
+                away, home = _fd_parse_event_name(name)
+                if away:
+                    entry["away"] = away
+                if home:
+                    entry["home"] = home
+            status_raw = (ev.get("inPlay") and "In Progress") or                          ev.get("eventStatus") or ""
+            if status_raw:
+                entry["status"] = status_raw
+
+    # ── Markets — extract ML / spread / total odds ───────────────────────
+    raw_markets = attachments.get("markets") or {}
+    if not isinstance(raw_markets, dict):
+        return
+    for mkt_id, mkt in raw_markets.items():
+        mkt_type = mkt.get("marketType", "")
+        if mkt_type not in _FD_GL_MARKET_TYPES:
+            continue
+        eid_str = str(mkt.get("eventId", ""))
+        if not eid_str:
+            continue
+        entry = events.setdefault(eid_str, {
+            "home": "", "away": "",
+            "ml_h": None, "ml_a": None,
+            "spread": "N/A", "total": "N/A",
+            "status": "Scheduled",
+        })
+        runners = mkt.get("runners") or []
+
+        if mkt_type == "MONEY_LINE":
+            # FanDuel ML runners: index 0 = away, index 1 = home.
+            # Confirmed from real DevTools captures (docstring above).
+            for idx, runner in enumerate(runners[:2]):
+                am    = _fd_american_odds(runner)
+                rname = runner.get("runnerName", "")
+                if idx == 0:
+                    if am is not None:
+                        entry["ml_a"] = am
+                    if not entry["away"] and rname:
+                        entry["away"] = rname
+                else:
+                    if am is not None:
+                        entry["ml_h"] = am
+                    if not entry["home"] and rname:
+                        entry["home"] = rname
+
+        elif mkt_type in ("MATCH_HANDICAP_(2-WAY)", "RUN_LINE", "PUCK_LINE"):
+            for runner in runners:
+                hcap  = runner.get("handicap") or 0
+                rname = runner.get("runnerName", "")
+                # Favourite carries the negative handicap
+                if hcap < 0:
+                    entry["spread"] = f"{rname} {hcap:+.1f}"
+
+        elif mkt_type in (
+            "TOTAL_POINTS_(OVER/UNDER)",
+            "TOTAL_RUNS_(OVER/UNDER)",
+            "TOTAL_GOALS_(OVER/UNDER)",
+        ):
+            # Both runners share the same handicap value — just read the first
+            for runner in runners:
+                hcap = runner.get("handicap")
+                if hcap is not None:
+                    try:
+                        entry["total"] = float(hcap)
+                    except (TypeError, ValueError):
+                        pass
+                    break
+
+
+def fetch_fanduel_game_lines_playwright(sport: str) -> list:
+    """
+    Fetch FanDuel game lines (ML / spread / total) using headed Playwright Chromium.
+
+    Why Playwright instead of curl_cffi?
+    FanDuel's PerimeterX protection blocks every static HTTP request that
+    doesn't carry a freshly-generated x-px-context session token.  The token
+    is produced by a real browser's JS challenge and expires in minutes.
+    Rather than harvesting and rotating it externally, this function launches a
+    real headed Chromium session — PerimeterX runs inside the browser and signs
+    every XHR the browser makes automatically.  We intercept those XHR
+    responses and parse the odds from them.
+
+    Automation masking:
+      --disable-blink-features=AutomationControlled  (Chrome flag)
+      navigator.webdriver = undefined                (JS override via add_init_script)
+      window.chrome, navigator.plugins, navigator.languages spoofed
+
+    Headless mode:
+      Defaults to headed (headless=False) which passes PerimeterX more reliably.
+      Set env var FANDUEL_HEADLESS=1 to force headless on hosts without a display
+      (Streamlit Cloud, CI).  The function also falls back to headless=True
+      automatically if the headed launch raises an exception (e.g. no $DISPLAY).
+
+    Returns:
+        List of game dicts compatible with fetch_game_lines() output shape:
+        [{"Matchup": "AWAY @ HOME", "Home ML": str, "Away ML": str,
+          "Spread": str, "Total": float|str, "Odds Source": "FanDuel",
+          "Status": str, "Sport": str}]
+        Returns [] on import error, unsupported sport, or any fetch failure.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as _PWTimeout
+    except ImportError:
+        log_error_to_session(
+            "fetch_fanduel_game_lines_playwright",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return []
+
+    sport_path = _FD_SPORT_URL_PATHS.get(sport.upper())
+    if not sport_path:
+        return []
+
+    # 30-minute cache — Playwright launch is expensive; skip on re-renders
+    cache_path = os.path.join(CACHE_DIR, f"fanduel_gl_playwright_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    events: dict = {}   # str(eventId) → partial game dict
+
+    def _on_response(response):
+        url = response.url
+        # Only intercept FanDuel API domains — ignore CDN, analytics, ads
+        if not any(d in url for d in (
+            "api.sportsbook.fanduel.com",
+            "sbapi.fanduel.com",
+            ".sportsbook.fanduel.com/api",
+        )):
+            return
+        if response.status != 200:
+            return
+        try:
+            ct = response.headers.get("content-type", "")
+            if "json" not in ct:
+                return
+            _fd_ingest_response(response.json(), events)
+        except Exception:
+            pass  # malformed response — skip silently
+
+    games = []
+    try:
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("FANDUEL_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                # No display available — fall back to headless
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 720},
+            )
+
+            # Mask automation fingerprints that PerimeterX inspects
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = ctx.new_page()
+            page.on("response", _on_response)
+
+            target_url = f"https://www.fanduel.com/sports/{sport_path}"
+            try:
+                page.goto(target_url, wait_until="networkidle", timeout=60_000)
+            except _PWTimeout:
+                # networkidle can time out on heavy pages — DOM is loaded, XHR
+                # calls may still be in-flight; the 5s dwell below catches them
+                pass
+            except Exception:
+                pass
+
+            # Dwell to capture deferred XHR calls that fire after initial paint
+            time.sleep(5)
+            ctx.close()
+            browser.close()
+
+        def _fmt_ml(val):
+            if val is None:
+                return "N/A"
+            return f"+{val}" if val > 0 else str(val)
+
+        games = [
+            {
+                "Matchup":     f"{ev['away']} @ {ev['home']}",
+                "Status":      ev.get("status", "Scheduled"),
+                "Home ML":     _fmt_ml(ev.get("ml_h")),
+                "Away ML":     _fmt_ml(ev.get("ml_a")),
+                "Spread":      ev.get("spread", "N/A"),
+                "Total":       ev.get("total", "N/A"),
+                "Odds Source": "FanDuel",
+                "Sport":       sport,
+            }
+            for ev in events.values()
+            if ev.get("home") and ev.get("away")
+        ]
+
+    except Exception as _e:
+        log_error_to_session(
+            "fetch_fanduel_game_lines_playwright", str(_e)[:150], "warning"
+        )
+        return []
+
+    if games:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(games, f)
+        except OSError:
+            pass
+
+    return games
+
+
 def record_clv(lock, current_props):
     player = lock.get("player", "")
     prop = lock.get("prop", "")
