@@ -609,6 +609,26 @@ def fetch_betonline_lines(sport="NBA"):
         save_json_data(BETONLINE_PATH, games)
     return games or load_json_data(BETONLINE_PATH, [])
 
+def fetch_mybookie_lines(sport="NBA"):
+    """
+    MyBookie game-line / player-prop fetcher.
+
+    BLOCKED — engine.mybookie.ag enforces Cloudflare Turnstile + CF-Clearance
+    fingerprinting on all sports_api/* endpoints. Direct requests (even with
+    accurate session cookies) return a 403 / CAPTCHA challenge page, not JSON.
+    A Playwright session harvester or a CF-solver proxy is required before this
+    function can return real data.
+
+    Until a working session is wired in, return [] immediately so the rest of
+    the board builds cleanly without a noisy exception or multi-second timeout.
+    """
+    st.warning(
+        "⚠️ MyBookie blocked by CAPTCHA — scraper disabled. "
+        "Harvest a fresh CF-Clearance cookie via Playwright and set it in "
+        "MYBOOKIE_CF_CLEARANCE (Streamlit secrets) to re-enable."
+    )
+    return []
+
 def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
                                 market_id=None, market_name=None, market_label_id=None,
                                 selection_id=None, selection_name=None, entity_id=None,
@@ -3272,24 +3292,37 @@ def scrape_prizepicks(sport):
                 except (requests.RequestException, KeyError, ValueError) as _cffi_e:
                     log_error_to_session("scrape_prizepicks_cffi", f"{type(_cffi_e).__name__}: {str(_cffi_e)[:80]} on {url[-40:]}", "warning")
 
-                # ── Attempt 2: ScrapeOps residential proxy ──
-                if not _cffi_success:
-                    resp = scrapeops_get(url, headers=pp_headers, timeout=20)
-                    if resp.status_code == 200:
-                        # Check for captcha response (returns HTML not JSON)
-                        content_type = resp.headers.get("content-type", "")
-                        if "html" in content_type or resp.text.strip().startswith("<"):
+                # ── Attempt 2: ScrapeOps residential proxy ──────────────────
+                # Guard: skip entirely when SCRAPEOPS_KEY is empty (exhausted /
+                # not configured). Falls through to the Gist fallback below.
+                # Also fixes the prior scrapeops_get() NameError — that helper
+                # was never defined; replaced with a direct requests.get using
+                # the standard ScrapeOps proxy URL pattern.
+                if not _cffi_success and SCRAPEOPS_KEY:
+                    try:
+                        from urllib.parse import quote as _q
+                        _so_url = (
+                            f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}"
+                            f"&url={_q(url, safe='')}&residential=true"
+                        )
+                        resp = requests.get(_so_url, headers=pp_headers, timeout=20)
+                        if resp.status_code == 200:
+                            # Check for captcha response (returns HTML not JSON)
+                            content_type = resp.headers.get("content-type", "")
+                            if "html" in content_type or resp.text.strip().startswith("<"):
+                                continue
+                            data = resp.json()
+                            if data and data.get("data"):
+                                with open(cache_path, "wb") as f:
+                                    pickle.dump(data, f)
+                        elif resp.status_code == 429:
+                            time.sleep(2)
                             continue
-                        data = resp.json()
-                        if data and data.get("data"):
-                            with open(cache_path, "wb") as f:
-                                pickle.dump(data, f)
-                elif resp.status_code == 429:
-                    time.sleep(2)
-                    continue
-                elif resp.status_code == 403:
-                    # Bot protection — try next URL
-                    continue
+                        elif resp.status_code == 403:
+                            # Bot protection — try next URL
+                            continue
+                    except (requests.RequestException, ValueError, KeyError, TypeError):
+                        pass
             except (ValueError, KeyError, TypeError, AttributeError):
                 continue
         if not data or not data.get("data"):

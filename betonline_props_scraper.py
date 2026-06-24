@@ -267,6 +267,58 @@ def parse_player_props(data: dict, sport: str) -> list:
                             "source":      "BOL_props",
                         })
 
+    # ── Fallback: Contests → Contest → Contestants path ───────────────────────
+    # Some get-contests responses use this flatter structure instead of the
+    # DateGroup → DescriptionGroup → TimeGroup → ContestExtended → ... chain.
+    # Guarded by `if not props` so the primary path always takes precedence.
+    if not props:
+        _contests_node = co.get("Contests") or {}
+        if isinstance(_contests_node, dict):
+            _contests_list = _contests_node.get("Contest") or []
+        elif isinstance(_contests_node, list):
+            _contests_list = _contests_node
+        else:
+            _contests_list = []
+        for _contest in _contests_list:
+            _c_date  = _contest.get("Date", "")
+            _c_time  = _contest.get("Time", "")
+            _c_desc  = _contest.get("Description", "") or _contest.get("Name", "")
+            _c_type  = _contest.get("ContestType", contest_type)
+            _c_tid   = _contest.get("ContestTypeID", contest_id)
+            _teams_m = re.search(r'[(w+)]s+(.+?)s+@s+(.+)', _c_desc, re.I)
+            _sport_tag2 = _teams_m.group(1).upper() if _teams_m else sport
+            _away_team2 = _teams_m.group(2).strip() if _teams_m else ""
+            _home_team2 = _teams_m.group(3).strip() if _teams_m else ""
+            for contestant in (_contest.get("Contestants") or []):
+                name     = contestant.get("Name", "")
+                rot      = contestant.get("RotationNumber", "")
+                cid      = contestant.get("ID", "")
+                line_obj = contestant.get("Line", {})
+                ml_obj   = line_obj.get("MoneyLine", {}) if isinstance(line_obj, dict) else {}
+                ml_line  = ml_obj.get("Line", 0) if isinstance(ml_obj, dict) else 0
+                if not name or ml_line == 0:
+                    continue
+                player, prop_type, prop_line, direction = _parse_name_prop(name)
+                props.append({
+                    "Player":        player or name,
+                    "Prop":          prop_type or name,
+                    "Line":          prop_line,
+                    "Over":          ml_line if direction in ("over", "yes", "") else None,
+                    "Under":         ml_line if direction == "under" else None,
+                    "Direction":     direction,
+                    "AwayTeam":      _away_team2,
+                    "HomeTeam":      _home_team2,
+                    "GameTime":      f"{_c_date} {_c_time}",
+                    "RotationNum":   rot,
+                    "ContestID":     cid,
+                    "ContestType":   _c_type,
+                    "ContestTypeID": _c_tid,
+                    "Sport":         _sport_tag2,
+                    "Book":          "BetOnline",
+                    "RawName":       name,
+                    "source":        "BOL_props",
+                })
+
     return props
 
 
