@@ -385,7 +385,7 @@ def parse_player_props(data: dict, sport: str) -> list:
                             "source":      "BOL_props",
                         })
 
-    # ── Fallback: Contests → Contest → Contestants path ───────────────────────
+    # ── Fallback 2: Contests → Contest → Contestants path ─────────────────────
     # Some get-contests responses use this flatter structure instead of the
     # DateGroup → DescriptionGroup → TimeGroup → ContestExtended → ... chain.
     # Guarded by `if not props` so the primary path always takes precedence.
@@ -434,6 +434,52 @@ def parse_player_props(data: dict, sport: str) -> list:
                     "Sport":         _sport_tag2,
                     "Book":          "BetOnline",
                     "RawName":       name,
+                    "source":        "BOL_props",
+                })
+
+    # ── Fallback 3: alternate top-level shapes ─────────────────────────────────
+    # Handles: {"data": [...]}, {"Offerings": [...]}, or a raw list at the root.
+    if not props:
+        _alt_lists = []
+        if isinstance(data, list):
+            _alt_lists.append(data)
+        elif isinstance(data, dict):
+            for _ak in ("data", "Offerings", "offerings", "Results", "results",
+                        "Items", "items", "PropOfferings", "PlayerProps"):
+                _av = data.get(_ak)
+                if isinstance(_av, list) and _av:
+                    _alt_lists.append(_av)
+                    break
+        for _alt_list in _alt_lists:
+            for _item in _alt_list:
+                if not isinstance(_item, dict):
+                    continue
+                _name = (_item.get("Name") or _item.get("name") or
+                         _item.get("Description") or _item.get("description") or "")
+                _ml   = (_item.get("MoneyLine") or _item.get("moneyLine") or
+                         _item.get("Odds") or _item.get("odds") or 0)
+                if isinstance(_ml, dict):
+                    _ml = _ml.get("Line") or _ml.get("line") or 0
+                if not _name or not _ml:
+                    continue
+                _pplayer, _pprop, _ppline, _pdir = _parse_name_prop(str(_name))
+                props.append({
+                    "Player":        _pplayer or str(_name),
+                    "Prop":          _pprop or str(_name),
+                    "Line":          _ppline,
+                    "Over":          _ml if _pdir in ("over", "yes", "") else None,
+                    "Under":         _ml if _pdir == "under" else None,
+                    "Direction":     _pdir,
+                    "AwayTeam":      _item.get("AwayTeam", ""),
+                    "HomeTeam":      _item.get("HomeTeam", ""),
+                    "GameTime":      _item.get("GameTime", ""),
+                    "RotationNum":   _item.get("RotationNumber", ""),
+                    "ContestID":     _item.get("ID", ""),
+                    "ContestType":   "",
+                    "ContestTypeID": 0,
+                    "Sport":         sport,
+                    "Book":          "BetOnline",
+                    "RawName":       str(_name),
                     "source":        "BOL_props",
                 })
 
@@ -578,18 +624,26 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         # cleared cookies.  Try the known contest endpoint with several body
         # formats, iterating over every SportCastId captured from game lines.
         #
-        # Body formats tried (in order):
-        #   F1: {"SportcastFixtureId": id}
-        #   F2: {"sportcastId": id, "contestTypeId": 5}
-        #   F3: {"Id": id}
-        #   F4: {"fixtureId": id, "contestTypeId": 1}
-        _CONTEST_URL = "https://api-offering.betonline.ag/api/offering/Sports/get-contests-by-contest-type2"
-        _CONTEST_HEADERS = {
-            "Content-Type":  "application/json",
-            "Accept":        "application/json, text/plain, */*",
-            "Origin":        "https://www.betonline.ag",
-            "Referer":       "https://www.betonline.ag/",
-        }
+        # Strategy A: direct authenticated POST to the contest/props endpoints.
+        # page.request.post() inherits the browser's Cloudflare cookies automatically;
+        # we do NOT pass explicit headers= so the browser context handles auth.
+        #
+        # Two endpoint variants tried:
+        #   URL1: get-contests-by-contest-type2  (per-game player props)
+        #   URL2: get-contests                   (league-wide props, no fixture id needed)
+        #
+        # Body formats tried per-game (in order):
+        #   F1: {sportcastFixtureId, contestTypeId: 5}   ← most likely correct
+        #   F2: {SportcastFixtureId, contestTypeId: 5}   ← alternate casing
+        #   F3: {sportcastFixtureId}                     ← no contestTypeId
+        #   F4: {SportcastFixtureId}                     ← no contestTypeId, uppercase
+        #   F5: {Id}                                     ← fallback
+        #   F6: {sportcastId, contestTypeId: 5}
+        #   F7: {fixtureId, contestTypeId: 1}
+        #
+        # League-level formats (not per-game) also tried if _offering_body available.
+        _CONTEST_URL  = "https://api-offering.betonline.ag/api/offering/Sports/get-contests-by-contest-type2"
+        _CONTEST_URL2 = "https://api-offering.betonline.ag/api/offering/Sports/get-contests"
 
         # Collect SportCastIds (non-null) from captured lines
         _sc_ids = list({
@@ -597,70 +651,133 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
             if g.get("SportCastId") and g.get("AdditionalMarkets", 0) > 0
         })
         if not _sc_ids:
-            # Also include SportCastIds where AM > 0 even without checking
             _sc_ids = list({g["SportCastId"] for g in all_lines if g.get("SportCastId")})
 
         print(f"  [BOL] Strategy A — direct fetch for {len(_sc_ids)} SportCastIds", file=sys.stderr)
 
-        for _sc_id in _sc_ids[:6]:   # cap at 6 to avoid long runs
-            _fetched = False
-            _body_formats = [
-                {"SportcastFixtureId": _sc_id},
-                {"sportcastId": _sc_id, "contestTypeId": 5},
-                {"sportcastId": _sc_id, "contestTypeId": 1},
-                {"Id": _sc_id},
-                {"fixtureId": _sc_id},
-                {"SportcastId": _sc_id},
-            ]
-            for _fmt in _body_formats:
-                if _fetched:
-                    break
+        # ── Helper: attempt one POST and parse props ─────────────────────────
+        import os as _osA
+        _raw_dump_written = False
+
+        async def _try_post(endpoint_url, body_dict):
+            """POST body_dict to endpoint_url; return (props_list, raw_data, status)."""
+            nonlocal _raw_dump_written
+            try:
+                _resp = await page.request.post(
+                    endpoint_url,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept":       "application/json, text/plain, */*",
+                        "Referer":      "https://www.betonline.ag/",
+                    },
+                    data=json.dumps(body_dict),
+                )
+                _status = _resp.status
+                _rbody  = await _resp.body()
                 try:
-                    _resp = await page.request.post(
-                        _CONTEST_URL,
-                        headers=_CONTEST_HEADERS,
-                        data=json.dumps(_fmt),
+                    _rdata = json.loads(_rbody)
+                except Exception:
+                    return [], None, _status
+                _top = list(_rdata.keys()) if isinstance(_rdata, dict) else type(_rdata).__name__
+                print(
+                    f"    [BOL] POST {endpoint_url.split('/')[-1]} "
+                    f"body={list(body_dict.keys())} → {_status} keys={_top}",
+                    file=sys.stderr,
+                )
+                _api_urls_seen.append({
+                    "direction": "direct_fetch",
+                    "url":       endpoint_url,
+                    "body_fmt":  list(body_dict.keys()),
+                    "status":    _status,
+                    "top_keys":  _top,
+                })
+                if _status != 200:
+                    return [], None, _status
+                # Always dump first 200 response for diagnostics
+                if not _raw_dump_written:
+                    _rp = _osA.path.join(
+                        _osA.path.dirname(_osA.path.abspath(__file__)),
+                        "bol_contest_raw.json",
                     )
-                    _status = _resp.status
-                    _rbody  = await _resp.body()
                     try:
-                        _rdata = json.loads(_rbody)
+                        with open(_rp, "w") as _rf:
+                            json.dump({"url": endpoint_url, "body": body_dict, "data": _rdata}, _rf, indent=2)
+                        _raw_dump_written = True
+                        print(f"    [BOL] Raw dump → {_rp}", file=sys.stderr)
                     except Exception:
-                        continue
-                    _top = list(_rdata.keys()) if isinstance(_rdata, dict) else type(_rdata).__name__
-                    print(f"    [BOL] Direct {_sc_id} fmt={list(_fmt.keys())} → {_status} keys={_top}", file=sys.stderr)
-                    # Record in URL dump
-                    _api_urls_seen.append({
-                        "direction": "direct_fetch",
-                        "url":       _CONTEST_URL,
-                        "sc_id":     _sc_id,
-                        "body_fmt":  list(_fmt.keys()),
-                        "status":    _status,
-                        "top_keys":  _top,
-                    })
-                    if _status == 200 and isinstance(_rdata, dict):
-                        # Save raw for inspection
-                        import os as _osA
-                        _rp = _osA.path.join(
-                            _osA.path.dirname(_osA.path.abspath(__file__)),
-                            "bol_contest_raw.json"
-                        )
-                        if not _osA.path.exists(_rp):
-                            with open(_rp, "w") as _rf:
-                                import json as _jA
-                                _jA.dump({"url": _CONTEST_URL, "body": _fmt, "data": _rdata}, _rf, indent=2)
-                        _props = parse_player_props(_rdata, sport)
-                        if _props:
-                            all_props.extend(_props)
-                            print(f"    [BOL] Direct fetch → {len(_props)} props! (sc={_sc_id}, fmt={list(_fmt.keys())})", file=sys.stderr)
-                            _fetched = True
-                        else:
-                            # Has data but parse returned empty — try next fmt only
-                            # if response looks truly empty (no ContestOfferings)
-                            if _rdata.get("ContestOfferings") or _rdata.get("Contests"):
-                                _fetched = True  # right endpoint, wrong parse — stop trying fmts
-                except Exception as _fe:
-                    print(f"    [BOL] Direct fetch error ({list(_fmt.keys())}): {_fe}", file=sys.stderr)
+                        pass
+                _props = parse_player_props(_rdata, sport)
+                if not _props:
+                    # Log first 300 chars of response to help diagnose shape
+                    _preview = json.dumps(_rdata)[:300] if isinstance(_rdata, dict) else str(_rdata)[:300]
+                    print(f"    [BOL] parse empty — preview: {_preview}", file=sys.stderr)
+                return _props, _rdata, _status
+            except Exception as _fe:
+                print(f"    [BOL] POST error ({list(body_dict.keys())}): {_fe}", file=sys.stderr)
+                return [], None, 0
+
+        # ── Per-game formats ─────────────────────────────────────────────────
+        for _sc_id in _sc_ids[:4]:   # cap at 4 to avoid long runs
+            if all_props:
+                break
+            _per_game_fmts = [
+                {"sportcastFixtureId": _sc_id, "contestTypeId": 5},
+                {"SportcastFixtureId": _sc_id, "contestTypeId": 5},
+                {"sportcastFixtureId": _sc_id},
+                {"SportcastFixtureId": _sc_id},
+                {"Id": _sc_id},
+                {"sportcastId": _sc_id, "contestTypeId": 5},
+                {"fixtureId": _sc_id, "contestTypeId": 1},
+            ]
+            for _fmt in _per_game_fmts:
+                _pp, _rd, _st = await _try_post(_CONTEST_URL, _fmt)
+                if _pp:
+                    all_props.extend(_pp)
+                    print(f"    [BOL] ✓ {len(_pp)} props (sc={_sc_id}, fmt={list(_fmt.keys())})", file=sys.stderr)
+                    break
+                # If response had the right envelope but parse was empty, stop trying fmts
+                if _rd and isinstance(_rd, dict) and (_rd.get("ContestOfferings") or _rd.get("Contests")):
+                    break
+
+        # ── League-level formats (no SportCastId) ────────────────────────────
+        # Use LeagueId/SportId captured from the offering-by-league request body.
+        if not all_props and _offering_body:
+            _league_id = _offering_body.get("leagueId") or _offering_body.get("LeagueId")
+            _sport_id  = _offering_body.get("sportId")  or _offering_body.get("SportId")
+            print(f"  [BOL] Strategy A (league-level) leagueId={_league_id} sportId={_sport_id}", file=sys.stderr)
+            _league_fmts = []
+            if _league_id:
+                _league_fmts += [
+                    {"leagueId": _league_id, "contestTypeId": 5},
+                    {"leagueId": _league_id, "sportId": _sport_id, "contestTypeId": 5},
+                    {"leagueId": _league_id},
+                ]
+            if _sport_id:
+                _league_fmts += [{"sportId": _sport_id, "contestTypeId": 5}]
+            for _lfmt in _league_fmts:
+                if all_props:
+                    break
+                for _url in [_CONTEST_URL, _CONTEST_URL2]:
+                    _pp, _, _ = await _try_post(_url, _lfmt)
+                    if _pp:
+                        all_props.extend(_pp)
+                        print(f"    [BOL] ✓ {len(_pp)} props via league-level ({list(_lfmt.keys())})", file=sys.stderr)
+                        break
+
+        # ── get-contests (league-wide, no fixture id) ────────────────────────
+        if not all_props:
+            _fallback_fmts = [
+                {"contestTypeId": 5},
+                {"contestTypeId": 1},
+                {},
+            ]
+            for _ff in _fallback_fmts:
+                if all_props:
+                    break
+                _pp, _, _ = await _try_post(_CONTEST_URL2, _ff)
+                if _pp:
+                    all_props.extend(_pp)
+                    print(f"    [BOL] ✓ {len(_pp)} props via get-contests ({list(_ff.keys())})", file=sys.stderr)
 
         # Use confirmed slugs: manually set in PROP_LEAGUES, or probed live from candidates
         prop_league_slugs = _get_confirmed_prop_slugs(sport, cfg)
