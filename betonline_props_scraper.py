@@ -36,6 +36,7 @@ import re
 import sys
 import time
 import argparse
+import os
 from datetime import datetime
 
 try:
@@ -818,7 +819,7 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                     )
 
             if not game_links:
-                raw = await page.evaluate("""
+                raw = await page.evaluate(r"""
                     () => Array.from(document.querySelectorAll('a[href]'))
                         .map(a => a.href)
                         .filter(h => /\/sportsbook\/[a-z]+\/[a-z]+\/\d{8,}/.test(h))
