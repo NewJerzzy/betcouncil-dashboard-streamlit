@@ -24,6 +24,7 @@ try:
         ACTION_NETWORK_PROP_TYPE_MAP, ODDS_API_SPORT_MAP,
         PLAYER_AVERAGES_SOCCER, PLAYER_AVERAGES_UFC,
         DEFAULT_AVERAGES, STAT_NORMALIZE,
+        BOVADA_SPORT_MAP, BOVADA_HEADERS,
     )
 except ImportError:
     CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
@@ -409,17 +410,45 @@ def fetch_dff_propstats(player_id, sport, metric, line, team="",
         pass
     return result
 
+# Bovada constants (BOVADA_BASE / BOVADA_PATH defined here so fetch_bovada_lines
+# works when fetchers.py is imported standalone; app.py may shadow these with
+# identical values — that is harmless).
+BOVADA_BASE = (
+    "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+)
+BOVADA_PATH = os.path.join(CACHE_DIR, "bovada_lines.json")
+
 def fetch_bovada_lines(sport="NBA"):
     """
-    Fetch Bovada game lines — ML, spread, total.
-    No auth required. Confirmed working via browser test.
+    Fetch Bovada game lines — moneyline, runline/spread, total.
+    No authentication required. Confirmed endpoint:
+      https://www.bovada.lv/services/sports/event/coupon/events/A/description/{sport_path}
+
+    Key fix (2024-06): Bovada returns DUPLICATE market keys inside the
+    "Game Lines" displayGroup (full-game + alt/first-half lines share key
+    names like 2W-12, 2W-HCAP, 2W-OU).  The FIRST occurrence is always the
+    standard full-game line; subsequent ones are alternates.  We now break
+    after the first capture for each key so we never serve first-half or
+    alternate-runline data as the main line.
 
     Returns list of:
       {matchup, home, away, home_ml, away_ml,
-       spread, spread_odds, total, over_odds, under_odds}
+       spread, spread_odds, total, over_odds, under_odds,
+       start_time, sport, link, event_id}
+
+    On failure: falls back to last cached data (BOVADA_PATH).
+
+    Early-exit / error guards:
+      - unsupported sport → silent []
+      - HTTP non-200      → st.warning + cached fallback
+      - empty response    → cached fallback
+      - exception         → logged + cached fallback
     """
-    sport_path = BOVADA_SPORT_MAP.get(sport, "basketball/nba")
-    url        = f"{BOVADA_BASE}/{sport_path}"
+    sport_path = BOVADA_SPORT_MAP.get(sport)
+    if not sport_path:
+        return []
+
+    url = f"{BOVADA_BASE}/{sport_path}"
 
     try:
         r = requests.get(
@@ -429,6 +458,10 @@ def fetch_bovada_lines(sport="NBA"):
             timeout=12,
         )
         if r.status_code != 200:
+            st.warning(
+                f"⚠️ Bovada: HTTP {r.status_code} from lines endpoint — "
+                "using last cached data."
+            )
             return load_json_data(BOVADA_PATH, [])
 
         raw = r.json()
@@ -441,19 +474,18 @@ def fetch_bovada_lines(sport="NBA"):
                 if event.get("type") != "GAMEEVENT":
                     continue
                 if event.get("live"):
-                    continue  # skip live games
+                    continue  # skip in-play events
 
-                desc         = event.get("description","")
-                competitors  = event.get("competitors", [])
-                home_team    = next((c["name"] for c in competitors if c.get("home")), "")
-                away_team    = next((c["name"] for c in competitors if not c.get("home")), "")
-                start_time   = event.get("startTime", 0)
+                competitors = event.get("competitors", [])
+                home_team   = next((c["name"] for c in competitors if c.get("home")), "")
+                away_team   = next((c["name"] for c in competitors if not c.get("home")), "")
+                if not home_team or not away_team:
+                    continue
 
-                # Find Game Lines display group
                 game_lines_grp = next(
                     (g for g in event.get("displayGroups", [])
                      if g.get("description") == "Game Lines"),
-                    None
+                    None,
                 )
                 if not game_lines_grp:
                     continue
@@ -462,36 +494,48 @@ def fetch_bovada_lines(sport="NBA"):
                 spread = spread_home = spread_odds = None
                 total = over_odds = under_odds = None
 
+                # ── BUG FIX: Bovada duplicates market keys inside the same
+                # displayGroup (standard full-game first, then alternates).
+                # Track captured keys and skip duplicates — first match wins.
+                captured = set()
+
                 for mkt in game_lines_grp.get("markets", []):
-                    key = mkt.get("key","")
+                    key = mkt.get("key", "")
+                    if key in captured:
+                        continue  # skip alternate / first-half duplicate
+
                     outcomes = mkt.get("outcomes", [])
 
-                    if key == "2W-12":  # Moneyline
+                    if key == "2W-12":      # Moneyline
                         for out in outcomes:
-                            price = out.get("price",{})
+                            price = out.get("price", {})
                             if out.get("type") == "H":
-                                ml_home = price.get("american","")
+                                ml_home = price.get("american", "")
                             elif out.get("type") == "A":
-                                ml_away = price.get("american","")
+                                ml_away = price.get("american", "")
+                        captured.add(key)
 
-                    elif key == "2W-HCAP":  # Spread
+                    elif key == "2W-HCAP":  # Runline / Spread
                         for out in outcomes:
-                            price = out.get("price",{})
+                            price = out.get("price", {})
                             if out.get("type") == "H":
-                                spread      = price.get("handicap","")
-                                spread_odds = price.get("american","")
+                                spread      = price.get("handicap", "")
+                                spread_odds = price.get("american", "")
+                        captured.add(key)
 
-                    elif key == "2W-OU":  # Total
+                    elif key == "2W-OU":    # Total
                         for out in outcomes:
-                            price = out.get("price",{})
+                            price = out.get("price", {})
                             if out.get("type") == "O":
-                                total     = price.get("handicap","")
-                                over_odds = price.get("american","")
+                                total     = price.get("handicap", "")
+                                over_odds = price.get("american", "")
                             elif out.get("type") == "U":
-                                under_odds = price.get("american","")
+                                under_odds = price.get("american", "")
+                        captured.add(key)
 
-                if not home_team or not away_team:
-                    continue
+                    # Stop early once all three markets captured
+                    if len(captured) == 3:
+                        break
 
                 games.append({
                     "matchup":     f"{away_team} @ {home_team}",
@@ -504,17 +548,18 @@ def fetch_bovada_lines(sport="NBA"):
                     "total":       total,
                     "over_odds":   over_odds,
                     "under_odds":  under_odds,
-                    "start_time":  start_time,
+                    "start_time":  event.get("startTime", 0),
                     "sport":       sport,
-                    "link":        event.get("link",""),
-                    "event_id":    event.get("id",""),
+                    "link":        event.get("link", ""),
+                    "event_id":    event.get("id", ""),
                 })
 
         if games:
             save_json_data(BOVADA_PATH, games)
         return games or load_json_data(BOVADA_PATH, [])
 
-    except Exception as e:
+    except Exception as _e:
+        print(f"[WARN] Bovada ({sport}): {type(_e).__name__}: {_e}")
         return load_json_data(BOVADA_PATH, [])
 
 def _fetch_betonline_one_league(sport_path, league_path, sport):
