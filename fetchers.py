@@ -3450,6 +3450,33 @@ def scrape_prizepicks(sport):
     if all_props:
         return all_props
     # Try Gist from local auto scraper FIRST
+    def _normalize_pp_gist(p, _sport=sport):
+        """Normalize a Gist-fallback prop to match the live scrape output shape.
+
+        Live path produces:
+            {Player, Prop, Line (float), Side, Sport, source, OddsType}
+        Auto-scraped Gist props may use different key casing or names
+        (e.g. 'player'/'name', 'Book'/'source', 'odds_type'/'OddsType').
+        This normalizer collapses both into the canonical live format so
+        every downstream caller sees a consistent dict regardless of path.
+        """
+        player = p.get("Player") or p.get("player") or p.get("name", "")
+        prop   = p.get("Prop")   or p.get("prop")   or p.get("stat_type", "")
+        line   = p.get("Line")   or p.get("line",    0)
+        try:
+            line = float(line)
+        except (TypeError, ValueError):
+            line = 0.0
+        return {
+            "Player":   player,
+            "Prop":     prop,
+            "Line":     line,
+            "Side":     p.get("Side")  or p.get("side",      "OVER"),
+            "Sport":    p.get("Sport") or p.get("sport",     _sport),
+            "source":   "PrizePicks",
+            "OddsType": p.get("OddsType") or p.get("odds_type", "standard"),
+        }
+
     try:
         _gist_props = fetch_auto_scraped_props(sport)
         if _gist_props:
@@ -3457,10 +3484,18 @@ def scrape_prizepicks(sport):
                         if "prizepicks" in str(p.get("source","")).lower()
                         or p.get("Book","") == "PrizePicks"]
             if _pp_gist:
-                return _pp_gist
+                # Normalize to live-scrape format before returning
+                _normalized = [_normalize_pp_gist(p) for p in _pp_gist
+                               if p.get("Player") or p.get("player") or p.get("name")]
+                if _normalized:
+                    return _normalized
             elif _gist_props:
-                # Use all auto-scraped props as board
-                return _gist_props
+                # Non-PrizePicks auto-scraped fallback — still normalize
+                # so callers don't see a different key shape
+                _normalized = [_normalize_pp_gist(p) for p in _gist_props
+                               if p.get("Player") or p.get("player") or p.get("name")]
+                if _normalized:
+                    return _normalized
     except (KeyError, TypeError, ValueError) as _e:
             print(f"[WARN] {_e}")
     # Clear cache so next load retries PrizePicks

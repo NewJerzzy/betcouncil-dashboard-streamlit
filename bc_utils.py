@@ -4,7 +4,7 @@ import os
 import json
 import math
 import pickle
-from math import exp, factorial, log, sqrt, floor, ceil, pi
+from math import exp, factorial, log, sqrt, floor
 import pandas as pd
 from datetime import datetime, date, timedelta
 import unicodedata
@@ -37,7 +37,7 @@ def safe_float(val, default: float = 0.0) -> float:
 
 # ── Team name canonicalization (declansx pattern) ────────────────────────────
 try:
-    from team_canon import canon as canon_team, match_teams, match_players, canon_game_key, merge_by_canon
+    from team_canon import canon as canon_team, match_teams, match_players, merge_by_canon
     _TEAM_CANON_AVAILABLE = True
 except ImportError:
     _TEAM_CANON_AVAILABLE = False

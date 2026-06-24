@@ -1,5 +1,7 @@
 import streamlit as st
 import os
+import logging
+_logger = logging.getLogger("betcouncil")
 import re
 import json
 import time
@@ -8,9 +10,7 @@ import statistics
 import hashlib
 import io
 import base64
-import traceback
 import pandas as pd
-import numpy as np
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry as _Retry
@@ -32,11 +32,9 @@ _http        = _make_retry_session()
 _HTTP_DIRECT = requests.Session()
 
 import streamlit.components.v1 as components
-from datetime import datetime, date, timedelta, timezone
-from functools import lru_cache
+from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from scipy import stats as scipy_stats
 try:
     from curl_cffi import requests as cf
 except ImportError:
@@ -58,9 +56,8 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
-from styles import COLORS, TIER_COLORS
-from scrapers import fetch_sleeper_mlb_scoreboard
-from app_fixes import fetch_vsin_intelligence, get_vsin_team_signal, get_vsin_game_signal
+from styles import TIER_COLORS
+from app_fixes import fetch_vsin_intelligence
 
 # --- API Keys ---
 # --- Config (extracted 2026-06-19 to reduce app.py size) ---
@@ -121,9 +118,8 @@ def bc_timer(label):
         def __exit__(self, *a): print(f"  {self.l}: {time.time()-self.t:.2f}s")
     return _Timer(label)
 import pickle
-import unicodedata
 import functools
-from math import exp, factorial, pi, log, sqrt
+from math import exp, log, pi
 from itertools import combinations
 
 # =========================
@@ -727,7 +723,7 @@ NHL_GOALS_DEFAULT = 3.0
 LEAGUE_AVG_ERA = 4.25
 
 try:
-    from oddswrap import OddsClient, Sport
+    from oddswrap import Sport
     ODDSWRAP_AVAILABLE = True
 except ImportError:
     ODDSWRAP_AVAILABLE = False
@@ -9872,7 +9868,7 @@ def parse_bet_screenshot_ocr(image_bytes):
     Parse PrizePicks/prop screenshots via OCR.space then multi-sport parser.
     Claude Vision disabled (no credits). fmt/media_type resolved before try/except.
     """
-    import base64 as _b64, json as _json, io, re
+    import io, re  # base64 and json already imported at module level
 
     # Resolve image format OUTSIDE try/except so it's in scope for OCR.space fallback
     _PIL = None
@@ -10811,9 +10807,10 @@ def _fetch_parallel(fns: list) -> list:
             elapsed = round(_time.time() - t0, 2)
             timings[name] = {"time": elapsed, "status": "✅"}
             return result
-        except (ValueError, TypeError, ZeroDivisionError) as e:
+        except Exception as e:
             elapsed = round(_time.time() - t0, 2)
-            timings[name] = {"time": elapsed, "status": f"❌ {str(e)[:40]}"}
+            timings[name] = {"time": elapsed, "status": f"❌ {type(e).__name__}: {str(e)[:30]}"}
+            _logger.warning("_fetch_parallel worker %s failed: %s: %s", name, type(e).__name__, e)
             return None
     with ThreadPoolExecutor(max_workers=min(len(fns), 8)) as ex:
         futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
@@ -10821,8 +10818,9 @@ def _fetch_parallel(fns: list) -> list:
             idx = futures[fut]
             try:
                 results[idx] = fut.result()
-            except Exception:
+            except Exception as _ex:
                 results[idx] = None
+                _logger.warning("_fetch_parallel future[%d] raised: %s: %s", idx, type(_ex).__name__, _ex)
     # NOTE: fetch_timings session_state write removed — was inside @st.cache_data
     # which causes Streamlit warnings and silent drops on cache hits. Timings
     # are diagnostic; callers needing them can read from the returned results.
@@ -11748,8 +11746,9 @@ def load_sport_data(sport):
                 for _fut in _futs:
                     try:
                         _bdl_avg_prefetch[_futs[_fut]] = _fut.result()
-                    except Exception:
+                    except Exception as _ex:
                         _bdl_avg_prefetch[_futs[_fut]] = None
+                        _logger.warning("BDL avg prefetch for %s failed: %s", _futs[_fut], _ex)
     if BDL_API_KEY:
         _needs_logs = set()
         for _p in props:
@@ -11765,8 +11764,9 @@ def load_sport_data(sport):
                 for _fut in _futs:
                     try:
                         _bdl_logs_prefetch[_futs[_fut]] = _fut.result()
-                    except Exception:
+                    except Exception as _ex:
                         _bdl_logs_prefetch[_futs[_fut]] = []
+                        _logger.warning("BDL logs prefetch for %s failed: %s", _futs[_fut], _ex)
     if sport == "NBA":
         _unique_teams = set()
         for _g in games:
@@ -11779,8 +11779,9 @@ def load_sport_data(sport):
                 for _fut in _futs:
                     try:
                         _team_def_prefetch[_futs[_fut]] = _fut.result()
-                    except Exception:
+                    except Exception as _ex:
                         _team_def_prefetch[_futs[_fut]] = None
+                        _logger.warning("Team defense prefetch for %s failed: %s", _futs[_fut], _ex)
 
     for p in props:
         stat_raw = p["Prop"]
@@ -11905,7 +11906,7 @@ def load_sport_data(sport):
         usage_boost = 0.0
         if player in TEAMMATE_OUT_BOOST:
             out_player = TEAMMATE_OUT_BOOST[player].get("out_player")
-            if out_player and any(out_player.lower() in inj.lower() for inj in injuries.keys()):
+            if out_player and any(normalize_name(out_player) in normalize_name(inj) for inj in injuries.keys()):
                 raw_boost = TEAMMATE_OUT_BOOST[player].get(stat_norm, 0)
                 avg_val = avg if avg > 0 else 1
                 usage_boost = min(raw_boost / avg_val * 0.5, 0.10)
@@ -14175,10 +14176,11 @@ with tabs[0]:
                 f'</div>'
                 for s, c in sorted(_sport_exp.items(), key=lambda x: -x[1])[:5]
             ])
+            _exp_fallback = '<div style="color:var(--color-text-tertiary);font-size:11px;">Load board first</div>'
             st.markdown(
                 f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">🎯 Sport Exposure</div>'
-                f'{_exp_html or "<div style=\'color:var(--color-text-tertiary);font-size:11px;\'>Load board first</div>"}</div>',
+                f'{_exp_html or _exp_fallback}</div>',
                 unsafe_allow_html=True
             )
 
@@ -14583,7 +14585,7 @@ with tabs[1]:
             if _edge_pct < _min_edge:
                 continue
             _player = _p.get("Player","")
-            if _search and _search.lower() not in _player.lower():
+            if _search and normalize_name(_search) not in normalize_name(_player):
                 continue
             if _prop_f and _p.get("Prop","") not in _prop_f:
                 continue
@@ -15047,7 +15049,6 @@ with tabs[2]:
     _slip_ctrl1, _slip_ctrl2, _slip_ctrl3 = st.columns([2,2,3])
     with _slip_ctrl1:
         if st.button("🎯 Start New Slip", key="start_new_slip", use_container_width=True):
-            import uuid
             st.session_state["current_slip_id"] = datetime.now().strftime("%Y-%m-%d %H:%M")
             st.success(f"New slip started — lock your picks")
     with _slip_ctrl2:
@@ -15393,13 +15394,17 @@ with tabs[3]:
             _is_game_slip = any(l.get("bet_type") == "game" for l in slip_locks)
             _slip_type_label = "🏟️ Game Bet" if _is_game_slip else f"{n}-Pick Prop Slip"
             tc = "#e8a020" if _is_game_slip else "#378add"
+            _slip_wager_html = (
+                f'<div style="color:#e8a020;font-size:1.0rem;">Wager: ${wager} → Potential: ${potential}</div>'
+            if wager > 0 else ""
+            )
             st.markdown(
                 f'<div style="background:#0a0e14;border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
                 f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
                 f'<div><span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{n}-Pick Slip</span> ' +
                 f'<span style="color:#378add;font-size:1.0rem;margin-left:8px;">{sport}</span> ' +
                 f'<span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:8px;">{ts}</span></div>' +
-                f'{"<div style=\"color:#e8a020;font-size:1.0rem;\">Wager: $"+str(wager)+" → Potential: $"+str(potential)+"</div>" if wager > 0 else ""}' +
+                f'{_slip_wager_html}' +
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -16086,7 +16091,7 @@ with tabs[4]:
             data = pick_roi[pc]
             if data["wagered"] > 0:
                 roi = (data["returned"] - data["wagered"]) / data["wagered"] * 100
-                roi_rows.append({"Pick Count": f"{pc}-pick", "Bets": data["bets"], "Wagered": f"${data['wagered']:.2f}", "Returned": f"${data['returned']:.2f}", "ROI": f"{'\U0001f7e2' if roi > 0 else '\U0001f534'} {roi:+.1f}%"})
+                roi_rows.append({"Pick Count": f"{pc}-pick", "Bets": data["bets"], "Wagered": f"${data['wagered']:.2f}", "Returned": f"${data['returned']:.2f}", "ROI": f"{'🟢' if roi > 0 else '🔴'} {roi:+.1f}%"})
         if roi_rows:
             st.dataframe(pd.DataFrame(roi_rows), width="stretch", hide_index=True)
     else:
@@ -16971,8 +16976,8 @@ with tabs[5]:
                 f'{r["data_source"]} | Confidence: {r["confidence"]}'
                 f'{" | " + r["sharp_flag"] if r["sharp_flag"] else ""}'
                 f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
-                f'{"<div style=\"font-size:14px;color:#22c55e;margin-top:4px\">⚡ " + r["better_line"] + "</div>" if r["better_line"] else ""}'
-                f'{"<div style=\"font-size:14px;color:#e8a020;margin-top:4px\">⚠️ " + r["line_note"] + "</div>" if r["line_note"] else ""}'
+                f'{_better_html}'
+                f'{_note_html}'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -17177,7 +17182,7 @@ with tabs[6]:
             pl_name_input = st.text_input("Player name", placeholder="Start typing a name…", key="pl_name")
             # Auto-suggest from loaded board
             if pl_name_input and len(pl_name_input) >= 3:
-                _matches = [n for n in board_player_names if pl_name_input.lower() in n.lower()]
+                _matches = [n for n in board_player_names if normalize_name(pl_name_input) in normalize_name(n)]
                 if _matches:
                     _selected = st.selectbox("Suggestions from today's board", ["— type to search —"] + _matches[:8], key="pl_suggest")
                     if _selected and _selected != "— type to search —":
@@ -17415,13 +17420,14 @@ with tabs[6]:
                     st.markdown("#### 🔒 On Today's Board")
                     for bp in board_props:
                         tier_color = TIER_COLORS.get(bp.get("Tier",""), "#7a8a9a")
+                        _pin_span = ('<span style="color:#22c55e;margin-left:12px">📌 Pinnacle confirms</span>' if bp.get("PinnacleConfirms") else "")
                         st.markdown(
                             f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};'
                             f'border-radius:8px;padding:10px 14px;margin:4px 0;">'
                             f'<span style="background:{tier_color};color:#000;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;margin-right:8px">{bp.get("Tier","")}</span>'
                             f'<span style="color:#e8f0f8;font-weight:600">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span>'
                             f'<span style="color:#e8a020;margin-left:12px">Edge: {bp.get("EdgePct","")}</span>'
-                            f'{"<span style=\"color:#22c55e;margin-left:12px\">📌 Pinnacle confirms</span>" if bp.get("PinnacleConfirms") else ""}'
+                            f'{_pin_span}'
                             f'</div>',
                             unsafe_allow_html=True
                         )
