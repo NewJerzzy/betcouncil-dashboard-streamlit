@@ -707,25 +707,336 @@ def fetch_betonline_lines(sport="NBA"):
         save_json_data(BETONLINE_PATH, games)
     return games or load_json_data(BETONLINE_PATH, [])
 
+# ── MyBookie sport configuration ─────────────────────────────────────────
+# sport/league params mirror mybookie_scraper.py (confirmed against the
+# engine.mybookie.ag/sports_api/leagues-lines endpoint discovered via DevTools).
+_MB_SPORT_CONFIG = {
+    "NBA":  {"sport": "basketball", "league": "nba",  "path": "basketball/nba"},
+    "MLB":  {"sport": "baseball",   "league": "mlb",  "path": "baseball/mlb"},
+    "NFL":  {"sport": "football",   "league": "nfl",  "path": "football/nfl"},
+    "NHL":  {"sport": "hockey",     "league": "nhl",  "path": "hockey/nhl"},
+    "WNBA": {"sport": "basketball", "league": "wnba", "path": "basketball/wnba"},
+}
+
+
+def _mb_fmt_ml(val):
+    """Format a raw MyBookie money-line value as a signed string."""
+    if val is None:
+        return "N/A"
+    try:
+        n = int(float(val))
+        return f"+{n}" if n > 0 else str(n)
+    except (TypeError, ValueError):
+        return str(val) if str(val).strip() else "N/A"
+
+
+def _mb_extract_game(item: dict, sport: str):
+    """
+    Convert one raw leagues-lines game item into a fetch_game_lines()-compatible
+    dict, or return None if the item lacks enough data to be useful.
+
+    Field-name variants tried reflect both confirmed keys from mybookie_scraper.py
+    (gameID, date, name/description/teams) and the standard naming conventions of
+    DigitalSportsTech (the odds-data backend MyBookie uses under the hood).
+    Without a captured real response the parser deliberately casts a wide net.
+    """
+    # ── Team names ─────────────────────────────────────────────────────────
+    def _s(d, *keys):
+        for k in keys:
+            v = d.get(k)
+            if v and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    home = _s(item, "homeTeam", "home_team", "HomeTeam", "homeName",
+               "home", "team1")
+    away = _s(item, "awayTeam", "away_team", "AwayTeam", "awayName",
+               "away", "team2")
+
+    if not home or not away:
+        # Try composite name fields: "AWAY @ HOME", "HOME vs AWAY", etc.
+        raw_name = _s(item, "name", "description", "teams", "matchup",
+                      "event", "title", "gameName")
+        for sep in (" @ ", " at ", " vs ", " v ", " VS "):
+            if sep in raw_name:
+                parts = raw_name.split(sep, 1)
+                away, home = parts[0].strip(), parts[1].strip()
+                break
+
+    if not home or not away:
+        return None   # not enough data to build a matchup
+
+    # ── Money lines ─────────────────────────────────────────────────────────
+    # Nested home/away dicts are also common in DST responses.
+    home_node = item.get("home") if isinstance(item.get("home"), dict) else {}
+    away_node = item.get("away") if isinstance(item.get("away"), dict) else {}
+
+    home_ml = (item.get("homeML") or item.get("home_ml") or item.get("homeMl") or
+               item.get("homeMoneyLine") or item.get("home_moneyline") or
+               item.get("hml") or item.get("homeOdds") or item.get("homePrice") or
+               home_node.get("ml") or home_node.get("moneyLine") or
+               home_node.get("price") or home_node.get("odds"))
+    away_ml = (item.get("awayML") or item.get("away_ml") or item.get("awayMl") or
+               item.get("awayMoneyLine") or item.get("away_moneyline") or
+               item.get("aml") or item.get("awayOdds") or item.get("awayPrice") or
+               away_node.get("ml") or away_node.get("moneyLine") or
+               away_node.get("price") or away_node.get("odds"))
+
+    # ── Spread ──────────────────────────────────────────────────────────────
+    spread_pt = (item.get("homeSpread") or item.get("home_spread") or
+                 item.get("spread") or item.get("pointSpread") or
+                 item.get("handicap") or item.get("spreadPoint") or
+                 home_node.get("spread") or home_node.get("handicap") or
+                 home_node.get("spreadPoint"))
+    spread_odds = (item.get("homeSpreadOdds") or item.get("spreadOdds") or
+                   item.get("spreadLine") or home_node.get("spreadOdds"))
+
+    spread_str = "N/A"
+    if spread_pt is not None:
+        try:
+            sp = float(spread_pt)
+            spread_str = f"{home} {sp:+.1f}"
+        except (TypeError, ValueError):
+            spread_str = str(spread_pt)
+
+    # ── Total ────────────────────────────────────────────────────────────────
+    total_raw = (item.get("total") or item.get("overUnder") or
+                 item.get("over_under") or item.get("gameTotal") or
+                 item.get("totalPoints") or item.get("totalRuns") or
+                 item.get("totalGoals") or item.get("ou") or item.get("OU"))
+    if isinstance(total_raw, dict):
+        total_raw = (total_raw.get("point") or total_raw.get("value") or
+                     total_raw.get("line"))
+    try:
+        total = float(total_raw) if total_raw is not None else "N/A"
+    except (TypeError, ValueError):
+        total = "N/A"
+
+    return {
+        "Matchup":     f"{away} @ {home}",
+        "Status":      "Scheduled",
+        "Home ML":     _mb_fmt_ml(home_ml),
+        "Away ML":     _mb_fmt_ml(away_ml),
+        "Spread":      spread_str,
+        "Total":       total,
+        "Odds Source": "MyBookie",
+        "Sport":       sport,
+    }
+
+
+def _mb_unwrap(data: object) -> list:
+    """
+    Unwrap a MyBookie API response to a flat list of raw game items.
+    Handles:  bare list, {"data":[…]}, {"games":[…]}, {"events":[…]},
+              {"leagues":[{"games":[…]}]}, {"results":[…]}.
+    """
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for key in ("data", "games", "events", "results", "items", "offerings"):
+        val = data.get(key)
+        if isinstance(val, list) and val:
+            return val
+    # Nested: {"leagues": [{"games": [...]}]}
+    for league in (data.get("leagues") or []):
+        for key in ("games", "events", "data"):
+            val = league.get(key) if isinstance(league, dict) else []
+            if isinstance(val, list) and val:
+                return val
+    return []
+
+
 def fetch_mybookie_lines(sport="NBA"):
     """
-    MyBookie game-line / player-prop fetcher.
+    MyBookie game lines (ML / spread / total) via headed Playwright Chromium.
 
-    BLOCKED — engine.mybookie.ag enforces Cloudflare Turnstile + CF-Clearance
-    fingerprinting on all sports_api/* endpoints. Direct requests (even with
-    accurate session cookies) return a 403 / CAPTCHA challenge page, not JSON.
-    A Playwright session harvester or a CF-solver proxy is required before this
-    function can return real data.
+    WHY PLAYWRIGHT: engine.mybookie.ag/sports_api/* is behind Cloudflare bot
+    detection (CF-Clearance fingerprinting, and on some paths Turnstile).
+    Direct curl_cffi requests without a valid cf_clearance cookie return a
+    403 / JS-challenge page.  A real headed browser solves the CF challenge
+    natively, setting cf_clearance in the browser's cookie jar.  We then:
+      1. Intercept XHR responses from engine.mybookie.ag as the page loads
+         (the schedule page fires leagues-lines automatically for the sport's
+         default date view).
+      2. If the intercept yields nothing (CF challenge page, no JSON responses
+         from the engine domain), fall back to page.request.get() — which
+         reuses the browser's now-cleared cookies — to call leagues-lines
+         directly.
 
-    Until a working session is wired in, return [] immediately so the rest of
-    the board builds cleanly without a noisy exception or multi-second timeout.
+    Pattern matches betonline_props_scraper.py:
+      - headed Chromium, headless=False (better CF bypass)
+      - --disable-blink-features=AutomationControlled
+      - navigator.webdriver = undefined via add_init_script
+      - page.on("response", …) to intercept engine.mybookie.ag XHR
+      - page.request.get() authenticated direct call as fallback
+
+    Sport → API params from mybookie_scraper.py (engine.mybookie.ag discovery):
+      NBA:  sport=basketball league=nba   path=basketball/nba
+      MLB:  sport=baseball   league=mlb   path=baseball/mlb
+      NFL:  sport=football   league=nfl   path=football/nfl
+      NHL:  sport=hockey     league=nhl   path=hockey/nhl
+      WNBA: sport=basketball league=wnba  path=basketball/wnba
+
+    Cache: 30 minutes (Playwright launch ≈ 5-10s).
+    Headless: defaults to headed. Set env MYBOOKIE_HEADLESS=1 to force
+    headless; also auto-falls back to headless=True if headed launch fails.
+
+    Returns list of game dicts (same shape as fetch_game_lines()):
+        [{"Matchup","Status","Home ML","Away ML","Spread","Total",
+          "Odds Source":"MyBookie","Sport"}]
+    Returns [] on playwright ImportError, unsupported sport, or any error.
     """
-    st.warning(
-        "⚠️ MyBookie blocked by CAPTCHA — scraper disabled. "
-        "Harvest a fresh CF-Clearance cookie via Playwright and set it in "
-        "MYBOOKIE_CF_CLEARANCE (Streamlit secrets) to re-enable."
-    )
-    return []
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as _PWTimeout
+    except ImportError:
+        log_error_to_session(
+            "fetch_mybookie_lines",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return []
+
+    cfg = _MB_SPORT_CONFIG.get(sport.upper())
+    if not cfg:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"mybookie_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    raw_items: list = []
+
+    def _on_response(response):
+        url = response.url
+        if "engine.mybookie.ag" not in url and "mybookie.ag/sports_api" not in url:
+            return
+        if response.status != 200:
+            return
+        try:
+            ct = response.headers.get("content-type", "")
+            if "json" not in ct:
+                return
+            data = response.json()
+        except Exception:
+            return
+        items = _mb_unwrap(data)
+        if items:
+            raw_items.extend(items)
+
+    games = []
+    try:
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("MYBOOKIE_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1280, "height": 720},
+            )
+            # Mask automation signals that Cloudflare inspects
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = ctx.new_page()
+            page.on("response", _on_response)
+
+            target_url = f"https://www.mybookie.ag/sportsbook/{cfg['path']}"
+            try:
+                # domcontentloaded is faster than networkidle and still lets
+                # the sport schedule XHR fire before we start waiting.
+                page.goto(target_url, wait_until="domcontentloaded", timeout=60_000)
+            except _PWTimeout:
+                pass
+            except Exception:
+                pass
+
+            # Dwell: give the page time to load the schedule + fire leagues-lines XHR
+            time.sleep(8)
+
+            # ── Fallback: direct authenticated call from within the browser ───
+            # If the XHR intercept caught nothing (CF challenge consumed the full
+            # page load, or the schedule rendered from a cached hydration bundle
+            # without a fresh XHR) we call the API endpoint directly.
+            # page.request.get() uses the browser context's cookies — including
+            # any cf_clearance set by the challenge page — so the request is
+            # authenticated.
+            if not raw_items:
+                _api_hdrs = {
+                    "Accept":          "application/json, text/plain, */*",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer":         target_url,
+                    "Origin":          "https://www.mybookie.ag",
+                }
+                for _endpoint in (
+                    "leagues-lines",
+                    "leagues-lines-pregame",
+                    "todays-lines",
+                    "daily-lines",
+                ):
+                    try:
+                        _r = page.request.get(
+                            f"https://engine.mybookie.ag/sports_api/{_endpoint}",
+                            params={"sport": cfg["sport"], "league": cfg["league"]},
+                            headers=_api_hdrs,
+                            timeout=12_000,
+                        )
+                        if _r.ok:
+                            _data = _r.json()
+                            _items = _mb_unwrap(_data)
+                            if _items:
+                                raw_items.extend(_items)
+                                break  # stop at first endpoint that returns data
+                    except Exception:
+                        continue
+
+            ctx.close()
+            browser.close()
+
+        games = [
+            g for g in (
+                _mb_extract_game(item, sport) for item in raw_items
+            )
+            if g is not None
+        ]
+
+    except Exception as _e:
+        log_error_to_session("fetch_mybookie_lines", str(_e)[:150], "warning")
+        return []
+
+    if games:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(games, f)
+        except OSError:
+            pass
+
+    return games
 
 def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
                                 market_id=None, market_name=None, market_label_id=None,
