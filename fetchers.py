@@ -7990,12 +7990,9 @@ def fetch_betr_direct(sport):
                             _mid_path = os.path.join(CACHE_DIR, f"betr_market_id_sample_{sport}.txt")
                             with open(_mid_path, "w") as _mf:
                                 _mf.write(
-                                    f"raw:     {_raw_mid}
-"
-                                    f"decoded: {_decoded_sample}
-"
-                                    f"stat_type: {stat_type}
-"
+                                    "raw:     " + str(_raw_mid) + "\n" +
+                                    "decoded: " + str(_decoded_sample) + "\n" +
+                                    "stat_type: " + str(stat_type) + "\n"
                                 )
                         except Exception:
                             pass
