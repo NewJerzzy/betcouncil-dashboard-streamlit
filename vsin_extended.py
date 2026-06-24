@@ -161,7 +161,7 @@ def _fetch_playwright(url):
 def _fetch_html(url):
     session = _make_session()
     try:
-        r = session.get(url, timeout=30)
+        r = session.get(url, timeout=20)
         if r.status_code == 403:
             return _fetch_playwright(url)
         r.raise_for_status()

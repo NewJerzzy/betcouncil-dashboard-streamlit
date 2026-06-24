@@ -967,7 +967,7 @@ def check_daily_risk_limits(sport=None):
 #     return conn
 # ═══════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════
+# ══���════════════════════════════════════════════════════════
 # MODULE: STORAGE — Gist, JSON, pickle persistence
 # Future extraction target: storage.py
 # ═══════════════════════════════════════════════════════════
@@ -7799,7 +7799,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
         ct = resp.headers.get("content-type","")
         return resp.status_code == 200 and "html" not in ct and not resp.text.strip().startswith("<")
 
-    # ── 1. ScrapeOps ────────────────────────────────────────
+    # ��─ 1. ScrapeOps ────────────────────────────────────────
     # Skip if quota exhausted. Checked in two layers: session_state (instant,
     # for repeat calls within this run) then Gist (persists across cold
     # starts/redeploys — without this, every fresh session silently re-pays
@@ -10790,7 +10790,6 @@ def compute_home_away_splits(game_logs, stat, line):
         "home_games": len(home_games),
         "away_games": len(away_games),
     }
-@st.cache_data(ttl=900)
 def _fetch_parallel(fns: list) -> list:
     """Run multiple fetch functions in parallel threads, return results in order.
     Records per-source timing in st.session_state['fetch_timings'] for profiler UI.
@@ -11605,7 +11604,7 @@ def load_sport_data(sport):
             else:
                 return [], games, 0, 0, {}, {}
 
-    # ── SECTION: DATA ACQUISITION COMPLETE ─────────────────────────────────────
+    # ── SECTION: DATA ACQUISITION COMPLETE ──────────────���──────────────────────
     # All network I/O is done above via _fetch_parallel().
     # Below: pure computation — B2B detection, enrichment, game analysis.
     # injuries, public_betting, an_props, games already fetched in parallel above
@@ -14133,7 +14132,7 @@ with tabs[0]:
 
         # ═══════════════════════════════════════════════════
         # SECTION 6 — DASHBOARD + ANALYTICS (secondary)
-        # ═══════════════════════════════════════════════════
+        # ═══���═══════════════════════════════════════════════
         st.markdown("---")
         # ══════════════════════════════════════════════════════
         # PROFESSIONAL DASHBOARD — 5 insight cards
@@ -15262,7 +15261,7 @@ with tabs[2]:
                                     f'<span style="color:#22c55e;font-weight:600;">↔️ RLM Detected:</span> '
                                     f'<span style="color:var(--color-text-secondary);font-size:12px;">'
                                     f'{_rlm_item.get("public_pct",0)}% tickets on {_rlm_item.get("public_side","")} | '
-                                    f'{_rlm_item.get("money_pct",0)}% money on {_rlm_item.get("sharp_side","")} — '
+                                    f'{_rlm_item.get("money_pct",0)}% money on {_rlm_item.get("sharp_side","")} ��� '
                                     f'sharp action moving against public</span></div>',
                                     unsafe_allow_html=True
                                 )

@@ -82,6 +82,19 @@ except ImportError:
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+
+def _safe_load_pkl(path):
+    """Load a pickle cache file; returns None on corruption, EOFError, or any
+    unpickling error so the caller falls through to a fresh network fetch.
+    Without this guard a single corrupt .pkl (partial write, disk-full, etc.)
+    would crash the entire board load.
+    """
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        return None
+
 def fetch_kalshi_markets(sport="NBA"):
     """
     Fetch Kalshi prediction market probabilities for sports events.
@@ -437,8 +450,7 @@ def fetch_dff_propstats(player_id, sport, metric, line, team="",
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 3:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     result = _fetch_dff_propstats_live(
         player_id, sport, metric, line, team=team, opponent=opponent,
         position=position, direction=direction, location=location,
@@ -981,8 +993,7 @@ def fetch_fanduel_event_ids(sport):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 10:
             try:
-                with open(cache_path, "rb") as f:
-                    cached = pickle.load(f)
+                cached = _safe_load_pkl(cache_path)
                 if cached:
                     return cached
             except (IOError, ValueError):
@@ -1121,8 +1132,7 @@ def fetch_fanduel_direct(sport, event_ids=None):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
+            cached = _safe_load_pkl(cache_path)
             if cached:
                 return cached
 
@@ -1344,8 +1354,7 @@ def fetch_weather_for_game(city, is_outdoor=True):
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 3:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     weather = None
     # Tier 1: wttr.in
     try:
@@ -1423,8 +1432,7 @@ def fetch_mlb_probable_pitchers():
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age < 3:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     today_str = date.today().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?date={today_str}&sportId=1&hydrate=probablePitcher,team"
     pitchers = {}
@@ -1461,8 +1469,7 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age < ROLLING_DEFENSE_CACHE_HOURS:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     if sport != "NBA":
         return None
     nba_headers = {
@@ -1505,8 +1512,7 @@ def fetch_espn_fpi_ratings(sport="NBA"):
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     sport_slug_map = {"NBA": "basketball/nba", "NFL": "football/nfl", "MLB": "baseball/mlb", "NHL": "hockey/nhl"}
     slug = sport_slug_map.get(sport)
     if not slug:
@@ -1552,8 +1558,7 @@ def fetch_todays_referees(sport):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age < 6:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     slug_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb"}
     path = slug_map.get(sport)
     if not path:
@@ -1588,8 +1593,7 @@ def fetch_alternate_lines(sport, matchup):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age < 2:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     alternates = {"spreads": [], "totals": [], "source": "OddsWrap"}
     try:
         client = OddsClient(books=["draftkings", "bovada"])
@@ -1810,8 +1814,7 @@ def fetch_mlb_full_roster_ids(force_refresh=False):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 24:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -1884,8 +1887,7 @@ def fetch_nba_team_defense():
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     nba_headers = {
         "Host": "stats.nba.com",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -1940,8 +1942,7 @@ def fetch_nfl_rolling_averages():
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     rolling = {}
     season = 2025
     for player_name, athlete_id in ESPN_ATHLETE_IDS.get("NFL", {}).items():
@@ -2010,8 +2011,7 @@ def fetch_tennis_player_stats(player_name):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 12:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -2081,8 +2081,7 @@ def fetch_golf_player_stats(player_name):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 12:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -2356,8 +2355,7 @@ def fetch_espn_fpi(sport="NFL"):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
     sport_path = "nfl" if sport.upper() == "NFL" else "college-football"
@@ -2423,8 +2421,7 @@ def fetch_parlaysavant_props(sport="mlb", position="batter", prop="hits"):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < (10 / 60):
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
     try:
@@ -2480,8 +2477,7 @@ def fetch_soccer_player_stats(player_name):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 12:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -2557,8 +2553,7 @@ def fetch_ufc_fighter_stats(fighter_name):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 24:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -2624,8 +2619,7 @@ def fetch_nfl_player_stats(player_name):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -2723,8 +2717,7 @@ def fetch_wnba_player_stats(player_name):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
 
@@ -2790,8 +2783,7 @@ def fetch_soccer_team_goals(league_key: str = "eng.1") -> dict:
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
     try:
@@ -2957,8 +2949,7 @@ def fetch_soccer_rolling_averages():
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     rolling = {}
     for player, stats in PLAYER_AVERAGES_SOCCER.items():
         goals = stats.get("GOALS", 0.3)
@@ -2991,8 +2982,7 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     try:
         r = _http.get(
             "https://api.balldontlie.io/v1/players",
@@ -3040,8 +3030,7 @@ def fetch_nba_averages_bdl():
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     if not BDL_API_KEY:
         return {}
     allowed, reason = api_budget_check("BDL")
@@ -3319,8 +3308,7 @@ def scrape_prizepicks(sport):
             age = (time.time() - os.path.getmtime(cache_path)) / 60
             if age < 20:
                 try:
-                    with open(cache_path, "rb") as f:
-                        cached = pickle.load(f)
+                    cached = _safe_load_pkl(cache_path)
                     # Only use cache if it has real data (not a 403 error cache)
                     if cached and cached.get("data") and len(cached.get("data", [])) > 0:
                         data = cached
@@ -3851,8 +3839,7 @@ def fetch_public_betting(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 20:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     today = date.today().strftime("%Y%m%d")
     url = f"{ACTION_NETWORK_BASE}/{sport_slug}?bookIds={ACTION_NETWORK_BOOK_IDS}&date={today}&periods=event"
     an_headers = {
@@ -4312,8 +4299,7 @@ def fetch_alt_lines(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 30:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     try:
         url = (f"{ODDS_API_BASE}/sports/{sport_key}/odds"
                f"?apiKey={ODDS_API_KEY}&regions=us,us2"
@@ -4369,8 +4355,7 @@ def fetch_odds_api_game_lines(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 20:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
@@ -4447,8 +4432,7 @@ def fetch_oddswrap_props(sport):
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 1:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     all_props = []
     try:
         client = OddsClient(books=["draftkings", "bovada", "betrivers"])
@@ -4488,8 +4472,7 @@ def fetch_oddswrap_lines(sport):
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 2:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     lines_data = []
     try:
         client = OddsClient(books=["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"])
@@ -4532,8 +4515,7 @@ def fetch_parlayapi_props(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 60:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
+            cached = _safe_load_pkl(cache_path)
             if cached:
                 return cached
     sport_map = {
@@ -4665,8 +4647,7 @@ def fetch_espn_game_ids(sport):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 60
         if age < 30:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     game_ids = {}
     try:
         today_str = date.today().strftime("%Y%m%d")
@@ -4693,8 +4674,7 @@ def fetch_espn_line_movement(sport, event_id):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 60
         if age < 15:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     sport_path = ESPN_CORE_SPORT_MAP.get(sport, "")
     if not sport_path:
         return []
@@ -4739,8 +4719,7 @@ def fetch_espn_predictor(sport, event_id):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age < 3:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     sport_path = ESPN_CORE_SPORT_MAP.get(sport, "")
     if not sport_path:
         return {}
@@ -4767,8 +4746,7 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     if os.path.exists(cache_path):
         age = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age < 24:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     sport_path = ESPN_CORE_SPORT_MAP.get(sport, "")
     if not sport_path:
         return None
@@ -4822,8 +4800,7 @@ def fetch_player_id_bdl(player_name):
     if os.path.exists(cache_path):
         age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
         if age_days < 7:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     try:
         r = _http.get(
             f"https://api.balldontlie.io/v1/players",
@@ -4854,8 +4831,7 @@ def fetch_player_game_logs(player_name, season=2025, last_n=15):
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 4:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
 
     pid = fetch_player_id_bdl(player_name)
     if not pid:
@@ -4915,8 +4891,7 @@ def fetch_dk_nba_draftgroup_id():
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 120:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
     try:
         r = _http.get(
             "https://www.draftkings.com/lobby/getcontests?sport=NBA",
@@ -4965,8 +4940,7 @@ def fetch_sleeper_props(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
 
     try:
         # Sleeper projections endpoint
@@ -5142,8 +5116,7 @@ def fetch_draftkings_direct(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
+            cached = _safe_load_pkl(cache_path)
             if cached:
                 return cached
 
@@ -5310,8 +5283,7 @@ def fetch_betmgm_direct(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
+            cached = _safe_load_pkl(cache_path)
             if cached:
                 return cached
 
@@ -5550,8 +5522,7 @@ def fetch_caesars_direct(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
+            cached = _safe_load_pkl(cache_path)
             if cached:
                 return cached
 
@@ -5687,8 +5658,7 @@ def fetch_betrivers_direct(sport):
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
-            with open(cache_path, "rb") as f:
-                return pickle.load(f)
+            return _safe_load_pkl(cache_path)
 
     # Step 1: Get event list from Kambi
     sport_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NHL": "ice_hockey/nhl",
@@ -6042,8 +6012,7 @@ def fetch_superbook_direct(sport):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 90:
             try:
-                with open(cache_path, "rb") as f:
-                    cached = pickle.load(f)
+                cached = _safe_load_pkl(cache_path)
                 if cached:
                     return cached
             except Exception:
@@ -6705,8 +6674,7 @@ def fetch_nfl_defensive_ratings() -> dict:
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
     season = date.today().year
@@ -6782,8 +6750,7 @@ def fetch_nfl_team_scoring_stats() -> dict:
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
     season = date.today().year
@@ -6852,8 +6819,7 @@ def fetch_mlb_team_run_stats() -> dict:
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
             try:
-                with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                return _safe_load_pkl(cache_path)
             except Exception:
                 pass
     season = date.today().year
