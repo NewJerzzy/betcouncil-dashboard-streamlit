@@ -74,8 +74,15 @@ SPORT_CONFIG = {
 }
 
 # Props we care about per sport
+# PROP_LEAGUES: league-page slugs that fire get-contests-by-contest-type2 on load.
+# The mlb-player-props / mlb-batter-props / mlb-pitcher-props slugs returned
+# 404 — BOL does not expose those as standalone pages.  Left empty so Strategy
+# A is a clean no-op until correct slugs are confirmed via bol_api_urls.json.
 PROP_LEAGUES = {
-    "MLB": ["mlb-player-props", "mlb-batter-props", "mlb-pitcher-props"],
+    "MLB": [],   # populate once correct slug(s) are identified
+    "NBA": [],
+    "NFL": [],
+    "NHL": [],
 }
 
 
@@ -362,6 +369,9 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         )
         page = await context.new_page()
 
+        # Accumulate ALL api-offering URLs seen during this session.
+        _api_urls_seen = []
+
         async def on_response(response):
             url = response.url
             if "api-offering.betonline.ag" not in url:
@@ -371,6 +381,15 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                 data = json.loads(body)
             except Exception:
                 return
+            # ── Record every BOL API URL + response metadata ────────────────
+            import os as _os2
+            _api_urls_seen.append({
+                "url":     url,
+                "method":  response.request.method,
+                "status":  response.status,
+                "bytes":   len(body),
+                "top_keys": list(data.keys()) if isinstance(data, dict) else str(type(data)),
+            })
 
             if "offering-by-league" in url:
                 lines = parse_game_lines(data, sport)
@@ -571,6 +590,19 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                     print(f"    Error: {e}", file=sys.stderr)
         else:
             print(f"  [BOL] Strategy A captured {len(all_props)} props — skipping per-game nav", file=sys.stderr)
+
+        # ── Dump all captured API URLs for diagnostics ──────────────────────
+        import os as _os3
+        _urls_path = _os3.path.join(
+            _os3.path.dirname(_os3.path.abspath(__file__)), "bol_api_urls.json"
+        )
+        try:
+            import json as _json2
+            with open(_urls_path, "w") as _uf:
+                _json2.dump(_api_urls_seen, _uf, indent=2)
+            print(f"  [BOL] API URL dump → {_urls_path} ({len(_api_urls_seen)} calls)", file=sys.stderr)
+        except Exception as _ue:
+            print(f"  [BOL] Could not write URL dump: {_ue}", file=sys.stderr)
 
         print(f"  [BOL] Done. Props: {len(all_props)} Lines: {len(all_lines)}", file=sys.stderr)
         await browser.close()
