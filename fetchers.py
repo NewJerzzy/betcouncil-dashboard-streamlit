@@ -4,6 +4,10 @@ Moved from app.py to keep app.py under 1 MB.
 All functions callable from app.py via: from fetchers import *
 """
 import os, time, pickle, json, re
+try:
+    from curl_cffi import requests as cf
+except ImportError:
+    cf = None
 from datetime import date, datetime, timedelta
 import requests
 import streamlit as st
