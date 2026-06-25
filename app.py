@@ -16303,58 +16303,92 @@ with tabs[7]:
             else:
                 st.error("Enter a player name.")
     with log_tab1:
-        st.markdown("### 📸 Upload Screenshot")
-        st.caption("Upload one or more screenshots of your bet slip or result.")
-
         # Use a counter key so we can reset the uploader after submitting
         if "uploader_key" not in st.session_state:
             st.session_state["uploader_key"] = 0
 
-        uploaded_imgs = st.file_uploader(
-            "Upload bet screenshots (select multiple)",
-            type=["jpg", "jpeg", "png", "heic", "webp"],
-            key=f"bet_screenshot_{st.session_state['uploader_key']}",
-            accept_multiple_files=True,
-        )
-        if uploaded_imgs:
-            up_col1, up_col2 = st.columns([3, 1])
-            up_col1.caption(f"{len(uploaded_imgs)} screenshot(s) loaded")
-            if up_col2.button("🗑️ Clear", key="clear_uploader_btn"):
-                st.session_state["uploader_key"] += 1
-                st.session_state["parsed_bets"] = []
-                st.session_state["ocr_raw_text"] = ""
-                st.rerun()
-            if st.button("🔍 Parse All Screenshots", key="parse_screenshot_btn"):
-                all_parsed = []
-                with st.spinner("Reading screenshots..."):
-                    for img_file in uploaded_imgs:
-                        img_bytes = img_file.read()
-                        result = parse_bet_screenshot_ocr(img_bytes)
-                        if result:
-                            all_parsed.extend(result)
-                if all_parsed:
-                    st.session_state["parsed_bets"] = all_parsed
-                    st.success(f"✅ Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
-                else:
-                    st.error("Could not read screenshots. Try manual entry below.")
-                    _vd = st.session_state.get("vision_debug", {})
-                    if _vd:
-                        st.warning(f"Vision API: status={_vd.get('status_code','?')} | key={_vd.get('api_key_truncated','?')} | {str(_vd.get('response_body_truncated',''))[:200]}")
+        input_scr, input_txt = st.tabs(["📸 Upload Screenshot", "📋 Paste Slip Text"])
+
+        with input_scr:
+            st.caption("Upload one or more screenshots of your bet slip or result.")
+            uploaded_imgs = st.file_uploader(
+                "Upload bet screenshots (select multiple)",
+                type=["jpg", "jpeg", "png", "heic", "webp"],
+                key=f"bet_screenshot_{st.session_state['uploader_key']}",
+                accept_multiple_files=True,
+            )
+            if uploaded_imgs:
+                up_col1, up_col2 = st.columns([3, 1])
+                up_col1.caption(f"{len(uploaded_imgs)} screenshot(s) loaded")
+                if up_col2.button("🗑️ Clear", key="clear_uploader_btn"):
+                    st.session_state["uploader_key"] += 1
+                    st.session_state["parsed_bets"] = []
+                    st.session_state["ocr_raw_text"] = ""
+                    st.rerun()
+                if st.button("🔍 Parse All Screenshots", key="parse_screenshot_btn"):
+                    all_parsed = []
+                    with st.spinner("Reading screenshots..."):
+                        for img_file in uploaded_imgs:
+                            img_bytes = img_file.read()
+                            result = parse_bet_screenshot_ocr(img_bytes)
+                            if result:
+                                all_parsed.extend(result)
+                    if all_parsed:
+                        st.session_state["parsed_bets"] = all_parsed
+                        st.success(f"✅ Found {len(all_parsed)} bet(s) across {len(uploaded_imgs)} screenshots")
                     else:
-                        st.warning("Vision API was never called. Check ANTHROPIC_API_KEY in Streamlit secrets.")
+                        st.error("Could not read screenshots. Try the Paste Slip Text tab.")
+                        _vd = st.session_state.get("vision_debug", {})
+                        if _vd:
+                            st.warning(f"Vision API: status={_vd.get('status_code','?')} | key={_vd.get('api_key_truncated','?')} | {str(_vd.get('response_body_truncated',''))[:200]}")
+                        else:
+                            st.warning("Vision API was never called. Check ANTHROPIC_API_KEY in Streamlit secrets.")
+            with st.expander("🔍 OCR Debug — Raw Text Extracted"):
+                raw_ocr = st.session_state.get("ocr_raw_text", "")
+                if raw_ocr:
+                    st.markdown(f'<pre style="color:#e0e0e0;background:#1a1a2e;padding:10px;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;">{raw_ocr[:1200]}</pre>', unsafe_allow_html=True)
+                else:
+                    st.caption("No OCR text yet — upload a screenshot above.")
+
+        with input_txt:
+            st.caption("Paste Bovada or MyBookie text slips — extracted bets are reviewed below before logging.")
+            pasted_slip = st.text_area(
+                "Paste slip text (Bovada or MyBookie)",
+                height=180,
+                placeholder="Paste your Bovada or MyBookie slip text here...",
+                key="pasted_slip_text"
+            )
+            _slip_src = st.radio("Slip source:", ["Bovada", "MyBookie"], horizontal=True, key="slip_source_radio")
+            if st.button("🔍 Parse Text Slip", key="parse_text_slip_btn"):
+                if pasted_slip and pasted_slip.strip():
+                    if _slip_src == "Bovada":
+                        _parsed = parse_bovada_slip_text(pasted_slip)
+                    else:
+                        _parsed = parse_mybookie_slip_text(pasted_slip)
+                    if _parsed:
+                        st.session_state["parsed_bets"] = _parsed
+                        st.success(f"✅ Found {len(_parsed)} bet(s) from {_slip_src} slip — review below")
+                        st.rerun()
+                    else:
+                        st.warning(f"Could not parse {_slip_src} slip. Check format and try again.")
+                else:
+                    st.warning("Please paste your slip text first.")
+
+        # ── Shared review + submit — shown below both input tabs ──────────────
         parsed_bets = st.session_state.get("parsed_bets", [])
         if parsed_bets:
+            st.markdown("---")
             top_c1, top_c2 = st.columns([3, 1])
-            top_c1.markdown("### \u2705 Confirm Parsed Bets")
-            if top_c2.button("\u274c Clear All", key="clear_parsed_bets_top"):
+            top_c1.markdown("### ✅ Confirm Parsed Bets")
+            if top_c2.button("❌ Clear All", key="clear_parsed_bets_top"):
                 st.session_state["parsed_bets"] = []
                 st.session_state["ocr_raw_text"] = ""
                 st.rerun()
             for idx, bet in enumerate(parsed_bets):
                 if bet.get("outcome") == "PENDING":
-                    st.caption(f"\u23f3 {bet['player']} \u2014 PENDING, skipping")
+                    st.caption(f"⏳ {bet['player']} — PENDING, skipping")
                     continue
-                with st.expander(f"{bet.get('player','?')} \u2014 {bet.get('outcome','?')}", expanded=True):
+                with st.expander(f"{bet.get('player','?')} — {bet.get('outcome','?')}", expanded=True):
                     c1, c2, c3 = st.columns(3)
                     c1.write(f"**Prop:** {bet.get('prop','?')}")
                     c1.write(f"**Line:** {bet.get('line','?')}")
@@ -16364,7 +16398,7 @@ with tabs[7]:
                     c3.write(f"**Wager:** ${bet.get('wager',0):.2f}")
             col_confirm1, col_confirm2 = st.columns(2)
             parsed_date = col_confirm1.date_input("Date of these bets", value=date.today(), key="parsed_bet_date")
-            if col_confirm1.button("\u2705 Submit All Parsed Bets", key="submit_parsed_bets"):
+            if col_confirm1.button("✅ Submit All Parsed Bets", key="submit_parsed_bets"):
                 submitted = 0
                 for bet in parsed_bets:
                     if bet.get("outcome") not in ("WIN","LOSS"):
@@ -16384,7 +16418,7 @@ with tabs[7]:
                     except (ValueError, TypeError):
                         continue
                 if submitted > 0:
-                    st.success(f"\u2705 Submitted {submitted} bets \u2014 Bankroll: ${st.session_state.bankroll:.2f}")
+                    st.success(f"✅ Submitted {submitted} bets — Bankroll: ${st.session_state.bankroll:.2f}")
                     st.session_state["parsed_bets"] = []
                     st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                     st.session_state["ocr_raw_text"] = ""
@@ -16394,37 +16428,6 @@ with tabs[7]:
                 st.session_state["ocr_raw_text"] = ""
                 st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                 st.rerun()
-        with st.expander("🔍 OCR Debug — Raw Text Extracted"):
-            raw_ocr = st.session_state.get("ocr_raw_text", "")
-            if raw_ocr:
-                st.markdown(f'<pre style="color:#e0e0e0;background:#1a1a2e;padding:10px;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;">{raw_ocr[:1200]}</pre>', unsafe_allow_html=True)
-            else:
-                st.caption("No OCR text yet — upload a screenshot above.")
-        # ── PASTE TEXT SLIP ─────────────────────────────
-        st.markdown("---")
-        st.markdown("### 📋 Paste Bet Slip Text")
-        st.caption("Paste Bovada or MyBookie text slips here — extracted bets are reviewed below before logging, same as screenshots.")
-        pasted_slip = st.text_area(
-            "Paste slip text (Bovada or MyBookie)",
-            height=180,
-            placeholder="Paste your Bovada or MyBookie slip text here...",
-            key="pasted_slip_text"
-        )
-        _slip_src = st.radio("Slip source:", ["Bovada", "MyBookie"], horizontal=True, key="slip_source_radio")
-        if st.button("🔍 Parse Text Slip", key="parse_text_slip_btn"):
-            if pasted_slip and pasted_slip.strip():
-                if _slip_src == "Bovada":
-                    _parsed = parse_bovada_slip_text(pasted_slip)
-                else:
-                    _parsed = parse_mybookie_slip_text(pasted_slip)
-                if _parsed:
-                    st.session_state["parsed_bets"] = _parsed
-                    st.success(f"✅ Found {len(_parsed)} bet(s) from {_slip_src} slip — review below")
-                    st.rerun()
-                else:
-                    st.warning(f"Could not parse {_slip_src} slip. Check format and try again.")
-            else:
-                st.warning("Please paste your slip text first.")
 
 
 
