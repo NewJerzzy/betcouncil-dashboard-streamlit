@@ -2703,6 +2703,337 @@ def _enrich_pitchers_savant(pitchers: dict) -> dict:
             pass
     return enriched
 
+
+
+# ── Functions migrated from app.py — needed by fetchers.py ──
+
+def _espn_get(url, cache_key, ttl_hours=12):
+    """Shared ESPN fetch with file cache. Returns parsed JSON or None."""
+    cache_path = os.path.join(CACHE_DIR, f"espn_{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < ttl_hours:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=12)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        with open(cache_path, "wb") as f:
+            pickle.dump(data, f)
+        return data
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": f"espn_get:{cache_key}", "error": str(e)[:80]
+        })
+        return None
+
+
+
+
+# ── Tennis signal engine ──────────────────────────────────────────────────────
+# Surface baselines: expected total games per match (both players combined)
+# Best-of-3 format (most ATP/WTA events and all WTA Slams)
+
+
+# Maps GEM/PrizePicks-style prop names to Parlay Savant's URL prop slugs (MLB)
+
+def _ev_auth_headers():
+    """Build auth headers for EVSharps authenticated endpoints."""
+    jwt = _get_ev_jwt()
+    h = {
+        "accept": "*/*",
+        "origin": "https://www.evsharps.com",
+        "referer": "https://www.evsharps.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+    }
+    if jwt:
+        h["authorization"] = f"Bearer {jwt}"
+    return h
+
+@st.cache_data(ttl=1800)
+
+def _get_ev_jwt():
+    """
+    Returns a valid EVSharps JWT, auto-refreshing when expired.
+    Priority:
+      1. In-memory cache (valid for remaining session)
+      2. Auto-refresh via EV_REFRESH_TOKEN secret (hands-free)
+      3. Fallback to EV_JWT secret (manual — legacy)
+    """
+    import time as _time
+    now = _time.time()
+
+    # 1. Cached token still valid (refresh 5min before expiry)
+    if _EV_TOKEN_CACHE["access_token"] and _EV_TOKEN_CACHE["expires_at"] > now + 300:
+        return _EV_TOKEN_CACHE["access_token"]
+
+    # 2. Auto-refresh using refresh_token
+    refresh_tok = _ev_refresh_token()
+    if refresh_tok:
+        new_tokens = _ev_do_refresh(refresh_tok)
+        if new_tokens and new_tokens.get("access_token"):
+            _EV_TOKEN_CACHE["access_token"] = new_tokens["access_token"]
+            _EV_TOKEN_CACHE["expires_at"]   = new_tokens["expires_at"]
+            # Update refresh token in cache if rotated
+            if new_tokens.get("refresh_token") != refresh_tok:
+                # Log rotation — user may need to update secret eventually
+                log_error_to_session("ev_jwt_refresh", "Refresh token rotated — update EV_REFRESH_TOKEN secret", "warning")
+            return _EV_TOKEN_CACHE["access_token"]
+
+    # 3. Manual fallback
+    try:
+        return st.secrets.get("EV_JWT") or st.secrets.get("ev_jwt")
+    except Exception:
+        return None
+
+def _get_fanduel_px_context():
+    """Shared PerimeterX token lookup — secrets, then Gist (harvester push),
+    then short-lived local cache. Used by both fetch_fanduel_direct and
+    fetch_fanduel_event_ids so the chain only lives in one place."""
+    px_context = ""
+    try:
+        px_context = st.secrets.get("FANDUEL_PX_CONTEXT", "")
+    except Exception:
+        pass
+    if not px_context:
+        # Picks up tokens pushed by fanduel-harvester-cdp.js (local Playwright
+        # tool, CDP-attached to an already-logged-in browser). A forensic test
+        # on 2026-06-21 found the x-px-context token on the PRICING domain
+        # (smp.{state}.sportsbook.fanduel.com, which getMarketPrices actually
+        # uses) held ONE value across 15+ requests over a 90-second window —
+        # this contradicts the original "expires within minutes" assumption.
+        # True long-term lifespan is still unconfirmed, so the freshness
+        # window here is a cautious guess (20 min), not a verified figure.
+        gist_tokens = load_from_gist("fanduel_tokens", None)
+        if gist_tokens:
+            try:
+                captured_at = gist_tokens.get("captured_at", "")
+                age_mins = (time.time() - datetime.fromisoformat(captured_at.replace("Z", "+00:00")).timestamp()) / 60
+            except (ValueError, TypeError):
+                age_mins = 9999
+            if age_mins < 20:
+                px_context = gist_tokens.get("px_context", "")
+    if not px_context:
+        fd_token_cache = os.path.join(CACHE_DIR, "fanduel_px_context.txt")
+        if os.path.exists(fd_token_cache):
+            try:
+                age_mins = (time.time() - os.path.getmtime(fd_token_cache)) / 60
+                if age_mins < 10:
+                    with open(fd_token_cache, "r") as f:
+                        px_context = f.read().strip()
+            except (IOError, OSError):
+                pass
+    return px_context
+
+def _get_fanduel_state():
+    state = "az"
+    try:
+        state = (st.secrets.get("FANDUEL_STATE", "az") or "az").lower()
+    except Exception:
+        pass
+    return state
+
+
+# FanDuel competitionId per sport — these are FanDuel-internal IDs required by
+# the navigation/facet/v1.0/search endpoint, NOT generic league identifiers.
+# MLB, WNBA, NFL confirmed via real DevTools capture 2026-06-21
+# (scan.az.sportsbook.fanduel.com/api/sports/navigation/facet/v1.0/search,
+# full request/response captured for each). NBA/NHL intentionally left out —
+# both seasons just ended in June, nothing to capture until they're back.
+# Capture each via the same method (fanduel-navfacet-request-capture.js
+# while on that sport's schedule page) once in season — wrong/guessed IDs
+# would silently return another sport's events or nothing at all, worse
+# than just [].
+FANDUEL_COMPETITION_IDS = {
+    "MLB": 11196870,
+    "WNBA": 11295025,
+    "NFL": 12282733,
+}
+
+def api_budget_check(budget_key):
+    budget = API_BUDGETS.get(budget_key)
+    if not budget:
+        return True, ""
+    counter = get_api_counter(budget["counter_path"])
+    daily_used = counter.get("count", 0)
+    monthly_used = counter.get("monthly_count", 0)
+    stop_pct = budget.get("hard_stop_pct", 0.80)
+    daily_limit = budget.get("daily_limit")
+    if daily_limit:
+        threshold = int(daily_limit * stop_pct)
+        if daily_used >= threshold:
+            return False, f"{budget_key} daily limit approached: {daily_used}/{daily_limit} — protecting free tier"
+    monthly_limit = budget.get("monthly_limit")
+    if monthly_limit:
+        threshold = int(monthly_limit * stop_pct)
+        if monthly_used >= threshold:
+            return False, f"{budget_key} monthly limit approached: {monthly_used}/{monthly_limit} — protecting free tier"
+    return True, ""
+
+def api_budget_increment(budget_key):
+    budget = API_BUDGETS.get(budget_key)
+    if budget:
+        increment_api_counter(budget["counter_path"])
+
+@st.cache_data(ttl=3600)
+
+def load_from_gist(data_type: str, default):
+    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return None
+    try:
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        resp = _http.get(
+            f"{GIST_API}/{GITHUB_GIST_ID}",
+            headers=headers,
+            timeout=10
+        )
+        if resp.status_code != 200:
+            return None
+        files = resp.json().get("files", {})
+        file_data = files.get(f"betcouncil_{data_type}.json", {})
+        content = (file_data.get("content") or "").strip()
+        if not content:
+            # GitHub's bulk gist response can return empty content for ANY
+            # file regardless of that file's own size, once another file in
+            # the same gist is large enough to push the total response past
+            # GitHub's inline-content limit. Confirmed 2026-06-21: a 405-byte
+            # caesars_tokens file came back empty purely because
+            # auto_scraped_props.json (2.5MB) sat alongside it in the same
+            # gist — every data_type using this function was silently
+            # affected, not just the large file. Always fall back to
+            # raw_url rather than trusting an empty content field as "no data".
+            raw_url = file_data.get("raw_url", "")
+            if not raw_url:
+                return None
+            raw_resp = _http.get(raw_url, headers=headers, timeout=15)
+            if raw_resp.status_code != 200:
+                return None
+            content = raw_resp.text.strip()
+            if not content:
+                return None
+        return json.loads(content)
+    except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError):
+        return None
+
+
+# load_json_data — moved to bc_utils.py
+
+def log_error_to_session(source, error, error_type="error"):
+    """Log errors to session_state so they appear in the System tab."""
+    try:
+        if "errors" not in st.session_state:
+            st.session_state["errors"] = []
+        st.session_state["errors"].append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": source,
+            "error": str(error)[:200],
+            "type": error_type
+        })
+        # Cap at 500 entries — trim oldest to prevent unbounded session state growth
+        st.session_state["errors"] = st.session_state["errors"][-500:]
+    except (KeyError, TypeError, ValueError) as _e:
+            print(f"[WARN] {_e}")
+
+
+# is_date_valid_for_today — moved to bc_utils.py
+
+def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
+    """
+    Residential proxy chain for anti-bot protected sites (PrizePicks etc).
+    Tries proxies in order until one succeeds:
+      1. ScrapeOps    (25k credits/mo — primary paid)
+      2. ScraperAPI   (1k free credits/mo — backup)
+      3. Scrape.do    (1k free credits/mo — backup)
+      4. Direct request (fallback — will 403 on protected sites)
+    """
+    from urllib.parse import quote
+
+    def _log(proxy, status, size=0, error=None):
+        st.session_state.setdefault("scrapeops_log", []).append({
+            "url": url[:60], "proxy": proxy,
+            "status": status, "size": size,
+            "error": str(error)[:60] if error else None,
+        })
+
+    def _is_valid(resp):
+        ct = resp.headers.get("content-type","")
+        return resp.status_code == 200 and "html" not in ct and not resp.text.strip().startswith("<")
+
+    # ��─ 1. ScrapeOps ────────────────────────────────────────
+    # Skip if quota exhausted. Checked in two layers: session_state (instant,
+    # for repeat calls within this run) then Gist (persists across cold
+    # starts/redeploys — without this, every fresh session silently re-pays
+    # the full ~20s timeout to rediscover exhaustion that was already known
+    # from an earlier session, the same class of bug fixed in load_from_gist
+    # on 2026-06-21). Scoped by month since ScrapeOps quota resets monthly.
+    _so_exhausted = st.session_state.get("scrapeops_exhausted", False)
+    if not _so_exhausted:
+        _so_gist = load_from_gist("scrapeops_status", None)
+        if _so_gist and _so_gist.get("exhausted") and _so_gist.get("month") == datetime.now().strftime("%Y-%m"):
+            _so_exhausted = True
+            st.session_state["scrapeops_exhausted"] = True
+    if SCRAPEOPS_KEY and not _so_exhausted:
+        try:
+            encoded = quote(url, safe='')
+            r = _HTTP_DIRECT.get(f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=false",
+                timeout=timeout
+            )
+            _log("ScrapeOps", r.status_code, len(r.text))
+            # 403/429 = quota exhausted — flag and skip for rest of session
+            if r.status_code in (403, 429, 402):
+                st.session_state["scrapeops_exhausted"] = True
+                save_to_gist("scrapeops_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
+                _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}"))
+            elif _is_valid(r):
+                return r
+        except (KeyError, TypeError, ValueError) as e:
+            _log("ScrapeOps", "ERR", error=e)
+
+    # ── 2. ScraperAPI ────────────────────────────────────────
+    if SCRAPERAPI_KEY:
+        try:
+            r = _HTTP_DIRECT.get(f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={quote(url, safe='')}&premium=true&country_code=us",
+                timeout=timeout
+            )
+            _log("ScraperAPI", r.status_code, len(r.text))
+            if r.status_code in (403, 429, 402):
+                st.session_state["scraperapi_exhausted"] = True
+            elif _is_valid(r):
+                return r
+        except (requests.RequestException, KeyError, ValueError) as e:
+            _log("ScraperAPI", "ERR", error=e)
+
+    # ── 3. Scrape.do ─────────────────────────────────────────
+    if SCRAPEDO_KEY:
+        try:
+            r = _HTTP_DIRECT.get(f"https://api.scrape.do?token={SCRAPEDO_KEY}&url={quote(url, safe='')}&super=true",
+                timeout=timeout
+            )
+            _log("Scrape.do", r.status_code, len(r.text))
+            if _is_valid(r):
+                return r
+        except (requests.RequestException, KeyError, ValueError) as e:
+            _log("Scrape.do", "ERR", error=e)
+
+    # ── 4. Direct (fallback) ─────────────────────────────────
+    return _http.get(url, headers=headers or {}, timeout=timeout)
+
+
+# ═══════════════════════════════════════════════════════════════
+# ESPN INJURY + DEPTH CHART FEEDS
+# Uses same ESPN infrastructure already trusted by the app.
+# Tier 4 injury source + depth chart movement for NFL/NBA/MLB.
+# ═══════════════════════════════════════════════════════════════
+
 def fetch_mlb_probable_pitchers():
     cache_path = os.path.join(CACHE_DIR, "mlb_pitchers.pkl")
     if os.path.exists(cache_path):
