@@ -1323,3 +1323,8 @@ PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
 POLYMARKET_PATH = os.path.join(CACHE_DIR, "polymarket_markets.json")
 ROLLING_DEFENSE_CACHE_HOURS = 12
 SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009c00")
+
+
+# ── Additional constants for fetchers ──
+GIST_API = "https://api.github.com/gists"
+SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "19f5a819c2ec471888ffd80ec807078527e259c1515")
