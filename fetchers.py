@@ -2898,6 +2898,173 @@ def save_to_gist(data_type, data):
     # Still within window — stay queued
     return True
 
+
+def ewma_average(game_values, decay=0.85, sport=None):
+    if not game_values:
+        return 0.0
+    if sport:
+        decay = SPORT_EWMA_DECAY.get(sport, decay)
+    weights = [decay**i for i in range(len(game_values))]
+    weighted = sum(v * w for v, w in zip(reversed(game_values), weights))
+    return round(weighted / sum(weights), 2)
+
+# compute_std_dev — moved to utils.py
+# tier_badge — moved to utils.py
+
+GAME_TOTAL_PROP_NAMES = {
+    "Points Total", "Total Points", "Game Total", "Match Total",
+    "Total Goals", "Total Runs", "Total Score", "Team Total",
+    "Alternate Total",
+}
+
+# is_game_total_prop — moved to utils.py
+# compute_market_edge — moved to bc_utils.py
+
+def _fetch_dff_propstats_live(player_id, sport, metric, line, team="",
+                         opponent="", position="", direction="over",
+                         location="ALL", last_n=10,
+                         wplayer="", woplayer=""):
+    """
+    Fetch DFF PropStats for a player/metric combination.
+    
+    Endpoint: dailyfantasyfuel.com/propstats/{SPORT}/
+    Returns per-game hit rate against the line + contextual stats.
+    
+    Params:
+      wplayer/woplayer: optional teammate filter (with/without)
+      last_n:           L5, L10, L20, or Season
+      direction:        "over" or "under"
+    
+    Returns dict:
+      hit_rate, hits, total_games, avg_val,
+      avg_minutes, avg_usage, avg_potentials,
+      games (raw list)
+    """
+    sport_key = DFF_SPORT_MAP.get(sport, sport.upper())
+    metric_key = DFF_METRIC_MAP.get(metric, metric.lower().replace(" ",""))
+    range_str  = f"L{last_n}" if last_n in (5,10,20) else "Season"
+    
+    params = {
+        "playerID":  player_id,
+        "metric":    metric_key,
+        "loc":       location,       # ALL, Home, Away
+        "playoffs":  "ALL",
+        "pos":       position or "ALL",
+        "team":      team or "ALL",
+        "opp":       opponent or "ALL",
+        "range":     range_str,
+        "line":      str(line),
+        "starter":   "ALL",
+        "minutes":   1,
+        "rest":      "ALL",
+        "direction": direction,
+        "win":       "ALL",
+    }
+    
+    # Optional teammate filters
+    if wplayer:
+        params["wplayer"] = wplayer
+    if woplayer:
+        params["woplayer"] = woplayer
+    
+    url = DFF_PROPSTATS_URL.format(sport=sport_key)
+    
+    try:
+        r = _http.get(url, headers=DFF_HEADERS, params=params, timeout=15)
+        
+        # Log actual URL once per session for diagnostics
+        _req_url = r.url if hasattr(r, 'url') else url
+        _url_log = st.session_state.get("dff_url_log", [])
+        if not any(l.get("player_id") == player_id and l.get("metric") == metric_key 
+                   for l in _url_log):
+            _url_log.append({
+                "player_id": player_id, "metric": metric_key,
+                "url": _req_url, "status": r.status_code,
+                "time": datetime.now().strftime("%H:%M"),
+            })
+        if r.status_code not in (200, 304):
+            st.session_state.setdefault("errors",[]).append({
+                "source": "DFF PropStats",
+                "error":  f"HTTP {r.status_code}",
+                "time":   datetime.now().strftime("%H:%M"),
+            })
+            return {}
+        
+        data  = r.json() if r.text else {}
+        games = data.get("stats", data.get("games", data.get("data", [])))
+        
+        if not games:
+            # Log but don't error — endpoint may return empty for some combos
+            st.session_state.setdefault("dff_propstats_log",[]).append({
+                "player_id": player_id, "metric": metric_key,
+                "result": "no_data", "time": datetime.now().strftime("%H:%M"),
+            })
+            return {}
+        
+        # Parse per-game stats
+        hits         = 0
+        total        = len(games)
+        vals         = []
+        mins_list    = []
+        usage_list   = []
+        potentials_list = []
+        
+        line_f = float(line)
+        
+        for g in games:
+            val       = float(g.get("metric", g.get("value", g.get("stat", 0))) or 0)
+            mins      = float(g.get("mins",   g.get("minutes", 0)) or 0)
+            usage     = float(g.get("usage",  0) or 0)
+            potential = float(g.get("potentials", g.get("potential", 0)) or 0)
+            
+            vals.append(val)
+            if mins > 0:     mins_list.append(mins)
+            if usage > 0:    usage_list.append(usage)
+            if potential > 0:potentials_list.append(potential)
+            
+            # Hit check
+            if direction == "over" and val > line_f:
+                hits += 1
+            elif direction == "under" and val < line_f:
+                hits += 1
+        
+        hit_rate  = round(hits / total, 3) if total > 0 else 0
+        avg_val   = round(sum(vals) / len(vals), 2) if vals else 0
+        avg_mins  = round(sum(mins_list) / len(mins_list), 1) if mins_list else 0
+        avg_usage = round(sum(usage_list) / len(usage_list), 3) if usage_list else 0
+        avg_pot   = round(sum(potentials_list) / len(potentials_list), 1) if potentials_list else 0
+        
+        result = {
+            "hit_rate":       hit_rate,
+            "hits":           hits,
+            "total_games":    total,
+            "avg_val":        avg_val,
+            "avg_minutes":    avg_mins,
+            "avg_usage":      avg_usage,
+            "avg_potentials": avg_pot,
+            "line":           line_f,
+            "direction":      direction,
+            "metric":         metric_key,
+            "range":          range_str,
+            "games":          games[:20],  # cap stored games
+        }
+        
+        # Log success
+        st.session_state.setdefault("dff_propstats_log",[]).append({
+            "player_id": player_id, "metric": metric_key,
+            "hit_rate": hit_rate, "games": total,
+            "result": "success", "time": datetime.now().strftime("%H:%M"),
+        })
+        
+        return result
+    
+    except (requests.RequestException, ValueError, KeyError) as e:
+        st.session_state.setdefault("errors",[]).append({
+            "source": "DFF PropStats", "error": str(e)[:80],
+            "time": datetime.now().strftime("%H:%M"),
+        })
+        return {}
+
 # ── Functions migrated from app.py — needed by fetchers.py ──
 
 def _espn_get(url, cache_key, ttl_hours=12):
