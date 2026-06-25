@@ -3357,15 +3357,22 @@ def main():
     sports = ["NBA","MLB","NHL","WNBA"] if args.all else [args.sport]
 
     if args.betonline_props:
-        all_props = []
+        _bol_props, _bol_lines = [], []
         for sp in sports:
             print(f"\n{'='*50}\nScraping BetOnline props: {sp}\n{'='*50}")
-            all_props.extend(scrape_betonline_props(sp, max_games=args.max_games))
-        print(f"\nTotal props scraped: {len(all_props)}")
-        if all_props and not args.no_push:
-            push_betonline_props(all_props, token, gist)
-        elif all_props:
-            print(json.dumps(all_props[:5], indent=2))
+            try:
+                from betonline_props_scraper import scrape_betonline_all
+                sp_props, sp_lines = scrape_betonline_all(sp)
+                _bol_props.extend(sp_props)
+                _bol_lines.extend(sp_lines)
+                print(f"  {sp}: {len(sp_props)} props, {len(sp_lines)} lines")
+            except Exception as _e:
+                print(f"  {sp}: error — {_e}")
+        print(f"\nTotal: {len(_bol_props)} props, {len(_bol_lines)} lines")
+        if (_bol_props or _bol_lines) and not args.no_push:
+            push_to_gist(_bol_props, _bol_lines, token, gist)
+        elif _bol_props:
+            print(json.dumps(_bol_props[:5], indent=2))
         return
 
     # Determine which books to scrape
@@ -3475,6 +3482,19 @@ def main():
                         sessions["mybookie"] = new_cookies
                         mb_props, _ = scrape_mybookie(sport, new_cookies)
                 all_props += mb_props
+
+        # BetOnline props + lines — Playwright headed browser (Cloudflare bypass)
+        # Opt-in only: requires --books bo or --books bol or --books betonline
+        if "bo" in book_filter or "bol" in book_filter or "betonline" in book_filter:
+            print(f"\n  BetOnline {sport} (Playwright):")
+            try:
+                from betonline_props_scraper import scrape_betonline_all
+                bol_props, bol_lines = scrape_betonline_all(sport)
+                all_props += bol_props
+                all_lines += bol_lines
+                print(f"    {len(bol_props)} props, {len(bol_lines)} lines")
+            except Exception as _bol_e:
+                print(f"    BetOnline error — {_bol_e}")
 
         time.sleep(1)
 
