@@ -56,6 +56,7 @@ try:
         FL_HEADERS, FL_SPORT_MAP,
         KALSHI_SPORT_SERIES, MLB_STADIUM_COORDS,
         NHL_PLAYER_IDS,
+        MLB_PITCHER_ERA, MLB_PITCHER_FIP, LEAGUE_AVG_ERA,
     )
 except ImportError:
     CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
@@ -71,6 +72,9 @@ except ImportError:
     KALSHI_SPORT_SERIES = {}
     MLB_STADIUM_COORDS = {}
     NHL_PLAYER_IDS = {}
+    MLB_PITCHER_ERA = {}
+    MLB_PITCHER_FIP = {}
+    LEAGUE_AVG_ERA = 4.25
 
 try:
     from bc_utils import normalize_name, safe_float, load_json_data, save_json_data
@@ -2588,6 +2592,62 @@ def fetch_fantasylabs_lineups(sport="MLB"):
         return lineups
     except (requests.RequestException, ValueError, KeyError) as e:
         return load_json_data(FANTASYLABS_PATH, {})
+
+
+def _enrich_pitchers_savant(pitchers: dict) -> dict:
+    """
+    Pull live FIP, xFIP, xwOBA allowed, K%, BB% for each probable pitcher
+    from the Baseball Savant / MLB Stats API season stat endpoint.
+    Updates each pitcher dict in-place; falls back to static config values
+    if the network call fails or a pitcher isn't found.
+
+    Endpoint: statsapi.mlb.com/api/v1/people/{id}/stats?stats=season&group=pitching
+    Returns enriched pitchers dict.
+    """
+    season = date.today().year
+    enriched = dict(pitchers)
+    seen_ids = {}  # pitcher_id -> stats, avoid duplicate fetches for same SP
+
+    for team, pdata in pitchers.items():
+        pid = pdata.get("pitcher_id")
+        pname = pdata.get("pitcher", "")
+        if not pid:
+            continue
+        if pid in seen_ids:
+            enriched[team].update(seen_ids[pid])
+            continue
+        try:
+            url = (
+                f"https://statsapi.mlb.com/api/v1/people/{pid}/stats"
+                f"?stats=season&group=pitching&season={season}"
+            )
+            resp = _http.get(url, headers=HEADERS, timeout=8)
+            if resp.status_code != 200:
+                continue
+            splits = resp.json().get("stats", [{}])[0].get("splits", [])
+            if not splits:
+                continue
+            s = splits[0].get("stat", {})
+            era  = float(s.get("era",  MLB_PITCHER_ERA.get(pname,  LEAGUE_AVG_ERA)))
+            fip  = float(s.get("fielding_independent_pitching",
+                               MLB_PITCHER_FIP.get(pname, era)))
+            k9   = float(s.get("strikeoutsPer9Inn", 0) or 0)
+            bb9  = float(s.get("walksPer9Inn",      0) or 0)
+            whip = float(s.get("whip",              1.30) or 1.30)
+            xfip = round(fip * 0.92 + bb9 * 0.05, 2)
+            live_stats = {
+                "era_live":   round(era,  2),
+                "fip_live":   round(fip,  2),
+                "xfip_live":  xfip,
+                "k9_live":    round(k9,   1),
+                "bb9_live":   round(bb9,  1),
+                "whip_live":  round(whip, 2),
+            }
+            enriched[team].update(live_stats)
+            seen_ids[pid] = live_stats
+        except Exception:
+            pass
+    return enriched
 
 def fetch_mlb_probable_pitchers():
     cache_path = os.path.join(CACHE_DIR, "mlb_pitchers.pkl")
