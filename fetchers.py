@@ -57,6 +57,33 @@ try:
         KALSHI_SPORT_SERIES, MLB_STADIUM_COORDS,
         NHL_PLAYER_IDS,
         MLB_PITCHER_ERA, MLB_PITCHER_FIP, LEAGUE_AVG_ERA,
+        CBS_SPORT_MAP,
+        ACTION_NETWORK_BASE,
+        ACTION_NETWORK_BOOK_IDS,
+        BETONLINE_PATH,
+        BETONLINE_PROP_PRICE_URL,
+        BETONLINE_PROP_SPORT_CODES,
+        BETONLINE_SPORT_MAP,
+        CLV_PATH,
+        COVERS_PATH,
+        ESPN_CORE_BASE,
+        ESPN_CORE_SPORT_MAP,
+        FANDUEL_COMPETITION_IDS,
+        FANTASYLABS_PATH,
+        FIRECRAWL_KEY,
+        GOLF_PATH,
+        KALSHI_PATH,
+        NFL_INACTIVES_PATH,
+        NFL_PRACTICE_PATH,
+        ODDSWRAP_SPORT_MAP,
+        ODDS_API_BOOKS_GAMES,
+        PARLAYSAVANT_MLB_PROP_MAP,
+        PARLAY_API_BASE,
+        PARLAY_API_KEY,
+        PINNACLE_LINES_PATH,
+        POLYMARKET_PATH,
+        ROLLING_DEFENSE_CACHE_HOURS,
+        SCRAPERAPI_KEY,
     )
 except ImportError:
     CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
@@ -75,6 +102,33 @@ except ImportError:
     MLB_PITCHER_ERA = {}
     MLB_PITCHER_FIP = {}
     LEAGUE_AVG_ERA = 4.25
+    ACTION_NETWORK_BASE = ""
+    ACTION_NETWORK_BOOK_IDS = {}
+    BETONLINE_PATH = ""
+    BETONLINE_PROP_PRICE_URL = ""
+    BETONLINE_PROP_SPORT_CODES = 0
+    BETONLINE_SPORT_MAP = {}
+    CLV_PATH = ""
+    COVERS_PATH = ""
+    ESPN_CORE_BASE = ""
+    ESPN_CORE_SPORT_MAP = {}
+    FANDUEL_COMPETITION_IDS = {}
+    FANTASYLABS_PATH = ""
+    FIRECRAWL_KEY = ""
+    GOLF_PATH = ""
+    KALSHI_PATH = ""
+    NFL_INACTIVES_PATH = ""
+    NFL_PRACTICE_PATH = ""
+    ODDSWRAP_SPORT_MAP = {}
+    ODDS_API_BOOKS_GAMES = 0
+    PARLAYSAVANT_MLB_PROP_MAP = {}
+    PARLAY_API_BASE = ""
+    PARLAY_API_KEY = ""
+    PINNACLE_LINES_PATH = ""
+    POLYMARKET_PATH = ""
+    ROLLING_DEFENSE_CACHE_HOURS = 0
+    SCRAPERAPI_KEY = ""
+    CBS_SPORT_MAP = {}
 
 try:
     from bc_utils import normalize_name, safe_float, load_json_data, save_json_data
