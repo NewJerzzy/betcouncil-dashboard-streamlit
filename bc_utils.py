@@ -866,6 +866,10 @@ def detect_season_regime(sport="NBA"):
             regime = "Late Season"
             desc   = "Late MLB — rest signal strengthens"
             adj    = {"rest": 0.02}
+        elif month in (11, 12, 1, 2):
+            regime = "Off-season"
+            desc   = "MLB off-season — current-season signals are stale"
+            adj    = {"base": -0.06}
         else:
             regime = "Mid Season"
             desc   = "Full weights active"

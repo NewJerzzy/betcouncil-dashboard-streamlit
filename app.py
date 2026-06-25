@@ -6788,7 +6788,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     best_bet = None
     best_edge = 0
     
-    is_playoff_now = (date.today().month in [4, 5, 6])
+    is_playoff_now = (detect_season_regime(sport).get("regime") == "Playoffs")
     live_ratings = fetch_espn_fpi_ratings(sport)
     
     if live_ratings and len(live_ratings) >= 10:
@@ -12012,7 +12012,7 @@ def load_sport_data(sport):
                             recent_def = _team_def_prefetch.get(p2)
                             if recent_def and recent_def.get("def_rating_recent"):
                                 recent_rating = recent_def["def_rating_recent"]
-                                is_playoff_month = date.today().month in [4,5,6]
+                                is_playoff_month = is_playoff  # use regime-aware flag from fetch_game_lines
                                 recent_weight = 0.80 if is_playoff_month else 0.70
                                 season_weight = 1 - recent_weight
                                 opp_def_rating = round(recent_rating * recent_weight + season_def * season_weight, 1)
@@ -16416,7 +16416,7 @@ with tabs[4]:
     _regime_sport = st.session_state.get("last_sport","NBA")
     _regime = detect_season_regime(_regime_sport)
     _radj = _regime.get("adjustments",{})
-    _rcolor = "#378add" if _regime["regime"] == "Mid Season" else "#22c55e" if "Playoffs" in _regime["regime"] else "#e8a020"
+    _rcolor = "#378add" if _regime["regime"] == "Mid Season" else "#22c55e" if "Playoffs" in _regime["regime"] else "#6a7a8a" if "Off-season" in _regime["regime"] else "#e8a020"
     st.markdown(
         f'<div style="background:#0a0e14;border:1px solid {_rcolor}44;border-radius:6px;padding:0.7rem;">'
         f'<span style="color:{_rcolor};font-weight:700;">{_regime_sport} — {_regime["regime"]}</span>'
