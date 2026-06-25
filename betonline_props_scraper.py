@@ -518,6 +518,7 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         _api_urls_seen = []
         _captured_headers = {}   # headers from offering-by-league, reused for direct calls
         _offering_body = {}      # parsed POST body of offering-by-league (league/sport etc.)
+        _got_game_props = False  # True once we capture ContestTypeID != 12170 (real game props)
 
         async def on_request(request):
             """Capture request bodies and headers from BOL API calls."""
@@ -589,7 +590,10 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                 props = parse_player_props(data, sport)
                 if props:
                     all_props.extend(props)
-                    print(f"    Props: +{len(props)} from {url.split('/')[-1]}", file=sys.stderr)
+                    if any(p.get("ContestTypeID", 0) != 12170 for p in props):
+                        nonlocal _got_game_props
+                        _got_game_props = True
+                    print(f"    Props: +{len(props)} (game={_got_game_props}) from {url.split('/')[-1]}", file=sys.stderr)
                 else:
                     top_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
                     print(f"    [BOL] contest endpoint hit, parse empty — keys: {top_keys}", file=sys.stderr)
@@ -811,7 +815,7 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         #
         # Both paths use page.expect_response() so we deterministically
         # capture the API response rather than hoping on_response fires.
-        if not all_props:
+        if not _got_game_props:
             print(f"  [BOL] Strategy B: browser-native capture...", file=sys.stderr)
 
             # Ensure we're on the main league page (Strategy A.2 may have navigated away)
@@ -862,7 +866,7 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
             _b1_labels = ["More Wagers", "All Wagers", "Player Props",
                           "Props", "Additional Markets"]
             for _label in _b1_labels:
-                if all_props:
+                if _got_game_props:
                     break
                 try:
                     _locs = page.get_by_text(_label, exact=False)
@@ -877,17 +881,19 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                             _pp = await _capture_and_parse(_ri.value)
                             if _pp:
                                 all_props.extend(_pp)
-                                print(f"    [BOL] B1 '{_label}'[{_li}] → {len(_pp)} props ✓", file=sys.stderr)
+                                if any(p.get("ContestTypeID", 0) != 12170 for p in _pp):
+                                    _got_game_props = True
+                                print(f"    [BOL] B1 '{_label}'[{_li}] → {len(_pp)} props (game={_got_game_props}) ✓", file=sys.stderr)
                                 break
                         except Exception as _be:
                             print(f"    [BOL] B1 '{_label}'[{_li}]: {type(_be).__name__}: {str(_be)[:80]}", file=sys.stderr)
-                        if all_props:
+                        if _got_game_props:
                             break
                 except Exception:
                     pass
 
             # ── B2: DOM-extracted actual game hrefs → navigate + capture ──────
-            if not all_props:
+            if not _got_game_props:
                 _actual_hrefs = await page.evaluate(r"""
                     () => Array.from(document.querySelectorAll('a[href]'))
                         .map(a => a.href)
@@ -917,7 +923,9 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                         _pp = await _capture_and_parse(_ri.value)
                         if _pp:
                             all_props.extend(_pp)
-                            print(f"    [BOL] B2 {_href} → {len(_pp)} props ✓", file=sys.stderr)
+                            if any(p.get("ContestTypeID", 0) != 12170 for p in _pp):
+                                _got_game_props = True
+                            print(f"    [BOL] B2 {_href} → {len(_pp)} props (game={_got_game_props}) ✓", file=sys.stderr)
                     except Exception as _be:
                         print(f"    [BOL] B2 {_href}: {type(_be).__name__}: {str(_be)[:100]}", file=sys.stderr)
 
@@ -936,7 +944,21 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         except Exception as _ue:
             print(f"  [BOL] Could not write URL dump: {_ue}", file=sys.stderr)
 
-        print(f"  [BOL] Done. Props: {len(all_props)} Lines: {len(all_lines)}", file=sys.stderr)
+        # Deduplicate by ContestID (on_response + expect_response can both fire)
+        _seen_cids = set()
+        _deduped = []
+        for _p in all_props:
+            _cid = _p.get("ContestID")
+            if _cid not in _seen_cids:
+                _seen_cids.add(_cid)
+                _deduped.append(_p)
+        # Drop cross-sport Odds Boosters: empty AwayTeam+HomeTeam with ContestTypeID=12170
+        all_props = [
+            _p for _p in _deduped
+            if not (_p.get("ContestTypeID") == 12170
+                    and not _p.get("AwayTeam") and not _p.get("HomeTeam"))
+        ]
+        print(f"  [BOL] Done. Props: {len(all_props)} (deduped+filtered) Lines: {len(all_lines)}", file=sys.stderr)
         await browser.close()
 
     return all_props, all_lines
