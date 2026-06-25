@@ -960,3 +960,133 @@ Abbreviations like "NYY", "LAD", "NYK" are resolved to full canonical names befo
 38. Makinen projected total is supporting signal only when divergence <1.5; primary only at ≥1.5
 39. BOL pitcher handedness must be factored into platoon splits when available
 40. VSiN public % and handle % are DraftKings-sourced — most reliable volume proxy available
+
+
+---
+
+## Section: Sports Quant Ensemble Models (NFL Game Lines)
+
+*Integrated from: "Prediction of NFL Conference Finals using sports quant models" — Saugat Shrestha, Feb 2026*
+
+This section adds five statistical models for NFL spread and win probability estimation. These run as an ensemble; no single model is used in isolation. When 3+ models agree on a side, treat as a confirming structural signal.
+
+---
+
+### Model 1: Bradley-Terry Model (BTM)
+
+Pairwise comparison model using Maximum Likelihood Estimation to reverse-engineer team strength ratings.
+
+**Formula:**
+```
+P(Home Win) = 1 / (1 + e^-(HFA + R_home - R_away))
+```
+Where `R` = team strength rating, `HFA` = Home Field Advantage constant.
+
+**GEM application:**
+- Use BTM win probability as the baseline win probability signal for NFL game lines
+- HFA for NFL = +2.5 points (standard); adjust to +1.5 for dome teams playing indoors
+- BTM output feeds directly into the edge calculation against implied market probability
+
+---
+
+### Model 2: Team OLS Optimized Rating (TOOR)
+
+Extends BTM to predict Margin of Victory (MOV) rather than binary win/loss. Minimizes Sum of Squared Errors via OLS regression on BTM ratings.
+
+**Formula:**
+```
+MOV_pred = β0 + β1(R_home) + β2(R_away)
+```
+
+**GEM application:**
+- TOOR MOV is the primary predicted spread signal
+- Compare TOOR MOV to the closing line: if TOOR MOV diverges from market spread by ≥2.5 points, flag as a spread value signal
+- TOOR is the most reliable single-model spread predictor in the ensemble
+
+---
+
+### Model 3: Game Scores Standard Deviation (GSSD)
+
+Situational model regressing four context-specific scoring averages to capture home/away performance splits.
+
+**Formula:**
+```
+MOV_pred = α + w1(PFH) + w2(PAH) + w3(PFA) + w4(PAA)
+```
+Where: `PFH` = Points For Home, `PAH` = Points Against Home, `PFA` = Points For Away, `PAA` = Points Against Away.
+
+**GEM application:**
+- GSSD is the situational context check — surfaces teams that dramatically over/underperform away from home
+- High GSSD divergence from BTM/TOOR (>3 points) = situational red flag; reduce position confidence
+- Particularly useful for dome teams on the road, cold-weather road underdogs, and teams with extreme home/away splits
+
+---
+
+### Model 4: Z-Score Deviation (ZSD)
+
+Score-based model comparing team performance to league-wide benchmarks using Z-scores. Neural Network derives Z-scores; applies both Normal and Competing Negative Binomial distributions.
+
+**Formula:**
+```
+Estimated Score = μ_league + (Z × σ_league)
+```
+
+**Distribution choice:**
+- **Normal distribution** → use for standard spread/total estimation
+- **Competing Negative Binomial (NB)** → use for win probability in high-variance, low-scoring games (divisional games, bad-weather games, games with totals ≤41)
+
+**GEM application:**
+- ZSD (NB) win probability is preferred over ZSD (N) for NFL because scoring is discrete and low-frequency
+- When total ≤41 or weather involves wind ≥15 mph or precipitation: force NB distribution
+- ZSD is the league-context normalizer — teams performing far above/below league Z-score are regression candidates
+
+---
+
+### Model 5: Power Rank Points (PRP)
+
+Rates teams by raw offensive and defensive point strength using head-to-head interaction of offensive/defensive ratings.
+
+**Formula:**
+```
+Score_home = 0.5(HFA) + (Off_home + Def_away) + μ_score
+```
+
+**GEM application:**
+- PRP is the raw strength check — highest confidence when Off/Def ratings produce a clear directional consensus with BTM/TOOR
+- PRP (NB) win probability preferred over PRP (N) under same low-scoring/weather conditions as ZSD
+- Use PRP power differential as a tiebreaker between otherwise equal model outputs
+
+---
+
+### Ensemble Averaging Rules
+
+| Condition | Action |
+|-----------|--------|
+| All 5 models agree on favorite | Maximum confidence — treat as structural lock signal |
+| 4/5 models agree | High confidence — standard signal |
+| 3/5 models agree | Moderate confidence — requires 1+ confirming external signal (RLM, sharp consensus, line value) |
+| 2/5 or fewer agree | No ensemble signal — models in conflict, reduce or pass |
+| Average MOV diverges from market spread ≥3.0 | Flag as spread value play regardless of win probability |
+| Average MOV within 1.0 of market spread | Line is efficient — do not force a play |
+
+**Ensemble spread calculation:**
+```
+Avg_MOV = mean(BTM_MOV, TOOR_MOV, GSSD_MOV, ZSD_MOV, PRP_MOV)
+```
+Compare `Avg_MOV` to market closing spread. Edge = `|Avg_MOV - market_spread|`.
+
+**Win probability ensemble:**
+```
+Avg_WinProb = mean(BTM, TOOR, GSSD, ZSD_NB, PRP_NB)
+```
+Use NB variants for ZSD and PRP as the defaults. Convert to implied probability to calculate model edge.
+
+---
+
+### Non-Negotiable Rules (additions — Sports Quant Ensemble)
+
+41. Ensemble requires ≥3/5 model agreement before generating a spread signal — never act on 2/5 or fewer
+42. Negative Binomial distribution is mandatory for NFL win probability when total ≤41 or wind ≥15 mph — Normal distribution underestimates variance in low-scoring environments
+43. TOOR MOV is the primary spread predictor; GSSD is situational context only — never override TOOR with GSSD alone
+44. Average ensemble MOV within 1.0 of market = efficient line; do not force a value play
+45. HFA constant = +2.5 standard; reduce to +1.5 for dome teams playing indoor games
