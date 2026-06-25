@@ -1261,3 +1261,65 @@ _UFC_WEIGHTCLASS_BASELINES = {
 }
 _UFC_ROUND_DEFAULT = 2.25   # overall UFC avg
 _UFC_CHAMPIONSHIP_ROUNDS = 5  # title fights go 5 rounds
+
+
+# ── Constants migrated from app.py for fetchers.py access ──
+ACTION_NETWORK_BASE = (
+    "https://api.actionnetwork.com"
+    "/web/v2/scoreboard/publicbetting"
+)
+ACTION_NETWORK_BOOK_IDS = (
+    "15,30,4727,4795,79,2988,"
+    "69,68,75,123,71"
+)
+BETONLINE_PATH = os.path.join(CACHE_DIR, "betonline_lines.json")
+BETONLINE_PROP_PRICE_URL = "https://bl.widget-prod.sportcast.app/public/RequestBetPriceUI"
+BETONLINE_PROP_SPORT_CODES = {
+    "MLB": 9,   # confirmed via sc-sportid: "Baseball" header
+    # "NBA": None, "NFL": None, "NHL": None, "WNBA": None,  # unconfirmed — do not guess
+}
+BETONLINE_SPORT_MAP = {
+    "NBA":  ("basketball", "nba"),
+    "MLB":  ("baseball",   "mlb"),
+    "NHL":  ("hockey",     "nhl"),
+    "WNBA": ("basketball", "wnba"),
+    "NFL":  ("football",   "nfl"),
+    # Soccer = EPL only, matching the existing "soccer/leagues/eng.1"
+    # convention already used elsewhere in this codebase (line ~718) —
+    # confirmed working via live probe 2026-06-21 (10 real games returned).
+    "Soccer": ("soccer", "epl"),
+}
+CLV_PATH = os.path.join(CACHE_DIR, "clv_tracking.json")
+COVERS_PATH     = os.path.join(CACHE_DIR, "covers_consensus.json")
+ESPN_CORE_BASE = "https://sports.core.api.espn.com/v2"
+ESPN_CORE_SPORT_MAP = {
+    "NBA": "basketball/leagues/nba", "MLB": "baseball/leagues/mlb",
+    "NHL": "hockey/leagues/nhl", "NFL": "football/leagues/nfl",
+    "WNBA": "basketball/leagues/wnba", "Soccer": "soccer/leagues/eng.1",
+}
+FANDUEL_COMPETITION_IDS = {
+    "MLB": 11196870,
+    "WNBA": 11295025,
+    "NFL": 12282733,
+}
+FANTASYLABS_PATH = os.path.join(CACHE_DIR, "fantasylabs_lineups.json")
+FIRECRAWL_KEY  = st.secrets.get("FIRECRAWL_KEY",  "fc-296afd1583694440938141e0bc113a38")
+GOLF_PATH = os.path.join(CACHE_DIR, "golf_data.json")
+KALSHI_PATH     = os.path.join(CACHE_DIR, "kalshi_markets.json")
+NFL_INACTIVES_PATH  = os.path.join(CACHE_DIR, "nfl_inactives.json")
+NFL_PRACTICE_PATH   = os.path.join(CACHE_DIR, "nfl_practice.json")
+ODDSWRAP_SPORT_MAP = {"NBA": "nba", "MLB": "mlb", "NFL": "nfl", "NHL": "nhl"}
+ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex,circa_sports,betonlineag"
+PARLAYSAVANT_MLB_PROP_MAP = {
+    "Hits": "hits", "Singles": "singles", "Doubles": "doubles", "Triples": "triples",
+    "Home Runs": "home-runs", "Total Bases": "total-bases", "RBI": "rbi", "Runs": "runs",
+    "H+R+RBI": "h-r-rbi", "Walks": "walks", "Stolen Bases": "stolen-bases",
+    "Strikeouts": "strikeouts", "Innings Pitched": "innings-pitched",
+    "Hits Allowed": "hits-allowed", "Earned Runs": "earned-runs",
+}
+PARLAY_API_BASE = "https://parlay-api.com/v1"
+PARLAY_API_KEY = st.secrets.get("PARLAY_API_KEY", "")
+PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
+POLYMARKET_PATH = os.path.join(CACHE_DIR, "polymarket_markets.json")
+ROLLING_DEFENSE_CACHE_HOURS = 12
+SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009c00")
