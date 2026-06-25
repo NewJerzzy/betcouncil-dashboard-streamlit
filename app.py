@@ -55,7 +55,9 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     devig_odds, compute_std_dev, calculate_edge,
     compute_fair_prob, tier_badge, is_game_total_prop, classify_regime, parlay_prob,
     parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
-    ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj)
+    ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
+    # Extracted from app.py — pure computation, no Streamlit deps
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_sharp_consensus_no_vig, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import TIER_COLORS
 from app_fixes import fetch_vsin_intelligence
@@ -919,21 +921,6 @@ def compute_consensus_probability(sport, player_name, stat_name, line_val, side=
     consensus = round(max(0.20, min(0.80, consensus)), 4)
     return consensus, books_used
 
-def check_prop_line_fairness(line, consensus_prob, side="OVER"):
-    if consensus_prob is None:
-        return "UNKNOWN", ""
-    market_implied = 0.524
-    if side.upper() == "OVER":
-        gap = market_implied - consensus_prob
-    else:
-        gap = market_implied - (1 - consensus_prob)
-    if gap >= 0.07:
-        return "BAD", f"⚠️ Market prices this at {consensus_prob:.1%} — line is {gap:.1%} worse than market fair value. Reduce sizing or skip."
-    elif gap >= 0.04:
-        return "CAUTION", f"📊 Market prices this at {consensus_prob:.1%} — slightly unfavorable line. Verify before betting."
-    else:
-        return "GOOD", f"✅ Line is fair vs market ({consensus_prob:.1%} consensus)"
-
 def check_daily_risk_limits(sport=None):
     bankroll = st.session_state.bankroll
     day_start = st.session_state.day_start_br
@@ -1120,11 +1107,6 @@ def load_from_gist(data_type: str, default):
 
 
 # load_json_data — moved to bc_utils.py
-def save_json_data(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
 def get_elo_ratings(sport="NFL"):
     """Load persisted Elo ratings dict {team_abbr: rating} for a sport from
     Gist, seeding any unseen team at ELO_DEFAULT_RATING. Falls back to an
@@ -1132,55 +1114,6 @@ def get_elo_ratings(sport="NFL"):
     unavailable — never raises, never blocks the rest of the app."""
     data = load_from_gist(f"elo_{sport.lower()}", None)
     return data if isinstance(data, dict) else {}
-
-
-def _get_elo_roster_confidence(sport: str, team: str, window_days: int = 14) -> float:
-    """
-    Return a K-factor confidence multiplier [0.5, 1.0] based on recent roster
-    churn for the given team.  High churn (3+ moves in 14 days) degrades Elo
-    reliability — we don't know how the new roster performs yet.
-
-    Fetches ESPN transactions endpoint; returns 1.0 on any error so normal
-    Elo updates proceed unaffected when the network is unavailable.
-    """
-    _sport_map = {
-        "NBA": ("basketball", "nba"),
-        "MLB": ("baseball",   "mlb"),
-        "NHL": ("hockey",     "nhl"),
-        "NFL": ("football",   "nfl"),
-    }
-    if sport not in _sport_map:
-        return 1.0
-    es, el = _sport_map[sport]
-    try:
-        from datetime import timedelta as _td
-        import requests as _req
-        cutoff = (datetime.now() - _td(days=window_days)).strftime("%Y%m%d")
-        url = (
-            f"https://site.api.espn.com/apis/site/v2/sports/{es}/{el}"
-            f"/transactions?limit=100&date={cutoff}"
-        )
-        r = _req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
-        if r.status_code != 200:
-            return 1.0
-        transactions = r.json().get("transactions", [])
-        # Count moves involving this team (case-insensitive partial match)
-        team_lower = team.lower()
-        churn_count = sum(
-            1 for t in transactions
-            if team_lower in t.get("team", {}).get("displayName", "").lower()
-        )
-        # Scale: 0-2 moves → 1.0, 3-4 → 0.85, 5-6 → 0.70, 7+ → 0.50
-        if churn_count <= 2:
-            return 1.0
-        elif churn_count <= 4:
-            return 0.85
-        elif churn_count <= 6:
-            return 0.70
-        else:
-            return 0.50
-    except Exception:
-        return 1.0
 
 
 def update_elo_after_game(sport, team_a, team_b, score_a, margin=None):
@@ -1529,43 +1462,6 @@ def compute_prop_correlation_score(props):
 # ═══════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300, show_spinner=False)
-def compute_signal_attribution(history=None):
-    """
-    Compute per-signal win rate and ROI from resolved bets.
-    Activates at 20+ resolved bets.
-    Returns (rows_list, resolved_count)
-    """
-    if history is None:
-        history = []
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
-    n = len(resolved)
-    if n < 20:
-        return None, n
-    signal_stats = {}
-    for bet in resolved:
-        sv = bet.get("signal_values", {})
-        for sig, val in sv.items():
-            if sig not in signal_stats:
-                signal_stats[sig] = {"wins":0,"total":0,"edge_sum":0}
-            signal_stats[sig]["total"] += 1
-            if bet.get("outcome") == "WIN":
-                signal_stats[sig]["wins"] += 1
-            signal_stats[sig]["edge_sum"] += float(val or 0)
-    rows = []
-    for sig, stats in sorted(signal_stats.items(), key=lambda x: -x[1]["total"]):
-        if stats["total"] < 3:
-            continue
-        wr = stats["wins"] / stats["total"]
-        rows.append({
-            "Signal":   sig,
-            "Bets":     stats["total"],
-            "Win Rate": f"{wr:.0%}",
-            "Avg Edge": f"{stats['edge_sum']/stats['total']:+.3f}",
-            "Status":   "✅" if wr >= 0.55 else "⚠️" if wr >= 0.50 else "❌",
-        })
-    return rows, n
-
-
 def compute_portfolio_exposure(board_data=None):
     """
     Check concentration risk across current locked picks.
@@ -1629,78 +1525,6 @@ def compute_portfolio_exposure(board_data=None):
         "total_stake":     round(total_stake, 2),
         "total_pct_br":    total_pct_br,
     }
-
-def compute_parlay_correlation(props):
-    """
-    Compute correlation score for a set of props.
-    Returns (score 0-1, list of correlated pairs).
-    """
-    if not props or len(props) < 2:
-        return 0.0, []
-    KNOWN_CORR = [
-        ("Points","PRA"), ("Rebounds","PRA"), ("Assists","PRA"),
-        ("Points","Fantasy Score"), ("Hits","Total Bases"),
-    ]
-    corr_pairs = []
-    score = 0.0
-    players = [p.get("Player","") for p in props]
-    # Same player = high correlation
-    from collections import Counter
-    dupes = [pl for pl, cnt in Counter(players).items() if cnt >= 2 and pl]
-    for pl in dupes:
-        corr_pairs.append(f"{pl} has multiple props")
-        score += 0.35
-    # Known correlated prop types
-    prop_types = [(p.get("Player",""), p.get("Prop","")) for p in props]
-    for i, (pl1, pr1) in enumerate(prop_types):
-        for j, (pl2, pr2) in enumerate(prop_types):
-            if i >= j:
-                continue
-            if pl1 == pl2:
-                for ca, cb in KNOWN_CORR:
-                    if (ca in pr1 and cb in pr2) or (cb in pr1 and ca in pr2):
-                        corr_pairs.append(f"{pl1}: {pr1}+{pr2}")
-                        score += 0.25
-    return round(min(1.0, score), 2), corr_pairs
-
-
-def generate_weight_recommendations(history=None, sport="NBA"):
-    """
-    Generate signal weight recommendations based on historical performance.
-    Activates at 100+ resolved bets for the given sport.
-    Returns (recommendations_list, resolved_count)
-    """
-    if history is None:
-        history = []
-    resolved = [h for h in history
-                if h.get("outcome") in ("WIN","LOSS")
-                and h.get("sport","") == sport]
-    n = len(resolved)
-    if n < 100:
-        return None, n
-    # Simple win rate by signal
-    recs = []
-    signal_perf = {}
-    for bet in resolved:
-        sv = bet.get("signal_values", {})
-        for sig, val in sv.items():
-            if sig not in signal_perf:
-                signal_perf[sig] = {"wins":0,"total":0}
-            signal_perf[sig]["total"] += 1
-            if bet.get("outcome") == "WIN":
-                signal_perf[sig]["wins"] += 1
-    for sig, perf in sorted(signal_perf.items(), key=lambda x: -x[1]["total"]):
-        if perf["total"] < 10:
-            continue
-        wr = perf["wins"] / perf["total"]
-        if wr >= 0.58:
-            recs.append({"signal": sig, "action": "INCREASE", "win_rate": wr,
-                         "reason": f"{wr:.0%} win rate — above threshold"})
-        elif wr <= 0.48:
-            recs.append({"signal": sig, "action": "DECREASE", "win_rate": wr,
-                         "reason": f"{wr:.0%} win rate — below threshold"})
-    return recs, n
-
 
 def generate_weekly_model_report(history=None, signal_data=None):
     """
@@ -1888,106 +1712,6 @@ def compute_bankroll_multiplier(history=None, clv_data=None):
         "reasons_up":   reasons_up,
         "reasons_down": reasons_down,
     }
-
-def generate_post_mortem(history, target_date=None):
-    """
-    Post-mortem analysis for a specific date (default: yesterday).
-    Answers: why did we win/lose that day?
-    
-    Top failing signals, top succeeding signals,
-    which tier underperformed, what to watch next time.
-    """
-    from datetime import timedelta
-    if target_date is None:
-        target_date = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-
-    day_bets = [h for h in history
-                if h.get("timestamp","").startswith(target_date)
-                and h.get("outcome") in ("WIN","LOSS")]
-
-    if not day_bets:
-        return None
-
-    n = len(day_bets)
-    wins = sum(1 for h in day_bets if h.get("outcome") == "WIN")
-    total_net = sum(h.get("net", 0) for h in day_bets)
-    wr = wins / n
-
-    # Signal performance for the day
-    SIGNAL_KEYS = {
-        "base":     "Base",
-        "defense":  "Defense",
-        "location": "Location",
-        "rest":     "Rest",
-        "usage":    "Usage",
-        "blowout":  "Blowout",
-        "weather":  "Weather",
-        "sharp":    "Sharp",
-    }
-    signal_day = {}
-    for h in day_bets:
-        sig_vals = h.get("signal_values", {})
-        for sk, sl in SIGNAL_KEYS.items():
-            val = sig_vals.get(sk, 0)
-            if abs(val) < 0.005:
-                continue
-            if sl not in signal_day:
-                signal_day[sl] = {"wins": 0, "losses": 0, "net": 0}
-            signal_day[sl]["net"] += h.get("net", 0)
-            if h.get("outcome") == "WIN":
-                signal_day[sl]["wins"] += 1
-            else:
-                signal_day[sl]["losses"] += 1
-
-    failing  = sorted([(k,v) for k,v in signal_day.items() if v["net"] < 0],
-                       key=lambda x: x[1]["net"])
-    succeeding = sorted([(k,v) for k,v in signal_day.items() if v["net"] > 0],
-                         key=lambda x: -x[1]["net"])
-
-    # Tier breakdown
-    tier_day = {}
-    for h in day_bets:
-        t = h.get("tier","?")
-        if t not in tier_day:
-            tier_day[t] = {"wins":0,"losses":0,"net":0}
-        tier_day[t]["net"] += h.get("net",0)
-        if h.get("outcome") == "WIN":
-            tier_day[t]["wins"] += 1
-        else:
-            tier_day[t]["losses"] += 1
-
-    # Verdict
-    if total_net > 0:
-        verdict = f"✅ Winning day: +{total_net:.1f}u ({wr:.0%} WR)"
-    elif total_net == 0:
-        verdict = f"⚪ Break-even day: {wr:.0%} WR"
-    else:
-        verdict = f"🔴 Losing day: {total_net:.1f}u ({wr:.0%} WR)"
-
-    # Primary cause
-    if failing:
-        top_fail = failing[0]
-        cause = f"{top_fail[0]} signal underperformed ({top_fail[1]['net']:+.1f}u)"
-    elif wins == 0:
-        cause = "No winning picks — review tier thresholds"
-    else:
-        cause = "Normal variance — no structural issues"
-
-    return {
-        "date":        target_date,
-        "verdict":     verdict,
-        "n":           n,
-        "wins":        wins,
-        "net":         round(total_net, 2),
-        "win_rate":    f"{wr:.1%}",
-        "cause":       cause,
-        "failing":     [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in failing[:3]],
-        "succeeding":  [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in succeeding[:3]],
-        "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—"}
-                           for k,v in tier_day.items()},
-        "watch_next":  [k for k,v in failing[:2]] if failing else [],
-    }
-
 
 def compute_signal_interactions(performance_data=None):
     """
@@ -2180,153 +1904,6 @@ def check_depth_chart_role_change(player, team, sport):
 
 
 # ── 2. Projection Confidence Score ─────────────────────────────
-def compute_projection_confidence(player, prop, line, sport,
-                                   avg=None, sample_n=10,
-                                   injury_status=None,
-                                   lineup_confirmed=None,
-                                   market_edge=None,
-                                   volatility=None):
-    """
-    Projection confidence score (0-100).
-    Combines multiple certainty factors into one number.
-    
-    Components:
-      Sample size (25pts):   10+ games = full, <5 = penalized
-      Injury certainty (25pts): Active = full, Questionable = half, Out = zero
-      Lineup confirmed (20pts): MLB lineup confirmed = full
-      Market agreement (20pts): If Pinnacle agrees = full
-      Volatility (10pts):    Low std dev = confident
-    
-    80-100 = HIGH confidence (trust the projection)
-    60-79  = MODERATE confidence
-    40-59  = LOW confidence (use with caution)
-    <40    = SKIP
-    """
-    score = 0
-
-    # Sample size (25pts)
-    if sample_n >= 10:
-        score += 25
-    elif sample_n >= 5:
-        score += int(sample_n / 10 * 25)
-    else:
-        score += int(sample_n / 5 * 12)
-
-    # Injury certainty (25pts)
-    inj = (injury_status or "").upper()
-    if not inj or inj in ("ACTIVE", "AVAILABLE", ""):
-        score += 25
-    elif inj == "PROBABLE":
-        score += 20
-    elif inj == "QUESTIONABLE":
-        score += 12
-    elif inj == "DOUBTFUL":
-        score += 4
-    elif inj == "OUT":
-        score += 0
-
-    # Lineup confirmed (20pts) — mainly MLB
-    if lineup_confirmed is True:
-        score += 20
-    elif lineup_confirmed is False:
-        score += 8
-    else:
-        score += 14  # Unknown — neutral
-
-    # Market agreement (20pts)
-    if market_edge is not None:
-        if abs(market_edge) >= 0.05:
-            score += 20   # Strong market signal
-        elif abs(market_edge) >= 0.02:
-            score += 14
-        else:
-            score += 8
-
-    # Volatility (10pts)
-    if volatility is not None:
-        if volatility <= 0.15:
-            score += 10   # Low variance player
-        elif volatility <= 0.25:
-            score += 7
-        elif volatility <= 0.35:
-            score += 4
-        else:
-            score += 1
-
-    score = max(0, min(100, score))
-
-    if score >= 80:
-        label = "HIGH"
-        color = "#22c55e"
-    elif score >= 60:
-        label = "MODERATE"
-        color = "#e8a020"
-    elif score >= 40:
-        label = "LOW"
-        color = "#e04040"
-    else:
-        label = "SKIP"
-        color = "#8a9ab0"
-
-    return {
-        "score":      score,
-        "label":      label,
-        "color":      color,
-        "components": {
-            "sample":   min(25, score),
-            "injury":   min(25, score),
-            "lineup":   min(20, score),
-            "market":   min(20, score),
-            "volatility": min(10, score),
-        }
-    }
-
-
-# ── 3. Market Implied Projection ────────────────────────────────
-# compute_market_implied_projection — moved to bc_utils.py
-def compute_model_vs_market(our_avg, line, stat_type):
-    """
-    Compare BetCouncil projection vs market implied projection.
-    
-    If our_avg and the line agree = low edge (market efficient)
-    If our_avg >> line = value OVER
-    If our_avg << line = value UNDER
-    
-    Agreement score tells you how much the model diverges from market.
-    """
-    if not line or not our_avg:
-        return None
-
-    line_val = float(line)
-    our_val  = float(our_avg)
-
-    if line_val <= 0:
-        return None
-
-    divergence = (our_val - line_val) / line_val
-    agreement  = max(0, 1 - abs(divergence))
-
-    if divergence >= 0.10:
-        signal = "MODEL_BULLISH"
-        note   = f"📈 Model ({our_val:.1f}) > Market ({line_val:.1f}) — consider OVER"
-    elif divergence <= -0.10:
-        signal = "MODEL_BEARISH"
-        note   = f"📉 Model ({our_val:.1f}) < Market ({line_val:.1f}) — consider UNDER"
-    else:
-        signal = "AGREEMENT"
-        note   = f"✅ Model ({our_val:.1f}) ≈ Market ({line_val:.1f}) — efficient"
-
-    return {
-        "our_avg":    our_val,
-        "line":       line_val,
-        "divergence": round(divergence, 3),
-        "agreement":  round(agreement, 3),
-        "signal":     signal,
-        "note":       note,
-    }
-
-
-# ── 4. NFL Usage Metrics Framework ──────────────────────────────
 def store_nfl_usage(player, team, game_date, stats):
     """
     Store NFL usage metrics when available.
@@ -3201,75 +2778,6 @@ def _fetch_dff_propstats_live(player_id, sport, metric, line, team="",
         return {}
 
 
-def compute_dff_propstats_edge(propstats_data, model_edge):
-    """
-    Convert DFF hit rate into a small confirmation edge adjustment.
-    
-    Weight: +1% to +2% max — confirmation only.
-    Never overrides Pinnacle EV.
-    
-    Logic:
-      L10 hit rate ≥ 70%: +2% (strong historical confirmation)
-      L10 hit rate ≥ 60%: +1% (mild confirmation)
-      L10 hit rate ≤ 30%: -2% (historical fade signal)
-      L10 hit rate ≤ 40%: -1% (mild fade)
-    """
-    if not propstats_data:
-        return 0.0, ""
-    
-    hit_rate   = propstats_data.get("hit_rate", 0.5)
-    total      = propstats_data.get("total_games", 0)
-    avg_val    = propstats_data.get("avg_val", 0)
-    avg_mins   = propstats_data.get("avg_minutes", 0)
-    avg_pot    = propstats_data.get("avg_potentials", 0)
-    line       = propstats_data.get("line", 0)
-    
-    # Need at least 5 games for signal
-    if total < 5:
-        return 0.0, f"DFF: {total} games (need 5+)"
-    
-    notes = []
-    adj   = 0.0
-    
-    # Hit rate signal
-    if hit_rate >= 0.70:
-        adj += 0.02
-        notes.append(f"📈 DFF L{total}: {hit_rate:.0%} hit rate")
-    elif hit_rate >= 0.60:
-        adj += 0.01
-        notes.append(f"✅ DFF L{total}: {hit_rate:.0%} hit rate")
-    elif hit_rate <= 0.30:
-        adj -= 0.02
-        notes.append(f"📉 DFF L{total}: {hit_rate:.0%} hit rate")
-    elif hit_rate <= 0.40:
-        adj -= 0.01
-        notes.append(f"⚠️ DFF L{total}: {hit_rate:.0%} hit rate")
-    
-    # Avg value vs line
-    if avg_val > 0 and line > 0:
-        avg_vs_line = (avg_val - line) / line
-        if abs(avg_vs_line) >= 0.10:
-            dir_str = f"+{avg_vs_line:.0%}" if avg_vs_line > 0 else f"{avg_vs_line:.0%}"
-            notes.append(f"avg {avg_val:.1f} vs line {line} ({dir_str})")
-    
-    # Minutes stability (NBA)
-    if avg_mins > 0:
-        notes.append(f"{avg_mins:.0f} min avg")
-    
-    adj = round(max(-0.02, min(0.02, adj)), 3)
-    return adj, " | ".join(notes)
-
-
-
-# ═══════════════════════════════════════════════════════════════
-# TIER 1 HIGH-VALUE FEATURES
-# 1. Market Move Quality (sharp attribution)
-# 2. Minutes Stability Score (CV)
-# 3. Volatility Flag
-# 4. Closing Line Hit Rate tracking
-# ═══════════════════════════════════════════════════════════════
-
-# ── 1. Market Move Quality ──────────────────────────────────────
 def compute_market_move_quality(matchup, prop, sport, current_props=None):
     """
     Determine WHY a line moved — sharp vs soft attribution.
@@ -3643,46 +3151,6 @@ def resolve_clv_records(history):
         return history, False
 
 
-def get_clv_summary(history):
-    """
-    Compute CLV statistics across all resolved bets.
-    Returns dict with avg_clv, beat_rate, n_resolved, and grade.
-    Per Buchdahl: 50+ resolved bets needed for significance.
-    """
-    resolved = [
-        r for r in (history or [])
-        if r.get("clv_capture", {}).get("clv_resolved")
-        and r.get("clv_capture", {}).get("clv_vs_novig") is not None
-    ]
-    if not resolved:
-        return {"avg_clv": None, "beat_rate": None, "n_resolved": 0, "grade": "INSUFFICIENT"}
-
-    clv_values = [r["clv_capture"]["clv_vs_novig"] for r in resolved]
-    avg_clv    = round(sum(clv_values) / len(clv_values), 4)
-    beat_rate  = round(sum(1 for v in clv_values if v > 0) / len(clv_values), 3)
-    n          = len(resolved)
-
-    if n < 50:
-        grade = "INSUFFICIENT"
-    elif avg_clv >= 0.05 and beat_rate >= 0.55:
-        grade = "ELITE"
-    elif avg_clv >= 0.03 and beat_rate >= 0.52:
-        grade = "GOOD"
-    elif avg_clv >= 0.01:
-        grade = "POSITIVE"
-    elif avg_clv >= -0.01:
-        grade = "NEUTRAL"
-    else:
-        grade = "NEGATIVE"
-
-    return {
-        "avg_clv":    avg_clv,
-        "beat_rate":  beat_rate,
-        "n_resolved": n,
-        "grade":      grade,
-    }
-
-
 def get_closing_line_hit_rate(history=None):
     """
     Compute what % of model projections beat the closing line.
@@ -3992,108 +3460,6 @@ def get_bq_weights(history=None):
     learned["_learned"] = True
     learned["_sample"]  = len(resolved)
     return learned, True
-
-
-def build_optimal_portfolio(board, n_bets=5, sport=None,
-                             max_per_player=1, max_per_game=2,
-                             max_volatile=1, min_bq=40):
-    """
-    Build optimal N-bet portfolio from the board.
-    
-    Controls:
-      max_per_player: max props per player (default 1)
-      max_per_game:   max props per game (default 2)
-      max_volatile:   max HIGH/EXTREME volatility props
-      min_bq:         minimum BQ score to include
-    
-    Algorithm:
-      1. Filter board by min_bq and sport
-      2. Sort by BetQualityScore descending
-      3. Greedy selection with concentration constraints
-      4. Return selected bets + portfolio health metrics
-    """
-    if not board:
-        return [], {}
-    
-    # Filter and sort
-    candidates = [
-        p for p in board
-        if int(p.get("BetQualityScore", 0) or 0) >= min_bq
-        and (sport is None or p.get("Sport","") == sport or p.get("sport","") == sport)
-    ]
-    candidates.sort(key=lambda x: int(x.get("BetQualityScore",0) or 0), reverse=True)
-    
-    selected    = []
-    player_count = {}
-    game_count   = {}
-    volatile_count = 0
-    
-    for prop in candidates:
-        if len(selected) >= n_bets:
-            break
-        
-        player  = normalize_name(prop.get("Player",""))
-        matchup = prop.get("Matchup", prop.get("matchup",""))
-        risk    = prop.get("RiskLevel","")
-        
-        # Concentration checks
-        if player_count.get(player, 0) >= max_per_player:
-            continue  # Too many props on same player
-        
-        if matchup and game_count.get(matchup, 0) >= max_per_game:
-            continue  # Too many props from same game
-        
-        if risk in ("HIGH","EXTREME") and volatile_count >= max_volatile:
-            continue  # Too many volatile props
-        
-        # Add to portfolio
-        selected.append(prop)
-        player_count[player] = player_count.get(player, 0) + 1
-        if matchup:
-            game_count[matchup] = game_count.get(matchup, 0) + 1
-        if risk in ("HIGH","EXTREME"):
-            volatile_count += 1
-    
-    # Portfolio health metrics
-    if not selected:
-        return [], {}
-    
-    avg_bq      = sum(int(p.get("BetQualityScore",0) or 0) for p in selected) / len(selected)
-    avg_edge    = sum(float(p.get("Edge",0) or 0) for p in selected) / len(selected)
-    n_aligned   = sum(1 for p in selected if p.get("ConflictStatus") == "ALIGNED")
-    n_conflicted= sum(1 for p in selected if p.get("ConflictStatus") == "CONFLICTED")
-    unique_games= len(set(p.get("Matchup","") for p in selected if p.get("Matchup","")))
-    unique_players = len(set(normalize_name(p.get("Player","")) for p in selected))
-    
-    # Health score 0-100
-    health = 50
-    health += min(20, int(avg_bq * 0.20))
-    health += (n_aligned / len(selected)) * 20
-    health -= n_conflicted * 10
-    health += (unique_games / max(1, len(selected))) * 10
-    health = max(0, min(100, int(health)))
-    
-    if health >= 80:
-        health_label = "🟢 Healthy"
-    elif health >= 60:
-        health_label = "🟡 Moderate"
-    else:
-        health_label = "🔴 Concentrated"
-    
-    metrics = {
-        "n_selected":       len(selected),
-        "avg_bq":           round(avg_bq, 1),
-        "avg_edge":         round(avg_edge * 100, 1),
-        "n_aligned":        n_aligned,
-        "n_conflicted":     n_conflicted,
-        "unique_games":     unique_games,
-        "unique_players":   unique_players,
-        "volatile_count":   volatile_count,
-        "health":           health,
-        "health_label":     health_label,
-    }
-    
-    return selected, metrics
 
 
 def check_correlation_risk(selected_props):
@@ -4423,14 +3789,6 @@ def scrape_prizepicks_with_gist_fallback(sport):
 
 SHARP_BOOKS_SET = {"pn", "circa", "espn"}   # books whose moves signal sharp action
 MOVEMENT_THRESHOLD = 3                        # minimum American odds change to count
-
-
-def _parse_american(raw):
-    """Parse first side of American odds string. '300/-500' → 300.0"""
-    try:
-        return float(str(raw).split("/")[0].strip())
-    except (ValueError, TypeError):
-        return None
 
 
 def compute_ev_line_movement(current_data, previous_snapshot):
@@ -4848,17 +4206,6 @@ def parse_ev_movement(movement_data):
     return movement_lookup, sharp_alerts
 
 
-def _ev_parse_odds(raw):
-    """Parse EV bookOdds string: '325' or '300/-595' → (over_str, under_str)."""
-    if raw is None:
-        return None, None
-    raw = str(raw).strip()
-    if "/" in raw:
-        parts = raw.split("/", 1)
-        return parts[0].strip() or None, parts[1].strip() or None
-    return raw or None, None
-
-
 def _ev_infer_sport(item):
     prop = item.get("prop", "").lower()
     if prop == "hr":                                    return "MLB"
@@ -5186,117 +4533,6 @@ FANDUEL_COMPETITION_IDS = {
 }
 
 
-def compute_tier_stats(history):
-    stats = {}
-    for bet in history:
-        tier = bet.get("tier", "UNKNOWN")
-        outcome = bet.get("outcome")
-        predicted_prob = bet.get("prob", 0.5)
-        if outcome not in ("WIN", "LOSS"):
-            continue
-        if tier not in stats:
-            stats[tier] = {"outcomes": [], "predicted": []}
-        stats[tier]["outcomes"].append(1 if outcome == "WIN" else 0)
-        stats[tier]["predicted"].append(predicted_prob)
-    result = {}
-    for tier, data in stats.items():
-        n = len(data["outcomes"])
-        if n == 0:
-            continue
-        hit_rate = sum(data["outcomes"]) / n
-        avg_predicted = sum(data["predicted"]) / n
-        sem = (hit_rate * (1 - hit_rate) / n) ** 0.5 if n > 0 else None
-        calibration_error = hit_rate - avg_predicted
-        result[tier] = {"n": n, "hit_rate": round(hit_rate, 3), "avg_predicted": round(avg_predicted, 3), "sem": round(sem, 3) if sem else None, "calibration_error": round(calibration_error, 3)}
-    return result
-
-def compute_calibration_buckets(history):
-    """
-    Bucket calibration tracking — the most important model quality metric.
-    Splits resolved bets into probability buckets and compares
-    predicted probability vs actual hit rate per bucket.
-    
-    Elite models: predicted % ≈ actual hit rate in each bucket.
-    If 65% bucket hits only 52%, model is systematically overconfident.
-    
-    Activates at 30+ resolved bets for meaningful buckets.
-    """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
-    if len(resolved) < 30:
-        return None, len(resolved)
-    
-    # Define buckets: center, label, range
-    buckets = [
-        (0.25, "20-30%", 0.20, 0.30),
-        (0.35, "30-40%", 0.30, 0.40),
-        (0.45, "40-50%", 0.40, 0.50),
-        (0.55, "50-60%", 0.50, 0.60),
-        (0.60, "55-65%", 0.55, 0.65),
-        (0.65, "60-70%", 0.60, 0.70),
-        (0.70, "65-75%", 0.65, 0.75),
-        (0.75, "70-80%", 0.70, 0.80),
-    ]
-    
-    results = []
-    for center, label, low, high in buckets:
-        bucket_bets = [
-            h for h in resolved
-            if low <= float(h.get("prob", 0) or 0) < high
-        ]
-        if len(bucket_bets) < 5:
-            continue
-        n = len(bucket_bets)
-        actual_hr = sum(1 for h in bucket_bets if h.get("outcome") == "WIN") / n
-        avg_predicted = sum(float(h.get("prob",0.5) or 0.5) for h in bucket_bets) / n
-        error = actual_hr - avg_predicted
-        # Calibration grade
-        if abs(error) < 0.03:
-            grade = "🟢 Excellent"
-        elif abs(error) < 0.07:
-            grade = "🟡 Good"
-        elif abs(error) < 0.12:
-            grade = "🟠 Fair"
-        else:
-            grade = "🔴 Needs Work"
-        overunder = "OVER-confident" if error < -0.03 else ("UNDER-confident" if error > 0.03 else "Calibrated")
-        results.append({
-            "Bucket":       label,
-            "Bets":         n,
-            "Predicted":    f"{avg_predicted:.1%}",
-            "Actual":       f"{actual_hr:.1%}",
-            "Error":        f"{error:+.1%}",
-            "Grade":        grade,
-            "Bias":         overunder,
-        })
-    
-    return results, len(resolved)
-
-
-def get_calibration_summary(history):
-    """
-    Single-line calibration health summary for Gem Brief and Summary tab.
-    Returns a string like: "Calibration: GOOD (avg error +2.1%, n=45)"
-    """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
-    if len(resolved) < 30:
-        return f"Calibration: INSUFFICIENT DATA ({len(resolved)}/30 bets)"
-    buckets, n = compute_calibration_buckets(history)
-    if not buckets:
-        return f"Calibration: NO DATA"
-    errors = [abs(float(b["Error"].replace("%","").replace("+",""))/100) for b in buckets]
-    avg_error = sum(errors) / len(errors)
-    if avg_error < 0.03:
-        status = "EXCELLENT"
-    elif avg_error < 0.07:
-        status = "GOOD"
-    elif avg_error < 0.12:
-        status = "FAIR"
-    else:
-        status = "NEEDS CALIBRATION"
-    return f"Calibration: {status} (avg error {avg_error:.1%}, n={n})"
-
-
-# compute_sem_for_tier — moved to bc_utils.py
 def cached_fetch(url, ttl_minutes=25):
     cache_key = hashlib.md5(url.encode()).hexdigest()
     cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
@@ -5320,14 +4556,6 @@ def cached_fetch(url, ttl_minutes=25):
         return None
 
 # poisson_prob_over — moved to utils.py
-def prizepicks_breakeven_prob(n_picks=2):
-    multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
-    return round((1 / multiplier) ** (1 / n_picks), 4)
-
-def calculate_prizepicks_ev(fair_prob, n_picks=2):
-    breakeven = prizepicks_breakeven_prob(n_picks)
-    return round(fair_prob - breakeven, 4)
-
 def kelly_unit_prizepicks(prob, bankroll, n_picks=2, apply_bi=False):
     """apply_bi: apply bankroll intelligence multiplier to Kelly fraction."""
     multiplier = PRIZEPICKS_MULTIPLIERS.get(n_picks, 3.0)
@@ -5373,21 +4601,6 @@ def kelly_unit(prob, bankroll, n_picks=2, american_odds=None):
     return round(min(kelly * KELLY_FRACTION * bankroll, bankroll * KELLY_CAP), 2)
 
 
-def get_tier(edge, sport  # Maps edge % to tier: SOVEREIGN/ELITE/APPROVED/LEAN/PASS
-="NBA") -> str:
-    try:
-        edge = float(edge or 0)
-    except (TypeError, ValueError):
-        edge = 0.0
-    thresholds = TIER_THRESHOLDS.get(sport, TIER_THRESHOLDS["NBA"])
-    if edge >= thresholds["SOVEREIGN"]: return "SOVEREIGN"
-    if edge >= thresholds["ELITE"]:     return "ELITE"
-    if edge >= thresholds["APPROVED"]:  return "APPROVED"
-    if edge >= thresholds["LEAN"]: return "LEAN"
-    return "PASS"
-
-# parlay_prob — moved to utils.py
-# parlay_payout — moved to utils.py
 def active_unit():
     return round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
 
@@ -5424,27 +4637,6 @@ def blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, 
     elif team_spread > threshold:
         return -0.03
     return 0.0
-
-def compute_clv_grade(clv_value, pinnacle_edge=None):
-    """
-    Grade the CLV performance.
-    Elite bettors consistently beat closing line.
-    +EV if consistently positive CLV vs Pinnacle.
-    """
-    if clv_value is None:
-        return "—", "#6a7a8a"
-    if clv_value >= 1.5:
-        return "ELITE CLV", "#22c55e"
-    elif clv_value >= 0.5:
-        return "GOOD CLV", "#0ea5a0"
-    elif clv_value >= 0:
-        return "NEUTRAL", "#e8a020"
-    elif clv_value >= -0.5:
-        return "POOR CLV", "#e07020"
-    else:
-        return "BAD CLV", "#e04040"
-
-
 
 def record_injury_performance(lock, outcome, injuries):
     player = lock.get("player", "")
@@ -6069,63 +5261,6 @@ def compute_clv_signal_feedback(sport: str) -> dict:
 
 
 # market_efficiency_score — moved to bc_utils.py
-def calculate_lock_quality_score(prop):
-    score = 0
-    edge = prop.get("Edge", 0)
-    if isinstance(edge, (int, float)):
-        edge_pts = min(30, edge * 150)
-        score += edge_pts
-    n_games = prop.get("SampleSize", 0)
-    if isinstance(n_games, (int, float)) and n_games > 0:
-        sample_pts = min(25, n_games * 2.5)
-        score += sample_pts
-    elif prop.get("Quality") == "Lookup":
-        score += 12
-    eff_score = prop.get("EffScore", 0)
-    if isinstance(eff_score, (int, float)):
-        score += min(20, eff_score * 20)
-    source = prop.get("source", "")
-    if "PrizePicks" in source:
-        score += 15
-    elif "Underdog" in source:
-        score += 10
-    elif source.startswith("oddswrap"):
-        score += 8
-    elif source.startswith("OddsAPI"):
-        score += 12
-    elif source.startswith("BDL"):
-        score += 10
-    elif source.startswith("ParlayPlay_Alt"):
-        score += 14
-    elif source.startswith("ParlayPlay"):
-        score += 12
-    else:
-        score += 5
-    if prop.get("Injury"):
-        score -= 10
-    sharp = prop.get("SharpFlag", "")
-    if sharp and "↑" in sharp:
-        score += 5
-    clv_adj = prop.get("CLVAdj", "")
-    if clv_adj and "Boosted" in str(clv_adj):
-        score += 3
-    # ── Projection confidence adjustment (new) ──────────────
-    conf = prop.get("ProjConfidence", 50)
-    if isinstance(conf, (int, float)):
-        if conf >= 80:
-            score += 5    # High confidence boost
-        elif conf < 40:
-            score -= 8    # Low confidence penalty
-        elif conf < 60:
-            score -= 3    # Moderate confidence minor penalty
-    # ── Role change boost ────────────────────────────────────
-    rc = prop.get("RoleChange")
-    if rc and rc.get("direction") == "UP":
-        score += 4    # Role increasing = more upside
-    elif rc and rc.get("direction") == "DOWN":
-        score -= 6    # Role decreasing = risky
-    return round(min(100, max(0, score)), 1)
-
 def detect_correlations(parlay_props):
     notes = []
     adjustment = 1.0
@@ -6167,63 +5302,6 @@ def detect_correlations(parlay_props):
         adj_prob = max(0.20, min(0.80, adj_prob))
         adjusted_probs.append(adj_prob)
     return adjusted_probs, notes
-
-def detect_game_script_contradictions(parlay_props, games):
-    warnings = []
-    if not parlay_props or not games:
-        return warnings
-    game_total_map = {}
-    for game in games:
-        matchup = game.get("Matchup","")
-        total = game.get("Total","N/A")
-        if total and total != "N/A":
-            try:
-                game_total_map[matchup] = float(total)
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
-    for i, j in combinations(range(len(parlay_props)), 2):
-        p1 = parlay_props[i]
-        p2 = parlay_props[j]
-        team1 = PLAYER_TEAM_MAP.get(p1["Player"],"")
-        team2 = PLAYER_TEAM_MAP.get(p2["Player"],"")
-        shared_game = None
-        for matchup in game_total_map:
-            if team1 and team1 in matchup:
-                if team2 and team2 in matchup:
-                    shared_game = matchup
-                    break
-        if not shared_game:
-            continue
-        game_total = game_total_map.get(shared_game, 0)
-        stat1 = STAT_NORMALIZE.get((p1.get("Sport","NBA"), p1["Prop"]), p1["Prop"])
-        stat2 = STAT_NORMALIZE.get((p2.get("Sport","NBA"), p2["Prop"]), p2["Prop"])
-        if (stat1 == "PTS" and p1["Side"] == "OVER" and game_total > 0 and game_total < 210):
-            warnings.append(f"⚠️ Contradiction: {p1['Player']} PTS OVER but game total {game_total} is very low. Low scoring game hurts PTS props.")
-        pos1 = NBA_PLAYER_POSITIONS.get(p1["Player"],"")
-        pos2 = NBA_PLAYER_POSITIONS.get(p2["Player"],"")
-        if (pos1 == "C" and pos2 == "C" and team1 != team2 and stat1 == "REB" and stat2 == "REB" and p1["Side"] == "OVER" and p2["Side"] == "OVER"):
-            warnings.append(f"⚠️ Contradiction: {p1['Player']} and {p2['Player']} are both centers in the same game going OVER rebounds. They compete for the same boards.")
-        if team1 and team2 and team1 != team2:
-            pace1 = NBA_TEAM_PACE.get(team1, 99.5)
-            pace2 = NBA_TEAM_PACE.get(team2, 99.5)
-            if (abs(pace1 - pace2) < 2 and stat1 in ["PTS","AST","REB"] and stat2 in ["PTS","AST","REB"]):
-                pass
-            elif (pace1 < 98 and p1["Side"] == "OVER" and stat1 == "PTS"):
-                warnings.append(f"📊 Note: {p1['Player']} plays for slow-paced {team1} ({pace1:.1f} pace). Fewer possessions may limit counting stats.")
-        for game in games:
-            matchup = game.get("Matchup","")
-            if team1 in matchup:
-                spread = game.get("Spread","")
-                if spread and spread != "N/A":
-                    try:
-                        spread_val = abs(float(str(spread).split()[-1]))
-                        if (spread_val > 12 and stat1 == "PTS" and p1["Side"] == "OVER"):
-                            fav_team = str(spread).split()[0]
-                            if team1 == fav_team:
-                                warnings.append(f"⚠️ Blowout risk: {p1['Player']} on {team1} favored by {spread_val}pts. May sit late if big lead develops.")
-                    except (ValueError, KeyError, TypeError):
-                        pass
-    return warnings
 
 def track_line_movement(props):
     existing = load_json_data(LINE_MOVEMENT_PATH, {})
@@ -6272,158 +5350,6 @@ def track_line_movement(props):
 # MLB stadium coordinates for NWS weather fallback
 
 # NFL stadium coordinates — outdoor only (domes excluded)
-
-def weather_edge_adjustment(weather, stat_norm, side="OVER", sport="MLB"):
-    if not weather:
-        return 0.0, ""
-    adjustment = 0.0
-    notes = []
-    wind_speed = weather.get("wind_speed_mph", 0)
-    wind_dir   = weather.get("wind_dir", "N")
-    temp       = weather.get("temp_f", 70)
-    humidity   = weather.get("humidity", 50)
-    out_winds  = ["SW", "WSW", "W", "WNW", "NW", "S", "SSW"]
-    in_winds   = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE"]
-
-    # ── MLB adjustments (existing) ────────────────────────────
-    if stat_norm == "HR":
-        if wind_dir in out_winds and wind_speed >= 15:
-            adj = min(0.08, wind_speed / 100)
-            adjustment += adj if side == "OVER" else -adj
-            notes.append(f"💨 Wind {wind_speed}mph out — HR boost")
-        elif wind_dir in in_winds and wind_speed >= 15:
-            adj = min(0.08, wind_speed / 100)
-            adjustment -= adj if side == "OVER" else -adj
-            notes.append(f"💨 Wind {wind_speed}mph in — HR penalty")
-        if temp < 45:
-            cold_adj = (45 - temp) / 100
-            adjustment -= cold_adj if side == "OVER" else -cold_adj
-            notes.append(f"🥶 Cold ({temp}°F) — HR penalty")
-        elif temp > 90:
-            hot_adj = (temp - 90) / 200
-            adjustment += hot_adj if side == "OVER" else -hot_adj
-            notes.append(f"🌡️ Hot ({temp}°F) — HR boost")
-    elif stat_norm == "H":
-        if wind_dir in out_winds and wind_speed >= 20:
-            adjustment += 0.03 if side == "OVER" else -0.03
-            notes.append("💨 Wind out — hits boost")
-        elif wind_dir in in_winds and wind_speed >= 20:
-            adjustment -= 0.03 if side == "OVER" else -0.03
-            notes.append("💨 Wind in — hits penalty")
-        if temp < 45:
-            adjustment -= 0.03 if side == "OVER" else -0.03
-
-    # ── NFL adjustments (new) ─────────────────────────────────
-    # Source: academic research on weather impact on NFL scoring
-    # Wind is most significant factor; rain/snow secondary
-    elif sport == "NFL":
-        if stat_norm in ("PassYds", "pass_yds", "PASS", "PassingYards"):
-            # Passing yards hurt most by wind
-            if wind_speed >= 25:
-                adj = min(0.15, (wind_speed - 25) * 0.006 + 0.10)
-                adjustment -= adj if side == "OVER" else -adj
-                notes.append(f"💨 High wind ({wind_speed}mph) — passing yards -{adj:.0%}")
-            elif wind_speed >= 15:
-                adj = 0.08
-                adjustment -= adj if side == "OVER" else -adj
-                notes.append(f"💨 Wind {wind_speed}mph — passing yards -{adj:.0%}")
-            if temp < 20:
-                adjustment -= 0.06 if side == "OVER" else -0.06
-                notes.append(f"🥶 Extreme cold ({temp}°F) — passing penalty")
-            elif temp < 35:
-                adjustment -= 0.03 if side == "OVER" else -0.03
-                notes.append(f"🥶 Cold ({temp}°F) — passing penalty")
-
-        elif stat_norm in ("RecYds", "rec_yds", "REC", "ReceivingYards"):
-            # Receiving yards correlate with passing yards
-            if wind_speed >= 25:
-                adj = min(0.12, (wind_speed - 25) * 0.005 + 0.08)
-                adjustment -= adj if side == "OVER" else -adj
-                notes.append(f"💨 High wind ({wind_speed}mph) — rec yards -{adj:.0%}")
-            elif wind_speed >= 15:
-                adjustment -= 0.06 if side == "OVER" else -0.06
-                notes.append(f"💨 Wind {wind_speed}mph — rec yards -6%")
-            if temp < 20:
-                adjustment -= 0.04 if side == "OVER" else -0.04
-
-        elif stat_norm in ("RushYds", "rush_yds", "RUSH", "RushingYards"):
-            # Rushing yards slightly boosted by bad weather (teams run more)
-            if wind_speed >= 20 or temp < 30:
-                adjustment += 0.04 if side == "OVER" else -0.04
-                notes.append(f"🌧️ Bad weather — rushing boost +4%")
-
-        elif stat_norm in ("Receptions", "rec", "REC_COUNT"):
-            # Receptions (catches) hurt by wind/rain
-            if wind_speed >= 20:
-                adjustment -= 0.05 if side == "OVER" else -0.05
-                notes.append(f"💨 Wind {wind_speed}mph — reception count -5%")
-
-        elif stat_norm in ("Touchdowns", "td", "TD"):
-            # TDs correlate with total scoring — hurt by bad weather
-            if wind_speed >= 20:
-                adjustment -= 0.04 if side == "OVER" else -0.04
-            if temp < 20:
-                adjustment -= 0.03 if side == "OVER" else -0.03
-            if notes or adjustment != 0:
-                notes.append(f"🌧️ Weather reducing TD probability")
-
-        elif stat_norm in ("Completions", "cmp", "PassCompletions"):
-            if wind_speed >= 15:
-                adj = min(0.10, wind_speed * 0.004)
-                adjustment -= adj if side == "OVER" else -adj
-                notes.append(f"💨 Wind {wind_speed}mph — completion % -{adj:.0%}")
-
-    return round(adjustment, 3), " | ".join(notes)
-
-# get_weighted_average — moved to bc_utils.py
-# get_recency_context — moved to bc_utils.py
-# sample_size_confidence — moved to bc_utils.py
-def get_edge_staleness(last_scan_time):
-    if not last_scan_time:
-        return "⚫ Never loaded", "black"
-    try:
-        last = datetime.strptime(last_scan_time, "%H:%M:%S")
-        now = datetime.now()
-        elapsed_minutes = ((now.hour * 60 + now.minute) - (last.hour * 60 + last.minute))
-        if elapsed_minutes < 0:
-            elapsed_minutes += 1440
-        if elapsed_minutes < 15:
-            return f"🟢 Fresh ({elapsed_minutes}m ago)", "green"
-        elif elapsed_minutes < 30:
-            return f"🟡 Aging ({elapsed_minutes}m ago)", "yellow"
-        elif elapsed_minutes < 60:
-            return f"🟠 Stale ({elapsed_minutes}m ago)", "orange"
-        else:
-            return f"🔴 Very stale ({elapsed_minutes}m ago)", "red"
-    except (ValueError, KeyError, TypeError):
-        return "⚫ Unknown", "black"
-
-def check_portfolio_correlation(new_prop, existing_locks, player_team_map, positive_correlations, negative_correlations):
-    warnings = []
-    new_player = new_prop.get("Player", new_prop.get("player", ""))
-    new_sport = new_prop.get("Sport", new_prop.get("sport", ""))
-    new_team = player_team_map.get(new_player, "")
-    for lock in existing_locks:
-        if lock.get("status") != "PENDING":
-            continue
-        lock_player = lock.get("player", "")
-        lock_sport = lock.get("sport", "")
-        lock_team = player_team_map.get(lock_player, "")
-        if lock_sport != new_sport:
-            continue
-        if lock_player == new_player:
-            warnings.append(f"⚠️ You already have a lock on **{new_player}** — same player props are 25% correlated")
-            continue
-        if new_team and new_team == lock_team:
-            pair = (new_player, lock_player)
-            pair_rev = (lock_player, new_player)
-            corr = (positive_correlations.get(pair) or positive_correlations.get(pair_rev) or 0.15)
-            warnings.append(f"⚠️ **{new_player}** and **{lock_player}** are teammates ({corr:.0%} correlation). Combined probability reduced.")
-        same_game_locks = [l for l in existing_locks if (l.get("sport") == new_sport and l.get("status") == "PENDING" and player_team_map.get(l.get("player",""), "") == new_team)]
-        if len(same_game_locks) >= 2:
-            warnings.append(f"🛑 You already have {len(same_game_locks)} locks from this game. High concentration risk.")
-            break
-    return warnings
 
 def get_clv_edge_adjustment(sport, tier):
     try:
@@ -6701,40 +5627,6 @@ def _enrich_pitchers_savant(pitchers: dict) -> dict:
 
 
 @st.cache_data(ttl=7200)
-def power_rating_spread_divergence(home_team, away_team, spread_str):
-    try:
-        if not spread_str or spread_str in ("N/A", "—"):
-            return 0, ""
-        spread_val = float(str(spread_str).replace("+", "").strip())
-        home_rating = NBA_POWER_RATINGS.get(home_team, 104)
-        away_rating = NBA_POWER_RATINGS.get(away_team, 104)
-        power_diff = home_rating - away_rating
-        implied_spread = -power_diff
-        divergence = abs(spread_val - implied_spread)
-        if divergence >= 6:
-            return min(10, divergence), f"⚡ Market diverges from power ratings by {divergence:.1f} pts"
-        return 0, ""
-    except (ValueError, TypeError, AttributeError):
-        return 0, ""
-
-
-def get_game_tier(edge, sport="NBA") -> str:
-    """
-    Tier for GAME LINES (spread/total/ML).
-    Uses lower thresholds than prop tiers because power rating
-    diffs are compressed — a 2% ML edge in MLB is meaningful.
-    """
-    thresholds = GAME_TIER_THRESHOLDS.get(sport, GAME_TIER_THRESHOLDS["NBA"])
-    edge = abs(edge)
-    if edge >= thresholds["SOVEREIGN"]: return "SOVEREIGN"
-    if edge >= thresholds["ELITE"]:     return "ELITE"
-    if edge >= thresholds["APPROVED"]:  return "APPROVED"
-    if edge >= thresholds["LEAN"]:      return "LEAN"
-    return "PASS"
-
-# Soccer league goal baselines — must be defined before analyze_game_edge
-
-
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, mlb_pitchers=None):
     if power_ratings is None:
         power_ratings = NBA_POWER_RATINGS
@@ -7561,27 +6453,6 @@ def scan_all_sports_best_plays():
     return results
 
 @st.cache_data(ttl=1800)
-def _load_cache(path, max_age_h=12):
-    if os.path.exists(path):
-        if (time.time() - os.path.getmtime(path)) / 3600 < max_age_h:
-            try:
-                with open(path, "rb") as f:
-                    return pickle.load(f)
-            except Exception:
-                pass
-    return None
-
-def _save_cache(path, data):
-    try:
-        with open(path, "wb") as f:
-            pickle.dump(data, f)
-    except Exception:
-        pass
-
-
-# ── WNBA: full roster + per-player season stats ─────────────────────────────
-
-
 def fetch_mlb_player_season_avg(player_name, player_id=None):
     """
     Fetch 2025 season averages for a single MLB player by name or ID.
@@ -8228,71 +7099,6 @@ def fetch_odds_api_props(sport):
         st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": str(e)[:100]})
         return []
 
-def find_best_alt_line(matchup, sport, home_power, away_power, home_full, away_full, alt_data=None):
-    """
-    Find the best alternate spread line that creates a playable edge.
-    
-    Compares model power rating diff against alternate spread numbers.
-    Returns the alternate line with the best edge above APPROVED threshold.
-    
-    MLB: Run line is always -1.5/+1.5. Best alt = best non-standard number.
-    WNBA/NBA: Alternate spreads give options like -3.5 instead of -7.5
-    """
-    if alt_data is None:
-        return None
-    game = alt_data.get(matchup, {})
-    if not game:
-        return None
-    
-    power_diff = home_power - away_power  # positive = home favored
-    APPROVED_THRESHOLD = 0.015 if sport == "MLB" else 0.02
-    
-    best = None
-    best_edge = APPROVED_THRESHOLD  # minimum to surface
-    
-    for line in game.get("lines", []):
-        team  = line.get("team","")
-        point = float(line.get("point",0) or 0)
-        price = int(line.get("price",0) or 0)
-        
-        # Determine if this is home or away team line
-        is_home = (team == game.get("home",""))
-        
-        # Model's implied spread: positive power_diff = home favored
-        model_spread = power_diff / 10.0  # normalize to spread scale
-        
-        # Edge = model spread vs this alternate line
-        if is_home:
-            line_edge = model_spread - point  # positive = home covers this spread
-        else:
-            line_edge = -model_spread - point  # negative = away covers spread
-        
-        edge_pct = abs(line_edge) / (10.0 if sport in ("MLB","NHL") else 30.0)
-        edge_pct = min(0.20, edge_pct)
-        
-        if edge_pct > best_edge:
-            best_edge = edge_pct
-            # Determine tier
-            if sport == "MLB":
-                tier = "SOVEREIGN" if edge_pct >= 0.06 else "ELITE" if edge_pct >= 0.03 else "APPROVED"
-            else:
-                tier = "SOVEREIGN" if edge_pct >= 0.12 else "ELITE" if edge_pct >= 0.08 else "APPROVED"
-            
-            # Format odds
-            odds_str = f"+{price}" if price > 0 else str(price)
-            best = {
-                "team":    team,
-                "point":   point,
-                "price":   price,
-                "pick":    f"{team} {'+' if point > 0 else ''}{point} ({odds_str})",
-                "edge":    round(edge_pct, 3),
-                "tier":    tier,
-                "book":    line.get("book",""),
-            }
-    return best
-
-
-
 def detect_arbitrage_opportunities(sport):
     cache_path = os.path.join(CACHE_DIR, f"odds_api_props_{sport}.pkl")
     if not os.path.exists(cache_path):
@@ -8561,8 +7367,6 @@ def compute_alt_line_ev(player_name, stat_name, avg, std_dev, sport, bankroll):
             return None, results
     return best, results
 
-def get_best_alt_line_recommendation(*args, **kwargs):
-    return None
 def optimize_parlay_with_alt_lines(selected_props, n_picks, bankroll):
     if not selected_props:
         return None
@@ -8851,99 +7655,6 @@ def check_data_freshness():
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return warnings
-
-def detect_sharp_movement(movements):
-    if len(movements) < 2:
-        return False, "", 0
-    first = movements[-1]
-    last = movements[0]
-    try:
-        first_spread = float(first.get("spread") or 0)
-        last_spread = float(last.get("spread") or 0)
-        spread_move = abs(last_spread - first_spread)
-        if spread_move >= 1.5:
-            direction = "↑" if last_spread > first_spread else "↓"
-            return True, direction, round(spread_move, 1)
-        first_ou = float(first.get("over_under") or 0)
-        last_ou = float(last.get("over_under") or 0)
-        ou_move = abs(last_ou - first_ou)
-        if ou_move >= 2.0:
-            direction = "↑" if last_ou > first_ou else "↓"
-            return True, direction, round(ou_move, 1)
-    except (ValueError, KeyError, TypeError, AttributeError):
-        pass
-    return False, "", 0
-
-def compute_sharp_consensus_no_vig(odds_data, matchup, market="total"):
-    """
-    Builds consensus fair price from the three sharpest books:
-    Pinnacle, Circa Sports, BetOnline.
-    
-    Stronger signal than single-book no-vig because:
-    - Eliminates idiosyncratic book error
-    - Captures true market consensus
-    - Reduces noise from temporary imbalances
-    
-    Returns: {"fair_prob": float, "books_used": list, 
-              "consensus_line": float, "agreement": str}
-    """
-    SHARP_BOOKS = ["pinnacle", "circa_sports", "betonlineag"]
-    SHARP_LABELS = {
-        "pinnacle":    "Pinnacle",
-        "circa_sports": "Circa",
-        "betonlineag": "BetOnline",
-    }
-    
-    book_probs = {}
-    book_lines = {}
-    
-    for game in (odds_data or []):
-        if matchup.lower() not in game.get("Matchup","").lower():
-            continue
-        for book_key, label in SHARP_LABELS.items():
-            over_key  = f"{label} Over"
-            under_key = f"{label} Under"
-            line_key  = f"{label} Total"
-            over_ml   = game.get(over_key)
-            under_ml  = game.get(under_key)
-            if over_ml and under_ml:
-                try:
-                    prob = no_vig_prob(int(over_ml), int(under_ml))
-                    book_probs[label] = prob
-                    if game.get(line_key):
-                        book_lines[label] = float(game[line_key])
-                except (ValueError, TypeError, ZeroDivisionError):
-                    pass
-
-    if not book_probs:
-        return None
-
-    books_used  = list(book_probs.keys())
-    avg_prob    = sum(book_probs.values()) / len(book_probs)
-    avg_line    = sum(book_lines.values()) / len(book_lines) if book_lines else None
-
-    # Agreement check — how spread are the sharp books?
-    if len(book_probs) >= 2:
-        spread = max(book_probs.values()) - min(book_probs.values())
-        if spread < 0.01:
-            agreement = "STRONG"   # books within 1% — high conviction
-        elif spread < 0.03:
-            agreement = "MODERATE"
-        else:
-            agreement = "DIVERGENT"  # sharp books disagree — flag it
-    else:
-        agreement = "SINGLE_BOOK"
-
-    return {
-        "fair_prob":       round(avg_prob, 4),
-        "book_probs":      book_probs,
-        "books_used":      books_used,
-        "consensus_line":  round(avg_line, 1) if avg_line else None,
-        "agreement":       agreement,
-        "n_books":         len(book_probs),
-        "label":           f"Consensus ({'/'.join(b[:3] for b in books_used)})",
-    }
-
 
 def get_sharp_consensus_for_prop(player, prop_name, line, side, sport, odds_data=None):
     """
@@ -10858,52 +9569,6 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
     return prob, confirms, note
 
 
-def get_pinnacle_edge(model_prob, pinnacle_prob, side="OVER"):
-    """
-    Calculate edge vs Pinnacle as the benchmark.
-    This is the OddsJam/Outlier methodology.
-    positive = we have edge over Pinnacle's true line
-    """
-    if pinnacle_prob is None or model_prob is None:
-        return None
-    # Edge = our model prob - Pinnacle true prob
-    # If positive, we think this is MORE likely than Pinnacle does
-    return round(model_prob - pinnacle_prob, 4)
-
-
-# =============================================================
-# PLAYER LOOKUP ENGINE — H2H, Game Logs, Splits
-# Powers the Player Lookup tab and H2H signal
-# =============================================================
-
-
-
-# compute_h2h_hit_rate — moved to bc_utils.py
-def compute_home_away_splits(game_logs, stat, line):
-    """Compute home vs away hit rates for a stat."""
-    stat_map = {
-        "Points": "pts", "Rebounds": "reb", "Assists": "ast",
-        "Steals": "stl", "Blocked Shots": "blk", "Turnovers": "turnover",
-        "3-PT Made": "fg3m", "Pts+Reb+Ast": "pra",
-    }
-    stat_key = stat_map.get(stat, "pts")
-
-    home_games = [g for g in game_logs if g.get("home")]
-    away_games = [g for g in game_logs if not g.get("home")]
-
-    home_avg = sum(g.get(stat_key,0) or 0 for g in home_games) / len(home_games) if home_games else 0
-    away_avg = sum(g.get(stat_key,0) or 0 for g in away_games) / len(away_games) if away_games else 0
-    home_hit = sum(1 for g in home_games if (g.get(stat_key,0) or 0) > line) / len(home_games) if home_games else 0
-    away_hit = sum(1 for g in away_games if (g.get(stat_key,0) or 0) > line) / len(away_games) if away_games else 0
-
-    return {
-        "home_avg": round(home_avg, 1),
-        "away_avg": round(away_avg, 1),
-        "home_hit_rate": home_hit,
-        "away_hit_rate": away_hit,
-        "home_games": len(home_games),
-        "away_games": len(away_games),
-    }
 def _fetch_parallel(fns: list) -> list:
     """Run multiple fetch functions in parallel threads, return results in order.
     Records per-source timing in st.session_state['fetch_timings'] for profiler UI.
@@ -11220,19 +9885,6 @@ def check_prediction_stability(board, sport):
     except (requests.RequestException, ValueError, KeyError):
         return []
 
-
-def _merge_rolling(season_avgs, rolling, weight=0.7):
-    """Merge rolling averages into season_avgs in-place. weight=rolling share."""
-    rnd = 2
-    for player, stats in rolling.items():
-        if player in season_avgs:
-            merged = {
-                k: round(v * weight + season_avgs[player].get(k, v) * (1 - weight), rnd)
-                for k, v in stats.items() if k != "n_games"
-            }
-            season_avgs[player] = {**season_avgs[player], **merged}
-        else:
-            season_avgs[player] = stats
 
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
