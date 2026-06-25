@@ -5606,8 +5606,8 @@ def fetch_game_lines(sport):
                 home_word = om.split(" @ ")[-1][:4] if " @ " in om else ""
                 if not any(home_word in m for m in espn_matchups if home_word):
                     today_games.append(odds_game)
-    except (ValueError, KeyError, TypeError, AttributeError):
-        pass
+    except (ValueError, KeyError, TypeError, AttributeError) as _ovl_err:
+        print(f"[fetch_game_lines] odds overlay error for {sport}: {_ovl_err}")
 
     # ── BetOnline overlay — independent of ODDS_API_KEY ──
     # Fills any ML/spread/total still "N/A" after the ESPN+OddsAPI passes
@@ -5971,12 +5971,14 @@ def fetch_odds_api_game_lines(sport):
 
     # ── OddsAPI fallback (requires key + remaining budget) ──
     if not ODDS_API_KEY:
+        print("[ODDS_API] ODDS_API_KEY not set — OddsAPI game lines skipped")
         return [], {}, {}
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return [], {}, {}
     allowed, reason = api_budget_check("ODDS_API")
     if not allowed:
+        print(f"[ODDS_API] budget check blocked game lines for {sport}: {reason}")
         return [], {}, {}
     cache_path = os.path.join(CACHE_DIR, f"odds_api_games_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -5988,6 +5990,8 @@ def fetch_odds_api_game_lines(sport):
         resp = _http.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDS_API")
         if resp.status_code != 200:
+            print(f"[ODDS_API] game lines HTTP {resp.status_code} for {sport} — "
+                  f"{'ODDS_API_KEY invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
             return [], {}, {}
         events = resp.json()
         games = []
@@ -6047,6 +6051,7 @@ def fetch_odds_api_game_lines(sport):
                 pickle.dump(result, f)
         return result
     except (IOError, ValueError) as e:
+        print(f"[ODDS_API] game lines fetch exception for {sport}: {e}")
         return [], {}, {}
 
 def fetch_oddswrap_props(sport):

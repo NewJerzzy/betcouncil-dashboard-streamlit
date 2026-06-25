@@ -616,6 +616,31 @@ SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL", "Soccer", "UFC", "Golf", "Tennis"]
 # API keys from secrets
 BDL_API_KEY = st.secrets.get("BALLSDONTLIE_API_KEY", "")
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
+
+# ── ODDS_API_KEY startup validity check (runs once per server process) ──────
+@st.cache_resource
+def _check_odds_api_key_status():
+    _key = st.secrets.get("ODDS_API_KEY", "")
+    if not _key:
+        print("[STARTUP] ODDS_API_KEY not set — Game Lines will rely on SBR/BetOnline fallbacks only")
+        return "missing"
+    try:
+        import requests as _req
+        _r = _req.get(f"https://api.the-odds-api.com/v4/sports?apiKey={_key}", timeout=8)
+        if _r.status_code == 200:
+            print(f"[STARTUP] ODDS_API_KEY valid — {len(_r.json())} sports available")
+            return "ok"
+        elif _r.status_code in (401, 403):
+            print(f"[STARTUP] ODDS_API_KEY invalid or expired (HTTP {_r.status_code})")
+            return "invalid"
+        print(f"[STARTUP] ODDS_API_KEY check returned HTTP {_r.status_code}")
+        return f"http_{_r.status_code}"
+    except Exception as _e:
+        print(f"[STARTUP] ODDS_API_KEY connectivity check failed: {_e}")
+        return "error"
+
+_ODDS_API_KEY_STATUS = _check_odds_api_key_status()
+
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
 SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
 SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009c00")
@@ -12055,6 +12080,12 @@ if "persistence_loaded" not in st.session_state:
 with st.sidebar:
     st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:14px;color:#4a8a8a;">v4.6 · Complete</div></div>', unsafe_allow_html=True)
 
+    # ── ODDS_API_KEY sidebar alert ──────────────────────────────────────────
+    if _ODDS_API_KEY_STATUS == "missing":
+        st.sidebar.warning("⚠️ ODDS_API_KEY missing — Game Lines show fallback odds only")
+    elif _ODDS_API_KEY_STATUS == "invalid":
+        st.sidebar.error("🔴 ODDS_API_KEY invalid/expired — update in Secrets")
+
     # ── PERSISTENT RISK HEADER ─────────────────────────────
     # Always visible — sharp bettors need stop-loss status
     # before interacting with anything else
@@ -13836,6 +13867,19 @@ with tabs[2]:
     _ga_sport = _game_analysis_full[0].get("Sport", _game_analysis_full[0].get("sport","")) if _game_analysis_full else ""
     _games = _game_analysis_full if (_game_analysis_full and _ga_sport == _sport2) else _raw_games
     st.markdown(f"## 🏟️ Game Lines — {_sport2}")
+
+    # ── ODDS_API_KEY status warning ────────────────────────────────────────
+    if _ODDS_API_KEY_STATUS == "missing":
+        st.warning(
+            "⚠️ **ODDS_API_KEY not configured** — Game lines source from SBR and "
+            "BetOnline fallbacks only. Props and alt lines are unavailable. "
+            "Add `ODDS_API_KEY` in Secrets to enable full odds coverage."
+        )
+    elif _ODDS_API_KEY_STATUS == "invalid":
+        st.warning(
+            "⚠️ **ODDS_API_KEY is invalid or expired** (HTTP 401/403 from api.the-odds-api.com). "
+            "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
+        )
 
     # Slip grouping controls
     _slip_ctrl1, _slip_ctrl2, _slip_ctrl3 = st.columns([2,2,3])
