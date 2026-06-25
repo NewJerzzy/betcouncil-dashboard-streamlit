@@ -14,6 +14,126 @@ from scipy import stats as scipy_stats
 # Inline to avoid circular import through config.py (which imports streamlit)
 SPORT_EWMA_DECAY = {"NBA": 0.85, "MLB": 0.92, "NHL": 0.88, "WNBA": 0.85, "NFL": 0.80}
 
+# ── Constants inlined from config.py ────────────────────────────────────────
+# config.py imports streamlit and cannot be imported here (circular import).
+# These pure-data constants are duplicated here verbatim from config.py.
+TIER_THRESHOLDS = {
+    "NBA": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "MLB": {"SOVEREIGN": 0.08, "ELITE": 0.04, "APPROVED": 0.02, "LEAN": 0.01},
+    "NFL": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "NHL": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "WNBA": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "Soccer": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "UFC": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "Golf": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "Tennis": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+}
+
+GAME_TIER_THRESHOLDS = {
+    "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "MLB":    {"SOVEREIGN": 0.06, "ELITE": 0.03, "APPROVED": 0.015, "LEAN": 0.005},
+    "NFL":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "NHL":    {"SOVEREIGN": 0.10, "ELITE": 0.06, "APPROVED": 0.03, "LEAN": 0.01},
+    "WNBA":   {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "Soccer": {"SOVEREIGN": 0.10, "ELITE": 0.06, "APPROVED": 0.03, "LEAN": 0.01},
+}
+
+PRIZEPICKS_MULTIPLIERS = {2: 3.0, 3: 5.0, 4: 10.0, 5: 20.0}
+
+STAT_NORMALIZE = {
+    ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
+    ("NBA", "Pts+Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
+    ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
+    ("NFL", "Passing Yards"): "PASS_YDS", ("NFL", "Rushing Yards"): "RUSH_YDS",
+    ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
+    ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
+    ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
+    ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
+    ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
+    ("NHL", "Shots on Goal"): "SOG",
+    ("NBA", "Pts+Rebs+Asts"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
+    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
+    ("NBA", "Steals"): "STL", ("NBA", "Turnovers"): "TOV",
+    ("WNBA", "Pts+Reb"): "PRA", ("WNBA", "Pts+Ast"): "PRA",
+    ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
+    ("NBA", "points"): "PTS", ("NBA", "rebounds"): "REB", ("NBA", "assists"): "AST",
+    ("Soccer", "Goals"): "GOALS", ("Soccer", "Assists"): "ASSISTS", ("Soccer", "Shots"): "SHOTS",
+    ("UFC", "Significant Strikes"): "SIG_STR", ("UFC", "Takedowns"): "TAKEDOWNS",
+    ("UFC", "Control Time"): "CONTROL_TIME",
+}
+
+PLAYER_TEAM_MAP = {
+    "LeBron James": "LAL", "Anthony Davis": "LAL", "Austin Reaves": "LAL", "D'Angelo Russell": "LAL",
+    "Luka Doncic": "LAL", "Kyrie Irving": "DAL",
+    "Nikola Jokic": "DEN", "Jamal Murray": "DEN", "Michael Porter Jr.": "DEN", "Aaron Gordon": "DEN",
+    "Shai Gilgeous-Alexander": "OKC", "Jalen Williams": "OKC", "Chet Holmgren": "OKC", "Luguentz Dort": "OKC",
+    "Giannis Antetokounmpo": "MIL", "Damian Lillard": "MIL", "Khris Middleton": "MIL", "Brook Lopez": "MIL",
+    "Jayson Tatum": "BOS", "Jaylen Brown": "BOS", "Kristaps Porzingis": "BOS", "Derrick White": "BOS",
+    "Stephen Curry": "GSW", "Draymond Green": "GSW", "Andrew Wiggins": "GSW",
+    "Klay Thompson": "DAL",
+    "Kevin Durant": "PHX", "Devin Booker": "PHX", "Bradley Beal": "PHX", "Jusuf Nurkic": "PHX",
+    "Paul George": "PHI",
+    "Donovan Mitchell": "CLE", "Darius Garland": "CLE", "Evan Mobley": "CLE", "Jarrett Allen": "CLE",
+    "Jimmy Butler": "MIA", "Bam Adebayo": "MIA", "Tyler Herro": "MIA", "Caleb Martin": "MIA",
+    "Trae Young": "ATL", "Dejounte Murray": "ATL", "Clint Capela": "ATL", "Bogdan Bogdanovic": "ATL",
+    "Ja Morant": "MEM", "Jaren Jackson Jr.": "MEM", "Desmond Bane": "MEM", "Marcus Smart": "MEM",
+    "Zion Williamson": "NOP", "Brandon Ingram": "NOP", "CJ McCollum": "NOP", "Jonas Valanciunas": "NOP",
+    "Kawhi Leonard": "LAC", "James Harden": "LAC",
+    "Joel Embiid": "PHI", "Tyrese Maxey": "PHI", "Tobias Harris": "PHI", "Kelly Oubre Jr.": "PHI",
+    "Karl-Anthony Towns": "MIN", "Anthony Edwards": "MIN", "Rudy Gobert": "MIN", "Mike Conley": "MIN",
+    "Domantas Sabonis": "SAC", "De'Aaron Fox": "SAS", "Keegan Murray": "SAC", "Harrison Barnes": "SAC",
+    "Victor Wembanyama": "SAS", "Cade Cunningham": "DET", "Jalen Brunson": "NYK", "Paolo Banchero": "ORL",
+    "Scottie Barnes": "TOR", "Alperen Sengun": "HOU", "Franz Wagner": "ORL", "Tyrese Haliburton": "IND",
+    "Pascal Siakam": "IND",
+}
+
+NBA_TEAM_PACE = {
+    "MEM": 102.8, "SAC": 101.5, "BOS": 101.2, "DAL": 100.8, "OKC": 100.5, "LAL": 100.2,
+    "DEN": 100.0, "PHX": 99.8, "GSW": 99.5, "NOP": 99.2, "ATL": 99.0, "IND": 98.8,
+    "MIN": 98.5, "TOR": 98.3, "ORL": 98.0, "HOU": 97.8, "SAS": 97.5, "DET": 97.3,
+    "LAC": 97.1, "MIL": 98.1, "CLE": 98.1, "NYK": 97.8, "MIA": 97.3, "PHI": 97.0,
+}
+
+NBA_POWER_RATINGS = {
+    "BOS": 112.3, "OKC": 110.8, "DEN": 109.2, "MIN": 108.5, "CLE": 107.9, "NYK": 107.2,
+    "IND": 106.8, "MIL": 106.1, "PHX": 105.8, "LAL": 105.4, "GSW": 104.9, "MEM": 104.6,
+    "NOP": 103.8, "SAC": 103.5, "DAL": 103.2, "MIA": 102.9, "ATL": 102.4, "PHI": 102.1,
+    "CHI": 101.8, "TOR": 101.5, "ORL": 101.2, "HOU": 100.9, "LAC": 100.6, "BKN": 100.2,
+    "DET": 99.8, "CHA": 99.5, "SAS": 99.2, "POR": 98.9, "UTA": 98.5, "WAS": 98.1,
+}
+
+NBA_PLAYER_POSITIONS = {
+    "Nikola Jokic": "C", "LeBron James": "SF", "Stephen Curry": "PG",
+    "Giannis Antetokounmpo": "PF", "Luka Doncic": "PG",
+    "Shai Gilgeous-Alexander": "PG", "Jayson Tatum": "SF",
+    "Anthony Davis": "C", "Donovan Mitchell": "SG", "Damian Lillard": "PG",
+    "Trae Young": "PG", "Devin Booker": "SG", "Joel Embiid": "C",
+    "Tyrese Maxey": "PG", "Bam Adebayo": "C", "Ja Morant": "PG",
+    "Zion Williamson": "PF", "Karl-Anthony Towns": "C",
+    "Anthony Edwards": "SG", "Paolo Banchero": "PF",
+    "Cade Cunningham": "PG", "Victor Wembanyama": "C",
+    "Jalen Brunson": "PG", "Tyrese Haliburton": "PG",
+    "Kevin Durant": "SF", "Jimmy Butler": "SF", "Kawhi Leonard": "SF",
+    "Rudy Gobert": "C", "Jaylen Brown": "SG", "Darius Garland": "PG",
+    "Evan Mobley": "C", "Jarrett Allen": "C", "Tyler Herro": "SG",
+    "Dejounte Murray": "PG", "Jaren Jackson Jr.": "PF",
+    "Desmond Bane": "SG", "CJ McCollum": "SG", "Paul George": "SF",
+    "James Harden": "PG", "Tobias Harris": "SF",
+    "Domantas Sabonis": "C", "De'Aaron Fox": "PG",
+    "Keegan Murray": "SF", "Franz Wagner": "SF",
+    "Scottie Barnes": "PF", "Alperen Sengun": "C",
+    "Jalen Williams": "SG", "Chet Holmgren": "C", "Luguentz Dort": "SG",
+    "Khris Middleton": "SF", "Brook Lopez": "C",
+    "Kristaps Porzingis": "C", "Derrick White": "PG",
+    "Andrew Wiggins": "SF", "Draymond Green": "PF",
+    "Aaron Gordon": "PF", "Michael Porter Jr.": "SF",
+    "Jamal Murray": "PG", "Caleb Martin": "SF",
+    "Bogdan Bogdanovic": "SG", "Marcus Smart": "PG",
+    "Jonas Valanciunas": "C", "Harrison Barnes": "SF",
+    "Mike Conley": "PG", "Pascal Siakam": "PF",
+}
+# ── End of inlined constants ─────────────────────────────────────────────────
+
 
 @lru_cache(maxsize=2048)
 def safe_float(val, default: float = 0.0) -> float:

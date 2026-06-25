@@ -36,6 +36,14 @@ def _make_retry_session() -> requests.Session:
 # protected internally), so this is safe inside ThreadPoolExecutor workers.
 _http = _make_retry_session()
 
+# Plain Session for proxy calls — no auto-retry so proxy errors surface fast.
+_HTTP_DIRECT = requests.Session()
+
+# Supabase EV endpoint (used by _ev_do_refresh / _get_ev_jwt)
+SUPABASE_URL  = "https://nkdhryqpiulrepmphwmt.supabase.co"
+SUPABASE_ANON = "sb_publishable_mMniM5v3auOHfF72hlVL_w_LUNlh3yt"
+_EV_TOKEN_CACHE: dict = {"access_token": None, "expires_at": 0}
+
 
 try:
     from config import (
@@ -138,8 +146,20 @@ except ImportError:
     SCRAPEDO_KEY = ""
     CBS_SPORT_MAP = {}
 
+# ── OddsWrap optional dependency ────────────────────────────────────────────
 try:
-    from bc_utils import normalize_name, safe_float, load_json_data, save_json_data
+    from oddswrap import OddsClient
+    ODDSWRAP_AVAILABLE = True
+except ImportError:
+    ODDSWRAP_AVAILABLE = False
+    class OddsClient:  # noqa: F811
+        """Stub when oddswrap is not installed."""
+        def __init__(self, **kwargs): pass
+        def get_markets(self, *a, **kw): return []
+        def get_lines(self, *a, **kw): return []
+
+try:
+    from bc_utils import normalize_name, safe_float, load_json_data, save_json_data, _load_cache, _save_cache
 except ImportError:
     def normalize_name(n): return n.strip().lower() if n else ""
     def safe_float(v, d=0.0):
@@ -2810,6 +2830,41 @@ def increment_api_counter(counter_path):
     # Refresh session cache with updated count
     st.session_state[f"_api_counter_{counter_path}"] = counter
     return counter
+
+# ── Gist batch-write constants (mirrors app.py module-level globals) ────────
+_GIST_BATCH_WINDOW   = 5.0   # seconds — flush after this many seconds of queued writes
+_GIST_CRITICAL_KEYS  = frozenset({"history", "bankroll", "signal_performance", "injury_performance"})
+
+
+def _flush_batch_gist(dirty, now=None):
+    """Write all queued dirty keys in a single GitHub Gist PATCH request."""
+    if not dirty or not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return not dirty
+    now = now or time.time()
+    try:
+        headers = {"Authorization": f"token {GITHUB_TOKEN}",
+                   "Accept": "application/vnd.github.v3+json"}
+        files = {
+            f"betcouncil_{k}.json": {"content": json.dumps(v, indent=2)}
+            for k, v in dirty.items()
+        }
+        resp = _http.patch(
+            f"{GIST_API}/{GITHUB_GIST_ID}",
+            headers=headers,
+            json={"files": files},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            if "gist_last_write" not in st.session_state:
+                st.session_state["gist_last_write"] = {}
+            for k in list(dirty.keys()):
+                st.session_state["gist_last_write"][k] = now
+            st.session_state["gist_dirty"].clear()
+            st.session_state["gist_batch_start"] = now
+        return resp.status_code == 200
+    except (requests.RequestException, json.JSONDecodeError, OSError):
+        return False
+
 
 def save_to_gist(data_type, data):
     """
