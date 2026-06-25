@@ -574,11 +574,10 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
             elif any(k in url for k in ["get-contests", "get-event",
                                          "additional-market", "player-prop"]):
                 # ── Save first contest-like response for diagnostics ─────────
-                import os as _os
-                _raw_path = _os.path.join(
-                    _os.path.dirname(_os.path.abspath(__file__)), "bol_contest_raw.json"
+                _raw_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "bol_contest_raw.json"
                 )
-                if not _os.path.exists(_raw_path):
+                if not os.path.exists(_raw_path):
                     try:
                         import json as _json
                         with open(_raw_path, "w") as _rf:
@@ -657,7 +656,6 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
         print(f"  [BOL] Strategy A — direct fetch for {len(_sc_ids)} SportCastIds", file=sys.stderr)
 
         # ── Helper: attempt one POST and parse props ─────────────────────────
-        import os as _osA
         _raw_dump_written = False
 
         async def _try_post(endpoint_url, body_dict):
@@ -696,8 +694,8 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                     return [], None, _status
                 # Always dump first 200 response for diagnostics
                 if not _raw_dump_written:
-                    _rp = _osA.path.join(
-                        _osA.path.dirname(_osA.path.abspath(__file__)),
+                    _rp = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
                         "bol_contest_raw.json",
                     )
                     try:
@@ -802,131 +800,133 @@ async def _scrape_async(sport: str = "MLB", max_wait: int = 25) -> tuple:
                 except Exception as _e:
                     print(f"    [BOL] Props-league error: {_e}", file=sys.stderr)
 
-        # ── Strategy B: Per-game navigation + tab click (fallback) ───────────
+        # ── Strategy B: Browser-native API capture via page.expect_response() ─
         # Only runs if Strategy A yielded nothing.
+        #
+        # B1: click "More Wagers"/"All Wagers" ON THE MAIN PAGE — no URL
+        #     format guessing, just interact with elements already visible.
+        # B2: extract ACTUAL <a> hrefs from the DOM (not constructed from
+        #     GameId, which doesn't map to BOL's URL slugs), navigate those,
+        #     and wait for the props API call to fire.
+        #
+        # Both paths use page.expect_response() so we deterministically
+        # capture the API response rather than hoping on_response fires.
         if not all_props:
-            print(f"  [BOL] Strategy A yielded 0 props; falling back to per-game nav", file=sys.stderr)
+            print(f"  [BOL] Strategy B: browser-native capture...", file=sys.stderr)
 
-            seen_ids = set()
-            game_links = []
-            for g in all_lines:
-                gid = g.get("GameId")
-                extra = g.get("AdditionalMarkets", 0)
-                if gid and extra > 0 and gid not in seen_ids:
-                    seen_ids.add(gid)
-                    game_links.append(
-                        f"https://www.betonline.ag/sportsbook/{cfg['sport']}/{cfg['league']}/{gid}"
-                    )
+            # Ensure we're on the main league page (Strategy A.2 may have navigated away)
+            if cfg["url"] not in page.url:
+                print(f"  [BOL] B: re-navigating to {cfg['url']}", file=sys.stderr)
+                await page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)
+                for _sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
+                             ".driver-popover-next-btn"]:
+                    try:
+                        _btn = page.locator(_sel).first
+                        if await _btn.is_visible(timeout=1000):
+                            await _btn.click()
+                    except Exception:
+                        pass
+                await asyncio.sleep(3)
 
-            if not game_links:
-                raw = await page.evaluate(r"""
+            def _is_props_response(r):
+                u = r.url
+                return ("api-offering.betonline.ag" in u and
+                        any(k in u for k in ["get-contests", "get-event",
+                                             "additional-market", "player-prop"]))
+
+            async def _capture_and_parse(resp_awaitable):
+                try:
+                    _r = await resp_awaitable
+                    _b = await _r.body()
+                    _d = json.loads(_b)
+                    _pp = parse_player_props(_d, sport)
+                    _top = list(_d.keys()) if isinstance(_d, dict) else type(_d).__name__
+                    print(f"    [BOL] captured {_r.url.split('/')[-1]} "
+                          f"status={_r.status} keys={_top} props={len(_pp)}", file=sys.stderr)
+                    # Dump first contest capture for diagnostics
+                    _rp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bol_contest_raw.json")
+                    if not os.path.exists(_rp):
+                        try:
+                            with open(_rp, "w") as _rf:
+                                json.dump({"url": _r.url, "data": _d}, _rf, indent=2)
+                            print(f"    [BOL] Raw dump → {_rp}", file=sys.stderr)
+                        except Exception:
+                            pass
+                    return _pp
+                except Exception as _ce:
+                    print(f"    [BOL] capture error: {type(_ce).__name__}: {_ce}", file=sys.stderr)
+                    return []
+
+            # ── B1: click visible "More Wagers"/"All Wagers" on main page ────
+            _b1_labels = ["More Wagers", "All Wagers", "Player Props",
+                          "Props", "Additional Markets"]
+            for _label in _b1_labels:
+                if all_props:
+                    break
+                try:
+                    _locs = page.get_by_text(_label, exact=False)
+                    _n = await _locs.count()
+                    if _n == 0:
+                        continue
+                    print(f"  [BOL] B1: {_n} '{_label}' elements on main page", file=sys.stderr)
+                    for _li in range(min(_n, 4)):
+                        try:
+                            async with page.expect_response(_is_props_response, timeout=8000) as _ri:
+                                await _locs.nth(_li).click()
+                            _pp = await _capture_and_parse(_ri.value)
+                            if _pp:
+                                all_props.extend(_pp)
+                                print(f"    [BOL] B1 '{_label}'[{_li}] → {len(_pp)} props ✓", file=sys.stderr)
+                                break
+                        except Exception as _be:
+                            print(f"    [BOL] B1 '{_label}'[{_li}]: {type(_be).__name__}: {str(_be)[:80]}", file=sys.stderr)
+                        if all_props:
+                            break
+                except Exception:
+                    pass
+
+            # ── B2: DOM-extracted actual game hrefs → navigate + capture ──────
+            if not all_props:
+                _actual_hrefs = await page.evaluate(r"""
                     () => Array.from(document.querySelectorAll('a[href]'))
                         .map(a => a.href)
-                        .filter(h => /\/sportsbook\/[a-z]+\/[a-z]+\/\d{8,}/.test(h))
-                        .slice(0, 6)
+                        .filter(h => h.includes('/sportsbook/') && !h.endsWith('/sportsbook/'))
+                        .filter((v, i, a) => a.indexOf(v) === i)
+                        .slice(0, 10)
                 """)
-                game_links = raw
+                print(f"  [BOL] B2: {len(_actual_hrefs)} unique hrefs from DOM", file=sys.stderr)
+                for _href in _actual_hrefs[:5]:
+                    if all_props:
+                        break
+                    try:
+                        print(f"  [BOL] B2 nav → {_href}", file=sys.stderr)
+                        async with page.expect_response(_is_props_response, timeout=15000) as _ri:
+                            await page.goto(_href, wait_until="domcontentloaded", timeout=20000)
+                            await asyncio.sleep(3)
+                            for _lab in ["All Wagers", "More Wagers", "Player Props", "Props"]:
+                                try:
+                                    _loc = page.get_by_text(_lab, exact=False).first
+                                    if await _loc.is_visible(timeout=1500):
+                                        await _loc.click()
+                                        print(f"    [BOL] B2 clicked '{_lab}'", file=sys.stderr)
+                                        break
+                                except Exception:
+                                    pass
+                            await asyncio.sleep(3)
+                        _pp = await _capture_and_parse(_ri.value)
+                        if _pp:
+                            all_props.extend(_pp)
+                            print(f"    [BOL] B2 {_href} → {len(_pp)} props ✓", file=sys.stderr)
+                    except Exception as _be:
+                        print(f"    [BOL] B2 {_href}: {type(_be).__name__}: {str(_be)[:100]}", file=sys.stderr)
 
-            print(f"  [BOL] Found {len(game_links)} game links, navigating...", file=sys.stderr)
-
-            for i, link in enumerate(game_links[:4]):
-                try:
-                    print(f"  [BOL] Game {i+1}/{min(4, len(game_links))}: {link}", file=sys.stderr)
-                    await page.goto(link, wait_until="domcontentloaded", timeout=20000)
-                    await asyncio.sleep(2)
-                    clicked = False
-
-                    for label in ["All Wagers", "More Wagers", "Player Props",
-                                   "Additional Markets", "All Markets", "Props"]:
-                        try:
-                            loc = page.get_by_text(label, exact=True).first
-                            if await loc.is_visible(timeout=2000):
-                                await loc.click()
-                                await asyncio.sleep(4)
-                                clicked = True
-                                print(f"    [BOL] Clicked '{label}' tab (get_by_text)", file=sys.stderr)
-                                break
-                        except Exception:
-                            pass
-
-                    if not clicked:
-                        more_wagers_selectors = [
-                            "a:has-text('All Wagers')",
-                            "li:has-text('All Wagers')",
-                            "div:has-text('All Wagers')",
-                            "a:has-text('More Wagers')",
-                            "li:has-text('More Wagers')",
-                            "div:has-text('More Wagers')",
-                            "a:has-text('Player Props')",
-                            "li:has-text('Player Props')",
-                            "div:has-text('Player Props')",
-                            "button:has-text('All Wagers')",
-                            "button:has-text('Player Props')",
-                            "span:has-text('All Wagers')",
-                            "[class*='tab']:has-text('Wagers')",
-                            "[class*='tab']:has-text('Props')",
-                            "[class*='contest-type']",
-                            "[class*='market-type']",
-                            "[class*='wager-type']",
-                        ]
-                        for selector in more_wagers_selectors:
-                            try:
-                                button = await page.wait_for_selector(selector, timeout=2000)
-                                if button and await button.is_visible():
-                                    await button.click()
-                                    await asyncio.sleep(4)
-                                    clicked = True
-                                    print(f"    [BOL] Clicked via CSS: {selector}", file=sys.stderr)
-                                    break
-                            except Exception:
-                                continue
-
-                    if not clicked:
-                        result = await page.evaluate("""
-                            () => {
-                                const targets = [
-                                    'All Wagers', 'More Wagers', 'Player Props',
-                                    'Additional Markets', 'All Markets', 'Props'
-                                ];
-                                const all = [...document.querySelectorAll('*')];
-                                for (const txt of targets) {
-                                    const el = all.find(e =>
-                                        e.children.length === 0 &&
-                                        e.textContent.trim() === txt &&
-                                        e.offsetParent !== null
-                                    );
-                                    if (el) { el.click(); return txt; }
-                                }
-                                return null;
-                            }
-                        """)
-                        if result:
-                            await asyncio.sleep(4)
-                            clicked = True
-                            print(f"    [BOL] JS-clicked '{result}'", file=sys.stderr)
-
-                    if not clicked:
-                        print(f"    [BOL] No wagers tab found on {link}", file=sys.stderr)
-
-                    await asyncio.sleep(4)
-
-                    for sel in ["button:has-text('Got It')", "button:has-text('GOT IT')",
-                                ".driver-popover-next-btn"]:
-                        try:
-                            btn = page.locator(sel).first
-                            if await btn.is_visible(timeout=1000):
-                                await btn.click()
-                        except Exception:
-                            pass
-                except Exception as e:
-                    print(f"    Error: {e}", file=sys.stderr)
         else:
-            print(f"  [BOL] Strategy A captured {len(all_props)} props — skipping per-game nav", file=sys.stderr)
+            print(f"  [BOL] Strategy A captured {len(all_props)} props — skipping Strategy B", file=sys.stderr)
 
         # ── Dump all captured API URLs for diagnostics ──────────────────────
-        import os as _os3
-        _urls_path = _os3.path.join(
-            _os3.path.dirname(_os3.path.abspath(__file__)), "bol_api_urls.json"
+        _urls_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "bol_api_urls.json"
         )
         try:
             import json as _json2
