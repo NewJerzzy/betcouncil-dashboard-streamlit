@@ -84,6 +84,7 @@ try:
         POLYMARKET_PATH,
         ROLLING_DEFENSE_CACHE_HOURS,
         SCRAPERAPI_KEY,
+        API_BUDGETS, GIST_API, SCRAPEDO_KEY,
     )
 except ImportError:
     CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
@@ -128,6 +129,9 @@ except ImportError:
     POLYMARKET_PATH = ""
     ROLLING_DEFENSE_CACHE_HOURS = 0
     SCRAPERAPI_KEY = ""
+    API_BUDGETS = {}
+    GIST_API = "https://api.github.com/gists"
+    SCRAPEDO_KEY = ""
     CBS_SPORT_MAP = {}
 
 try:
@@ -2704,6 +2708,136 @@ def _enrich_pitchers_savant(pitchers: dict) -> dict:
     return enriched
 
 
+
+
+# ── Additional functions from app.py needed by fetchers ──
+
+def _ev_do_refresh(refresh_token):
+    """Exchange refresh_token for a new access_token via Supabase auth API."""
+    try:
+        r = _http.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
+            headers={
+                "apikey":        SUPABASE_ANON,
+                "Content-Type":  "application/json",
+            },
+            json={"refresh_token": refresh_token},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return {
+                "access_token":  data.get("access_token"),
+                "expires_at":    data.get("expires_at", 0),
+                "refresh_token": data.get("refresh_token", refresh_token),
+            }
+    except Exception:
+        pass
+    return None
+
+def _ev_refresh_token():
+    """
+    Retrieve the EVSharps Supabase refresh token from st.secrets.
+    Set once in Streamlit Cloud → Settings → Secrets:
+      EV_REFRESH_TOKEN = "z325a7doims5"
+    This never expires (until explicitly revoked).
+    """
+    try:
+        return (st.secrets.get("EV_REFRESH_TOKEN")
+                or st.secrets.get("ev_refresh_token"))
+    except Exception:
+        return None
+
+@st.cache_data(ttl=1800)
+
+@st.cache_data(ttl=3600)
+
+def get_api_counter(counter_path):
+    """
+    Reads the API usage counter for a given budget. Gist-backed (same
+    pattern as signal_performance/injury_performance) so the count survives
+    Streamlit Cloud redeploys — previously this only lived in local
+    CACHE_DIR, which wipes on every redeploy, so the 80% hard-stop in
+    api_budget_check() never actually triggered: the app always thought it
+    was starting fresh while real upstream usage (e.g. The Odds API) kept
+    climbing across redeploys. Confirmed via real usage hitting 498/500
+    monthly credits despite the supposed 400/500 stop.
+    """
+    today = date.today().strftime("%Y-%m-%d")
+    current_month = date.today().strftime("%Y-%m")
+    data_type = os.path.basename(counter_path).replace(".json", "")
+    # Use session_state as in-memory cache to avoid Gist/disk reads on every budget check
+    _ss_key = f"_api_counter_{counter_path}"
+    cached = st.session_state.get(_ss_key)
+    if cached and cached.get("date") == today and cached.get("month") == current_month:
+        return cached
+
+    counter = None
+    gist_counter = load_from_gist(data_type, None)
+    if isinstance(gist_counter, dict) and "count" in gist_counter:
+        counter = gist_counter
+    elif os.path.exists(counter_path):
+        try:
+            with open(counter_path, "r") as f:
+                counter = json.load(f)
+        except (ValueError, KeyError, TypeError, AttributeError, OSError):
+            counter = None
+
+    if counter is None:
+        counter = {"count": 0, "date": today, "month": current_month, "monthly_count": 0}
+    else:
+        if counter.get("date") != today:
+            counter["date"] = today
+            counter["count"] = 0
+        if counter.get("month") != current_month:
+            counter["month"] = current_month
+            counter["monthly_count"] = 0
+
+    st.session_state[_ss_key] = counter
+    return counter
+
+def increment_api_counter(counter_path):
+    counter = get_api_counter(counter_path)
+    counter["count"] += 1
+    counter["monthly_count"] = counter.get("monthly_count", 0) + 1
+    save_json_data(counter_path, counter)  # local fallback, kept for same-session reads
+    data_type = os.path.basename(counter_path).replace(".json", "")
+    save_to_gist(data_type, counter)  # the persistence that actually survives redeploys
+    # Refresh session cache with updated count
+    st.session_state[f"_api_counter_{counter_path}"] = counter
+    return counter
+
+def save_to_gist(data_type, data):
+    """
+    Batched Gist writer — marks data as dirty and flushes once per batch window.
+
+    Non-critical writes (locks, props, etc.) are queued for up to
+    _GIST_BATCH_WINDOW seconds. When a critical write arrives, OR when the
+    window expires, ALL dirty keys are flushed in a SINGLE Gist PATCH request.
+    This replaces the previous per-key PATCH pattern and reduces API calls
+    proportionally to the number of keys written together.
+    """
+    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        return False
+    if "gist_dirty" not in st.session_state:
+        st.session_state["gist_dirty"] = {}
+    if "gist_last_write" not in st.session_state:
+        st.session_state["gist_last_write"] = {}
+    # Mark dirty
+    st.session_state["gist_dirty"][data_type] = data
+    now = time.time()
+    # Open a new batch window the first time a key goes dirty
+    if "gist_batch_start" not in st.session_state:
+        st.session_state["gist_batch_start"] = now
+    batch_age = now - st.session_state.get("gist_batch_start", now)
+    is_critical = data_type in _GIST_CRITICAL_KEYS
+    # Flush ALL dirty keys in one PATCH when:
+    #   (a) a critical key was just written — don't delay history/bankroll
+    #   (b) the batch window has expired — coalesce whatever accumulated
+    if is_critical or batch_age >= _GIST_BATCH_WINDOW:
+        return _flush_batch_gist(st.session_state["gist_dirty"], now)
+    # Still within window — stay queued
+    return True
 
 # ── Functions migrated from app.py — needed by fetchers.py ──
 
