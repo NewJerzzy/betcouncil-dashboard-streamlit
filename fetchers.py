@@ -1731,6 +1731,102 @@ def fetch_ev_heatmap(sport="mlb", method="worst"):
         return {}
 
 
+def fetch_ev_bvp(date=None):
+    """
+    Fetch the EVSharps /api/bvp endpoint — the richest analytical dataset on
+    the site. Returns 389+ records for every batter in today's MLB games.
+
+    Unique fields not in /api/ev:
+      bvpStats   — full BvP breakdown: {hh%, ab, h, 2b/3b, hr, bb, ba, obp, ops}
+      hitRateL10 — last 10 games hit rate %
+      hitRateLYR — last year hit rate %
+      100-evo    — count of 100+ mph EV at-bats this season
+      300-ft     — count of 300+ ft contact at-bats
+      pitcherHR_PA   — pitcher HR allowed per PA rate
+      pitcherSummary — pre-formatted pitcher quality string
+      oppRankSeason  — opponent HR rank on full season basis
+      oppRankPer6    — opponent HR rank per 6 innings
+      bvt / bvs      — batter vs team / batter vs stadium history
+      logs + dtSplits + awayHomeSplits — full season HR log with dates+splits
+      feed       — per-game EV arrays for recent at-bats (richer than /api/feed)
+
+    date: optional "YYYY-MM-DD" to query historical data. Defaults to today.
+    Returns {"date": "...", "res": [{...}, ...]} or {} on error.
+    """
+    path = "/api/bvp"
+    if date:
+        path += f"?date={date}"
+    url = f"https://api-production-3a3b.up.railway.app{path}"
+    try:
+        r = _http.get(url, timeout=20, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/bvp",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_bvp_player_lookup(bvp_data):
+    """
+    Convert raw /api/bvp response into a player-keyed lookup dict.
+    Only extracts fields that are NEW or RICHER than what /api/ev already provides.
+    Returns { player_norm: {
+        hit_rate_l10, hit_rate_lyr,
+        evo_100_count, ft_300_count,
+        pitcher_hr_pa, pitcher_summary,
+        opp_rank_season, opp_rank_per6,
+        bvp_stats, bvt, bvs,
+        bvp_hr, bvp_avg, bvp_h,
+        logs_dated ([{"dt","hw","val"}, ...] last 30),
+    } }
+    """
+    lookup = {}
+    if not bvp_data or not isinstance(bvp_data, dict):
+        return lookup
+    for rec in (bvp_data.get("res") or []):
+        try:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname:
+                continue
+            # Full-season HR log with dates + home/away tags
+            logs     = rec.get("logs") or []
+            dts      = rec.get("dtSplits") or []
+            hw       = rec.get("awayHomeSplits") or []
+            logs_dated = []
+            for i, val in enumerate(logs[:30]):
+                logs_dated.append({
+                    "dt":  dts[i] if i < len(dts) else "",
+                    "hw":  hw[i]  if i < len(hw)  else "",
+                    "val": val,
+                })
+            lookup[pname] = {
+                "hit_rate_l10":     rec.get("hitRateL10"),
+                "hit_rate_lyr":     rec.get("hitRateLYR"),
+                "evo_100_count":    rec.get("100-evo"),
+                "ft_300_count":     rec.get("300-ft"),
+                "pitcher_hr_pa":    rec.get("pitcherHR_PA"),
+                "pitcher_summary":  rec.get("pitcherSummary", ""),
+                "opp_rank_season":  rec.get("oppRankSeason"),
+                "opp_rank_per6":    rec.get("oppRankPer6"),
+                "bvp_stats":        rec.get("bvpStats") or {},
+                "bvt":              rec.get("bvt", ""),
+                "bvs":              rec.get("bvs", ""),
+                "bvp_hr":           rec.get("bvpHR", 0),
+                "bvp_avg":          rec.get("bvpAvg", 0),
+                "bvp_h":            rec.get("bvpH", 0),
+                "logs_dated":       logs_dated,
+                "game":             rec.get("game", ""),
+            }
+        except Exception:
+            continue
+    return lookup
+
+
 def fetch_ev_api_outliers(sport="mlb"):
     """
     Fetch outlier props from EVSharps /api/outliers?sport={sport}.
