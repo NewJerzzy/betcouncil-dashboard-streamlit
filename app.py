@@ -4232,11 +4232,17 @@ def parse_ev_movement(movement_data):
 
 
 def _ev_infer_sport(item):
+    # Source tag takes priority — WNBA and NBA share identical prop names
+    src_sport = item.get("_source_sport", "")
+    if src_sport:
+        return src_sport.upper()
     prop = item.get("prop", "").lower()
-    if prop == "hr":                                    return "MLB"
-    if prop in ("td", "rush_yards", "rec_yards"):       return "NFL"
-    if prop in ("pts", "reb", "ast", "3pm"):            return "NBA"
-    if prop in ("goals", "shots", "saves"):             return "NHL"
+    if prop == "hr":                                                    return "MLB"
+    if prop in ("td", "rush_yards", "rec_yards", "pass_yards",
+                "receptions", "rec_yards"):                             return "NFL"
+    if prop in ("pts", "reb", "ast", "3pm", "dd", "pts+reb",
+                "pts+ast", "pts+reb+ast", "reb+ast", "1st pts"):       return "NBA"
+    if prop in ("goals", "shots", "saves"):                            return "NHL"
     return "MLB"
 
 
@@ -4244,6 +4250,8 @@ EV_PROP_MAP = {
     "hr": "Home Runs", "hits": "Hits", "rbi": "RBI", "runs": "Runs",
     "sb": "Stolen Bases", "k": "Pitcher Strikeouts",
     "pts": "Points", "reb": "Rebounds", "ast": "Assists", "3pm": "Threes",
+    "dd": "Double-Double", "pts+reb": "Pts+Reb", "pts+ast": "Pts+Ast",
+    "pts+reb+ast": "Pts+Reb+Ast", "reb+ast": "Reb+Ast", "1st pts": "1st Points",
     "td": "Touchdowns", "rush_yards": "Rush Yards", "rec_yards": "Rec Yards",
     "receptions": "Receptions", "pass_yards": "Pass Yards",
     "goals": "Goals", "shots": "Shots", "saves": "Saves",
@@ -4308,6 +4316,13 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
             homer_logs   = item.get("homerLogs", {}) or {}
             analysis     = item.get("analysis", {}) or {}
             book_odds    = item.get("bookOdds", {}) or {}
+
+            # ── WNBA-specific fields (absent for MLB/NBA) ──────────────────────
+            avg_min       = item.get("avgMin")
+            player_pos    = item.get("pos", "")
+            opp_pos_rank  = item.get("oppPosRank")
+            hit_rate_career = item.get("hitRateCareer", {}) or {}
+            hit_rate_lyr  = item.get("hitRateLYR", {}) or {}
 
             pitcher_name   = item.get("pitcher", "")
             pitcher_lr     = item.get("pitcherLR", "")
@@ -4501,7 +4516,10 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
                     "homer_due_edge": homer_due_edge,
                     "fd_z_score": fd_z_score, "pn_median": pn_median, "circa_median": circa_median,
                     "fd_median": fd_median, "pn_avg": pn_avg, "circa_avg": circa_avg,
-                    "opp_rank": opp_rank, "bats": bats, "bpp_factor": bpp_factor,
+                    "opp_rank": opp_rank, "opp_pos_rank": opp_pos_rank,
+                    "avg_min": avg_min, "player_pos": player_pos,
+                    "hit_rate_career": hit_rate_career, "hit_rate_lyr": hit_rate_lyr,
+                    "bats": bats, "bpp_factor": bpp_factor,
                     "bpp_proj": bpp_proj, "bpp_diff": bpp_diff, "bpp_proj_edge": bpp_proj_edge,
                     "player_factor": player_factor_raw, "player_factor_edge": player_factor_edge,
                     "player_factor_note": player_factor_note,
@@ -4527,6 +4545,7 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
                     "Game": item.get("game", ""), "Team": item.get("team", ""),
                     "Opp": item.get("opp", ""), "OppRank": opp_rank,
                     "BvP": bvp_raw, "Weather": weather, "BPP": bpp_factor,
+                    "Pos": player_pos, "OppPosRank": opp_pos_rank, "AvgMin": avg_min,
                     "BPPProj": bpp_proj, "BPPDiff": bpp_diff,
                     "PlayerFactor": player_factor_raw, "Liquidity": liquidity,
                     "_bet_link": (item.get("links") or {}).get(bk_key),
@@ -10169,6 +10188,7 @@ def load_sport_data(sport):
     def _pf_game_lines():   return fetch_game_lines(sport)
     def _pf_parlayplay():   return fetch_parlayplay_props(sport)
     def _pf_ev_api():       return fetch_ev_api_live()
+    def _pf_ev_wnba():      return fetch_ev_api_wnba()
     def _pf_ev_movement():  return fetch_ev_movement(sport)
 
     _parallel_fns = [
@@ -10176,14 +10196,14 @@ def load_sport_data(sport):
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_movement,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_movement,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_movement_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_movement_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10289,6 +10309,13 @@ def load_sport_data(sport):
     # EV Sharps API — 20+ books (Hard Rock, DK, FD, MGM, Caesars, Pinnacle, Circa, etc.)
     ev_api_raw = ev_api_raw if isinstance(ev_api_raw, dict) else {}
     if ev_api_raw.get("data"):
+        # Merge WNBA EV data (pre-tagged _source_sport="WNBA") into main ev_api_raw
+        if ev_wnba_raw and ev_wnba_raw.get("data"):
+            if not ev_api_raw:
+                ev_api_raw = ev_wnba_raw
+            else:
+                ev_api_raw = dict(ev_api_raw)
+                ev_api_raw["data"] = list(ev_api_raw.get("data") or []) + list(ev_wnba_raw.get("data") or [])
         _ev_board_props, _ev_signal_lookup = extract_ev_props_for_app(ev_api_raw, sport_filter=sport)
     else:
         _ev_board_props, _ev_signal_lookup = [], {}

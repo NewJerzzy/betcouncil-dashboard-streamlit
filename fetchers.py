@@ -1609,6 +1609,32 @@ def fetch_ev_api_live():
         log_error_to_session("fetch_ev_api_live", str(e)[:100], "warning")
         return {}
 
+def fetch_ev_api_wnba():
+    """
+    Fetch live WNBA player props from EVSharps /api/wnba (public endpoint).
+    Tags each item with _source_sport='WNBA' so _ev_infer_sport() can
+    distinguish WNBA pts/reb/ast from NBA props.
+    Returns a dict with same structure as fetch_ev_api_live():
+      { "data": [...], "games": [...], "times": {...}, "updated": "..." }
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/wnba"
+    try:
+        r = _http.get(url, timeout=15)
+        if r.status_code == 200:
+            j = r.json()
+            for item in (j.get("data") or []):
+                item["_source_sport"] = "WNBA"
+            return j
+        log_error_to_session("fetch_ev_api_wnba", f"WNBA EV API returned {r.status_code}", "warning")
+        return {}
+    except requests.exceptions.Timeout:
+        log_error_to_session("fetch_ev_api_wnba", "WNBA EV API timeout", "warning")
+        return {}
+    except Exception as e:
+        log_error_to_session("fetch_ev_api_wnba", str(e)[:100], "warning")
+        return {}
+
+
 def fetch_ev_movement(sport="mlb"):
     """
     Fetch line movement data from EVSharps /api/movement endpoint.
