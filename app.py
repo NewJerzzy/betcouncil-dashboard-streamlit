@@ -8040,14 +8040,34 @@ def generate_gem_summary():
     lines.append(f"Elite: {len(sovereign_elite)} | Approved: {len(approved)} | Total: {len(board)}")
     lines.append("")
     if board:
-        lines.append("=== TOP PROPS ===")
-        top = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")][:8]
+        lines.append("=== TOP PROPS (MODE A READY) ===")
+        top = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")][:15]
         for p in top:
             injury = f" ⚠️ {p['Injury']}" if p.get("Injury") else ""
-            std_note = f" [σ={p['StdDev']:.1f}]" if p.get("StdDev") else ""
+            std_note = f" σ={p['StdDev']:.1f}" if p.get("StdDev") else ""
             fairness = f" [{p['FairnessGrade']}]" if p.get("FairnessGrade") not in (None, "GOOD", "UNKNOWN") else ""
-            consensus = f" Consensus:{p['ConsensusProb']}" if p.get("ConsensusProb","—") != "—" else ""
-            lines.append(f"{p['Tier']}: {p['Player']} {p['Side']} {p['Line']} {p['Prop']} | Avg:{p['Avg']:.1f}{std_note} | Edge:{p['EdgePct']} | EV:{p.get('EV_2pick','—')} | Prob:{p['Prob']:.1%}{consensus}{fairness}{injury}")
+            consensus = f" Pin:{p['ConsensusProb']}" if p.get("ConsensusProb","—") != "—" else ""
+            # Signal count
+            sig_count = p.get("SignalCount", p.get("signal_count", None))
+            sig_note = f" [{sig_count}/7 signals]" if sig_count is not None else ""
+            # Opponent defensive context
+            opp_def = p.get("OppDef", p.get("opp_def", p.get("DefRating", None)))
+            opp_note = f" OppDef:{opp_def}" if opp_def else ""
+            # Rest flag
+            rest = p.get("RestFlag", p.get("rest_flag", ""))
+            rest_note = f" [{rest}]" if rest else ""
+            # Recent game log summary
+            log = p.get("RecentLog", p.get("recent_log", ""))
+            log_note = f" L5:{log}" if log else ""
+            # Book + odds
+            book = p.get("Book", p.get("book", ""))
+            odds = p.get("Odds", p.get("odds", ""))
+            book_note = f" @{book}{odds}" if book else ""
+            lines.append(
+                f"{p['Tier']}: {p['Player']} {p['Side']} {p['Line']} {p['Prop']}{book_note} | "
+                f"Avg:{p['Avg']:.1f}{std_note} | Edge:{p['EdgePct']} | Prob:{p['Prob']:.1%}"
+                f"{consensus}{sig_note}{opp_note}{rest_note}{fairness}{injury}{log_note}"
+            )
         lines.append("")
     alt_upgrades = st.session_state.get("alt_line_upgrades", [])
     if alt_upgrades:
@@ -16808,6 +16828,25 @@ with tabs[9]:
         _alerts_count = len(st.session_state.get("sharp_alerts", []))
         _mv_count     = len(st.session_state.get("ev_movement_lookup", {}))
         st.metric("Sharp Alerts", _alerts_count, delta=f"{_mv_count} props tracked")
+    st.markdown("---")
+
+    # ── GEM Brief Generator ──────────────────────────────────
+    st.markdown("### 🤖 GEM Brief Generator")
+    st.caption("Generates a full MODE A brief — paste directly into Gemini, ChatGPT, or Claude to run the BetCouncil AI model away from the dashboard.")
+    _gem_col1, _gem_col2 = st.columns([1, 3])
+    with _gem_col1:
+        if st.button("📋 Generate GEM Brief", type="primary", use_container_width=True):
+            _brief = generate_gem_summary()
+            st.session_state["gem_brief_output"] = _brief
+    if st.session_state.get("gem_brief_output"):
+        st.text_area(
+            "Copy this entire block → paste into AI chatbox as your first message:",
+            value=st.session_state["gem_brief_output"],
+            height=400,
+            key="gem_brief_textarea",
+            help="Select all (Ctrl+A / Cmd+A) then copy. Paste into Gemini/ChatGPT/Claude. The model will auto-detect MODE A and run full analysis."
+        )
+        st.success("✅ Brief ready — select all text above and copy.")
     st.markdown("---")
 
     # ── Data Source Status (from last board load) ────────────
