@@ -2110,6 +2110,206 @@ def fetch_ev_movement(sport="mlb"):
         log_error_to_session("fetch_ev_movement", str(e)[:100], "warning")
         return []
 
+
+def fetch_ev_stats(prop="hr"):
+    """
+    Fetch the EVSharps /api/stats?prop={prop} endpoint.
+    prop: 'hr' (Home Runs), 'h' (Hits), 'h_r_rbi' (H+R+RBI combined).
+
+    Returns {"tier": "free", "data": [...]} or {} on error.
+    Response is gzip-encoded — requests handles decompression automatically.
+
+    Unique fields vs /api/ev:
+      hitRate, hitRateL10, hitRateLYR — historical over-rate % for this prop
+      awayHomeSplits — {away: {...}, home: {...}} performance splits
+      dtSplits — day-of-week / time-of-day splits
+      oppRankClass — categorical label ("Below Avg", "Average", "Elite", etc.)
+      oppRankSeason, oppRankPer6 — opponent rank breakdowns
+      bvpHR, bvpAvg, bvpH — batter-vs-pitcher specific to HR/hits
+      logs — raw per-game stat counts (last ~20 games)
+    """
+    url = f"https://api-production-3a3b.up.railway.app/api/stats?prop={prop}"
+    try:
+        r = _http.get(url, timeout=20, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_stats_player_lookup(stats_data, prop_name_mapped="Home Runs"):
+    """
+    Convert /api/stats response into a (player_norm, prop_name) keyed lookup.
+
+    Key: (normalize_name(player), prop_name_mapped) — matches signal_lookup keys.
+    Deduped: if a player has multiple line records for the same prop, only the
+    first is kept (pitcher/line columns differ but player-level stats are the same).
+
+    Returns { (player_norm, prop_name_mapped): {
+        stats_hit_rate, stats_hit_rate_l10, stats_hit_rate_lyr,
+        stats_opp_rank, stats_opp_rank_class, stats_opp_rank_season,
+        stats_opp_rank_per6, stats_stadium_rank, stats_stadium_rank_l,
+        stats_stadium_rank_r, stats_away_home_splits, stats_dt_splits,
+        stats_bvp_hr, stats_bvp_avg, stats_bvp_h, stats_logs,
+    } }
+    """
+    lookup = {}
+    if not stats_data or not isinstance(stats_data, dict):
+        return lookup
+    for rec in (stats_data.get("data") or []):
+        try:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname:
+                continue
+            key = (pname, prop_name_mapped)
+            if key in lookup:
+                continue
+            lookup[key] = {
+                "stats_hit_rate":         rec.get("hitRate"),
+                "stats_hit_rate_l10":     rec.get("hitRateL10"),
+                "stats_hit_rate_lyr":     rec.get("hitRateLYR"),
+                "stats_opp_rank":         rec.get("oppRank"),
+                "stats_opp_rank_class":   rec.get("oppRankClass"),
+                "stats_opp_rank_season":  rec.get("oppRankSeason"),
+                "stats_opp_rank_per6":    rec.get("oppRankPer6"),
+                "stats_stadium_rank":     rec.get("stadiumRank"),
+                "stats_stadium_rank_l":   rec.get("stadiumRankLeft"),
+                "stats_stadium_rank_r":   rec.get("stadiumRankRight"),
+                "stats_away_home_splits": rec.get("awayHomeSplits") or {},
+                "stats_dt_splits":        rec.get("dtSplits") or {},
+                "stats_bvp_hr":           rec.get("bvpHR"),
+                "stats_bvp_avg":          rec.get("bvpAvg"),
+                "stats_bvp_h":            rec.get("bvpH"),
+                "stats_logs":             rec.get("logs") or [],
+            }
+        except Exception:
+            continue
+    return lookup
+
+
+def fetch_ev_barrels():
+    """
+    Fetch the EVSharps /api/barrels endpoint — 322-record Statcast contact dataset.
+    Response is gzip-encoded — requests handles decompression automatically.
+
+    Unique fields not available from /api/ev savant dict:
+      barrels_per_bip + Percentile — barrel rate with leaguewide percentile rank
+      exit_velocity_avg + Percentile — EV with rank
+      hard_hit_percent + Percentile
+      sweet_spot_percent + Percentile
+      launch_angle_avg + Percentile
+      flyballs_percent + Percentile
+      avg_swing_speed, blasts_swing, squared_up_swing — swing quality metrics
+      pull_percent, meatball_percent — contact tendencies
+
+    Returns list of records (one per player) or [] on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/barrels"
+    try:
+        r = _http.get(url, timeout=20, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            data = r.json()
+            return data if isinstance(data, list) else (data.get("data") or [])
+        return []
+    except requests.exceptions.Timeout:
+        return []
+    except Exception:
+        return []
+
+
+def fetch_ev_barrels_player_lookup(barrels_data):
+    """
+    Convert /api/barrels list into player-keyed lookup.
+    Key: normalize_name(player). Deduped — first record per player kept.
+
+    Returns { player_norm: {
+        brl_barrel_ct, brl_barrels_per_bip, brl_barrels_per_bip_pct,
+        brl_exit_velo, brl_exit_velo_pct,
+        brl_hard_hit_pct, brl_hard_hit_pct_pct,
+        brl_sweet_spot_pct, brl_sweet_spot_pct_pct,
+        brl_launch_angle, brl_launch_angle_pct,
+        brl_flyballs_pct, brl_flyballs_pct_pct,
+        brl_avg_swing_speed, brl_blasts_swing, brl_squared_up_swing,
+        brl_pull_pct, brl_meatball_pct, brl_pa, brl_home_runs, brl_bip,
+    } }
+    """
+    lookup = {}
+    if not barrels_data or not isinstance(barrels_data, list):
+        return lookup
+    for rec in barrels_data:
+        try:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname or pname in lookup:
+                continue
+            lookup[pname] = {
+                "brl_barrel_ct":           rec.get("barrel_ct"),
+                "brl_barrels_per_bip":     rec.get("barrels_per_bip"),
+                "brl_barrels_per_bip_pct": rec.get("barrels_per_bipPercentile"),
+                "brl_exit_velo":           rec.get("exit_velocity_avg"),
+                "brl_exit_velo_pct":       rec.get("exit_velocity_avgPercentile"),
+                "brl_hard_hit_pct":        rec.get("hard_hit_percent"),
+                "brl_hard_hit_pct_pct":    rec.get("hard_hit_percentPercentile"),
+                "brl_sweet_spot_pct":      rec.get("sweet_spot_percent"),
+                "brl_sweet_spot_pct_pct":  rec.get("sweet_spot_percentPercentile"),
+                "brl_launch_angle":        rec.get("launch_angle_avg"),
+                "brl_launch_angle_pct":    rec.get("launch_angle_avgPercentile"),
+                "brl_flyballs_pct":        rec.get("flyballs_percent"),
+                "brl_flyballs_pct_pct":    rec.get("flyballs_percentPercentile"),
+                "brl_avg_swing_speed":     rec.get("avg_swing_speed"),
+                "brl_blasts_swing":        rec.get("blasts_swing"),
+                "brl_squared_up_swing":    rec.get("squared_up_swing"),
+                "brl_pull_pct":            rec.get("pull_percent"),
+                "brl_meatball_pct":        rec.get("meatball_percent"),
+                "brl_pa":                  rec.get("pa"),
+                "brl_home_runs":           rec.get("home_runs"),
+                "brl_bip":                 rec.get("bip"),
+            }
+        except Exception:
+            continue
+    return lookup
+
+
+def fetch_ev_recap():
+    """
+    Fetch the EVSharps /api/recap endpoint — yesterday's player prop results.
+    Response is gzip-encoded — requests handles decompression automatically.
+
+    Returns {"record": {...}, "data": [...]} or {} on error.
+      record: nested ROI / win-loss breakdown by book-vs-sharp-book combination
+              (e.g. "hr-vs-circa", "hr-vs-pn+circa") across bet sizes
+              (probit / fd / dk / b365 / mgm / espn / fn / br / hr / kal / nv)
+      data:   per-prop result rows with fields:
+                dt, key, prop, game, player, pos, bookOdds, team, opp,
+                oppRank, book, line, handicap, order, under, ouIdx,
+                bvp, bpp, hit (bool), result (float pnl)
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/recap"
+    try:
+        r = _http.get(url, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_fanduel_event_ids(sport):
     """Fetch today's FanDuel event IDs for a sport via the navigation/facet
     endpoint, confirmed via real capture to return a clean per-sport event

@@ -10195,6 +10195,9 @@ def load_sport_data(sport):
     def _pf_ev_preview():      return fetch_ev_preview() if sport in ("MLB",) else {}
     def _pf_ev_strikeouts():  return fetch_ev_strikeouts() if sport in ("MLB",) else {}
     def _pf_ev_movement():    return fetch_ev_movement(sport)
+    def _pf_ev_stats_hr():    return fetch_ev_stats("hr") if sport in ("MLB",) else {}
+    def _pf_ev_barrels():     return fetch_ev_barrels() if sport in ("MLB",) else []
+    def _pf_ev_recap():       return fetch_ev_recap() if sport in ("MLB",) else {}
 
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
@@ -10202,13 +10205,15 @@ def load_sport_data(sport):
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
+        _pf_ev_stats_hr, _pf_ev_barrels, _pf_ev_recap,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
+     ev_stats_hr_raw, ev_barrels_raw, ev_recap_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10624,6 +10629,132 @@ def load_sport_data(sport):
             })
         st.session_state["ev_strikeouts_lookup"] = _ev_strikeouts_lookup
         st.session_state["ev_strikeouts_count"]  = len(ev_strikeouts_raw.get("data") or [])
+
+    # ── /api/stats enrichment — hit rates + splits for HR/Hits props ─────────
+    # /api/stats?prop=hr returns hitRate, hitRateL10, hitRateLYR, awayHomeSplits,
+    # dtSplits, oppRankClass, oppRankSeason, oppRankPer6, bvpHR/bvpAvg/bvpH.
+    # Keyed by (player_norm, "Home Runs") to match signal_lookup.
+    _ev_stats_lookup: dict = {}
+    if ev_stats_hr_raw and isinstance(ev_stats_hr_raw, dict) and ev_stats_hr_raw.get("data"):
+        try:
+            _ev_stats_lookup = fetch_ev_stats_player_lookup(ev_stats_hr_raw, "Home Runs")
+        except Exception:
+            _ev_stats_lookup = {}
+    if _ev_stats_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            _sd = _ev_stats_lookup.get(_sk)
+            if not _sd:
+                continue
+            # Opp rank class edge: categorical rank from EVSharps
+            _stats_opp_edge = 0.0; _stats_opp_note = ""
+            _orc = (_sd.get("stats_opp_rank_class") or "").lower()
+            if _orc in ("elite", "great"):
+                _stats_opp_edge =  0.02; _stats_opp_note = f"OppRank {_sd['stats_opp_rank_class']}"
+            elif _orc in ("good", "above avg"):
+                _stats_opp_edge =  0.01; _stats_opp_note = f"OppRank {_sd['stats_opp_rank_class']}"
+            elif _orc in ("below avg", "poor"):
+                _stats_opp_edge = -0.01; _stats_opp_note = f"OppRank {_sd['stats_opp_rank_class']}"
+            elif _orc in ("worst", "bad"):
+                _stats_opp_edge = -0.02; _stats_opp_note = f"OppRank {_sd['stats_opp_rank_class']}"
+            # L10 hit rate edge (backfill if not already set by bvp/outliers)
+            _stats_l10_edge = 0.0; _stats_l10_note = ""
+            _l10 = _sd.get("stats_hit_rate_l10")
+            if _l10 is not None and not _sv.get("hit_rate_l10"):
+                try:
+                    l10v = float(_l10)
+                    if l10v >= 70:   _stats_l10_edge =  0.02; _stats_l10_note = f"StatsL10 {l10v:.0f}%"
+                    elif l10v >= 60: _stats_l10_edge =  0.01; _stats_l10_note = f"StatsL10 {l10v:.0f}%"
+                    elif l10v <= 25: _stats_l10_edge = -0.02; _stats_l10_note = f"StatsL10 {l10v:.0f}%"
+                    elif l10v <= 35: _stats_l10_edge = -0.01; _stats_l10_note = f"StatsL10 {l10v:.0f}%"
+                except (ValueError, TypeError):
+                    pass
+            _sv.update({
+                "stats_hit_rate":         _sd.get("stats_hit_rate"),
+                "stats_hit_rate_l10":     _sd.get("stats_hit_rate_l10"),
+                "stats_hit_rate_lyr":     _sd.get("stats_hit_rate_lyr"),
+                "stats_opp_rank":         _sd.get("stats_opp_rank"),
+                "stats_opp_rank_class":   _sd.get("stats_opp_rank_class"),
+                "stats_opp_rank_season":  _sd.get("stats_opp_rank_season"),
+                "stats_opp_rank_per6":    _sd.get("stats_opp_rank_per6"),
+                "stats_stadium_rank":     _sd.get("stats_stadium_rank"),
+                "stats_stadium_rank_l":   _sd.get("stats_stadium_rank_l"),
+                "stats_stadium_rank_r":   _sd.get("stats_stadium_rank_r"),
+                "stats_away_home_splits": _sd.get("stats_away_home_splits", {}),
+                "stats_dt_splits":        _sd.get("stats_dt_splits", {}),
+                "stats_bvp_hr":           _sd.get("stats_bvp_hr"),
+                "stats_bvp_avg":          _sd.get("stats_bvp_avg"),
+                "stats_bvp_h":            _sd.get("stats_bvp_h"),
+                "stats_logs":             _sd.get("stats_logs", []),
+                "stats_opp_edge":         _stats_opp_edge,
+                "stats_opp_note":         _stats_opp_note,
+                "stats_l10_edge":         _stats_l10_edge,
+                "stats_l10_note":         _stats_l10_note,
+            })
+        st.session_state["ev_stats_lookup"]  = _ev_stats_lookup
+        st.session_state["ev_stats_count"]   = len(ev_stats_hr_raw.get("data") or [])
+
+    # ── /api/barrels enrichment — Statcast barrel/contact percentiles ─────────
+    # /api/barrels has leaguewide percentile rankings for barrel rate, EV, hard-hit,
+    # sweet spot, launch angle, flyball %, swing quality — more granular than
+    # the raw Statcast dict in /api/ev savant field.
+    _ev_barrels_lookup: dict = {}
+    if ev_barrels_raw and isinstance(ev_barrels_raw, list):
+        try:
+            _ev_barrels_lookup = fetch_ev_barrels_player_lookup(ev_barrels_raw)
+        except Exception:
+            _ev_barrels_lookup = {}
+    if _ev_barrels_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            _pname = _sk[0]
+            _bld = _ev_barrels_lookup.get(_pname)
+            if not _bld:
+                continue
+            # Barrel rate percentile edge for HR props
+            _brl_edge = 0.0; _brl_note = ""
+            if "Home Run" in _sk[1] or "run" in _sk[1].lower():
+                try:
+                    _bpct = float(_bld.get("brl_barrels_per_bip_pct") or 0)
+                    _braw = float(_bld.get("brl_barrels_per_bip") or 0)
+                    if _bpct >= 80 or _braw >= 12.0:
+                        _brl_edge =  0.02; _brl_note = f"BRL {_braw:.1f}% ({_bpct:.0f}%ile)"
+                    elif _bpct >= 65 or _braw >= 8.0:
+                        _brl_edge =  0.01; _brl_note = f"BRL {_braw:.1f}% ({_bpct:.0f}%ile)"
+                    elif _bpct <= 20 or _braw <= 3.0:
+                        _brl_edge = -0.01; _brl_note = f"BRL {_braw:.1f}% ({_bpct:.0f}%ile)"
+                except (ValueError, TypeError):
+                    pass
+            _sv.update({
+                "brl_barrel_ct":           _bld.get("brl_barrel_ct"),
+                "brl_barrels_per_bip":     _bld.get("brl_barrels_per_bip"),
+                "brl_barrels_per_bip_pct": _bld.get("brl_barrels_per_bip_pct"),
+                "brl_exit_velo":           _bld.get("brl_exit_velo"),
+                "brl_exit_velo_pct":       _bld.get("brl_exit_velo_pct"),
+                "brl_hard_hit_pct":        _bld.get("brl_hard_hit_pct"),
+                "brl_hard_hit_pct_pct":    _bld.get("brl_hard_hit_pct_pct"),
+                "brl_sweet_spot_pct":      _bld.get("brl_sweet_spot_pct"),
+                "brl_sweet_spot_pct_pct":  _bld.get("brl_sweet_spot_pct_pct"),
+                "brl_launch_angle":        _bld.get("brl_launch_angle"),
+                "brl_launch_angle_pct":    _bld.get("brl_launch_angle_pct"),
+                "brl_flyballs_pct":        _bld.get("brl_flyballs_pct"),
+                "brl_flyballs_pct_pct":    _bld.get("brl_flyballs_pct_pct"),
+                "brl_avg_swing_speed":     _bld.get("brl_avg_swing_speed"),
+                "brl_blasts_swing":        _bld.get("brl_blasts_swing"),
+                "brl_squared_up_swing":    _bld.get("brl_squared_up_swing"),
+                "brl_pull_pct":            _bld.get("brl_pull_pct"),
+                "brl_meatball_pct":        _bld.get("brl_meatball_pct"),
+                "brl_pa":                  _bld.get("brl_pa"),
+                "brl_home_runs":           _bld.get("brl_home_runs"),
+                "brl_edge":                _brl_edge,
+                "brl_note":                _brl_note,
+            })
+        st.session_state["ev_barrels_lookup"] = _ev_barrels_lookup
+        st.session_state["ev_barrels_count"]  = len(ev_barrels_raw)
+
+    # ── /api/recap — save yesterday's results to session_state ───────────────
+    # Not used for signal_lookup enrichment; exposed for a daily results widget.
+    if ev_recap_raw and isinstance(ev_recap_raw, dict) and ev_recap_raw.get("data"):
+        st.session_state["ev_recap_data"]   = ev_recap_raw.get("data") or []
+        st.session_state["ev_recap_record"] = ev_recap_raw.get("record") or {}
 
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props
