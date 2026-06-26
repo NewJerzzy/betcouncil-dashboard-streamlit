@@ -4322,9 +4322,13 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
             else:
                 adj_stadium_rank = stadium_rank
 
-            bvp_raw    = item.get("bvp", "") or ""
-            bpp_factor = item.get("bpp", "") or ""
-            weather    = item.get("weather", {}) or {}
+            bvp_raw      = item.get("bvp", "") or ""
+            bpp_factor   = item.get("bpp", "") or ""
+            bpp_proj     = item.get("bppProj", 0) or 0
+            bpp_diff     = item.get("bppDiff", 0) or 0
+            player_factor_raw = item.get("playerFactor", "") or ""
+            liquidity    = item.get("liquidity", {}) or {}
+            weather      = item.get("weather", {}) or {}
 
             sharp_fv      = item.get("fairVal")
             sharp_ev      = item.get("ev")
@@ -4434,6 +4438,45 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
                     elif z >= 1.5:  homer_due_edge = -0.01
                 except (ValueError, TypeError): pass
 
+            # ── Player park factor edge (player-specific BPP) ──────────────────
+            player_factor_edge = 0.0; player_factor_note = ""
+            try:
+                pf = float(player_factor_raw)
+                if pf > 0:
+                    if pf >= 1.20:   player_factor_edge =  0.02; player_factor_note = f"PF {pf:.2f} (hr-friendly)"
+                    elif pf >= 1.10: player_factor_edge =  0.01; player_factor_note = f"PF {pf:.2f} (slight+)"
+                    elif pf <= 0.80: player_factor_edge = -0.02; player_factor_note = f"PF {pf:.2f} (suppressive)"
+                    elif pf <= 0.90: player_factor_edge = -0.01; player_factor_note = f"PF {pf:.2f} (slight-)"
+            except (ValueError, TypeError):
+                pass
+
+            # ── Sharp liquidity edge (NoVig + ProphetX over/under volume) ──────
+            liquidity_edge = 0.0; liquidity_note = ""
+            try:
+                liq_over = liq_under = 0
+                for bk_liq in liquidity.values():
+                    if isinstance(bk_liq, (list, tuple)) and len(bk_liq) >= 2:
+                        liq_over  += int(bk_liq[0] or 0)
+                        liq_under += int(bk_liq[1] or 0)
+                liq_total = liq_over + liq_under
+                if liq_total >= 50:
+                    liq_pct = liq_over / liq_total
+                    if liq_pct >= 0.65:
+                        liquidity_edge = 0.01; liquidity_note = f"SharpLiq OVER {liq_pct:.0%} ({liq_total} bets)"
+                    elif liq_pct <= 0.35:
+                        liquidity_edge = -0.01; liquidity_note = f"SharpLiq UNDER {1-liq_pct:.0%} ({liq_total} bets)"
+            except (TypeError, ValueError, AttributeError):
+                pass
+
+            # ── BallParkPal projection diff ───────────────────────────────────
+            bpp_proj_edge = 0.0
+            try:
+                diff = float(bpp_diff)
+                if diff >= 0.10:   bpp_proj_edge =  0.01
+                elif diff <= -0.10: bpp_proj_edge = -0.01
+            except (ValueError, TypeError):
+                pass
+
             opp_rank = item.get("oppRank")
 
             if sig_key not in signal_lookup:
@@ -4459,6 +4502,11 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
                     "fd_z_score": fd_z_score, "pn_median": pn_median, "circa_median": circa_median,
                     "fd_median": fd_median, "pn_avg": pn_avg, "circa_avg": circa_avg,
                     "opp_rank": opp_rank, "bats": bats, "bpp_factor": bpp_factor,
+                    "bpp_proj": bpp_proj, "bpp_diff": bpp_diff, "bpp_proj_edge": bpp_proj_edge,
+                    "player_factor": player_factor_raw, "player_factor_edge": player_factor_edge,
+                    "player_factor_note": player_factor_note,
+                    "liquidity": liquidity, "liquidity_edge": liquidity_edge,
+                    "liquidity_note": liquidity_note,
                     "weather": weather, "game": item.get("game", ""),
                     "team": item.get("team", ""), "opp": item.get("opp", ""),
                     "_savant": savant, "_batter_percs": batter_percs,
@@ -4479,6 +4527,8 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
                     "Game": item.get("game", ""), "Team": item.get("team", ""),
                     "Opp": item.get("opp", ""), "OppRank": opp_rank,
                     "BvP": bvp_raw, "Weather": weather, "BPP": bpp_factor,
+                    "BPPProj": bpp_proj, "BPPDiff": bpp_diff,
+                    "PlayerFactor": player_factor_raw, "Liquidity": liquidity,
                     "_bet_link": (item.get("links") or {}).get(bk_key),
                     "_sig_key": sig_key, "_hit_rates": hit_rates,
                     "_savant": savant, "_batter_percs": batter_percs,
