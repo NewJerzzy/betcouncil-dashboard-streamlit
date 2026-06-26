@@ -2637,6 +2637,86 @@ def scrape_czr_api(sport, cookies):
 
 
 # ── Gist Push ─────────────────────────────────────────────────
+
+def generate_brief_text(all_props, all_lines, sport=None):
+    from datetime import date, datetime
+    today = date.today().strftime('%A, %B %d, %Y')
+    now   = datetime.now().strftime('%H:%M')
+    sport = sport or 'MULTI'
+    out   = []
+    out.append('=== BETCOUNCIL GEM BRIEF ===')
+    out.append(f'Sport: {sport}')
+    out.append(f'Date: {today}')
+    out.append(f'Generated: {now} (auto-scraper)')
+    out.append('')
+
+    def _edge_val(p):
+        try: return float(str(p.get('Edge', p.get('edge', 0))).replace('%',''))
+        except: return 0.0
+
+    top = sorted(all_props, key=_edge_val, reverse=True)[:15]
+    if top:
+        out.append('=== TOP PROPS (MODE A READY) ===')
+        for p in top:
+            player  = p.get('Player',   p.get('player',   'Unknown'))
+            stat    = p.get('Prop',     p.get('stat',     p.get('Stat', '')))
+            side    = p.get('Side',     p.get('side',     ''))
+            line    = p.get('Line',     p.get('line',     ''))
+            book    = p.get('Book',     p.get('book',     p.get('source', '')))
+            odds    = p.get('Odds',     p.get('odds',     ''))
+            edge    = p.get('EdgePct',  p.get('edge_pct', f'{_edge_val(p):.1f}%'))
+            prob    = p.get('Prob',     p.get('fair_prob',''))
+            tier    = p.get('Tier',     p.get('tier',     ''))
+            avg     = p.get('Avg',      p.get('avg',      ''))
+            std_dev = p.get('StdDev',   p.get('std_dev',  ''))
+            injury  = p.get('Injury',   p.get('injury',   ''))
+            pin     = p.get('PinnacleProb', p.get('ConsensusProb', ''))
+            sigs    = p.get('SignalCount',  p.get('signal_count',  ''))
+            opp_def = p.get('OppDef',       p.get('opp_def',       ''))
+            rest    = p.get('RestFlag',      p.get('rest_flag',     ''))
+            log     = p.get('RecentLog',     p.get('recent_log',    ''))
+            try:    prob_str = f"{float(prob):.1%}"
+            except: prob_str = str(prob)
+            try:    avg_str = f"{float(avg):.1f}"
+            except: avg_str = str(avg)
+            parts = [f"{(tier+': ') if tier else ""}{player} {side} {line} {stat}"]
+            if book:    parts.append(f'@{book}{odds}')
+            if avg_str: parts.append(f'Avg:{avg_str}')
+            if std_dev: parts.append(f'σ:{std_dev}')
+            if edge:    parts.append(f'Edge:{edge}')
+            if prob_str:parts.append(f'Prob:{prob_str}')
+            if pin:     parts.append(f'Pin:{pin}')
+            if sigs:    parts.append(f'[{sigs}/7 signals]')
+            if opp_def: parts.append(f'OppDef:{opp_def}')
+            if rest:    parts.append(f'[{rest}]')
+            if log:     parts.append(f'L5:{log}')
+            if injury:  parts.append(f'⚠️ {injury}')
+            out.append(' | '.join(parts))
+        out.append('')
+
+    if all_lines:
+        out.append('=== GAME LINES ===')
+        for g in all_lines[:10]:
+            matchup = g.get('matchup', g.get('Matchup', ''))
+            spread  = g.get('spread',  g.get('Spread',  ''))
+            total   = g.get('total',   g.get('Total',   ''))
+            gbook   = g.get('book',    g.get('Book',    ''))
+            if matchup:
+                out.append(f'{matchup} | Spread:{spread} Total:{total} @{gbook}')
+        out.append('')
+
+    injuries = {p.get('Player', p.get('player','')): p.get('Injury', p.get('injury',''))
+                for p in all_props if p.get('Injury') or p.get('injury')}
+    if injuries:
+        out.append('=== INJURY FLAGS ===')
+        for pl, st in injuries.items():
+            out.append(f'{pl}: {st}')
+        out.append('')
+
+    out.append(f'Props: {len(all_props)} total | Lines: {len(all_lines)} games')
+    out.append('=== END BRIEF — PASTE INTO GEM ===')
+    return chr(10).join(out)
+
 def push_to_gist(all_props, all_lines, token, gist_id):
     if not token or not gist_id:
         print("❌ No GitHub token/Gist ID")
@@ -2681,18 +2761,25 @@ def push_to_gist(all_props, all_lines, token, gist_id):
         payload_str = _json.dumps(payload)
         print(f"  ⚠️  Trimmed to fit Gist limit: {len(payload['props'])} props")
 
+    brief_text = generate_brief_text(all_props, all_lines)
     r = requests.patch(
         f"https://api.github.com/gists/{gist_id}",
         headers={"Authorization": f"token {token}",
                  "Accept": "application/vnd.github.v3+json"},
-        json={"files": {"auto_scraped_props.json": {
-            "content": json.dumps(payload, indent=2)
-        }}},
+        json={"files": {
+            "auto_scraped_props.json": {
+                "content": json.dumps(payload, indent=2)
+            },
+            "betcouncil_daily_brief.txt": {
+                "content": brief_text
+            }
+        }},
         timeout=15
     )
     if r.status_code == 200:
         print(f"\n✅ Pushed to Gist: {len(all_props)} props + {len(all_lines)} lines")
         print(f"   Books: {', '.join(books)}")
+        print(f"   📋 Brief pushed → betcouncil_daily_brief.txt")
         return True
     print(f"\n❌ Gist push failed: {r.status_code}")
     return False
