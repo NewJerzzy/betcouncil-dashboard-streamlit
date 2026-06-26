@@ -2310,6 +2310,218 @@ def fetch_ev_recap():
         return {}
 
 
+def fetch_ev_mlb():
+    """
+    Fetch the EVSharps /api/mlb endpoint — today's curated featured MLB picks.
+    ~40 records (filtered, highest-value props), gzip-encoded.
+
+    Richer than /api/ev for the props it covers:
+      hitRates  — {szn, L5, L10, L20} each {w: wins, t: total, p: pct}
+                  — four-window W/L record vs a single hitRate % in /api/outliers
+      lastHR    — date of batter's last home run
+      liquidity — betting volume/liquidity per book
+      ou        — consensus over/under line
+      roof      — stadium roof status ("open", "dome", "closed")
+      order     — batting order position
+      logs      — raw game-by-game stat counts (last ~20 games)
+      bvp       — batter-vs-pitcher summary string
+
+    Returns {"data": [...], "games": [...], "updated": ...} or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/mlb"
+    try:
+        r = _http.get(url, timeout=20, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_mlb_player_lookup(mlb_data):
+    """
+    Convert /api/mlb response into a (player_norm, prop_name) keyed lookup.
+    Key matches signal_lookup: (normalize_name(player), EV_PROP_MAP[prop]).
+    Deduped — first record per player+prop kept.
+
+    Returns { (player_norm, prop_name): {
+        mlb_hit_rate_szn, mlb_hit_rate_szn_w, mlb_hit_rate_szn_t,
+        mlb_hit_rate_l5,  mlb_hit_rate_l5_w,  mlb_hit_rate_l5_t,
+        mlb_hit_rate_l10, mlb_hit_rate_l10_w, mlb_hit_rate_l10_t,
+        mlb_hit_rate_l20, mlb_hit_rate_l20_w, mlb_hit_rate_l20_t,
+        mlb_last_hr, mlb_ou, mlb_roof, mlb_order, mlb_logs, mlb_bvp,
+        mlb_liquidity,
+    } }
+    """
+    _EV_PROP_MAP = {
+        "hr": "Home Runs", "hits": "Hits", "rbi": "RBI", "runs": "Runs",
+        "sb": "Stolen Bases", "k": "Pitcher Strikeouts",
+        "pts": "Points", "reb": "Rebounds", "ast": "Assists",
+        "td": "Touchdowns", "rush_yards": "Rush Yards", "rec_yards": "Rec Yards",
+        "goals": "Goals", "shots": "Shots",
+    }
+    lookup = {}
+    if not mlb_data or not isinstance(mlb_data, dict):
+        return lookup
+    for rec in (mlb_data.get("data") or []):
+        try:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname:
+                continue
+            prop_key  = rec.get("prop", "")
+            prop_name = _EV_PROP_MAP.get(prop_key, prop_key.title())
+            key = (pname, prop_name)
+            if key in lookup:
+                continue
+            hr = rec.get("hitRates") or {}
+            def _w(win_key):
+                block = hr.get(win_key) or {}
+                return block.get("p"), block.get("w"), block.get("t")
+            szn_p, szn_w, szn_t = _w("szn")
+            l5_p,  l5_w,  l5_t  = _w("L5")
+            l10_p, l10_w, l10_t = _w("L10")
+            l20_p, l20_w, l20_t = _w("L20")
+            lookup[key] = {
+                "mlb_hit_rate_szn":   szn_p,
+                "mlb_hit_rate_szn_w": szn_w,
+                "mlb_hit_rate_szn_t": szn_t,
+                "mlb_hit_rate_l5":    l5_p,
+                "mlb_hit_rate_l5_w":  l5_w,
+                "mlb_hit_rate_l5_t":  l5_t,
+                "mlb_hit_rate_l10":   l10_p,
+                "mlb_hit_rate_l10_w": l10_w,
+                "mlb_hit_rate_l10_t": l10_t,
+                "mlb_hit_rate_l20":   l20_p,
+                "mlb_hit_rate_l20_w": l20_w,
+                "mlb_hit_rate_l20_t": l20_t,
+                "mlb_last_hr":        rec.get("lastHR"),
+                "mlb_ou":             rec.get("ou"),
+                "mlb_roof":           rec.get("roof"),
+                "mlb_order":          rec.get("order"),
+                "mlb_logs":           rec.get("logs") or [],
+                "mlb_bvp":            rec.get("bvp", ""),
+                "mlb_liquidity":      rec.get("liquidity") or {},
+            }
+        except Exception:
+            continue
+    return lookup
+
+
+def fetch_ev_trends():
+    """
+    Fetch the EVSharps /api/trends endpoint — league-wide HR and barrel rates
+    by year (1990-present), month, and day. Response is gzip-encoded.
+
+    Structure: { year: { month: { hr:[...], g:[...], hr/g:[...], dt:[...],
+                                   brl:[...], brl/g:[...] } } }
+
+    Used to compute a same-day "league HR environment" signal:
+      - today's league HR/game vs season average
+      - whether this is a historically barrel-friendly or suppressed day
+      - year-over-year HR rate trends for model calibration
+
+    Returns the full nested dict or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/trends"
+    try:
+        r = _http.get(url, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def compute_ev_trends_signal(trends_data):
+    """
+    Compute league-level HR environment signals from /api/trends data.
+
+    Returns dict:
+      league_hr_per_g_season — avg HR/game for the current season-to-date
+      league_hr_per_g_l7     — avg HR/game over the last 7 game-days
+      league_hr_per_g_l7_vs_season — l7 rate minus season avg (positive = hot env)
+      league_brl_per_g_season — avg barrel/game season-to-date
+      league_trend_note       — human-readable summary string
+      league_env_edge         — float signal: +0.01/+0.02 if hot, -0.01/-0.02 if cold
+    """
+    import datetime
+    result = {
+        "league_hr_per_g_season":      None,
+        "league_hr_per_g_l7":          None,
+        "league_hr_per_g_l7_vs_season": None,
+        "league_brl_per_g_season":     None,
+        "league_trend_note":           "",
+        "league_env_edge":             0.0,
+    }
+    if not trends_data or not isinstance(trends_data, dict):
+        return result
+    try:
+        today = datetime.date.today()
+        yr    = str(today.year)
+        yr_data = trends_data.get(yr) or {}
+        if not yr_data:
+            return result
+
+        # Collect all daily data points for the current season
+        all_hr_per_g = []
+        all_brl_per_g = []
+        all_days = []  # (date_str, hr_per_g, brl_per_g)
+        for mo_str, mo_data in yr_data.items():
+            dts    = mo_data.get("dt") or []
+            hr_g   = mo_data.get("hr/g") or []
+            brl_g  = mo_data.get("brl/g") or []
+            for i, dt_str in enumerate(dts):
+                try:
+                    dt_full = f"{yr}-{dt_str}"
+                    hrg  = float(hr_g[i])  if i < len(hr_g)  else None
+                    brlg = float(brl_g[i]) if i < len(brl_g) else None
+                    if hrg is not None:
+                        all_hr_per_g.append(hrg)
+                        all_brl_per_g.append(brlg or 0)
+                        all_days.append((dt_full, hrg, brlg or 0))
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+        if not all_hr_per_g:
+            return result
+
+        season_avg   = round(sum(all_hr_per_g) / len(all_hr_per_g), 3)
+        season_brl   = round(sum(all_brl_per_g) / len(all_brl_per_g), 3)
+        l7_days      = all_days[-7:] if len(all_days) >= 7 else all_days
+        l7_avg       = round(sum(d[1] for d in l7_days) / len(l7_days), 3) if l7_days else None
+        l7_vs_season = round(l7_avg - season_avg, 3) if l7_avg is not None else None
+
+        result["league_hr_per_g_season"]      = season_avg
+        result["league_hr_per_g_l7"]          = l7_avg
+        result["league_hr_per_g_l7_vs_season"] = l7_vs_season
+        result["league_brl_per_g_season"]     = season_brl
+
+        # Edge signal
+        edge = 0.0; note = f"LeagueHR L7={l7_avg:.2f}/g vs szn={season_avg:.2f}/g"
+        if l7_vs_season is not None:
+            if l7_vs_season >= 0.40:   edge =  0.02; note += " 🔥HOT"
+            elif l7_vs_season >= 0.20: edge =  0.01; note += " ↑hot"
+            elif l7_vs_season <= -0.40: edge = -0.02; note += " 🥶COLD"
+            elif l7_vs_season <= -0.20: edge = -0.01; note += " ↓cold"
+        result["league_trend_note"] = note
+        result["league_env_edge"]   = edge
+    except Exception:
+        pass
+    return result
+
+
 def fetch_fanduel_event_ids(sport):
     """Fetch today's FanDuel event IDs for a sport via the navigation/facet
     endpoint, confirmed via real capture to return a clean per-sport event

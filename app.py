@@ -10196,8 +10196,11 @@ def load_sport_data(sport):
     def _pf_ev_strikeouts():  return fetch_ev_strikeouts() if sport in ("MLB",) else {}
     def _pf_ev_movement():    return fetch_ev_movement(sport)
     def _pf_ev_stats_hr():    return fetch_ev_stats("hr") if sport in ("MLB",) else {}
+    def _pf_ev_stats_k():     return fetch_ev_stats("k")  if sport in ("MLB",) else {}
     def _pf_ev_barrels():     return fetch_ev_barrels() if sport in ("MLB",) else []
     def _pf_ev_recap():       return fetch_ev_recap() if sport in ("MLB",) else {}
+    def _pf_ev_mlb():         return fetch_ev_mlb() if sport in ("MLB",) else {}
+    def _pf_ev_trends():      return fetch_ev_trends() if sport in ("MLB",) else {}
 
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
@@ -10205,7 +10208,7 @@ def load_sport_data(sport):
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
-        _pf_ev_stats_hr, _pf_ev_barrels, _pf_ev_recap,
+        _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
@@ -10213,7 +10216,7 @@ def load_sport_data(sport):
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
-     ev_stats_hr_raw, ev_barrels_raw, ev_recap_raw) = _results
+     ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10755,6 +10758,141 @@ def load_sport_data(sport):
     if ev_recap_raw and isinstance(ev_recap_raw, dict) and ev_recap_raw.get("data"):
         st.session_state["ev_recap_data"]   = ev_recap_raw.get("data") or []
         st.session_state["ev_recap_record"] = ev_recap_raw.get("record") or {}
+
+    # ── /api/stats?prop=k enrichment — hit rates for strikeout props ──────────
+    # Extends the existing /api/stats HR enrichment to K props.
+    # Uses the same fetch_ev_stats_player_lookup — just pass "Pitcher Strikeouts".
+    _ev_stats_k_lookup: dict = {}
+    if ev_stats_k_raw and isinstance(ev_stats_k_raw, dict) and ev_stats_k_raw.get("data"):
+        try:
+            _ev_stats_k_lookup = fetch_ev_stats_player_lookup(ev_stats_k_raw, "Pitcher Strikeouts")
+        except Exception:
+            _ev_stats_k_lookup = {}
+    if _ev_stats_k_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            _sd = _ev_stats_k_lookup.get(_sk)
+            if not _sd:
+                continue
+            _k_orc = (_sd.get("stats_opp_rank_class") or "").lower()
+            _k_opp_edge = 0.0; _k_opp_note = ""
+            if _k_orc in ("elite", "great"):
+                _k_opp_edge =  0.02; _k_opp_note = f"KOppRank {_sd['stats_opp_rank_class']}"
+            elif _k_orc in ("good", "above avg"):
+                _k_opp_edge =  0.01; _k_opp_note = f"KOppRank {_sd['stats_opp_rank_class']}"
+            elif _k_orc in ("below avg", "poor"):
+                _k_opp_edge = -0.01; _k_opp_note = f"KOppRank {_sd['stats_opp_rank_class']}"
+            elif _k_orc in ("worst", "bad"):
+                _k_opp_edge = -0.02; _k_opp_note = f"KOppRank {_sd['stats_opp_rank_class']}"
+            _sv.update({
+                "k_stats_hit_rate":        _sd.get("stats_hit_rate"),
+                "k_stats_hit_rate_l10":    _sd.get("stats_hit_rate_l10"),
+                "k_stats_hit_rate_lyr":    _sd.get("stats_hit_rate_lyr"),
+                "k_stats_opp_rank":        _sd.get("stats_opp_rank"),
+                "k_stats_opp_rank_class":  _sd.get("stats_opp_rank_class"),
+                "k_stats_away_home":       _sd.get("stats_away_home_splits", {}),
+                "k_stats_dt_splits":       _sd.get("stats_dt_splits", {}),
+                "k_stats_logs":            _sd.get("stats_logs", []),
+                "k_stats_opp_edge":        _k_opp_edge,
+                "k_stats_opp_note":        _k_opp_note,
+            })
+        st.session_state["ev_stats_k_lookup"] = _ev_stats_k_lookup
+        st.session_state["ev_stats_k_count"]  = len(ev_stats_k_raw.get("data") or [])
+
+    # ── /api/mlb enrichment — four-window hit-rate W/L records ───────────────
+    # /api/mlb is a curated ~40-record featured-picks list with hitRates broken
+    # into {szn, L5, L10, L20} W/L/pct windows — far richer than the single
+    # hitRate % from /api/outliers. Also adds lastHR, ou, roof, order, liquidity.
+    _ev_mlb_lookup: dict = {}
+    if ev_mlb_raw and isinstance(ev_mlb_raw, dict) and ev_mlb_raw.get("data"):
+        try:
+            _ev_mlb_lookup = fetch_ev_mlb_player_lookup(ev_mlb_raw)
+        except Exception:
+            _ev_mlb_lookup = {}
+    if _ev_mlb_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            _md = _ev_mlb_lookup.get(_sk)
+            if not _md:
+                continue
+            # L10 and L5 hit-rate edge from W/L window records
+            _mlb_edge = 0.0; _mlb_note = ""
+            try:
+                _l10p = float(_md.get("mlb_hit_rate_l10") or 0)
+                _l5p  = float(_md.get("mlb_hit_rate_l5")  or 0)
+                # Use L5 (tighter/more recent) as primary signal when ≥3 games
+                _l5t  = int(_md.get("mlb_hit_rate_l5_t")  or 0)
+                _l10t = int(_md.get("mlb_hit_rate_l10_t") or 0)
+                if _l5t >= 3:
+                    if _l5p >= 80:    _mlb_edge =  0.02; _mlb_note = f"L5 {_md['mlb_hit_rate_l5_w']}/{_l5t} ({_l5p:.0f}%)"
+                    elif _l5p >= 60:  _mlb_edge =  0.01; _mlb_note = f"L5 {_md['mlb_hit_rate_l5_w']}/{_l5t} ({_l5p:.0f}%)"
+                    elif _l5p <= 20:  _mlb_edge = -0.02; _mlb_note = f"L5 {_md['mlb_hit_rate_l5_w']}/{_l5t} ({_l5p:.0f}%)"
+                    elif _l5p <= 40:  _mlb_edge = -0.01; _mlb_note = f"L5 {_md['mlb_hit_rate_l5_w']}/{_l5t} ({_l5p:.0f}%)"
+                elif _l10t >= 5:
+                    if _l10p >= 80:   _mlb_edge =  0.02; _mlb_note = f"L10 {_md['mlb_hit_rate_l10_w']}/{_l10t} ({_l10p:.0f}%)"
+                    elif _l10p >= 60: _mlb_edge =  0.01; _mlb_note = f"L10 {_md['mlb_hit_rate_l10_w']}/{_l10t} ({_l10p:.0f}%)"
+                    elif _l10p <= 20: _mlb_edge = -0.02; _mlb_note = f"L10 {_md['mlb_hit_rate_l10_w']}/{_l10t} ({_l10p:.0f}%)"
+                    elif _l10p <= 40: _mlb_edge = -0.01; _mlb_note = f"L10 {_md['mlb_hit_rate_l10_w']}/{_l10t} ({_l10p:.0f}%)"
+            except (ValueError, TypeError):
+                pass
+            # Roof signal — dome suppresses/boosts depending on park
+            _roof_note = ""
+            _roof = (_md.get("mlb_roof") or "").lower()
+            if _roof == "dome":
+                _roof_note = "Dome"
+            elif _roof == "open":
+                _roof_note = "Open"
+            _sv.update({
+                "mlb_hit_rate_szn":   _md.get("mlb_hit_rate_szn"),
+                "mlb_hit_rate_szn_w": _md.get("mlb_hit_rate_szn_w"),
+                "mlb_hit_rate_szn_t": _md.get("mlb_hit_rate_szn_t"),
+                "mlb_hit_rate_l5":    _md.get("mlb_hit_rate_l5"),
+                "mlb_hit_rate_l5_w":  _md.get("mlb_hit_rate_l5_w"),
+                "mlb_hit_rate_l5_t":  _md.get("mlb_hit_rate_l5_t"),
+                "mlb_hit_rate_l10":   _md.get("mlb_hit_rate_l10"),
+                "mlb_hit_rate_l10_w": _md.get("mlb_hit_rate_l10_w"),
+                "mlb_hit_rate_l10_t": _md.get("mlb_hit_rate_l10_t"),
+                "mlb_hit_rate_l20":   _md.get("mlb_hit_rate_l20"),
+                "mlb_hit_rate_l20_w": _md.get("mlb_hit_rate_l20_w"),
+                "mlb_hit_rate_l20_t": _md.get("mlb_hit_rate_l20_t"),
+                "mlb_last_hr":        _md.get("mlb_last_hr"),
+                "mlb_ou":             _md.get("mlb_ou"),
+                "mlb_roof":           _md.get("mlb_roof"),
+                "mlb_order":          _md.get("mlb_order"),
+                "mlb_logs":           _md.get("mlb_logs", []),
+                "mlb_bvp":            _md.get("mlb_bvp", ""),
+                "mlb_liquidity":      _md.get("mlb_liquidity", {}),
+                "mlb_hit_rate_edge":  _mlb_edge,
+                "mlb_hit_rate_note":  _mlb_note,
+                "mlb_roof_note":      _roof_note,
+            })
+        st.session_state["ev_mlb_lookup"] = _ev_mlb_lookup
+        st.session_state["ev_mlb_count"]  = len(ev_mlb_raw.get("data") or [])
+
+    # ── /api/trends — league HR environment signal ────────────────────────────
+    # Computes a single league-level HR/game signal: L7 rate vs season average.
+    # A hot league environment (L7 >> season avg) lifts all HR prop over-rates;
+    # a cold environment suppresses them. Applied as a small universal edge
+    # modifier stored in session_state and readable by any downstream widget.
+    _ev_trends_signal: dict = {}
+    if ev_trends_raw and isinstance(ev_trends_raw, dict):
+        try:
+            _ev_trends_signal = compute_ev_trends_signal(ev_trends_raw)
+        except Exception:
+            _ev_trends_signal = {}
+    if _ev_trends_signal:
+        _league_edge = _ev_trends_signal.get("league_env_edge", 0.0)
+        _league_note = _ev_trends_signal.get("league_trend_note", "")
+        # Backfill league env edge into every HR prop in signal_lookup
+        if _league_edge != 0.0:
+            for _sk, _sv in _ev_signal_lookup.items():
+                if "Home Run" in _sk[1] or "run" in _sk[1].lower():
+                    _sv["league_env_edge"] = _league_edge
+                    _sv["league_env_note"] = _league_note
+        st.session_state["ev_trends_signal"]          = _ev_trends_signal
+        st.session_state["ev_trends_hr_per_g_season"] = _ev_trends_signal.get("league_hr_per_g_season")
+        st.session_state["ev_trends_hr_per_g_l7"]     = _ev_trends_signal.get("league_hr_per_g_l7")
+        st.session_state["ev_trends_note"]            = _league_note
+        if _league_note:
+            st.caption(f"📈 League HR env: {_league_note}")
 
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props
