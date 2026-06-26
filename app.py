@@ -10192,22 +10192,23 @@ def load_sport_data(sport):
     def _pf_ev_outliers():  return fetch_ev_api_outliers(sport)
     def _pf_ev_feed():      return fetch_ev_feed()
     def _pf_ev_bvp():       return fetch_ev_bvp() if sport in ("MLB",) else {}
-    def _pf_ev_preview():   return fetch_ev_preview() if sport in ("MLB",) else {}
-    def _pf_ev_movement():  return fetch_ev_movement(sport)
+    def _pf_ev_preview():      return fetch_ev_preview() if sport in ("MLB",) else {}
+    def _pf_ev_strikeouts():  return fetch_ev_strikeouts() if sport in ("MLB",) else {}
+    def _pf_ev_movement():    return fetch_ev_movement(sport)
 
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_movement,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_movement_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10563,6 +10564,66 @@ def load_sport_data(sport):
             })
         st.session_state["ev_preview_lookup"] = _ev_preview_lookup
         st.session_state["ev_preview_count"]  = len(ev_preview_raw.get("data") or [])
+
+    # ── Strikeouts enrichment — /api/strikeouts (532 K prop records) ──────────
+    # Unique fields vs /api/ev: K hit rates across szn/L5/L10/LYR windows,
+    # per-start K count logs, opponent team K rank, and pitcher Statcast metrics.
+    # Records are pitcher-keyed (player = the pitcher), matched against
+    # (player_norm, "Pitcher Strikeouts") signal_lookup entries.
+    _ev_strikeouts_lookup: dict = {}
+    if ev_strikeouts_raw and isinstance(ev_strikeouts_raw, dict) and ev_strikeouts_raw.get("data"):
+        try:
+            _ev_strikeouts_lookup = fetch_ev_strikeouts_pitcher_lookup(ev_strikeouts_raw)
+        except Exception:
+            _ev_strikeouts_lookup = {}
+    if _ev_strikeouts_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            if "Strikeout" not in _sk[1]:
+                continue
+            _kd = _ev_strikeouts_lookup.get(_sk[0])
+            if not _kd:
+                continue
+            # K hit rate edge — season rate is primary; L5 confirms recent form
+            _k_hit_rate_edge = 0.0; _k_hit_rate_note = ""
+            try:
+                _k_szn = float(_kd.get("k_rate_szn") or 0)
+                _k_l5  = float(_kd.get("k_rate_l5")  or 0)
+                if _k_szn >= 80 and _k_l5 >= 80:
+                    _k_hit_rate_edge =  0.02; _k_hit_rate_note = f"KRate {_k_szn:.0f}% szn/{_k_l5:.0f}% L5"
+                elif _k_szn >= 70 or _k_l5 >= 75:
+                    _k_hit_rate_edge =  0.01; _k_hit_rate_note = f"KRate {_k_szn:.0f}% szn/{_k_l5:.0f}% L5"
+                elif _k_szn <= 50:
+                    _k_hit_rate_edge = -0.01; _k_hit_rate_note = f"KRate low {_k_szn:.0f}% szn"
+            except (ValueError, TypeError):
+                pass
+            # Opp K rank edge — higher rank = weaker offense = easier to K
+            _k_opp_edge = 0.0; _k_opp_note = ""
+            try:
+                _opp_r = int(_kd.get("k_opp_rank") or 0)
+                if _opp_r >= 25:
+                    _k_opp_edge =  0.01; _k_opp_note = f"OppK rank #{_opp_r}"
+                elif _opp_r <= 5:
+                    _k_opp_edge = -0.01; _k_opp_note = f"OppK rank #{_opp_r}"
+            except (ValueError, TypeError):
+                pass
+            _sv.update({
+                "k_rate_szn":      _kd.get("k_rate_szn"),
+                "k_rate_l5":       _kd.get("k_rate_l5"),
+                "k_rate_l10":      _kd.get("k_rate_l10"),
+                "k_rate_lyr":      _kd.get("k_rate_lyr"),
+                "k_logs":          _kd.get("k_logs", []),
+                "k_opp_rank":      _kd.get("k_opp_rank"),
+                "k_pitcher_data":  _kd.get("k_pitcher_data", {}),
+                "k_bpp":           _kd.get("k_bpp", ""),
+                "k_bpp_proj":      _kd.get("k_bpp_proj"),
+                "k_bpp_diff":      _kd.get("k_bpp_diff"),
+                "k_hit_rate_edge": _k_hit_rate_edge,
+                "k_hit_rate_note": _k_hit_rate_note,
+                "k_opp_edge":      _k_opp_edge,
+                "k_opp_note":      _k_opp_note,
+            })
+        st.session_state["ev_strikeouts_lookup"] = _ev_strikeouts_lookup
+        st.session_state["ev_strikeouts_count"]  = len(ev_strikeouts_raw.get("data") or [])
 
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props

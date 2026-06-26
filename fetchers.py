@@ -1933,6 +1933,83 @@ def fetch_ev_preview_pitcher_lookup(preview_data):
     return lookup
 
 
+def fetch_ev_strikeouts():
+    """
+    Fetch the EVSharps /api/strikeouts endpoint — 532 K prop records,
+    one per pitcher/line combination for today's MLB games.
+
+    Unique fields not in /api/ev:
+      hitRates   — K hit rates across szn/lyr/L5/L10/L20 windows
+                   each window: {w: wins, t: total, p: pct}
+      logs       — raw K counts per start (last ~16 starts)
+      pitcherData — Statcast quality metrics for the pitcher:
+                    xwoba, barrel_batted_rate, hard_hit_percent,
+                    sweet_spot_percent, exit_velocity_avg, p_era, etc.
+      oppRank    — opponent team's K rank (higher rank = weaker K offense)
+      bpp / bppProj / bppDiff — BetterProps projection vs book line
+
+    Returns {"updated": {...}, "games": [...], "times": [...], "data": [...]}
+    or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/strikeouts"
+    try:
+        r = _http.get(url, timeout=20, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/strikeouts",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_strikeouts_pitcher_lookup(strikeouts_data):
+    """
+    Convert raw /api/strikeouts response into a pitcher-keyed lookup dict.
+    Key: normalize_name(pitcher). Deduplicated — if a pitcher appears in
+    multiple line records (over/under), only the first is kept since the
+    pitcher-level fields (hitRates, logs, pitcherData) are identical.
+
+    Returns { pitcher_norm: {
+        k_rate_szn, k_rate_l5, k_rate_l10, k_rate_lyr,
+        k_logs ([int, ...] last N K counts),
+        k_opp_rank,
+        k_pitcher_data (Statcast dict),
+        k_bpp, k_bpp_proj, k_bpp_diff,
+        k_ev, k_fair_val,
+    } }
+    """
+    lookup = {}
+    if not strikeouts_data or not isinstance(strikeouts_data, dict):
+        return lookup
+    for rec in (strikeouts_data.get("data") or []):
+        try:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname or pname in lookup:
+                continue
+            hr = rec.get("hitRates") or {}
+            lookup[pname] = {
+                "k_rate_szn":     (hr.get("szn") or {}).get("p"),
+                "k_rate_l5":      (hr.get("L5") or {}).get("p"),
+                "k_rate_l10":     (hr.get("L10") or {}).get("p"),
+                "k_rate_lyr":     (hr.get("lyr") or {}).get("p"),
+                "k_logs":         rec.get("logs") or [],
+                "k_opp_rank":     rec.get("oppRank"),
+                "k_pitcher_data": rec.get("pitcherData") or {},
+                "k_bpp":          rec.get("bpp", ""),
+                "k_bpp_proj":     rec.get("bppProj"),
+                "k_bpp_diff":     rec.get("bppDiff"),
+                "k_ev":           rec.get("ev"),
+                "k_fair_val":     rec.get("fairVal"),
+            }
+        except Exception:
+            continue
+    return lookup
+
+
 def fetch_ev_api_outliers(sport="mlb"):
     """
     Fetch outlier props from EVSharps /api/outliers?sport={sport}.
