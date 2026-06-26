@@ -10192,6 +10192,7 @@ def load_sport_data(sport):
     def _pf_ev_outliers():  return fetch_ev_api_outliers(sport)
     def _pf_ev_feed():      return fetch_ev_feed()
     def _pf_ev_bvp():       return fetch_ev_bvp() if sport in ("MLB",) else {}
+    def _pf_ev_preview():   return fetch_ev_preview() if sport in ("MLB",) else {}
     def _pf_ev_movement():  return fetch_ev_movement(sport)
 
     _parallel_fns = [
@@ -10199,14 +10200,14 @@ def load_sport_data(sport):
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_movement,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_movement,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_movement_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_movement_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10483,6 +10484,85 @@ def load_sport_data(sport):
             })
         st.session_state["ev_bvp_lookup"]  = _ev_bvp_lookup
         st.session_state["ev_bvp_count"]   = len(ev_bvp_raw.get("res") or [])
+
+    # ── Pitcher Preview enrichment — /api/preview (30 starters today) ────────
+    # Unique fields: hr_pitch/hr_pitch_l/hr_pitch_r (which pitch types gave
+    # up HRs), hr_l_rate/hr_r_rate with platoon percentile ranks, arm_angle,
+    # whiff%, barrel_batted_rate — none of these are in /api/ev or /api/bvp.
+    _ev_preview_lookup: dict = {}
+    if ev_preview_raw and isinstance(ev_preview_raw, dict) and ev_preview_raw.get("data"):
+        try:
+            _ev_preview_lookup = fetch_ev_preview_pitcher_lookup(ev_preview_raw)
+        except Exception:
+            _ev_preview_lookup = {}
+    if _ev_preview_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            _pitcher_raw = (_sv.get("pitcher") or "").strip()
+            if not _pitcher_raw:
+                continue
+            _pd = _ev_preview_lookup.get(normalize_name(_pitcher_raw))
+            if not _pd:
+                continue
+            # ── HR rate edge: pitcher's HR-allowed percentile leaguewide ──
+            _prev_hr_rate_edge = 0.0; _prev_hr_rate_note = ""
+            try:
+                hrpa_pct = float(_pd.get("hr_pa_percentile") or 0)
+                if hrpa_pct >= 75:   _prev_hr_rate_edge =  0.02; _prev_hr_rate_note = f"PitcherHR%ile {hrpa_pct:.0f}th"
+                elif hrpa_pct >= 60: _prev_hr_rate_edge =  0.01; _prev_hr_rate_note = f"PitcherHR%ile {hrpa_pct:.0f}th"
+                elif hrpa_pct <= 25: _prev_hr_rate_edge = -0.01; _prev_hr_rate_note = f"PitcherHR%ile {hrpa_pct:.0f}th"
+            except (ValueError, TypeError):
+                pass
+            # ── Platoon HR rate edge: batter hand vs pitcher L/R split ──
+            _prev_platoon_edge = 0.0; _prev_platoon_note = ""
+            try:
+                _bats = (_sv.get("bats") or "").upper()
+                if _bats in ("L", "R"):
+                    _side_rate = float(_pd.get(f"hr_{'l' if _bats=='L' else 'r'}_rate") or 0)
+                    _side_pct  = float(_pd.get(f"hr_{'l' if _bats=='L' else 'r'}_rate_percentile") or 0)
+                    if _side_rate >= 3.5 or _side_pct >= 75:
+                        _prev_platoon_edge =  0.02
+                        _prev_platoon_note = f"PlatoonHR {_bats}vP {_side_rate:.1f}/PA ({_side_pct:.0f}%ile)"
+                    elif _side_rate >= 2.5 or _side_pct >= 60:
+                        _prev_platoon_edge =  0.01
+                        _prev_platoon_note = f"PlatoonHR {_bats}vP {_side_rate:.1f}/PA ({_side_pct:.0f}%ile)"
+                    elif _side_rate <= 1.0 or _side_pct <= 25:
+                        _prev_platoon_edge = -0.01
+                        _prev_platoon_note = f"PlatoonHR {_bats}vP {_side_rate:.1f}/PA ({_side_pct:.0f}%ile)"
+            except (ValueError, TypeError):
+                pass
+            _sv.update({
+                "preview_home_run_pct":     _pd.get("home_run_percentile"),
+                "preview_hr_pa_pct":        _pd.get("hr_pa_percentile"),
+                "preview_hr_pa":            _pd.get("hr_pa"),
+                "preview_hr_l":             _pd.get("hr_l"),
+                "preview_hr_r":             _pd.get("hr_r"),
+                "preview_hr_l_rate":        _pd.get("hr_l_rate"),
+                "preview_hr_r_rate":        _pd.get("hr_r_rate"),
+                "preview_hr_l_rate_pct":    _pd.get("hr_l_rate_percentile"),
+                "preview_hr_r_rate_pct":    _pd.get("hr_r_rate_percentile"),
+                "preview_hr_pitch":         _pd.get("hr_pitch", []),
+                "preview_hr_pitch_l":       _pd.get("hr_pitch_l", []),
+                "preview_hr_pitch_r":       _pd.get("hr_pitch_r", []),
+                "preview_arm_angle":        _pd.get("arm_angle"),
+                "preview_k_pct":            _pd.get("k_percent"),
+                "preview_xera":             _pd.get("xera"),
+                "preview_whiff_pct":        _pd.get("whiff_percent"),
+                "preview_whiff_pct_pct":    _pd.get("whiff_pct_pct"),
+                "preview_barrel_rate":      _pd.get("barrel_rate"),
+                "preview_barrel_rate_pct":  _pd.get("barrel_rate_pct"),
+                "preview_hard_hit_pct":     _pd.get("hard_hit_pct"),
+                "preview_hard_hit_pct_pct": _pd.get("hard_hit_pct_pct"),
+                "preview_fb_velo":          _pd.get("fb_velo"),
+                "preview_fb_pct":           _pd.get("fb_pct"),
+                "preview_breaking_pct":     _pd.get("breaking_pct"),
+                "preview_offspeed_pct":     _pd.get("offspeed_pct"),
+                "preview_hr_rate_edge":     _prev_hr_rate_edge,
+                "preview_hr_rate_note":     _prev_hr_rate_note,
+                "preview_platoon_edge":     _prev_platoon_edge,
+                "preview_platoon_note":     _prev_platoon_note,
+            })
+        st.session_state["ev_preview_lookup"] = _ev_preview_lookup
+        st.session_state["ev_preview_count"]  = len(ev_preview_raw.get("data") or [])
 
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props

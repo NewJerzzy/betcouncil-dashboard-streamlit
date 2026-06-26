@@ -1827,6 +1827,112 @@ def fetch_ev_bvp_player_lookup(bvp_data):
     return lookup
 
 
+def fetch_ev_preview(prop=None):
+    """
+    Fetch the EVSharps /api/preview endpoint — today's starting pitchers.
+    30 records, one per starter, with the richest pitcher Statcast dataset
+    on the site (409 fields per record).
+
+    Key unique fields for HR prop enrichment:
+      home_run_percentile  — leaguewide HR-allowed percentile (higher = more HR-prone)
+      hr_pa_percentile     — HR per PA percentile
+      hr_pa                — raw HR per PA rate
+      hr_l / hr_r          — HRs allowed vs L/R batters
+      hr_l_rate / hr_r_rate — HR rate vs L/R batters (platoon signal)
+      hr_pitch / hr_pitch_l / hr_pitch_r — which pitch types gave up HRs
+      arm_angle            — pitcher arm slot
+      whiff_percent / barrel_batted_rate / hard_hit_percent — quality metrics
+      k_percent / xera     — K rate and expected ERA
+      n_fastball_formatted / fastball_avg_speed — pitch mix and velo
+
+    prop: optional "k" for K-prop-specific preview. Defaults to HR view.
+    Returns {"tier": "free", "data": [{...}, ...]} or {} on error.
+    """
+    path = "/api/preview"
+    if prop:
+        path += f"?prop={prop}"
+    url = f"https://api-production-3a3b.up.railway.app{path}"
+    try:
+        r = _http.get(url, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/preview",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_preview_pitcher_lookup(preview_data):
+    """
+    Convert raw /api/preview response into a pitcher-name-keyed lookup dict.
+    Extracts the fields most actionable for HR prop enrichment.
+
+    Returns { pitcher_norm: {
+        home_run_percentile, hr_pa_percentile, hr_pa,
+        hr_l, hr_r, hr_l_rate, hr_r_rate,
+        hr_l_percentile, hr_r_percentile,
+        hr_l_rate_percentile, hr_r_rate_percentile,
+        hr_pitch, hr_pitch_l, hr_pitch_r,
+        arm_angle, k_percent, xera, p_era,
+        whiff_percent, whiff_pct_pct,
+        barrel_rate, barrel_rate_pct,
+        hard_hit_pct, hard_hit_pct_pct,
+        fb_velo, fb_pct, breaking_pct, offspeed_pct,
+        team, opp, game, weather, bpp,
+    } }
+    """
+    lookup = {}
+    if not preview_data or not isinstance(preview_data, dict):
+        return lookup
+    for rec in (preview_data.get("data") or []):
+        try:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname:
+                continue
+            lookup[pname] = {
+                "home_run_percentile":      rec.get("home_run_percentile"),
+                "hr_pa_percentile":         rec.get("hr_pa_percentile"),
+                "hr_pa":                    rec.get("hr_pa"),
+                "hr_l":                     rec.get("hr_l"),
+                "hr_r":                     rec.get("hr_r"),
+                "hr_l_rate":                rec.get("hr_l_rate"),
+                "hr_r_rate":                rec.get("hr_r_rate"),
+                "hr_l_percentile":          rec.get("hr_l_percentile"),
+                "hr_r_percentile":          rec.get("hr_r_percentile"),
+                "hr_l_rate_percentile":     rec.get("hr_l_rate_percentile"),
+                "hr_r_rate_percentile":     rec.get("hr_r_rate_percentile"),
+                "hr_pitch":                 rec.get("hr_pitch") or [],
+                "hr_pitch_l":               rec.get("hr_pitch_l") or [],
+                "hr_pitch_r":               rec.get("hr_pitch_r") or [],
+                "arm_angle":                rec.get("arm_angle"),
+                "k_percent":                rec.get("k_percent"),
+                "xera":                     rec.get("xera"),
+                "p_era":                    rec.get("p_era"),
+                "whiff_percent":            rec.get("whiff_percent"),
+                "whiff_pct_pct":            rec.get("whiff_percentPercentile"),
+                "barrel_rate":              rec.get("barrel_batted_rate"),
+                "barrel_rate_pct":          rec.get("barrel_batted_ratePercentile"),
+                "hard_hit_pct":             rec.get("hard_hit_percent"),
+                "hard_hit_pct_pct":         rec.get("hard_hit_percentPercentile"),
+                "fb_velo":                  rec.get("fastball_avg_speed"),
+                "fb_pct":                   rec.get("n_fastball_formatted"),
+                "breaking_pct":             rec.get("n_breaking_formatted"),
+                "offspeed_pct":             rec.get("n_offspeed_formatted"),
+                "team":                     rec.get("team", ""),
+                "opp":                      rec.get("opp", ""),
+                "game":                     rec.get("game", ""),
+                "weather":                  rec.get("weather") or {},
+                "bpp":                      rec.get("bpp", ""),
+            }
+        except Exception:
+            continue
+    return lookup
+
+
 def fetch_ev_api_outliers(sport="mlb"):
     """
     Fetch outlier props from EVSharps /api/outliers?sport={sport}.
