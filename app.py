@@ -10190,6 +10190,7 @@ def load_sport_data(sport):
     def _pf_ev_api():       return fetch_ev_api_live()
     def _pf_ev_wnba():      return fetch_ev_api_wnba()
     def _pf_ev_outliers():  return fetch_ev_api_outliers(sport)
+    def _pf_ev_feed():      return fetch_ev_feed()
     def _pf_ev_movement():  return fetch_ev_movement(sport)
 
     _parallel_fns = [
@@ -10197,14 +10198,14 @@ def load_sport_data(sport):
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_movement,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_movement,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_movement_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_movement_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10381,6 +10382,49 @@ def load_sport_data(sport):
     if _ev_outliers_lookup:
         st.session_state["ev_outliers_lookup"] = _ev_outliers_lookup
         st.session_state["ev_outliers_count"]  = len(_outliers_data)
+
+    # ── EV Feed enrichment — today's at-bat Statcast data ─────────────────
+    # /api/feed returns per-at-bat exit velo, barrel, hard-hit, results,
+    # and hr/park ratio for every batter in today's games. We build a
+    # player-keyed lookup and merge it into signal_lookup + session_state.
+    _ev_feed_lookup: dict = {}
+    if ev_feed_raw and isinstance(ev_feed_raw, dict):
+        try:
+            _ev_feed_lookup = fetch_ev_feed_player_lookup(ev_feed_raw)
+        except Exception:
+            _ev_feed_lookup = {}
+    # Backfill signal_lookup with today's live at-bat data
+    if _ev_feed_lookup:
+        for _sk, _sv in _ev_signal_lookup.items():
+            _pname = _sk[0]  # player_norm
+            _fd = _ev_feed_lookup.get(_pname)
+            if not _fd:
+                continue
+            # Same-day EV/barrel edge for HR props
+            _today_brl_edge = 0.0; _today_brl_note = ""
+            _prop_k = _sk[1]
+            if "Home Run" in _prop_k or "run" in _prop_k.lower():
+                brl_r = _fd.get("today_brl_rate", 0)
+                hh_r  = _fd.get("today_hh_rate", 0)
+                if brl_r >= 0.20:   _today_brl_edge += 0.02; _today_brl_note = f"TodayBRL {brl_r:.0%}"
+                elif brl_r >= 0.10: _today_brl_edge += 0.01; _today_brl_note = f"TodayBRL {brl_r:.0%}"
+                if hh_r >= 0.50:   _today_brl_edge += 0.01; _today_brl_note += f" HH{hh_r:.0%}"
+            _sv.update({
+                "today_pa":        _fd.get("today_pa"),
+                "today_ab":        _fd.get("today_ab"),
+                "today_brl":       _fd.get("today_brl"),
+                "today_hh":        _fd.get("today_hh"),
+                "today_hr":        _fd.get("today_hr"),
+                "today_evo_avg":   _fd.get("today_evo_avg"),
+                "today_brl_rate":  _fd.get("today_brl_rate"),
+                "today_hh_rate":   _fd.get("today_hh_rate"),
+                "hr_park":         _fd.get("hr_park"),
+                "today_results":   _fd.get("today_results", [])[:10],
+                "today_brl_edge":  _today_brl_edge,
+                "today_brl_note":  _today_brl_note,
+            })
+        st.session_state["ev_feed_lookup"]  = _ev_feed_lookup
+        st.session_state["ev_feed_summary"] = ev_feed_raw.get("all", {})
 
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props

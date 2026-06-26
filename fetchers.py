@@ -1609,6 +1609,128 @@ def fetch_ev_api_live():
         log_error_to_session("fetch_ev_api_live", str(e)[:100], "warning")
         return {}
 
+def fetch_ev_feed():
+    """
+    Fetch real-time at-bat log data from EVSharps /api/feed (public, no auth).
+    Returns a dict keyed by game string (e.g. "kc @ tb") plus "all" (league agg).
+
+    Per at-bat fields: player, pitcher, pitcherLR, pitch, bats, team, stadium,
+      evo (exit velo), la (launch angle), dist (distance ft), is_hh, is_brl,
+      result, in (inning), pa (cumulative PA count), hr/park ("N/total" HRs
+      hit at this stadium today), dt, created_at.
+
+    "all" aggregate: pitchers, batters, pitches, ff%/si%/sl%/cu% (pitch mix),
+      max_ev, hh%, brl%, avg, hr, so, liveGames, updated.
+
+    Use fetch_ev_feed_player_lookup() to turn this into a player-keyed dict.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/feed"
+    try:
+        r = _http.get(url, timeout=15)
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_feed_player_lookup(feed_data):
+    """
+    Convert raw /api/feed response into a player-keyed lookup dict.
+    Returns { player_norm: {
+        today_pa, today_ab, today_brl, today_hh, today_hr,
+        today_evo_avg (float or None), today_brl_rate, today_hh_rate,
+        hr_park_ratio (str "N/total"), today_results ([str...]),
+        pitchers_faced ([str...])
+    } }
+    """
+    from collections import defaultdict
+    lookup = defaultdict(lambda: {
+        "today_pa": 0, "today_ab": 0, "today_brl": 0, "today_hh": 0,
+        "today_hr": 0, "today_evo_sum": 0.0, "today_evo_n": 0,
+        "today_results": [], "pitchers_faced": set(),
+        "hr_park": "", "game": "",
+    })
+    if not feed_data or not isinstance(feed_data, dict):
+        return {}
+    for game_key, records in feed_data.items():
+        if game_key == "all" or not isinstance(records, list):
+            continue
+        for rec in records:
+            pname = normalize_name(rec.get("player", ""))
+            if not pname:
+                continue
+            p = lookup[pname]
+            p["game"] = rec.get("game", "")
+            try: p["today_pa"] = max(p["today_pa"], int(rec.get("pa", 0) or 0))
+            except (ValueError, TypeError): pass
+            p["today_ab"] += 1
+            if rec.get("is_brl"): p["today_brl"] += 1
+            if rec.get("is_hh"):  p["today_hh"] += 1
+            result = rec.get("result", "")
+            if result == "Home Run": p["today_hr"] += 1
+            if result: p["today_results"].append(result)
+            try:
+                evo = float(rec.get("evo") or 0)
+                if evo > 0: p["today_evo_sum"] += evo; p["today_evo_n"] += 1
+            except (ValueError, TypeError): pass
+            pitcher = rec.get("pitcher", "")
+            if pitcher: p["pitchers_faced"].add(pitcher)
+            hr_park = rec.get("hr/park", "")
+            if hr_park: p["hr_park"] = hr_park
+    # Finalize
+    result_lookup = {}
+    for pname, p in lookup.items():
+        ab = p["today_ab"]
+        evo_avg = round(p["today_evo_sum"] / p["today_evo_n"], 1) if p["today_evo_n"] else None
+        result_lookup[pname] = {
+            "today_pa":       p["today_pa"],
+            "today_ab":       ab,
+            "today_brl":      p["today_brl"],
+            "today_hh":       p["today_hh"],
+            "today_hr":       p["today_hr"],
+            "today_evo_avg":  evo_avg,
+            "today_brl_rate": round(p["today_brl"] / ab, 3) if ab else 0.0,
+            "today_hh_rate":  round(p["today_hh"]  / ab, 3) if ab else 0.0,
+            "hr_park":        p["hr_park"],
+            "today_results":  p["today_results"],
+            "pitchers_faced": list(p["pitchers_faced"]),
+            "game":           p["game"],
+        }
+    return result_lookup
+
+
+def fetch_ev_heatmap(sport="mlb", method="worst"):
+    """
+    Fetch the EVSharps Cheat Sheet heatmap data (static .json.gz files).
+    Returns { "record": {book: {prop-vs-book: {All/L3/L7/L14/L30: {wins,losses,roi,profit,kelly}}}},
+              "xy": {prop: [...]} }
+
+    sport:  "mlb" | "wnba" | "nba" | "nhl" | "nfl"
+    method: "worst" (Worst Line devig) | "probit" (Probit devig)
+    Both mlb_worst and mlb_probit confirmed accessible.
+    """
+    import gzip as _gzip
+    url = f"https://www.evsharps.com/heatmaps/{sport.lower()}_{method}.json.gz"
+    try:
+        r = _http.get(url, timeout=20, headers={
+            "Referer": "https://www.evsharps.com/cheat?sport=" + sport.lower(),
+            "Accept-Encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            try:
+                return json.loads(_gzip.decompress(r.content))
+            except Exception:
+                return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_ev_api_outliers(sport="mlb"):
     """
     Fetch outlier props from EVSharps /api/outliers?sport={sport}.
