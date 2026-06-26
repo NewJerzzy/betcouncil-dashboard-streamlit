@@ -10189,6 +10189,7 @@ def load_sport_data(sport):
     def _pf_parlayplay():   return fetch_parlayplay_props(sport)
     def _pf_ev_api():       return fetch_ev_api_live()
     def _pf_ev_wnba():      return fetch_ev_api_wnba()
+    def _pf_ev_outliers():  return fetch_ev_api_outliers(sport)
     def _pf_ev_movement():  return fetch_ev_movement(sport)
 
     _parallel_fns = [
@@ -10196,14 +10197,14 @@ def load_sport_data(sport):
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
-        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_movement,
+        _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_movement,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
-     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_movement_raw) = _results
+     kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_movement_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10319,6 +10320,67 @@ def load_sport_data(sport):
         _ev_board_props, _ev_signal_lookup = extract_ev_props_for_app(ev_api_raw, sport_filter=sport)
     else:
         _ev_board_props, _ev_signal_lookup = [], {}
+
+    # ── Outliers enrichment — merge hitRate + logs into signal_lookup ──────
+    # /api/outliers returns historical hit rates and per-game logs not in /api/ev.
+    # We build a (player_norm, prop_name) → {hit_rate, logs, pos} lookup and
+    # backfill any signal_lookup entries that match.
+    _ev_outliers_lookup: dict = {}
+    _outliers_data = (ev_outliers_raw or {}).get("data") or []
+    for _oi in _outliers_data:
+        try:
+            _op_key   = _oi.get("prop", "")
+            _op_name  = EV_PROP_MAP.get(_op_key, _op_key.title())
+            _op_player = normalize_name(_oi.get("player", "Unknown"))
+            _sig_k    = (_op_player, _op_name)
+            _hit_rate = _oi.get("hitRate")
+            _logs     = _oi.get("logs") or []
+            _pos      = _oi.get("pos", "")
+            _ou_line  = _oi.get("ou", "")
+            # Compute hit-rate edge: historical over-rate vs expected 50%
+            _hr_edge  = 0.0; _hr_note = ""
+            if _hit_rate is not None:
+                try:
+                    hr = int(_hit_rate)
+                    if hr >= 70:   _hr_edge =  0.02; _hr_note = f"HitRate {hr}% (L-hist)"
+                    elif hr >= 60: _hr_edge =  0.01; _hr_note = f"HitRate {hr}% (L-hist)"
+                    elif hr <= 25: _hr_edge = -0.02; _hr_note = f"HitRate {hr}% (L-hist)"
+                    elif hr <= 35: _hr_edge = -0.01; _hr_note = f"HitRate {hr}% (L-hist)"
+                except (ValueError, TypeError):
+                    pass
+            # Recent L10 form from logs array
+            _l10_hit_rate = None
+            if _logs and len(_logs) >= 5:
+                try:
+                    hcap = float(_oi.get("handicap", 0) or 0)
+                    l10  = [int(v) for v in _logs[:10] if v is not None]
+                    if len(l10) >= 5:
+                        hits = sum(1 for v in l10 if v > hcap)
+                        _l10_hit_rate = round(hits / len(l10), 3)
+                except (ValueError, TypeError):
+                    pass
+            _ev_outliers_lookup[_sig_k] = {
+                "hit_rate": _hit_rate, "hit_rate_edge": _hr_edge,
+                "hit_rate_note": _hr_note, "l10_hit_rate": _l10_hit_rate,
+                "logs": _logs[:20], "pos": _pos, "ou_line": _ou_line,
+            }
+        except Exception:
+            continue
+    # Backfill signal_lookup with outlier data
+    for _sk, _sv in _ev_signal_lookup.items():
+        _od = _ev_outliers_lookup.get(_sk)
+        if _od:
+            _sv.update({
+                "hit_rate":       _od["hit_rate"],
+                "hit_rate_edge":  _od["hit_rate_edge"],
+                "hit_rate_note":  _od["hit_rate_note"],
+                "l10_hit_rate":   _od["l10_hit_rate"],
+                "outlier_logs":   _od["logs"],
+                "pos":            _od.get("pos") or _sv.get("player_pos", ""),
+            })
+    if _ev_outliers_lookup:
+        st.session_state["ev_outliers_lookup"] = _ev_outliers_lookup
+        st.session_state["ev_outliers_count"]  = len(_outliers_data)
 
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props

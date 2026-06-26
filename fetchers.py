@@ -1609,6 +1609,34 @@ def fetch_ev_api_live():
         log_error_to_session("fetch_ev_api_live", str(e)[:100], "warning")
         return {}
 
+def fetch_ev_api_outliers(sport="mlb"):
+    """
+    Fetch outlier props from EVSharps /api/outliers?sport={sport}.
+    Returns props with historical hit rates and per-game logs — a
+    completely different dataset from /api/ev (no multi-book EV, but
+    has hitRate % and a raw game-log array for recent form context).
+    Schema per item: player, prop, game, team, opp, pos, bookOdds,
+      hitRate (int %), logs ([int...] last ~50 games), ou (consensus line),
+      ev, fairVal, implied, kelly, handicap.
+    Returns {} on 500/error (WNBA/NBA/NHL return 500 off-season).
+    """
+    url = f"https://api-production-3a3b.up.railway.app/api/outliers?sport={sport.lower()}"
+    try:
+        r = _http.get(url, timeout=15)
+        if r.status_code == 200:
+            j = r.json()
+            # Tag items so downstream knows the source
+            for item in (j.get("data") or []):
+                item["_outlier_source"] = True
+                item["_source_sport"]   = sport.upper()
+            return j
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_ev_api_wnba():
     """
     Fetch live WNBA player props from EVSharps /api/wnba (public endpoint).
