@@ -221,6 +221,9 @@ def fetch_nflfastr_data(season: int) -> list[dict]:
     Pull nflfastR play-by-play CSV from nflverse GitHub releases.
     Parses EPA, air yards, target share, RACR per player per game.
 
+    nflverse data is free, no auth required.
+    URL pattern: https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.csv.gz
+
     Returns list of player-game stat dicts.
     """
     cache_path = os.path.join(CACHE_DIR, f"nflfastr_{season}.pkl")
@@ -234,15 +237,21 @@ def fetch_nflfastr_data(season: int) -> list[dict]:
             except Exception:
                 pass
 
-    # Try to import pandas for CSV parsing
     try:
         import pandas as pd
     except ImportError:
         logger.warning("pandas not available — skipping nflfastR data")
         return []
 
-    # nflverse data releases URL
-    url = f"{NFLVERSE_BASE}/pbp/play_by_play_{season}.csv.gz"
+    # Try multiple URL formats — nflverse releases work from browser/Streamlit Cloud
+    urls_to_try = [
+        f"https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.csv.gz",
+        f"https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.csv",
+        # player_stats release has pre-aggregated weekly data (smaller, faster)
+        f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_{season}.csv",
+    ]
+
+    url = urls_to_try[0]
     logger.info("Fetching nflfastR PBP for %d season...", season)
 
     try:
@@ -328,6 +337,177 @@ def fetch_nflfastr_data(season: int) -> list[dict]:
 
 
 # ── Rolling team stats (PFF-style) ───────────────────────────────────────────
+
+
+def fetch_nfl_snap_counts(season: int) -> list[dict]:
+    """
+    Fetch weekly snap counts from nflverse-data releases.
+    Source: https://github.com/nflverse/nflverse-data/releases/tag/snap_counts
+
+    Returns list of {player, team, week, season, offense_snaps, offense_pct,
+                     defense_snaps, defense_pct, st_snaps, st_pct}
+    """
+    cache_path = os.path.join(CACHE_DIR, f"snap_counts_{season}.pkl")
+    if os.path.exists(cache_path):
+        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
+        if age_days < 1:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return []
+
+    url = f"https://github.com/nflverse/nflverse-data/releases/download/snap_counts/snap_counts_{season}.csv"
+    logger.info("Fetching NFL snap counts for %d...", season)
+
+    try:
+        r = _session.get(url, timeout=60)
+        if r.status_code != 200:
+            logger.warning("Snap counts %d: HTTP %s", season, r.status_code)
+            return []
+
+        import io
+        df = pd.read_csv(io.StringIO(r.text))
+        records = df.to_dict("records")
+
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(records, f)
+        except Exception:
+            pass
+
+        logger.info("Snap counts %d: %d records", season, len(records))
+        return records
+
+    except Exception as e:
+        logger.warning("Snap counts fetch error: %s", e)
+        return []
+
+
+def fetch_nfl_cpoe_data(season: int) -> list[dict]:
+    """
+    Fetch Completion Percentage Over Expected (CPOE) from nflverse pfr_advstats.
+    CPOE measures QB accuracy above/below expectation given receiver separation,
+    air yards, etc. Key prop signal for passing yards and TD props.
+
+    Source: https://github.com/nflverse/nflverse-data/releases/tag/pfr_advstats
+
+    Returns list of {player, team, week, season, cpoe, completions, attempts,
+                     yards, air_yards, yac, first_downs, touchdowns}
+    """
+    cache_path = os.path.join(CACHE_DIR, f"cpoe_{season}.pkl")
+    if os.path.exists(cache_path):
+        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
+        if age_days < 1:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return []
+
+    url = f"https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_week_pass_{season}.csv"
+    logger.info("Fetching NFL CPOE data for %d...", season)
+
+    try:
+        r = _session.get(url, timeout=60)
+        if r.status_code != 200:
+            logger.warning("CPOE %d: HTTP %s", season, r.status_code)
+            return []
+
+        import io
+        df = pd.read_csv(io.StringIO(r.text))
+
+        # Normalize column names
+        col_map = {
+            "player": "player", "pfr_player_name": "player",
+            "team": "team", "tm": "team",
+            "week": "week", "g": "week",
+            "cpoe": "cpoe", "c_pct_oe": "cpoe",
+            "cmp": "completions", "att": "attempts",
+            "yds": "yards", "air_yds": "air_yards",
+            "yac": "yac", "td": "touchdowns", "first_down": "first_downs",
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        df["season"] = season
+
+        records = df.to_dict("records")
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(records, f)
+        except Exception:
+            pass
+
+        logger.info("CPOE %d: %d QB-week records", season, len(records))
+        return records
+
+    except Exception as e:
+        logger.warning("CPOE fetch error: %s", e)
+        return []
+
+
+def fetch_nfl_player_stats_weekly(season: int) -> list[dict]:
+    """
+    Fetch pre-aggregated weekly player stats from nflverse.
+    Faster than parsing full PBP — already aggregated per player per week.
+
+    Source: https://github.com/nflverse/nflverse-data/releases/tag/player_stats
+
+    Returns list of weekly stat dicts per player.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"player_stats_weekly_{season}.pkl")
+    if os.path.exists(cache_path):
+        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
+        if age_days < 1:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return []
+
+    url = f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_{season}.csv"
+    logger.info("Fetching NFL weekly player stats for %d...", season)
+
+    try:
+        r = _session.get(url, timeout=60)
+        if r.status_code != 200:
+            # Fallback: try offense only
+            url2 = f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_offense_{season}.csv"
+            r = _session.get(url2, timeout=60)
+            if r.status_code != 200:
+                return []
+
+        import io
+        df = pd.read_csv(io.StringIO(r.text))
+        records = df.to_dict("records")
+
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(records, f)
+        except Exception:
+            pass
+
+        logger.info("Player stats %d: %d player-week records", season, len(records))
+        return records
+
+    except Exception as e:
+        logger.warning("Player stats fetch error: %s", e)
+        return []
+
 
 def compute_rolling_team_stats(games: list[dict], epa_records: list[dict]) -> dict[str, dict]:
     """
@@ -524,14 +704,21 @@ def build_nfl_features(season: int, week: Optional[int] = None) -> list[dict]:
 # ── Player prop feature builder ───────────────────────────────────────────────
 
 def build_nfl_player_features(player_name: str, team: str,
-                               season: int, epa_records: Optional[list] = None) -> dict:
+                               season: int, epa_records: Optional[list] = None,
+                               weekly_stats: Optional[list] = None,
+                               cpoe_data: Optional[list] = None) -> dict:
     """
     Build player-level features for prop analysis.
+    Includes snap counts, CPOE, and weekly aggregated stats.
 
     Returns dict with recent averages and EPA metrics for the player.
     """
     if epa_records is None:
         epa_records = fetch_nflfastr_data(season)
+    if weekly_stats is None:
+        weekly_stats = fetch_nfl_player_stats_weekly(season)
+    if cpoe_data is None:
+        cpoe_data = fetch_nfl_cpoe_data(season)
 
     # Normalize name for matching
     name_lower = player_name.lower().strip()
@@ -551,25 +738,56 @@ def build_nfl_player_features(player_name: str, team: str,
         vals = [r.get(key, 0.0) for r in records if key in r]
         return sum(vals) / max(1, len(vals))
 
+    # CPOE enrichment for QBs
+    name_lower = player_name.lower().strip()
+    cpoe_records = [c for c in (cpoe_data or [])
+                    if name_lower in str(c.get("player", "")).lower()
+                    and c.get("team") == team]
+    cpoe_recent  = cpoe_records[-5:] if cpoe_records else []
+
+    # Snap count enrichment
+    snap_records = fetch_nfl_snap_counts(season) if not weekly_stats else []
+    player_snaps = [s for s in snap_records
+                    if name_lower in str(s.get("player", "")).lower()
+                    and str(s.get("team", "")) == team]
+    snap_recent  = player_snaps[-5:] if player_snaps else []
+
     return {
-        "player":          player_name,
-        "team":            team,
-        "season":          season,
-        "games":           len(player_records),
-        "stat_type":       player_records[-1].get("stat_type", ""),
+        "player":            player_name,
+        "team":              team,
+        "season":            season,
+        "games":             len(player_records),
+        "stat_type":         player_records[-1].get("stat_type", "") if player_records else "",
         # Season averages
-        "epa_per_game":    _avg(player_records, "epa"),
-        "air_yards_avg":   _avg(player_records, "air_yards"),
-        "targets_avg":     _avg(player_records, "targets"),
-        "receptions_avg":  _avg(player_records, "receptions"),
-        "carries_avg":     _avg(player_records, "carries"),
-        "racr_avg":        _avg(player_records, "racr"),
+        "epa_per_game":      _avg(player_records, "epa"),
+        "air_yards_avg":     _avg(player_records, "air_yards"),
+        "targets_avg":       _avg(player_records, "targets"),
+        "receptions_avg":    _avg(player_records, "receptions"),
+        "carries_avg":       _avg(player_records, "carries"),
+        "racr_avg":          _avg(player_records, "racr"),
         # Recent (L5)
-        "epa_l5":          _avg(recent, "epa"),
-        "air_yards_l5":    _avg(recent, "air_yards"),
-        "targets_l5":      _avg(recent, "targets"),
-        "receptions_l5":   _avg(recent, "receptions"),
-        "carries_l5":      _avg(recent, "carries"),
+        "epa_l5":            _avg(recent, "epa"),
+        "air_yards_l5":      _avg(recent, "air_yards"),
+        "targets_l5":        _avg(recent, "targets"),
+        "receptions_l5":     _avg(recent, "receptions"),
+        "carries_l5":        _avg(recent, "carries"),
         # Trend (L5 vs season)
-        "epa_trend":       _avg(recent, "epa") - _avg(player_records, "epa"),
+        "epa_trend":         _avg(recent, "epa") - _avg(player_records, "epa"),
+        # CPOE (QB accuracy metric)
+        "cpoe_avg":          _avg(cpoe_records, "cpoe"),
+        "cpoe_l5":           _avg(cpoe_recent,  "cpoe"),
+        "cpoe_trend":        _avg(cpoe_recent, "cpoe") - _avg(cpoe_records, "cpoe"),
+        # Snap counts
+        "offense_snap_pct_avg": _avg(player_snaps, "offense_pct"),
+        "offense_snap_pct_l5":  _avg(snap_recent,  "offense_pct"),
+        # Weekly stat averages (from pre-aggregated nflverse data)
+        "passing_yards_avg": _avg([w for w in weekly_stats
+                                   if name_lower in str(w.get("player_name","")).lower()],
+                                  "passing_yards"),
+        "rushing_yards_avg": _avg([w for w in weekly_stats
+                                   if name_lower in str(w.get("player_name","")).lower()],
+                                  "rushing_yards"),
+        "receiving_yards_avg": _avg([w for w in weekly_stats
+                                     if name_lower in str(w.get("player_name","")).lower()],
+                                    "receiving_yards"),
     }
