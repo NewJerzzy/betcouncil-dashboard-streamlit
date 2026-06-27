@@ -8247,10 +8247,29 @@ def generate_gem_summary():
             book = p.get("Book", p.get("book", ""))
             odds = p.get("Odds", p.get("odds", ""))
             book_note = f" @{book}{odds}" if book else ""
+            # Sharp signals on this prop
+            prop_steam  = p.get("steam_flag", p.get("EVSteamFlag", False))
+            prop_rlm    = p.get("rlm_flag", p.get("RLMFlag", False))
+            prop_sharp  = p.get("sharp_move", p.get("SharpMoveFlag", False))
+            sharp_note  = ""
+            if prop_steam:
+                sharp_note += " 🔥STEAM"
+            if prop_rlm:
+                rlm_str = p.get("rlm_note", p.get("RLMNote", "RLM"))
+                sharp_note += f" ⚡{rlm_str[:30]}"
+            elif prop_sharp:
+                sharp_note += " 📌SHARP"
+            # Regression risk
+            reg_risk = p.get("regression_risk", p.get("HotStreakRisk", ""))
+            reg_note = f" [REGRESS:{reg_risk}]" if reg_risk and reg_risk != "NONE" else ""
+            # CPOE for QBs / pitchers
+            cpoe = p.get("cpoe", p.get("CPOE", None))
+            cpoe_note = f" CPOE:{cpoe:+.1f}" if cpoe is not None else ""
             lines.append(
                 f"{p['Tier']}: {p['Player']} {p['Side']} {p['Line']} {p['Prop']}{book_note} | "
                 f"Avg:{p['Avg']:.1f}{std_note} | Edge:{p['EdgePct']} | Prob:{p['Prob']:.1%}"
                 f"{consensus}{sig_note}{opp_note}{rest_note}{fairness}{injury}{log_note}"
+                f"{sharp_note}{reg_note}{cpoe_note}"
             )
         lines.append("")
     alt_upgrades = st.session_state.get("alt_line_upgrades", [])
@@ -8261,15 +8280,69 @@ def generate_gem_summary():
         lines.append("")
     if game_analysis:
         lines.append("=== TOP GAME BETS ===")
-        for g in game_analysis[:3]:
+        for g in game_analysis[:5]:
             bb = g.get("best_bet", {})
-            if bb:
-                pub = g.get("public_data", {})
-                pub_note = ""
-                if pub and pub.get("sharp_signals"):
-                    pub_note = f" | Sharp: {pub['sharp_signals'][0][:40]}"
-                lines.append(f"{g['matchup']}: {bb['pick']} ({bb['type']}) | Edge: {bb['edge_pct']}{pub_note}")
+            if not bb:
+                continue
+            pub       = g.get("public_data", {})
+            steam_sig = g.get("steam_signals", {})
+            rlm_sig   = g.get("rlm_score", {})
+            mkt_div   = g.get("market_divergence", {})
+            sharp_con = g.get("sharp_consensus", {})
+
+            # Base line
+            line_str = f"{g['matchup']}: {bb['pick']} ({bb['type']}) | Edge:{bb['edge_pct']} | Tier:{bb.get('tier','?')}"
+
+            # Steam flag
+            steam_parts = []
+            for k, v in steam_sig.items():
+                if isinstance(v, dict) and v.get("is_steam"):
+                    steam_parts.append(f"🔥STEAM {k.upper()} +{v.get('magnitude',0):.1f}pt in {v.get('elapsed_seconds',0)//60}min")
+            if steam_parts:
+                line_str += f" | {' '.join(steam_parts)}"
+
+            # RLM score
+            if rlm_sig.get("rlm_detected"):
+                line_str += f" | {rlm_sig.get('strength','?')} RLM(score={rlm_sig.get('rlm_score',0):.2f} mult=×{rlm_sig.get('edge_mult',1):.2f})"
+
+            # Market maker divergence
+            if mkt_div.get("divergence_detected"):
+                line_str += f" | MKT_DIV:{mkt_div.get('gap',0):.2f}pt(setter={mkt_div.get('setter_line')} taker={mkt_div.get('taker_line')}) [{mkt_div.get('signal_strength')}]"
+
+            # Sharp consensus
+            if sharp_con.get("agreement"):
+                line_str += f" | SHARP_CONSENSUS:{sharp_con.get('confidence','?')}(line={sharp_con.get('setter_line')})"
+
+            # Public signals
+            if pub and pub.get("sharp_signals"):
+                line_str += f" | {pub['sharp_signals'][0][:50]}"
+
+            # Fair values
+            if bb.get("fair_total"):
+                line_str += f" | FairTotal:{bb['fair_total']}"
+            if bb.get("fair_prob"):
+                line_str += f" | FairProb:{bb['fair_prob']:.1%}"
+
+            lines.append(line_str)
         lines.append("")
+    # ── Sharp signal summary section ──────────────────────────────────────────
+    _game_steam = st.session_state.get("game_steam_signals", {})
+    _steam_moves = st.session_state.get("steam_moves", [])
+    if _game_steam or _steam_moves:
+        lines.append("=== SHARP MONEY SIGNALS ===")
+        # Steam moves from detect_steam_moves()
+        for sm in _steam_moves[:5]:
+            lines.append(f"🔥 {sm.get('matchup','?')}: {sm.get('signal',sm.get('strength','STEAM'))} | {sm.get('direction','')} {sm.get('market','')} | Books:{','.join(sm.get('moved_books',[])[:3])}")
+        # Steam from game signals
+        for gkey, gsig in _game_steam.items():
+            tot = gsig.get("steam_total", {})
+            spr = gsig.get("steam_spread", {})
+            if tot.get("is_steam"):
+                lines.append(f"🔥 {gkey} TOTAL: steam +{tot.get('magnitude',0):.1f}pt | conf={tot.get('confidence',0):.2f}")
+            if spr.get("is_steam"):
+                lines.append(f"🔥 {gkey} SPREAD: steam +{spr.get('magnitude',0):.1f}pt | conf={spr.get('confidence',0):.2f}")
+        lines.append("")
+
     public_data = st.session_state.get("public_betting_data", {})
     if public_data:
         lines.append("=== PUBLIC BETTING ALERTS ===")
