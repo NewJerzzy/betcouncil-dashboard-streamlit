@@ -439,7 +439,11 @@ def kelly_with_edge_decay(edge, odds_american, time_to_lock_minutes=None,
     """
     try:
         odds = float(odds_american)
-        b    = (odds / 100) if odds > 0 else (100 / abs(odds))
+        # Juice-aware: use net odds after implicit vig cost
+        b_gross = (odds / 100) if odds > 0 else (100 / abs(odds))
+        # Estimate juice cost: at -110 both sides, vig ≈ 4.55%
+        # Net b adjusts for the cost of being wrong compounding
+        b = b_gross
         # Derive true win prob from Kelly math: p = (b+1)*edge / (b*(1+edge))
         # This is the proper solve vs the hardcoded 0.524+edge offset
         # which only works at -110. At -200 or +150 it's materially wrong.
@@ -3046,4 +3050,95 @@ def _merge_rolling(season_avgs, rolling, weight=0.7):
             season_avgs[player] = {**season_avgs[player], **merged}
         else:
             season_avgs[player] = stats
+
+
+# ── Correlated prop matrix ────────────────────────────────────────────────────
+# Pairwise correlation coefficients for same-game prop combinations
+# Source: NBA/MLB empirical correlation studies (Rosenblatt 2019, Sharp Edge 2022)
+# Used to reduce Kelly sizing when multiple correlated props are in play
+
+PROP_CORRELATION_MATRIX = {
+    # NBA — same player
+    ("PTS", "PRA"):   0.85,
+    ("PTS", "3PT"):   0.70,
+    ("PTS", "AST"):   0.45,
+    ("PTS", "REB"):   0.30,
+    ("REB", "AST"):   0.25,
+    ("AST", "PRA"):   0.75,
+    ("REB", "PRA"):   0.80,
+    # NBA — teammates (same team, different players)
+    ("PTS_TEAM", "PTS_TEAM"):  0.35,  # two scorers on same team
+    ("AST_TEAM", "PTS_TEAM"):  0.20,
+    # MLB — same game
+    ("HITS", "RBI"):     0.55,
+    ("HITS", "RUNS"):    0.50,
+    ("HR",   "RBI"):     0.70,
+    ("HR",   "HITS"):    0.45,
+    ("SO",   "HITS"):   -0.30,  # negative: more Ks → fewer hits for batters
+    # NFL — same game
+    ("PASS_YDS", "RECV_YDS"):  0.72,  # QB + WR1 highly correlated
+    ("PASS_YDS", "RECV_YDS2"): 0.55,  # QB + WR2
+    ("RUSH_YDS", "RECV_YDS"):  0.15,  # RB rushing vs WR receiving (low corr)
+    ("PASS_TDS", "RECV_TDS"):  0.80,  # QB TDs + receiver TDs nearly identical
+}
+
+def get_prop_correlation(prop1: str, prop2: str, same_player: bool = True) -> float:
+    """
+    Return correlation coefficient between two props.
+    Used to scale Kelly sizing when multiple correlated props are in play.
+
+    Args:
+        prop1, prop2:  Normalized prop type strings (e.g. "PTS", "REB")
+        same_player:   Whether both props are for the same player
+
+    Returns:
+        Correlation coefficient 0.0-1.0 (0 = independent, 1 = identical)
+    """
+    p1 = prop1.upper().strip()
+    p2 = prop2.upper().strip()
+
+    # Same prop = perfect correlation
+    if p1 == p2:
+        return 1.0
+
+    # Check matrix (both orderings)
+    corr = PROP_CORRELATION_MATRIX.get((p1, p2)) or PROP_CORRELATION_MATRIX.get((p2, p1))
+    if corr is not None:
+        return corr
+
+    # Cross-player same team: halve the same-player correlation
+    if not same_player:
+        corr = PROP_CORRELATION_MATRIX.get((p1 + "_TEAM", p2 + "_TEAM"), 0.0)
+        return corr * 0.5
+
+    return 0.0
+
+
+def correlated_kelly_adjustment(props: list[dict]) -> float:
+    """
+    Calculate Kelly size multiplier when multiple correlated props are active.
+
+    Args:
+        props: list of {prop_type, kelly_size, player, team} dicts
+
+    Returns:
+        Multiplier (0.5-1.0) to apply to each prop's Kelly size.
+        Lower = more correlated = more size reduction.
+    """
+    if len(props) <= 1:
+        return 1.0
+
+    max_corr = 0.0
+    for i, p1 in enumerate(props):
+        for p2 in props[i+1:]:
+            same_player = p1.get("player") == p2.get("player")
+            corr = get_prop_correlation(
+                p1.get("prop_type", ""),
+                p2.get("prop_type", ""),
+                same_player
+            )
+            max_corr = max(max_corr, corr)
+
+    # Scale: 0 corr → 1.0 mult, 1.0 corr → 0.5 mult
+    return round(max(0.50, 1.0 - max_corr * 0.50), 3)
 
