@@ -2877,10 +2877,8 @@ def find_best_alt_line(matchup, sport, home_power, away_power, home_full, away_f
         if edge_pct > best_edge:
             best_edge = edge_pct
             # Determine tier
-            if sport == "MLB":
-                tier = "SOVEREIGN" if edge_pct >= 0.06 else "ELITE" if edge_pct >= 0.03 else "APPROVED"
-            else:
-                tier = "SOVEREIGN" if edge_pct >= 0.12 else "ELITE" if edge_pct >= 0.08 else "APPROVED"
+            _gt = GAME_TIER_THRESHOLDS.get(sport, GAME_TIER_THRESHOLDS.get("NBA", {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04}))
+            tier = "SOVEREIGN" if edge_pct >= _gt["SOVEREIGN"] else "ELITE" if edge_pct >= _gt["ELITE"] else "APPROVED"
             
             # Format odds
             odds_str = f"+{price}" if price > 0 else str(price)

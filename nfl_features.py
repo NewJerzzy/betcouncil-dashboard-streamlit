@@ -7,7 +7,6 @@ Adapted from thadhutch/sports-quant with additions for BetCouncil's
 prop and game-line edge model.
 
 Feature set:
-  - PFF grade ranks (11 categories × home/away = 22 features)
   - nflfastR EPA per play (pass/rush, offense/defense)
   - Rolling season averages with season-reset logic
   - Injury impact scores
@@ -41,9 +40,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 ESPN_NFL_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 NFLVERSE_BASE = "https://github.com/nflverse/nflverse-data/releases/download"
-
-# PFF grade categories (from sports-quant)
-PFF_STATS = ["off", "pass", "pblk", "recv", "run", "rblk", "def", "rdef", "tack", "prsh", "cov"]
 
 # NFL team abbreviation → canonical name
 NFL_TEAMS = {
@@ -336,7 +332,7 @@ def fetch_nflfastr_data(season: int) -> list[dict]:
         return []
 
 
-# ── Rolling team stats (PFF-style) ───────────────────────────────────────────
+# ── Rolling team stats ───────────────────────────────────────────
 
 
 def fetch_nfl_snap_counts(season: int) -> list[dict]:
