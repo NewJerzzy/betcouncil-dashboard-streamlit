@@ -2724,7 +2724,7 @@ def generate_brief_text(all_props, all_lines, sport=None):
             except: prob_str = str(prob)
             try:    avg_str = f"{float(avg):.1f}"
             except: avg_str = str(avg)
-            parts = [f"{(tier+': ') if tier else ""}{player} {side} {line} {stat}"]
+            parts = [f"{(tier+': ') if tier else ''}{player} {side} {line} {stat}"]
             if book:    parts.append(f'@{book}{odds}')
             if avg_str: parts.append(f'Avg:{avg_str}')
             if std_dev: parts.append(f'σ:{std_dev}')
