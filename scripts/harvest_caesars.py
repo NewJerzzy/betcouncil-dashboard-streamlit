@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Caesars harvester — find submit button inside login drawer."""
+"""Caesars harvester — dismiss location modal, then login."""
 import os, sys, json, time, urllib.request, traceback
 from datetime import datetime, timezone
 
@@ -52,120 +52,157 @@ try:
         ctx = browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            locale="en-US", timezone_id="America/New_York",
+            locale="en-US", timezone_id="America/Phoenix",
+            geolocation={"latitude": 33.4484, "longitude": -112.0740},
+            permissions=["geolocation"],
         )
         ctx.add_cookies([
             {"name": "OptanonAlertBoxClosed","value": "2026-01-01T00:00:00.000Z","domain": ".caesars.com","path": "/"},
             {"name": "OptanonConsent","value": "isGpcEnabled=0&datestamp=2026-01-01&version=202301.2.0&isIABGlobal=false&hosts=&consentId=x&interactionCount=1&landingPath=NotLandingPage&groups=C0001:1,C0002:1,C0003:1,C0004:1","domain": ".caesars.com","path": "/"},
+            # Pre-set AZ location cookie
+            {"name": "userLocation","value": "az","domain": ".caesars.com","path": "/"},
+            {"name": "selectedState","value": "az","domain": ".caesars.com","path": "/"},
         ])
         ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});window.chrome={runtime:{}};")
         page = ctx.new_page()
         page.on("request", _on_request)
 
+        log(f"Navigating state={STATE}")
         try:
-            page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet", wait_until="networkidle", timeout=45000)
+            page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet",
+                      wait_until="networkidle", timeout=45000)
         except Exception as e: log(f"goto: {e}")
-        time.sleep(2)
+        time.sleep(3)
+
+        # 1. Kill OneTrust
         page.evaluate("document.querySelectorAll('[id*=\"onetrust\"],[class*=\"onetrust\"]').forEach(e=>e.remove())")
         time.sleep(0.5)
 
-        # Click LOG IN with real mouse
-        btn = page.get_by_text("LOG IN", exact=True).first
-        box = btn.bounding_box()
-        log(f"LOG IN box: {box}")
-        page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
+        # 2. Dismiss location modal — close button or X
+        log("Checking for location modal...")
+        for sel in [
+            "button.CloseButton",
+            "[aria-label='close']",
+            "[aria-label='Close']",
+            "button:has-text('×')",
+            ".change-location-drawer-container button.CloseButton",
+            "[class*='close']",
+        ]:
+            try:
+                el = page.query_selector(sel)
+                if el and el.is_visible():
+                    el.click()
+                    log(f"Dismissed modal via: {sel}")
+                    time.sleep(1)
+                    break
+            except: pass
+
+        # Also try pressing Escape
+        page.keyboard.press("Escape")
+        time.sleep(1)
+
+        # Log what's visible
+        visible_text = page.inner_text("body")[:300]
+        log(f"Page text: {visible_text[:200]}")
+
+        # 3. Click LOG IN
+        try:
+            btn = page.get_by_text("LOG IN", exact=True).first
+            box = btn.bounding_box()
+            log(f"LOG IN box: {box}")
+            page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
+            log("Clicked LOG IN")
+        except Exception as e:
+            log(f"LOG IN click: {e}")
         time.sleep(4)
 
-        # Fill email
+        # 4. Fill credentials
+        email_sel = None
         for sel in ["input[type='email']","input[name='email']","input[name='username']"]:
             try:
                 el = page.wait_for_selector(sel, timeout=8000, state="visible")
-                if el: page.fill(sel, EMAIL); log(f"email: {sel}"); break
+                if el: email_sel = sel; log(f"Email: {sel}"); break
             except: pass
 
-        time.sleep(0.3)
+        if not email_sel:
+            log("NO EMAIL FIELD")
+            # Dump all drawers
+            info = page.evaluate("""() => {
+                const drawers = [...document.querySelectorAll('[class*="Drawer"],[class*="drawer"]')]
+                    .filter(d => d.getBoundingClientRect().height > 50)
+                    .map(d => ({cls: d.className.substring(0,80), h: d.getBoundingClientRect().height,
+                                overlay: d.className.includes('closed')}));
+                return drawers;
+            }""")
+            log(f"Drawers: {json.dumps(info)}")
+        else:
+            page.fill(email_sel, EMAIL)
+            log("Filled email")
+            time.sleep(0.3)
 
-        # Fill password
-        for sel in ["input[type='password']","input[name='password']"]:
-            try:
-                el = page.wait_for_selector(sel, timeout=5000, state="visible")
-                if el: page.fill(sel, PASSWORD); log(f"pw: {sel}"); break
-            except: pass
+            for sel in ["input[type='password']","input[name='password']"]:
+                try:
+                    el = page.wait_for_selector(sel, timeout=5000, state="visible")
+                    if el: page.fill(sel, PASSWORD); log(f"Filled pw: {sel}"); break
+                except: pass
+            time.sleep(0.5)
 
-        time.sleep(0.5)
-
-        # Dump ALL buttons in the drawer after filling credentials
-        drawer_btns = page.evaluate("""() => {
-            // Find the open/visible drawer
-            const drawers = [...document.querySelectorAll('[class*="Drawer"],[class*="drawer"]')]
-                .filter(d => {
-                    const r = d.getBoundingClientRect();
-                    return r.height > 100 && r.width > 100;
-                });
-            const result = [];
-            for (const drawer of drawers) {
-                const btns = [...drawer.querySelectorAll('button,[role="button"]')]
-                    .map(b => ({
-                        text: b.textContent.trim().substring(0,50),
-                        type: b.type||'',
-                        id: b.id,
-                        cls: b.className.substring(0,80),
-                        disabled: b.disabled,
-                        h: b.getBoundingClientRect().height,
-                        w: b.getBoundingClientRect().width,
-                        x: Math.round(b.getBoundingClientRect().x),
-                        y: Math.round(b.getBoundingClientRect().y),
-                    }));
-                result.push({drawer_cls: drawer.className.substring(0,60), buttons: btns});
-            }
-            return result;
-        }""")
-        log(f"DRAWER BUTTONS: {json.dumps(drawer_btns, indent=2)}")
-
-        # Find the login submit button — look for button inside the drawer with pw field
-        submit_result = page.evaluate("""() => {
-            const pw = document.querySelector('input[type="password"]');
-            if (!pw) return 'no-pw-field';
-            // Walk up to find containing drawer
-            let el = pw;
-            while (el && el !== document.body) {
-                if (el.className && el.className.includes('Drawer')) break;
-                el = el.parentElement;
-            }
-            if (!el || el === document.body) {
-                // Try finding any visible submit button
-                const allBtns = [...document.querySelectorAll('button[type="submit"],button')]
+            # Find submit button in the same drawer as the password field
+            submit_info = page.evaluate("""() => {
+                const pw = document.querySelector('input[type="password"]');
+                if (!pw) return {result: 'no-pw'};
+                // Find visible buttons near the pw field
+                const allBtns = [...document.querySelectorAll('button')]
                     .filter(b => {
                         const r = b.getBoundingClientRect();
-                        return r.height > 0 && r.width > 0;
-                    });
-                // Find one that says LOG IN or SIGN IN or CONTINUE or LOGIN
-                const loginBtn = allBtns.find(b =>
-                    /^(LOG IN|LOGIN|SIGN IN|CONTINUE|SUBMIT)$/i.test(b.textContent.trim())
+                        return r.height > 0 && r.width > 50;
+                    })
+                    .map(b => ({
+                        text: b.textContent.trim().substring(0,40),
+                        type: b.type,
+                        x: Math.round(b.getBoundingClientRect().x),
+                        y: Math.round(b.getBoundingClientRect().y),
+                        h: Math.round(b.getBoundingClientRect().height),
+                        w: Math.round(b.getBoundingClientRect().width),
+                        disabled: b.disabled
+                    }));
+                return {buttons: allBtns};
+            }""")
+            log(f"Visible buttons after fill: {json.dumps(submit_info)}")
+
+            # Click submit — find button with LOG IN text or type=submit near the form
+            clicked = page.evaluate("""() => {
+                const btns = [...document.querySelectorAll('button')]
+                    .filter(b => b.getBoundingClientRect().height > 0 && b.getBoundingClientRect().width > 50);
+                // Priority: button saying LOG IN that's not at y<30 (not the header button)
+                const loginBtn = btns.find(b =>
+                    b.textContent.trim().toUpperCase() === 'LOG IN' &&
+                    b.getBoundingClientRect().y > 100
                 );
-                if (loginBtn) { loginBtn.click(); return 'clicked-' + loginBtn.textContent.trim(); }
-                // Just click the last visible submit
-                const submits = allBtns.filter(b => b.type === 'submit');
-                if (submits.length) { submits[submits.length-1].click(); return 'clicked-last-submit:' + submits[submits.length-1].textContent.trim(); }
-                return 'no-submit-found';
-            }
-            const btns = [...el.querySelectorAll('button')].filter(b => b.getBoundingClientRect().height > 0);
-            const sub = btns.find(b => b.type === 'submit' || /^(LOG IN|LOGIN|CONTINUE|SIGN IN)$/i.test(b.textContent.trim()));
-            if (sub) { sub.click(); return 'drawer-submit:' + sub.textContent.trim(); }
-            if (btns.length) { btns[btns.length-1].click(); return 'drawer-last-btn:' + btns[btns.length-1].textContent.trim(); }
-            return 'drawer-no-buttons';
-        }""")
-        log(f"Submit: {submit_result}")
+                if (loginBtn) { loginBtn.click(); return 'login-btn:' + loginBtn.textContent.trim(); }
+                // type=submit
+                const sub = btns.find(b => b.type === 'submit' && !b.disabled);
+                if (sub) { sub.click(); return 'submit:' + sub.textContent.trim(); }
+                return 'none';
+            }""")
+            log(f"Submit click: {clicked}")
 
-        time.sleep(25)
+            # Also try clicking via Playwright locator targeting button below y=100
+            try:
+                submit_btn = page.locator("button").filter(has_text="LOG IN").nth(1)
+                if submit_btn.count() > 0:
+                    submit_btn.click(force=True)
+                    log("Playwright click on second LOG IN button")
+            except: pass
 
-        state = page.evaluate("""() => ({
-            hasLogIn: document.body.innerText.includes('LOG IN'),
-            hasBalance: document.body.innerText.includes('BALANCE') || document.body.innerText.includes('MY BETS') || document.body.innerText.includes('Deposit'),
-            url: window.location.href,
-            snip: document.body.innerText.substring(0,200)
-        })""")
-        log(f"POST-SUBMIT: {json.dumps(state)}")
+            time.sleep(25)
+            state_info = page.evaluate("""() => ({
+                hasLogIn: document.body.innerText.includes('LOG IN'),
+                hasBalance: document.body.innerText.includes('BALANCE') || document.body.innerText.includes('MY BETS') || document.body.innerText.includes('Deposit'),
+                url: window.location.href,
+                snip: document.body.innerText.substring(0,200)
+            })""")
+            log(f"POST-SUBMIT: {json.dumps(state_info)}")
 
         deadline = time.time() + 60
         while not _done["flag"] and time.time() < deadline:
