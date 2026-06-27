@@ -9892,12 +9892,12 @@ def _fetch_parallel(fns: list) -> list:
             timings[name] = {"time": elapsed, "status": f"❌ {type(e).__name__}: {str(e)[:30]}"}
             _logger.warning("_fetch_parallel worker %s failed: %s: %s", name, type(e).__name__, e)
             return None
-    with ThreadPoolExecutor(max_workers=min(len(fns), 8)) as ex:
+    with ThreadPoolExecutor(max_workers=min(len(fns), 20)) as ex:
         futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
         for fut in as_completed(futures):
             idx = futures[fut]
             try:
-                results[idx] = fut.result()
+                results[idx] = fut.result(timeout=20)
             except Exception as _ex:
                 results[idx] = None
                 _logger.warning("_fetch_parallel future[%d] raised: %s: %s", idx, type(_ex).__name__, _ex)
@@ -10268,30 +10268,44 @@ def load_sport_data(sport):
         season_avgs = dict(PLAYER_AVERAGES.get("WNBA", {}))
         _merge_rolling(season_avgs, wnba_rolling)
     elif sport == "MLB":
-        # Populate full MLB roster IDs (all 30 teams) — cached 24h
+        # Populate full MLB roster IDs (all 30 teams) — cached 24h (fast on cache hit)
         if "mlb_roster_ids" not in st.session_state or not st.session_state["mlb_roster_ids"]:
             with st.spinner("Loading MLB roster IDs..."):
                 st.session_state["mlb_roster_ids"] = fetch_mlb_full_roster_ids()
-        mlb_rolling = fetch_mlb_rolling_averages()
+        # Run remaining MLB pre-pool fetches in parallel instead of sequentially
+        from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
+        import time as _t0
+        _mlb_pre_fns = {
+            "rolling":  fetch_mlb_rolling_averages,
+            "pitchers": fetch_mlb_probable_pitchers,
+            "woba":     _fetch_live_team_woba_splits,
+            "lineups":  fetch_mlb_confirmed_lineups_with_fallback,
+            "fl":       lambda: fetch_fantasylabs_lineups(sport),
+        }
+        _mlb_pre = {}
+        with _TPE(max_workers=5) as _pre_ex:
+            _pre_futs = {_pre_ex.submit(fn): name for name, fn in _mlb_pre_fns.items()}
+            for _fut in _ac(_pre_futs):
+                _name = _pre_futs[_fut]
+                try:
+                    _mlb_pre[_name] = _fut.result(timeout=15)
+                except Exception:
+                    _mlb_pre[_name] = None
+        mlb_rolling = _mlb_pre.get("rolling") or {}
         season_avgs = dict(PLAYER_AVERAGES.get("MLB", {}))
         _merge_rolling(season_avgs, mlb_rolling)
-        mlb_pitchers = fetch_mlb_probable_pitchers()
-        # ── Live team wOBA splits (vs LHP / RHP) — refreshed each board load ──
-        # Overwrites static config dicts with running season data from statsapi.
-        # Suppressed on error so static fallback always applies.
+        mlb_pitchers = _mlb_pre.get("pitchers") or {}
         try:
-            _live_woba = _fetch_live_team_woba_splits()
+            _live_woba = _mlb_pre.get("woba") or {}
             if _live_woba:
                 MLB_TEAM_WOBA_VS_RHP.update(_live_woba.get("vs_rhp", {}))
                 MLB_TEAM_WOBA_VS_LHP.update(_live_woba.get("vs_lhp", {}))
         except Exception:
             pass
-        # ── MLB confirmed lineup check (statsapi primary, Sleeper fallback) ──
-        _mlb_lineups = fetch_mlb_confirmed_lineups_with_fallback()
+        _mlb_lineups = _mlb_pre.get("lineups") or {}
         if _mlb_lineups:
             st.session_state["mlb_confirmed_lineups"] = _mlb_lineups
-        # FantasyLabs lineup feed — batting order + starter confirmation
-        _fl_lineups = fetch_fantasylabs_lineups(sport)
+        _fl_lineups = _mlb_pre.get("fl") or {}
         if _fl_lineups:
             st.session_state["fantasylabs_lineups"] = _fl_lineups
         st.session_state["mlb_pitchers"] = mlb_pitchers
