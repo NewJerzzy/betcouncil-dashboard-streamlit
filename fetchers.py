@@ -10682,3 +10682,485 @@ def fetch_nhl_starting_goalies():
         return goalies
     except (requests.RequestException, ValueError, KeyError):
         return {}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADDITIONAL DATA SOURCES — v9.1
+# FanGraphs, Baseball Savant direct, Unabated, OddsJam, Tennis, Golf, MMA,
+# Soccer (MLS), UFC, PropSwap
+# ══════════════════════════════════════════════════════════════════════════════
+
+import io as _io
+
+_SPORT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/html, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _cache_pkl(path, data):
+    try:
+        import pickle
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+    except Exception:
+        pass
+
+
+def _load_pkl(path, max_age_h=6):
+    import os, time, pickle
+    if not os.path.exists(path):
+        return None
+    if (time.time() - os.path.getmtime(path)) / 3600 > max_age_h:
+        return None
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        return None
+
+
+# ── FanGraphs ─────────────────────────────────────────────────────────────────
+
+def fetch_fangraphs_batting(season: int = 2026, min_pa: int = 10) -> list:
+    """
+    Fetch FanGraphs batting leaderboard — xwOBA, barrel%, hard hit%, BABIP, ISO.
+    URL: fangraphs.com/api/leaders/major-league/data
+    Free, no auth. Returns list of player stat dicts.
+    """
+    import os, time
+    cache_path = os.path.join(CACHE_DIR, f"fg_batting_{season}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=6)
+    if cached is not None:
+        return cached
+
+    url = f"https://www.fangraphs.com/api/leaders/major-league/data"
+    params = {
+        "age": 0, "pos": "all", "stats": "bat", "lg": "all",
+        "qual": min_pa, "season": season, "season1": season,
+        "month": 0, "team": 0, "pageitems": 500, "pagenum": 1,
+        "ind": 0, "type": 8,  # type=8 = advanced stats
+    }
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=20)
+        if r.status_code != 200:
+            st.warning(f"⚠️ FanGraphs batting: HTTP {r.status_code}")
+            return []
+        data = r.json()
+        players = data.get("data", data) if isinstance(data, dict) else data
+        _cache_pkl(cache_path, players)
+        return players
+    except Exception as e:
+        st.warning(f"⚠️ FanGraphs batting error: {e}")
+        return []
+
+
+def fetch_fangraphs_pitching(season: int = 2026, min_ip: int = 5) -> list:
+    """
+    Fetch FanGraphs pitching leaderboard — SIERA, xFIP, K/9, BB/9, HR/9.
+    SIERA is the best ERA estimator for next-start prop prediction.
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"fg_pitching_{season}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=6)
+    if cached is not None:
+        return cached
+
+    url = "https://www.fangraphs.com/api/leaders/major-league/data"
+    params = {
+        "pos": "all", "stats": "pit", "lg": "all",
+        "qual": min_ip, "season": season, "season1": season,
+        "month": 0, "team": 0, "pageitems": 500, "pagenum": 1,
+        "type": 8,
+    }
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=20)
+        if r.status_code != 200:
+            st.warning(f"⚠️ FanGraphs pitching: HTTP {r.status_code}")
+            return []
+        data = r.json()
+        players = data.get("data", data) if isinstance(data, dict) else data
+        _cache_pkl(cache_path, players)
+        return players
+    except Exception as e:
+        st.warning(f"⚠️ FanGraphs pitching error: {e}")
+        return []
+
+
+def fetch_fangraphs_park_factors(season: int = 2026) -> dict:
+    """
+    Fetch FanGraphs park factors per team.
+    Returns {team_abbr: {HR_factor, R_factor, H_factor}}
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"fg_park_factors_{season}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=24)
+    if cached is not None:
+        return cached
+
+    url = "https://www.fangraphs.com/api/guts.aspx"
+    params = {"type": "pf", "teamid": 0, "season": season}
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=20)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        parks = {}
+        for row in (data if isinstance(data, list) else data.get("data", [])):
+            team = row.get("Team", row.get("team", ""))
+            if team:
+                parks[team] = {
+                    "hr_factor":  float(row.get("HR",  row.get("hr",  100))) / 100,
+                    "r_factor":   float(row.get("R",   row.get("r",   100))) / 100,
+                    "h_factor":   float(row.get("H",   row.get("h",   100))) / 100,
+                    "bb_factor":  float(row.get("BB",  row.get("bb",  100))) / 100,
+                    "so_factor":  float(row.get("SO",  row.get("so",  100))) / 100,
+                }
+        _cache_pkl(cache_path, parks)
+        return parks
+    except Exception as e:
+        return {}
+
+
+# ── Baseball Savant direct ────────────────────────────────────────────────────
+
+def fetch_savant_expected_stats(season: int = 2026, player_type: str = "batter") -> list:
+    """
+    Fetch Baseball Savant expected stats (xBA, xSLG, xwOBA, xOBP).
+    Direct CSV endpoint — no auth required.
+    player_type: "batter" or "pitcher"
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"savant_xstats_{season}_{player_type}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=6)
+    if cached is not None:
+        return cached
+
+    url = "https://baseballsavant.mlb.com/expected_statistics"
+    params = {
+        "type": player_type, "year": season,
+        "position": "", "team": "", "min": "q", "csv": "true",
+    }
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=30)
+        if r.status_code != 200:
+            st.warning(f"⚠️ Savant xStats HTTP {r.status_code}")
+            return []
+        try:
+            import pandas as pd
+            df = pd.read_csv(_io.StringIO(r.text))
+            records = df.to_dict("records")
+        except Exception:
+            records = []
+            for line in r.text.split("\n")[1:]:
+                parts = line.split(",")
+                if len(parts) > 5:
+                    records.append({"raw": line})
+        _cache_pkl(cache_path, records)
+        return records
+    except Exception as e:
+        st.warning(f"⚠️ Savant xStats error: {e}")
+        return []
+
+
+def fetch_savant_statcast_player(player_id: int, season: int = 2026) -> dict:
+    """
+    Fetch Statcast data for a specific player from Baseball Savant.
+    Returns detailed exit velo, launch angle, barrel%, hard hit%.
+    player_id: MLB player ID (e.g. 660271 = Juan Soto)
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"savant_player_{player_id}_{season}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=3)
+    if cached is not None:
+        return cached
+
+    url = "https://baseballsavant.mlb.com/savant-player"
+    params = {
+        "player_id": player_id, "stats": "statcast",
+        "game_date_gt": f"{season}-03-01",
+        "game_date_lt": f"{season}-11-01",
+        "type": "batter",
+    }
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=20)
+        if r.status_code != 200:
+            return {}
+        # Parse JSON from HTML page (embedded in script tag)
+        import re
+        match = re.search(r'window\.statcast_data\s*=\s*(\{[^;]+\})', r.text)
+        if match:
+            import json
+            data = json.loads(match.group(1))
+            _cache_pkl(cache_path, data)
+            return data
+        return {}
+    except Exception:
+        return {}
+
+
+# ── Unabated (no-vig Pinnacle screener) ──────────────────────────────────────
+
+def fetch_unabated_lines(sport: str = "mlb") -> list:
+    """
+    Fetch Unabated no-vig lines — Pinnacle-based fair value screener.
+    Free public data. Returns list of {game, market, fair_line, books}.
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"unabated_{sport}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=0.25)  # 15 min cache
+    if cached is not None:
+        return cached
+
+    # Unabated public endpoint
+    url = f"https://unabated.com/api/lines/{sport.lower()}"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            # Try alternate endpoint
+            url2 = f"https://unabated.com/lines/{sport.lower()}"
+            r = _http.get(url2, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            games = data if isinstance(data, list) else data.get("games", data.get("data", []))
+            _cache_pkl(cache_path, games)
+            return games
+        return []
+    except Exception:
+        return []
+
+
+# ── OddsJam positive EV ───────────────────────────────────────────────────────
+
+def fetch_oddsjam_positive_ev(sport: str = "baseball_mlb",
+                               api_key: str = "") -> list:
+    """
+    Fetch positive EV props from OddsJam.
+    Requires API key (free tier available at oddsjam.com).
+    Set ODDSJAM_KEY in Streamlit secrets.
+    """
+    import os
+    if not api_key:
+        try:
+            api_key = st.secrets.get("ODDSJAM_KEY", "")
+        except Exception:
+            pass
+    if not api_key:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"oddsjam_ev_{sport}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=0.25)
+    if cached is not None:
+        return cached
+
+    url = "https://api.oddsjam.com/api/v2/positive-ev"
+    params = {"apikey": api_key, "sport": sport, "min_ev": 1.0}
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code == 401:
+            st.warning("⚠️ OddsJam: invalid API key — set ODDSJAM_KEY in secrets")
+            return []
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        props = data.get("data", data) if isinstance(data, dict) else data
+        _cache_pkl(cache_path, props)
+        return props
+    except Exception:
+        return []
+
+
+# ── Tennis ────────────────────────────────────────────────────────────────────
+
+def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
+    """
+    Fetch live/upcoming tennis scores from ESPN hidden API.
+    tour: "atp" or "wta"
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"tennis_{tour}_scoreboard.pkl")
+    cached = _load_pkl(cache_path, max_age_h=0.5)
+    if cached is not None:
+        return cached
+
+    url = f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        _cache_pkl(cache_path, data)
+        return data
+    except Exception:
+        return {}
+
+
+def fetch_tennis_player_stats(player_id: str, tour: str = "atp") -> dict:
+    """Fetch tennis player stats from ESPN."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/athletes/{player_id}"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+# ── Golf ──────────────────────────────────────────────────────────────────────
+
+def fetch_golf_scoreboard(tour: str = "pga") -> dict:
+    """Fetch live golf leaderboard from ESPN hidden API."""
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"golf_{tour}_scoreboard.pkl")
+    cached = _load_pkl(cache_path, max_age_h=0.25)
+    if cached is not None:
+        return cached
+
+    url = f"https://site.api.espn.com/apis/site/v2/sports/golf/{tour}/scoreboard"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        _cache_pkl(cache_path, data)
+        return data
+    except Exception:
+        return {}
+
+
+def fetch_golf_player_stats(player_id: str, tour: str = "pga") -> dict:
+    """Fetch golf player historical stats from ESPN."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/golf/{tour}/athletes/{player_id}/statistics"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+# ── MMA / UFC ─────────────────────────────────────────────────────────────────
+
+def fetch_ufc_scoreboard() -> dict:
+    """Fetch UFC/MMA event data from ESPN."""
+    import os
+    cache_path = os.path.join(CACHE_DIR, "ufc_scoreboard.pkl")
+    cached = _load_pkl(cache_path, max_age_h=1)
+    if cached is not None:
+        return cached
+
+    url = "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        _cache_pkl(cache_path, data)
+        return data
+    except Exception:
+        return {}
+
+
+def fetch_ufc_fighter_stats(fighter_id: str) -> dict:
+    """Fetch UFC fighter stats from ESPN."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes/{fighter_id}"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+# ── Soccer / MLS ──────────────────────────────────────────────────────────────
+
+def fetch_soccer_scoreboard(league: str = "usa.1") -> dict:
+    """
+    Fetch soccer scoreboard from ESPN.
+    league: usa.1=MLS, eng.1=EPL, esp.1=La Liga, ger.1=Bundesliga,
+            ita.1=Serie A, fra.1=Ligue 1, uefa.champions=UCL
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"soccer_{league.replace('.','_')}_scoreboard.pkl")
+    cached = _load_pkl(cache_path, max_age_h=0.25)
+    if cached is not None:
+        return cached
+
+    url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        _cache_pkl(cache_path, data)
+        return data
+    except Exception:
+        return {}
+
+
+def fetch_soccer_standings(league: str = "usa.1", season: int = 2026) -> list:
+    """Fetch soccer standings from ESPN."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/standings?season={season}"
+    try:
+        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return data.get("standings", data.get("children", []))
+    except Exception:
+        return []
+
+
+# ── PropSwap (secondary market pricing) ──────────────────────────────────────
+
+def fetch_propswap_listings(sport: str = "baseball") -> list:
+    """
+    Fetch PropSwap secondary market ticket listings.
+    Secondary market prices reveal true sharp value on props.
+    Listings where market price > face value = sharp money on that side.
+    """
+    import os
+    cache_path = os.path.join(CACHE_DIR, f"propswap_{sport}.pkl")
+    cached = _load_pkl(cache_path, max_age_h=1)
+    if cached is not None:
+        return cached
+
+    url = f"https://propswap.com/api/v1/events"
+    params = {"sport": sport, "status": "active"}
+    try:
+        r = _http.get(url, params=params, headers=_SPORT_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        listings = data if isinstance(data, list) else data.get("events", data.get("data", []))
+        _cache_pkl(cache_path, listings)
+        return listings
+    except Exception:
+        return []
+
+
+def get_propswap_sharp_signal(player: str, prop_type: str,
+                               listings: list) -> dict:
+    """
+    Check if PropSwap secondary market shows sharp signal for a prop.
+    Market price > face value = demand exceeds supply = sharp side.
+    """
+    name_lower = player.lower().strip()
+    prop_lower  = prop_type.lower().strip()
+
+    for listing in listings:
+        name = str(listing.get("player_name", listing.get("name", ""))).lower()
+        prop = str(listing.get("prop_type", listing.get("stat", ""))).lower()
+        if name_lower not in name and prop_lower not in prop:
+            continue
+        face  = float(listing.get("face_value", listing.get("price", 0)) or 0)
+        mkt   = float(listing.get("market_value", listing.get("last_sale", 0)) or 0)
+        if face > 0 and mkt > 0:
+            premium = (mkt - face) / face
+            return {
+                "sharp_signal":  premium > 0.05,  # 5%+ premium = demand
+                "premium_pct":   round(premium, 3),
+                "face_value":    face,
+                "market_value":  mkt,
+                "direction":     "OVER" if premium > 0 else "UNDER",
+            }
+    return {"sharp_signal": False, "premium_pct": 0.0}
+
