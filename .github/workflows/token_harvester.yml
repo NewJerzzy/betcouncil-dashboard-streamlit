@@ -1,0 +1,56 @@
+name: Token Harvester
+# Runs every 18 hours so tokens stay fresh (Caesars JWT ~24h, FanDuel PX ~20m+).
+# Trigger manually from the Actions tab for an immediate refresh.
+on:
+  schedule:
+    - cron: '0 2,20 * * *'   # 02:00 and 20:00 UTC (18 h apart)
+  workflow_dispatch:
+
+jobs:
+  # ── Caesars: Bearer JWT + AWS WAF token ──────────────────────────────────
+  harvest-caesars:
+    name: "Caesars — JWT + WAF"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Playwright + stealth
+        run: |
+          pip install playwright playwright-stealth
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Harvest Caesars tokens
+        run: xvfb-run -a python scripts/harvest_caesars.py
+        env:
+          CAESARS_EMAIL:    ${{ secrets.CAESARS_EMAIL }}
+          CAESARS_PASSWORD: ${{ secrets.CAESARS_PASSWORD }}
+          CAESARS_STATE:    ${{ secrets.CAESARS_STATE }}
+          GIST_TOKEN:       ${{ secrets.GIST_TOKEN }}
+          GIST_ID:          "7e52e1c2c2054847c7c4663a157386c5"
+
+  # ── FanDuel: PerimeterX x-px-context token ───────────────────────────────
+  harvest-fanduel:
+    name: "FanDuel — PerimeterX"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Playwright + stealth
+        run: |
+          pip install playwright playwright-stealth
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Harvest FanDuel tokens
+        run: xvfb-run -a python scripts/harvest_fanduel.py
+        env:
+          FANDUEL_EMAIL:    ${{ secrets.FANDUEL_EMAIL }}
+          FANDUEL_PASSWORD: ${{ secrets.FANDUEL_PASSWORD }}
+          FANDUEL_STATE:    ${{ secrets.FANDUEL_STATE }}
+          GIST_TOKEN:       ${{ secrets.GIST_TOKEN }}
+          GIST_ID:          "7e52e1c2c2054847c7c4663a157386c5"
