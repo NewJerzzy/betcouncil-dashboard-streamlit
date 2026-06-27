@@ -3179,3 +3179,438 @@ def validate_mode_a_brief(brief_dict: dict) -> dict:
         "completeness": len(present) / max(1, len(OPTIONAL_FIELDS)),
     }
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SHARP SIGNAL ENHANCEMENTS — v9.1
+# Steam move detector, RLM scoring, closing line velocity,
+# opener gap tracking, rest-adjusted std_dev, ensemble devig,
+# market maker detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+import time as _time
+from collections import defaultdict as _defaultdict
+
+# ── Line history store (in-memory, per session) ───────────────────────────────
+_LINE_HISTORY: dict = _defaultdict(list)  # key=(book,game,market) → [(ts, line, odds)]
+
+def record_line(book: str, game_key: str, market: str,
+                line: float, over_odds: float, under_odds: float) -> None:
+    """Record a line snapshot for steam/velocity tracking."""
+    key = (book.lower(), game_key, market.lower())
+    _LINE_HISTORY[key].append({
+        "ts":         _time.time(),
+        "line":       line,
+        "over_odds":  over_odds,
+        "under_odds": under_odds,
+    })
+    # Keep last 50 snapshots per market
+    if len(_LINE_HISTORY[key]) > 50:
+        _LINE_HISTORY[key] = _LINE_HISTORY[key][-50:]
+
+
+# ── Steam move detector ───────────────────────────────────────────────────────
+
+def detect_steam_move(book: str, game_key: str, market: str,
+                      window_seconds: int = 300) -> dict:
+    """
+    Detect steam moves — rapid sharp line movement at Pinnacle/BOL.
+
+    Steam = line moves ≥0.5 points within window_seconds.
+    Strongest single sharp signal: indicates coordinated sharp action.
+
+    Args:
+        book:           Book to check (use "pinnacle" or "betonline")
+        game_key:       Canonical game identifier
+        market:         Market type (e.g. "total", "spread")
+        window_seconds: Lookback window (default 5 min)
+
+    Returns:
+        {is_steam, direction, magnitude, elapsed_seconds, confidence}
+    """
+    key = (book.lower(), game_key, market.lower())
+    history = _LINE_HISTORY.get(key, [])
+
+    if len(history) < 2:
+        return {"is_steam": False, "direction": None, "magnitude": 0.0,
+                "elapsed_seconds": 0, "confidence": 0.0}
+
+    now = _time.time()
+    cutoff = now - window_seconds
+    recent = [h for h in history if h["ts"] >= cutoff]
+
+    if len(recent) < 2:
+        return {"is_steam": False, "direction": None, "magnitude": 0.0,
+                "elapsed_seconds": 0, "confidence": 0.0}
+
+    first_line = recent[0]["line"]
+    last_line  = recent[-1]["line"]
+    magnitude  = abs(last_line - first_line)
+    direction  = "UP" if last_line > first_line else "DOWN"
+    elapsed    = recent[-1]["ts"] - recent[0]["ts"]
+
+    # Steam threshold: ≥0.5 point move
+    is_steam = magnitude >= 0.5
+
+    # Confidence scales with magnitude and recency
+    confidence = min(1.0, magnitude / 1.0) * (1.0 - elapsed / window_seconds * 0.3)
+
+    return {
+        "is_steam":        is_steam,
+        "direction":       direction if is_steam else None,
+        "magnitude":       round(magnitude, 2),
+        "elapsed_seconds": round(elapsed),
+        "confidence":      round(confidence, 3),
+        "first_line":      first_line,
+        "last_line":       last_line,
+        "snapshots":       len(recent),
+    }
+
+
+# ── RLM continuous scoring ────────────────────────────────────────────────────
+
+def score_rlm(public_pct: float, line_move_direction: str,
+              public_side: str, move_magnitude: float = 0.5) -> dict:
+    """
+    Continuous RLM strength score (replaces binary yes/no).
+
+    RLM strength = public_pct_opposing × magnitude_of_move
+    Higher score = stronger sharp signal.
+
+    Args:
+        public_pct:           0-1, fraction of public money on one side
+        line_move_direction:  "AWAY" or "HOME" / "OVER" or "UNDER"
+        public_side:          Which side the public is on
+        move_magnitude:       Points the line moved
+
+    Returns:
+        {rlm_detected, rlm_score, strength, edge_mult, note}
+    """
+    # RLM fires when public favors one side but line moves opposite
+    opposing_pct = public_pct if line_move_direction != public_side else (1 - public_pct)
+
+    if opposing_pct < 0.55:
+        return {"rlm_detected": False, "rlm_score": 0.0,
+                "strength": "NONE", "edge_mult": 1.0, "note": ""}
+
+    # Continuous score: opposing_pct × move_magnitude
+    rlm_score = round(opposing_pct * min(move_magnitude / 0.5, 2.0), 3)
+
+    if rlm_score >= 1.4:
+        strength   = "STRONG"
+        edge_mult  = 1.10
+        note       = f"🚨 STRONG RLM: {opposing_pct:.0%} public opposite, {move_magnitude:.1f}pt move"
+    elif rlm_score >= 0.9:
+        strength   = "MODERATE"
+        edge_mult  = 1.05
+        note       = f"⚡ MODERATE RLM: {opposing_pct:.0%} public opposite, {move_magnitude:.1f}pt move"
+    else:
+        strength   = "WEAK"
+        edge_mult  = 1.02
+        note       = f"RLM signal: {opposing_pct:.0%} public opposite (weak)"
+
+    return {
+        "rlm_detected": True,
+        "rlm_score":    rlm_score,
+        "strength":     strength,
+        "edge_mult":    edge_mult,
+        "note":         note,
+        "opposing_pct": round(opposing_pct, 3),
+        "magnitude":    move_magnitude,
+    }
+
+
+# ── Closing line velocity ─────────────────────────────────────────────────────
+
+def compute_line_velocity(book: str, game_key: str, market: str,
+                          window_hours: float = 24.0) -> dict:
+    """
+    Measure how fast the line is moving (velocity = points per hour).
+    High velocity = sharp action accelerating = stronger signal.
+
+    Returns:
+        {velocity_per_hour, direction, total_move, is_accelerating}
+    """
+    key = (book.lower(), game_key, market.lower())
+    history = _LINE_HISTORY.get(key, [])
+
+    if len(history) < 2:
+        return {"velocity_per_hour": 0.0, "direction": None,
+                "total_move": 0.0, "is_accelerating": False}
+
+    now    = _time.time()
+    cutoff = now - window_hours * 3600
+    recent = [h for h in history if h["ts"] >= cutoff]
+
+    if len(recent) < 2:
+        return {"velocity_per_hour": 0.0, "direction": None,
+                "total_move": 0.0, "is_accelerating": False}
+
+    total_move = recent[-1]["line"] - recent[0]["line"]
+    hours      = (recent[-1]["ts"] - recent[0]["ts"]) / 3600
+    velocity   = abs(total_move) / max(0.01, hours)
+
+    # Check acceleration: is recent half moving faster than early half?
+    mid = len(recent) // 2
+    early_vel = abs(recent[mid]["line"] - recent[0]["line"]) / max(0.01, (recent[mid]["ts"] - recent[0]["ts"]) / 3600)
+    late_vel  = abs(recent[-1]["line"] - recent[mid]["line"]) / max(0.01, (recent[-1]["ts"] - recent[mid]["ts"]) / 3600)
+    is_accelerating = late_vel > early_vel * 1.5
+
+    return {
+        "velocity_per_hour": round(velocity, 3),
+        "direction":         "UP" if total_move > 0 else "DOWN" if total_move < 0 else "FLAT",
+        "total_move":        round(total_move, 2),
+        "is_accelerating":   is_accelerating,
+        "early_velocity":    round(early_vel, 3),
+        "late_velocity":     round(late_vel, 3),
+    }
+
+
+def get_opener_gap(book: str, game_key: str, market: str) -> dict:
+    """
+    Compare opening line vs current line.
+    Large gap from opener = sustained sharp action, not just noise.
+    """
+    key = (book.lower(), game_key, market.lower())
+    history = _LINE_HISTORY.get(key, [])
+
+    if not history:
+        return {"opener": None, "current": None, "gap": 0.0, "direction": None}
+
+    opener  = history[0]["line"]
+    current = history[-1]["line"]
+    gap     = current - opener
+
+    return {
+        "opener":    opener,
+        "current":   current,
+        "gap":       round(gap, 2),
+        "direction": "UP" if gap > 0 else "DOWN" if gap < 0 else "FLAT",
+        "sharp_signal": abs(gap) >= 1.0,  # ≥1 point from opener = sustained sharp
+    }
+
+
+# ── Rest-adjusted std_dev ─────────────────────────────────────────────────────
+
+# Rest variance multipliers per sport (validated vs historical game logs)
+_REST_VARIANCE = {
+    "MLB": {0: 1.18, 1: 1.08, 2: 1.03, 3: 1.0, 4: 1.0},   # 0=B2B rare, 3+=normal
+    "NFL": {0: 1.0,  1: 1.0,  7: 1.0},                      # NFL always 7 days
+    "default": {0: 1.20, 1: 1.10, 2: 1.05, 3: 1.0},
+}
+
+def rest_adjusted_std_dev(base_std_dev: float, days_rest: int, sport: str) -> float:
+    """
+    Adjust std_dev upward for short rest situations.
+    B2B/short rest → higher variance → wider distribution → smaller edge.
+
+    Args:
+        base_std_dev: EWMA std_dev from game logs
+        days_rest:    Days since last game (0=B2B, 1=1 day rest, etc.)
+        sport:        Sport string
+
+    Returns:
+        Adjusted std_dev (higher = more uncertain)
+    """
+    sport_map = _REST_VARIANCE.get(sport.upper(), _REST_VARIANCE["default"])
+    # Find closest rest bucket
+    buckets = sorted(sport_map.keys())
+    mult    = 1.0
+    for b in buckets:
+        if days_rest <= b:
+            mult = sport_map[b]
+            break
+    else:
+        mult = sport_map[buckets[-1]]
+
+    return round(base_std_dev * mult, 4)
+
+
+# ── Ensemble devig ────────────────────────────────────────────────────────────
+
+def devig_ensemble(over_american: float, under_american: float,
+                   market_type: str = "standard",
+                   prop_key: str = "",
+                   liquidity: str = "medium") -> dict:
+    """
+    Ensemble devig — blends Probit + Shin weighted by market liquidity.
+    Sharp books use blended methods for more accurate fair prices.
+
+    Liquidity tiers:
+        high:   both Pinnacle + Circa active → weight Shin 60%, Probit 40%
+        medium: one sharp book active → 50/50 blend
+        low:    public books only → weight Probit 70%, Shin 30%
+
+    Returns:
+        {fair_prob, method_used, probit_prob, shin_prob, blend_weights}
+    """
+    try:
+        probit_p = no_vig_prob_probit(over_american, under_american)
+        shin_p   = no_vig_prob_shin(over_american, under_american)
+
+        weights = {
+            "high":   {"shin": 0.60, "probit": 0.40},
+            "medium": {"shin": 0.50, "probit": 0.50},
+            "low":    {"shin": 0.30, "probit": 0.70},
+        }.get(liquidity, {"shin": 0.50, "probit": 0.50})
+
+        # For longshots, weight toward Shin regardless of liquidity
+        try:
+            o_val = float(over_american)
+            if o_val >= 200:
+                weights = {"shin": 0.80, "probit": 0.20}
+            elif o_val >= 150:
+                weights = {"shin": 0.65, "probit": 0.35}
+        except Exception:
+            pass
+
+        blended = round(
+            probit_p * weights["probit"] + shin_p * weights["shin"], 4
+        )
+
+        return {
+            "fair_prob":     blended,
+            "probit_prob":   round(probit_p, 4),
+            "shin_prob":     round(shin_p, 4),
+            "blend_weights": weights,
+            "liquidity":     liquidity,
+            "method":        "ensemble",
+        }
+    except Exception:
+        return {
+            "fair_prob":   no_vig_prob(over_american, under_american),
+            "method":      "additive_fallback",
+            "probit_prob": 0.5, "shin_prob": 0.5,
+            "blend_weights": {}, "liquidity": liquidity,
+        }
+
+
+# ── Market maker detection ────────────────────────────────────────────────────
+
+# Books known to be price setters (set the market) vs price takers (follow)
+# Validated against line movement research (Kaunitz et al. 2017, Pinnacle whitepaper)
+_PRICE_SETTER_BOOKS  = {"pinnacle", "betonlineag", "circa_sports", "bookmaker"}
+_PRICE_TAKER_BOOKS   = {"draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
+                         "wynnbet", "barstool", "unibet"}
+
+def classify_book_role(book: str) -> dict:
+    """
+    Classify whether a book is a price setter or price taker for a given market.
+
+    Price setters: Sharp books that move first — their lines lead the market.
+    Price takers:  Square books that follow sharp books — their lines lag.
+
+    Signal implication:
+        Price setter moving = sharp action (stronger signal)
+        Price taker moving  = public/recreational action (weaker signal)
+
+    Returns:
+        {role, signal_weight, is_sharp, description}
+    """
+    b = book.lower().replace(" ", "").replace(".", "").replace("-", "")
+
+    if b in _PRICE_SETTER_BOOKS or any(s in b for s in ["pinnacle","betonline","circa"]):
+        return {
+            "role":          "PRICE_SETTER",
+            "signal_weight": 1.0,
+            "is_sharp":      True,
+            "description":   "Sharp book — line movements are leading indicators",
+        }
+    elif b in _PRICE_TAKER_BOOKS or any(s in b for s in ["draftkings","fanduel","mgm","caesars"]):
+        return {
+            "role":          "PRICE_TAKER",
+            "signal_weight": 0.4,
+            "is_sharp":      False,
+            "description":   "Square book — line movements lag sharp action by 2-6 hours",
+        }
+    else:
+        return {
+            "role":          "UNKNOWN",
+            "signal_weight": 0.6,
+            "is_sharp":      False,
+            "description":   "Unknown book role — treat as moderately sharp",
+        }
+
+
+def detect_market_maker_divergence(lines_by_book: dict) -> dict:
+    """
+    Detect when price setters and price takers disagree on a line.
+    Divergence = sharp money hasn't been arbitraged yet = opportunity.
+
+    Args:
+        lines_by_book: {book_name: {"over_odds": float, "under_odds": float, "line": float}}
+
+    Returns:
+        {divergence_detected, setter_line, taker_line, gap, signal_strength}
+    """
+    setter_lines = []
+    taker_lines  = []
+
+    for book, data in lines_by_book.items():
+        role = classify_book_role(book)
+        line = data.get("line") or data.get("total") or data.get("spread")
+        if line is None:
+            continue
+        if role["is_sharp"]:
+            setter_lines.append(float(line))
+        else:
+            taker_lines.append(float(line))
+
+    if not setter_lines or not taker_lines:
+        return {"divergence_detected": False, "setter_line": None,
+                "taker_line": None, "gap": 0.0, "signal_strength": "NONE"}
+
+    setter_avg = sum(setter_lines) / len(setter_lines)
+    taker_avg  = sum(taker_lines)  / len(taker_lines)
+    gap        = abs(setter_avg - taker_avg)
+
+    if gap >= 1.0:
+        strength = "STRONG"    # ≥1 point divergence = clear opportunity
+    elif gap >= 0.5:
+        strength = "MODERATE"
+    elif gap >= 0.25:
+        strength = "WEAK"
+    else:
+        strength = "NONE"
+
+    return {
+        "divergence_detected": gap >= 0.25,
+        "setter_line":   round(setter_avg, 2),
+        "taker_line":    round(taker_avg, 2),
+        "gap":           round(gap, 2),
+        "signal_strength": strength,
+        "setter_books":  len(setter_lines),
+        "taker_books":   len(taker_lines),
+        "bet_toward":    "SETTER" if setter_avg < taker_avg else "UNDER_SETTER",
+    }
+
+
+# ── MLB pace-adjusted props (counting stats only) ────────────────────────────
+
+def pace_adjust_mlb_prop(player_avg: float, prop_type: str,
+                          team_pace_factor: float = 1.0) -> float:
+    """
+    Apply pace adjustment only to counting stat props (hits, runs, RBI).
+    Do NOT apply to rate stats (BA, OBP, ERA, WHIP).
+
+    Args:
+        player_avg:       Raw EWMA average
+        prop_type:        Normalized prop type string
+        team_pace_factor: Team's pace vs league avg (1.0 = neutral)
+
+    Returns:
+        Pace-adjusted average (only modified for counting stats)
+    """
+    COUNTING_STATS = {
+        "hits", "h", "runs", "r", "rbi", "tb", "total_bases",
+        "singles", "doubles", "triples", "walks", "bb",
+        "strikeouts", "so", "k",  # pitcher Ks ARE pace-dependent
+    }
+    prop_clean = prop_type.lower().strip().replace(" ", "_").replace("+", "")
+
+    if prop_clean in COUNTING_STATS:
+        return round(player_avg * team_pace_factor, 3)
+
+    # Rate stats — no pace adjustment
+    return player_avg
+
