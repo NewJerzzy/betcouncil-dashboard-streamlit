@@ -3759,16 +3759,8 @@ def extract_ev_props(ev_data, book_key="hr", sport_filter=None):
 
 
 def fetch_books_parallel(sport, book_fns):
-    """Run multiple book scrapers in parallel. EV API fetched once at module level."""
+    """Run multiple book scrapers in parallel."""
     all_props = []
-
-    # Fetch EV API once (cached) BEFORE the thread pool so it's not called per-sport
-    ev_raw = fetch_ev_api()
-    if ev_raw and ev_raw.get("data"):
-        ev_props = extract_ev_props(ev_raw, book_key="hr", sport_filter=sport)
-        if ev_props:
-            all_props.extend(ev_props)
-            print(f"    EV API: {len(ev_props)} Hard Rock props added for {sport}")
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(fn, sport): name for name, fn in book_fns.items()}
