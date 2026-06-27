@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Caesars token harvester — fixed login selectors based on actual page text."""
+"""Caesars token harvester — dismiss OneTrust overlay before login."""
 import os, sys, json, time, urllib.request, urllib.error
 from datetime import datetime, timezone
 
@@ -34,8 +34,7 @@ _done = {"flag": False}
 
 def _on_request(request):
     if _done["flag"]: return
-    url = request.url
-    if "americanwagering.com" not in url: return
+    if "americanwagering.com" not in request.url: return
     try:
         hdrs = request.all_headers()
     except Exception: return
@@ -45,15 +44,55 @@ def _on_request(request):
     harvested["waf_token"]   = hdrs.get("x-aws-waf-token", "")
     harvested["captured_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _done["flag"] = True
-    log(f"✅ Bearer captured (len={len(harvested['bearer_jwt'])}, url={url[:80]})")
+    log(f"✅ Bearer captured len={len(harvested['bearer_jwt'])} url={request.url[:80]}")
 
 def snap(page, label):
     try:
         page.screenshot(path=f"/tmp/caesars_{label}.png")
-        txt = page.inner_text("body")[:300].replace("\n", " ")
-        log(f"[{label}] url={page.url[:80]} text={txt[:200]}")
+        txt = page.inner_text("body")[:200].replace("\n", " ")
+        log(f"[{label}] {page.url[:70]} | {txt[:150]}")
     except Exception as e:
-        log(f"snap failed ({label}): {e}")
+        log(f"snap {label}: {e}")
+
+def dismiss_onetrust(page):
+    """Force-remove OneTrust overlay and accept cookies via JS."""
+    try:
+        page.evaluate("""
+            () => {
+                // Remove the blocking overlay
+                const overlay = document.querySelector('.onetrust-pc-dark-filter');
+                if (overlay) overlay.remove();
+                // Remove the entire consent SDK
+                const sdk = document.getElementById('onetrust-consent-sdk');
+                if (sdk) sdk.remove();
+                // Also try clicking accept button if it exists
+                const accept = document.getElementById('onetrust-accept-btn-handler');
+                if (accept) accept.click();
+                // Set consent cookies so it doesn't re-appear
+                document.cookie = 'OptanonAlertBoxClosed=' + new Date().toISOString();
+                document.cookie = 'OptanonConsent=isGpcEnabled=0&datestamp=' + new Date().toISOString();
+            }
+        """)
+        log("OneTrust overlay dismissed")
+        time.sleep(0.5)
+    except Exception as e:
+        log(f"OneTrust dismiss: {e}")
+
+def js_click(page, text_options):
+    """Click element containing any of the given texts via JS."""
+    texts_js = json.dumps(text_options)
+    result = page.evaluate(f"""
+        () => {{
+            const texts = {texts_js};
+            const els = [...document.querySelectorAll('button, a, [role="button"], div[class*="login"], span[class*="login"]')];
+            for (const t of texts) {{
+                const target = els.find(e => e.textContent.trim().toUpperCase().includes(t.toUpperCase()));
+                if (target) {{ target.click(); return target.textContent.trim(); }}
+            }}
+            return null;
+        }}
+    """)
+    return result
 
 log(f"Starting — state={STATE}")
 
@@ -75,6 +114,14 @@ with sync_playwright() as pw:
         Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
         Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
     """)
+    # Pre-set OneTrust consent cookies so overlay never appears
+    ctx.add_cookies([
+        {"name": "OptanonAlertBoxClosed", "value": "2026-01-01T00:00:00.000Z",
+         "domain": ".caesars.com", "path": "/"},
+        {"name": "OptanonConsent", "value": "isGpcEnabled=0&datestamp=2026-01-01",
+         "domain": ".caesars.com", "path": "/"},
+    ])
+
     page = ctx.new_page()
     if HAS_STEALTH: stealth_sync(page)
     page.on("request", _on_request)
@@ -86,122 +133,95 @@ with sync_playwright() as pw:
                   wait_until="networkidle", timeout=45_000)
     except Exception as e:
         log(f"goto: {e}")
-    time.sleep(3)
+    time.sleep(2)
+
+    # 2. Nuke OneTrust overlay immediately
+    dismiss_onetrust(page)
+    time.sleep(1)
     snap(page, "01_landing")
 
-    # 2. Dismiss banners
-    for sel in ["button:has-text('Accept')", "button:has-text('OK')",
-                 "[aria-label='close']", "button:has-text('No thanks')"]:
-        try:
-            btn = page.query_selector(sel)
-            if btn and btn.is_visible(): btn.click(); time.sleep(0.5)
-        except Exception: pass
-
-    # 3. Click LOG IN — actual text from page is "LOG IN" all caps
-    login_clicked = False
-    # Try text-exact match first, then broader selectors
-    for sel in [
-        "text='LOG IN'",
-        "text='Log In'",
-        "text='Login'",
-        "button:has-text('LOG IN')",
-        "a:has-text('LOG IN')",
-        "[data-testid='login-button']",
-        "[data-qa='login-button']",
-        "button:has-text('Log In')",
-        "a:has-text('Log In')",
-    ]:
-        try:
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                el.click()
-                log(f"Clicked login: {sel}")
-                login_clicked = True
-                time.sleep(3)
-                break
-        except Exception as e:
-            log(f"selector {sel} failed: {e}")
-
-    if not login_clicked:
-        # Last resort: find by evaluating all buttons/links for LOG IN text
-        log("Trying JS click fallback...")
-        try:
-            page.evaluate("""
-                () => {
-                    const els = [...document.querySelectorAll('button, a, [role="button"]')];
-                    const target = els.find(e => e.textContent.trim().toUpperCase().includes('LOG IN') ||
-                                                 e.textContent.trim().toUpperCase().includes('LOGIN') ||
-                                                 e.textContent.trim().toUpperCase() === 'SIGN IN');
-                    if (target) { target.click(); return target.textContent; }
-                    return null;
-                }
-            """)
-            log("JS click executed")
-            time.sleep(3)
-        except Exception as e:
-            log(f"JS click failed: {e}")
-
+    # 3. Click LOG IN using JS (bypass pointer-event issues entirely)
+    result = js_click(page, ["LOG IN", "Log In", "Login", "Sign In", "SIGN IN"])
+    log(f"Login click result: {result}")
+    time.sleep(3)
+    dismiss_onetrust(page)  # dismiss again in case it re-appeared after click
     snap(page, "02_after_login_click")
 
-    # 4. Fill credentials — wait for form to appear
-    time.sleep(2)
-    log("Looking for email/username field...")
+    # 4. Fill email
+    time.sleep(1)
+    email_filled = False
     for sel in ["input[type='email']", "input[name='email']", "input[name='username']",
-                 "input[placeholder*='email' i]", "input[placeholder*='username' i]",
-                 "#email", "#username", "[data-qa='email-input']", "[data-testid='email']"]:
+                 "input[placeholder*='email' i]", "#email", "#username"]:
         try:
-            inp = page.wait_for_selector(sel, timeout=3000, state="visible")
+            inp = page.wait_for_selector(sel, timeout=5000, state="visible")
             if inp:
+                inp.click()
+                time.sleep(0.3)
                 inp.fill(EMAIL)
                 log(f"Filled email: {sel}")
+                email_filled = True
                 break
         except Exception: pass
+
+    if not email_filled:
+        log("WARNING: Could not find email field")
 
     time.sleep(0.5)
 
-    for sel in ["input[type='password']", "input[name='password']", "#password",
-                 "[data-qa='password-input']", "[data-testid='password']"]:
+    # 5. Fill password
+    pw_filled = False
+    for sel in ["input[type='password']", "input[name='password']", "#password"]:
         try:
-            inp = page.wait_for_selector(sel, timeout=3000, state="visible")
+            inp = page.wait_for_selector(sel, timeout=5000, state="visible")
             if inp:
+                inp.click()
+                time.sleep(0.3)
                 inp.fill(PASSWORD)
                 log(f"Filled password: {sel}")
+                pw_filled = True
                 break
         except Exception: pass
+
+    if not pw_filled:
+        log("WARNING: Could not find password field")
 
     time.sleep(0.5)
     snap(page, "03_form_filled")
 
-    # Submit
-    for sel in ["button[type='submit']", "button:has-text('LOG IN')",
-                 "button:has-text('Log In')", "button:has-text('Login')",
-                 "button:has-text('Sign In')", "button:has-text('Continue')",
-                 "[data-qa='submit-button']"]:
-        try:
-            btn = page.query_selector(sel)
-            if btn and btn.is_visible():
-                btn.click()
-                log(f"Submitted: {sel}")
-                break
-        except Exception: pass
+    # 6. Submit — use JS click to bypass any overlay
+    submit_result = page.evaluate("""
+        () => {
+            // Try submit button first
+            const submit = document.querySelector('button[type="submit"]');
+            if (submit) { submit.click(); return 'submit-button'; }
+            // Try any button with login text
+            const btns = [...document.querySelectorAll('button')];
+            const login_btn = btns.find(b =>
+                b.textContent.trim().toUpperCase().match(/^(LOG IN|LOGIN|SIGN IN|CONTINUE)$/)
+            );
+            if (login_btn) { login_btn.click(); return login_btn.textContent.trim(); }
+            return null;
+        }
+    """)
+    log(f"Submit result: {submit_result}")
 
-    log("Waiting 20s for post-login XHRs...")
-    time.sleep(20)
+    log("Waiting 25s for post-login XHRs...")
+    time.sleep(25)
     snap(page, "04_post_login")
-    log(f"URL: {page.url}")
+    log(f"URL after login: {page.url}")
 
-    # 5. If not captured yet, navigate to props to force more XHRs
+    # 7. If not captured, try navigating to force auth XHRs
     if not _done["flag"]:
-        props_url = f"https://sportsbook.caesars.com/us/{STATE}/bet#type=SCHEDULE&subtab=Batter+Props"
-        log(f"Navigating to props: {props_url}")
+        log("Token not yet captured — trying sports page to trigger auth XHRs...")
         try:
-            page.goto(props_url, wait_until="domcontentloaded", timeout=30_000)
+            page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet#type=SPORT&id=Baseball",
+                      wait_until="domcontentloaded", timeout=20_000)
         except Exception as e:
-            log(f"Props nav: {e}")
-        time.sleep(5)
-        snap(page, "05_props")
+            log(f"sports nav: {e}")
+        time.sleep(8)
+        snap(page, "05_sports")
 
-    # 6. Poll remainder
+    # 8. Poll remainder
     deadline = time.time() + MAX_WAIT
     while not _done["flag"] and time.time() < deadline:
         time.sleep(1)
@@ -211,7 +231,7 @@ with sync_playwright() as pw:
     browser.close()
 
 if not harvested.get("bearer_jwt"):
-    die(f"No token after {MAX_WAIT}s — login likely still failing, check screenshots")
+    die(f"No token after {MAX_WAIT}s")
 
 log("Pushing to Gist...")
 payload = json.dumps({"files": {"caesars_tokens.json": {
