@@ -59,7 +59,8 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     # Extracted from app.py — pure computation, no Streamlit deps
     _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_sharp_consensus_no_vig, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     rest_adjusted_std_dev, score_rlm, devig_ensemble, pace_adjust_mlb_prop,
-    record_line, detect_steam_move, get_opener_gap, detect_market_maker_divergence)
+    record_line, detect_steam_move, get_opener_gap, detect_market_maker_divergence,
+    compute_line_velocity, classify_book_role)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import TIER_COLORS
 from app_fixes import fetch_vsin_intelligence
@@ -3927,6 +3928,7 @@ def compute_ev_line_movement(current_data, previous_snapshot):
                 "sharp_flag":         sharp_moved,
                 "moved_books":        moved_books,
                 "sharp_moved":        sharp_moved,
+                "book_roles":         {b[0]: classify_book_role(b[0])["role"] for b in moved_books},
                 "move_direction":     moved_books[-1][3] if moved_books else None,
                 "open_line":          None,
                 "curr_line":          item.get("handicap"),
@@ -4197,6 +4199,7 @@ def parse_ev_movement(movement_data):
                 "move_direction": move_direction,
                 "moved_books":  moved_books,
                 "sharp_moved":  sharp_moved,
+                "book_roles":   {b[0]: classify_book_role(b[0])["role"] for b in moved_books},
                 "open_line":    open_line,
                 "curr_line":    curr_line,
                 "tickets_pct":  tickets_pct,
@@ -10242,6 +10245,8 @@ def load_sport_data(sport):
             _steam_tot = detect_steam_move("consensus", _gkey, "total")
             _steam_spr = detect_steam_move("consensus", _gkey, "spread")
             _gap_tot   = get_opener_gap("consensus", _gkey, "total")
+            _vel_tot   = compute_line_velocity("consensus", _gkey, "total")
+            _vel_spr   = compute_line_velocity("consensus", _gkey, "spread")
             _lbb: dict = {}
             for _bk, _fld in [("pinnacle","PinnacleTotal"),("betonline","BOLTotal"),("draftkings","DKTotal"),("fanduel","FDTotal")]:
                 _bv = safe_float(_sg.get(_fld) or 0)
@@ -10251,10 +10256,12 @@ def load_sport_data(sport):
                 _lbb["consensus"] = {"line": _g_total, "over_odds": -110, "under_odds": -110}
             _mm_div = detect_market_maker_divergence(_lbb) if len(_lbb) >= 2 else {}
             _steam_signals[_gkey] = {
-                "steam_total":   _steam_tot,
-                "steam_spread":  _steam_spr,
-                "opener_gap":    _gap_tot,
-                "mm_divergence": _mm_div,
+                "steam_total":    _steam_tot,
+                "steam_spread":   _steam_spr,
+                "opener_gap":     _gap_tot,
+                "velocity_total": _vel_tot,
+                "velocity_spread":_vel_spr,
+                "mm_divergence":  _mm_div,
             }
         st.session_state["game_steam_signals"] = _steam_signals
 
