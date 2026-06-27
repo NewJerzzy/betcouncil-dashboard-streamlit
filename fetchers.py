@@ -10248,6 +10248,234 @@ def fetch_superbook_direct(sport):
 # Alias so callers can use either name
 fetch_superbook_lines = fetch_superbook_direct
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KAMBI GAME LINES — BetRivers / Fanatics / ESPN Bet
+#
+# All three books use the Kambi sportsbook backend (eu-offering-api.kambicdn.com).
+# Offering IDs:
+#   BetRivers → "rvn"     (Rush Street Gaming / SugarHouse; confirmed by the
+#                            existing fetch_betrivers_direct which uses same URL)
+#   Fanatics  → "ftn"     (Fanatics Sportsbook via Kambi; best-effort — degrades
+#                            silently to [] if offering ID is wrong)
+#   ESPN Bet  → "espnbet" (Penn Entertainment ESPN Bet brand on Kambi)
+#
+# curl_cffi TLS impersonation bypasses Kambi's IP-level 429 rate-limiting that
+# blocks plain urllib/requests from datacenter IPs — same pattern as
+# fetch_superbook_direct and fetch_betrivers_direct.
+#
+# Kambi line encoding: all numeric values are integers x 1000.
+#   odds=1909   → decimal 1.909 → American ≈ -110
+#   line=-5500  → spread -5.5
+#   line=215500 → total  215.5
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _kambi_dec_to_am(odds_int: int) -> str:
+    """Convert Kambi integer odds (e.g. 1909) to American odds string (+110/-110)."""
+    try:
+        d = odds_int / 1000.0
+        if d >= 2.0:
+            return f"+{int(round((d - 1) * 100))}"
+        elif d > 1.0:
+            return f"{int(round(-100 / (d - 1)))}"
+        return "N/A"
+    except (TypeError, ZeroDivisionError, ValueError):
+        return "N/A"
+
+
+def _fetch_kambi_game_lines(offering_id: str, sport: str, book_label: str) -> list:
+    """
+    Core Kambi game-lines fetcher shared by BetRivers / Fanatics / ESPN Bet.
+
+    Queries eu-offering-api.kambicdn.com with category=match (game lines only;
+    no player props), parses spread / total / moneyline markets, returns the
+    standard BetCouncil game-lines list.
+
+    Returns list of dicts:
+        {Matchup, Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+         Total, OverOdds, UnderOdds, Book, Sport, source}
+    """
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    sport_map = {
+        "NBA":  "basketball/nba",
+        "MLB":  "baseball/mlb",
+        "NHL":  "ice-hockey/nhl",
+        "NFL":  "american-football/nfl",
+        "WNBA": "basketball/wnba",
+        "Soccer": "football",
+    }
+    kambi_sport = sport_map.get(sport)
+    if not kambi_sport:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"kambi_{offering_id}_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    url = (
+        f"https://eu-offering-api.kambicdn.com/offering/v2018/{offering_id}"
+        f"/listView/{kambi_sport}.json"
+        f"?lang=en_US&market=US&client_id=2&channel_id=1&ncids=1"
+        f"&category=match&useCombined=true"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://sportsbook.draftkings.com",
+        "Referer": "https://sportsbook.draftkings.com/sports",
+    }
+
+    games = []
+    try:
+        r = session.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        events = data.get("events", [])
+
+        for ev_wrap in events:
+            ev = ev_wrap.get("event", {})
+            home_name = ev.get("homeName", "") or ev.get("home", "")
+            away_name = ev.get("awayName", "") or ev.get("away", "")
+            if not home_name or not away_name:
+                ev_name = ev.get("englishName") or ev.get("name", "")
+                for sep in (" @ ", " vs ", " v ", " - "):
+                    if sep in ev_name:
+                        parts = ev_name.split(sep, 1)
+                        away_name, home_name = parts[0].strip(), parts[1].strip()
+                        break
+            if not home_name or not away_name:
+                continue
+
+            matchup  = f"{away_name} @ {home_name}"
+            home_ml  = away_ml = "N/A"
+            spread   = spread_odds = "N/A"
+            total    = over_odds = under_odds = "N/A"
+
+            for offer in ev_wrap.get("betOffers", []):
+                if not offer.get("open", True):
+                    continue
+                criterion = offer.get("criterion", {})
+                label     = (criterion.get("englishLabel") or criterion.get("label") or "").lower()
+                outcomes  = offer.get("outcomes", [])
+
+                # Money Line
+                if any(x in label for x in ("money line", "moneyline", "match result", "match winner")):
+                    for o in outcomes:
+                        otype   = (o.get("type") or "").upper()
+                        o_label = (o.get("englishLabel") or o.get("label") or "").lower()
+                        am      = _kambi_dec_to_am(o.get("odds", 0))
+                        if otype == "OT_2" or home_name.lower() in o_label:
+                            home_ml = am
+                        elif otype == "OT_1" or away_name.lower() in o_label:
+                            away_ml = am
+                        elif home_ml == "N/A":
+                            home_ml = am
+                        else:
+                            away_ml = am
+
+                # Handicap / Spread
+                elif any(x in label for x in ("handicap", "point spread", "spread")):
+                    for o in outcomes:
+                        if o.get("line") is None:
+                            continue
+                        line_val = o["line"] / 1000.0
+                        am       = _kambi_dec_to_am(o.get("odds", 0))
+                        otype    = (o.get("type") or "").upper()
+                        if otype == "OT_1" or away_name.lower() in (o.get("label","")).lower():
+                            spread       = f"{away_name} {line_val:+.1f}"
+                            spread_odds  = am
+                        elif spread == "N/A":
+                            spread       = f"{away_name} {line_val:+.1f}"
+                            spread_odds  = am
+
+                # Over/Under / Total
+                elif any(x in label for x in ("over/under", "total", "goals")):
+                    for o in outcomes:
+                        if o.get("line") is None:
+                            continue
+                        line_val = o["line"] / 1000.0
+                        am       = _kambi_dec_to_am(o.get("odds", 0))
+                        otype    = (o.get("type") or "").upper()
+                        if "OVER" in otype:
+                            total      = str(line_val)
+                            over_odds  = am
+                        elif "UNDER" in otype:
+                            under_odds = am
+                        elif total == "N/A":
+                            total      = str(line_val)
+
+            if home_ml == "N/A" and spread == "N/A" and total == "N/A":
+                continue
+
+            games.append({
+                "Matchup":    matchup,
+                "Home":       home_name,
+                "Away":       away_name,
+                "HomeML":     home_ml,
+                "AwayML":     away_ml,
+                "Spread":     spread,
+                "SpreadOdds": spread_odds,
+                "Total":      total,
+                "OverOdds":   over_odds,
+                "UnderOdds":  under_odds,
+                "Book":       book_label,
+                "Sport":      sport,
+                "source":     f"kambi_{offering_id}",
+            })
+
+    except Exception as _e:
+        print(f"[WARN] Kambi {book_label}: {type(_e).__name__}: {_e}")
+
+    if games:
+        _safe_save_pkl(cache_path, games)
+    return games
+
+
+def fetch_betrivers_game_lines(sport: str) -> list:
+    """
+    BetRivers game lines via Kambi backend (offering_id='rvn').
+
+    Rush Street Gaming / BetRivers is a confirmed Kambi operator; the same
+    offering_id is used by the existing fetch_betrivers_direct for player props.
+    Returns {Matchup, Home, Away, HomeML, AwayML, Spread, Total,
+             Book: 'BetRivers', Sport, source} per game.  Cached 60 min.
+    """
+    return _fetch_kambi_game_lines("rvn", sport, "BetRivers")
+
+
+def fetch_fanatics_game_lines(sport: str) -> list:
+    """
+    Fanatics Sportsbook game lines via Kambi backend (offering_id='ftn').
+
+    Fanatics operates on Kambi as 'ftn'.  Degrades silently (returns []) if the
+    offering ID is wrong — no harmful side effects.
+    Returns {Matchup, Home, Away, HomeML, AwayML, Spread, Total,
+             Book: 'Fanatics', Sport, source} per game.  Cached 60 min.
+    """
+    return _fetch_kambi_game_lines("ftn", sport, "Fanatics")
+
+
+def fetch_espnbet_game_lines(sport: str) -> list:
+    """
+    ESPN Bet game lines via Kambi backend (offering_id='espnbet').
+
+    ESPN Bet (Penn Entertainment) uses Kambi sportsbook infrastructure.
+    Returns {Matchup, Home, Away, HomeML, AwayML, Spread, Total,
+             Book: 'ESPN Bet', Sport, source} per game.  Cached 60 min.
+    """
+    return _fetch_kambi_game_lines("espnbet", sport, "ESPN Bet")
+
+
 def fetch_nfl_practice_participation():
     """
     NFL practice participation: DNP / Limited / Full.
