@@ -760,6 +760,8 @@ MLB_PITCHER_FIP = {
     "Nestor Cortes": 4.05, "Jordan Montgomery": 3.90, "Miles Mikolas": 4.25,
     "Lance Lynn": 4.35,
 }
+LEAGUE_AVG_ERA = 4.25  # MLB league average ERA (2024 baseline)
+
 
 # Pitcher handedness — used to select opposing lineup wOBA split
 MLB_PITCHER_HANDEDNESS = {
