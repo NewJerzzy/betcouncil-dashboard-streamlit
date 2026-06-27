@@ -5997,6 +5997,14 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     except Exception:
                         pass
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
+                # Apply RLM + steam + market divergence multipliers
+                try:
+                    _rlm_m  = _rlm_score.get("edge_mult", 1.0) if _rlm_score else 1.0
+                    _stm_m  = 1.08 if any(v.get("is_steam") for v in _steam_signals.values()) else 1.0
+                    _div_m  = 1.05 if _mkt_divergence.get("signal_strength") in ("STRONG","MODERATE") else 1.0
+                    spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct * min(1.25, _rlm_m * _stm_m * _div_m)))
+                except Exception:
+                    pass
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
