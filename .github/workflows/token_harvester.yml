@@ -1,13 +1,10 @@
 name: Token Harvester
-# Runs every 18 hours so tokens stay fresh (Caesars JWT ~24h, FanDuel PX ~20m+).
-# Trigger manually from the Actions tab for an immediate refresh.
 on:
   schedule:
-    - cron: '0 2,20 * * *'   # 02:00 and 20:00 UTC (18 h apart)
+    - cron: '0 2,20 * * *'
   workflow_dispatch:
 
 jobs:
-  # ── Caesars: Bearer JWT + AWS WAF token ──────────────────────────────────
   harvest-caesars:
     name: "Caesars — JWT + WAF"
     runs-on: ubuntu-latest
@@ -30,8 +27,14 @@ jobs:
           CAESARS_STATE:    ${{ secrets.CAESARS_STATE }}
           GIST_TOKEN:       ${{ secrets.GIST_TOKEN }}
           GIST_ID:          "7e52e1c2c2054847c7c4663a157386c5"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: caesars-screenshots
+          path: /tmp/caesars_*.png
+          if-no-files-found: ignore
 
-  # ── FanDuel: PerimeterX x-px-context token ───────────────────────────────
   harvest-fanduel:
     name: "FanDuel — PerimeterX"
     runs-on: ubuntu-latest
@@ -54,3 +57,10 @@ jobs:
           FANDUEL_STATE:    ${{ secrets.FANDUEL_STATE }}
           GIST_TOKEN:       ${{ secrets.GIST_TOKEN }}
           GIST_ID:          "7e52e1c2c2054847c7c4663a157386c5"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fanduel-screenshots
+          path: /tmp/fanduel_*.png
+          if-no-files-found: ignore
