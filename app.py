@@ -10405,7 +10405,14 @@ def load_sport_data(sport):
     def _pf_openmeteo():       return fetch_openmeteo_weather()
     def _pf_ump_scorecards():  return fetch_ump_scorecards()
     def _pf_nba_advanced():    return fetch_nba_advanced_stats()
-    def _pf_pinnacle_oddsapi(): return fetch_pinnacle_via_odds_api(sport)
+    def _pf_pinnacle_lines():
+        # DNS pre-check — skips silently on Streamlit Cloud, works self-hosted
+        import socket as _sock
+        try:
+            _sock.getaddrinfo("guest.api.arcadia.pinnacle.com", 443)
+        except OSError:
+            return []
+        return fetch_pinnacle_game_lines(sport)
     def _pf_ev_api():       return fetch_ev_api_live()
     def _pf_ev_wnba():      return fetch_ev_api_wnba()
     def _pf_ev_outliers():  return fetch_ev_api_outliers(sport)
@@ -10430,7 +10437,7 @@ def load_sport_data(sport):
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
-        _pf_nba_advanced, _pf_pinnacle_oddsapi,
+        _pf_nba_advanced, _pf_pinnacle_lines,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
     ]
@@ -10443,7 +10450,7 @@ def load_sport_data(sport):
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
-     nba_advanced_raw, pinnacle_oddsapi_raw,
+     nba_advanced_raw, pinnacle_lines_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw) = _results
 
@@ -10517,9 +10524,8 @@ def load_sport_data(sport):
     st.session_state["openmeteo_weather"]    = openmeteo_raw       or {}
     st.session_state["ump_scorecards"]       = ump_scorecards_raw  or {}
     st.session_state["nba_advanced_stats"]   = nba_advanced_raw    or {}
-    st.session_state["pinnacle_props"]       = []
-    st.session_state["pinnacle_game_lines"]   = pinnacle_oddsapi_raw or []
-    st.session_state["pinnacle_props"]       = []
+    st.session_state["pinnacle_game_lines"]   = pinnacle_lines_raw or []
+    st.session_state["pinnacle_props"]        = []
     st.session_state["officials_data"]   = officials_data_raw or {}
     # Store OddsAPI + OddsPapi props for Line Shop access
     if odds_api_props_raw:
