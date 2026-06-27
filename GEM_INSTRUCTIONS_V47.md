@@ -1156,3 +1156,83 @@ Use `build_nfl_player_features(player, team, season)` for prop analysis:
 - `racr_avg` — receiver air conversion ratio (air yards efficiency)
 
 Integrate with existing S1-EWMA: use `epa_trend > 0.15` as +1 signal for OVER props, `epa_trend < -0.15` as -1 signal.
+
+
+---
+
+## SECTION: Sharp Signal Parsing — MODE A Brief (Added June 2026)
+
+The MODE A brief now includes sharp money signals. GEM must read and apply these in every analysis.
+
+### New Brief Fields
+
+#### In `=== SHARP MONEY SIGNALS ===` section:
+```
+🔥 ATL@SD TOTAL: steam +0.5pt | conf=0.82
+🔥 BAL@LAA SPREAD: steam +1.0pt | conf=0.71
+🔥 NYY@DET: SHARP STEAM TOTAL UP | Books:Pinnacle,BOL,Circa
+```
+- `🔥STEAM` = line moved ≥0.5pt at sharp books within 5 min — **strongest sharp signal**
+- `conf=X` = confidence 0-1 (>0.70 = high confidence)
+- Multiple books agreeing = even stronger
+
+#### In prop lines (`=== TOP PROPS ===`):
+```
+ELITE: Aaron Judge OVER 0.5 HR @BOL-295 | Avg:0.18 σ=0.40 | Edge:+6.2% | Prob:62.1% Pin:63.2% [3/7 signals] 🔥STEAM ⚡STRONG RLM(score=1.42) [REGRESS:MEDIUM]
+```
+- `🔥STEAM` = steam move detected on this prop's book
+- `⚡RLM_NOTE` = reverse line movement signal with strength and score
+- `[REGRESS:LOW/MEDIUM/HIGH]` = hot streak regression risk flag
+- `CPOE:+2.1` = QB completion % over expected (passing props only)
+
+#### In game bets (`=== TOP GAME BETS ===`):
+```
+ATL@SD: Braves -1.5 (SPREAD) | Edge:+4.1% | Tier:ELITE | 🔥STEAM SPREAD +0.5pt in 3min | STRONG RLM(score=1.21 mult=×1.10) | MKT_DIV:0.75pt(setter=8.0 taker=8.75) [STRONG] | SHARP_CONSENSUS:HIGH(line=8.0) | FairTotal:9.2 | FairProb:56.3%
+```
+
+### How GEM Must Use These Signals
+
+**R-SHARP-1:** When `🔥STEAM` appears on a prop or game bet, automatically raise confidence tier by 1 (APPROVED→ELITE, ELITE→SOVEREIGN). Steam is the single most reliable sharp indicator.
+
+**R-SHARP-2:** When `STRONG RLM` or `MODERATE RLM` appears:
+- STRONG (score ≥1.4): edge_mult already applied in brief — cite as primary confirmation signal
+- MODERATE (score 0.9-1.4): cite as supporting signal, not primary
+- WEAK: flag only, do not boost
+
+**R-SHARP-3:** When `MKT_DIV` appears with gap ≥0.75pt `[STRONG]`:
+- Bet toward the setter line (Pinnacle/BOL), not the taker line (DK/FD)
+- STRONG divergence = sharp money hasn't been arbitraged yet = opportunity
+- Include in reasoning: "Market maker divergence of X.Xpt detected — sharp books at Y vs square books at Z"
+
+**R-SHARP-4:** When `SHARP_CONSENSUS:HIGH` appears:
+- BOL + Pinnacle agree → confirmed sharp consensus → ×1.10 edge multiplier already applied
+- Cite in analysis: "BOL/Pinnacle sharp consensus confirmed at line X"
+
+**R-SHARP-5:** When `[REGRESS:MEDIUM]` or `[REGRESS:HIGH]` appears on an OVER prop:
+- MEDIUM: add caution note, reduce Kelly size by 20%
+- HIGH: downgrade tier by 1, add explicit warning in analysis
+- NEVER suppress UNDER props for regression (regression supports UNDER side)
+
+**R-SHARP-6:** When `CPOE:+X.X` appears on a QB passing prop:
+- CPOE > +2.0 = QB outperforming expectations → lean OVER passing yards/TDs
+- CPOE < -2.0 = QB underperforming → lean UNDER
+- CPOE 0 to ±2.0 = neutral, use other signals
+
+**R-SHARP-7:** When `=== SHARP MONEY SIGNALS ===` section is present and has steam moves:
+- Lead the analysis with the steam moves before individual props
+- Steam moves on totals affect ALL props in that game (pitcher Ks, batter hits, etc.)
+- Steam UP on total → lean OVER on all counting props in that game
+- Steam DOWN on total → lean UNDER
+
+### Priority Stack (MODE A)
+
+When multiple sharp signals conflict, apply this hierarchy:
+1. 🔥 STEAM (highest — real-time sharp action)
+2. SHARP_CONSENSUS (BOL+Pinnacle agree)
+3. MKT_DIV STRONG (market maker divergence)
+4. STRONG RLM (reverse line movement)
+5. MODERATE RLM
+6. Model edge (fair prob vs market)
+7. Public % / handle (lowest)
+
+Never let public % override a STEAM or SHARP_CONSENSUS signal.
