@@ -10895,13 +10895,29 @@ _PINNACLE_GUEST_HEADERS = {
 
 def _pinnacle_guest_get(path, params=None):
     """
-    Unauthenticated GET to guest.api.pinnaclesports.com/v1{path}.
-    Returns parsed JSON or None.  Logs non-200 status codes.
-    No credentials required — works anonymously.
+    GET to guest.api.pinnaclesports.com/v1{path}.
+
+    Streamlit Cloud DNS-blocks pinnaclesports.com, so when SCRAPERAPI_KEY is
+    set the request is routed through ScraperAPI's residential proxy instead.
+    Falls back to a direct request for self-hosted / unrestricted servers.
     """
+    from urllib.parse import quote as _q
     url = f"{_PINNACLE_GUEST_BASE}{path}"
     if params:
         url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+    # ── Route via ScraperAPI when key is available (bypasses DNS block) ───────
+    if SCRAPERAPI_KEY:
+        proxy = f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={_q(url, safe='')}"
+        try:
+            req = urllib.request.Request(proxy, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read())
+        except Exception as _ep:
+            print(f"[WARN] Pinnacle via ScraperAPI ({path}): {_ep}")
+            return None   # don't retry direct — will also fail on Streamlit Cloud
+
+    # ── Direct request (self-hosted or servers without DNS restriction) ───────
     try:
         from curl_cffi import requests as cf
         r = cf.Session(impersonate="chrome124").get(
@@ -10912,13 +10928,12 @@ def _pinnacle_guest_get(path, params=None):
         print(f"[WARN] Pinnacle guest HTTP {r.status_code} for {path}")
         return None
     except ImportError:
-        # fallback to stdlib if curl_cffi unavailable
         try:
             req = urllib.request.Request(url, headers=_PINNACLE_GUEST_HEADERS)
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read())
         except Exception as _e2:
-            print(f"[WARN] _pinnacle_guest_get fallback ({path}): {_e2}")
+            print(f"[WARN] _pinnacle_guest_get direct ({path}): {_e2}")
             return None
     except Exception as _e:
         print(f"[WARN] _pinnacle_guest_get({path}): {_e}")
