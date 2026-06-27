@@ -181,6 +181,15 @@ def _safe_load_pkl(path):
     except Exception:
         return None
 
+
+def _safe_save_pkl(path, obj):
+    """Save obj to a pickle file, silently ignoring errors."""
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(obj, f)
+    except Exception:
+        pass
+
 def fetch_kalshi_markets(sport="NBA"):
     """
     Fetch Kalshi prediction market probabilities for sports events.
@@ -6380,6 +6389,7 @@ def fetch_rotowire_injuries(sport):
         if r.status_code != 200:
             return []
 
+        import xml.etree.ElementTree as ET
         root = ET.fromstring(r.content)
         channel = root.find("channel")
         if channel is None:
