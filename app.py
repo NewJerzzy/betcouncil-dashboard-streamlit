@@ -5851,9 +5851,18 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 # (blowouts are less likely) and expand them for underdogs.
                 # Previously park factor was only applied to totals.
                 if sport == "MLB":
-                    _park_mult_rl = MLB_PARK_FACTORS.get(
-                        home_full, MLB_PARK_FACTORS.get(home_team, 1.0)
-                    )
+                    # Use FanGraphs park factors if available, else fallback
+                    try:
+                        from fetchers import fetch_fangraphs_park_factors
+                        _fg_parks = fetch_fangraphs_park_factors()
+                        _fg_hr = _fg_parks.get(home_full, _fg_parks.get(home_team, {})).get("hr_factor", None)
+                        _park_mult_rl = _fg_hr if _fg_hr else MLB_PARK_FACTORS.get(
+                            home_full, MLB_PARK_FACTORS.get(home_team, 1.0)
+                        )
+                    except Exception:
+                        _park_mult_rl = MLB_PARK_FACTORS.get(
+                            home_full, MLB_PARK_FACTORS.get(home_team, 1.0)
+                        )
                     _park_rl_adj = (_park_mult_rl - 1.0) * 0.08
                     if spread_edge > 0:
                         spread_edge_pct -= _park_rl_adj
@@ -6361,6 +6370,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 elif sport == "Golf":
                     total_edge_pct = total_edge / 8.0  # H2H total ~140; 4-stroke range = big edge
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
+                # Apply steam signal to total edge
+                try:
+                    _total_steam = _steam_signals.get("betonline_total", {}) if '_steam_signals' in dir() else {}
+                    if _total_steam.get("is_steam"):
+                        _t_mult = min(1.15, 1 + _total_steam.get("confidence", 0) * 0.15)
+                        total_edge_pct *= _t_mult
+                    total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
+                except Exception:
+                    pass
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_game_tier(abs(total_edge_pct), sport)
@@ -6375,14 +6393,22 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         if home_ml and away_ml and home_ml != "N/A" and away_ml != "N/A":
             h_ml = float(str(home_ml).replace("+",""))
             a_ml = float(str(away_ml).replace("+",""))
-            if h_ml < 0:
-                h_implied = abs(h_ml) / (abs(h_ml) + 100)
-            else:
-                h_implied = 100 / (h_ml + 100)
-            if a_ml < 0:
-                a_implied = abs(a_ml) / (abs(a_ml) + 100)
-            else:
-                a_implied = 100 / (a_ml + 100)
+            # Use ensemble devig (Probit+Shin blend) not raw implied prob
+            try:
+                from bc_utils import devig_ensemble
+                _ens = devig_ensemble(h_ml, a_ml, market_type="ml",
+                                      liquidity="high" if sport in ("NFL","MLB") else "medium")
+                h_implied = _ens["fair_prob"]
+                a_implied = 1 - h_implied
+            except Exception:
+                if h_ml < 0:
+                    h_implied = abs(h_ml) / (abs(h_ml) + 100)
+                else:
+                    h_implied = 100 / (h_ml + 100)
+                if a_ml < 0:
+                    a_implied = abs(a_ml) / (abs(a_ml) + 100)
+                else:
+                    a_implied = 100 / (a_ml + 100)
             if home_team in power_ratings and away_team in power_ratings:
                 h_power = power_ratings[home_team]
                 a_power = power_ratings[away_team]
@@ -6414,6 +6440,84 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
     
+    # ── Sharp signal computation ─────────────────────────────────────────────
+    _steam_signals   = {}
+    _mkt_divergence  = {}
+    _rlm_score       = {}
+    _sharp_consensus = {}
+
+    try:
+        from bc_utils import (detect_steam_move, detect_market_maker_divergence,
+                               score_rlm, record_line, get_opener_gap,
+                               compute_line_velocity)
+
+        _game_key = f"{away_team}@{home_team}"
+
+        # Record current lines for steam tracking
+        if total_str not in ("N/A", None, ""):
+            try:
+                _tv = float(str(total_str).replace("+",""))
+                record_line("betonline", _game_key, "total", _tv, 0, 0)
+                record_line("pinnacle",  _game_key, "total", _tv, 0, 0)
+            except Exception:
+                pass
+
+        if spread_str not in ("N/A", None, ""):
+            try:
+                _sv = float(str(spread_str).split()[-1].replace("+",""))
+                record_line("betonline", _game_key, "spread", _sv, 0, 0)
+            except Exception:
+                pass
+
+        # Steam detection on total and spread
+        for _mkt in ["total", "spread"]:
+            for _bk in ["betonline", "pinnacle"]:
+                _steam = detect_steam_move(_bk, _game_key, _mkt)
+                if _steam.get("is_steam"):
+                    _steam_signals[f"{_bk}_{_mkt}"] = _steam
+
+        # Opener gap
+        _total_gap  = get_opener_gap("betonline", _game_key, "total")
+        _spread_gap = get_opener_gap("betonline", _game_key, "spread")
+        if abs(_total_gap.get("gap", 0)) >= 0.5:
+            _steam_signals["total_opener_gap"]  = _total_gap
+        if abs(_spread_gap.get("gap", 0)) >= 0.5:
+            _steam_signals["spread_opener_gap"] = _spread_gap
+
+        # Market maker divergence — build lines_by_book from available data
+        _lines_by_book = {}
+        if game_lines_data:
+            for _bk_data in game_lines_data:
+                _bk_name = _bk_data.get("Book", _bk_data.get("book", ""))
+                _bk_total = _bk_data.get("Total", _bk_data.get("total"))
+                _bk_spread = _bk_data.get("Spread", _bk_data.get("spread"))
+                if _bk_name and (_bk_total or _bk_spread):
+                    _lines_by_book[_bk_name] = {
+                        "total": _bk_total, "spread": _bk_spread
+                    }
+        if len(_lines_by_book) >= 2:
+            _mkt_divergence = detect_market_maker_divergence(_lines_by_book)
+
+        # RLM scoring from public data
+        if game_public:
+            _pub_pct  = game_public.get("spread_public_pct", 0.5)
+            _pub_side = game_public.get("spread_public_side", "")
+            _line_dir = "HOME" if (spread_edge if 'spread_edge' in dir() else 0) > 0 else "AWAY"
+            if _pub_pct and _pub_side:
+                _rlm_score = score_rlm(_pub_pct, _line_dir, _pub_side,
+                                        abs(_spread_gap.get("gap", 0.5)))
+
+        # Sharp consensus from BOL + Pinnacle agreement
+        if _mkt_divergence.get("gap", 1.0) < 0.25:
+            _sharp_consensus = {
+                "agreement": True,
+                "setter_line": _mkt_divergence.get("setter_line"),
+                "confidence": "HIGH" if _mkt_divergence.get("gap", 1) < 0.1 else "MODERATE",
+            }
+
+    except Exception:
+        pass
+
     # Market availability flags for UI labeling
     spread_available = spread_str not in ("N/A", None, "")
     total_available  = total_str  not in ("N/A", None, "")
@@ -6476,7 +6580,12 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             "spread": "available" if spread_available else "no_market",
             "total":  "available" if total_available  else "no_market",
             "ml":     "available" if ml_available      else "no_market",
-        }
+        },
+        # ── Sharp signal layer ────────────────────────────────────────────────
+        "steam_signals":    _steam_signals,
+        "market_divergence": _mkt_divergence,
+        "rlm_score":        _rlm_score,
+        "sharp_consensus":  _sharp_consensus,
     }
 
 
