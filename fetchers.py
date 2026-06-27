@@ -10914,1126 +10914,188 @@ def fetch_unibet_game_lines(sport: str) -> list:
 # Will return [] silently if the endpoint is unreachable from this server.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Pinnacle arcadia guest API ─────────────────────────────────────────────
+# Confirmed from DevTools 2026-06-27:
+#   GET guest.api.arcadia.pinnacle.com/0.1/leagues/{id}/matchups
+#   GET guest.api.arcadia.pinnacle.com/0.1/leagues/{id}/markets/straight
+# No auth. CORS open (*). DNS-blocked on Streamlit Cloud — use when self-hosted.
+
+_PINNACLE_ARCADIA_BASE = "https://guest.api.arcadia.pinnacle.com/0.1"
+_PINNACLE_ARCADIA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Origin": "https://www.pinnacle.com",
+    "Referer": "https://www.pinnacle.com/",
+}
 _PINNACLE_SPORT_IDS = {
-    "baseball": 3, "MLB": 3,
-    "basketball": 4, "NBA": 4,
-    "football": 6, "NFL": 6,
-    "hockey": 19, "NHL": 19,
-    "soccer": 29, "MLS": 29,
-    "tennis": 33,
+    "MLB": 3, "NBA": 4, "WNBA": 4, "NFL": 15, "NHL": 19,
 }
-
-# Default league IDs for the most-liquid US markets.
 _PINNACLE_LEAGUE_IDS = {
-    3:  [246],    # MLB
-    4:  [487],    # NBA
-    6:  [889],    # NFL
-    19: [1456],   # NHL
-}
-
-_PINNACLE_GUEST_BASE = "https://guest.api.pinnaclesports.com/v1"
-_PINNACLE_GUEST_HEADERS = {
-    "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept":        "application/json",
-    "Origin":        "https://www.pinnacle.com",
-    "Referer":       "https://www.pinnacle.com/",
+    "MLB": 246, "NBA": 487, "WNBA": 578, "NFL": 889, "NHL": 1456,
 }
 
 
-def _pinnacle_guest_get(path, params=None):
-    """
-    GET to guest.api.pinnaclesports.com/v1{path}.
-    Direct only — no proxy routing (Streamlit Cloud DNS-blocks this domain,
-    so both functions return [] silently when deployed there).
-    Works when self-hosted or on servers without egress restrictions.
-    """
-    url = f"{_PINNACLE_GUEST_BASE}{path}"
-    if params:
-        url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+def _pinnacle_arcadia_get(path):
+    """GET guest.api.arcadia.pinnacle.com/0.1{path}. No auth needed."""
+    url = f"{_PINNACLE_ARCADIA_BASE}{path}"
     try:
-        from curl_cffi import requests as cf
-        r = cf.Session(impersonate="chrome124").get(
-            url, headers=_PINNACLE_GUEST_HEADERS, timeout=15
-        )
+        from curl_cffi import requests as _cf
+        r = _cf.Session(impersonate="chrome124").get(url, headers=_PINNACLE_ARCADIA_HEADERS, timeout=12)
         if r.status_code == 200:
             return r.json()
-        print(f"[WARN] Pinnacle guest HTTP {r.status_code} for {path}")
+        print(f"[WARN] Pinnacle arcadia HTTP {r.status_code} for {path}")
         return None
     except ImportError:
         try:
-            req = urllib.request.Request(url, headers=_PINNACLE_GUEST_HEADERS)
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            import urllib.request as _ur
+            req = _ur.Request(url, headers=_PINNACLE_ARCADIA_HEADERS)
+            with _ur.urlopen(req, timeout=12) as resp:
                 return json.loads(resp.read())
-        except Exception as _e2:
-            print(f"[WARN] _pinnacle_guest_get ({path}): {_e2}")
+        except Exception as e2:
+            print(f"[WARN] _pinnacle_arcadia_get fallback ({path}): {e2}")
             return None
-    except Exception as _e:
-        print(f"[WARN] _pinnacle_guest_get({path}): {_e}")
+    except Exception as e:
+        print(f"[WARN] _pinnacle_arcadia_get ({path}): {e}")
         return None
 
 
 def _pinn_american(price):
-    """Convert Pinnacle price to American odds string.
-    Guest API returns American odds directly when oddsFormat=2."""
+    """Arcadia returns American odds as integers already."""
     if price is None:
-        return "N/A"
+        return None
     try:
-        p = float(price)
-        if abs(p) >= 100:
-            return f"+{int(p)}" if p > 0 else str(int(p))
-        if p >= 2.0:
-            return f"+{int(round((p - 1) * 100))}"
-        if p > 1.0:
-            return str(int(round(-100 / (p - 1))))
+        return int(price)
     except (TypeError, ValueError, ZeroDivisionError):
-        pass
-    return "N/A"
+        return None
 
 
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
-    Pinnacle game lines (spread / moneyline / total) via guest API.
-    No credentials required — uses guest.api.pinnaclesports.com.
-
-    Workflow: /v1/fixtures → /v1/odds (oddsFormat=2, American) → normalise.
+    Pinnacle game lines via arcadia guest API (no auth).
+    Workflow: matchups → participant map, then markets/straight → join on matchupId.
     Returns list of {Matchup, Home, Away, HomeML, AwayML, Spread, SpreadOdds,
-                     Total, TotalOver, TotalUnder, Book:'Pinnacle', Sport,
-                     source:'pinnacle_lines'}
-    Cached 45 minutes.
+                     Total, TotalOver, TotalUnder, Book, Sport, source}
+    Cached 30 min.
     """
-    sport_id = _PINNACLE_SPORT_IDS.get(sport)
-    if not sport_id:
+    league_id = _PINNACLE_LEAGUE_IDS.get(sport)
+    if not league_id:
         return []
 
-    cache_path = os.path.join(CACHE_DIR, f"pinnacle_lines_{sport_id}.pkl")
+    cache_path = os.path.join(CACHE_DIR, f"pinnacle_arcadia_{sport}.pkl")
     if os.path.exists(cache_path):
-        if (time.time() - os.path.getmtime(cache_path)) / 60 < 45:
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
             cached = _safe_load_pkl(cache_path)
             if cached is not None:
                 return cached
 
-    league_ids = _PINNACLE_LEAGUE_IDS.get(sport_id, [])
+    # Step 1: matchups → team + participant maps
+    matchups_data = _pinnacle_arcadia_get(f"/leagues/{league_id}/matchups")
+    if not matchups_data:
+        return []
 
+    matchup_teams = {}   # matchupId → {home, away}
+    participant_map = {} # participantId → {matchupId, alignment}
+    for mu in matchups_data:
+        if mu.get("type") != "matchup":
+            continue
+        mid = mu.get("id")
+        if not mid:
+            continue
+        home = away = ""
+        for p in mu.get("participants", []):
+            pid = p.get("id") or p.get("rotation")
+            alignment = p.get("alignment", "")
+            name = p.get("name", "")
+            if alignment == "home":
+                home = name
+            elif alignment == "away":
+                away = name
+            if pid:
+                participant_map[pid] = {"matchupId": mid, "alignment": alignment}
+        matchup_teams[mid] = {"home": home, "away": away}
+
+    # Step 2: markets/straight → flat price list
+    markets_data = _pinnacle_arcadia_get(f"/leagues/{league_id}/markets/straight")
+    if not markets_data:
+        return []
+
+    game_markets = {}  # matchupId → {moneyline, spread, total}
+    for market in markets_data:
+        mid   = market.get("matchupId")
+        period = market.get("period", 0)
+        mtype  = market.get("type", "")
+        prices = market.get("prices", [])
+        if period != 0 or not mid or mid not in matchup_teams:
+            continue
+        if mid not in game_markets:
+            game_markets[mid] = {}
+
+        if mtype == "moneyline":
+            ml = {}
+            for p in prices:
+                pid = p.get("participantId")
+                aln = participant_map.get(pid, {}).get("alignment", "")
+                if aln == "home":
+                    ml["home"] = _pinn_american(p.get("price"))
+                elif aln == "away":
+                    ml["away"] = _pinn_american(p.get("price"))
+            game_markets[mid]["moneyline"] = ml
+
+        elif mtype == "spread":
+            sp = {}
+            for p in prices:
+                pid = p.get("participantId")
+                aln = participant_map.get(pid, {}).get("alignment", "")
+                if aln == "home":
+                    sp["hdp"]        = p.get("points")
+                    sp["home_price"] = _pinn_american(p.get("price"))
+                elif aln == "away":
+                    sp["away_price"] = _pinn_american(p.get("price"))
+            game_markets[mid]["spread"] = sp
+
+        elif mtype == "total" and len(prices) >= 2:
+            tot = {
+                "points":      prices[0].get("points"),
+                "over_price":  _pinn_american(prices[0].get("price")),
+                "under_price": _pinn_american(prices[1].get("price")),
+            }
+            game_markets[mid]["total"] = tot
+
+    # Step 3: assemble
     results = []
-    for lid in (league_ids or [None]):
-        params_fix = {"sportid": sport_id}
-        if lid:
-            params_fix["leagueid"] = lid
-        fx = _pinnacle_guest_get("/fixtures", params_fix)
-        if not fx:
+    for mid, teams in matchup_teams.items():
+        home = teams.get("home", "")
+        away = teams.get("away", "")
+        if not home or not away:
             continue
-
-        event_map = {}
-        for league in fx.get("league", []):
-            for ev in league.get("events", []):
-                eid = ev.get("id")
-                if eid:
-                    event_map[eid] = {
-                        "home":   ev.get("home", ""),
-                        "away":   ev.get("away", ""),
-                        "starts": ev.get("starts", ""),
-                    }
-        if not event_map:
-            continue
-
-        params_odds = {"sportid": sport_id, "oddsFormat": 2}
-        if lid:
-            params_odds["leagueid"] = lid
-        od = _pinnacle_guest_get("/odds", params_odds)
-        if not od:
-            continue
-
-        for league in od.get("leagues", []):
-            for ev_odds in league.get("events", []):
-                eid  = ev_odds.get("id")
-                info = event_map.get(eid, {})
-                home = info.get("home", "")
-                away = info.get("away", "")
-                if not home or not away:
-                    continue
-                home_ml = away_ml = spread_hdp = spread_pr = total = total_ov = total_un = None
-                for period in ev_odds.get("periods", []):
-                    if period.get("number") != 0:
-                        continue
-                    ml = period.get("moneyline") or {}
-                    home_ml = ml.get("home"); away_ml = ml.get("away")
-                    sps = period.get("spreads") or []
-                    if sps:
-                        spread_hdp = sps[0].get("hdp")
-                        spread_pr  = sps[0].get("home")
-                    tots = period.get("totals") or []
-                    if tots:
-                        total    = tots[0].get("points")
-                        total_ov = tots[0].get("over")
-                        total_un = tots[0].get("under")
-                results.append({
-                    "Matchup":    f"{away} @ {home}",
-                    "Home":       home,
-                    "Away":       away,
-                    "HomeML":     _pinn_american(home_ml),
-                    "AwayML":     _pinn_american(away_ml),
-                    "Spread":     spread_hdp,
-                    "SpreadOdds": _pinn_american(spread_pr),
-                    "Total":      total,
-                    "TotalOver":  _pinn_american(total_ov),
-                    "TotalUnder": _pinn_american(total_un),
-                    "Book":       "Pinnacle",
-                    "Sport":      sport,
-                    "source":     "pinnacle_lines",
-                })
+        mkts = game_markets.get(mid, {})
+        ml   = mkts.get("moneyline", {})
+        sp   = mkts.get("spread", {})
+        tot  = mkts.get("total", {})
+        results.append({
+            "Matchup":    f"{away} @ {home}",
+            "Home":       home,
+            "Away":       away,
+            "HomeML":     ml.get("home"),
+            "AwayML":     ml.get("away"),
+            "Spread":     sp.get("hdp"),
+            "SpreadOdds": sp.get("home_price"),
+            "Total":      tot.get("points"),
+            "TotalOver":  tot.get("over_price"),
+            "TotalUnder": tot.get("under_price"),
+            "Book":       "Pinnacle",
+            "Sport":      sport,
+            "source":     "pinnacle_lines",
+        })
 
     if results:
         _safe_save_pkl(cache_path, results)
     return results
 
 
-def fetch_pinnacle_props(sport: str = "baseball") -> list:
-    """
-    Pinnacle player props via guest API betspecials endpoint.
-    No credentials required — uses guest.api.pinnaclesports.com.
-
-    Note: the guest betspecials endpoint primarily returns game specials rather
-    than traditional player props.  Returns whatever is available; may be empty
-    if Pinnacle has not posted props or the endpoint returns only game lines.
-
-    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book:'Pinnacle',
-                     Sport, source:'pinnacle_props'}
-    Cached 45 minutes.
-    """
-    sport_id = _PINNACLE_SPORT_IDS.get(sport)
-    if not sport_id:
-        return []
-
-    cache_path = os.path.join(CACHE_DIR, f"pinnacle_props_{sport_id}.pkl")
-    if os.path.exists(cache_path):
-        if (time.time() - os.path.getmtime(cache_path)) / 60 < 45:
-            cached = _safe_load_pkl(cache_path)
-            if cached is not None:
-                return cached
-
-    league_ids = _PINNACLE_LEAGUE_IDS.get(sport_id, [])
-    results = []; seen = set()
-
-    for lid in (league_ids or [None]):
-        params = {"sportid": sport_id, "oddsFormat": 2}
-        if lid:
-            params["leagueid"] = lid
-        raw = _pinnacle_guest_get("/betspecials", params)
-        if not raw:
-            continue
-        specials = raw if isinstance(raw, list) else raw.get("specials", [])
-        for sp in specials:
-            sp_name = sp.get("name", "") or ""
-            sp_type = sp.get("type", "") or sp_name
-            for c in sp.get("contestants", []):
-                player  = c.get("name", "") or sp_name
-                line    = c.get("handicap") or c.get("points")
-                over_o  = c.get("price")  or c.get("over")
-                under_o = c.get("underPrice") or c.get("under")
-                uid = (player, sp_type, line)
-                if uid in seen or not player:
-                    continue
-                seen.add(uid)
-                results.append({
-                    "Player":    player,
-                    "Prop":      sp_type,
-                    "Line":      float(line) if line is not None else None,
-                    "OverOdds":  _pinn_american(over_o),
-                    "UnderOdds": _pinn_american(under_o),
-                    "Book":      "Pinnacle",
-                    "Sport":     sport,
-                    "source":    "pinnacle_props",
-                })
-
-    if results:
-        _safe_save_pkl(cache_path, results)
-    return results
-def fetch_nfl_practice_participation():
-    """
-    NFL practice participation: DNP / Limited / Full.
-    Pulled from ESPN injuries endpoint — details field contains
-    practice status for NFL players.
-    
-    3-day trend matters most:
-      DNP → DNP → DNP   = likely out
-      DNP → Limited → Full = trending toward playing
-      Full → Full → Full = healthy, no concern
-    
-    Returns dict: {player_name: {date: participation, trend: str}}
-    """
-    try:
-        url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
-        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code != 200:
-            return {}
-        data = r.json()
-        today_str = date.today().strftime("%Y-%m-%d")
-        participation = {}
-        for team in data.get("injuries", []):
-            team_abbr = team.get("team", {}).get("abbreviation", "")
-            for injury in team.get("injuries", []):
-                athlete = injury.get("athlete", {})
-                player  = athlete.get("displayName", "")
-                detail  = injury.get("details", {})
-                # ESPN practice field
-                practice = detail.get("practiceStatus", "") or detail.get("detail", "")
-                practice_lower = practice.lower()
-                if "did not participate" in practice_lower or "dnp" in practice_lower:
-                    pstatus = "DNP"
-                elif "limited" in practice_lower:
-                    pstatus = "Limited"
-                elif "full" in practice_lower:
-                    pstatus = "Full"
-                else:
-                    pstatus = None
-                if player and pstatus:
-                    if player not in participation:
-                        participation[player] = {"team": team_abbr, "history": {}}
-                    participation[player]["history"][today_str] = pstatus
-        # Load stored history and merge
-        stored = load_json_data(NFL_PRACTICE_PATH, {})
-        for player, data_new in participation.items():
-            if player in stored:
-                stored[player]["history"].update(data_new["history"])
-            else:
-                stored[player] = data_new
-        # Calculate 3-day trend
-        for player, pdata in stored.items():
-            hist = pdata.get("history", {})
-            recent_days = sorted(hist.keys())[-3:]
-            recent = [hist[d] for d in recent_days]
-            if len(recent) >= 2:
-                if recent[-1] == "Full" and recent[-2] in ("Limited", "DNP"):
-                    pdata["trend"] = "↑ Trending UP"
-                elif recent[-1] == "DNP" and all(r == "DNP" for r in recent):
-                    pdata["trend"] = "⛔ DNP all week"
-                elif recent[-1] == "Limited":
-                    pdata["trend"] = "⚠️ Limited"
-                elif recent[-1] == "Full":
-                    pdata["trend"] = "✅ Full practice"
-                else:
-                    pdata["trend"] = recent[-1]
-        save_json_data(NFL_PRACTICE_PATH, stored)
-        return stored
-    except Exception:
-        return load_json_data(NFL_PRACTICE_PATH, {})
-
-def fetch_atsstats_mlb_matchups():
-    """
-    Scrapes atsstats.com/free-mlb-stats/ for today's MLB matchup data.
-    Returns dict keyed by team name (full): {
-        "l10_su": (w, l),        # last 10 straight up
-        "l10_ou": (o, u),        # last 10 over/under
-        "forecast_total": float, # site's projected game total
-        "win_pct": float,        # site's model win probability (0-1)
-    }
-    Cached 6 hours. Returns {} on any failure.
-    """
-    try:
-        from bs4 import BeautifulSoup
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        resp = _http.get("https://www.atsstats.com/free-mlb-stats/", headers=headers, timeout=12)
-        if resp.status_code != 200:
-            return {}
-        soup = BeautifulSoup(resp.text, "html.parser")
-        result = {}
-
-        # Each game block is a table with class containing "raymond" or similar;
-        # the site renders each matchup as a nested table. We look for rows that
-        # contain the L10(SU) and L10(O/U) labels and extract values per team.
-        tables = soup.find_all("table")
-        for tbl in tables:
-            rows = tbl.find_all("tr")
-            row_map = {}
-            for row in rows:
-                cells = row.find_all(["td", "th"])
-                if len(cells) >= 3:
-                    label = cells[1].get_text(strip=True)
-                    left  = cells[0].get_text(strip=True)
-                    right = cells[2].get_text(strip=True)
-                    row_map[label] = (left, right)
-
-            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
-                continue
-
-            # Extract team names from header rows (bold text or img alt)
-            teams = []
-            for row in rows:
-                imgs = row.find_all("img")
-                for img in imgs:
-                    alt = img.get("alt", "").strip()
-                    if alt and alt not in teams:
-                        teams.append(alt)
-                if len(teams) >= 2:
-                    break
-
-            if len(teams) < 2:
-                # Try bold text
-                bolds = tbl.find_all("b")
-                for b in bolds:
-                    txt = b.get_text(strip=True)
-                    if txt and txt not in teams and len(txt) > 3:
-                        teams.append(txt)
-                    if len(teams) >= 2:
-                        break
-
-            if len(teams) < 2:
-                continue
-
-            home_team, away_team = teams[0], teams[1]
-
-            def _parse_record(s):
-                """Parse '4-6' or '4-6-1' → (wins, losses)."""
-                parts = s.replace(" ", "").split("-")
-                try:
-                    return (int(parts[0]), int(parts[1]))
-                except Exception:
-                    return (5, 5)
-
-            def _parse_pct(s):
-                """Parse '45.13%' → 0.4513."""
-                try:
-                    return float(s.replace("%", "").strip()) / 100.0
-                except Exception:
-                    return 0.5
-
-            def _parse_forecast(s):
-                """Parse forecast cell like '4.26' (per-team runs)."""
-                try:
-                    return float(s.strip())
-                except Exception:
-                    return None
-
-            l10su_l, l10su_r   = row_map.get("L10(SU)",   ("5-5", "5-5"))
-            l10ou_l, l10ou_r   = row_map.get("L10(O/U)",  ("5-5", "5-5"))
-            forecast_l, forecast_r = row_map.get("Forecast", ("", ""))
-            pct_l, pct_r       = row_map.get("45.13%", ("", "")) or \
-                                  next(((v[0], v[1]) for k, v in row_map.items() if "%" in k), ("", ""))
-
-            # Resolve win% — label key varies; grab any cell that looks like a %
-            home_pct = away_pct = 0.5
-            for k, (lv, rv) in row_map.items():
-                if "%" in lv and "%" in rv:
-                    home_pct = _parse_pct(lv)
-                    away_pct = _parse_pct(rv)
-                    break
-
-            forecast_home = _parse_forecast(forecast_l)
-            forecast_away = _parse_forecast(forecast_r)
-            forecast_total = None
-            if forecast_home is not None and forecast_away is not None:
-                forecast_total = round(forecast_home + forecast_away, 2)
-
-            result[home_team] = {
-                "l10_su":         _parse_record(l10su_l),
-                "l10_ou":         _parse_record(l10ou_l),
-                "forecast_total": forecast_total,
-                "win_pct":        home_pct,
-            }
-            result[away_team] = {
-                "l10_su":         _parse_record(l10su_r),
-                "l10_ou":         _parse_record(l10ou_r),
-                "forecast_total": forecast_total,
-                "win_pct":        away_pct,
-            }
-
-        return result
-    except Exception:
-        return {}
-
-def fetch_atsstats_nba_matchups():
-    """
-    Scrapes atsstats.com/free-nba-stats/ for today's NBA matchup data.
-    Returns dict keyed by display team name: {
-        "l10_su": (w, l),
-        "l10_ou": (o, u),
-        "forecast_total": float | None,
-        "win_pct": float,
-    }
-    Dormant off-season (returns {}). Cached 6 hours.
-    """
-    # Normalise ATS display names → full names used in power_ratings
-    _NBA_NAME_MAP = {
-        "OKC Thunder": "Oklahoma City Thunder",
-        "GS Warriors": "Golden State Warriors",
-        "LA Lakers": "Los Angeles Lakers",
-        "LA Clippers": "Los Angeles Clippers",
-        "NY Knicks": "New York Knicks",
-        "NJ Nets": "Brooklyn Nets",
-        "NO Pelicans": "New Orleans Pelicans",
-        "SA Spurs": "San Antonio Spurs",
-        "UTAH Jazz": "Utah Jazz",
-        "PHX Suns": "Phoenix Suns",
-        "MEM Grizzlies": "Memphis Grizzlies",
-        "MIL Bucks": "Milwaukee Bucks",
-        "MIN Timberwolves": "Minnesota Timberwolves",
-        "CLE Cavaliers": "Cleveland Cavaliers",
-        "IND Pacers": "Indiana Pacers",
-        "MIA Heat": "Miami Heat",
-        "ATL Hawks": "Atlanta Hawks",
-        "PHI 76ers": "Philadelphia 76ers",
-        "BOS Celtics": "Boston Celtics",
-        "CHI Bulls": "Chicago Bulls",
-        "DET Pistons": "Detroit Pistons",
-        "TOR Raptors": "Toronto Raptors",
-        "ORL Magic": "Orlando Magic",
-        "CHA Hornets": "Charlotte Hornets",
-        "WAS Wizards": "Washington Wizards",
-        "DEN Nuggets": "Denver Nuggets",
-        "POR Trail Blazers": "Portland Trail Blazers",
-        "DAL Mavericks": "Dallas Mavericks",
-        "HOU Rockets": "Houston Rockets",
-        "SAC Kings": "Sacramento Kings",
-    }
-    try:
-        from bs4 import BeautifulSoup
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        }
-        resp = _http.get("https://www.atsstats.com/free-nba-stats/", headers=headers, timeout=12)
-        if resp.status_code != 200:
-            return {}
-        soup = BeautifulSoup(resp.text, "html.parser")
-        result = {}
-        tables = soup.find_all("table")
-        for tbl in tables:
-            rows = tbl.find_all("tr")
-            row_map = {}
-            for row in rows:
-                cells = row.find_all(["td", "th"])
-                if len(cells) >= 3:
-                    label = cells[1].get_text(strip=True)
-                    left  = cells[0].get_text(strip=True)
-                    right = cells[2].get_text(strip=True)
-                    row_map[label] = (left, right)
-            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
-                continue
-            teams = []
-            for row in rows:
-                for img in row.find_all("img"):
-                    alt = img.get("alt", "").strip()
-                    if alt and alt not in teams:
-                        teams.append(alt)
-                if len(teams) >= 2:
-                    break
-            if len(teams) < 2:
-                for b in tbl.find_all("b"):
-                    txt = b.get_text(strip=True)
-                    if txt and txt not in teams and len(txt) > 3:
-                        teams.append(txt)
-                    if len(teams) >= 2:
-                        break
-            if len(teams) < 2:
-                continue
-
-            def _pr(s):
-                parts = s.replace(" ", "").split("-")
-                try: return (int(parts[0]), int(parts[1]))
-                except: return (5, 5)
-
-            def _pf(s):
-                try: return float(s.strip())
-                except: return None
-
-            l10su_l, l10su_r = row_map.get("L10(SU)", ("5-5", "5-5"))
-            l10ou_l, l10ou_r = row_map.get("L10(O/U)", ("5-5", "5-5"))
-            fc_l, fc_r = row_map.get("Forecast", ("", ""))
-            home_pct = away_pct = 0.5
-            for k, (lv, rv) in row_map.items():
-                if "%" in lv and "%" in rv:
-                    try: home_pct = float(lv.replace("%","")) / 100
-                    except: pass
-                    try: away_pct = float(rv.replace("%","")) / 100
-                    except: pass
-                    break
-            fc_home = _pf(fc_l)
-            fc_away = _pf(fc_r)
-            fc_total = round(fc_home + fc_away, 1) if fc_home and fc_away else None
-            for raw, rec in [(teams[0], {"l10_su": _pr(l10su_l), "l10_ou": _pr(l10ou_l),
-                                          "forecast_total": fc_total, "win_pct": home_pct}),
-                             (teams[1], {"l10_su": _pr(l10su_r), "l10_ou": _pr(l10ou_r),
-                                          "forecast_total": fc_total, "win_pct": away_pct})]:
-                key = _NBA_NAME_MAP.get(raw, raw)
-                result[key] = rec
-        return result
-    except Exception:
-        return {}
-
-def fetch_atsstats_nhl_matchups():
-    """
-    Scrapes atsstats.com/free-nhl-stats/ for today's NHL matchup data.
-    Same structure as NBA/MLB scrapers. Dormant off-season. Cached 6 hours.
-    """
-    _NHL_NAME_MAP = {
-        "BOS Bruins": "Boston Bruins",
-        "BUF Sabres": "Buffalo Sabres",
-        "CGY Flames": "Calgary Flames",
-        "CAR Hurricanes": "Carolina Hurricanes",
-        "CHI Blackhawks": "Chicago Blackhawks",
-        "COL Avalanche": "Colorado Avalanche",
-        "CBJ Blue Jackets": "Columbus Blue Jackets",
-        "DAL Stars": "Dallas Stars",
-        "DET Red Wings": "Detroit Red Wings",
-        "EDM Oilers": "Edmonton Oilers",
-        "FLA Panthers": "Florida Panthers",
-        "LA Kings": "Los Angeles Kings",
-        "MIN Wild": "Minnesota Wild",
-        "MTL Canadiens": "Montreal Canadiens",
-        "NSH Predators": "Nashville Predators",
-        "NJ Devils": "New Jersey Devils",
-        "NY Islanders": "New York Islanders",
-        "NYR Rangers": "New York Rangers",
-        "OTT Senators": "Ottawa Senators",
-        "PHI Flyers": "Philadelphia Flyers",
-        "PIT Penguins": "Pittsburgh Penguins",
-        "SJS Sharks": "San Jose Sharks",
-        "SEA Kraken": "Seattle Kraken",
-        "STL Blues": "St. Louis Blues",
-        "TB Lightning": "Tampa Bay Lightning",
-        "TOR Maple Leafs": "Toronto Maple Leafs",
-        "VAN Canucks": "Vancouver Canucks",
-        "VGK Golden Knights": "Vegas Golden Knights",
-        "WSH Capitals": "Washington Capitals",
-        "WPG Jets": "Winnipeg Jets",
-        "UTA Hockey Club": "Utah Hockey Club",
-    }
-    try:
-        from bs4 import BeautifulSoup
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        }
-        resp = _http.get("https://www.atsstats.com/free-nhl-stats/", headers=headers, timeout=12)
-        if resp.status_code != 200:
-            return {}
-        soup = BeautifulSoup(resp.text, "html.parser")
-        result = {}
-        tables = soup.find_all("table")
-        for tbl in tables:
-            rows = tbl.find_all("tr")
-            row_map = {}
-            for row in rows:
-                cells = row.find_all(["td", "th"])
-                if len(cells) >= 3:
-                    label = cells[1].get_text(strip=True)
-                    left  = cells[0].get_text(strip=True)
-                    right = cells[2].get_text(strip=True)
-                    row_map[label] = (left, right)
-            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
-                continue
-            teams = []
-            for row in rows:
-                for img in row.find_all("img"):
-                    alt = img.get("alt", "").strip()
-                    if alt and alt not in teams:
-                        teams.append(alt)
-                if len(teams) >= 2:
-                    break
-            if len(teams) < 2:
-                for b in tbl.find_all("b"):
-                    txt = b.get_text(strip=True)
-                    if txt and txt not in teams and len(txt) > 3:
-                        teams.append(txt)
-                    if len(teams) >= 2:
-                        break
-            if len(teams) < 2:
-                continue
-
-            def _pr(s):
-                parts = s.replace(" ", "").split("-")
-                try: return (int(parts[0]), int(parts[1]))
-                except: return (5, 5)
-
-            def _pf(s):
-                try: return float(s.strip())
-                except: return None
-
-            l10su_l, l10su_r = row_map.get("L10(SU)", ("5-5", "5-5"))
-            l10ou_l, l10ou_r = row_map.get("L10(O/U)", ("5-5", "5-5"))
-            fc_l, fc_r = row_map.get("Forecast", ("", ""))
-            home_pct = away_pct = 0.5
-            for k, (lv, rv) in row_map.items():
-                if "%" in lv and "%" in rv:
-                    try: home_pct = float(lv.replace("%","")) / 100
-                    except: pass
-                    try: away_pct = float(rv.replace("%","")) / 100
-                    except: pass
-                    break
-            fc_home = _pf(fc_l)
-            fc_away = _pf(fc_r)
-            fc_total = round(fc_home + fc_away, 1) if fc_home and fc_away else None
-            for raw, rec in [(teams[0], {"l10_su": _pr(l10su_l), "l10_ou": _pr(l10ou_l),
-                                          "forecast_total": fc_total, "win_pct": home_pct}),
-                             (teams[1], {"l10_su": _pr(l10su_r), "l10_ou": _pr(l10ou_r),
-                                          "forecast_total": fc_total, "win_pct": away_pct})]:
-                key = _NHL_NAME_MAP.get(raw, raw)
-                result[key] = rec
-        return result
-    except Exception:
-        return {}
-
-def fetch_atsstats_nfl_matchups():
-    """
-    Scrapes atsstats.com/free-nfl-stats/ for today's NFL matchup data.
-    Same structure as NBA/NHL scrapers. Dormant off-season. Cached 6 hours.
-    """
-    _NFL_NAME_MAP = {
-        "ARI Cardinals": "Arizona Cardinals",
-        "ATL Falcons": "Atlanta Falcons",
-        "BAL Ravens": "Baltimore Ravens",
-        "BUF Bills": "Buffalo Bills",
-        "CAR Panthers": "Carolina Panthers",
-        "CHI Bears": "Chicago Bears",
-        "CIN Bengals": "Cincinnati Bengals",
-        "CLE Browns": "Cleveland Browns",
-        "DAL Cowboys": "Dallas Cowboys",
-        "DEN Broncos": "Denver Broncos",
-        "DET Lions": "Detroit Lions",
-        "GB Packers": "Green Bay Packers",
-        "HOU Texans": "Houston Texans",
-        "IND Colts": "Indianapolis Colts",
-        "JAC Jaguars": "Jacksonville Jaguars",
-        "KC Chiefs": "Kansas City Chiefs",
-        "LV Raiders": "Las Vegas Raiders",
-        "LAC Chargers": "Los Angeles Chargers",
-        "LAR Rams": "Los Angeles Rams",
-        "MIA Dolphins": "Miami Dolphins",
-        "MIN Vikings": "Minnesota Vikings",
-        "NE Patriots": "New England Patriots",
-        "NO Saints": "New Orleans Saints",
-        "NY Giants": "New York Giants",
-        "NY Jets": "New York Jets",
-        "PHI Eagles": "Philadelphia Eagles",
-        "PIT Steelers": "Pittsburgh Steelers",
-        "SF 49ers": "San Francisco 49ers",
-        "SEA Seahawks": "Seattle Seahawks",
-        "TB Buccaneers": "Tampa Bay Buccaneers",
-        "TEN Titans": "Tennessee Titans",
-        "WSH Commanders": "Washington Commanders",
-    }
-    try:
-        from bs4 import BeautifulSoup
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        }
-        resp = _http.get("https://www.atsstats.com/free-nfl-stats/", headers=headers, timeout=12)
-        if resp.status_code != 200:
-            return {}
-        soup = BeautifulSoup(resp.text, "html.parser")
-        result = {}
-        tables = soup.find_all("table")
-        for tbl in tables:
-            rows = tbl.find_all("tr")
-            row_map = {}
-            for row in rows:
-                cells = row.find_all(["td", "th"])
-                if len(cells) >= 3:
-                    label = cells[1].get_text(strip=True)
-                    left  = cells[0].get_text(strip=True)
-                    right = cells[2].get_text(strip=True)
-                    row_map[label] = (left, right)
-            if "L10(SU)" not in row_map and "L10(O/U)" not in row_map:
-                continue
-            teams = []
-            for row in rows:
-                for img in row.find_all("img"):
-                    alt = img.get("alt", "").strip()
-                    if alt and alt not in teams:
-                        teams.append(alt)
-                if len(teams) >= 2:
-                    break
-            if len(teams) < 2:
-                for b in tbl.find_all("b"):
-                    txt = b.get_text(strip=True)
-                    if txt and txt not in teams and len(txt) > 3:
-                        teams.append(txt)
-                    if len(teams) >= 2:
-                        break
-            if len(teams) < 2:
-                continue
-
-            def _pr(s):
-                parts = s.replace(" ", "").split("-")
-                try: return (int(parts[0]), int(parts[1]))
-                except: return (5, 5)
-
-            def _pf(s):
-                try: return float(s.strip())
-                except: return None
-
-            l10su_l, l10su_r = row_map.get("L10(SU)", ("5-5", "5-5"))
-            l10ou_l, l10ou_r = row_map.get("L10(O/U)", ("5-5", "5-5"))
-            fc_l, fc_r = row_map.get("Forecast", ("", ""))
-            home_pct = away_pct = 0.5
-            for k, (lv, rv) in row_map.items():
-                if "%" in lv and "%" in rv:
-                    try: home_pct = float(lv.replace("%", "")) / 100
-                    except: pass
-                    try: away_pct = float(rv.replace("%", "")) / 100
-                    except: pass
-                    break
-            fc_home = _pf(fc_l)
-            fc_away = _pf(fc_r)
-            fc_total = round(fc_home + fc_away, 1) if fc_home and fc_away else None
-            for raw, rec in [(teams[0], {"l10_su": _pr(l10su_l), "l10_ou": _pr(l10ou_l),
-                                          "forecast_total": fc_total, "win_pct": home_pct}),
-                             (teams[1], {"l10_su": _pr(l10su_r), "l10_ou": _pr(l10ou_r),
-                                          "forecast_total": fc_total, "win_pct": away_pct})]:
-                key = _NFL_NAME_MAP.get(raw, raw)
-                result[key] = rec
-        return result
-    except Exception:
-        return {}
-
-def fetch_nfl_defensive_ratings() -> dict:
-    """
-    Fetches pass yards allowed per game, rush yards allowed per game,
-    sacks per game, and points allowed per game for every NFL team via
-    the ESPN statistics endpoint.
-    Returns: {team_abbr: {
-        "pass_yds_allowed_pg": float,
-        "rush_yds_allowed_pg": float,
-        "sacks_pg": float,
-        "pts_allowed_pg": float,
-    }}
-    Cached 6 hours. Returns {} off-season or on failure.
-    """
-    cache_path = os.path.join(CACHE_DIR, "nfl_defensive_ratings.pkl")
-    if os.path.exists(cache_path):
-        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
-            try:
-                return _safe_load_pkl(cache_path)
-            except Exception:
-                pass
-    season = date.today().year
-    if date.today().month < 9:
-        season -= 1
-    try:
-        r = _http.get(
-            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&season={season}",
-            headers=HEADERS, timeout=12,
-        )
-        if r.status_code != 200:
-            return {}
-        teams = (r.json().get("sports", [{}])[0]
-                          .get("leagues", [{}])[0]
-                          .get("teams", []))
-    except Exception:
-        return {}
-
-    DEFAULTS = {"pass_yds_allowed_pg": 230.0, "rush_yds_allowed_pg": 112.0,
-                "sacks_pg": 2.5, "pts_allowed_pg": 23.0}
-    result = {}
-    for entry in teams:
-        team = entry.get("team", {})
-        abbr = team.get("abbreviation", "")
-        tid  = team.get("id")
-        if not abbr or not tid:
-            continue
-        try:
-            sr = _http.get(
-                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
-                f"/teams/{tid}/statistics?season={season}",
-                headers=HEADERS, timeout=8,
-            )
-            if sr.status_code != 200:
-                continue
-            cats = sr.json().get("results", {}).get("splits", {}).get("categories", [])
-            rec = dict(DEFAULTS)
-            for cat in cats:
-                name  = cat.get("name", "").lower()
-                stats = {s["name"]: float(s.get("value") or 0) for s in cat.get("stats", [])}
-                if "defensive" in name or "defense" in name:
-                    if stats.get("opponentPassingYardsPerGame"):
-                        rec["pass_yds_allowed_pg"] = stats["opponentPassingYardsPerGame"]
-                    if stats.get("opponentRushingYardsPerGame"):
-                        rec["rush_yds_allowed_pg"] = stats["opponentRushingYardsPerGame"]
-                    if stats.get("sacks"):
-                        games = stats.get("gamesPlayed", 17) or 17
-                        rec["sacks_pg"] = round(stats["sacks"] / games, 2)
-                elif "scoring" in name:
-                    if stats.get("opponentPointsPerGame"):
-                        rec["pts_allowed_pg"] = stats["opponentPointsPerGame"]
-            result[abbr] = rec
-        except Exception:
-            continue
-
-    if result:
-        try:
-            with open(cache_path, "wb") as f:
-                pickle.dump(result, f)
-        except Exception:
-            pass
-    return result
-
-def fetch_nfl_team_scoring_stats() -> dict:
-    """
-    Fetches points-scored and points-allowed per game for every NFL team via
-    ESPN team statistics endpoint.  Used by the James matchup total projector.
-    Returns: {team_abbr: {"pts_for_pg": float, "pts_against_pg": float}}
-    Mirrors _fetch_nfl_team_stats_power but returns raw scoring data.
-    Cached 6 hours.
-    """
-    cache_path = os.path.join(CACHE_DIR, "nfl_team_scoring_stats.pkl")
-    if os.path.exists(cache_path):
-        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
-            try:
-                return _safe_load_pkl(cache_path)
-            except Exception:
-                pass
-    season = date.today().year
-    if date.today().month < 9:
-        season -= 1
-    try:
-        r = _http.get(
-            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&season={season}",
-            headers=HEADERS, timeout=12,
-        )
-        if r.status_code != 200:
-            return {}
-        teams = (r.json().get("sports", [{}])[0]
-                          .get("leagues", [{}])[0]
-                          .get("teams", []))
-    except Exception:
-        return {}
-
-    NFL_PTS_DEFAULT = 23.0
-    result = {}
-    for entry in teams:
-        team = entry.get("team", {})
-        abbr = team.get("abbreviation", "")
-        tid  = team.get("id")
-        if not abbr or not tid:
-            continue
-        try:
-            sr = _http.get(
-                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl"
-                f"/teams/{tid}/statistics?season={season}",
-                headers=HEADERS, timeout=8,
-            )
-            if sr.status_code != 200:
-                continue
-            cats = sr.json().get("results", {}).get("splits", {}).get("categories", [])
-            pts_for = pts_against = None
-            for cat in cats:
-                name  = cat.get("name", "").lower()
-                stats = {s["name"]: s.get("value", 0) for s in cat.get("stats", [])}
-                if "scoring" in name:
-                    pts_for     = stats.get("pointsPerGame") or stats.get("totalPointsPerGame")
-                    pts_against = stats.get("opponentPointsPerGame")
-            result[abbr] = {
-                "pts_for_pg":     float(pts_for     or NFL_PTS_DEFAULT),
-                "pts_against_pg": float(pts_against or NFL_PTS_DEFAULT),
-            }
-        except Exception:
-            continue
-
-    if result:
-        try:
-            with open(cache_path, "wb") as f:
-                pickle.dump(result, f)
-        except Exception:
-            pass
-    return result
-
-def fetch_mlb_team_run_stats() -> dict:
-    """
-    Fetches runs-scored and runs-allowed per game for every MLB team via
-    statsapi.mlb.com.  Used by the James matchup total projector.
-    Returns: {team_name: {"rs_pg": float, "ra_pg": float}}
-    Mirrors the fetch_mlb_team_woba_splits pattern. Cached 6 hours.
-    """
-    cache_path = os.path.join(CACHE_DIR, "mlb_team_run_stats.pkl")
-    if os.path.exists(cache_path):
-        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
-            try:
-                return _safe_load_pkl(cache_path)
-            except Exception:
-                pass
-    season = date.today().year
-    try:
-        teams_r = _http.get(
-            f"https://statsapi.mlb.com/api/v1/teams?sportId=1&season={season}",
-            headers=HEADERS, timeout=10,
-        )
-        if teams_r.status_code != 200:
-            return {}
-        teams = teams_r.json().get("teams", [])
-    except Exception:
-        return {}
-
-    LEAGUE_RS_DEFAULT = 4.25  # 2026 MLB avg runs/game/team
-    result = {}
-    for team in teams:
-        tid   = team.get("id")
-        tname = team.get("name", "")
-        if not tid or not tname:
-            continue
-        try:
-            rs_pg = ra_pg = None
-            # Runs scored
-            hr = _http.get(
-                f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
-                f"?stats=season&group=hitting&season={season}&gameType=R",
-                headers=HEADERS, timeout=8,
-            )
-            if hr.status_code == 200:
-                splits = hr.json().get("stats", [{}])[0].get("splits", [])
-                if splits:
-                    s = splits[0].get("stat", {})
-                    runs   = s.get("runs", 0) or 0
-                    games  = s.get("gamesPlayed", 1) or 1
-                    rs_pg  = round(float(runs) / float(games), 3)
-            # Runs allowed
-            pr = _http.get(
-                f"https://statsapi.mlb.com/api/v1/teams/{tid}/stats"
-                f"?stats=season&group=pitching&season={season}&gameType=R",
-                headers=HEADERS, timeout=8,
-            )
-            if pr.status_code == 200:
-                splits = pr.json().get("stats", [{}])[0].get("splits", [])
-                if splits:
-                    s = splits[0].get("stat", {})
-                    runs   = s.get("runs", 0) or 0
-                    games  = s.get("gamesPlayed", 1) or 1
-                    ra_pg  = round(float(runs) / float(games), 3)
-            result[tname] = {
-                "rs_pg": rs_pg if rs_pg else LEAGUE_RS_DEFAULT,
-                "ra_pg": ra_pg if ra_pg else LEAGUE_RS_DEFAULT,
-            }
-        except Exception:
-            continue
-
-    if result:
-        try:
-            with open(cache_path, "wb") as f:
-                pickle.dump(result, f)
-        except Exception:
-            pass
-    return result
-
-def fetch_nfl_inactives():
-    """
-    NFL official inactives — published 90 min before kickoff.
-    Uses ESPN gamecenter endpoint which surfaces inactives
-    once the official list is released.
-    
-    Returns dict: {team_abbr: [inactive_player_names]}
-    """
-    try:
-        today_str = date.today().strftime("%Y%m%d")
-        url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={today_str}"
-        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code != 200:
-            return {}
-        events = r.json().get("events", [])
-        inactives = {}
-        for event in events:
-            for comp in event.get("competitions", []):
-                for team_data in comp.get("competitors", []):
-                    team_abbr = team_data.get("team", {}).get("abbreviation", "")
-                    roster    = team_data.get("roster", [])
-                    team_inactives = []
-                    for player in roster:
-                        if player.get("active") is False or player.get("status","").upper() == "INACTIVE":
-                            pname = player.get("athlete", {}).get("displayName", "")
-                            if pname:
-                                team_inactives.append(pname)
-                    if team_inactives and team_abbr:
-                        inactives[team_abbr] = team_inactives
-        # Persist with timestamp
-        if inactives:
-            stamped = {"inactives": inactives, "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
-            save_json_data(NFL_INACTIVES_PATH, stamped)
-            return inactives
-        # Fall back to stored
-        stored = load_json_data(NFL_INACTIVES_PATH, {})
-        return stored.get("inactives", {})
-    except (requests.RequestException, KeyError, ValueError):
-        return load_json_data(NFL_INACTIVES_PATH, {}).get("inactives", {})
-
-def fetch_nhl_starting_goalies():
-    """
-    Fetch confirmed NHL starting goalies for today's games.
-    Uses NHL official API — no bot protection, completely free.
-    
-    Starting goalie is the #1 factor in NHL props:
-      - Opponent's shooter props affected by goalie quality
-      - Team's scorer props affected by opposing goalie
-      - Goalie saves/goals-against props directly
-    
-    Returns dict: {team_abbr: {"goalie": name, "confirmed": bool, "stats": {...}}}
-    """
-    try:
-        today_str = date.today().strftime("%Y-%m-%d")
-        # NHL schedule with goalie info
-        url = f"https://api-web.nhle.com/v1/schedule/{today_str}"
-        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0 BetCouncil/1.0"}, timeout=10)
-        if r.status_code != 200:
-            return {}
-
-        data = r.json()
-        goalies = {}
-
-        # Navigate NHL schedule structure
-        game_week = data.get("gameWeek", [])
-        for day in game_week:
-            for game in day.get("games", []):
-                game_id = game.get("id")
-                if not game_id:
-                    continue
-                for side in ("homeTeam", "awayTeam"):
-                    team_data = game.get(side, {})
-                    team_abbr = team_data.get("abbrev","")
-                    # Check for goalie data in game object
-                    goalie = team_data.get("goalieInNet", {}) or {}
-                    goalie_name = ""
-                    confirmed = False
-                    if goalie:
-                        first = goalie.get("firstName", {}).get("default","")
-                        last  = goalie.get("lastName", {}).get("default","")
-                        goalie_name = f"{first} {last}".strip()
-                        confirmed = True
-
-                    if team_abbr:
-                        goalies[team_abbr] = {
-                            "goalie":    goalie_name or "TBD",
-                            "confirmed": confirmed,
-                            "game_id":   game_id,
-                            "opponent":  game.get("awayTeam" if side == "homeTeam" else "homeTeam", {}).get("abbrev",""),
-                            "home":      side == "homeTeam",
-                        }
-
-        # If no goalies in schedule, try game center for confirmed starters
-        if not any(g["confirmed"] for g in goalies.values()):
-            for team_abbr, gdata in goalies.items():
-                try:
-                    gc_url = f"https://api-web.nhle.com/v1/gamecenter/{gdata['game_id']}/landing"
-                    rg = _http.get(gc_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
-                    if rg.status_code == 200:
-                        gc = rg.json()
-                        side = "homeTeam" if gdata["home"] else "awayTeam"
-                        starters = gc.get(side, {}).get("goalies", [])
-                        for g in starters:
-                            if g.get("starter"):
-                                fn = g.get("firstName", {}).get("default","")
-                                ln = g.get("lastName", {}).get("default","")
-                                goalies[team_abbr]["goalie"]    = f"{fn} {ln}".strip()
-                                goalies[team_abbr]["confirmed"] = True
-                                break
-                except Exception:
-                    pass
-
-        return goalies
-    except (requests.RequestException, ValueError, KeyError):
-        return {}
-
+def fetch_pinnacle_props(sport: str) -> list:
+    """Pinnacle player props — not available on arcadia guest API. Returns []."""
+    return []
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ADDITIONAL DATA SOURCES — v9.1
