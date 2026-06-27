@@ -531,88 +531,13 @@ def fetch_golf_odds(tournament_key="default"):
         return {}
 
 def _fetch_dff_propstats_live(player_id, sport, metric, line,
-                              team="", opponent="", position="",
-                              direction="over", location="ALL", last_n=10,
-                              wplayer="", woplayer=""):
-    """
-    Live fetch from dailyfantasyfuel.com prop stats API.
-    Called by fetch_dff_propstats (which adds caching on top).
-    Returns dict with hit_rate, avg, games_played, trend, etc.
-    """
-    dff_sport = DFF_SPORT_MAP.get(sport, sport)
-    metric_key = DFF_METRIC_MAP.get(metric, metric.lower().replace(" ", "_"))
-    team_code = DFF_TEAM_MAP.get(team, team)
-    opp_code  = DFF_TEAM_MAP.get(opponent, opponent)
-
-    try:
-        params = {
-            "player_id":  player_id,
-            "sport":      dff_sport,
-            "stat":       metric_key,
-            "line":       line,
-            "direction":  direction,
-            "location":   location,
-            "last_n":     last_n,
-        }
-        if team_code:   params["team"]     = team_code
-        if opp_code:    params["opponent"] = opp_code
-        if wplayer:     params["wplayer"]  = wplayer
-        if woplayer:    params["woplayer"] = woplayer
-
-        url = "https://www.dailyfantasyfuel.com/api/prop-stats/"
-        r = _http.get(url, params=params, headers=DFF_HEADERS, timeout=10)
-        if r.status_code != 200:
-            return {}
-        data = r.json()
-        if not isinstance(data, dict):
-            return {}
-        return {
-            "hit_rate":    data.get("hit_rate", data.get("hitRate")),
-            "avg":         data.get("avg", data.get("average")),
-            "games":       data.get("games", data.get("game_count", last_n)),
-            "trend":       data.get("trend", ""),
-            "splits":      data.get("splits", {}),
-            "raw":         data,
-        }
-    except Exception:
-        return {}
-
+                              team="", opponent="", home=False):
+    """DEAD: dailyfantasyfuel.com is Cloudflare-blocked; endpoint URL unverified."""
+    return {}
 def fetch_dff_propstats(player_id, sport, metric, line, team="",
-                         opponent="", position="", direction="over",
-                         location="ALL", last_n=10,
-                         wplayer="", woplayer=""):
-    """Cached wrapper around _fetch_dff_propstats_live — previously every call
-    hit dailyfantasyfuel.com live with no caching at all, once per prop, with
-    a 15s timeout. That was the single largest contributor to multi-minute
-    board loads on a board with 100+ props."""
-    cache_key = hashlib.md5(
-        f"dff_{player_id}_{sport}_{metric}_{line}_{direction}_{location}_{last_n}_{team}_{opponent}_{wplayer}_{woplayer}".encode()
-    ).hexdigest()
-    cache_path = os.path.join(CACHE_DIR, f"{cache_key}_dffprop.pkl")
-    if os.path.exists(cache_path):
-        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 3:
-            return _safe_load_pkl(cache_path)
-    result = _fetch_dff_propstats_live(
-        player_id, sport, metric, line, team=team, opponent=opponent,
-        position=position, direction=direction, location=location,
-        last_n=last_n, wplayer=wplayer, woplayer=woplayer,
-    )
-    try:
-        with open(cache_path, "wb") as f:
-            pickle.dump(result, f)
-    except OSError:
-        pass
-    return result
-
-# Bovada constants (BOVADA_BASE / BOVADA_PATH defined here so fetch_bovada_lines
-# works when fetchers.py is imported standalone; app.py may shadow these with
-# identical values — that is harmless).
-BOVADA_BASE = (
-    "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
-)
-BOVADA_PATH = os.path.join(CACHE_DIR, "bovada_lines.json")
-
+                        opponent="", home=False, cache_hours=6):
+    """DEAD: dailyfantasyfuel.com is Cloudflare-blocked; endpoint URL unverified."""
+    return {}
 def fetch_bovada_lines(sport="NBA"):
     """
     Fetch Bovada game lines — moneyline, runline/spread, total.
