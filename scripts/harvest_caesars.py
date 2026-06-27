@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""
-Caesars token harvester — with screenshot diagnostics.
-"""
-import os, sys, json, time, urllib.request, urllib.error, base64
+"""Caesars token harvester — fixed login selectors based on actual page text."""
+import os, sys, json, time, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 EMAIL      = os.environ.get("CAESARS_EMAIL", "").strip()
@@ -34,36 +32,9 @@ except ImportError:
 harvested = {}
 _done = {"flag": False}
 
-def push_screenshot(page, label, gist_token, gist_id):
-    """Upload a screenshot as a Gist file for diagnosis."""
-    try:
-        img = page.screenshot(full_page=False)
-        b64 = base64.b64encode(img).decode()
-        # Save locally so Actions artifact can pick it up
-        fname = f"/tmp/caesars_{label}.png"
-        with open(fname, "wb") as f:
-            f.write(img)
-        log(f"Screenshot saved: {fname}")
-        # Also push page HTML for text diagnosis
-        html_fname = f"/tmp/caesars_{label}.html"
-        with open(html_fname, "w") as f:
-            f.write(page.content())
-        log(f"HTML saved: {html_fname}")
-        # Log visible text
-        try:
-            body_text = page.inner_text("body")[:1000]
-            log(f"Page text ({label}): {body_text[:500]}")
-        except Exception:
-            pass
-    except Exception as e:
-        log(f"Screenshot failed ({label}): {e}")
-
 def _on_request(request):
     if _done["flag"]: return
     url = request.url
-    # Log ALL XHR/fetch requests for diagnosis
-    if any(x in url for x in ["americanwagering", "caesars", "api.", "wagering"]):
-        log(f"XHR: {request.method} {url[:120]}")
     if "americanwagering.com" not in url: return
     try:
         hdrs = request.all_headers()
@@ -74,29 +45,29 @@ def _on_request(request):
     harvested["waf_token"]   = hdrs.get("x-aws-waf-token", "")
     harvested["captured_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _done["flag"] = True
-    log(f"✅ Bearer captured (len={len(harvested['bearer_jwt'])})")
+    log(f"✅ Bearer captured (len={len(harvested['bearer_jwt'])}, url={url[:80]})")
+
+def snap(page, label):
+    try:
+        page.screenshot(path=f"/tmp/caesars_{label}.png")
+        txt = page.inner_text("body")[:300].replace("\n", " ")
+        log(f"[{label}] url={page.url[:80]} text={txt[:200]}")
+    except Exception as e:
+        log(f"snap failed ({label}): {e}")
 
 log(f"Starting — state={STATE}")
 
 with sync_playwright() as pw:
     browser = pw.chromium.launch(
         headless=False,
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--window-size=1280,800",
-        ],
+        args=["--disable-blink-features=AutomationControlled",
+              "--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,800"],
     )
     ctx = browser.new_context(
         viewport={"width": 1280, "height": 800},
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        locale="en-US",
-        timezone_id="America/New_York",
+        user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+        locale="en-US", timezone_id="America/New_York",
     )
     ctx.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
@@ -109,109 +80,139 @@ with sync_playwright() as pw:
     page.on("request", _on_request)
 
     # 1. Navigate
-    url = f"https://sportsbook.caesars.com/us/{STATE}/bet"
-    log(f"Navigating → {url}")
+    log(f"Navigating → https://sportsbook.caesars.com/us/{STATE}/bet")
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet",
+                  wait_until="networkidle", timeout=45_000)
     except Exception as e:
         log(f"goto: {e}")
-    time.sleep(4)
-    push_screenshot(page, "01_landing", GIST_TOKEN, GIST_ID)
+    time.sleep(3)
+    snap(page, "01_landing")
 
     # 2. Dismiss banners
     for sel in ["button:has-text('Accept')", "button:has-text('OK')",
                  "[aria-label='close']", "button:has-text('No thanks')"]:
         try:
             btn = page.query_selector(sel)
-            if btn and btn.is_visible(): btn.click(); time.sleep(1)
+            if btn and btn.is_visible(): btn.click(); time.sleep(0.5)
         except Exception: pass
 
-    # 3. Check login state
-    logged_in = False
-    for indicator in ["[data-testid='account-balance']", ".account-balance",
-                       "text=My Account", "text=BALANCE", "text=Deposit"]:
+    # 3. Click LOG IN — actual text from page is "LOG IN" all caps
+    login_clicked = False
+    # Try text-exact match first, then broader selectors
+    for sel in [
+        "text='LOG IN'",
+        "text='Log In'",
+        "text='Login'",
+        "button:has-text('LOG IN')",
+        "a:has-text('LOG IN')",
+        "[data-testid='login-button']",
+        "[data-qa='login-button']",
+        "button:has-text('Log In')",
+        "a:has-text('Log In')",
+    ]:
         try:
-            if page.query_selector(indicator):
-                logged_in = True
-                log(f"Already logged in (found: {indicator})")
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                el.click()
+                log(f"Clicked login: {sel}")
+                login_clicked = True
+                time.sleep(3)
+                break
+        except Exception as e:
+            log(f"selector {sel} failed: {e}")
+
+    if not login_clicked:
+        # Last resort: find by evaluating all buttons/links for LOG IN text
+        log("Trying JS click fallback...")
+        try:
+            page.evaluate("""
+                () => {
+                    const els = [...document.querySelectorAll('button, a, [role="button"]')];
+                    const target = els.find(e => e.textContent.trim().toUpperCase().includes('LOG IN') ||
+                                                 e.textContent.trim().toUpperCase().includes('LOGIN') ||
+                                                 e.textContent.trim().toUpperCase() === 'SIGN IN');
+                    if (target) { target.click(); return target.textContent; }
+                    return null;
+                }
+            """)
+            log("JS click executed")
+            time.sleep(3)
+        except Exception as e:
+            log(f"JS click failed: {e}")
+
+    snap(page, "02_after_login_click")
+
+    # 4. Fill credentials — wait for form to appear
+    time.sleep(2)
+    log("Looking for email/username field...")
+    for sel in ["input[type='email']", "input[name='email']", "input[name='username']",
+                 "input[placeholder*='email' i]", "input[placeholder*='username' i]",
+                 "#email", "#username", "[data-qa='email-input']", "[data-testid='email']"]:
+        try:
+            inp = page.wait_for_selector(sel, timeout=3000, state="visible")
+            if inp:
+                inp.fill(EMAIL)
+                log(f"Filled email: {sel}")
                 break
         except Exception: pass
 
-    if not logged_in:
-        log("Attempting login...")
-        # Find and click login button
-        for sel in ["button:has-text('Sign in')", "button:has-text('Log in')",
-                     "a:has-text('Sign in')", "[data-testid='login-button']",
-                     "button:has-text('Login')"]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible():
-                    btn.click(); time.sleep(2)
-                    log(f"Clicked: {sel}"); break
-            except Exception: pass
+    time.sleep(0.5)
 
-        push_screenshot(page, "02_after_login_click", GIST_TOKEN, GIST_ID)
+    for sel in ["input[type='password']", "input[name='password']", "#password",
+                 "[data-qa='password-input']", "[data-testid='password']"]:
+        try:
+            inp = page.wait_for_selector(sel, timeout=3000, state="visible")
+            if inp:
+                inp.fill(PASSWORD)
+                log(f"Filled password: {sel}")
+                break
+        except Exception: pass
 
-        # Email
-        for sel in ["input[type='email']", "input[name='email']",
-                     "input[placeholder*='email' i]", "#email", "input[name='username']"]:
-            try:
-                inp = page.query_selector(sel)
-                if inp and inp.is_visible():
-                    inp.fill(EMAIL); log(f"Filled email ({sel})"); break
-            except Exception: pass
+    time.sleep(0.5)
+    snap(page, "03_form_filled")
 
-        time.sleep(0.5)
+    # Submit
+    for sel in ["button[type='submit']", "button:has-text('LOG IN')",
+                 "button:has-text('Log In')", "button:has-text('Login')",
+                 "button:has-text('Sign In')", "button:has-text('Continue')",
+                 "[data-qa='submit-button']"]:
+        try:
+            btn = page.query_selector(sel)
+            if btn and btn.is_visible():
+                btn.click()
+                log(f"Submitted: {sel}")
+                break
+        except Exception: pass
 
-        # Password
-        for sel in ["input[type='password']", "input[name='password']", "#password"]:
-            try:
-                inp = page.query_selector(sel)
-                if inp and inp.is_visible():
-                    inp.fill(PASSWORD); log(f"Filled password ({sel})"); break
-            except Exception: pass
+    log("Waiting 20s for post-login XHRs...")
+    time.sleep(20)
+    snap(page, "04_post_login")
+    log(f"URL: {page.url}")
 
-        time.sleep(0.5)
-
-        # Submit
-        for sel in ["button[type='submit']", "button:has-text('Log in')",
-                     "button:has-text('Sign in')", "button:has-text('Continue')",
-                     "button:has-text('Login')"]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible():
-                    btn.click(); log(f"Submitted ({sel})"); break
-            except Exception: pass
-
-        time.sleep(15)
-        push_screenshot(page, "03_post_login", GIST_TOKEN, GIST_ID)
-        log(f"Current URL after login: {page.url}")
-
-    # 4. Navigate to props to trigger XHRs
+    # 5. If not captured yet, navigate to props to force more XHRs
     if not _done["flag"]:
         props_url = f"https://sportsbook.caesars.com/us/{STATE}/bet#type=SCHEDULE&subtab=Batter+Props"
-        log(f"Props nav → {props_url}")
+        log(f"Navigating to props: {props_url}")
         try:
             page.goto(props_url, wait_until="domcontentloaded", timeout=30_000)
         except Exception as e:
             log(f"Props nav: {e}")
         time.sleep(5)
-        push_screenshot(page, "04_props_page", GIST_TOKEN, GIST_ID)
-        log(f"URL after props nav: {page.url}")
+        snap(page, "05_props")
 
-    # 5. Poll
+    # 6. Poll remainder
     deadline = time.time() + MAX_WAIT
     while not _done["flag"] and time.time() < deadline:
         time.sleep(1)
 
-    push_screenshot(page, "05_final", GIST_TOKEN, GIST_ID)
+    snap(page, "06_final")
     ctx.close()
     browser.close()
 
 if not harvested.get("bearer_jwt"):
-    die(f"No token after {MAX_WAIT}s — check screenshots in /tmp/caesars_*.png")
+    die(f"No token after {MAX_WAIT}s — login likely still failing, check screenshots")
 
-# Push to Gist
 log("Pushing to Gist...")
 payload = json.dumps({"files": {"caesars_tokens.json": {
     "content": json.dumps(harvested, indent=2)
@@ -219,14 +220,12 @@ payload = json.dumps({"files": {"caesars_tokens.json": {
 req = urllib.request.Request(
     f"https://api.github.com/gists/{GIST_ID}",
     data=payload, method="PATCH",
-    headers={
-        "Authorization": f"token {GIST_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-    },
+    headers={"Authorization": f"token {GIST_TOKEN}",
+             "Accept": "application/vnd.github.v3+json",
+             "Content-Type": "application/json"},
 )
 try:
     with urllib.request.urlopen(req, timeout=15) as resp:
-        log(f"✅ Gist updated (HTTP {resp.status})")
+        log(f"✅ Gist updated HTTP {resp.status} — captured_at={harvested['captured_at']}")
 except Exception as e:
-    die(f"Gist PATCH failed: {e}")
+    die(f"Gist PATCH: {e}")
