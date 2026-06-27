@@ -10351,7 +10351,6 @@ def load_sport_data(sport):
         return result
     def _pf_oddspapi():     return fetch_oddspapi_props(sport)
     def _pf_bdl():          return fetch_bdl_props(sport)
-    def _pf_sleeper():      return fetch_sleeper_props(sport)
     def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else {}
     def _pf_rw_injuries():
         try:
@@ -10431,7 +10430,7 @@ def load_sport_data(sport):
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
-        _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
+        _pf_bdl, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines,
