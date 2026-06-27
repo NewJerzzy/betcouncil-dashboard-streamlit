@@ -6,7 +6,7 @@ Full multi-book scraper using Playwright browser automation.
 Handles Cloudflare automatically on all regulated US books.
 
 BOOKS COVERED:
-  DFS:        PrizePicks, Underdog, Sleeper, ParlayPlay
+  DFS:        PrizePicks, Underdog, Sleeper
   US Sharp:   DraftKings, FanDuel, BetMGM, Caesars
   Offshore:   Bovada, MyBookie, BetOnline (no login needed)
 
@@ -1177,94 +1177,58 @@ def parse_generic_response(data, sport, book):
     except Exception: pass
     return props
 
-def scrape_dk_pick6(sport):
+def scrape_dk_pick6(sport, cookies=None):
     """
-    DraftKings Pick6 DFS props via curl_cffi — no Playwright required.
-
-    Auth tokens (Bearer JWT + x-api-key) are loaded from:
-      1. SESSION_DIR/pick6_session_token.txt  (line 1 = JWT, line 2 = api-key)
-      2. SESSION_DIR/draftkings_session_token.txt  (sportsbook fallback)
-
-    If no valid tokens are found, logs a clear warning and returns [] rather
-    than crashing the full scrape run.
+    DraftKings Pick6 DFS props via curl_cffi — no login, no Playwright.
+    Hits the public projections API directly.
     """
     print(f"\n  DraftKings Pick6 {sport}:")
     props = []
 
+    sport_map = {
+        "NBA":  "NBA",
+        "MLB":  "MLB",
+        "NHL":  "NHL",
+        "NFL":  "NFL",
+        "WNBA": "WNBA",
+    }
+    sp = sport_map.get(sport, sport)
+
+    endpoints = [
+        f"https://pick6.draftkings.com/api/v1/players?sport={sp}",
+        f"https://pick6.draftkings.com/api/v1/lineup/{sp}",
+        f"https://pick6.draftkings.com/api/v1/projections?sport={sp}",
+        f"https://pick6.draftkings.com/api/v2/players?sport={sp}&includeProjections=true",
+    ]
+
     try:
         from curl_cffi import requests as cf
         session = cf.Session(impersonate="chrome124")
+        headers = {
+            "User-Agent": UA,
+            "Referer":    "https://pick6.draftkings.com/",
+            "Origin":     "https://pick6.draftkings.com",
+            "Accept":     "application/json, text/plain, */*",
+        }
+
+        for url in endpoints:
+            try:
+                r = session.get(url, headers=headers, timeout=15)
+                print(f"    {url[-55:]}: {r.status_code}")
+                if r.status_code == 200:
+                    data = r.json()
+                    parsed = parse_pick6_response(data, sport)
+                    if parsed:
+                        print(f"    ✅ {len(parsed)} props")
+                        props.extend(parsed)
+                        break  # got data, stop trying endpoints
+            except Exception as _e:
+                continue
+
     except ImportError:
-        print("    ❌ curl_cffi not installed — pip install curl_cffi")
-        return props
-
-    # Load auth tokens from local cache files (written by dashboard harvester)
-    def _load_tokens():
-        for fname in ["pick6_session_token.txt", "draftkings_session_token.txt"]:
-            p = SESSION_DIR / fname
-            if p.exists():
-                try:
-                    lines = p.read_text(encoding="utf-8").strip().splitlines()
-                    if lines and lines[0]:
-                        return {
-                            "bearer":  lines[0],
-                            "api_key": lines[1] if len(lines) > 1 else "",
-                        }
-                except Exception:
-                    pass
-        return {}
-
-    tokens = _load_tokens()
-    if not tokens.get("bearer"):
-        print("    ⚠️  No Pick6 auth tokens — run Harvest Pick6 Tokens in the dashboard,")
-        print("       or place pick6_session_token.txt in .sessions/ (JWT on line 1, api-key on line 2).")
-        return props
-
-    headers = {
-        "Authorization": f"Bearer {tokens['bearer']}",
-        "x-api-key":     tokens.get("api_key", ""),
-        "Accept":        "application/json",
-        "Content-Type":  "application/json",
-        "Origin":        "https://pick6.draftkings.com",
-        "Referer":       "https://pick6.draftkings.com/",
-        "User-Agent":    UA,
-    }
-
-    sport_ids = {
-        "NBA": 4, "MLB": 2, "NFL": 1, "NHL": 5,
-        "WNBA": 11, "UFC": 13, "MMA": 13,
-    }
-    sport_id = sport_ids.get(sport.upper(), 4)
-
-    endpoints = [
-        f"https://api.draftkings.com/lineups/v1/player-groups?sport={sport_id}",
-        f"https://api.draftkings.com/lineups/v1/player-groups?sport={sport_id}&state=NJ",
-        f"https://api.draftkings.com/lineups/v1/player-groups?sportId={sport_id}",
-        f"https://api.draftkings.com/picks/v1/player-groups?sport={sport_id}",
-        f"https://api.draftkings.com/draftgroups/v1/draftgroups?sport={sport_id}&typeid=96",
-    ]
-
-    raw_data = None
-    for endpoint in endpoints:
-        try:
-            r = session.get(endpoint, headers=headers, timeout=14)
-            if r.status_code == 200:
-                raw_data = r.json()
-                print(f"    Hit: {endpoint.split('?')[0].split('/')[-1]} → {r.status_code}")
-                break
-            elif r.status_code in (401, 403):
-                print(f"    ⚠️  Pick6 auth rejected (HTTP {r.status_code}) — tokens may be expired.")
-                print("       Re-run Harvest Pick6 Tokens in the dashboard to refresh.")
-                return props
-            # 404 = wrong endpoint path, try next
-        except Exception:
-            continue
-
-    if not raw_data:
-        print("    ⚠️  Pick6: all endpoints returned no data. Tokens may be invalid or endpoint changed.")
-        return props
-
-    props = parse_pick6_response(raw_data, sport)
+        print("    curl_cffi not installed — pip install curl_cffi")
+    except Exception as e:
+        print(f"    Error: {e}")
 
     # Deduplicate
     seen = set()
@@ -1430,7 +1394,7 @@ def scrape_parlayplay(sport):
                     if player and line is not None:
                         props.append({
                             "Player": player,
-                            "Prop": stat,
+                            "Prop": stat_type,
                             "Line": float(str(line).replace("+", "")),
                             "Side": "OVER",
                             "OverOdds": "—",
@@ -2710,7 +2674,7 @@ def generate_brief_text(all_props, all_lines, sport=None):
             except: prob_str = str(prob)
             try:    avg_str = f"{float(avg):.1f}"
             except: avg_str = str(avg)
-            parts = [f"{(tier+': ') if tier else ''}{player} {side} {line} {stat}"]
+            parts = [f"{(tier+': ') if tier else ""}{player} {side} {line} {stat}"]
             if book:    parts.append(f'@{book}{odds}')
             if avg_str: parts.append(f'Avg:{avg_str}')
             if std_dev: parts.append(f'σ:{std_dev}')
@@ -3463,7 +3427,7 @@ def main():
     parser.add_argument("--sport",   default="NBA")
     parser.add_argument("--all",     action="store_true")
     parser.add_argument("--no-push", action="store_true")
-    parser.add_argument("--books",   default="", help="Comma-separated: dk,fd,mgm,czr,mb,bo,pp,ud,sl,bov,pplay")
+    parser.add_argument("--books",   default="", help="Comma-separated: dk,fd,mgm,czr,mb,bo,pp,ud,sl,bov")
     parser.add_argument("--betonline-props", action="store_true",
                          help="Harvest BetOnline player-prop widget keys (Cloudflare-gated, needs real browser) and exit")
     parser.add_argument("--max-games", type=int, default=15, help="Max games to harvest per sport (--betonline-props only)")
@@ -3560,13 +3524,15 @@ def main():
             _par_results = fetch_books_parallel(sport, _parallel_books)
             all_props += _par_results
 
-        # DraftKings Pick6 — DFS props (curl_cffi, no Playwright session needed)
-        if use("dk_pick6") or use("pick6") or use("dk") or use("draftkings"):
-            try:
-                pick6_props = scrape_dk_pick6(sport)
-                all_props += pick6_props
-            except Exception as _p6e:
-                print(f"    Pick6 error: {_p6e}")
+        # DraftKings Pick6 — DFS props (no login needed, curl_cffi)
+        if use("dk") or use("pick6") or use("draftkings"):
+            pick6_props = scrape_dk_pick6(sport)
+            all_props += pick6_props
+
+        # ParlayPlay — session cookie from config.json
+        if use("parlayplay") or use("pp2") or args.all:
+            pp2_props = scrape_parlayplay(sport)
+            all_props += pp2_props
 
         if use("fd") or use("fanduel"):
             try:
@@ -3612,16 +3578,6 @@ def main():
                         sessions["mybookie"] = new_cookies
                         mb_props, _ = scrape_mybookie(sport, new_cookies)
                 all_props += mb_props
-
-        # ParlayPlay props — cookie-gated; skips gracefully if session_cookie is absent
-        if use("pplay") or use("parlayplay"):
-            pp_cfg = cfg.get("parlayplay", {})
-            if pp_cfg.get("session_cookie"):
-                pplay_props = scrape_parlayplay(sport)
-                all_props += pplay_props
-            elif "parlayplay" in book_filter or "pplay" in book_filter:
-                print("\n  ParlayPlay: no session_cookie in config.json — skipping")
-                print('    Add: "parlayplay": {"session_cookie": "YOUR_SESSIONID"} to config.json')
 
         # BetOnline props + lines — Playwright headed browser (Cloudflare bypass)
         # Opt-in only: requires --books bo or --books bol or --books betonline
