@@ -530,6 +530,53 @@ def fetch_golf_odds(tournament_key="default"):
     except (requests.RequestException, ValueError, KeyError, TypeError) as e:
         return {}
 
+def _fetch_dff_propstats_live(player_id, sport, metric, line,
+                              team="", opponent="", position="",
+                              direction="over", location="ALL", last_n=10,
+                              wplayer="", woplayer=""):
+    """
+    Live fetch from dailyfantasyfuel.com prop stats API.
+    Called by fetch_dff_propstats (which adds caching on top).
+    Returns dict with hit_rate, avg, games_played, trend, etc.
+    """
+    dff_sport = DFF_SPORT_MAP.get(sport, sport)
+    metric_key = DFF_METRIC_MAP.get(metric, metric.lower().replace(" ", "_"))
+    team_code = DFF_TEAM_MAP.get(team, team)
+    opp_code  = DFF_TEAM_MAP.get(opponent, opponent)
+
+    try:
+        params = {
+            "player_id":  player_id,
+            "sport":      dff_sport,
+            "stat":       metric_key,
+            "line":       line,
+            "direction":  direction,
+            "location":   location,
+            "last_n":     last_n,
+        }
+        if team_code:   params["team"]     = team_code
+        if opp_code:    params["opponent"] = opp_code
+        if wplayer:     params["wplayer"]  = wplayer
+        if woplayer:    params["woplayer"] = woplayer
+
+        url = "https://www.dailyfantasyfuel.com/api/prop-stats/"
+        r = _http.get(url, params=params, headers=DFF_HEADERS, timeout=10)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        if not isinstance(data, dict):
+            return {}
+        return {
+            "hit_rate":    data.get("hit_rate", data.get("hitRate")),
+            "avg":         data.get("avg", data.get("average")),
+            "games":       data.get("games", data.get("game_count", last_n)),
+            "trend":       data.get("trend", ""),
+            "splits":      data.get("splits", {}),
+            "raw":         data,
+        }
+    except Exception:
+        return {}
+
 def fetch_dff_propstats(player_id, sport, metric, line, team="",
                          opponent="", position="", direction="over",
                          location="ALL", last_n=10,
