@@ -11021,45 +11021,51 @@ def fetch_pinnacle_game_lines(sport: str) -> list:
 
     game_markets = {}  # matchupId → {moneyline, spread, total}
     for market in markets_data:
-        mid   = market.get("matchupId")
+        mid    = market.get("matchupId")
         period = market.get("period", 0)
         mtype  = market.get("type", "")
         prices = market.get("prices", [])
-        if period != 0 or not mid or mid not in matchup_teams:
+        # Full-game (period=0), non-alternate main lines only
+        if period != 0 or market.get("isAlternate") or not mid or mid not in matchup_teams:
             continue
         if mid not in game_markets:
             game_markets[mid] = {}
 
+        # Arcadia prices use designation:'home'/'away'/'over'/'under' directly
         if mtype == "moneyline":
             ml = {}
             for p in prices:
-                pid = p.get("participantId")
-                aln = participant_map.get(pid, {}).get("alignment", "")
-                if aln == "home":
+                desig = p.get("designation", "")
+                if desig == "home":
                     ml["home"] = _pinn_american(p.get("price"))
-                elif aln == "away":
+                elif desig == "away":
                     ml["away"] = _pinn_american(p.get("price"))
-            game_markets[mid]["moneyline"] = ml
+            if ml:
+                game_markets[mid]["moneyline"] = ml
 
         elif mtype == "spread":
             sp = {}
             for p in prices:
-                pid = p.get("participantId")
-                aln = participant_map.get(pid, {}).get("alignment", "")
-                if aln == "home":
+                desig = p.get("designation", "")
+                if desig == "home":
                     sp["hdp"]        = p.get("points")
                     sp["home_price"] = _pinn_american(p.get("price"))
-                elif aln == "away":
+                elif desig == "away":
                     sp["away_price"] = _pinn_american(p.get("price"))
-            game_markets[mid]["spread"] = sp
+            if sp:
+                game_markets[mid]["spread"] = sp
 
-        elif mtype == "total" and len(prices) >= 2:
-            tot = {
-                "points":      prices[0].get("points"),
-                "over_price":  _pinn_american(prices[0].get("price")),
-                "under_price": _pinn_american(prices[1].get("price")),
-            }
-            game_markets[mid]["total"] = tot
+        elif mtype == "total":
+            tot = {}
+            for p in prices:
+                desig = p.get("designation", "")
+                if desig == "over":
+                    tot["points"]     = p.get("points")
+                    tot["over_price"] = _pinn_american(p.get("price"))
+                elif desig == "under":
+                    tot["under_price"] = _pinn_american(p.get("price"))
+            if tot:
+                game_markets[mid]["total"] = tot
 
     # Step 3: assemble
     results = []
