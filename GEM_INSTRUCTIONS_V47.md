@@ -1090,3 +1090,69 @@ Use NB variants for ZSD and PRP as the defaults. Convert to implied probability 
 43. TOOR MOV is the primary spread predictor; GSSD is situational context only — never override TOOR with GSSD alone
 44. Average ensemble MOV within 1.0 of market = efficient line; do not force a value play
 45. HFA constant = +2.5 standard; reduce to +1.5 for dome teams playing indoor games
+
+
+---
+
+## SECTION: NFL Ensemble Model (Added June 2026)
+
+### Architecture
+
+BetCouncil's NFL model uses a two-model ensemble adapted from thadhutch/sports-quant:
+
+- **Primary:** XGBoost ensemble (25 models, diverse seeds) trained on spread outcomes
+- **Secondary:** LightGBM trained on O/U outcomes
+- **Walk-forward backtesting** — no data leakage; each game predicted using only prior data
+- **Season weighting** — early season relies more on prior year; by playoffs relies on current
+
+### Feature Set
+
+| Category | Features |
+|----------|----------|
+| EPA (offense) | pass_epa_diff, rush_epa_diff, total_epa_diff |
+| EPA (defense) | home_def_pass_epa, away_def_pass_epa |
+| Scoring | ppg_diff, def_ppg_diff, home_ppg, away_ppg, home_papg, away_papg |
+| Win rates | home_win_pct, away_win_pct, home_home_win_pct |
+
+All features from nflfastR play-by-play data (EPA per play, air yards, target share, RACR).
+
+### Signal Rules (Non-Negotiable — R-NFL)
+
+**R-NFL-1:** `confidence > 0.65` → **PRIMARY signal** — overrides S2 defense adjustment for NFL. Use as primary edge driver.
+
+**R-NFL-2:** `confidence 0.55-0.65` → **SUPPORTING signal** — combine with ≥1 other signal before betting.
+
+**R-NFL-3:** `confidence < 0.55` → **IGNORE** — do not use as any signal. Below coin-flip threshold.
+
+**R-NFL-4:** When model `spread_side` conflicts with Pinnacle/BOL sharp movement, REDUCE confidence by 0.10 before classification.
+
+**R-NFL-5:** When model `spread_side` agrees with BOL+Pinnacle sharp consensus, BOOST confidence by 0.05 (cap at 0.80).
+
+**R-NFL-6:** Model `predicted_total` vs market total: if difference ≥ 1.5 points AND `total_conf ≥ 0.60`, treat as primary O/U signal. If 0.8-1.4 points difference, treat as supporting only.
+
+### Integration
+
+```python
+from nfl_model import nfl_game_edge
+result = nfl_game_edge("KC", "BUF", week=5, season=2025)
+# result["signal_strength"] → "PRIMARY" | "SUPPORTING" | "IGNORE"
+# result["model_side"]      → "HOME" | "AWAY" | "OVER" | "UNDER" | "PASS"
+# result["confidence"]      → 0.0–1.0
+```
+
+### Data Pipeline
+
+- **nfl_features.py** — ESPN schedule + nflfastR play-by-play → rolling team stats
+- **nfl_model.py** — XGBoost/LightGBM ensemble training + prediction + BetCouncil integration
+- Models retrain automatically when prior season data available (cached 24h)
+- NFL season: Sep–Jan. Model inactive in offseason (returns PASS for all games)
+
+### Player Props (NFL)
+
+Use `build_nfl_player_features(player, team, season)` for prop analysis:
+- `epa_l5` — EPA over last 5 games (trend indicator)
+- `targets_l5` — recent target share (receiving props)
+- `carries_l5` — recent carry volume (rushing props)
+- `racr_avg` — receiver air conversion ratio (air yards efficiency)
+
+Integrate with existing S1-EWMA: use `epa_trend > 0.15` as +1 signal for OVER props, `epa_trend < -0.15` as -1 signal.
