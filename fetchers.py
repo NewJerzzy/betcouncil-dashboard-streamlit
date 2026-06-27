@@ -3,7 +3,7 @@ BetCouncil Fetchers — extracted data-fetch and utility functions.
 Moved from app.py to keep app.py under 1 MB.
 All functions callable from app.py via: from fetchers import *
 """
-import os, time, pickle, json, re, csv, io
+import os, time, pickle, json, re, csv, io, hashlib
 try:
     from curl_cffi import requests as cf
 except ImportError:
