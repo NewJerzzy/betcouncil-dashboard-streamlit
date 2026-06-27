@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Caesars harvester — real Playwright clicks, diagnostic to public gist."""
+"""Caesars harvester — find submit button inside login drawer."""
 import os, sys, json, time, urllib.request, traceback
 from datetime import datetime, timezone
 
@@ -12,16 +12,15 @@ STATE      = os.environ.get("CAESARS_STATE", "az").strip().lower()
 
 log_lines = []
 def log(msg): print(f"[harvest_caesars] {msg}", flush=True); log_lines.append(msg)
-
-def push_gist(gist_id, files):
-    payload = json.dumps({"files": {k: {"content": v} for k, v in files.items()}}).encode()
-    req = urllib.request.Request(f"https://api.github.com/gists/{gist_id}",
+def push_diag(content):
+    payload = json.dumps({"files": {"caesars_diag.txt": {"content": content}}}).encode()
+    req = urllib.request.Request(f"https://api.github.com/gists/{DIAG_GIST}",
         data=payload, method="PATCH",
         headers={"Authorization": f"token {GIST_TOKEN}",
                  "Accept": "application/vnd.github.v3+json",
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as r:
-        log(f"Gist {gist_id[:8]} push HTTP {r.status}")
+        log(f"Diag push HTTP {r.status}")
 
 if not EMAIL or not PASSWORD or not GIST_TOKEN:
     log("Missing env vars"); sys.exit(1)
@@ -47,122 +46,131 @@ def _on_request(request):
 success = False
 try:
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            headless=False,
+        browser = pw.chromium.launch(headless=False,
             args=["--disable-blink-features=AutomationControlled",
-                  "--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,800"],
-        )
+                  "--no-sandbox","--disable-dev-shm-usage","--window-size=1280,900"])
         ctx = browser.new_context(
-            viewport={"width": 1280, "height": 800},
+            viewport={"width": 1280, "height": 900},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             locale="en-US", timezone_id="America/New_York",
         )
         ctx.add_cookies([
-            {"name": "OptanonAlertBoxClosed", "value": "2026-01-01T00:00:00.000Z",
-             "domain": ".caesars.com", "path": "/"},
-            {"name": "OptanonConsent",
-             "value": "isGpcEnabled=0&datestamp=2026-01-01&version=202301.2.0&isIABGlobal=false&hosts=&consentId=x&interactionCount=1&landingPath=NotLandingPage&groups=C0001:1,C0002:1,C0003:1,C0004:1",
-             "domain": ".caesars.com", "path": "/"},
+            {"name": "OptanonAlertBoxClosed","value": "2026-01-01T00:00:00.000Z","domain": ".caesars.com","path": "/"},
+            {"name": "OptanonConsent","value": "isGpcEnabled=0&datestamp=2026-01-01&version=202301.2.0&isIABGlobal=false&hosts=&consentId=x&interactionCount=1&landingPath=NotLandingPage&groups=C0001:1,C0002:1,C0003:1,C0004:1","domain": ".caesars.com","path": "/"},
         ])
-        ctx.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            window.chrome = {runtime: {}};
-            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
-        """)
+        ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});window.chrome={runtime:{}};")
         page = ctx.new_page()
         page.on("request", _on_request)
 
-        log(f"Navigating state={STATE}")
         try:
-            page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet",
-                      wait_until="networkidle", timeout=45000)
-        except Exception as e:
-            log(f"goto: {e}")
+            page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet", wait_until="networkidle", timeout=45000)
+        except Exception as e: log(f"goto: {e}")
         time.sleep(2)
-
-        # Nuke OneTrust
-        page.evaluate("""() => {
-            document.querySelectorAll('[id*="onetrust"],[class*="onetrust"]').forEach(e=>e.remove());
-        }""")
+        page.evaluate("document.querySelectorAll('[id*=\"onetrust\"],[class*=\"onetrust\"]').forEach(e=>e.remove())")
         time.sleep(0.5)
 
-        # Use Playwright locator with real pointer events
-        try:
-            btn = page.get_by_text("LOG IN", exact=True).first
-            box = btn.bounding_box()
-            log(f"LOG IN bounding_box: {box}")
-            if box:
-                page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
-                log("Clicked LOG IN via mouse")
-            else:
-                btn.click(force=True)
-                log("Clicked LOG IN via force click")
-        except Exception as e:
-            log(f"LOG IN click error: {e}")
-
+        # Click LOG IN with real mouse
+        btn = page.get_by_text("LOG IN", exact=True).first
+        box = btn.bounding_box()
+        log(f"LOG IN box: {box}")
+        page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
         time.sleep(4)
 
-        # Log drawer state
-        drawers = page.evaluate("""() =>
-            [...document.querySelectorAll('[class*="drawer"],[class*="Drawer"]')]
-            .map(e => ({cls: e.className.substring(0,60), h: e.getBoundingClientRect().height}))
-        """)
-        log(f"Drawers: {json.dumps(drawers)}")
-
-        # Wait for email input
-        email_sel = None
-        for sel in ["input[type='email']","input[name='email']",
-                     "input[name='username']","input[placeholder*='email' i]",
-                     "input[placeholder*='Email' i]","input[placeholder*='username' i]"]:
+        # Fill email
+        for sel in ["input[type='email']","input[name='email']","input[name='username']"]:
             try:
                 el = page.wait_for_selector(sel, timeout=8000, state="visible")
-                if el: email_sel = sel; log(f"Email field: {sel}"); break
+                if el: page.fill(sel, EMAIL); log(f"email: {sel}"); break
             except: pass
 
-        if not email_sel:
-            log("NO EMAIL FIELD — drawer not open")
-            # Log all visible inputs
-            all_inputs = page.evaluate("""() =>
-                [...document.querySelectorAll('input')]
-                .map(i => ({t:i.type,n:i.name,id:i.id,ph:i.placeholder,h:i.getBoundingClientRect().height}))
-            """)
-            log(f"All inputs: {json.dumps(all_inputs)}")
-        else:
-            page.fill(email_sel, EMAIL)
-            log("Filled email")
-            time.sleep(0.3)
-            for sel in ["input[type='password']","input[name='password']","#password"]:
-                try:
-                    el = page.wait_for_selector(sel, timeout=5000, state="visible")
-                    if el:
-                        page.fill(sel, PASSWORD)
-                        log(f"Filled password: {sel}")
-                        break
-                except: pass
-            time.sleep(0.3)
+        time.sleep(0.3)
 
-            # Submit
+        # Fill password
+        for sel in ["input[type='password']","input[name='password']"]:
             try:
-                page.locator("button[type='submit']").first.click(force=True)
-                log("Clicked submit")
-            except:
-                page.keyboard.press("Enter")
-                log("Pressed Enter")
+                el = page.wait_for_selector(sel, timeout=5000, state="visible")
+                if el: page.fill(sel, PASSWORD); log(f"pw: {sel}"); break
+            except: pass
 
-            time.sleep(25)
-            state_info = page.evaluate("""() => ({
-                hasLogIn: document.body.innerText.includes('LOG IN'),
-                hasBalance: document.body.innerText.includes('BALANCE') || document.body.innerText.includes('MY BETS'),
-                snip: document.body.innerText.substring(0,150)
-            })""")
-            log(f"Post-login: {json.dumps(state_info)}")
+        time.sleep(0.5)
+
+        # Dump ALL buttons in the drawer after filling credentials
+        drawer_btns = page.evaluate("""() => {
+            // Find the open/visible drawer
+            const drawers = [...document.querySelectorAll('[class*="Drawer"],[class*="drawer"]')]
+                .filter(d => {
+                    const r = d.getBoundingClientRect();
+                    return r.height > 100 && r.width > 100;
+                });
+            const result = [];
+            for (const drawer of drawers) {
+                const btns = [...drawer.querySelectorAll('button,[role="button"]')]
+                    .map(b => ({
+                        text: b.textContent.trim().substring(0,50),
+                        type: b.type||'',
+                        id: b.id,
+                        cls: b.className.substring(0,80),
+                        disabled: b.disabled,
+                        h: b.getBoundingClientRect().height,
+                        w: b.getBoundingClientRect().width,
+                        x: Math.round(b.getBoundingClientRect().x),
+                        y: Math.round(b.getBoundingClientRect().y),
+                    }));
+                result.push({drawer_cls: drawer.className.substring(0,60), buttons: btns});
+            }
+            return result;
+        }""")
+        log(f"DRAWER BUTTONS: {json.dumps(drawer_btns, indent=2)}")
+
+        # Find the login submit button — look for button inside the drawer with pw field
+        submit_result = page.evaluate("""() => {
+            const pw = document.querySelector('input[type="password"]');
+            if (!pw) return 'no-pw-field';
+            // Walk up to find containing drawer
+            let el = pw;
+            while (el && el !== document.body) {
+                if (el.className && el.className.includes('Drawer')) break;
+                el = el.parentElement;
+            }
+            if (!el || el === document.body) {
+                // Try finding any visible submit button
+                const allBtns = [...document.querySelectorAll('button[type="submit"],button')]
+                    .filter(b => {
+                        const r = b.getBoundingClientRect();
+                        return r.height > 0 && r.width > 0;
+                    });
+                // Find one that says LOG IN or SIGN IN or CONTINUE or LOGIN
+                const loginBtn = allBtns.find(b =>
+                    /^(LOG IN|LOGIN|SIGN IN|CONTINUE|SUBMIT)$/i.test(b.textContent.trim())
+                );
+                if (loginBtn) { loginBtn.click(); return 'clicked-' + loginBtn.textContent.trim(); }
+                // Just click the last visible submit
+                const submits = allBtns.filter(b => b.type === 'submit');
+                if (submits.length) { submits[submits.length-1].click(); return 'clicked-last-submit:' + submits[submits.length-1].textContent.trim(); }
+                return 'no-submit-found';
+            }
+            const btns = [...el.querySelectorAll('button')].filter(b => b.getBoundingClientRect().height > 0);
+            const sub = btns.find(b => b.type === 'submit' || /^(LOG IN|LOGIN|CONTINUE|SIGN IN)$/i.test(b.textContent.trim()));
+            if (sub) { sub.click(); return 'drawer-submit:' + sub.textContent.trim(); }
+            if (btns.length) { btns[btns.length-1].click(); return 'drawer-last-btn:' + btns[btns.length-1].textContent.trim(); }
+            return 'drawer-no-buttons';
+        }""")
+        log(f"Submit: {submit_result}")
+
+        time.sleep(25)
+
+        state = page.evaluate("""() => ({
+            hasLogIn: document.body.innerText.includes('LOG IN'),
+            hasBalance: document.body.innerText.includes('BALANCE') || document.body.innerText.includes('MY BETS') || document.body.innerText.includes('Deposit'),
+            url: window.location.href,
+            snip: document.body.innerText.substring(0,200)
+        })""")
+        log(f"POST-SUBMIT: {json.dumps(state)}")
 
         deadline = time.time() + 60
         while not _done["flag"] and time.time() < deadline:
             time.sleep(1)
-        if _done["flag"]:
-            success = True
+        if _done["flag"]: success = True
 
         ctx.close()
         browser.close()
@@ -172,14 +180,17 @@ except Exception as e:
 
 finally:
     diag = "\n".join(log_lines)
-    try:
-        push_gist(DIAG_GIST, {"caesars_diag.txt": diag})
-    except Exception as e:
-        print(f"diag push failed: {e}")
+    try: push_diag(diag)
+    except Exception as e: print(f"diag push: {e}")
     if success and harvested.get("bearer_jwt"):
-        try:
-            push_gist(GIST_ID, {"betcouncil_caesars_tokens.json": json.dumps(harvested, indent=2)})
-        except Exception as e:
-            print(f"token push failed: {e}")
+        payload = json.dumps({"files": {"betcouncil_caesars_tokens.json": {
+            "content": json.dumps(harvested, indent=2)}}}).encode()
+        req = urllib.request.Request(f"https://api.github.com/gists/{GIST_ID}",
+            data=payload, method="PATCH",
+            headers={"Authorization": f"token {GIST_TOKEN}",
+                     "Accept": "application/vnd.github.v3+json",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            log(f"Tokens push HTTP {r.status}")
 
 sys.exit(0 if success else 1)
