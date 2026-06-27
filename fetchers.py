@@ -3,7 +3,7 @@ BetCouncil Fetchers — extracted data-fetch and utility functions.
 Moved from app.py to keep app.py under 1 MB.
 All functions callable from app.py via: from fetchers import *
 """
-import os, time, pickle, json, re
+import os, time, pickle, json, re, csv, io
 try:
     from curl_cffi import requests as cf
 except ImportError:
@@ -10474,6 +10474,740 @@ def fetch_espnbet_game_lines(sport: str) -> list:
              Book: 'ESPN Bet', Sport, source} per game.  Cached 60 min.
     """
     return _fetch_kambi_game_lines("espnbet", sport, "ESPN Bet")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BASEBALL SAVANT STATCAST — MLB's own free public data, no auth required.
+# Five CSV endpoints; each cached 2 hours.  All return dicts keyed by a
+# lowercase "first last" player name for easy lookup in the scoring loop.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _savant_parse_csv(text):
+    """Parse Savant CSV text → list[dict].  Handles the 'last, first' header."""
+    if not text or not text.strip():
+        return []
+    rows = []
+    lines = [l.rstrip("\r") for l in text.strip().split("\n") if l.strip()]
+    if len(lines) < 2:
+        return []
+    # Savant CSV is well-formed; split on comma respecting quoted fields
+    def _split(line):
+        fields, cur, in_q = [], [], False
+        for ch in line:
+            if ch == '"': in_q = not in_q
+            elif ch == ',' and not in_q: fields.append("".join(cur)); cur = []
+            else: cur.append(ch)
+        fields.append("".join(cur))
+        return [f.strip('"').strip() for f in fields]
+
+    headers = _split(lines[0])
+    for line in lines[1:]:
+        vals = _split(line)
+        if len(vals) == len(headers):
+            rows.append(dict(zip(headers, vals)))
+    return rows
+
+
+def _savant_name_key(row):
+    """Return lowercase 'first last' from a Savant row (handles last, first format)."""
+    raw = row.get("last_name, first_name") or row.get("name") or row.get("player_name") or ""
+    if "," in raw:
+        parts = [p.strip() for p in raw.split(",", 1)]
+        return f"{parts[1]} {parts[0]}".lower().strip()
+    n = row.get("first_name", ""); s = row.get("last_name", "")
+    if n and s:
+        return f"{n} {s}".lower().strip()
+    return raw.lower().strip()
+
+
+def fetch_savant_statcast(season=2026):
+    """
+    Baseball Savant xStats leaderboard — completely free, no auth.
+    Returns dict: lowercase_name → {xba, xslg, xwoba, xobp, xiso,
+      exit_velocity_avg, launch_angle_avg, barrel_batted_rate,
+      hard_hit_percent, strikeout_percent, walk_percent, player_id}
+    Cached 2 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"savant_xstats_{season}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    url = (
+        f"https://baseballsavant.mlb.com/leaderboard/custom"
+        f"?year={season}&type=batter&filter=&sort=xwoba&sortDir=desc&min=q"
+        f"&selections=xba,xslg,xwoba,xobp,xiso,exit_velocity_avg,launch_angle_avg"
+        f",barrel_batted_rate,hard_hit_percent,strikeout_percent,walk_percent&csv=true"
+    )
+    try:
+        r = _http.get(url, headers=HEADERS, timeout=25)
+        if r.status_code != 200: return {}
+        rows = _savant_parse_csv(r.text)
+        lookup = {}
+        for row in rows:
+            key = _savant_name_key(row)
+            if not key: continue
+            def _f(k): 
+                v = row.get(k, "")
+                try: return float(v) if v not in ("", "null", "None") else None
+                except: return None
+            lookup[key] = {
+                "player_id":          row.get("player_id", ""),
+                "xba":                _f("xba"),
+                "xslg":               _f("xslg"),
+                "xwoba":              _f("xwoba"),
+                "xobp":               _f("xobp"),
+                "xiso":               _f("xiso"),
+                "exit_velocity_avg":  _f("exit_velocity_avg"),
+                "launch_angle_avg":   _f("launch_angle_avg"),
+                "barrel_batted_rate": _f("barrel_batted_rate"),
+                "hard_hit_percent":   _f("hard_hit_percent"),
+                "strikeout_percent":  _f("strikeout_percent"),
+                "walk_percent":       _f("walk_percent"),
+            }
+        if lookup: _safe_save_pkl(cache_path, lookup)
+        return lookup
+    except Exception as _e:
+        print(f"[WARN] fetch_savant_statcast: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+def fetch_savant_sprint_speed(season=2026):
+    """
+    Baseball Savant sprint speed leaderboard — free, no auth.
+    Returns dict: lowercase_name → {sprint_speed, bolts, hp_to_1b, team, position}
+    sprint_speed in ft/s; bolts = 30+ ft/s sprints; hp_to_1b in seconds.
+    Cached 2 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"savant_sprint_{season}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    url = f"https://baseballsavant.mlb.com/sprint_speed_leaderboard?year={season}&position=&team=&min=10&csv=true"
+    try:
+        r = _http.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200: return {}
+        rows = _savant_parse_csv(r.text)
+        lookup = {}
+        for row in rows:
+            # Sprint speed CSV uses "last_name, first_name" column
+            key = _savant_name_key(row)
+            if not key: continue
+            def _f(k):
+                v = row.get(k, "")
+                try: return float(v) if v not in ("", "null") else None
+                except: return None
+            lookup[key] = {
+                "sprint_speed": _f("sprint_speed"),
+                "bolts":        _f("bolts"),
+                "hp_to_1b":     _f("hp_to_1b"),
+                "team":         row.get("team", ""),
+                "position":     row.get("position", ""),
+                "player_id":    row.get("player_id", ""),
+            }
+        if lookup: _safe_save_pkl(cache_path, lookup)
+        return lookup
+    except Exception as _e:
+        print(f"[WARN] fetch_savant_sprint_speed: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+def fetch_savant_expected_stats(season=2026):
+    """
+    Baseball Savant expected stats (xBA, xSLG, xwOBA) vs actual — catches
+    overperformers (due for regression) and underperformers (breakout candidates).
+    Returns dict: lowercase_name → {ba, xba, xba_diff, slg, xslg, xslg_diff,
+                                     woba, xwoba, xwoba_diff, pa}
+    Cached 2 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"savant_expected_{season}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    url = f"https://baseballsavant.mlb.com/leaderboard/expected_statistics?type=batter&year={season}&position=&team=&min=q&csv=true"
+    try:
+        r = _http.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200: return {}
+        rows = _savant_parse_csv(r.text)
+        lookup = {}
+        for row in rows:
+            key = _savant_name_key(row)
+            if not key: continue
+            def _f(k):
+                v = row.get(k, "")
+                try: return float(v) if v not in ("", "null") else None
+                except: return None
+            lookup[key] = {
+                "pa":         _f("pa"),
+                "ba":         _f("ba"),
+                "xba":        _f("est_ba"),
+                "xba_diff":   _f("est_ba_minus_ba_diff"),
+                "slg":        _f("slg"),
+                "xslg":       _f("est_slg"),
+                "xslg_diff":  _f("est_slg_minus_slg_diff"),
+                "woba":       _f("woba"),
+                "xwoba":      _f("est_woba"),
+                "xwoba_diff": _f("est_woba_minus_woba_diff"),
+            }
+        if lookup: _safe_save_pkl(cache_path, lookup)
+        return lookup
+    except Exception as _e:
+        print(f"[WARN] fetch_savant_expected_stats: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+def fetch_savant_pitch_arsenal(season=2026):
+    """
+    Baseball Savant pitch arsenal — run value per 100 pitches by type,
+    per pitcher.  Negative run value = good for pitcher (run-saving pitch).
+    Returns dict: lowercase_pitcher_name → {FF, SL, CH, CU, SI, FC, ...}
+      each value = run_value_per_100 for that pitch type.
+    Cached 2 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"savant_arsenal_{season}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    url = f"https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=pitcher&pitchType=&year={season}&team=&min=10&csv=true"
+    try:
+        r = _http.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200: return {}
+        rows = _savant_parse_csv(r.text)
+        # Group rows by pitcher (one row per pitch type)
+        from collections import defaultdict
+        pitcher_map = defaultdict(dict)
+        for row in rows:
+            key = _savant_name_key(row)
+            if not key: continue
+            pitch_type = row.get("pitch_type", "UNK")
+            rv_raw = row.get("run_value_per_100", "")
+            try: rv = float(rv_raw)
+            except: rv = None
+            pitch_pct_raw = row.get("pitch_usage", row.get("pitch_percent", ""))
+            try: pitch_pct = float(pitch_pct_raw)
+            except: pitch_pct = None
+            if rv is not None:
+                pitcher_map[key][pitch_type] = {"rv_per_100": rv, "usage_pct": pitch_pct}
+        result = dict(pitcher_map)
+        if result: _safe_save_pkl(cache_path, result)
+        return result
+    except Exception as _e:
+        print(f"[WARN] fetch_savant_pitch_arsenal: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+def fetch_savant_batted_ball(season=2026):
+    """
+    Baseball Savant batted-ball profile per batter —
+    GB%, FB%, LD%, PU%, pull/straight/oppo rates.
+    Returns dict: lowercase_name → {gb_rate, fb_rate, ld_rate, pu_rate,
+                                     pull_rate, oppo_rate, sweet_spot_rate}
+    Cached 2 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"savant_batted_{season}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    url = f"https://baseballsavant.mlb.com/leaderboard/batted-ball?year={season}&csv=true"
+    try:
+        r = _http.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200: return {}
+        rows = _savant_parse_csv(r.text)
+        lookup = {}
+        for row in rows:
+            # Batted ball uses "id" + "name" columns
+            raw_name = row.get("name", "")
+            key = raw_name.lower().strip() if raw_name else _savant_name_key(row)
+            if not key: continue
+            def _f(k):
+                v = row.get(k, "")
+                try: return float(v) if v not in ("", "null") else None
+                except: return None
+            lookup[key] = {
+                "bbe":         _f("bbe"),
+                "gb_rate":     _f("gb_rate"),
+                "fb_rate":     _f("fb_rate"),
+                "ld_rate":     _f("ld_rate"),
+                "pu_rate":     _f("pu_rate"),
+                "pull_rate":   _f("pull_rate"),
+                "oppo_rate":   _f("oppo_rate"),
+                "player_id":   row.get("id", ""),
+            }
+        if lookup: _safe_save_pkl(cache_path, lookup)
+        return lookup
+    except Exception as _e:
+        print(f"[WARN] fetch_savant_batted_ball: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPENMETEO WEATHER — Free JSON API, no key, any lat/lng, hourly precision.
+# Wind speed + direction at game time is the top external factor for MLB HR props.
+# Dome/retractable parks are excluded — weather doesn't affect indoor games.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MLB_STADIUM_COORDS = {
+    # team_abbrev: (latitude, longitude, iana_timezone)
+    "ARI": (33.4455, -112.0667, "America/Phoenix"),
+    "ATL": (33.7554, -84.3900,  "America/New_York"),
+    "BAL": (39.2839, -76.6218,  "America/New_York"),
+    "BOS": (42.3467, -71.0972,  "America/New_York"),
+    "CHC": (41.9484, -87.6553,  "America/Chicago"),
+    "CWS": (41.8300, -87.6338,  "America/Chicago"),
+    "CIN": (39.0974, -84.5082,  "America/New_York"),
+    "CLE": (41.4962, -81.6852,  "America/New_York"),
+    "COL": (39.7559, -104.9942, "America/Denver"),
+    "DET": (42.3390, -83.0485,  "America/New_York"),
+    "KC":  (39.0517, -94.4803,  "America/Chicago"),
+    "LAA": (33.8003, -117.8827, "America/Los_Angeles"),
+    "LAD": (34.0739, -118.2400, "America/Los_Angeles"),
+    "MIN": (44.9817, -93.2776,  "America/Chicago"),
+    "NYM": (40.7571, -73.8458,  "America/New_York"),
+    "NYY": (40.8296, -73.9262,  "America/New_York"),
+    "ATH": (37.7516, -122.2007, "America/Los_Angeles"),
+    "PHI": (39.9057, -75.1665,  "America/New_York"),
+    "PIT": (40.4469, -80.0057,  "America/New_York"),
+    "SD":  (32.7076, -117.1570, "America/Los_Angeles"),
+    "SF":  (37.7786, -122.3893, "America/Los_Angeles"),
+    "STL": (38.6226, -90.1928,  "America/Chicago"),
+    "WSH": (38.8730, -77.0074,  "America/New_York"),
+}
+# Dome / full retractable-roof parks — weather irrelevant regardless of setting
+_MLB_DOME_PARKS = {"HOU", "MIA", "MIL", "SEA", "TEX", "TOR", "TB"}
+
+
+def fetch_openmeteo_weather(date=None):
+    """
+    Fetch hourly wind/temp forecasts for all MLB outdoor stadiums via OpenMeteo.
+    OpenMeteo is completely free — no API key, no account needed.
+
+    Returns dict: team_abbrev → {
+        wind_speed_mph: float,     # at game time (7pm local default)
+        wind_dir_deg: int,         # 0=N 90=E 180=S 270=W
+        wind_cardinal: str,        # 'N','NE','E','SE','S','SW','W','NW'
+        temp_f: float,
+        precip_pct: int,           # precipitation probability 0-100
+        is_dome: bool,
+    }
+    Dome parks always return is_dome=True with null weather values.
+    Cached 30 minutes.
+    """
+    from datetime import date as _date, datetime as _dt
+    today = (date or _date.today()).strftime("%Y-%m-%d") if not isinstance(date, str) else date
+    cache_path = os.path.join(CACHE_DIR, f"openmeteo_{today}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    def _deg_to_cardinal(deg):
+        if deg is None: return "—"
+        dirs = ["N","NE","E","SE","S","SW","W","NW"]
+        return dirs[round(deg / 45) % 8]
+
+    result = {}
+    # Add dome parks first
+    for abbr in _MLB_DOME_PARKS:
+        result[abbr] = {"is_dome": True, "wind_speed_mph": None, "wind_dir_deg": None,
+                        "wind_cardinal": "—", "temp_f": None, "precip_pct": None}
+
+    for abbr, (lat, lon, tz) in _MLB_STADIUM_COORDS.items():
+        try:
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                f"&hourly=wind_speed_10m,wind_direction_10m,temperature_2m,precipitation_probability"
+                f"&wind_speed_unit=mph&temperature_unit=fahrenheit"
+                f"&timezone={tz.replace('/', '%2F')}&forecast_days=1"
+            )
+            r = _http.get(url, timeout=8)
+            if r.status_code != 200:
+                result[abbr] = {"is_dome": False, "error": r.status_code}
+                continue
+            data = r.json()
+            hourly = data.get("hourly", {})
+            times  = hourly.get("time", [])
+            winds  = hourly.get("wind_speed_10m", [])
+            dirs   = hourly.get("wind_direction_10m", [])
+            temps  = hourly.get("temperature_2m", [])
+            precip = hourly.get("precipitation_probability", [])
+            # Use hour 19 (7 PM local) as representative game time; fall back to 13 (1 PM)
+            game_hr = next(
+                (i for i, t in enumerate(times) if t.endswith("T19:00") or t.endswith("T18:00")),
+                next((i for i, t in enumerate(times) if t.endswith("T13:00")), 12)
+            )
+            def _get(lst, idx):
+                try: return lst[idx]
+                except: return None
+            spd = _get(winds, game_hr)
+            deg = _get(dirs,  game_hr)
+            result[abbr] = {
+                "is_dome":        False,
+                "wind_speed_mph": round(spd, 1) if spd is not None else None,
+                "wind_dir_deg":   int(deg) if deg is not None else None,
+                "wind_cardinal":  _deg_to_cardinal(deg),
+                "temp_f":         round(_get(temps,  game_hr), 1) if _get(temps, game_hr) is not None else None,
+                "precip_pct":     int(_get(precip, game_hr)) if _get(precip, game_hr) is not None else None,
+            }
+            time.sleep(0.1)
+        except Exception as _we:
+            result[abbr] = {"is_dome": False, "error": str(_we)[:50]}
+
+    if result: _safe_save_pkl(cache_path, result)
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MLB.com OFFICIAL LINEUPS — Confirmed batting orders + probable pitchers +
+# home-plate umpire assignments from MLB Stats API (completely free, no auth).
+# Lineups confirmed ~3-4 hours before game time.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_mlb_lineups(date=None):
+    """
+    Fetch confirmed batting orders, probable pitchers, and home-plate umpire
+    from MLB Stats API (statsapi.mlb.com).  Completely free, no auth required.
+
+    Returns dict: '{away_abbr}@{home_abbr}' → {
+        home_team, away_team, home_abbr, away_abbr,
+        home_lineup: [list of batter names in order],
+        away_lineup: [...],
+        home_pitcher: str, home_pitcher_hand: str,
+        away_pitcher: str, away_pitcher_hand: str,
+        hp_umpire: str,     # home plate umpire name
+        game_time: str,     # ISO format
+        venue: str,
+        game_pk: int,
+    }
+    Cached 30 minutes.
+    """
+    from datetime import date as _date
+    today = (date or _date.today()).strftime("%Y-%m-%d") if not isinstance(date, str) else date
+    cache_path = os.path.join(CACHE_DIR, f"mlb_lineups_{today}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    url = (
+        f"https://statsapi.mlb.com/api/v1/schedule"
+        f"?sportId=1&date={today}"
+        f"&hydrate=lineups,probablePitcher(note),officials,teams,venue"
+    )
+    result = {}
+    try:
+        r = _http.get(url, headers={"User-Agent": HEADERS.get("User-Agent", "")}, timeout=15)
+        if r.status_code != 200: return {}
+        data = r.json()
+        for date_block in data.get("dates", []):
+            for game in date_block.get("games", []):
+                try:
+                    gid    = game.get("gamePk", 0)
+                    teams  = game.get("teams", {})
+                    home   = teams.get("home", {}).get("team", {})
+                    away   = teams.get("away", {}).get("team", {})
+                    home_n = home.get("name", "")
+                    away_n = away.get("name", "")
+                    home_a = home.get("abbreviation", home_n[:3].upper())
+                    away_a = away.get("abbreviation", away_n[:3].upper())
+                    key = f"{away_a}@{home_a}"
+
+                    # Batting lineups
+                    lineups = game.get("lineups", {})
+                    def _extract_lineup(side):
+                        players = lineups.get(side, {}).get("batters", [])
+                        return [p.get("fullName", "") for p in players if p.get("fullName")]
+                    home_lu = _extract_lineup("homePlayers")
+                    away_lu = _extract_lineup("visitingPlayers")
+
+                    # Probable pitchers
+                    def _pitcher_info(side):
+                        pp = teams.get(side, {}).get("probablePitcher", {})
+                        return pp.get("fullName", "TBD"), (pp.get("pitchHand", {}) or {}).get("code", "")
+                    home_p, home_ph = _pitcher_info("home")
+                    away_p, away_ph = _pitcher_info("away")
+
+                    # Umpire assignments
+                    hp_ump = ""
+                    for official in game.get("officials", []):
+                        ot = official.get("officialType", "")
+                        if ot == "Home Plate":
+                            hp_ump = official.get("official", {}).get("fullName", "")
+                            break
+
+                    result[key] = {
+                        "game_pk":           gid,
+                        "home_team":         home_n,
+                        "away_team":         away_n,
+                        "home_abbr":         home_a,
+                        "away_abbr":         away_a,
+                        "home_lineup":       home_lu,
+                        "away_lineup":       away_lu,
+                        "home_pitcher":      home_p,
+                        "home_pitcher_hand": home_ph,
+                        "away_pitcher":      away_p,
+                        "away_pitcher_hand": away_ph,
+                        "hp_umpire":         hp_ump,
+                        "venue":             game.get("venue", {}).get("name", ""),
+                        "game_time":         game.get("gameDate", ""),
+                        "confirmed_lineup":  bool(home_lu or away_lu),
+                    }
+                except Exception: continue
+    except Exception as _e:
+        print(f"[WARN] fetch_mlb_lineups: {_e}")
+
+    if result: _safe_save_pkl(cache_path, result)
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UMP SCORECARDS — Career HP ump tendencies (K%, BB%, run scoring).
+# Source: umpscorecards.com/api/umpires (confirmed public, no auth).
+# Cross-referenced with hp_umpire from fetch_mlb_lineups() for today's games.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_ump_scorecards():
+    """
+    Fetch career home-plate umpire stats from umpscorecards.com.
+
+    Returns dict: lowercase_ump_name → {
+        n_games: int,
+        accuracy_pct: float,       # called strike accuracy
+        favor_home_pct: float,     # % of incorrect calls favoring home team
+        k_rate_above_avg: float,   # extra Ks per 9 vs league avg (pos = more Ks)
+        called_correct_pct: float,
+        games: int,
+    }
+    Cached 6 hours (career stats don't change game-to-game).
+    """
+    cache_path = os.path.join(CACHE_DIR, "ump_scorecards.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    url = "https://umpscorecards.com/api/umpires"
+    try:
+        r = _http.get(url, headers={**HEADERS, "Referer": "https://umpscorecards.com/"},
+                      timeout=15)
+        if r.status_code != 200: return {}
+        data = r.json()
+        rows = data.get("rows", data) if isinstance(data, dict) else data
+        lookup = {}
+        for row in rows:
+            name = (row.get("umpire") or "").strip()
+            if not name: continue
+            key = name.lower()
+            n   = row.get("n", 0) or 0
+            correct = row.get("called_correct_sum", 0) or 0
+            total   = row.get("called_pitches_sum", 1) or 1
+            x_correct = row.get("x_correct_calls_sum", correct) or correct
+            lookup[key] = {
+                "umpire":              name,
+                "n_games":             int(n),
+                "called_correct_pct":  round(correct / total * 100, 2) if total else None,
+                "x_correct_calls":     x_correct,
+                "accuracy_pct":        round(x_correct / total * 100, 2) if total else None,
+                "raw":                 row,
+            }
+        if lookup: _safe_save_pkl(cache_path, lookup)
+        return lookup
+    except Exception as _e:
+        print(f"[WARN] fetch_ump_scorecards: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NBA ADVANCED STATS — Via NBA.com stats API.
+# Requires curl_cffi TLS impersonation + NBA-specific headers.
+# Returns BPM, TS%, USG%, AST%, TOV%, DBPM, OBPM per player.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_nba_advanced_stats(season="2025-26"):
+    """
+    Fetch NBA advanced stats via stats.nba.com.
+    Returns dict: lowercase_player_name → {ts_pct, usg_pct, ast_pct, tov_pct,
+                                            bpm, obpm, dbpm, per, ws_per_48}
+    curl_cffi required to bypass NBA.com bot detection.
+    Cached 4 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"nba_advanced_{season.replace('-','_')}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 4:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return {}
+
+    nba_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nba.com/",
+        "Origin": "https://www.nba.com",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Connection": "keep-alive",
+    }
+    url = (
+        "https://stats.nba.com/stats/leaguedashplayerstats"
+        f"?MeasureType=Advanced&Season={season}&SeasonType=Regular+Season"
+        "&PerMode=PerGame&LeagueID=00&PORound=0&Conference=&Division=&Team"
+        "ID=0&PlayerExperience=&PlayerPosition=&StarterBench=&GameScope=&GameSegment=&Period=0"
+        "&LastNGames=0&Month=0&OpponentTeamID=0&Location=&Outcome=&DateFrom=&DateTo=&College=&Country=&DraftPick=&DraftYear=&Height=&Weight=&ISTRound="
+    )
+    try:
+        r = session.get(url, headers=nba_headers, timeout=20)
+        if r.status_code != 200: return {}
+        data = r.json()
+        rs  = data.get("resultSets", [])
+        if not rs: return {}
+        headers = rs[0].get("headers", [])
+        rows    = rs[0].get("rowSet", [])
+        lookup = {}
+        for row in rows:
+            rec = dict(zip(headers, row))
+            name = (rec.get("PLAYER_NAME") or "").lower().strip()
+            if not name: continue
+            def _f(k): v = rec.get(k); return float(v) if v is not None else None
+            lookup[name] = {
+                "player_id": rec.get("PLAYER_ID"),
+                "team":      rec.get("TEAM_ABBREVIATION", ""),
+                "gp":        rec.get("GP"),
+                "ts_pct":    _f("TS_PCT"),
+                "usg_pct":   _f("USG_PCT"),
+                "ast_pct":   _f("AST_PCT"),
+                "tov_pct":   _f("TOV_PCT"),
+                "reb_pct":   _f("REB_PCT"),
+                "pie":       _f("PIE"),
+                "pace":      _f("PACE"),
+                "per":       None,
+            }
+        if lookup: _safe_save_pkl(cache_path, lookup)
+        return lookup
+    except Exception as _e:
+        print(f"[WARN] fetch_nba_advanced_stats: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADDITIONAL KAMBI GAME LINES — Hard Rock / WynnBET / Unibet
+# All use the same _fetch_kambi_game_lines() core; curl_cffi bypasses the
+# 429 rate-limit that Kambi enforces against datacenter IPs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_hardrock_game_lines(sport: str) -> list:
+    """Hard Rock Bet game lines via Kambi (offering_id='hardrock'). Cached 60 min."""
+    return _fetch_kambi_game_lines("hardrock", sport, "Hard Rock")
+
+
+def fetch_wynnbet_game_lines(sport: str) -> list:
+    """WynnBET game lines via Kambi (offering_id='wynn'). Cached 60 min."""
+    return _fetch_kambi_game_lines("wynn", sport, "WynnBET")
+
+
+def fetch_unibet_game_lines(sport: str) -> list:
+    """Unibet game lines via Kambi (offering_id='unibet'). Cached 60 min."""
+    return _fetch_kambi_game_lines("unibet", sport, "Unibet")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PINNACLE PLAYER PROPS — Sharpest no-vig prop source; requires session cookie.
+# Set PINNACLE_SESSION env var to your browser session token.
+# Without a valid session this returns [] silently (no crash).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_pinnacle_props(sport="baseball"):
+    """
+    Pinnacle player props — sharpest no-vig market; gold standard for fair value.
+
+    Requires PINNACLE_SESSION secret (grab from browser DevTools after logging in
+    to pinnacle.com → Application → Cookies → copy 'authToken' value, then set
+    PINNACLE_SESSION=<value> in Replit secrets).
+
+    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book:'Pinnacle', Sport, source}
+    Cached 45 minutes.
+    """
+    import os as _os
+    pinn_session = _os.environ.get("PINNACLE_SESSION", "")
+    if not pinn_session:
+        return []
+
+    sport_map = {"basketball": "basketball", "baseball": "baseball",
+                 "NBA": "basketball", "MLB": "baseball",
+                 "NHL": "hockey", "NFL": "american-football"}
+    pinn_sport = sport_map.get(sport, "baseball")
+
+    cache_path = os.path.join(CACHE_DIR, f"pinnacle_props_{pinn_sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 45:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+
+    try:
+        from curl_cffi import requests as cf
+        session = cf.Session(impersonate="chrome124")
+    except ImportError:
+        return []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://www.pinnacle.com",
+        "Referer": "https://www.pinnacle.com/",
+        "Cookie": f"authToken={pinn_session}",
+        "Authorization": f"Bearer {pinn_session}",
+    }
+    props = []
+    try:
+        r = session.get(
+            f"https://api.pinnacle.com/v1/sports/{pinn_sport}/player-props",
+            headers=headers, timeout=15
+        )
+        if r.status_code in (401, 403):
+            print("[WARN] Pinnacle: session expired — update PINNACLE_SESSION secret")
+            return []
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        markets = data if isinstance(data, list) else data.get("markets", data.get("props", []))
+        for market in markets:
+            player = market.get("participant") or market.get("playerName") or ""
+            prop   = market.get("type") or market.get("marketType") or ""
+            line   = market.get("points") or market.get("handicap")
+            over_o = market.get("overPrice") or market.get("over")
+            under_o= market.get("underPrice") or market.get("under")
+            if not player or line is None: continue
+            def _am(dec):
+                if dec is None: return "N/A"
+                try:
+                    d = float(dec)
+                    if d >= 2.0: return f"+{int(round((d-1)*100))}"
+                    return f"{int(round(-100/(d-1)))}"
+                except: return "N/A"
+            props.append({
+                "Player":    player,
+                "Prop":      prop,
+                "Line":      float(line),
+                "OverOdds":  _am(over_o),
+                "UnderOdds": _am(under_o),
+                "Book":      "Pinnacle",
+                "Sport":     sport,
+                "source":    "pinnacle_props",
+            })
+        if props: _safe_save_pkl(cache_path, props)
+    except Exception as _e:
+        print(f"[WARN] fetch_pinnacle_props: {_e}")
+    return props
+
 
 
 def fetch_nfl_practice_participation():
