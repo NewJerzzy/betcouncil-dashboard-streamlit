@@ -115,8 +115,8 @@ except ImportError:
     MLB_PITCHER_ERA = {}
     MLB_PITCHER_FIP = {}
     LEAGUE_AVG_ERA = 4.25
-    ACTION_NETWORK_BASE = ""
-    ACTION_NETWORK_BOOK_IDS = {}
+    ACTION_NETWORK_BASE = "https://api.actionnetwork.com/web/v2/scoreboard/publicbetting"
+    ACTION_NETWORK_BOOK_IDS = "15,30,4727,4795,79,2988,69,68,75,123,71"
     BETONLINE_PATH = ""
     BETONLINE_PROP_PRICE_URL = ""
     BETONLINE_PROP_SPORT_CODES = 0
@@ -7346,6 +7346,156 @@ def fetch_oddswrap_lines(sport):
     except (IOError, ValueError) as e:
         pass
     return lines_data
+
+def fetch_action_network_props(sport: str) -> dict:
+    """
+    Fetch Action Network public betting percentages.
+    Returns {matchup: {home_pct, away_pct, over_pct, under_pct, tickets, money}}
+    Cached 20 min. Free — no API key needed.
+    """
+    sport_slug = ACTION_NETWORK_SPORT_MAP.get(sport)
+    league_id  = ACTION_NETWORK_LEAGUE_IDS.get(sport)
+    if not sport_slug or not league_id:
+        return {}
+    cache_path = os.path.join(CACHE_DIR, f"an_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    try:
+        today = date.today().strftime("%Y%m%d")
+        url = (
+            f"https://api.actionnetwork.com/web/v2/scoreboard/publicbetting"
+            f"?bookIds={ACTION_NETWORK_BOOK_IDS}&date={today}&leagueId={league_id}"
+        )
+        r = _http.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.actionnetwork.com/",
+        }, timeout=12)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        result = {}
+        for game in data.get("games", []):
+            teams = game.get("teams", [])
+            if len(teams) < 2:
+                continue
+            away = teams[0].get("full_name", teams[0].get("name", ""))
+            home = teams[1].get("full_name", teams[1].get("name", ""))
+            matchup = f"{away} @ {home}"
+            books = game.get("books", [])
+            if not books:
+                continue
+            b = books[0]
+            result[matchup] = {
+                "home_ml_pct":   b.get("home_ml_pct"),
+                "away_ml_pct":   b.get("away_ml_pct"),
+                "over_pct":      b.get("over_pct"),
+                "under_pct":     b.get("under_pct"),
+                "home_spread_pct": b.get("home_spread_pct"),
+                "away_spread_pct": b.get("away_spread_pct"),
+                "total_bets":    b.get("num_bets"),
+            }
+        if result:
+            _safe_save_pkl(cache_path, result)
+        return result
+    except Exception as e:
+        print(f"[WARN] fetch_action_network_props: {e}")
+        return {}
+
+
+def fetch_oddspapi_props(sport: str) -> list:
+    """
+    Fetch player props via OddsPAPI — aggregates DraftKings, FanDuel, BetMGM etc.
+    Key: ODDSPAPI_KEY in Streamlit secrets.
+    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source}
+    Cached 30 min.
+    """
+    if not ODDSPAPI_KEY:
+        return []
+    sport_map = {
+        "MLB": "baseball_mlb", "NBA": "basketball_nba",
+        "NFL": "americanfootball_nfl", "NHL": "icehockey_nhl",
+        "WNBA": "basketball_wnba",
+    }
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"oddspapi_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        r = _http.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/events",
+            params={"apiKey": ODDSPAPI_KEY, "dateFormat": "iso"},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            print(f"[WARN] fetch_oddspapi_props events: HTTP {r.status_code}")
+            return []
+        events = r.json()[:10]  # limit to 10 games to save credits
+        props = []
+        prop_markets = {
+            "MLB": ["batter_hits", "batter_total_bases", "batter_rbis",
+                    "batter_home_runs", "pitcher_strikeouts", "pitcher_outs"],
+            "NBA": ["player_points", "player_rebounds", "player_assists",
+                    "player_threes", "player_points_rebounds_assists"],
+            "NFL": ["player_pass_yds", "player_rush_yds", "player_reception_yds",
+                    "player_receptions", "player_touchdowns"],
+            "NHL": ["player_shots_on_goal", "player_points", "player_goals"],
+            "WNBA": ["player_points", "player_rebounds", "player_assists"],
+        }.get(sport, [])
+        if not prop_markets:
+            return []
+        for event in events[:5]:  # max 5 events
+            eid = event.get("id", "")
+            if not eid: continue
+            for market in prop_markets[:3]:  # max 3 markets per event
+                try:
+                    mr = _http.get(
+                        f"https://api.the-odds-api.com/v4/sports/{sport_key}/events/{eid}/odds",
+                        params={
+                            "apiKey": ODDSPAPI_KEY,
+                            "markets": market,
+                            "oddsFormat": "american",
+                            "bookmakers": "draftkings,fanduel,betmgm",
+                        },
+                        timeout=10,
+                    )
+                    if mr.status_code != 200: continue
+                    event_data = mr.json()
+                    for bm in event_data.get("bookmakers", [])[:2]:
+                        book = bm.get("key", "")
+                        for mkt in bm.get("markets", []):
+                            for outcome in mkt.get("outcomes", []):
+                                player = outcome.get("description", "")
+                                line   = outcome.get("point")
+                                price  = outcome.get("price")
+                                name   = outcome.get("name", "")
+                                if not player or line is None: continue
+                                if name.lower() == "over":
+                                    props.append({
+                                        "Player": player,
+                                        "Prop": market.replace("_", " ").title(),
+                                        "Line": float(line),
+                                        "OverOdds": str(int(price)) if price else "N/A",
+                                        "UnderOdds": "N/A",
+                                        "Book": book,
+                                        "Sport": sport,
+                                        "source": "oddspapi",
+                                    })
+                    time.sleep(0.2)
+                except Exception:
+                    continue
+        if props:
+            _safe_save_pkl(cache_path, props)
+        return props
+    except Exception as e:
+        print(f"[WARN] fetch_oddspapi_props: {e}")
+        return []
 
 def fetch_parlayapi_props(sport):
     """

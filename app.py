@@ -10426,6 +10426,9 @@ def load_sport_data(sport):
     def _pf_ev_recap():       return fetch_ev_recap() if sport in ("MLB",) else {}
     def _pf_ev_mlb():         return fetch_ev_mlb() if sport in ("MLB",) else {}
     def _pf_ev_trends():      return fetch_ev_trends() if sport in ("MLB",) else {}
+    def _pf_parlayapi_ev():   return fetch_parlayapi_ev(sport)
+    def _pf_parlayapi_arb():  return fetch_parlayapi_arbitrage(sport)
+    def _pf_unabated():       return fetch_unabated_lines(sport.lower())
 
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
@@ -10439,11 +10442,12 @@ def load_sport_data(sport):
         _pf_nba_advanced, _pf_pinnacle_lines,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
+        _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated,
     ]
     _results = _fetch_parallel(_parallel_fns)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
-     bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
+     bdl_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw,
@@ -10451,7 +10455,8 @@ def load_sport_data(sport):
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
-     ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw) = _results
+     ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
+     parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw) = _results
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
@@ -10523,6 +10528,9 @@ def load_sport_data(sport):
     st.session_state["openmeteo_weather"]    = openmeteo_raw       or {}
     st.session_state["ump_scorecards"]       = ump_scorecards_raw  or {}
     st.session_state["nba_advanced_stats"]   = nba_advanced_raw    or {}
+    st.session_state["parlayapi_ev"]         = parlayapi_ev_raw    or []
+    st.session_state["parlayapi_arb"]        = parlayapi_arb_raw   or []
+    st.session_state["unabated_lines"]       = unabated_raw        or []
     st.session_state["pinnacle_game_lines"]   = pinnacle_lines_raw or []
     st.session_state["pinnacle_props"]        = []
     st.session_state["officials_data"]   = officials_data_raw or {}
@@ -11354,8 +11362,8 @@ def load_sport_data(sport):
             props = oddspapi_props_raw
         elif sport == "NBA" and BDL_API_KEY and bdl_props_raw:
             props = bdl_props_raw
-        elif sleeper_props_raw:
-            props = sleeper_props_raw
+        elif []:
+            props = []
         else:
             cached_props = st.session_state.get("last_good_props", {}).get(sport, [])
             if cached_props:
