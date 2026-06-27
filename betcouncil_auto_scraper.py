@@ -106,6 +106,17 @@ SPORT_MAP = {
     "NFL":  {"sport": "football",   "league": "nfl",  "pp_id": 1,  "ud_sport": "NFL"},
 }
 
+# Active months per sport (1=Jan … 12=Dec). Sports outside these months are
+# automatically skipped when --all is used, to avoid wasting scrape budget
+# on dead markets. Update here when seasons shift.
+SEASON_ACTIVE_MONTHS = {
+    "NBA":  [10, 11, 12, 1, 2, 3, 4, 5, 6],   # Oct–Jun  (off-season: Jul–Sep)
+    "NHL":  [10, 11, 12, 1, 2, 3, 4, 5, 6],   # Oct–Jun  (off-season: Jul–Sep)
+    "NFL":  [9, 10, 11, 12, 1, 2, 3],          # Sep–Mar  (off-season: Apr–Aug)
+    "MLB":  [3, 4, 5, 6, 7, 8, 9, 10],         # Mar–Oct
+    "WNBA": [5, 6, 7, 8, 9, 10],               # May–Oct
+}
+
 ALWAYS_OVER = {"home runs","pitcher wins","wins","saves","first basket","blowout"}
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -713,11 +724,13 @@ def scrape_bovada_lines(sport):
     sp = sport_map.get(sport,"basketball/nba")
     lines = []
     try:
-        r = requests.get(
+        from curl_cffi import requests as cf
+        _bov_session = cf.Session(impersonate="chrome124")
+        r = _bov_session.get(
             f"https://www.bovada.lv/services/sports/event/coupon/events/A/description/{sp}",
             params={"lang":"en","eventsLimit":"50","preMatchOnly":"true"},
             headers={"User-Agent": UA, "Referer": "https://www.bovada.lv/"},
-            timeout=10
+            timeout=15
         )
         print(f"    Status: {r.status_code}")
         if r.status_code == 200:
@@ -869,8 +882,40 @@ def scrape_mybookie(sport, cookies):
         print(f"    leagues-lines: {r.status_code}")
         if r.status_code in (401, 403):
             SESSION_DIR.joinpath("mybookie_session.json").unlink(missing_ok=True)
-            print(f"    Session cleared — will re-login next run")
-            return props, True
+            print(f"    Session expired (403) — attempting auto-refresh via browser...")
+            _mb_cfg = load_config().get("mybookie", {})
+            new_cookies = login_mybookie(_mb_cfg)
+            if new_cookies:
+                # Update config.json session_cookie with fresh values
+                try:
+                    _cfg_path = Path(__file__).parent / "config.json"
+                    if _cfg_path.exists():
+                        import json as _json
+                        _full_cfg = _json.loads(_cfg_path.read_text())
+                        _full_cfg.setdefault("mybookie", {})["session_cookie"] = "; ".join(
+                            f"{k}={v}" for k,v in new_cookies.items()
+                        )
+                        _cfg_path.write_text(_json.dumps(_full_cfg, indent=2))
+                        print(f"    ✅ config.json updated with fresh MyBookie cookies")
+                except Exception as _ce:
+                    print(f"    ⚠️  Could not update config.json: {_ce}")
+                # Retry with new cookies
+                new_cookie_str = "; ".join(f"{k}={v}" for k,v in new_cookies.items())
+                headers["Cookie"] = new_cookie_str
+                r = cf.get(
+                    "https://engine.mybookie.ag/sports_api/leagues-lines",
+                    params={"sport":cfg_s["sport"],"league":cfg_s["league"]},
+                    headers=headers, impersonate="chrome124", timeout=15
+                )
+                if r.status_code in (401, 403):
+                    print(f"    ❌ Still 403 after re-login — cf_clearance may need manual refresh")
+                    print(f"    👉 Re-run the DevTools cookie grab from mybookie.ag and update config.json")
+                    return props, True
+                cookies = new_cookies
+            else:
+                print(f"    ❌ Auto re-login failed — manual cookie refresh required")
+                print(f"    👉 Open mybookie.ag in Chrome → DevTools → Application → Cookies → copy cf_clearance + gamingstation_session into config.json")
+                return props, True
         if r.status_code != 200:
             return props, False
         today = date.today().isoformat()
@@ -3441,7 +3486,16 @@ def main():
     cfg    = load_config()
     token  = cfg.get("github_token","")
     gist   = cfg.get("gist_id","")
-    sports = ["NBA","MLB","NHL","WNBA"] if args.all else [args.sport]
+    sports = ["NBA","MLB","NHL","WNBA","NFL"] if args.all else [args.sport]
+
+    # Season gate — skip off-season sports when --all is used
+    if args.all:
+        cur_month = datetime.now().month
+        in_season = [s for s in sports if cur_month in SEASON_ACTIVE_MONTHS.get(s, list(range(1,13)))]
+        shelved   = [s for s in sports if s not in in_season]
+        if shelved:
+            print(f"\n⏸  Off-season — shelving: {', '.join(shelved)} (month {cur_month})")
+        sports = in_season
 
     if args.betonline_props:
         _bol_props, _bol_lines = [], []
