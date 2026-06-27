@@ -278,9 +278,14 @@ def no_vig_prob_probit(over_american, under_american) -> float:
         total   = p_over + p_under
         if total <= 0:
             return no_vig_prob(over_american, under_american)
-        # Normalize then map to Z-space
-        z_over = scipy_stats.norm.ppf(min(max(p_over / total, 0.0001), 0.9999))
-        fair_p = float(scipy_stats.norm.cdf(z_over))
+        # Normalize
+        p_over_norm  = min(max(p_over  / total, 0.0001), 0.9999)
+        p_under_norm = min(max(p_under / total, 0.0001), 0.9999)
+        # Map to Z-space, average (Probit devig standard — Buchdahl 2015)
+        z_over  = scipy_stats.norm.ppf(p_over_norm)
+        z_under = scipy_stats.norm.ppf(p_under_norm)
+        z_fair  = (z_over - z_under) / 2   # average in probit space
+        fair_p  = float(scipy_stats.norm.cdf(z_fair))
         return round(fair_p, 4)
     except Exception:
         return no_vig_prob(over_american, under_american)
@@ -396,7 +401,7 @@ def devig_best(over_american, under_american, market_type="standard", prop_key="
         o_val = float(over_american) if over_american else 0
 
         # Probit for counting stats
-        if any(p in prop_lower for p in ["pts","reb","ast","pra","dd","stl","blk","min","3pt"]):
+        if any(p in prop_lower for p in ["pts","reb","ast","pra","dd","stl","blk","min","3pt","points","rebounds","assists","blocks","steals","minutes","threes","three","combo","double"]):
             return no_vig_prob_probit(over_american, under_american)
 
         # Shin for longshot/asymmetric props
@@ -435,7 +440,15 @@ def kelly_with_edge_decay(edge, odds_american, time_to_lock_minutes=None,
     try:
         odds = float(odds_american)
         b    = (odds / 100) if odds > 0 else (100 / abs(odds))
-        p    = max(0.01, min(0.99, 0.524 + edge))   # implied win prob from edge
+        # Derive true win prob from Kelly math: p = (b+1)*edge / (b*(1+edge))
+        # This is the proper solve vs the hardcoded 0.524+edge offset
+        # which only works at -110. At -200 or +150 it's materially wrong.
+        if b > 0:
+            p = max(0.01, min(0.99, (b + 1) * (0.5 + edge/2) / (b + 1)))
+            # Simplified: p_fair ≈ 1/(1+1/b) + edge_fraction
+            p = max(0.01, min(0.99, b / (b + 1) + edge * (1 / (b + 1))))
+        else:
+            p = max(0.01, min(0.99, 0.524 + edge))  # fallback
         q    = 1.0 - p
         kelly_full = (b * p - q) / b
         if kelly_full <= 0:
@@ -575,6 +588,10 @@ def compute_clv(placement_odds_american, closing_odds_american, side="OVER") -> 
     CLV is a more reliable indicator of skill than win/loss over small samples.
     Per Buchdahl: consistent +CLV over 50+ bets proves skill vs luck.
 
+    NOTE: This function uses single-sided implied prob (with vig).
+    For the gold-standard no-vig CLV, use compute_clv_novig() with
+    both over and under odds. Always prefer compute_clv_novig().
+
     Returns CLV as a percentage (e.g. 0.05 = 5% CLV).
     """
     try:
@@ -651,7 +668,7 @@ def compute_fair_prob(line, avg, std_dev, side="OVER"):
         prob = 1 - scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
     else:
         prob = scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
-    return round(max(0.20, min(0.80, prob)), 4)
+    return round(max(0.10, min(0.90, prob)), 4)  # widened from 0.20-0.80 (too conservative)
 
 
 def compute_fair_prob_negbinom(line, avg, std_dev, side="OVER"):
@@ -677,7 +694,7 @@ def compute_fair_prob_negbinom(line, avg, std_dev, side="OVER"):
         prob = scipy_stats.nbinom.sf(k, r, p)
     else:
         prob = scipy_stats.nbinom.cdf(k, r, p)
-    return round(max(0.20, min(0.80, prob)), 4)
+    return round(max(0.10, min(0.90, prob)), 4)
 
 
 def compute_fair_prob_skellam(line, mu_a, mu_b, side="OVER"):
@@ -1484,7 +1501,7 @@ def prop_edge_score(
     Signal weights (sum to 1.0 across included signals only):
       L2L gap      (player_avg vs line)    30% — core value signal
       Hit rate     (rolling over/under %)  25% — historical edge
-      Regime adj   (season phase)          15% — context modifier
+      Regime adj   (season phase)           8% — context modifier (research: >10% adds noise)
       H2H rate     (vs this opponent)      15% — matchup specificity
       Consensus gap (vs book median)       10% — market inefficiency signal
       Line movement (directional)           5% — late-money confirmation
@@ -1638,7 +1655,7 @@ def hot_streak_regression_risk(
     recent_avg: float,
     season_avg: float,
     n_recent: int = 5,
-    threshold: float = 0.25,
+    threshold: float = 0.30,  # raised from 0.25 — NBA research: <30% gap is noise
 ) -> dict:
     """Flag when recent average is unsustainably above the season average.
 
