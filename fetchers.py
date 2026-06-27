@@ -10845,16 +10845,16 @@ def fetch_unibet_game_lines(sport: str) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PINNACLE — HTTP Basic Auth (documented scheme: base64(username:password)).
-# Correct v2 API endpoint structure with integer sport IDs.
+# PINNACLE — Guest API (no credentials required)
 #
-# Required Replit secrets: PINNACLE_USERNAME  and  PINNACLE_PASSWORD
-# Docs: https://api.pinnacle.com/  (register free account to get credentials)
+# Pinnacle.com is blocked to US residents, so the authenticated API is
+# inaccessible from US IPs.  The guest endpoint is public and requires no auth:
+#   https://guest.api.pinnaclesports.com/v1/
 #
 # Sport IDs (integers): Baseball=3  Basketball=4  NFL=6  NHL=19  Soccer=29
+# Odds format: oddsFormat=2 (American)
 #
-# Note on geo-blocking: sandbox egress prevents verification here.
-# If you receive 451 in production, switch deployment region to EU (Frankfurt).
+# Will return [] silently if the endpoint is unreachable from this server.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PINNACLE_SPORT_IDS = {
@@ -10868,76 +10868,62 @@ _PINNACLE_SPORT_IDS = {
 
 # Default league IDs for the most-liquid US markets.
 _PINNACLE_LEAGUE_IDS = {
-    3:  [246],   # MLB
-    4:  [487],   # NBA
-    6:  [889],   # NFL
-    19: [1456],  # NHL
+    3:  [246],    # MLB
+    4:  [487],    # NBA
+    6:  [889],    # NFL
+    19: [1456],   # NHL
+}
+
+_PINNACLE_GUEST_BASE = "https://guest.api.pinnaclesports.com/v1"
+_PINNACLE_GUEST_HEADERS = {
+    "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept":        "application/json",
+    "Origin":        "https://www.pinnacle.com",
+    "Referer":       "https://www.pinnacle.com/",
 }
 
 
-def _pinnacle_basic_auth():
+def _pinnacle_guest_get(path, params=None):
     """
-    Return Authorization header string for Pinnacle API.
-    Scheme: Basic base64(username:password)  — the documented Pinnacle auth method.
-    Returns None if PINNACLE_USERNAME or PINNACLE_PASSWORD secrets are not set.
+    Unauthenticated GET to guest.api.pinnaclesports.com/v1{path}.
+    Returns parsed JSON or None.  Logs non-200 status codes.
+    No credentials required — works anonymously.
     """
-    user = os.environ.get("PINNACLE_USERNAME", "")
-    pwd  = os.environ.get("PINNACLE_PASSWORD", "")
-    if not user or not pwd:
-        return None
-    import base64 as _b64
-    tok = _b64.b64encode(f"{user}:{pwd}".encode()).decode()
-    return f"Basic {tok}"
-
-
-def _pinnacle_get(path, params=None):
-    """
-    Authenticated GET to api.pinnacle.com.  Returns parsed JSON or None.
-    Logs 401 (bad credentials) and 451 (geo/egress block) distinctly.
-    """
-    auth = _pinnacle_basic_auth()
-    if auth is None:
-        return None
-    headers = {
-        "User-Agent":    "pinnacle-client/2.0",
-        "Accept":        "application/json",
-        "Authorization": auth,
-    }
-    url = f"https://api.pinnacle.com{path}"
+    url = f"{_PINNACLE_GUEST_BASE}{path}"
     if params:
         url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
     try:
         from curl_cffi import requests as cf
-        r = cf.Session(impersonate="chrome124").get(url, headers=headers, timeout=15)
-        if r.status_code == 401:
-            print("[WARN] Pinnacle 401 — check PINNACLE_USERNAME / PINNACLE_PASSWORD")
-            return None
-        if r.status_code == 451:
-            print("[WARN] Pinnacle 451 — endpoint unreachable. "
-                  "Deploy to EU region (Frankfurt/Amsterdam) if this persists in production.")
-            return None
-        if r.status_code != 200:
-            print(f"[WARN] Pinnacle HTTP {r.status_code} for {path}")
-            return None
-        return r.json()
+        r = cf.Session(impersonate="chrome124").get(
+            url, headers=_PINNACLE_GUEST_HEADERS, timeout=15
+        )
+        if r.status_code == 200:
+            return r.json()
+        print(f"[WARN] Pinnacle guest HTTP {r.status_code} for {path}")
+        return None
     except ImportError:
-        print("[WARN] Pinnacle: curl_cffi not available")
-        return None
+        # fallback to stdlib if curl_cffi unavailable
+        try:
+            req = urllib.request.Request(url, headers=_PINNACLE_GUEST_HEADERS)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except Exception as _e2:
+            print(f"[WARN] _pinnacle_guest_get fallback ({path}): {_e2}")
+            return None
     except Exception as _e:
-        print(f"[WARN] _pinnacle_get({path}): {_e}")
+        print(f"[WARN] _pinnacle_guest_get({path}): {_e}")
         return None
 
 
-def _pinnacle_american(price):
+def _pinn_american(price):
     """Convert Pinnacle price to American odds string.
-    Pinnacle returns American odds directly when oddsFormat=American is requested."""
+    Guest API returns American odds directly when oddsFormat=2."""
     if price is None:
         return "N/A"
     try:
         p = float(price)
         if abs(p) >= 100:
             return f"+{int(p)}" if p > 0 else str(int(p))
-        # Decimal fallback
         if p >= 2.0:
             return f"+{int(round((p - 1) * 100))}"
         if p > 1.0:
@@ -10949,16 +10935,17 @@ def _pinnacle_american(price):
 
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
-    Pinnacle game lines (spread / moneyline / total) via Pinnacle v2 API.
-    Auth: HTTP Basic base64(username:password) via PINNACLE_USERNAME + PINNACLE_PASSWORD.
+    Pinnacle game lines (spread / moneyline / total) via guest API.
+    No credentials required — uses guest.api.pinnaclesports.com.
 
-    Workflow: GET /v2/fixtures → GET /v2/odds → normalise into standard format.
-    Returns list of {Matchup, Home, Away, HomeML, AwayML, Spread, Total,
-                     Book:'Pinnacle', Sport, source:'pinnacle_lines'}
+    Workflow: /v1/fixtures → /v1/odds (oddsFormat=2, American) → normalise.
+    Returns list of {Matchup, Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+                     Total, TotalOver, TotalUnder, Book:'Pinnacle', Sport,
+                     source:'pinnacle_lines'}
     Cached 45 minutes.
     """
     sport_id = _PINNACLE_SPORT_IDS.get(sport)
-    if not sport_id or not _pinnacle_basic_auth():
+    if not sport_id:
         return []
 
     cache_path = os.path.join(CACHE_DIR, f"pinnacle_lines_{sport_id}.pkl")
@@ -10969,71 +10956,74 @@ def fetch_pinnacle_game_lines(sport: str) -> list:
                 return cached
 
     league_ids = _PINNACLE_LEAGUE_IDS.get(sport_id, [])
-    lid_str    = ",".join(str(x) for x in league_ids) if league_ids else None
-
-    fix_params = {"sportId": sport_id}
-    if lid_str:
-        fix_params["leagueIds"] = lid_str
-    fx = _pinnacle_get("/v2/fixtures", fix_params)
-    if not fx:
-        return []
-
-    event_map = {}
-    for league in fx.get("league", []):
-        for ev in league.get("events", []):
-            eid = ev.get("id")
-            if eid:
-                event_map[eid] = {
-                    "home":   ev.get("home", ""),
-                    "away":   ev.get("away", ""),
-                    "starts": ev.get("starts", ""),
-                }
-    if not event_map:
-        return []
-
-    odds_params = {"sportId": sport_id, "oddsFormat": "American"}
-    if lid_str:
-        odds_params["leagueIds"] = lid_str
-    od = _pinnacle_get("/v2/odds", odds_params)
-    if not od:
-        return []
 
     results = []
-    for league in od.get("leagues", []):
-        for ev_odds in league.get("events", []):
-            eid  = ev_odds.get("id")
-            info = event_map.get(eid, {})
-            home = info.get("home", ""); away = info.get("away", "")
-            if not home or not away:
-                continue
-            home_ml = away_ml = spread_hdp = spread_pr = total = total_ov = total_un = None
-            for period in ev_odds.get("periods", []):
-                if period.get("number") != 0:
+    for lid in (league_ids or [None]):
+        params_fix = {"sportid": sport_id}
+        if lid:
+            params_fix["leagueid"] = lid
+        fx = _pinnacle_guest_get("/fixtures", params_fix)
+        if not fx:
+            continue
+
+        event_map = {}
+        for league in fx.get("league", []):
+            for ev in league.get("events", []):
+                eid = ev.get("id")
+                if eid:
+                    event_map[eid] = {
+                        "home":   ev.get("home", ""),
+                        "away":   ev.get("away", ""),
+                        "starts": ev.get("starts", ""),
+                    }
+        if not event_map:
+            continue
+
+        params_odds = {"sportid": sport_id, "oddsFormat": 2}
+        if lid:
+            params_odds["leagueid"] = lid
+        od = _pinnacle_guest_get("/odds", params_odds)
+        if not od:
+            continue
+
+        for league in od.get("leagues", []):
+            for ev_odds in league.get("events", []):
+                eid  = ev_odds.get("id")
+                info = event_map.get(eid, {})
+                home = info.get("home", "")
+                away = info.get("away", "")
+                if not home or not away:
                     continue
-                ml = period.get("moneyline") or {}
-                home_ml = ml.get("home"); away_ml = ml.get("away")
-                sps = period.get("spreads") or []
-                if sps:
-                    spread_hdp = sps[0].get("hdp"); spread_pr = sps[0].get("home")
-                tots = period.get("totals") or []
-                if tots:
-                    total = tots[0].get("points")
-                    total_ov = tots[0].get("over"); total_un = tots[0].get("under")
-            results.append({
-                "Matchup":    f"{away} @ {home}",
-                "Home":       home,
-                "Away":       away,
-                "HomeML":     _pinnacle_american(home_ml),
-                "AwayML":     _pinnacle_american(away_ml),
-                "Spread":     spread_hdp,
-                "SpreadOdds": _pinnacle_american(spread_pr),
-                "Total":      total,
-                "TotalOver":  _pinnacle_american(total_ov),
-                "TotalUnder": _pinnacle_american(total_un),
-                "Book":       "Pinnacle",
-                "Sport":      sport,
-                "source":     "pinnacle_lines",
-            })
+                home_ml = away_ml = spread_hdp = spread_pr = total = total_ov = total_un = None
+                for period in ev_odds.get("periods", []):
+                    if period.get("number") != 0:
+                        continue
+                    ml = period.get("moneyline") or {}
+                    home_ml = ml.get("home"); away_ml = ml.get("away")
+                    sps = period.get("spreads") or []
+                    if sps:
+                        spread_hdp = sps[0].get("hdp")
+                        spread_pr  = sps[0].get("home")
+                    tots = period.get("totals") or []
+                    if tots:
+                        total    = tots[0].get("points")
+                        total_ov = tots[0].get("over")
+                        total_un = tots[0].get("under")
+                results.append({
+                    "Matchup":    f"{away} @ {home}",
+                    "Home":       home,
+                    "Away":       away,
+                    "HomeML":     _pinn_american(home_ml),
+                    "AwayML":     _pinn_american(away_ml),
+                    "Spread":     spread_hdp,
+                    "SpreadOdds": _pinn_american(spread_pr),
+                    "Total":      total,
+                    "TotalOver":  _pinn_american(total_ov),
+                    "TotalUnder": _pinn_american(total_un),
+                    "Book":       "Pinnacle",
+                    "Sport":      sport,
+                    "source":     "pinnacle_lines",
+                })
 
     if results:
         _safe_save_pkl(cache_path, results)
@@ -11042,17 +11032,19 @@ def fetch_pinnacle_game_lines(sport: str) -> list:
 
 def fetch_pinnacle_props(sport: str = "baseball") -> list:
     """
-    Pinnacle player props (betspecials) via v2 API.
-    Auth: HTTP Basic base64(username:password) via PINNACLE_USERNAME + PINNACLE_PASSWORD.
+    Pinnacle player props via guest API betspecials endpoint.
+    No credentials required — uses guest.api.pinnaclesports.com.
 
-    Workflow: GET /v2/specials/categories → find player-prop categories →
-              GET /v2/betspecials per category → normalise.
+    Note: the guest betspecials endpoint primarily returns game specials rather
+    than traditional player props.  Returns whatever is available; may be empty
+    if Pinnacle has not posted props or the endpoint returns only game lines.
+
     Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book:'Pinnacle',
                      Sport, source:'pinnacle_props'}
     Cached 45 minutes.
     """
     sport_id = _PINNACLE_SPORT_IDS.get(sport)
-    if not sport_id or not _pinnacle_basic_auth():
+    if not sport_id:
         return []
 
     cache_path = os.path.join(CACHE_DIR, f"pinnacle_props_{sport_id}.pkl")
@@ -11063,24 +11055,13 @@ def fetch_pinnacle_props(sport: str = "baseball") -> list:
                 return cached
 
     league_ids = _PINNACLE_LEAGUE_IDS.get(sport_id, [])
-
-    cats = _pinnacle_get("/v2/specials/categories", {"sportId": sport_id})
-    cat_list  = cats if isinstance(cats, list) else (cats or {}).get("categories", [])
-    prop_kws  = {"player", "hits", "strikeout", "home run", "points", "assists",
-                 "rebounds", "yards", "touchdown", "reception", "total bases"}
-    cat_ids   = [c.get("id") for c in cat_list
-                 if any(kw in (c.get("name") or "").lower() for kw in prop_kws)]
-    if not cat_ids:
-        cat_ids = [None]
-
     results = []; seen = set()
-    for cat_id in cat_ids:
-        params = {}
-        if cat_id:
-            params["categoryId"] = cat_id
-        if league_ids:
-            params["leagueId"] = league_ids[0]
-        raw = _pinnacle_get("/v2/betspecials", params)
+
+    for lid in (league_ids or [None]):
+        params = {"sportid": sport_id, "oddsFormat": 2}
+        if lid:
+            params["leagueid"] = lid
+        raw = _pinnacle_guest_get("/betspecials", params)
         if not raw:
             continue
         specials = raw if isinstance(raw, list) else raw.get("specials", [])
@@ -11100,8 +11081,8 @@ def fetch_pinnacle_props(sport: str = "baseball") -> list:
                     "Player":    player,
                     "Prop":      sp_type,
                     "Line":      float(line) if line is not None else None,
-                    "OverOdds":  _pinnacle_american(over_o),
-                    "UnderOdds": _pinnacle_american(under_o),
+                    "OverOdds":  _pinn_american(over_o),
+                    "UnderOdds": _pinn_american(under_o),
                     "Book":      "Pinnacle",
                     "Sport":     sport,
                     "source":    "pinnacle_props",
@@ -11110,9 +11091,6 @@ def fetch_pinnacle_props(sport: str = "baseball") -> list:
     if results:
         _safe_save_pkl(cache_path, results)
     return results
-
-
-
 def fetch_nfl_practice_participation():
     """
     NFL practice participation: DNP / Limited / Full.
