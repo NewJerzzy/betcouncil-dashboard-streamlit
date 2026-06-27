@@ -485,18 +485,6 @@ def build_nfl_game_features(home_team: str, away_team: str,
         ),
     }
 
-    # Enrich with PFF grades if available
-    try:
-        from nfl_pff_grades import build_pff_game_features
-        pff_feats = build_pff_game_features(home_team, away_team, season)
-        if pff_feats:
-            features.update(pff_feats)
-            features["has_pff_grades"] = True
-        else:
-            features["has_pff_grades"] = False
-    except Exception:
-        features["has_pff_grades"] = False
-
     return features
 
 
