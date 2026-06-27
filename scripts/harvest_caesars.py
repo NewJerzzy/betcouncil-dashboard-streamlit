@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Caesars harvester — write full diagnostic to Gist for remote reading."""
-import os, sys, json, time, urllib.request
+"""Caesars harvester — always push diagnostic to Gist even on failure."""
+import os, sys, json, time, urllib.request, traceback
 from datetime import datetime, timezone
 
 EMAIL      = os.environ.get("CAESARS_EMAIL", "").strip()
@@ -9,23 +9,13 @@ GIST_TOKEN = os.environ.get("GIST_TOKEN", "").strip()
 GIST_ID    = os.environ.get("GIST_ID", "7e52e1c2c2054847c7c4663a157386c5").strip()
 STATE      = os.environ.get("CAESARS_STATE", "az").strip().lower()
 
-def log(msg): print(f"[harvest_caesars] {msg}", flush=True)
-def die(msg): log(f"FATAL: {msg}"); sys.exit(1)
+log_lines = []
+def log(msg):
+    print(f"[harvest_caesars] {msg}", flush=True)
+    log_lines.append(msg)
 
-if not EMAIL: die("CAESARS_EMAIL not set")
-if not PASSWORD: die("CAESARS_PASSWORD not set")
-if not GIST_TOKEN: die("GIST_TOKEN not set")
-
-from playwright.sync_api import sync_playwright
-
-diag_lines = []
-def dlog(msg):
-    log(msg)
-    diag_lines.append(msg)
-
-def push_diag():
-    content = "\n".join(diag_lines)
-    payload = json.dumps({"files": {"caesars_diag.txt": {"content": content}}}).encode()
+def push_gist(files_dict):
+    payload = json.dumps({"files": {k: {"content": v} for k, v in files_dict.items()}}).encode()
     req = urllib.request.Request(
         f"https://api.github.com/gists/{GIST_ID}",
         data=payload, method="PATCH",
@@ -34,10 +24,16 @@ def push_diag():
                  "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=15) as r:
-        log(f"Diag pushed HTTP {r.status}")
+        log(f"Gist push HTTP {r.status}")
+
+if not EMAIL or not PASSWORD or not GIST_TOKEN:
+    log("Missing env vars"); sys.exit(1)
+
+from playwright.sync_api import sync_playwright
 
 harvested = {}
 _done = {"flag": False}
+dom_snapshots = {}
 
 def _on_request(request):
     if _done["flag"]: return
@@ -50,143 +46,161 @@ def _on_request(request):
     harvested["waf_token"]   = hdrs.get("x-aws-waf-token", "")
     harvested["captured_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _done["flag"] = True
-    dlog(f"BEARER CAPTURED len={len(harvested['bearer_jwt'])}")
+    log(f"BEARER CAPTURED len={len(harvested['bearer_jwt'])}")
 
-dlog(f"Starting state={STATE}")
-
-with sync_playwright() as pw:
-    browser = pw.chromium.launch(
-        headless=False,
-        args=["--disable-blink-features=AutomationControlled",
-              "--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,800"],
-    )
-    ctx = browser.new_context(
-        viewport={"width": 1280, "height": 800},
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        locale="en-US", timezone_id="America/New_York",
-    )
-    ctx.add_cookies([
-        {"name": "OptanonAlertBoxClosed", "value": "2026-01-01T00:00:00.000Z", "domain": ".caesars.com", "path": "/"},
-        {"name": "OptanonConsent", "value": "isGpcEnabled=0&datestamp=2026-01-01", "domain": ".caesars.com", "path": "/"},
-    ])
-    ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-    page = ctx.new_page()
-    page.on("request", _on_request)
-
+def dom_dump(page, label):
     try:
-        page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet", wait_until="networkidle", timeout=45000)
+        info = page.evaluate("""() => {
+            const vis_btns = [...document.querySelectorAll('button,[role="button"],a')]
+                .filter(e => {
+                    const r = e.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0 && r.top < window.innerHeight;
+                })
+                .slice(0, 30)
+                .map(e => e.tagName + '|' + (e.type||'') + '|' + e.textContent.trim().substring(0,30) + '|id=' + e.id);
+            const vis_inputs = [...document.querySelectorAll('input')]
+                .filter(e => e.getBoundingClientRect().height > 0)
+                .map(e => 'type=' + e.type + ' name=' + e.name + ' id=' + e.id + ' ph=' + e.placeholder);
+            const dialogs = [...document.querySelectorAll('[role="dialog"],[class*="Modal"],[class*="modal"],[class*="Drawer"],[class*="drawer"]')]
+                .filter(e => e.getBoundingClientRect().height > 0)
+                .map(e => e.tagName + '#' + e.id + '.' + e.className.substring(0,50));
+            return {
+                url: window.location.href,
+                title: document.title,
+                buttons: vis_btns,
+                inputs: vis_inputs,
+                dialogs: dialogs,
+                bodySnip: document.body.innerText.substring(0, 200)
+            };
+        }""")
+        dom_snapshots[label] = info
+        log(f"DOM[{label}] url={info['url'][:60]}")
+        log(f"DOM[{label}] inputs={info['inputs']}")
+        log(f"DOM[{label}] dialogs={info['dialogs']}")
+        log(f"DOM[{label}] buttons_count={len(info['buttons'])}")
+        for b in info['buttons'][:15]:
+            log(f"  btn: {b}")
     except Exception as e:
-        dlog(f"goto: {e}")
-    time.sleep(2)
+        log(f"dom_dump {label}: {e}")
 
-    # Kill OneTrust
-    page.evaluate("() => { const s=document.getElementById('onetrust-consent-sdk'); if(s) s.remove(); }")
-    time.sleep(0.5)
+log(f"Starting state={STATE}")
+success = False
+try:
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled",
+                  "--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,800"],
+        )
+        ctx = browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            locale="en-US", timezone_id="America/New_York",
+        )
+        ctx.add_cookies([
+            {"name": "OptanonAlertBoxClosed", "value": "2026-01-01T00:00:00.000Z", "domain": ".caesars.com", "path": "/"},
+            {"name": "OptanonConsent", "value": "isGpcEnabled=0&datestamp=2026-01-01", "domain": ".caesars.com", "path": "/"},
+        ])
+        ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
+        page = ctx.new_page()
+        page.on("request", _on_request)
 
-    # Dump ALL buttons before login click
-    info = page.evaluate("""() => {
-        const btns = [...document.querySelectorAll('button, a[href], [role="button"]')]
-            .filter(e => e.offsetParent !== null)
-            .map(e => ({tag: e.tagName, text: e.textContent.trim().substring(0,40),
-                        type: e.type||'', id: e.id, cls: e.className.substring(0,60)}));
-        const inputs = [...document.querySelectorAll('input')]
-            .map(e => ({type: e.type, name: e.name, id: e.id, placeholder: e.placeholder,
-                        visible: e.offsetParent !== null}));
-        return {buttons: btns, inputs};
-    }""")
-    dlog(f"PRE-CLICK BUTTONS: {json.dumps(info['buttons'], indent=2)}")
-    dlog(f"PRE-CLICK INPUTS: {json.dumps(info['inputs'], indent=2)}")
-
-    # Click LOG IN
-    page.evaluate("""() => {
-        const els = [...document.querySelectorAll('button, a, [role="button"]')];
-        const t = els.find(e => e.textContent.trim().toUpperCase().includes('LOG IN'));
-        if (t) t.click();
-    }""")
-    time.sleep(3)
-    page.evaluate("() => { const s=document.getElementById('onetrust-consent-sdk'); if(s) s.remove(); }")
-
-    # Dump after login click
-    info2 = page.evaluate("""() => {
-        const btns = [...document.querySelectorAll('button, [role="button"]')]
-            .filter(e => e.offsetParent !== null)
-            .map(e => ({tag: e.tagName, text: e.textContent.trim().substring(0,40),
-                        type: e.type||'', id: e.id, cls: e.className.substring(0,60)}));
-        const inputs = [...document.querySelectorAll('input')]
-            .filter(e => e.offsetParent !== null)
-            .map(e => ({type: e.type, name: e.name, id: e.id, placeholder: e.placeholder}));
-        const modals = [...document.querySelectorAll('[role="dialog"],[class*="modal"],[class*="drawer"],[class*="login"],[class*="Login"],[class*="auth"],[class*="Auth"]')]
-            .filter(e => e.offsetParent !== null)
-            .map(e => ({tag: e.tagName, id: e.id, cls: e.className.substring(0,80)}));
-        return {buttons: btns, inputs, modals};
-    }""")
-    dlog(f"POST-CLICK BUTTONS: {json.dumps(info2['buttons'], indent=2)}")
-    dlog(f"POST-CLICK INPUTS: {json.dumps(info2['inputs'], indent=2)}")
-    dlog(f"POST-CLICK MODALS: {json.dumps(info2['modals'], indent=2)}")
-
-    # Fill and submit
-    for sel in ["input[type='email']", "input[name='email']", "input[name='username']", "#email"]:
         try:
-            inp = page.wait_for_selector(sel, timeout=5000, state="visible")
-            if inp: inp.fill(EMAIL); dlog(f"Filled email: {sel}"); break
-        except: pass
+            page.goto(f"https://sportsbook.caesars.com/us/{STATE}/bet", wait_until="networkidle", timeout=45000)
+        except Exception as e:
+            log(f"goto: {e}")
+        time.sleep(2)
+        page.evaluate("() => { const s=document.getElementById('onetrust-consent-sdk'); if(s) s.remove(); }")
 
-    for sel in ["input[type='password']", "#password"]:
-        try:
-            inp = page.wait_for_selector(sel, timeout=5000, state="visible")
-            if inp: inp.fill(PASSWORD); dlog(f"Filled pw: {sel}"); break
-        except: pass
+        dom_dump(page, "1_before_login_click")
 
-    time.sleep(0.5)
+        # Click LOG IN
+        clicked = page.evaluate("""() => {
+            const all = [...document.querySelectorAll('*')];
+            const t = all.find(e => {
+                const txt = e.textContent.trim().toUpperCase();
+                const r = e.getBoundingClientRect();
+                return (txt === 'LOG IN' || txt === 'LOGIN') && r.height > 0 && r.width > 0;
+            });
+            if (t) { t.click(); return t.tagName + ' ' + t.textContent.trim(); }
+            return null;
+        }""")
+        log(f"Login click: {clicked}")
+        time.sleep(4)
+        page.evaluate("() => { const s=document.getElementById('onetrust-consent-sdk'); if(s) s.remove(); }")
 
-    # Submit — try multiple approaches
-    # 1. button[type=submit]
-    submit_info = page.evaluate("""() => {
-        const submit = document.querySelector('button[type="submit"]');
-        if (submit) { submit.click(); return 'clicked type=submit: ' + submit.textContent.trim(); }
-        // Find button near password input
-        const pw = document.querySelector('input[type="password"]');
-        if (pw) {
-            const form = pw.closest('form');
-            if (form) {
-                const btn = form.querySelector('button');
-                if (btn) { btn.click(); return 'clicked form button: ' + btn.textContent.trim(); }
+        dom_dump(page, "2_after_login_click")
+
+        # Fill email
+        for sel in ["input[type='email']","input[name='email']","input[name='username']","#email"]:
+            try:
+                el = page.wait_for_selector(sel, timeout=4000, state="visible")
+                if el: el.fill(EMAIL); log(f"email filled via {sel}"); break
+            except: pass
+
+        # Fill password
+        for sel in ["input[type='password']","input[name='password']","#password"]:
+            try:
+                el = page.wait_for_selector(sel, timeout=4000, state="visible")
+                if el: el.fill(PASSWORD); log(f"pw filled via {sel}"); break
+            except: pass
+
+        dom_dump(page, "3_after_fill")
+
+        # Submit
+        sub = page.evaluate("""() => {
+            // Try type=submit
+            const s = document.querySelector('button[type="submit"]');
+            if (s && s.getBoundingClientRect().height > 0) { s.click(); return 'type=submit:' + s.textContent.trim(); }
+            // Try form containing password
+            const pw = document.querySelector('input[type="password"]');
+            if (pw) {
+                const form = pw.closest('form');
+                if (form) {
+                    const b = form.querySelector('button');
+                    if (b) { b.click(); return 'form-btn:' + b.textContent.trim(); }
+                    form.submit();
+                    return 'form.submit()';
+                }
             }
-        }
-        return 'no submit found';
-    }""")
-    dlog(f"Submit attempt: {submit_info}")
-    time.sleep(20)
+            // Press Enter on password field
+            const pw2 = document.querySelector('input[type="password"]');
+            if (pw2) {
+                pw2.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',keyCode:13,bubbles:true}));
+                pw2.dispatchEvent(new KeyboardEvent('keyup',  {key:'Enter',keyCode:13,bubbles:true}));
+                return 'enter-keyevent';
+            }
+            return 'no-submit-found';
+        }""")
+        log(f"Submit: {sub}")
+        time.sleep(25)
 
-    info3 = page.evaluate("""() => ({
-        url: window.location.href,
-        hasLogIn: document.body.innerText.includes('LOG IN'),
-        loggedIn: document.body.innerText.includes('MY BETS') || document.body.innerText.includes('DEPOSIT') || document.body.innerText.includes('Balance'),
-        bodyText: document.body.innerText.substring(0, 300)
-    })""")
-    dlog(f"POST-SUBMIT state: {json.dumps(info3, indent=2)}")
+        dom_dump(page, "4_after_submit")
 
-    deadline = time.time() + 60
-    while not _done["flag"] and time.time() < deadline:
-        time.sleep(1)
+        deadline = time.time() + 60
+        while not _done["flag"] and time.time() < deadline:
+            time.sleep(1)
 
-    ctx.close()
-    browser.close()
+        if _done["flag"]:
+            success = True
 
-push_diag()
+        ctx.close()
+        browser.close()
 
-if not harvested.get("bearer_jwt"):
-    die("No token captured")
+except Exception as e:
+    log(f"EXCEPTION: {traceback.format_exc()}")
 
-payload = json.dumps({"files": {"caesars_tokens.json": {
-    "content": json.dumps(harvested, indent=2)
-}}}).encode()
-req = urllib.request.Request(
-    f"https://api.github.com/gists/{GIST_ID}",
-    data=payload, method="PATCH",
-    headers={"Authorization": f"token {GIST_TOKEN}",
-             "Accept": "application/vnd.github.v3+json",
-             "Content-Type": "application/json"},
-)
-with urllib.request.urlopen(req, timeout=15) as r:
-    log(f"Tokens pushed HTTP {r.status}")
+finally:
+    # Always push diagnostic
+    diag = "\n".join(log_lines)
+    diag += "\n\nDOM SNAPSHOTS:\n" + json.dumps(dom_snapshots, indent=2)
+    files = {"caesars_diag.txt": diag}
+    if success and harvested.get("bearer_jwt"):
+        files["betcouncil_caesars_tokens.json"] = json.dumps(harvested, indent=2)
+    try:
+        push_gist(files)
+    except Exception as e:
+        log(f"Final push failed: {e}")
+
+if not success:
+    sys.exit(1)
