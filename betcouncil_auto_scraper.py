@@ -6,7 +6,7 @@ Full multi-book scraper using Playwright browser automation.
 Handles Cloudflare automatically on all regulated US books.
 
 BOOKS COVERED:
-  DFS:        PrizePicks, Underdog, Sleeper
+  DFS:        PrizePicks, Underdog, Sleeper, ParlayPlay
   US Sharp:   DraftKings, FanDuel, BetMGM, Caesars
   Offshore:   Bovada, MyBookie, BetOnline (no login needed)
 
@@ -1444,7 +1444,7 @@ def scrape_parlayplay(sport):
                     if player and line is not None:
                         props.append({
                             "Player": player,
-                            "Prop": stat_type,
+                            "Prop": stat,
                             "Line": float(str(line).replace("+", "")),
                             "Side": "OVER",
                             "OverOdds": "—",
@@ -3477,7 +3477,7 @@ def main():
     parser.add_argument("--sport",   default="NBA")
     parser.add_argument("--all",     action="store_true")
     parser.add_argument("--no-push", action="store_true")
-    parser.add_argument("--books",   default="", help="Comma-separated: dk,fd,mgm,czr,mb,bo,pp,ud,sl,bov")
+    parser.add_argument("--books",   default="", help="Comma-separated: dk,fd,mgm,czr,mb,bo,pp,ud,sl,bov,pplay")
     parser.add_argument("--betonline-props", action="store_true",
                          help="Harvest BetOnline player-prop widget keys (Cloudflare-gated, needs real browser) and exit")
     parser.add_argument("--max-games", type=int, default=15, help="Max games to harvest per sport (--betonline-props only)")
@@ -3623,6 +3623,16 @@ def main():
                         sessions["mybookie"] = new_cookies
                         mb_props, _ = scrape_mybookie(sport, new_cookies)
                 all_props += mb_props
+
+        # ParlayPlay props — cookie-gated; skips gracefully if session_cookie is absent
+        if use("pplay") or use("parlayplay"):
+            pp_cfg = cfg.get("parlayplay", {})
+            if pp_cfg.get("session_cookie"):
+                pplay_props = scrape_parlayplay(sport)
+                all_props += pplay_props
+            elif "parlayplay" in book_filter or "pplay" in book_filter:
+                print("\n  ParlayPlay: no session_cookie in config.json — skipping")
+                print('    Add: "parlayplay": {"session_cookie": "YOUR_SESSIONID"} to config.json')
 
         # BetOnline props + lines — Playwright headed browser (Cloudflare bypass)
         # Opt-in only: requires --books bo or --books bol or --books betonline

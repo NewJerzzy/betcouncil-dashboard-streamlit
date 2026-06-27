@@ -27,5 +27,8 @@
   "mybookie": {
     "username": "YOUR_MYBOOKIE_USERNAME",
     "password": "YOUR_MYBOOKIE_PASSWORD"
+  },
+  "parlayplay": {
+    "session_cookie": "YOUR_PARLAYPLAY_SESSIONID"
   }
 }
