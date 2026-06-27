@@ -1153,11 +1153,26 @@ BDL_PLAYER_IDS = {
 }
 
 ESPN_SLUG_MAP = {
-    "NBA":  "basketball/nba",
-    "NFL":  "football/nfl",
-    "MLB":  "baseball/mlb",
-    "NHL":  "hockey/nhl",
-    "WNBA": "basketball/wnba",
+    # Core pro leagues
+    "NBA":    "basketball/nba",
+    "NFL":    "football/nfl",
+    "MLB":    "baseball/mlb",
+    "NHL":    "hockey/nhl",
+    "WNBA":   "basketball/wnba",
+    # College
+    "NCAAB":  "basketball/mens-college-basketball",
+    "NCAAW":  "basketball/womens-college-basketball",
+    "NCAAF":  "football/college-football",
+    # Soccer
+    "MLS":    "soccer/usa.1",
+    "EPL":    "soccer/eng.1",
+    "UCL":    "soccer/uefa.champions",
+    # Other betting markets
+    "PGA":    "golf/pga",
+    "UFC":    "mma/ufc",
+    "ATP":    "tennis/atp",
+    "WTA":    "tennis/wta",
+    "NASCAR": "racing/nascar-premier",
 }
 
 PLAYER_HOME_SPLITS = {
