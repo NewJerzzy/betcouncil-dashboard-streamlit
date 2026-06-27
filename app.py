@@ -10302,6 +10302,7 @@ def load_sport_data(sport):
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
     def _pf_game_lines():   return fetch_game_lines(sport)
     def _pf_parlayplay():   return fetch_parlayplay_props(sport)
+    def _pf_dk_pick6():    return fetch_draftkings_pick6(sport)
     def _pf_ev_api():       return fetch_ev_api_live()
     def _pf_ev_wnba():      return fetch_ev_api_wnba()
     def _pf_ev_outliers():  return fetch_ev_api_outliers(sport)
@@ -10321,7 +10322,7 @@ def load_sport_data(sport):
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_sleeper, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
-        _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay,
+        _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
     ]
@@ -10329,7 +10330,7 @@ def load_sport_data(sport):
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, sleeper_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
-     an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw,
+     an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw) = _results
 
@@ -10387,6 +10388,7 @@ def load_sport_data(sport):
     st.session_state[f"pinnacle_{sport}"] = pinnacle_data or {}
     st.session_state["oddswrap_props"]   = oddswrap_props or []
     st.session_state["ud_props_compare"] = ud_props_compare or []
+    st.session_state["dk_pick6_props"]   = dk_pick6_props_raw or []
     st.session_state["officials_data"]   = officials_data_raw or {}
     # Store OddsAPI + OddsPapi props for Line Shop access
     if odds_api_props_raw:
@@ -11206,6 +11208,8 @@ def load_sport_data(sport):
                 props = parlayapi_props
         elif parlayplay_props_raw:
             props = parlayplay_props_raw
+        elif dk_pick6_props_raw:
+            props = dk_pick6_props_raw
         elif oddswrap_props:
             props = [p for p in oddswrap_props if p.get("Side") == "OVER"]
         elif odds_api_props_raw:
@@ -17327,6 +17331,7 @@ with tabs[8]:
                 ls_sources.setdefault(k, {}).setdefault(prop, {})[source_name] = float(line)
 
         _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
+        _ls_add(st.session_state.get("dk_pick6_props", []), "DK Pick6")
         _pa_all = st.session_state.get("parlayapi_props_cache", [])
         _ls_add([p for p in _pa_all if p.get("source","").lower() in ("parlayplay","parlay play")], "ParlayPlay")
         # OddsWrap prop name → PrizePicks format mapping

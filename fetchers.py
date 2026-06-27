@@ -8793,6 +8793,457 @@ def harvest_caesars_tokens(max_wait: int = 90) -> dict:
 
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DRAFTKINGS PICK6 — player-props contest product (DK's PrizePicks equivalent)
+#
+# Auth: Bearer JWT + x-api-key harvested from pick6.draftkings.com via
+# Playwright (harvest_pick6_tokens).  Falls back to existing sportsbook tokens
+# (harvest_draftkings_tokens) since both products share api.draftkings.com.
+#
+# Endpoint confirmed via network inspection: api.draftkings.com/lineups/v1/
+# player-groups — requires auth; 404 without Bearer header.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_P6_STAT_MAP = {
+    # Basketball
+    "Points": "PTS", "Rebounds": "REB", "Assists": "AST",
+    "Pts+Reb+Ast": "PRA", "Pts+Ast": "PA", "Pts+Reb": "PR",
+    "Reb+Ast": "RA", "3-Pointers Made": "3PM", "Blocks": "BLK",
+    "Steals": "STL", "Turnovers": "TO", "Minutes": "MIN",
+    "Double Doubles": "DD", "Triple Doubles": "TD2",
+    # Baseball
+    "Hits": "H", "Runs": "R", "RBI": "RBI", "Home Runs": "HR",
+    "Strikeouts": "SO", "Pitcher Strikeouts": "SO",
+    "Hits Allowed": "HA", "Total Bases": "TB", "Earned Runs": "ER",
+    "Walks": "BB", "Stolen Bases": "SB",
+    # Hockey
+    "Shots on Goal": "SOG", "Goals": "G",
+    "Goals+Assists": "GA", "Saves": "SV",
+    # Football
+    "Passing Yards": "PYD", "Rushing Yards": "RYD",
+    "Receiving Yards": "RecYD", "Receptions": "REC",
+    "Touchdowns": "TD", "Passing TDs": "PTD", "Interceptions": "INT",
+    "Carries": "CAR", "Targets": "TGT",
+    # Combat/MMA
+    "Significant Strikes": "SST", "Takedowns": "TKD",
+}
+
+
+def _load_dk_pick6_tokens() -> dict:
+    """
+    Load DK Pick6 auth tokens.
+    Read order: local pick6_session_token.txt → Gist pick6_tokens.json
+                → local draftkings_session_token.txt (sportsbook fallback)
+                → Gist draftkings_tokens.json.
+    Returns {"bearer_jwt": str, "api_key": str, ...} or {}.
+    """
+    # 1. Pick6-specific local cache
+    p6_cache = os.path.join(CACHE_DIR, "pick6_session_token.txt")
+    if os.path.exists(p6_cache):
+        try:
+            age_mins = (time.time() - os.path.getmtime(p6_cache)) / 60
+            if age_mins < 360:
+                tok_lines = open(p6_cache).read().strip().splitlines()
+                if tok_lines and tok_lines[0]:
+                    return {"bearer_jwt": tok_lines[0],
+                            "api_key": tok_lines[1] if len(tok_lines) > 1 else ""}
+        except Exception:
+            pass
+    # 2. Gist pick6_tokens.json
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        try:
+            _gr = _http.get(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}",
+                         "Accept": "application/vnd.github.v3+json"},
+                timeout=8,
+            )
+            if _gr.status_code == 200:
+                _gf = _gr.json().get("files", {}).get("pick6_tokens.json", {})
+                if _gf.get("content"):
+                    _d = json.loads(_gf["content"])
+                    if _d.get("bearer_jwt"):
+                        return _d
+        except Exception:
+            pass
+    # 3. Sportsbook token fallback (same auth domain)
+    sb_cache = os.path.join(CACHE_DIR, "draftkings_session_token.txt")
+    if os.path.exists(sb_cache):
+        try:
+            age_mins = (time.time() - os.path.getmtime(sb_cache)) / 60
+            if age_mins < 360:
+                tok_lines = open(sb_cache).read().strip().splitlines()
+                if tok_lines and tok_lines[0]:
+                    return {"bearer_jwt": tok_lines[0],
+                            "api_key": tok_lines[1] if len(tok_lines) > 1 else ""}
+        except Exception:
+            pass
+    # 4. Gist draftkings_tokens.json
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        try:
+            _gr = _http.get(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}",
+                         "Accept": "application/vnd.github.v3+json"},
+                timeout=8,
+            )
+            if _gr.status_code == 200:
+                _gf = _gr.json().get("files", {}).get("draftkings_tokens.json", {})
+                if _gf.get("content"):
+                    _d = json.loads(_gf["content"])
+                    if _d.get("bearer_jwt"):
+                        return _d
+        except Exception:
+            pass
+    return {}
+
+
+def harvest_pick6_tokens(max_wait: int = 90) -> dict:
+    """
+    Playwright-based DraftKings Pick6 auth token harvester.
+
+    Navigates to pick6.draftkings.com (user must be logged in to their DK
+    account) and intercepts outgoing XHR to api.draftkings.com, capturing:
+      - Bearer JWT
+      - x-api-key
+      - The actual Pick6 API endpoint URL (stored in pick6_endpoint key)
+
+    Falls back gracefully: if pick6.draftkings.com doesn't produce tokens fast
+    enough, the result of harvest_draftkings_tokens() (sportsbook tokens) will
+    work equally well since both products authenticate via api.draftkings.com.
+
+    Persists tokens to:
+      1. Gist file "pick6_tokens.json"
+      2. CACHE_DIR/pick6_session_token.txt  (line 1 = JWT, line 2 = api-key)
+
+    Returns harvested dict on success, {} on failure.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        log_error_to_session(
+            "harvest_pick6_tokens",
+            "playwright not installed — pip install playwright && playwright install chromium",
+            "warning",
+        )
+        return {}
+
+    harvested: dict = {}
+    _stop = {"done": False}
+    _endpoints: list = []
+
+    def _on_request(request):
+        if _stop["done"]:
+            return
+        if "api.draftkings.com" not in request.url:
+            return
+        try:
+            req_hdrs = request.all_headers()
+        except Exception:
+            return
+        auth = req_hdrs.get("authorization", "")
+        api_key = req_hdrs.get("x-api-key", "")
+        if not auth.startswith("Bearer ") or len(auth) < 60:
+            return
+        # Capture endpoint URL if it looks like a Pick6 API call
+        if any(x in request.url for x in
+               ["player-groups", "picks", "lobby", "featured", "lineup", "projection"]):
+            _endpoints.append(request.url)
+        harvested["bearer_jwt"]     = auth[len("Bearer "):]
+        harvested["api_key"]        = api_key
+        harvested["captured_at"]    = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        harvested["source_domain"]  = "pick6.draftkings.com"
+        if _endpoints:
+            harvested["pick6_endpoint"] = _endpoints[0]
+        _stop["done"] = True
+
+    try:
+        import time as _t
+        with sync_playwright() as pw:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox", "--disable-dev-shm-usage",
+                "--disable-gpu", "--window-size=1280,720",
+            ]
+            headless = bool(os.environ.get("DRAFTKINGS_HEADLESS", ""))
+            try:
+                browser = pw.chromium.launch(headless=headless, args=launch_args)
+            except Exception:
+                browser = pw.chromium.launch(headless=True, args=launch_args)
+
+            ctx = browser.new_context(
+                viewport={"width": 1280, "height": 720},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                ),
+            )
+            ctx.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.chrome = {runtime: {}};
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+            """)
+            page = ctx.new_page()
+            page.on("request", _on_request)
+            page.goto(
+                "https://pick6.draftkings.com/",
+                timeout=30000,
+                wait_until="domcontentloaded",
+            )
+            deadline = _t.time() + max_wait
+            while _t.time() < deadline and not _stop["done"]:
+                _t.sleep(0.5)
+            browser.close()
+    except Exception as _e:
+        log_error_to_session("harvest_pick6_tokens", str(_e)[:200], "warning")
+
+    if not harvested.get("bearer_jwt"):
+        log_error_to_session(
+            "harvest_pick6_tokens",
+            "No auth token captured from pick6.draftkings.com — ensure you are logged in "
+            "to your DraftKings account in the browser session.",
+            "warning",
+        )
+        return {}
+
+    # Persist to Gist
+    if GITHUB_TOKEN and GITHUB_GIST_ID:
+        try:
+            _http.patch(
+                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}",
+                         "Accept": "application/vnd.github.v3+json"},
+                json={"files": {"pick6_tokens.json": {
+                    "content": json.dumps(harvested, indent=2)
+                }}},
+                timeout=10,
+            )
+        except Exception:
+            pass
+    # Persist to local cache
+    try:
+        open(os.path.join(CACHE_DIR, "pick6_session_token.txt"), "w").write(
+            f"{harvested['bearer_jwt']}\n{harvested.get('api_key','')}\n"
+        )
+    except Exception:
+        pass
+
+    return harvested
+
+
+def fetch_draftkings_pick6(sport: str) -> list:
+    """
+    Fetch DraftKings Pick6 player props (DK's PrizePicks-style contest product).
+
+    Authentication: Bearer JWT + x-api-key from harvest_pick6_tokens() or the
+    existing harvest_draftkings_tokens() result (same auth domain).
+
+    Endpoint: api.draftkings.com/lineups/v1/player-groups  (auth-required;
+    confirmed 404 without Bearer — standard DK API gateway pattern).
+
+    Returns list of props in BetCouncil format:
+        {Player, Prop, Line, Sport, source: "DK Pick6", Book: "DK Pick6",
+         Team, Opponent, StatLabel}
+
+    Cached 20 minutes per sport.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"dk_pick6_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    # ── Load tokens ───────────────────────────────────────────────────────────
+    tokens = _load_dk_pick6_tokens()
+    if not tokens.get("bearer_jwt"):
+        log_error_to_session(
+            "fetch_draftkings_pick6",
+            "No DK auth tokens — click 'Harvest Pick6 Tokens' in the Settings panel "
+            "while logged in to your DraftKings account.",
+            "warning",
+        )
+        return []
+
+    auth_hdrs = {
+        "Authorization": f"Bearer {tokens['bearer_jwt']}",
+        "x-api-key":     tokens.get("api_key", ""),
+        "Accept":        "application/json",
+        "Content-Type":  "application/json",
+        "User-Agent":    (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Origin":        "https://pick6.draftkings.com",
+        "Referer":       "https://pick6.draftkings.com/",
+    }
+
+    # Sport ID map (DK internal)
+    sport_ids = {
+        "NBA": 4, "MLB": 2, "NFL": 1, "NHL": 5,
+        "WNBA": 11, "UFC": 13, "MMA": 13,
+        "PGA": 19, "Golf": 19, "Tennis": 18,
+        "ATP": 18, "WTA": 18,
+    }
+    sport_id = sport_ids.get(sport.upper(), sport_ids.get(sport, 4))
+
+    # ── Try endpoints in priority order ───────────────────────────────────────
+    # If harvest captured the real URL, it goes first.
+    saved = tokens.get("pick6_endpoint", "")
+    candidates = [saved] if saved else []
+    candidates += [
+        # Confirmed pattern from DK network inspection (requires auth)
+        f"https://api.draftkings.com/lineups/v1/player-groups?sport={sport_id}",
+        f"https://api.draftkings.com/lineups/v1/player-groups?sport={sport_id}&state=NJ",
+        f"https://api.draftkings.com/lineups/v1/player-groups?sportId={sport_id}",
+        # Alternative paths tried during investigation
+        f"https://api.draftkings.com/picks/v1/player-groups?sport={sport_id}",
+        f"https://api.draftkings.com/picks/v2/player-groups?sport={sport_id}",
+        # Draft group type 96 = Pick6 contest type
+        f"https://api.draftkings.com/draftgroups/v1/draftgroups?sport={sport_id}&typeid=96",
+        f"https://api.draftkings.com/lineups/v1/player-groups",
+    ]
+    candidates = list(dict.fromkeys(c for c in candidates if c))  # dedupe, preserve order
+
+    raw_data = None
+    hit_url  = ""
+    for endpoint in candidates:
+        try:
+            resp = _http.get(endpoint, headers=auth_hdrs, timeout=14)
+            if resp.status_code == 200:
+                raw_data = resp.json()
+                hit_url  = endpoint
+                break
+            elif resp.status_code in (401, 403):
+                log_error_to_session(
+                    "fetch_draftkings_pick6",
+                    f"Pick6 auth expired (HTTP {resp.status_code}) — "
+                    "re-run Harvest Pick6 Tokens.",
+                    "warning",
+                )
+                return []
+            # 404 = wrong endpoint path, try next
+        except Exception:
+            continue
+
+    if not raw_data:
+        log_error_to_session(
+            "fetch_draftkings_pick6",
+            "Pick6: all endpoint patterns failed. Tokens may be valid but endpoint "
+            "URL changed — re-run Harvest Pick6 Tokens to auto-capture the live URL.",
+            "warning",
+        )
+        return []
+
+    # ── Parse response ─────────────────────────────────────────────────────────
+    # DK API returns one of several shapes depending on which endpoint responds.
+    # We normalise all known shapes to a flat list of (name, stat_label, line).
+    props: list = []
+    try:
+        # Shape A: {"playerGroups": [{players: [{displayName, draftStatAttributes:[{label,sortValue}]}]}]}
+        groups = (
+            raw_data.get("playerGroups")
+            or raw_data.get("draftGroups")
+            or raw_data.get("data", {}).get("playerGroups")
+            or raw_data.get("result", {}).get("playerGroups")
+            or (raw_data if isinstance(raw_data, list) else [])
+        )
+        for grp in groups:
+            group_sport = (grp.get("sport") or grp.get("sportName") or sport).upper()
+            players = grp.get("players") or grp.get("draftables") or []
+            for player in players:
+                name = (
+                    player.get("displayName") or player.get("name")
+                    or player.get("playerName") or player.get("shortName") or ""
+                ).strip()
+                if not name:
+                    continue
+                team = player.get("teamAbbreviation") or player.get("team") or ""
+                opp  = player.get("opponent") or player.get("opp") or ""
+
+                stats = (
+                    player.get("draftStatAttributes")
+                    or player.get("stats")
+                    or player.get("projections")
+                    or []
+                )
+                for stat in stats:
+                    label = (
+                        stat.get("label") or stat.get("statName")
+                        or stat.get("name") or stat.get("abbreviation") or ""
+                    ).strip()
+                    raw_val = (
+                        stat.get("sortValue") or stat.get("value")
+                        or stat.get("projection") or stat.get("line")
+                    )
+                    if not label or raw_val is None:
+                        continue
+                    try:
+                        line = float(raw_val)
+                    except (ValueError, TypeError):
+                        continue
+                    if line <= 0:
+                        continue
+
+                    prop_key = _P6_STAT_MAP.get(label, label)
+                    props.append({
+                        "Player":    name,
+                        "Prop":      prop_key,
+                        "Line":      line,
+                        "Sport":     group_sport or sport,
+                        "source":    "DK Pick6",
+                        "Book":      "DK Pick6",
+                        "Team":      team,
+                        "Opponent":  opp,
+                        "StatLabel": label,
+                    })
+
+        # Shape B: flat list of projections {"playerName", "statType", "line"}
+        if not props and isinstance(raw_data, list):
+            for item in raw_data:
+                name  = item.get("playerName") or item.get("displayName") or ""
+                label = item.get("statType") or item.get("stat") or item.get("label") or ""
+                line_val = item.get("line") or item.get("projection") or item.get("value")
+                if not name or not label or line_val is None:
+                    continue
+                try:
+                    line = float(line_val)
+                except (ValueError, TypeError):
+                    continue
+                if line <= 0:
+                    continue
+                props.append({
+                    "Player":    name.strip(),
+                    "Prop":      _P6_STAT_MAP.get(label, label),
+                    "Line":      line,
+                    "Sport":     sport,
+                    "source":    "DK Pick6",
+                    "Book":      "DK Pick6",
+                    "Team":      item.get("team") or item.get("teamAbbreviation") or "",
+                    "Opponent":  item.get("opponent") or "",
+                    "StatLabel": label,
+                })
+
+    except Exception as _parse_err:
+        log_error_to_session(
+            "fetch_draftkings_pick6",
+            f"Pick6 parse error: {_parse_err} (endpoint: {hit_url})",
+            "warning",
+        )
+
+    if props:
+        _safe_save_pkl(cache_path, props)
+        log_error_to_session(
+            "fetch_draftkings_pick6",
+            f"✅ DK Pick6: {len(props)} props fetched for {sport}",
+            "info",
+        )
+    return props
+
+
 def harvest_draftkings_tokens(max_wait: int = 90) -> dict:
     """
     Playwright-based DraftKings Authorization + x-api-key harvester.
