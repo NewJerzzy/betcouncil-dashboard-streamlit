@@ -12,21 +12,21 @@ from functools import lru_cache
 from scipy import stats as scipy_stats
 
 # Inline to avoid circular import through config.py (which imports streamlit)
-SPORT_EWMA_DECAY = {"NBA": 0.85, "MLB": 0.92, "NHL": 0.88, "WNBA": 0.85, "NFL": 0.80}
+SPORT_EWMA_DECAY = {"NBA": 0.82, "MLB": 0.90, "NHL": 0.85, "WNBA": 0.82, "NFL": 0.78}
 
 # ── Constants inlined from config.py ────────────────────────────────────────
 # config.py imports streamlit and cannot be imported here (circular import).
 # These pure-data constants are duplicated here verbatim from config.py.
 TIER_THRESHOLDS = {
-    "NBA": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
-    "MLB": {"SOVEREIGN": 0.08, "ELITE": 0.04, "APPROVED": 0.02, "LEAN": 0.01},
-    "NFL": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
-    "NHL": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
-    "WNBA": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
-    "Soccer": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
-    "UFC": {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
-    "Golf": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
-    "Tennis": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "MLB":    {"SOVEREIGN": 0.06, "ELITE": 0.03, "APPROVED": 0.015,"LEAN": 0.008},
+    "NFL":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "NHL":    {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.015},
+    "WNBA":   {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "GOLF":   {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "TENNIS": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+    "SOCCER": {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.015},
+    "UFC":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
 }
 
 GAME_TIER_THRESHOLDS = {
@@ -3141,4 +3141,43 @@ def correlated_kelly_adjustment(props: list[dict]) -> float:
 
     # Scale: 0 corr → 1.0 mult, 1.0 corr → 0.5 mult
     return round(max(0.50, 1.0 - max_corr * 0.50), 3)
+
+
+
+def validate_mode_a_brief(brief_dict: dict) -> dict:
+    """
+    Validate that a MODE A brief from app.py contains all fields GEM expects.
+    Returns {valid: bool, missing: list, warnings: list}
+    """
+    # Fields GEM reads from the brief (from GEM system prompt analysis)
+    REQUIRED_FIELDS = [
+        "sport", "date", "player", "prop", "line",
+        "player_avg", "edge", "tier", "fair_prob",
+        "over_odds", "under_odds", "book",
+    ]
+    OPTIONAL_FIELDS = [
+        "h2h_rate", "hit_rate", "clv_est", "pinnacle_prob",
+        "ev_api_line", "regime", "sharp_signal", "lqs_score",
+        "sample_n", "std_dev", "kelly_size", "bet_size",
+        "away_team", "home_team", "game_time",
+    ]
+
+    missing  = [f for f in REQUIRED_FIELDS if f not in brief_dict]
+    present  = [f for f in OPTIONAL_FIELDS if f in brief_dict]
+    warnings = []
+
+    if brief_dict.get("edge", 0) > 0.20:
+        warnings.append("edge >20% — verify not a calculation error")
+    if brief_dict.get("fair_prob", 0.5) in (0.0, 1.0):
+        warnings.append("fair_prob at boundary (0 or 1) — likely parse error")
+    if not brief_dict.get("over_odds") and not brief_dict.get("under_odds"):
+        warnings.append("no odds provided — GEM cannot devig")
+
+    return {
+        "valid":    len(missing) == 0,
+        "missing":  missing,
+        "optional_present": present,
+        "warnings": warnings,
+        "completeness": len(present) / max(1, len(OPTIONAL_FIELDS)),
+    }
 
