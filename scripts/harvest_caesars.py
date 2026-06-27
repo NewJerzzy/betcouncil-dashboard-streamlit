@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Caesars harvester — dismiss location modal, then login."""
+"""Caesars harvester — handle MFA and TOS after login."""
 import os, sys, json, time, urllib.request, traceback
 from datetime import datetime, timezone
 
@@ -43,6 +43,28 @@ def _on_request(request):
     _done["flag"] = True
     log(f"BEARER CAPTURED len={len(harvested['bearer_jwt'])}")
 
+def snap_state(page, label):
+    info = page.evaluate("""() => ({
+        url: window.location.href,
+        bodySnip: document.body.innerText.substring(0, 400),
+        visInputs: [...document.querySelectorAll('input')]
+            .filter(i => i.getBoundingClientRect().height > 0)
+            .map(i => ({type: i.type, name: i.name, ph: i.placeholder})),
+        visBtns: [...document.querySelectorAll('button')]
+            .filter(b => {
+                const r = b.getBoundingClientRect();
+                return r.height > 20 && r.width > 40 && r.y > 50;
+            })
+            .map(b => ({text: b.textContent.trim().substring(0,40),
+                        type: b.type, y: Math.round(b.getBoundingClientRect().y),
+                        disabled: b.disabled}))
+    })""")
+    log(f"[{label}] url={info['url'][:60]}")
+    log(f"[{label}] body={info['bodySnip'][:200]}")
+    log(f"[{label}] inputs={json.dumps(info['visInputs'])}")
+    log(f"[{label}] buttons={json.dumps(info['visBtns'])}")
+    return info
+
 success = False
 try:
     with sync_playwright() as pw:
@@ -58,10 +80,7 @@ try:
         )
         ctx.add_cookies([
             {"name": "OptanonAlertBoxClosed","value": "2026-01-01T00:00:00.000Z","domain": ".caesars.com","path": "/"},
-            {"name": "OptanonConsent","value": "isGpcEnabled=0&datestamp=2026-01-01&version=202301.2.0&isIABGlobal=false&hosts=&consentId=x&interactionCount=1&landingPath=NotLandingPage&groups=C0001:1,C0002:1,C0003:1,C0004:1","domain": ".caesars.com","path": "/"},
-            # Pre-set AZ location cookie
-            {"name": "userLocation","value": "az","domain": ".caesars.com","path": "/"},
-            {"name": "selectedState","value": "az","domain": ".caesars.com","path": "/"},
+            {"name": "OptanonConsent","value": "isGpcEnabled=0&datestamp=2026-01-01&version=202301.2.0&interactionCount=1&groups=C0001:1,C0002:1,C0003:1,C0004:1","domain": ".caesars.com","path": "/"},
         ])
         ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});window.chrome={runtime:{}};")
         page = ctx.new_page()
@@ -73,136 +92,110 @@ try:
                       wait_until="networkidle", timeout=45000)
         except Exception as e: log(f"goto: {e}")
         time.sleep(3)
-
-        # 1. Kill OneTrust
         page.evaluate("document.querySelectorAll('[id*=\"onetrust\"],[class*=\"onetrust\"]').forEach(e=>e.remove())")
         time.sleep(0.5)
+        snap_state(page, "01_landing")
 
-        # 2. Dismiss location modal — close button or X
-        log("Checking for location modal...")
-        for sel in [
-            "button.CloseButton",
-            "[aria-label='close']",
-            "[aria-label='Close']",
-            "button:has-text('×')",
-            ".change-location-drawer-container button.CloseButton",
-            "[class*='close']",
-        ]:
+        # Dismiss any modal/location overlay first
+        for sel in ["button.CloseButton","[aria-label='Close']","[aria-label='close']"]:
             try:
                 el = page.query_selector(sel)
                 if el and el.is_visible():
-                    el.click()
-                    log(f"Dismissed modal via: {sel}")
-                    time.sleep(1)
-                    break
+                    el.click(); log(f"Dismissed: {sel}"); time.sleep(1); break
             except: pass
-
-        # Also try pressing Escape
         page.keyboard.press("Escape")
         time.sleep(1)
 
-        # Log what's visible
-        visible_text = page.inner_text("body")[:300]
-        log(f"Page text: {visible_text[:200]}")
-
-        # 3. Click LOG IN
+        # Click LOG IN (header button at y≈18)
         try:
             btn = page.get_by_text("LOG IN", exact=True).first
             box = btn.bounding_box()
             log(f"LOG IN box: {box}")
             page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
             log("Clicked LOG IN")
-        except Exception as e:
-            log(f"LOG IN click: {e}")
+        except Exception as e: log(f"LOG IN: {e}")
         time.sleep(4)
+        snap_state(page, "02_after_login_click")
 
-        # 4. Fill credentials
-        email_sel = None
+        # Fill email
         for sel in ["input[type='email']","input[name='email']","input[name='username']"]:
             try:
                 el = page.wait_for_selector(sel, timeout=8000, state="visible")
-                if el: email_sel = sel; log(f"Email: {sel}"); break
+                if el: page.fill(sel, EMAIL); log(f"email: {sel}"); break
             except: pass
 
-        if not email_sel:
-            log("NO EMAIL FIELD")
-            # Dump all drawers
-            info = page.evaluate("""() => {
-                const drawers = [...document.querySelectorAll('[class*="Drawer"],[class*="drawer"]')]
-                    .filter(d => d.getBoundingClientRect().height > 50)
-                    .map(d => ({cls: d.className.substring(0,80), h: d.getBoundingClientRect().height,
-                                overlay: d.className.includes('closed')}));
-                return drawers;
-            }""")
-            log(f"Drawers: {json.dumps(info)}")
-        else:
-            page.fill(email_sel, EMAIL)
-            log("Filled email")
-            time.sleep(0.3)
+        # Fill password
+        for sel in ["input[type='password']","input[name='password']"]:
+            try:
+                el = page.wait_for_selector(sel, timeout=5000, state="visible")
+                if el: page.fill(sel, PASSWORD); log(f"pw: {sel}"); break
+            except: pass
+        time.sleep(0.5)
 
-            for sel in ["input[type='password']","input[name='password']"]:
-                try:
-                    el = page.wait_for_selector(sel, timeout=5000, state="visible")
-                    if el: page.fill(sel, PASSWORD); log(f"Filled pw: {sel}"); break
-                except: pass
-            time.sleep(0.5)
+        snap_state(page, "03_after_fill")
 
-            # Find submit button in the same drawer as the password field
-            submit_info = page.evaluate("""() => {
-                const pw = document.querySelector('input[type="password"]');
-                if (!pw) return {result: 'no-pw'};
-                // Find visible buttons near the pw field
-                const allBtns = [...document.querySelectorAll('button')]
+        # Click the submit LOG IN button — must be below y=100 (not header)
+        clicked = page.evaluate("""() => {
+            const btns = [...document.querySelectorAll('button')]
+                .filter(b => {
+                    const r = b.getBoundingClientRect();
+                    return r.height > 20 && r.width > 40 && r.y > 80;
+                });
+            // Find LOG IN button below header
+            const login = btns.find(b => b.textContent.trim().toUpperCase() === 'LOG IN');
+            if (login) { login.click(); return 'login@y=' + Math.round(login.getBoundingClientRect().y); }
+            // Any submit
+            const sub = btns.find(b => b.type === 'submit' && !b.disabled);
+            if (sub) { sub.click(); return 'submit:' + sub.textContent.trim(); }
+            return 'none:' + btns.map(b=>b.textContent.trim().substring(0,20)).join('|');
+        }""")
+        log(f"Submit: {clicked}")
+        time.sleep(10)
+        snap_state(page, "04_after_submit_10s")
+
+        # Handle post-login states
+        for attempt in range(6):
+            time.sleep(5)
+            state = page.evaluate("""() => ({
+                hasLogIn: document.body.innerText.includes('LOG IN'),
+                hasMFA: document.body.innerText.includes('verification') ||
+                        document.body.innerText.includes('code') ||
+                        document.body.innerText.includes('authenticat'),
+                hasTOS: document.body.innerText.includes('Terms') ||
+                        document.body.innerText.includes('Accept'),
+                hasBalance: document.body.innerText.includes('BALANCE') ||
+                            document.body.innerText.includes('MY BETS') ||
+                            document.body.innerText.includes('Deposit'),
+                bodySnip: document.body.innerText.substring(0,300),
+                visInputs: [...document.querySelectorAll('input')]
+                    .filter(i => i.getBoundingClientRect().height > 0)
+                    .map(i => ({type: i.type, name: i.name, ph: i.placeholder, val: i.value.substring(0,5)})),
+                visBtns: [...document.querySelectorAll('button')]
                     .filter(b => {
                         const r = b.getBoundingClientRect();
-                        return r.height > 0 && r.width > 50;
+                        return r.height > 20 && r.width > 40 && r.y > 50;
                     })
-                    .map(b => ({
-                        text: b.textContent.trim().substring(0,40),
-                        type: b.type,
-                        x: Math.round(b.getBoundingClientRect().x),
-                        y: Math.round(b.getBoundingClientRect().y),
-                        h: Math.round(b.getBoundingClientRect().height),
-                        w: Math.round(b.getBoundingClientRect().width),
-                        disabled: b.disabled
-                    }));
-                return {buttons: allBtns};
-            }""")
-            log(f"Visible buttons after fill: {json.dumps(submit_info)}")
-
-            # Click submit — find button with LOG IN text or type=submit near the form
-            clicked = page.evaluate("""() => {
-                const btns = [...document.querySelectorAll('button')]
-                    .filter(b => b.getBoundingClientRect().height > 0 && b.getBoundingClientRect().width > 50);
-                // Priority: button saying LOG IN that's not at y<30 (not the header button)
-                const loginBtn = btns.find(b =>
-                    b.textContent.trim().toUpperCase() === 'LOG IN' &&
-                    b.getBoundingClientRect().y > 100
-                );
-                if (loginBtn) { loginBtn.click(); return 'login-btn:' + loginBtn.textContent.trim(); }
-                // type=submit
-                const sub = btns.find(b => b.type === 'submit' && !b.disabled);
-                if (sub) { sub.click(); return 'submit:' + sub.textContent.trim(); }
-                return 'none';
-            }""")
-            log(f"Submit click: {clicked}")
-
-            # Also try clicking via Playwright locator targeting button below y=100
-            try:
-                submit_btn = page.locator("button").filter(has_text="LOG IN").nth(1)
-                if submit_btn.count() > 0:
-                    submit_btn.click(force=True)
-                    log("Playwright click on second LOG IN button")
-            except: pass
-
-            time.sleep(25)
-            state_info = page.evaluate("""() => ({
-                hasLogIn: document.body.innerText.includes('LOG IN'),
-                hasBalance: document.body.innerText.includes('BALANCE') || document.body.innerText.includes('MY BETS') || document.body.innerText.includes('Deposit'),
-                url: window.location.href,
-                snip: document.body.innerText.substring(0,200)
+                    .map(b => ({text: b.textContent.trim().substring(0,40), y: Math.round(b.getBoundingClientRect().y)}))
             })""")
-            log(f"POST-SUBMIT: {json.dumps(state_info)}")
+            log(f"[poll-{attempt}] logIn={state['hasLogIn']} MFA={state['hasMFA']} TOS={state['hasTOS']} balance={state['hasBalance']}")
+            log(f"[poll-{attempt}] body={state['bodySnip'][:200]}")
+            log(f"[poll-{attempt}] inputs={json.dumps(state['visInputs'])}")
+            log(f"[poll-{attempt}] buttons={json.dumps(state['visBtns'])}")
+
+            if state['hasTOS']:
+                # Accept TOS
+                accepted = page.evaluate("""() => {
+                    const btns = [...document.querySelectorAll('button')]
+                        .filter(b => b.getBoundingClientRect().height > 0);
+                    const accept = btns.find(b => /accept|agree|confirm|continue/i.test(b.textContent));
+                    if (accept) { accept.click(); return 'accepted:' + accept.textContent.trim(); }
+                    return 'no-accept-btn';
+                }""")
+                log(f"TOS: {accepted}")
+
+            if state['hasBalance'] or _done["flag"]:
+                log("LOGGED IN!")
+                break
 
         deadline = time.time() + 60
         while not _done["flag"] and time.time() < deadline:
