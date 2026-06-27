@@ -14,19 +14,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Playwright + stealth
+      - name: Install Playwright
         run: |
-          pip install playwright playwright-stealth
+          pip install playwright
           playwright install chromium
           playwright install-deps chromium
       - name: Harvest Caesars tokens
         run: xvfb-run -a python scripts/harvest_caesars.py
         env:
-          CAESARS_EMAIL:    ${{ secrets.CAESARS_EMAIL }}
-          CAESARS_PASSWORD: ${{ secrets.CAESARS_PASSWORD }}
-          CAESARS_STATE:    ${{ secrets.CAESARS_STATE }}
-          GIST_TOKEN:       ${{ secrets.GIST_TOKEN }}
-          GIST_ID:          "7e52e1c2c2054847c7c4663a157386c5"
+          CAESARS_STATE:     ${{ secrets.CAESARS_STATE }}
+          CAESARS_WAF_TOKEN: ${{ secrets.CAESARS_WAF_TOKEN }}
+          CAESARS_BCNCTKN:   ${{ secrets.CAESARS_BCNCTKN }}
+          GIST_TOKEN:        ${{ secrets.GIST_TOKEN }}
+          GIST_ID:           "7e52e1c2c2054847c7c4663a157386c5"
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
