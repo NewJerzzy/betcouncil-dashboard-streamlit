@@ -57,7 +57,9 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_sharp_consensus_no_vig, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment)
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_sharp_consensus_no_vig, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    rest_adjusted_std_dev, score_rlm, devig_ensemble, pace_adjust_mlb_prop,
+    record_line, detect_steam_move, get_opener_gap, detect_market_maker_divergence)
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import TIER_COLORS
 from app_fixes import fetch_vsin_intelligence
@@ -915,18 +917,14 @@ def compute_consensus_probability(sport, player_name, stat_name, line_val, side=
             over_odds = -110
         if under_odds is None:
             under_odds = -110
-        over_implied = devig_odds(over_odds)
-        under_implied = devig_odds(under_odds)
-        if (over_implied is None or under_implied is None):
+        try:
+            _ens     = devig_ensemble(over_odds, under_odds, liquidity="medium")
+            _bk_fair = _ens.get("fair_prob")
+            if _bk_fair is None:
+                continue
+            book_probs.append(_bk_fair if side.upper() == "OVER" else round(1.0 - _bk_fair, 4))
+        except Exception:
             continue
-        total_implied = over_implied + under_implied
-        if total_implied <= 0:
-            continue
-        over_no_vig = over_implied / total_implied
-        if side.upper() == "OVER":
-            book_probs.append(over_no_vig)
-        else:
-            book_probs.append(1 - over_no_vig)
         books_used.append(book)
     if len(book_probs) < 2:
         return None, books_used
@@ -4175,16 +4173,13 @@ def parse_ev_movement(movement_data):
                 try:
                     t = float(tickets_pct or 0)
                     m = float(money_pct or 0)
-                    gap = abs(t - m)
-                    if gap >= 30:
-                        s9_boost = 0.02
-                        rlm_note = f"{t:.0f}% tickets, {m:.0f}% money [RLM]"
-                    elif gap >= 20:
-                        s9_boost = 0.01
-                        rlm_note = f"{t:.0f}% tickets, {m:.0f}% money [RLM]"
-                    elif gap >= 12:
-                        s9_boost = 0.005
-                        rlm_note = f"{t:.0f}% tickets, {m:.0f}% money [soft RLM]"
+                    _pub_side = "OVER" if t >= 50 else "UNDER"
+                    _move_mag = abs(float(curr_line or 0) - float(open_line or 0)) if (curr_line and open_line) else 0.5
+                    _rlm_r    = score_rlm(t / 100.0, move_direction or "FLAT", _pub_side, max(0.5, _move_mag))
+                    if _rlm_r["rlm_detected"]:
+                        _rs = _rlm_r["strength"]
+                        s9_boost = 0.02 if _rs == "STRONG" else (0.01 if _rs == "MODERATE" else 0.005)
+                        rlm_note = _rlm_r.get("note", "")
                 except (TypeError, ValueError):
                     pass
 
@@ -10225,6 +10220,44 @@ def load_sport_data(sport):
     else:
         games, is_playoff, home_teams, away_teams = [], False, {}, {}
 
+    # ── Line snapshot → steam + market-maker divergence signals ──────────────
+    # record_line() feeds _LINE_HISTORY (module-level dict in bc_utils) which
+    # persists across Streamlit reruns within the same Python process, so
+    # steam/velocity signals accumulate as the user refreshes throughout the day.
+    if games:
+        _steam_signals: dict = {}
+        for _sg in games:
+            _gkey = (_sg.get("Matchup") or "").replace(" ", "_")
+            if not _gkey:
+                continue
+            _g_total = safe_float(_sg.get("Total") or 0)
+            try:
+                _g_spr_f = safe_float(str(_sg.get("Spread") or "0").replace("+", ""))
+            except Exception:
+                _g_spr_f = 0.0
+            if _g_total:
+                record_line("consensus", _gkey, "total",  _g_total,  -110, -110)
+            if _g_spr_f:
+                record_line("consensus", _gkey, "spread", _g_spr_f, -110, -110)
+            _steam_tot = detect_steam_move("consensus", _gkey, "total")
+            _steam_spr = detect_steam_move("consensus", _gkey, "spread")
+            _gap_tot   = get_opener_gap("consensus", _gkey, "total")
+            _lbb: dict = {}
+            for _bk, _fld in [("pinnacle","PinnacleTotal"),("betonline","BOLTotal"),("draftkings","DKTotal"),("fanduel","FDTotal")]:
+                _bv = safe_float(_sg.get(_fld) or 0)
+                if _bv:
+                    _lbb[_bk] = {"line": _bv, "over_odds": -110, "under_odds": -110}
+            if _g_total and len(_lbb) < 2:
+                _lbb["consensus"] = {"line": _g_total, "over_odds": -110, "under_odds": -110}
+            _mm_div = detect_market_maker_divergence(_lbb) if len(_lbb) >= 2 else {}
+            _steam_signals[_gkey] = {
+                "steam_total":   _steam_tot,
+                "steam_spread":  _steam_spr,
+                "opener_gap":    _gap_tot,
+                "mm_divergence": _mm_div,
+            }
+        st.session_state["game_steam_signals"] = _steam_signals
+
     # Store parallel results into session state
     st.session_state["dk_salaries"]      = dk_salaries or []
     st.session_state[f"pinnacle_{sport}"] = pinnacle_data or {}
@@ -11617,6 +11650,8 @@ def load_sport_data(sport):
                 break
         std_dev_key = f"{stat_norm}_std"
         std_dev = avg_dict.get(std_dev_key, None)
+        if std_dev is not None and days_rest is not None:
+            std_dev = rest_adjusted_std_dev(std_dev, int(days_rest), sport)
         consensus_prob, consensus_books = compute_consensus_probability(sport, player, stat_raw, line, side)
         fairness_grade, fairness_note = check_prop_line_fairness(line, consensus_prob, side)
         player_parts = player.split()
@@ -11632,6 +11667,8 @@ def load_sport_data(sport):
         an_tier = an_data.get("tier", "")
         an_tickets = an_data.get("tickets_pct", 0)
         an_money = an_data.get("money_pct", 0)
+        if sport == "MLB" and avg is not None:
+            avg = pace_adjust_mlb_prop(avg, stat_norm)
         over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player)
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
         under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player)
