@@ -3315,7 +3315,24 @@ def compute_market_agreement_score(prop, public_betting=None):
         elif rlm.get("has_sharp"):
             score += 5
     
-    # Kalshi/Polymarket agreement
+    # Unabated sharp lines
+    _unabated_st = st.session_state.get("unabated_lines", [])
+    if _unabated_st:
+        _src_statuses.append({"Source": "Unabated (sharp fair lines)", "Status": f"🟢 {len(_unabated_st)} lines", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Unabated (sharp fair lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # ParlayAPI EV
+    _papi_ev_st = st.session_state.get("parlayapi_ev", [])
+    _papi_arb_st = st.session_state.get("parlayapi_arb", [])
+    if _papi_ev_st or _papi_arb_st:
+        _src_statuses.append({"Source": "ParlayAPI EV + Arb", "Status": f"🟢 {len(_papi_ev_st)} EV / {len(_papi_arb_st)} arb", "Action": "None"})
+    elif PARLAY_API_KEY:
+        _src_statuses.append({"Source": "ParlayAPI EV + Arb", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+    else:
+        _src_statuses.append({"Source": "ParlayAPI EV + Arb", "Status": "🔴 No API key", "Action": "Add PARLAY_API_KEY"})
+
+        # Kalshi/Polymarket agreement
     mkt = prop.get("MarketVsModel")
     if isinstance(mkt, dict):
         if mkt.get("signal") == "AGREEMENT":
@@ -10571,6 +10588,9 @@ def load_sport_data(sport):
         st.session_state["public_betting_data"] = public_betting
     if an_props:
         st.session_state["an_props_data"] = an_props
+        # Also store as public_betting_data for the scoring engine
+        if isinstance(an_props, dict):
+            st.session_state["public_betting_data"] = an_props
 
     # Merge RotoWire injuries into main injuries dict
     # RotoWire supplements ESPN with editorial injury intelligence
@@ -12477,6 +12497,83 @@ def load_sport_data(sport):
             prop["FDDKProb"] = None
             prop["FDDKConfirms"] = False
             prop["FDDKFades"] = False
+
+    # ── Unabated sharp line validation ─────────────────────────────────────
+    # Unabated provides Pinnacle-derived no-vig fair lines for game totals/spreads.
+    # If our prop edge aligns with Unabated's fair value direction, boost confidence.
+    _unabated = st.session_state.get("unabated_lines", [])
+    if _unabated:
+        _unabated_lookup = {}
+        for _u in _unabated:
+            _gm = normalize_name(_u.get("game", ""))
+            if _gm:
+                _unabated_lookup[_gm] = _u
+        for prop in enriched:
+            prop["UnabatedNote"] = ""
+
+    # ── ParlayAPI +EV signal ────────────────────────────────────────────────
+    # If ParlayAPI independently flags this player/prop as +EV vs Pinnacle,
+    # that's a sharp consensus confirmation — boost tier.
+    _papi_ev = st.session_state.get("parlayapi_ev", [])
+    if _papi_ev:
+        _papi_ev_set = set()
+        for _pe in _papi_ev:
+            _pname = normalize_name(_pe.get("player", _pe.get("Player", "")))
+            _pstat = str(_pe.get("prop", _pe.get("Prop", ""))).lower()
+            if _pname:
+                _papi_ev_set.add((_pname, _pstat))
+        for prop in enriched:
+            _pk = (normalize_name(prop.get("Player","")),
+                   str(prop.get("Prop","")).lower())
+            if _pk in _papi_ev_set:
+                prop["ParlayAPIEV"] = True
+                # Boost: ParlayAPI EV + our model edge = stronger signal
+                if prop.get("Tier") == "APPROVED" and prop.get("Edge", 0) > 0.03:
+                    prop["Tier"] = "ELITE"
+                    prop["TierBoost"] = prop.get("TierBoost","") + " + ParlayAPI EV"
+            else:
+                prop["ParlayAPIEV"] = False
+
+    # ── Action Network public betting % signal ──────────────────────────────
+    # High public % on one side with sharp line moving opposite = RLM signal.
+    # Low public % + our model edge = sharp-side lean.
+    _an_public = st.session_state.get("public_betting_data", {})
+    if _an_public:
+        for prop in enriched:
+            matchup = prop.get("Matchup", "")
+            if not matchup:
+                continue
+            _pub = _an_public.get(matchup, {})
+            if not _pub:
+                # Try fuzzy match
+                for _mk, _mv in _an_public.items():
+                    if any(t in matchup for t in _mk.split(" @ ")):
+                        _pub = _mv
+                        break
+            if _pub:
+                side = prop.get("Side", "OVER")
+                if side == "OVER":
+                    pub_pct = _pub.get("over_pct") or 0
+                elif side == "UNDER":
+                    pub_pct = _pub.get("under_pct") or 0
+                else:
+                    pub_pct = 0
+                try:
+                    pub_pct = float(pub_pct)
+                except (TypeError, ValueError):
+                    pub_pct = 0
+                prop["PublicPct"] = pub_pct
+                # Sharp fade: <40% public but our model has edge = contrarian signal
+                if pub_pct > 0 and pub_pct < 40 and prop.get("Edge", 0) > 0.03:
+                    prop["SharpContrarian"] = True
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🎯 Sharp contrarian ({pub_pct:.0f}% public)"
+                # RLM candidate: >65% public tickets
+                elif pub_pct > 65:
+                    prop["PublicHeavy"] = True
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ Public heavy ({pub_pct:.0f}%)"
+            else:
+                prop["PublicPct"] = None
+
 
 
 
