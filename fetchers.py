@@ -10903,6 +10903,11 @@ def fetch_unibet_game_lines(sport: str) -> list:
     return _fetch_kambi_game_lines("unibet", sport, "Unibet")
 
 
+def fetch_bet365_game_lines(sport: str) -> list:
+    """Bet365 game lines via Kambi (offering_id='bet365'). Cached 60 min."""
+    return _fetch_kambi_game_lines("bet365", sport, "Bet365")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PINNACLE — Guest API (no credentials required)
 #
