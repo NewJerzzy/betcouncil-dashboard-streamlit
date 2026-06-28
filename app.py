@@ -8612,6 +8612,23 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
                 )
     except Exception:
         pass
+    # ── Enhance record with tier-based CLV quality before saving ──────────
+    try:
+        _rec_tier = record.get("tier", "APPROVED")
+        _rec_odds = record.get("odds_american", record.get("odds", "-110"))
+        _rec_clv  = record.get("clv_capture", {}).get("clv_vs_novig", 0) or 0
+        if _rec_clv != 0 and _rec_odds:
+            _clv_detail = compute_clv_with_tier(
+                placement_odds=float(str(_rec_odds).replace("+","")),
+                closing_odds=float(str(_rec_odds).replace("+","")),
+                tier=_rec_tier,
+                edge=record.get("edge", 0) or 0,
+            )
+            record["clv_quality"]    = _clv_detail.get("quality", "")
+            record["clv_threshold"]  = _clv_detail.get("threshold", 0)
+            record["clv_confirmed"]  = _clv_detail.get("edge_confirmed", False)
+    except Exception:
+        pass
     st.session_state.history.append(record)
     save_json_data(HISTORY_PATH, st.session_state.history)
     save_to_gist("history", st.session_state.history)
@@ -12523,6 +12540,82 @@ def load_sport_data(sport):
             prop["FDDKConfirms"] = False
             prop["FDDKFades"] = False
 
+
+    # ── Kalshi prediction market signal ─────────────────────────────────────
+    _kalshi = st.session_state.get("kalshi_raw", [])
+    if _kalshi:
+        _kal_lookup = {}
+        for _km in _kalshi:
+            _title = normalize_name(_km.get("title", ""))
+            _kal_lookup[_title] = _km
+        for prop in enriched:
+            _pname = normalize_name(prop.get("Player", ""))
+            _pstat = str(prop.get("Prop", "")).lower()
+            _pline = prop.get("Line", 0)
+            # Find matching Kalshi market
+            _kal_match = None
+            for _kt, _kv in _kal_lookup.items():
+                if _pname and _pname in _kt and any(s in _kt for s in [_pstat[:4], str(_pline)]):
+                    _kal_match = _kv
+                    break
+            if _kal_match:
+                _yes = _kal_match.get("yes_bid")
+                prop["KalshiYesBid"] = _yes
+                if _yes and float(_yes) > 0.65 and prop.get("Side","OVER") == "OVER":
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🎰 Kalshi {float(_yes):.0%} yes"
+                elif _yes and float(_yes) < 0.35 and prop.get("Side","OVER") == "OVER":
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ Kalshi fading ({float(_yes):.0%})"
+            else:
+                prop["KalshiYesBid"] = None
+
+    # ── Polymarket signal ────────────────────────────────────────────────────
+    _poly = st.session_state.get("polymarket_raw", [])
+    if _poly:
+        _poly_lookup = {}
+        for _pm in _poly:
+            _q = normalize_name(_pm.get("question", ""))
+            _poly_lookup[_q] = _pm
+        for prop in enriched:
+            _pname = normalize_name(prop.get("Player", ""))
+            _pstat = str(prop.get("Prop", "")).lower()
+            _poly_match = None
+            for _pk, _pv in _poly_lookup.items():
+                if _pname and _pname in _pk:
+                    _poly_match = _pv
+                    break
+            if _poly_match:
+                try:
+                    _yes_p = float(_poly_match.get("yes_price", 0) or 0)
+                    prop["PolymarketYes"] = _yes_p
+                    if _yes_p > 0.65 and prop.get("Side","OVER") == "OVER":
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📊 Poly {_yes_p:.0%}"
+                except Exception:
+                    prop["PolymarketYes"] = None
+            else:
+                prop["PolymarketYes"] = None
+
+    # ── Covers.com consensus signal ──────────────────────────────────────────
+    _covers = st.session_state.get("covers_raw", {})
+    if _covers and isinstance(_covers, dict):
+        for prop in enriched:
+            _matchup = prop.get("Matchup", "")
+            _cov = _covers.get(_matchup, {})
+            if not _cov:
+                for _ck, _cv in _covers.items():
+                    if any(t in _matchup for t in _ck.split(" @ ")):
+                        _cov = _cv
+                        break
+            if _cov:
+                _side = prop.get("Side", "OVER")
+                _pct = float(_cov.get("over_pct") or 0) if _side=="OVER" else float(_cov.get("under_pct") or 0)
+                prop["CoversConsensus"] = _pct
+                if _pct > 0 and _pct < 35 and prop.get("Edge",0) > 0.03:
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🎯 Covers fade ({_pct:.0f}% public)"
+                elif _pct > 70:
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ Covers public ({_pct:.0f}%)"
+            else:
+                prop["CoversConsensus"] = None
+
     # ── Unabated sharp line validation ─────────────────────────────────────
     # Unabated provides Pinnacle-derived no-vig fair lines for game totals/spreads.
     # If our prop edge aligns with Unabated's fair value direction, boost confidence.
@@ -12629,6 +12722,33 @@ def load_sport_data(sport):
 
 
 
+
+
+    # ── Tier-based Kelly sizing ─────────────────────────────────────────────
+    # Apply KELLY_BY_TIER so SOVEREIGN gets 25%, ELITE 20%, APPROVED 15%, LEAN 8%
+    _bm_mult = bankroll_multiplier.get("multiplier", 1.0) if isinstance(bankroll_multiplier, dict) else 1.0
+    for prop in enriched:
+        _tier = prop.get("Tier", "APPROVED")
+        _tier_frac = KELLY_BY_TIER.get(_tier, KELLY_FRACTION)
+        _edge = prop.get("Edge", 0.0) or 0.0
+        _odds_a = prop.get("BestOdds", prop.get("OverOdds", "-110"))
+        try:
+            _odds_f = float(str(_odds_a).replace("+","")) if _odds_a not in ("N/A","—","") else -110
+            if _odds_f > 0:
+                _b = _odds_f / 100
+            else:
+                _b = 100 / abs(_odds_f)
+            _p = _edge + (1 / (1 + _b))  # implied prob + edge
+            _p = min(max(_p, 0.01), 0.99)
+            _q = 1 - _p
+            _kelly_full = (_b * _p - _q) / _b
+            _kelly_full = max(0.0, _kelly_full)
+        except Exception:
+            _kelly_full = _edge  # fallback to edge
+        _kelly_pct = round(_kelly_full * _tier_frac * _bm_mult, 4)
+        _kelly_pct = min(_kelly_pct, KELLY_CAP)
+        prop["KellyFraction"]   = _tier_frac
+        prop["KellyAdvisedPct"] = _kelly_pct if _kelly_pct >= KELLY_MIN else 0.0
 
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
@@ -17625,6 +17745,20 @@ with tabs[8]:
                 ls_sources.setdefault(k, {}).setdefault(prop, {})[source_name] = float(line)
 
         _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
+        # ── New book sources added today ────────────────────────────────────
+        _ls_add(st.session_state.get("bovada_props", []), "Bovada")
+        _ls_add(st.session_state.get("caesars_props", []), "Caesars")
+        _ls_add(st.session_state.get("sharpapi_props", []), "SharpAPI")
+        # BetOnline/BetMGM/Bovada game lines → convert to prop format for line shop
+        for _bol in (st.session_state.get("betonline_offering", []) or []):
+            if _bol.get("market","") == "Total":
+                _ls_add([{"Player": _bol.get("game",""), "Prop": "Total",
+                          "Line": str(_bol.get("selection","")).split()[-1],
+                          "source": "BetOnline"}], "BetOnline")
+        for _bmg in (st.session_state.get("betmgm_game_lines", []) or []):
+            if "Total" in _bmg.get("market","") or "total" in _bmg.get("market","").lower():
+                _ls_add([{"Player": _bmg.get("game",""), "Prop": "Total",
+                          "Line": _bmg.get("odds",""), "source": "BetMGM"}], "BetMGM")
         _ls_add(st.session_state.get("dk_pick6_props", []), "DK Pick6")
         _pa_all = st.session_state.get("parlayapi_props_cache", [])
         _ls_add([p for p in _pa_all if p.get("source","").lower() in ("parlayplay","parlay play")], "ParlayPlay")
