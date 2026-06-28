@@ -10903,6 +10903,135 @@ def fetch_unibet_game_lines(sport: str) -> list:
     return _fetch_kambi_game_lines("unibet", sport, "Unibet")
 
 
+def fetch_sharpapi_lines(sport: str) -> list:
+    """
+    Fetch game lines from SharpAPI — 20+ books, Pinnacle no-vig EV pre-computed.
+    Returns list of {game, sport, market, book, odds_american, ev_percent,
+                     fair_odds, is_ev_positive, home_team, away_team}
+    Free tier: 12 req/min. Cached 15 min.
+    Auth: X-API-Key header.
+    """
+    if not SHARPAPI_KEY:
+        return []
+    sport_map = {
+        "MLB": "baseball_mlb", "NBA": "basketball_nba",
+        "NFL": "americanfootball_nfl", "NHL": "icehockey_nhl",
+        "WNBA": "basketball_wnba",
+    }
+    league = sport_map.get(sport)
+    if not league:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"sharpapi_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 15:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        r = _http.get(
+            f"{SHARPAPI_BASE}/odds",
+            params={"league": league, "market_type": "moneyline,spread,total"},
+            headers={"X-API-Key": SHARPAPI_KEY, "Accept": "application/json"},
+            timeout=12,
+        )
+        if r.status_code == 429:
+            print("[WARN] SharpAPI rate limit hit")
+            return []
+        if r.status_code != 200:
+            print(f"[WARN] fetch_sharpapi_lines HTTP {r.status_code}")
+            return []
+        data = r.json().get("data", [])
+        results = []
+        for event in data:
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            game = f"{away} @ {home}"
+            for line in event.get("odds", []):
+                results.append({
+                    "game":          game,
+                    "home_team":     home,
+                    "away_team":     away,
+                    "sport":         sport,
+                    "book":          line.get("sportsbook", ""),
+                    "market":        line.get("market_type", ""),
+                    "selection":     line.get("selection", ""),
+                    "odds_american": line.get("odds_american"),
+                    "ev_percent":    line.get("ev_percent"),
+                    "fair_odds":     line.get("fair_odds"),
+                    "is_ev_positive": line.get("is_ev_positive", False),
+                    "source":        "sharpapi",
+                })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_sharpapi_lines: {e}")
+        return []
+
+
+def fetch_sharpapi_props(sport: str) -> list:
+    """
+    Fetch player props from SharpAPI — Pinnacle no-vig EV pre-computed per prop.
+    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book,
+                     ev_percent, fair_odds, is_ev_positive, Sport, source}
+    Free tier: 12 req/min. Cached 20 min.
+    """
+    if not SHARPAPI_KEY:
+        return []
+    sport_map = {
+        "MLB": "baseball_mlb", "NBA": "basketball_nba",
+        "NFL": "americanfootball_nfl", "NHL": "icehockey_nhl",
+        "WNBA": "basketball_wnba",
+    }
+    league = sport_map.get(sport)
+    if not league:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"sharpapi_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        r = _http.get(
+            f"{SHARPAPI_BASE}/odds",
+            params={"league": league, "market_type": "player_props"},
+            headers={"X-API-Key": SHARPAPI_KEY, "Accept": "application/json"},
+            timeout=12,
+        )
+        if r.status_code == 429:
+            print("[WARN] SharpAPI rate limit hit (props)")
+            return []
+        if r.status_code != 200:
+            print(f"[WARN] fetch_sharpapi_props HTTP {r.status_code}")
+            return []
+        data = r.json().get("data", [])
+        results = []
+        for event in data:
+            for line in event.get("odds", []):
+                player = line.get("player", line.get("description", ""))
+                if not player:
+                    continue
+                market = line.get("market_type", "")
+                selection = line.get("selection", "").upper()
+                results.append({
+                    "Player":        player,
+                    "Prop":          market.replace("player_", "").replace("_", " ").title(),
+                    "Line":          line.get("point", line.get("handicap")),
+                    "OverOdds":      str(int(line.get("odds_american", 0))) if selection == "OVER" else "N/A",
+                    "UnderOdds":     str(int(line.get("odds_american", 0))) if selection == "UNDER" else "N/A",
+                    "Book":          line.get("sportsbook", ""),
+                    "ev_percent":    line.get("ev_percent"),
+                    "fair_odds":     line.get("fair_odds"),
+                    "is_ev_positive": line.get("is_ev_positive", False),
+                    "Sport":         sport,
+                    "source":        "sharpapi",
+                })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_sharpapi_props: {e}")
+        return []
+
 def fetch_bet365_game_lines(sport: str) -> list:
     """Bet365 game lines via Kambi (offering_id='bet365'). Cached 60 min."""
     return _fetch_kambi_game_lines("bet365", sport, "Bet365")

@@ -1335,7 +1335,9 @@ PARLAYSAVANT_MLB_PROP_MAP = {
     "Hits Allowed": "hits-allowed", "Earned Runs": "earned-runs",
 }
 PARLAY_API_BASE = "https://parlay-api.com/v1"
-PARLAY_API_KEY = st.secrets.get("PARLAY_API_KEY", "")
+PARLAY_API_KEY  = st.secrets.get("PARLAY_API_KEY", "")
+SHARPAPI_KEY   = st.secrets.get("SHARPAPI_KEY", "")
+SHARPAPI_BASE  = "https://api.sharpapi.io/api/v1"
 PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
 POLYMARKET_PATH = os.path.join(CACHE_DIR, "polymarket_markets.json")
 ROLLING_DEFENSE_CACHE_HOURS = 12

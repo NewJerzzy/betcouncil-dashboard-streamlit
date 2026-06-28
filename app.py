@@ -3315,6 +3315,16 @@ def compute_market_agreement_score(prop, public_betting=None):
         elif rlm.get("has_sharp"):
             score += 5
     
+    # SharpAPI
+    _sharpapi_st = st.session_state.get("sharpapi_lines", [])
+    _sharpapi_props_st = st.session_state.get("sharpapi_props", [])
+    if _sharpapi_st or _sharpapi_props_st:
+        _src_statuses.append({"Source": "SharpAPI (lines + props EV)", "Status": f"🟢 {len(_sharpapi_st)} lines / {len(_sharpapi_props_st)} props", "Action": "None"})
+    elif SHARPAPI_KEY:
+        _src_statuses.append({"Source": "SharpAPI (lines + props EV)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+    else:
+        _src_statuses.append({"Source": "SharpAPI (lines + props EV)", "Status": "🔴 No API key", "Action": "Add SHARPAPI_KEY to Streamlit secrets"})
+
     # Unabated sharp lines
     _unabated_st = st.session_state.get("unabated_lines", [])
     if _unabated_st:
@@ -10413,6 +10423,8 @@ def load_sport_data(sport):
     def _pf_wynnbet_lines():   return fetch_wynnbet_game_lines(sport)
     def _pf_unibet_lines():    return fetch_unibet_game_lines(sport)
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
+    def _pf_sharpapi_lines():  return fetch_sharpapi_lines(sport)
+    def _pf_sharpapi_props():  return fetch_sharpapi_props(sport)
     def _pf_savant_xstats():   return fetch_savant_statcast()
     def _pf_savant_sprint():   return fetch_savant_sprint_speed()
     def _pf_savant_expected(): return fetch_savant_expected_stats()
@@ -10455,6 +10467,7 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
+        _pf_sharpapi_lines, _pf_sharpapi_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -10469,6 +10482,7 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
+     sharpapi_lines_raw, sharpapi_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -10538,6 +10552,8 @@ def load_sport_data(sport):
     st.session_state["wynnbet_game_lines"]   = wynnbet_lines_raw   or []
     st.session_state["unibet_game_lines"]    = unibet_lines_raw    or []
     st.session_state["bet365_game_lines"]    = bet365_lines_raw    or []
+    st.session_state["sharpapi_lines"]       = sharpapi_lines_raw  or []
+    st.session_state["sharpapi_props"]       = sharpapi_props_raw  or []
     st.session_state["savant_xstats"]        = savant_xstats_raw   or {}
     st.session_state["savant_sprint"]        = savant_sprint_raw   or {}
     st.session_state["savant_expected"]      = savant_expected_raw or {}
@@ -12513,7 +12529,35 @@ def load_sport_data(sport):
         for prop in enriched:
             prop["UnabatedNote"] = ""
 
-    # ── ParlayAPI +EV signal ────────────────────────────────────────────────
+    # ── SharpAPI +EV signal ────────────────────────────────────────────────────
+    # SharpAPI pre-computes Pinnacle no-vig EV on every prop.
+    # is_ev_positive:True = confirmed +EV vs sharp benchmark — strongest free signal.
+    _sharp_props = st.session_state.get("sharpapi_props", [])
+    if _sharp_props:
+        _sharp_ev_set = {}
+        for _sp in _sharp_props:
+            _pname = normalize_name(_sp.get("Player", ""))
+            _stat  = str(_sp.get("Prop", "")).lower()
+            _ev    = _sp.get("ev_percent") or 0
+            _is_ev = _sp.get("is_ev_positive", False)
+            key = (_pname, _stat)
+            if key not in _sharp_ev_set or _ev > _sharp_ev_set[key][0]:
+                _sharp_ev_set[key] = (_ev, _is_ev)
+        for prop in enriched:
+            _pk = (normalize_name(prop.get("Player", "")),
+                   str(prop.get("Prop", "")).lower())
+            if _pk in _sharp_ev_set:
+                _ev_val, _is_ev = _sharp_ev_set[_pk]
+                prop["SharpAPIEV"]      = _is_ev
+                prop["SharpAPIEVPct"]   = round(_ev_val, 2)
+                if _is_ev and prop.get("Edge", 0) > 0.02:
+                    prop["Tier"] = "ELITE" if prop.get("Tier") == "APPROVED" else prop.get("Tier")
+                    prop["SignalNotes"] = prop.get("SignalNotes", "") + f" ⚡ SharpAPI EV+{_ev_val:.1f}%"
+            else:
+                prop["SharpAPIEV"]    = False
+                prop["SharpAPIEVPct"] = None
+
+        # ── ParlayAPI +EV signal ────────────────────────────────────────────────
     # If ParlayAPI independently flags this player/prop as +EV vs Pinnacle,
     # that's a sharp consensus confirmation — boost tier.
     _papi_ev = st.session_state.get("parlayapi_ev", [])
