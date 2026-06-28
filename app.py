@@ -10405,10 +10405,10 @@ def load_sport_data(sport):
     # ── PARALLEL FETCH — all independent data sources fire simultaneously ──
     # Groups fetches with no inter-dependencies into one ThreadPoolExecutor call.
     # _fetch_parallel was built last session but never wired in — now connected.
-    def _pf_prizepicks():   return scrape_prizepicks_with_gist_fallback(sport)
+    def _pf_prizepicks():   return scrape_prizepicks(sport)
     def _pf_underdog():     return fetch_underdog_props(sport)
     def _pf_dk_sal():       return fetch_dk_salaries(sport)
-    def _pf_pinnacle():     return fetch_pinnacle_lines(sport)
+    def _pf_pinnacle():     return fetch_pinnacle_game_lines(sport)
     def _pf_oddswrap():     return fetch_oddswrap_props(sport)
     def _pf_parlayapi():    return fetch_parlayapi_props(sport)
     _papi_key = f'oddsapi_props_{sport}'
@@ -10466,9 +10466,6 @@ def load_sport_data(sport):
     def _pf_wynnbet_lines():   return fetch_wynnbet_game_lines(sport)
     def _pf_unibet_lines():    return fetch_unibet_game_lines(sport)
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
-    def _pf_espnbet_lines():   return fetch_espnbet_game_lines(sport)
-    def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
-    def _pf_thescore_lines():  return fetch_thescore_game_lines(sport)
     def _pf_sharpapi_lines():  return fetch_sharpapi_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
@@ -10518,7 +10515,6 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
-        _pf_espnbet_lines, _pf_fanatics_lines, _pf_thescore_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines,
         _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
@@ -10535,7 +10531,6 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
-     espnbet_lines_raw, fanatics_lines_raw, thescore_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw,
      caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
@@ -10607,9 +10602,6 @@ def load_sport_data(sport):
     st.session_state["wynnbet_game_lines"]   = wynnbet_lines_raw   or []
     st.session_state["unibet_game_lines"]    = unibet_lines_raw    or []
     st.session_state["bet365_game_lines"]    = bet365_lines_raw    or []
-    st.session_state["espnbet_game_lines"]   = espnbet_lines_raw   or []
-    st.session_state["fanatics_game_lines"]  = fanatics_lines_raw  or []
-    st.session_state["thescore_game_lines"]  = thescore_lines_raw  or []
     st.session_state["sharpapi_lines"]       = sharpapi_lines_raw  or []
     st.session_state["sharpapi_props"]       = sharpapi_props_raw  or []
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
