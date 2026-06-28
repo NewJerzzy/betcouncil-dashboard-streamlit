@@ -3315,60 +3315,7 @@ def compute_market_agreement_score(prop, public_betting=None):
         elif rlm.get("has_sharp"):
             score += 5
     
-    # ESPN BET / Fanatics / theScore (Kambi)
-    _kambi_new = {
-        "ESPN BET":  st.session_state.get("espnbet_game_lines", []),
-        "Fanatics":  st.session_state.get("fanatics_game_lines", []),
-        "theScore":  st.session_state.get("thescore_game_lines", []),
-    }
-    for _kname, _kdata in _kambi_new.items():
-        if _kdata:
-            _src_statuses.append({"Source": f"{_kname} (game lines)", "Status": f"🟢 {len(_kdata)} lines", "Action": "None"})
-        else:
-            _src_statuses.append({"Source": f"{_kname} (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
-    # SharpAPI
-    _sharpapi_st = st.session_state.get("sharpapi_lines", [])
-    _sharpapi_props_st = st.session_state.get("sharpapi_props", [])
-    if _sharpapi_st or _sharpapi_props_st:
-        _src_statuses.append({"Source": "SharpAPI (lines + props EV)", "Status": f"🟢 {len(_sharpapi_st)} lines / {len(_sharpapi_props_st)} props", "Action": "None"})
-    elif SHARPAPI_KEY:
-        _src_statuses.append({"Source": "SharpAPI (lines + props EV)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-    else:
-        _src_statuses.append({"Source": "SharpAPI (lines + props EV)", "Status": "🔴 No API key", "Action": "Add SHARPAPI_KEY to Streamlit secrets"})
-
-    # Caesars props
-    _czr_props_st = st.session_state.get("caesars_props", [])
-    if _czr_props_st:
-        _src_statuses.append({"Source": "Caesars (props)", "Status": f"🟢 {len(_czr_props_st)} props", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Caesars (props)", "Status": "🟡 Needs fresh token", "Action": "Paste Bearer from DevTools"})
-
-    # BetOnline (offering)
-    _bol_off_st = st.session_state.get("betonline_offering", [])
-    if _bol_off_st:
-        _src_statuses.append({"Source": "BetOnline (game lines)", "Status": f"🟢 {len(_bol_off_st)} lines", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "BetOnline (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
-    # Bovada
-    _bovada_lines_st = st.session_state.get("bovada_game_lines", [])
-    _bovada_props_st = st.session_state.get("bovada_props", [])
-    if _bovada_lines_st or _bovada_props_st:
-        _src_statuses.append({"Source": "Bovada (lines + props)", "Status": f"🟢 {len(_bovada_lines_st)} lines / {len(_bovada_props_st)} props", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Bovada (lines + props)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
-    # BetMGM game lines
-    _betmgm_lines_st = st.session_state.get("betmgm_game_lines", [])
-    if _betmgm_lines_st:
-        _src_statuses.append({"Source": "BetMGM (game lines)", "Status": f"🟢 {len(_betmgm_lines_st)} lines", "Action": "None"})
-    elif BETMGM_COOKIE:
-        _src_statuses.append({"Source": "BetMGM (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-    else:
-        _src_statuses.append({"Source": "BetMGM (game lines)", "Status": "🟡 No cookie — paste headers", "Action": "Add BETMGM_COOKIE to secrets"})
-
-    # Unabated sharp lines
+    # Unabated sharp lines (status shown in sidebar section below)
     _unabated_st = st.session_state.get("unabated_lines", [])
     if _unabated_st:
         _src_statuses.append({"Source": "Unabated (sharp fair lines)", "Status": f"🟢 {len(_unabated_st)} lines", "Action": "None"})
