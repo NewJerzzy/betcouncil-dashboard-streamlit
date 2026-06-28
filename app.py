@@ -10427,6 +10427,7 @@ def load_sport_data(sport):
     def _pf_unibet_lines():    return fetch_unibet_game_lines(sport)
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
     def _pf_sharpapi_lines():  return fetch_sharpapi_lines(sport)
+    def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
     def _pf_betonline_off():   return fetch_betonline_offering(sport)
@@ -10475,7 +10476,7 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
-        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines,
+        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines,
         _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
@@ -10491,7 +10492,7 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
-     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw,
+     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw,
      caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
@@ -10574,6 +10575,7 @@ def load_sport_data(sport):
     st.session_state["sharpapi_lines"]       = sharpapi_lines_raw  or []
     st.session_state["sharpapi_props"]       = sharpapi_props_raw  or []
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
+    st.session_state["heritage_game_lines"]  = heritage_lines_raw  or []
     st.session_state["caesars_props"]        = caesars_props_raw   or []
     st.session_state["betonline_offering"]   = betonline_off_raw   or []
     st.session_state["bovada_game_lines"]    = bovada_lines_raw    or []
