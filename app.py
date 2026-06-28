@@ -11853,7 +11853,14 @@ def load_sport_data(sport):
             best_side = "OVER"
             best_prob = over_prob
             best_signals = over_signals
-        adj_edge, calibrated = adjusted_edge(best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history)
+        # SEM inputs for adjusted_edge
+        _n_samp = len(prop.get("GameLog", prop.get("game_log", [])) or [])
+        _std_d  = prop.get("StdDev")
+        _avg_v  = prop.get("Avg", 0)
+        adj_edge, calibrated = adjusted_edge(
+            best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history,
+            n_samples=_n_samp, std_dev=_std_d, avg=_avg_v
+        )
         final_edge = adj_edge if calibrated else best_edge
         eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
         if (an_grade in ("A+", "A", "A-") and _get_cal_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")):
