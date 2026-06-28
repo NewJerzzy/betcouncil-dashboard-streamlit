@@ -10215,6 +10215,7 @@ def load_sport_data(sport):
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
     def _pf_signalodds():    return fetch_signalodds_events(sport)
+    def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
     def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
     def _pf_betonline_off():   return fetch_betonline_offering(sport)
@@ -10264,7 +10265,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines,
-        _pf_signalodds, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
+        _pf_signalodds, _pf_betslib, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -10280,7 +10281,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw,
-     signalodds_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
+     signalodds_raw, betslib_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -10365,6 +10366,7 @@ def load_sport_data(sport):
     st.session_state["heritage_game_lines"]  = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"] = bookmaker_lines_raw or []
     st.session_state["signalodds_events"]   = signalodds_raw      or []
+    st.session_state["betslib_predictions"] = betslib_raw         or []
     st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
     st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
@@ -11918,6 +11920,25 @@ def load_sport_data(sport):
                         final_edge = final_edge * _de.get("edge_adj",1.0)
                         if _de.get("favorable"):
                             prop["SignalNotes"] = prop.get("SignalNotes","") + f" {_de['note']}"
+            except Exception:
+                pass
+
+        # ── Signal Odds / BetsLib AI prediction overlay ────────────────────
+        if home_team or away_team:
+            try:
+                _bl_preds = st.session_state.get("betslib_predictions", [])
+                _bl_hit   = next((p for p in _bl_preds
+                    if (home_team and normalize_name(home_team) in normalize_name(p.get("home","")))
+                    or (away_team and normalize_name(away_team) in normalize_name(p.get("away","")))),None)
+                if _bl_hit:
+                    _bl_conf = _bl_hit.get("confidence",0)
+                    _bl_ev   = _bl_hit.get("ev",0)
+                    if _bl_conf >= 0.65 and _bl_ev > 0:
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🤖 SO:{_bl_conf:.0%} EV:{_bl_ev:.2f}"
+                        final_edge = min(final_edge*1.05, EDGE_CAP)
+                    elif _bl_conf < 0.40:
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ SO fade:{_bl_conf:.0%}"
+                        final_edge = final_edge*0.92
             except Exception:
                 pass
 
@@ -18384,10 +18405,12 @@ with tabs[9]:
 
 
     # Signal Odds
-    _so_ev = st.session_state.get("signalodds_events", [])
-    _so_sb = sum(1 for e in _so_ev if e.get("has_sure_bet"))
+    _so_ev  = st.session_state.get("signalodds_events", [])
+    _so_bl  = st.session_state.get("betslib_predictions", [])
+    _so_sb  = sum(1 for e in _so_ev if e.get("has_sure_bet"))
     _src_statuses.append({"Source": "Signal Odds (AI picks + 60+ books)",
-        "Status": f"🟢 {len(_so_ev)} events | {_so_sb} sure bets" if _so_ev else "⚪ Loads on board load",
+        "Status": (f"🟢 {len(_so_ev)} events | {len(_so_bl)} AI picks | {_so_sb} sure bets"
+                   if _so_ev or _so_bl else "🟡 Add SIGNAL_ODDS_JWT to Streamlit secrets"),
         "Action": "None"})
 
     # StatMuse (on-demand player trends)

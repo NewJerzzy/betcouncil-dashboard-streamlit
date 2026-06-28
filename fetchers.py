@@ -13119,6 +13119,108 @@ def fetch_signalodds_events(sport: str) -> list:
         print(f"[WARN] fetch_signalodds_events({sport}): {e}"); return []
 
 
+
+# ── BetsLib / Signal Odds API ─────────────────────────────────────────────────
+# api.betslib.com — Signal Odds backend
+# Auth: SIGNAL_ODDS_JWT in Streamlit secrets (expires ~Aug 27 2026)
+# Refresh: log into signalodds.com → DevTools → find api.betslib.com request → copy Bearer token
+BETSLIB_BASE     = "https://api.betslib.com"
+BETSLIB_SPORT_MAP = {
+    "MLB":"baseball","NBA":"basketball","NFL":"american-football",
+    "NHL":"hockey","WNBA":"basketball","UFC":"mma","SOCCER":"soccer",
+}
+
+def _betslib_jwt():
+    try:
+        import streamlit as st
+        return st.secrets.get("SIGNAL_ODDS_JWT","")
+    except Exception:
+        return ""
+
+def fetch_betslib_predictions(sport: str, limit: int = 20) -> list:
+    """
+    Signal Odds AI predictions via api.betslib.com.
+    Returns {event,home,away,sport,market,pick,confidence,ev,odds,bookmaker,model,source}
+    Auth: SIGNAL_ODDS_JWT. Cached 30 min.
+    """
+    slug = BETSLIB_SPORT_MAP.get(sport)
+    if not slug: return []
+    cp = os.path.join(CACHE_DIR, f"betslib_{sport}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 30:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    jwt = _betslib_jwt()
+    if not jwt: return []
+    try:
+        hdrs = {
+            "Authorization": f"Bearer {jwt}",
+            "Accept":        "application/json, text/plain, */*",
+            "Origin":        "https://signalodds.com",
+            "Referer":       "https://signalodds.com/",
+            "x-client-source": "web",
+            "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        url = f"{BETSLIB_BASE}/predictions?date_filter=upcoming&limit={limit}&page=1&sort_by=commence_time&sort_dir=asc&sport={slug}"
+        r   = _http.get(url, headers=hdrs, timeout=15)
+        if r.status_code == 401:
+            print("[WARN] betslib: JWT expired — refresh SIGNAL_ODDS_JWT in secrets"); return []
+        if r.status_code != 200:
+            print(f"[WARN] betslib HTTP {r.status_code}"); return []
+        raw  = r.json()
+        preds = raw if isinstance(raw,list) else raw.get("data", raw.get("predictions", raw.get("results",[])))
+        results = []
+        for p in preds:
+            ev_obj  = p.get("event", p.get("match", p.get("game",{})))
+            home    = ev_obj.get("home_team", p.get("home_team",""))
+            away    = ev_obj.get("away_team", p.get("away_team",""))
+            if isinstance(home,dict): home = home.get("name", home.get("full_name",""))
+            if isinstance(away,dict): away = away.get("name", away.get("full_name",""))
+            model   = p.get("model", p.get("model_name",""))
+            if isinstance(model,dict): model = model.get("name","")
+            results.append({
+                "event":        f"{away} @ {home}" if home and away else p.get("event_name",""),
+                "home":home,"away":away,"sport":sport,
+                "market":       p.get("market", p.get("market_key","h2h")),
+                "pick":         p.get("pick", p.get("prediction", p.get("outcome",""))),
+                "confidence":   float(p.get("confidence", p.get("probability",0)) or 0),
+                "ev":           float(p.get("expected_value", p.get("ev",0)) or 0),
+                "odds":         p.get("odds", p.get("best_odds", p.get("price",0))),
+                "bookmaker":    p.get("bookmaker", p.get("bookie","")),
+                "commence_time":ev_obj.get("commence_time","") or p.get("commence_time",""),
+                "model":model,"source":"signalodds",
+            })
+        if results: _safe_save_pkl(cp, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_betslib_predictions({sport}): {e}"); return []
+
+def fetch_betslib_models() -> list:
+    """Signal Odds model leaderboard. Cached 6h."""
+    cp = os.path.join(CACHE_DIR, "betslib_models.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/3600 < 6:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    jwt = _betslib_jwt()
+    if not jwt: return []
+    try:
+        hdrs = {"Authorization":f"Bearer {jwt}","Accept":"application/json",
+                "Origin":"https://signalodds.com","x-client-source":"web"}
+        r = _http.get(f"{BETSLIB_BASE}/models?limit=100&sort_by=name&sort_dir=asc",
+                      headers=hdrs, timeout=10)
+        if r.status_code != 200: return []
+        raw  = r.json()
+        mods = raw if isinstance(raw,list) else raw.get("data", raw.get("models",[]))
+        results = [{"name":m.get("name",m.get("model_name","")),
+                    "accuracy_30d":m.get("accuracy_30d",m.get("accuracy",0)),
+                    "total_predictions":m.get("total_predictions",m.get("count",0)),
+                    "sport":m.get("sport",""),"roi":m.get("roi",0),"source":"signalodds"}
+                   for m in mods]
+        if results: _safe_save_pkl(cp, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_betslib_models: {e}"); return []
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
