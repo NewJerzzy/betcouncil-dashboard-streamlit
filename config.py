@@ -1357,6 +1357,7 @@ BETMGM_WIDGET_MAP = {
     "WNBA": "basketball/wnba-gamelines-comp",
 }
 SHARPAPI_BASE  = "https://api.sharpapi.io/api/v1"
+BOVADA_BASE    = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
 PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
 POLYMARKET_PATH = os.path.join(CACHE_DIR, "polymarket_markets.json")
 ROLLING_DEFENSE_CACHE_HOURS = 12
