@@ -9842,10 +9842,13 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
     """
     cache_key = f"pinnacle_{sport}"
     pinn_data = st.session_state.get(cache_key, {})
+    # Also check pinnacle_game_lines (list format from fetch_pinnacle_game_lines)
+    if not pinn_data or isinstance(pinn_data, list):
+        pinn_data = {}
     if not pinn_data:
         return None, False, ""
 
-    props = pinn_data.get("props", {})
+    props = pinn_data.get("props", {}) if isinstance(pinn_data, dict) else {}
     norm_player = normalize_name(player)
     norm_stat = stat.lower().replace(" ","_").replace("+","_")
 
