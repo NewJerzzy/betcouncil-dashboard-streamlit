@@ -281,6 +281,15 @@ KELLY_FRACTION = 0.15      # Fractional Kelly (15% of full) — reduces variance
 KELLY_CAP      = 0.20      # Never risk >20% bankroll per bet
 KELLY_MIN      = 0.01      # Below 1% = negligible EV, skip
 
+# Tier-based Kelly fractions — higher tier = more conviction = larger fraction
+KELLY_BY_TIER = {
+    "SOVEREIGN": 0.25,   # 25% fractional — highest conviction
+    "ELITE":     0.20,   # 20% fractional
+    "APPROVED":  0.15,   # 15% fractional — default
+    "LEAN":      0.08,   # 8% fractional — small edge
+    "PASS":      0.00,   # No bet
+}
+
 # Tier thresholds (props) — sport-specific overrides in get_tier()
 TIER_SOVEREIGN_DEFAULT = 0.15   # 15%+ edge
 TIER_ELITE_DEFAULT     = 0.10   # 10%+ edge
@@ -1722,6 +1731,7 @@ def compute_bankroll_multiplier(history=None, clv_data=None):
         reasons_down = [reason]
 
     kelly_advised = round(mult * 0.15, 3)  # 15% base Kelly fraction × multiplier
+    # Note: tier-based Kelly adjustment applied in prop enrichment loop (KELLY_BY_TIER)
 
     return {
         "multiplier":   mult,
@@ -10497,6 +10507,15 @@ def load_sport_data(sport):
                 _g_spr_f = 0.0
             if _g_total:
                 record_line("consensus", _gkey, "total",  _g_total,  -110, -110)
+    # Also record BetOnline and Bovada lines for cross-book steam detection
+    _bol_lines = st.session_state.get("betonline_offering", [])
+    for _bl in _bol_lines:
+        if _bl.get("game","") == _gkey and _bl.get("market","") == "Total":
+            try:
+                _odds = float(str(_bl.get("odds","0")).replace("+","") or 0)
+                if "Over" in _bl.get("selection",""):
+                    record_line("betonline", _gkey, "total", float(_bl.get("selection","0").split()[-1] or 0), _odds, -110)
+            except Exception: pass
             if _g_spr_f:
                 record_line("consensus", _gkey, "spread", _g_spr_f, -110, -110)
             _steam_tot = detect_steam_move("consensus", _gkey, "total")

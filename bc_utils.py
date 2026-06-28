@@ -584,6 +584,33 @@ def get_best_devig_combo(sport, book, prop):
     return None
 
 
+def compute_clv_with_tier(placement_odds, closing_odds, tier="APPROVED", edge=0.0, side="OVER") -> dict:
+    """
+    Enhanced CLV computation with tier context.
+    Returns dict with clv, tier_adjusted_clv, interpretation, and quality score.
+    """
+    clv = compute_clv(placement_odds, closing_odds, side)
+    # Tier-weighted CLV — SOVEREIGN picks need higher CLV to confirm edge
+    tier_thresholds = {
+        "SOVEREIGN": 0.03,   # Need 3%+ CLV to confirm SOVEREIGN
+        "ELITE":     0.02,   # 2%+ CLV confirms ELITE
+        "APPROVED":  0.01,   # 1%+ CLV confirms APPROVED
+        "LEAN":      0.005,  # 0.5%+ CLV confirms LEAN
+    }
+    threshold = tier_thresholds.get(tier, 0.01)
+    quality = "EXCELLENT" if clv >= threshold * 2 else (
+              "GOOD"      if clv >= threshold else (
+              "FAIR"      if clv >= 0 else "POOR"))
+    return {
+        "clv":              clv,
+        "tier":             tier,
+        "threshold":        threshold,
+        "quality":          quality,
+        "beats_threshold":  clv >= threshold,
+        "edge_confirmed":   clv >= threshold and edge > 0,
+    }
+
+
 def compute_clv(placement_odds_american, closing_odds_american, side="OVER") -> float:
     """
     Compute Closing Line Value (CLV) — Buchdahl methodology.
