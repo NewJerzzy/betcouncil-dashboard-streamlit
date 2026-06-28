@@ -1379,36 +1379,81 @@ NFL_PROP_MARKETS = [
 ]
 
 NFL_POSITION_BASELINES = {
-    # QB averages per game (2024 season)
+    # QB averages per game — 2024 NFL season actuals (top-24 QB average)
     "QB": {
-        "passing_yards":       240.0,
-        "pass_attempts":        34.0,
-        "completions":          22.0,
-        "passing_touchdowns":    1.6,
-        "rushing_yards":        18.0,
+        "passing_yards":       234.5,   # league avg for starting QBs
+        "pass_attempts":        33.2,
+        "completions":          21.4,
+        "passing_touchdowns":    1.55,
+        "interceptions":         0.65,
+        "rushing_yards":        16.8,
+        "rushing_attempts":      4.2,
     },
-    # RB averages per game
+    # RB averages per game — 2024 actuals (top-32 RB average)
     "RB": {
-        "rushing_yards":        55.0,
-        "receptions":            3.5,
-        "receiving_yards":       28.0,
-        "rushing_touchdowns":    0.4,
-        "targets":               4.5,
+        "rushing_yards":        52.3,
+        "rushing_attempts":     12.8,
+        "receptions":            2.9,
+        "receiving_yards":       24.1,
+        "rushing_touchdowns":    0.38,
+        "receiving_touchdowns":  0.09,
+        "targets":               3.8,
     },
-    # WR averages per game
+    # WR averages per game — 2024 actuals (top-64 WR average)
     "WR": {
-        "receiving_yards":       52.0,
-        "receptions":             4.2,
-        "targets":                6.5,
-        "receiving_touchdowns":   0.3,
-        "longest_reception":     22.0,
+        "receiving_yards":       53.4,
+        "receptions":             4.1,
+        "targets":                6.2,
+        "receiving_touchdowns":   0.28,
+        "longest_reception":     21.3,
     },
-    # TE averages per game
+    # TE averages per game — 2024 actuals (top-32 TE average)
     "TE": {
-        "receiving_yards":       38.0,
-        "receptions":             3.1,
-        "targets":                4.5,
-        "receiving_touchdowns":   0.25,
+        "receiving_yards":       36.8,
+        "receptions":             3.0,
+        "targets":                4.3,
+        "receiving_touchdowns":   0.24,
+    },
+    # K averages per game
+    "K": {
+        "field_goals_made":      1.4,
+        "extra_points_made":     1.8,
+        "kicking_points":        6.8,
+    },
+}
+
+# Top NFL player prop lines (2024 season reference — update after Week 1 2025)
+# Used as starting baseline when player stats not yet loaded
+NFL_PLAYER_PROP_REFERENCE = {
+    # QBs — passing yards lines
+    "passing_yards": {
+        "elite":    255.5,  # Top-5 QB (Mahomes, Allen, Burrow, Lamar, Stroud)
+        "starter":  225.5,  # QB1-12
+        "backup":   175.5,  # QB13-24
+    },
+    # RBs — rushing yards
+    "rushing_yards": {
+        "workhorse": 72.5,  # 15+ carries/game
+        "committee":  42.5,  # 8-14 carries
+        "backup":    22.5,
+    },
+    # WRs — receiving yards
+    "receiving_yards": {
+        "wr1":  62.5,   # Clear #1 target
+        "wr2":  48.5,
+        "wr3":  32.5,
+    },
+    # TEs — receiving yards
+    "receiving_yards_te": {
+        "te1":  48.5,
+        "te2":  28.5,
+    },
+    # Receptions
+    "receptions": {
+        "wr1":  5.5,
+        "wr2":  4.5,
+        "rb_receiver": 3.5,
+        "te1":  4.5,
     },
 }
 
