@@ -13427,6 +13427,114 @@ def fetch_sharpapi_ev_opportunities(sport: str) -> list:
         print(f"[WARN] fetch_sharpapi_ev_opportunities({sport}): {e}"); return []
 
 
+
+def fetch_fanduel_props_sharpapi(sport: str) -> list:
+    """
+    Fetch FanDuel player props via SharpAPI — no PerimeterX issues.
+    Uses existing SHARPAPI_KEY. Free tier has ~60s delay + 12 RPM.
+    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source}
+    Cached 20 min.
+    """
+    cp = os.path.join(CACHE_DIR, f"fanduel_props_sharpapi_{sport}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 20:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+
+    api_key = _sharpapi_key()
+    if not api_key: return []
+
+    league = SHARPAPI_LEAGUE_MAP.get(sport, sport.lower())
+    results = []
+    cursor  = None
+
+    try:
+        for page in range(5):  # max 5 pages = 1000 props
+            params = f"league={league}&market=props&sportsbook=fanduel&limit=200"
+            if cursor:
+                params += f"&cursor={cursor}"
+            url = f"{SHARPAPI_BASE}/odds?{params}"
+            r   = _http.get(url, headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept":        "application/json",
+            }, timeout=15)
+
+            if r.status_code == 401:
+                print("[WARN] fetch_fanduel_props_sharpapi: invalid key"); break
+            if r.status_code == 429:
+                print("[WARN] fetch_fanduel_props_sharpapi: rate limited"); break
+            if r.status_code != 200:
+                print(f"[WARN] fetch_fanduel_props_sharpapi HTTP {r.status_code}"); break
+
+            data  = r.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+
+            for item in items:
+                book = item.get("sportsbook", item.get("book", ""))
+                if "fanduel" not in str(book).lower():
+                    continue
+
+                # Extract player name
+                player = (item.get("player") or
+                          item.get("participant") or
+                          item.get("selection","").split(" Over ")[0].split(" Under ")[0].strip())
+
+                # Extract market/prop type
+                mkt_raw  = item.get("market_type", item.get("market", item.get("market_name", "")))
+                prop_type = (mkt_raw.replace("player_","")
+                                    .replace("_"," ")
+                                    .title()
+                                    .strip())
+
+                line      = item.get("line", item.get("handicap"))
+                selection = item.get("selection", "")
+                odds_amer = item.get("odds_american", item.get("price"))
+
+                over_odds = under_odds = None
+                if "Over" in selection or "over" in selection:
+                    over_odds = odds_amer
+                elif "Under" in selection or "under" in selection:
+                    under_odds = odds_amer
+
+                if not player or not prop_type:
+                    continue
+
+                # Find matching existing entry to merge over/under
+                matched = next((r for r in results
+                    if normalize_name(r["Player"]) == normalize_name(player)
+                    and r["Prop"].lower() == prop_type.lower()
+                    and r.get("Line") == line), None)
+                if matched:
+                    if over_odds  and not matched["OverOdds"]:  matched["OverOdds"]  = over_odds
+                    if under_odds and not matched["UnderOdds"]: matched["UnderOdds"] = under_odds
+                else:
+                    results.append({
+                        "Player":    player.strip(),
+                        "Prop":      prop_type,
+                        "Line":      line,
+                        "OverOdds":  over_odds  or "N/A",
+                        "UnderOdds": under_odds or "N/A",
+                        "Book":      "FanDuel",
+                        "Sport":     sport,
+                        "source":    "sharpapi_fanduel",
+                    })
+
+            # Pagination
+            meta   = data.get("meta", {}) if isinstance(data, dict) else {}
+            cursor = meta.get("pagination", {}).get("next_cursor") if meta else None
+            if not cursor or not items:
+                break
+            time.sleep(0.5)  # respect rate limit
+
+        if results:
+            _safe_save_pkl(cp, results)
+            print(f"[SharpAPI] FanDuel props: {len(results)} for {sport}")
+        return results
+
+    except Exception as e:
+        print(f"[WARN] fetch_fanduel_props_sharpapi({sport}): {e}")
+        return []
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.

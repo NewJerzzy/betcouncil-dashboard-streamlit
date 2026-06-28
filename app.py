@@ -10214,6 +10214,7 @@ def load_sport_data(sport):
     def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
+    def _pf_fd_props_sa():   return fetch_fanduel_props_sharpapi(sport)
     def _pf_sharpapi_drops(): return fetch_sharpapi_line_drops(sport)
     def _pf_sharpapi_ev():   return fetch_sharpapi_ev_opportunities(sport)
     def _pf_signalodds():    return fetch_signalodds_events(sport)
@@ -10368,6 +10369,7 @@ def load_sport_data(sport):
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
     st.session_state["heritage_game_lines"]  = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"] = bookmaker_lines_raw or []
+    st.session_state["fanduel_props_sa"]    = fd_props_sa_raw     or []
     st.session_state["sharpapi_line_drops"] = sharpapi_drops_raw  or []
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     st.session_state["signalodds_events"]   = signalodds_raw      or []
@@ -10376,6 +10378,10 @@ def load_sport_data(sport):
     st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
     st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
+    # Merge SharpAPI FanDuel props into fanduel_props session key
+    _fd_sa = st.session_state.get("fanduel_props_sa", [])
+    if _fd_sa:
+        st.session_state["fanduel_props"] = _fd_sa
     st.session_state["betonline_offering"]   = betonline_off_raw   or []
     st.session_state["bovada_game_lines"]    = bovada_lines_raw    or []
     st.session_state["bovada_props"]         = bovada_props_raw    or []
@@ -18426,6 +18432,16 @@ with tabs[9]:
     else:
         _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": "⚪ Load board to activate", "Action": "Snapshot engine ready"})
 
+
+    try:
+        from fetchers import _sharpapi_key as _sk_fn; _sharpapi_key_present = bool(_sk_fn())
+    except Exception: _sharpapi_key_present = False
+    # FanDuel props (via SharpAPI)
+    _fd_sa_st = st.session_state.get("fanduel_props_sa", [])
+    _src_statuses.append({"Source": "FanDuel props (SharpAPI)",
+        "Status": (f"🟢 {len(_fd_sa_st)} props" if _fd_sa_st
+                   else ("🟡 Add SHARPAPI_KEY to secrets" if not _sharpapi_key_present else "⚪ Loading...")),
+        "Action": "None"})
 
     # SharpAPI line movement + EV
     _sa_dr = st.session_state.get("sharpapi_line_drops", [])
