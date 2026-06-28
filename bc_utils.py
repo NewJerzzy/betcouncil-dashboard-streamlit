@@ -691,17 +691,29 @@ def compute_std_dev(game_values, decay=0.85, sport=None):
     return round(weighted_var**0.5, 3)
 
 
-def compute_fair_prob(line, avg, std_dev, side="OVER"):
+# Sport-specific std_dev fallback coefficients (fraction of avg)
+# Tighter for high-volume sports (NBA), wider for high-variance (NFL/UFC)
+_STD_DEV_FALLBACK = {
+    "NBA": 0.30, "WNBA": 0.30,   # high game count, tight distributions
+    "MLB": 0.42,                   # medium variance
+    "NHL": 0.38,
+    "NFL": 0.50,                   # high variance per game
+    "GOLF": 0.55, "TENNIS": 0.48,
+    "UFC": 0.60, "SOCCER": 0.45,
+}
+
+def compute_fair_prob(line, avg, std_dev, side="OVER", sport=None):
     if avg <= 0:
         return 0.5
     if std_dev is None or std_dev <= 0:
-        std_dev = avg * 0.40
+        coeff = _STD_DEV_FALLBACK.get(sport, 0.40) if sport else 0.40
+        std_dev = avg * coeff
     adjusted_line = line + 0.5 if (line == int(line)) else line
     if side.upper() == "OVER":
         prob = 1 - scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
     else:
         prob = scipy_stats.norm.cdf(adjusted_line, loc=avg, scale=std_dev)
-    return round(max(0.10, min(0.90, prob)), 4)  # widened from 0.20-0.80 (too conservative)
+    return round(max(0.10, min(0.90, prob)), 4)
 
 
 def compute_fair_prob_negbinom(line, avg, std_dev, side="OVER"):

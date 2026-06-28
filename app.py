@@ -291,6 +291,10 @@ KELLY_BY_TIER = {
 }
 
 # Tier thresholds (props) — sport-specific overrides in get_tier()
+def _get_cal_tier(edge, sport):
+    """Wrapper: get_tier with auto-calibrated thresholds from session_state."""
+    cal = st.session_state.get("calibrated_thresholds", {})
+    return get_tier(edge, sport, cal if cal.get("_calibrated") else None)
 TIER_SOVEREIGN_DEFAULT = 0.15   # 15%+ edge
 TIER_ELITE_DEFAULT     = 0.10   # 10%+ edge
 TIER_APPROVED_DEFAULT  = 0.05   # 5%+ edge
@@ -6376,7 +6380,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         ml_pick = f"{away_team} ML ({away_ml})"
                         ml_edge = a_ml_edge
                         fair_prob = a_fair
-                    tier = get_tier(ml_edge, sport)
+                    tier = _get_cal_tier(ml_edge, sport)
                     ev = fair_prob * (abs(float(str(home_ml if h_ml_edge > a_ml_edge else away_ml).replace("+",""))) / 100) - (1 - fair_prob)
                     recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"})
                     if ml_edge > best_edge:
@@ -8585,7 +8589,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                 return {
                     "edge": edge, "prob": prob,
                     "avg": float(b.get("Avg", 0) or 0),
-                    "tier": get_tier(edge, sport),
+                    "tier": _get_cal_tier(edge, sport),
                     "ev_2": f"{calculate_prizepicks_ev(prob, 2):+.1%}",
                     "confidence": b.get("SEM", "Full model"),
                     "data_source": "📊 Full model (board)",
@@ -8849,7 +8853,7 @@ def score_pick_standalone(player, stat, line, side, sport):
         prob = max(0.20, min(0.80, prob))
         edge = round(calculate_edge(prob, side, sport), 4)
 
-    tier = get_tier(edge, sport)
+    tier = _get_cal_tier(edge, sport)
     ev_2 = f"{calculate_prizepicks_ev(prob, 2):+.1%}"
 
     return {
@@ -11411,7 +11415,7 @@ def load_sport_data(sport):
             if _gt_game and _gt_game.get("best_bet"):
                 _gt_bb = _gt_game["best_bet"]
                 _gt_edge = float(_gt_bb.get("edge", 0))
-                _gt_tier  = get_tier(abs(_gt_edge), sport)
+                _gt_tier  = _get_cal_tier(abs(_gt_edge), sport)
                 _gt_prob  = float(_gt_bb.get("fair_prob", 0.55))
                 enriched.append({
                     "Player": player, "Prop": stat_raw, "Line": line,
@@ -11849,10 +11853,10 @@ def load_sport_data(sport):
             best_side = "OVER"
             best_prob = over_prob
             best_signals = over_signals
-        adj_edge, calibrated = adjusted_edge(best_edge, sport, get_tier(best_edge, sport), stat_norm, history)
+        adj_edge, calibrated = adjusted_edge(best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history)
         final_edge = adj_edge if calibrated else best_edge
         eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
-        if (an_grade in ("A+", "A", "A-") and get_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")):
+        if (an_grade in ("A+", "A", "A-") and _get_cal_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")):
             final_edge = min(final_edge * 1.05, EDGE_CAP)
         if (an_grade in ("C", "D") and final_edge > 0.05):
             final_edge = final_edge * 0.90
@@ -11875,7 +11879,7 @@ def load_sport_data(sport):
             confidence_mult = sample_size_confidence(n_games, sport)
             if confidence_mult < 1.0:
                 final_edge = final_edge * confidence_mult
-        clv_mult, clv_note = get_clv_edge_adjustment(sport, get_tier(final_edge, sport))
+        clv_mult, clv_note = get_clv_edge_adjustment(sport, _get_cal_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
         # ── Regression-to-mean discount (applied last — after all other mults) ──
@@ -11948,7 +11952,7 @@ def load_sport_data(sport):
         if final_edge < min_edge:
             skipped_edge += 1
             continue
-        tier = get_tier(final_edge, sport)
+        tier = _get_cal_tier(final_edge, sport)
 
         # ── Role change detection — applied to final_edge ──────
         _role_change = detect_role_changes(player, sport, {}, st.session_state.history)
@@ -11959,7 +11963,7 @@ def load_sport_data(sport):
             _rc_adj = _role_change.get("edge_adj", 0)
             if abs(_rc_adj) > 0:
                 final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _rc_adj)), 4)
-                tier = get_tier(final_edge, sport)  # re-tier after role change
+                tier = _get_cal_tier(final_edge, sport)  # re-tier after role change
 
         # ── Market Move Quality ────────────────────────────────
         _matchup_str = p.get("Matchup", p.get("matchup",""))
@@ -12027,11 +12031,11 @@ def load_sport_data(sport):
                 p["InjuryNote"] = f"⛔ {injury_flag} — pick suppressed"
             elif "QUEST" in _inj_status:
                 final_edge  = round(final_edge * 0.70, 4)
-                tier        = get_tier(final_edge, sport)
+                tier        = _get_cal_tier(final_edge, sport)
                 p["InjuryNote"] = f"⚠️ {injury_flag} — edge -30%"
             elif "PROB" in _inj_status:
                 final_edge  = round(final_edge * 0.90, 4)
-                tier        = get_tier(final_edge, sport)
+                tier        = _get_cal_tier(final_edge, sport)
                 p["InjuryNote"] = f"🟡 {injury_flag} — edge -10%"
         # DFF Teammate Impact — NBA/WNBA primarily
         if sport in ("NBA","WNBA"):
@@ -12046,7 +12050,7 @@ def load_sport_data(sport):
                 )
                 if _dff_adj != 0:
                     final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _dff_adj)), 4)
-                    tier = get_tier(final_edge, sport)
+                    tier = _get_cal_tier(final_edge, sport)
                 if _dff_note:
                     p["DFFSignal"] = _dff_note
                 if _dff_signals:
@@ -12069,7 +12073,7 @@ def load_sport_data(sport):
                 _ps_adj, _ps_note = compute_dff_propstats_edge(_dff_ps, final_edge)
                 if _ps_adj != 0:
                     final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _ps_adj)), 4)
-                    tier = get_tier(final_edge, sport)
+                    tier = _get_cal_tier(final_edge, sport)
                 p["DFFHitRateL10"]    = _dff_ps.get("hit_rate", 0)
                 p["DFFAvgVal"]        = _dff_ps.get("avg_val", 0)
                 p["DFFAvgMins"]       = _dff_ps.get("avg_minutes", 0)
@@ -12116,7 +12120,7 @@ def load_sport_data(sport):
                     _fl_adj, _fl_flags, _fl_note = get_fantasylabs_lineup_bonus(player, _fl_data, sport)
                     if _fl_adj != 0:
                         final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _fl_adj)), 4)
-                        tier = get_tier(final_edge, sport)
+                        tier = _get_cal_tier(final_edge, sport)
                     if _fl_note:
                         p["LineupStatus"] = _fl_note
                     # Store separate flags — not composite score
@@ -12193,7 +12197,7 @@ def load_sport_data(sport):
             "AN_Projection": round(float(an_projection), 1) if an_projection else None,
             "AN_Edge": round(float(an_edge), 3) if an_edge else None, "AN_Tier": an_tier,
             "AN_Tickets": an_tickets, "AN_Money": an_money,
-            "AN_Confirms": (an_tier in ("SOVEREIGN", "ELITE") and get_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")),
+            "AN_Confirms": (an_tier in ("SOVEREIGN", "ELITE") and _get_cal_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")),
             # EV API signals
             "EVPinnacleNoVig":   ev_pn_novig,
             "EVCircaNoVig":      ev_circa_novig,
