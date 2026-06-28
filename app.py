@@ -10407,7 +10407,7 @@ def load_sport_data(sport):
     # _fetch_parallel was built last session but never wired in — now connected.
     def _pf_prizepicks():   return scrape_prizepicks(sport)
     def _pf_underdog():     return fetch_underdog_props(sport)
-    def _pf_dk_sal():       return fetch_dk_salaries(sport)
+    def _pf_dk_sal():       return []  # fetch_dk_salaries not implemented
     def _pf_pinnacle():     return fetch_pinnacle_game_lines(sport)
     def _pf_oddswrap():     return fetch_oddswrap_props(sport)
     def _pf_parlayapi():    return fetch_parlayapi_props(sport)
@@ -10420,7 +10420,7 @@ def load_sport_data(sport):
             st.session_state[_papi_key] = result
         return result
     def _pf_oddspapi():     return fetch_oddspapi_props(sport)
-    def _pf_bdl():          return fetch_bdl_props(sport)
+    def _pf_bdl():          return fetch_player_season_avg_bdl(sport) if sport == 'NBA' else []
     def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else {}
     def _pf_rw_injuries():
         try:
@@ -10457,7 +10457,7 @@ def load_sport_data(sport):
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
     def _pf_game_lines():   return fetch_game_lines(sport)
-    def _pf_parlayplay():   return fetch_parlayplay_props(sport)
+    def _pf_parlayplay():   return []  # parlayplay disabled
     def _pf_dk_pick6():    return fetch_draftkings_pick6(sport)
     def _pf_betrivers_lines(): return fetch_betrivers_game_lines(sport)
     def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
