@@ -11291,6 +11291,274 @@ def fetch_covers_consensus(sport: str) -> dict:
         print(f"[WARN] fetch_covers_consensus: {e}")
         return {}
 
+
+# ── Functions extracted from app.py ──────────────────────────────────────
+
+def fetch_dk_salaries(sport="NBA"):
+    """
+    Fetch DraftKings DFS salary data for today's slate.
+    Returns dict: {player_name: {salary, avg_points, value_score}}
+    High salary = DK model projects big game
+    Value score = projected points per $1000 salary
+    """
+    cache_path = os.path.join(CACHE_DIR, f"dk_salaries_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    sport_map = {
+        "NBA": "NBA", "MLB": "MLB", "NHL": "NHL",
+        "NFL": "NFL", "WNBA": "WNBA"
+    }
+    dk_sport = sport_map.get(sport)
+    if not dk_sport:
+        return {}
+
+    try:
+        # Step 1: get draftGroupId
+        contests_r = _http.get(
+            f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if contests_r.status_code != 200:
+            return {}
+
+        contests = contests_r.json().get("Contests", [])
+        draft_group_id = None
+        for c in contests:
+            name = c.get("n", "").lower()
+            if ("classic" in name or "showdown" not in name) and c.get("dg"):
+                draft_group_id = c["dg"]
+                break
+
+        if not draft_group_id:
+            return {}
+
+        # Step 2: get draftable players with salaries
+        players_r = _http.get(
+            f"https://api.draftkings.com/draftgroups/v1/{draft_group_id}/draftables",
+            headers={**HEADERS, "Referer": "https://www.draftkings.com/"},
+            timeout=10
+        )
+        if players_r.status_code != 200:
+            return {}
+
+        data = players_r.json()
+        draftables = data.get("draftables", [])
+
+        salaries = {}
+        for player in draftables:
+            name = player.get("displayName", "")
+            salary = player.get("salary", 0)
+            avg_pts = player.get("draftStatAttributes", [{}])
+            # Extract average FPPG
+            fppg = 0.0
+            for attr in player.get("draftStatAttributes", []):
+                if attr.get("id") == 90:  # FPPG stat id
+                    try:
+                        fppg = float(attr.get("value", 0))
+                    except (ValueError, TypeError, ZeroDivisionError):
+                        pass
+
+            if name and salary:
+                value_score = round((fppg / (salary / 1000)), 2) if salary > 0 else 0
+                salaries[normalize_name(name)] = {
+                    "name": name,
+                    "salary": salary,
+                    "fppg": fppg,
+                    "value": value_score,
+                    "salary_tier": (
+                        "ELITE" if salary >= 9000 else
+                        "HIGH" if salary >= 7500 else
+                        "MID" if salary >= 6000 else
+                        "VALUE"
+                    )
+                }
+
+        if salaries:
+            with open(cache_path, "wb") as f:
+                pickle.dump(salaries, f)
+            st.session_state["dk_salaries"] = salaries
+
+        return salaries
+
+    except (KeyError, TypeError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_dk_salaries",
+            "error": str(e)[:100]
+        })
+        return {}
+
+def fetch_mlb_rolling_averages():
+    cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
+    rolling = {}
+    # Use full active roster IDs (all 30 teams) instead of hardcoded 29-player list
+    all_roster_ids = st.session_state.get("mlb_roster_ids") or MLB_PLAYER_IDS
+    for player_name, player_id in all_roster_ids.items():
+        player_avgs = PLAYER_AVERAGES.get("MLB", {}).get(player_name, {})
+        is_pitcher = "SO" in player_avgs or "ER" in player_avgs
+        group = "pitching" if is_pitcher else "hitting"
+        url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season=2025&gameType=R")
+        resp = None
+        for _attempt in range(2):  # one retry on transient connection failures
+            try:
+                resp = _http.get(url, headers=HEADERS, timeout=10)
+                break
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                    requests.exceptions.RetryError, requests.exceptions.ChunkedEncodingError) as _conn_e:
+                if _attempt == 0:
+                    time.sleep(1.0)
+                    continue
+                st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": f"statsapi unreachable after retry: {str(_conn_e)[:80]}"})
+                resp = None
+        if resp is None:
+            continue
+        try:
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            stats_list = data.get("stats", [])
+            if not stats_list:
+                continue
+            splits = stats_list[0].get("splits", [])
+            last10 = splits[-10:] if len(splits) >= 10 else splits
+            if len(last10) < 3:
+                continue
+            if is_pitcher:
+                so_vals = [g["stat"].get("strikeOuts",0) for g in last10]
+                er_vals = [g["stat"].get("earnedRuns",0) for g in last10]
+                h_vals = [g["stat"].get("hits",0) for g in last10]
+                rolling[player_name] = {
+                    "SO": ewma_average(so_vals, sport="MLB"),
+                    "ER": ewma_average(er_vals, sport="MLB"),
+                    "H": ewma_average(h_vals, sport="MLB"),
+                    "SO_std": compute_std_dev(so_vals, sport="MLB") or 2.0,
+                    "ER_std": compute_std_dev(er_vals, sport="MLB") or 1.0,
+                    "H_std": compute_std_dev(h_vals, sport="MLB") or 0.3,
+                    "n_games": len(last10)
+                }
+            else:
+                h_vals = [g["stat"].get("hits",0) for g in last10]
+                hr_vals = [g["stat"].get("homeRuns",0) for g in last10]
+                rbi_vals = [g["stat"].get("rbi",0) for g in last10]
+                r_vals = [g["stat"].get("runs",0) for g in last10]
+                rolling[player_name] = {
+                    "H": ewma_average(h_vals, sport="MLB"),
+                    "HR": ewma_average(hr_vals, sport="MLB"),
+                    "RBI": ewma_average(rbi_vals, sport="MLB"),
+                    "R": ewma_average(r_vals, sport="MLB"),
+                    "H_std": compute_std_dev(h_vals, sport="MLB") or 0.4,
+                    "HR_std": compute_std_dev(hr_vals, sport="MLB") or 0.12,
+                    "RBI_std": compute_std_dev(rbi_vals, sport="MLB") or 0.5,
+                    "R_std": compute_std_dev(r_vals, sport="MLB") or 0.4,
+                    "n_games": len(last10)
+                }
+            time.sleep(0.3)
+        except Exception as e:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": str(e)[:100]})
+            continue
+    try:
+        if rolling:
+            with open(cache_path, "wb") as f:
+                pickle.dump(rolling, f)
+    except Exception:
+        pass
+    return rolling
+
+
+# ═══════════════════════════════════════════════════════════
+# MODULE: LIVE STATS — Tennis, Golf, Soccer, UFC, NFL, WNBA
+# All use ESPN public API (site.api.espn.com) — free, no key.
+# Works in deployed app via curl_cffi TLS impersonation.
+# Cached 6-24h per sport. Falls back to hardcoded baselines.
+# ═══════════════════════════════════════════════════════════
+
+def scrape_prizepicks_with_gist_fallback(sport):
+    """
+    Priority order:
+    1. Gist (from auto-scraper)   — primary; Gist-first already baked into
+                                    scrape_prizepicks(), but we also call
+                                    fetch_auto_scraped_props() directly here
+                                    to capture the result for LKG caching.
+    2. scrape_prizepicks(sport)   — curl_cffi chrome124/chrome110 + Gist safety net.
+    3. Last-known-good cache      — stale pickle from last successful run,
+                                    surfaced with a visible st.warning banner
+                                    instead of silently returning [].
+
+    LKG is written on every successful return so it's always as fresh as
+    the most recent working fetch.
+    """
+    import pickle as _pkl
+
+    lkg_path = os.path.join(CACHE_DIR, f"pp_last_known_good_{sport}.pkl")
+
+    # ── 1. Gist direct ────────────────────────────────────────────────────────
+    gist_props = fetch_auto_scraped_props(sport)
+    if gist_props:
+        st.session_state["pp_source"] = "gist_scraper"
+        st.session_state["pp_status"] = "ok"
+        _write_pp_lkg(sport, gist_props)
+        return gist_props
+
+    # ── 2. Live scrape (curl_cffi → chrome110 → Gist safety-net) ─────────────
+    log_error_to_session(
+        "scrape_prizepicks_with_gist_fallback",
+        f"Gist empty for {sport} — trying live scrape...",
+        "warning",
+    )
+    pp_props = scrape_prizepicks(sport)
+    if pp_props:
+        st.session_state["pp_source"] = "prizepicks_direct"
+        st.session_state["pp_status"] = "ok"
+        _write_pp_lkg(sport, pp_props)
+        return pp_props
+
+    # ── 3. Last-known-good ────────────────────────────────────────────────────
+    try:
+        if os.path.exists(lkg_path):
+            _lkg_age_h = (time.time() - os.path.getmtime(lkg_path)) / 3600
+            with open(lkg_path, "rb") as _f:
+                _lkg = _pkl.load(_f)
+            if _lkg:
+                st.warning(
+                    f"⚠️ **PrizePicks live data unavailable** — showing last cached "
+                    f"props ({_lkg_age_h:.0f}h old). Data may be stale. Refresh to retry.",
+                    icon="🟡",
+                )
+                st.session_state["pp_source"] = "last_known_good"
+                st.session_state["pp_status"] = "stale"
+                log_error_to_session(
+                    "scrape_prizepicks_with_gist_fallback",
+                    f"Serving LKG cache ({_lkg_age_h:.1f}h old, {len(_lkg)} props)",
+                    "warning",
+                )
+                return _lkg
+    except (OSError, _pkl.UnpicklingError, EOFError):
+        pass
+
+    # ── 4. Truly nothing ─────────────────────────────────────────────────────
+    st.session_state["pp_status"] = "unavailable"
+    st.session_state["pp_source"] = "none"
+    log_error_to_session(
+        "scrape_prizepicks_with_gist_fallback",
+        f"PrizePicks unavailable for {sport} — all paths exhausted, no LKG cache",
+        "error",
+    )
+    return []
+
+
+
+
+# ── EV Sharps API (20+ books — Hard Rock, DK, FD, MGM, Caesars, Pinnacle, Circa, etc.) ──
+# ── EV Line Movement — snapshot delta engine ─────────────────────────────────
+# Replaces the /api/movement endpoint by comparing successive /api/ev snapshots.
+# Every board load compares current bookOdds against the previous snapshot
+# stored in session_state["ev_odds_snapshot"], computes deltas, and fires S8/S9.
+
 def fetch_bovada_game_lines(sport: str) -> list:
     """
     Fetch Bovada game lines via public coupon API — no auth required.
