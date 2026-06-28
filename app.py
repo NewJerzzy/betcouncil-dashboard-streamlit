@@ -3315,24 +3315,7 @@ def compute_market_agreement_score(prop, public_betting=None):
         elif rlm.get("has_sharp"):
             score += 5
     
-    # Unabated sharp lines (status shown in sidebar section below)
-    _unabated_st = st.session_state.get("unabated_lines", [])
-    if _unabated_st:
-        _src_statuses.append({"Source": "Unabated (sharp fair lines)", "Status": f"🟢 {len(_unabated_st)} lines", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Unabated (sharp fair lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
-    # ParlayAPI EV
-    _papi_ev_st = st.session_state.get("parlayapi_ev", [])
-    _papi_arb_st = st.session_state.get("parlayapi_arb", [])
-    if _papi_ev_st or _papi_arb_st:
-        _src_statuses.append({"Source": "ParlayAPI EV + Arb", "Status": f"🟢 {len(_papi_ev_st)} EV / {len(_papi_arb_st)} arb", "Action": "None"})
-    elif PARLAY_API_KEY:
-        _src_statuses.append({"Source": "ParlayAPI EV + Arb", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-    else:
-        _src_statuses.append({"Source": "ParlayAPI EV + Arb", "Status": "🔴 No API key", "Action": "Add PARLAY_API_KEY"})
-
-        # Kalshi/Polymarket agreement
+    # Kalshi/Polymarket agreement
     mkt = prop.get("MarketVsModel")
     if isinstance(mkt, dict):
         if mkt.get("signal") == "AGREEMENT":
