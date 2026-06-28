@@ -10214,6 +10214,8 @@ def load_sport_data(sport):
     def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
+    def _pf_sharpapi_drops(): return fetch_sharpapi_line_drops(sport)
+    def _pf_sharpapi_ev():   return fetch_sharpapi_ev_opportunities(sport)
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_betslib_live():  return fetch_betslib_live_events(sport)
@@ -10366,6 +10368,8 @@ def load_sport_data(sport):
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
     st.session_state["heritage_game_lines"]  = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"] = bookmaker_lines_raw or []
+    st.session_state["sharpapi_line_drops"] = sharpapi_drops_raw  or []
+    st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
@@ -11909,6 +11913,23 @@ def load_sport_data(sport):
         clv_mult, clv_note = get_clv_edge_adjustment(sport, _get_cal_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
+        # ── SharpAPI Pinnacle steam detection ────────────────────────────────
+        if home_team or away_team:
+            try:
+                _sa_drops = st.session_state.get("sharpapi_line_drops", [])
+                _steam = next((d for d in _sa_drops if d.get("is_steam") and (
+                    normalize_name(home_team or "") in normalize_name(d.get("home",""))
+                    or normalize_name(away_team or "") in normalize_name(d.get("away",""))
+                )), None)
+                if _steam:
+                    _dp = _steam.get("drop_pct",0)
+                    prop["SteamMove"]   = True
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🔥 Steam:{_dp:+.1%}"
+                    if abs(_dp) > 0.05:
+                        final_edge = min(final_edge * 1.06, EDGE_CAP)
+            except Exception:
+                pass
+
         # ── Defense ranking adjustment ─────────────────────────────────────
         if final_edge > 0 and prop.get("Matchup"):
             try:
@@ -18405,6 +18426,14 @@ with tabs[9]:
     else:
         _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": "⚪ Load board to activate", "Action": "Snapshot engine ready"})
 
+
+    # SharpAPI line movement + EV
+    _sa_dr = st.session_state.get("sharpapi_line_drops", [])
+    _sa_ev = st.session_state.get("sharpapi_ev_opps", [])
+    _src_statuses.append({"Source": "SharpAPI (Pinnacle steam + +EV)",
+        "Status": (f"🟢 {len(_sa_dr)} steam | {len(_sa_ev)} +EV"
+                   if _sa_dr or _sa_ev else "🟡 Add SHARPAPI_KEY to secrets"),
+        "Action": "None"})
 
     # Signal Odds
     _so_ev   = st.session_state.get("signalodds_events", [])

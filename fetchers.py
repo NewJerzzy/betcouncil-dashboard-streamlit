@@ -13308,6 +13308,125 @@ def fetch_betslib_upcoming_events(sport: str = None) -> list:
     return fetch_betslib_events(sport=sport, category="upcoming", limit=50)
 
 
+
+# ── SharpAPI Odds Delta — Pinnacle Line Movement ──────────────────────────────
+SHARPAPI_BASE = "https://api.sharpapi.io/api/v1"
+SHARPAPI_LEAGUE_MAP = {
+    "MLB":"MLB","NBA":"NBA","NFL":"NFL","NHL":"NHL",
+    "WNBA":"WNBA","SOCCER":"EPL","UFC":"UFC",
+}
+_SHARPAPI_OPENER_CACHE = {}
+_SHARPAPI_LAST_SINCE   = {}
+_SHARPAPI_LAST_POLL    = {}
+
+def _sharpapi_key():
+    try:
+        import streamlit as st
+        return st.secrets.get("SHARPAPI_KEY","")
+    except Exception: return ""
+
+def _amer_to_prob(odds):
+    try:
+        o=float(odds)
+        return 100.0/(o+100.0) if o>0 else (-o)/((-o)+100.0)
+    except Exception: return 0.5
+
+def fetch_sharpapi_line_drops(sport: str, min_drop_pct: float = 0.03) -> list:
+    """
+    Poll SharpAPI Odds Delta for Pinnacle line movements.
+    Quota-efficient: only fetches changes since last poll (?since= timestamp).
+    In-memory opener cache detects opener-vs-current steam moves.
+    Returns {game, home, away, market, selection, old_odds, new_odds, drop_pct, is_steam}
+    5-min min poll interval. Add SHARPAPI_KEY to Streamlit secrets.
+    """
+    global _SHARPAPI_OPENER_CACHE, _SHARPAPI_LAST_SINCE, _SHARPAPI_LAST_POLL
+    last_poll = _SHARPAPI_LAST_POLL.get(sport, 0)
+    if time.time() - last_poll < 300:
+        try:
+            import streamlit as st
+            return st.session_state.get(f"sharpapi_drops_{sport}", [])
+        except Exception: return []
+    api_key = _sharpapi_key()
+    if not api_key: return []
+    league = SHARPAPI_LEAGUE_MAP.get(sport, sport)
+    try:
+        hdrs = {"Authorization":f"Bearer {api_key}","Accept":"application/json"}
+        since = _SHARPAPI_LAST_SINCE.get(sport)
+        url   = f"{SHARPAPI_BASE}/odds/delta?sportsbooks=pinnacle&leagues={league}&limit=500"
+        if since: url += f"&since={since}"
+        r = _http.get(url, headers=hdrs, timeout=15)
+        if r.status_code not in (200,): 
+            print(f"[WARN] SharpAPI delta HTTP {r.status_code}"); return []
+        data  = r.json()
+        items = data if isinstance(data,list) else data.get("data",data.get("odds",data.get("results",[])))
+        new_since = data.get("timestamp",data.get("next_since")) if isinstance(data,dict) else None
+        if new_since: _SHARPAPI_LAST_SINCE[sport] = new_since
+        _SHARPAPI_LAST_POLL[sport] = time.time()
+        if sport not in _SHARPAPI_OPENER_CACHE: _SHARPAPI_OPENER_CACHE[sport] = {}
+        opener = _SHARPAPI_OPENER_CACHE[sport]
+        drops  = []
+        for item in items:
+            ev_obj    = item.get("event",{})
+            home      = ev_obj.get("home",item.get("home_team",""))
+            away      = ev_obj.get("away",item.get("away_team",""))
+            if isinstance(home,dict): home=home.get("name","")
+            if isinstance(away,dict): away=away.get("name","")
+            game      = f"{away} @ {home}" if home and away else item.get("event_name","")
+            event_id  = ev_obj.get("id",item.get("event_id",""))
+            market    = item.get("market",item.get("market_name","h2h"))
+            selection = item.get("selection",item.get("outcome",item.get("name","")))
+            new_odds  = item.get("odds_american",item.get("price",item.get("odds")))
+            ts        = item.get("timestamp",item.get("changed_at",""))
+            if new_odds is None: continue
+            new_prob  = _amer_to_prob(new_odds)
+            cache_key = f"{event_id}_{market}_{selection}"
+            if cache_key in opener:
+                old_prob  = opener[cache_key]["prob"]
+                old_odds  = opener[cache_key]["odds"]
+                drop_pct  = new_prob - old_prob
+                if abs(drop_pct) >= min_drop_pct:
+                    drops.append({"game":game,"home":home,"away":away,"sport":sport,
+                        "market":market,"selection":selection,"old_odds":old_odds,
+                        "new_odds":new_odds,"old_prob":round(old_prob,4),
+                        "new_prob":round(new_prob,4),"drop_pct":round(drop_pct,4),
+                        "is_steam":drop_pct>0,"timestamp":ts,"source":"sharpapi_delta"})
+            opener[cache_key] = {"prob":new_prob,"odds":new_odds,"ts":ts}
+        drops.sort(key=lambda x: abs(x["drop_pct"]), reverse=True)
+        try:
+            import streamlit as st
+            st.session_state[f"sharpapi_drops_{sport}"] = drops
+        except Exception: pass
+        return drops
+    except Exception as e:
+        print(f"[WARN] fetch_sharpapi_line_drops({sport}): {e}"); return []
+
+def fetch_sharpapi_ev_opportunities(sport: str) -> list:
+    """SharpAPI +EV opportunities vs Pinnacle fair value. Cached 10 min."""
+    cp = os.path.join(CACHE_DIR, f"sharpapi_ev_{sport}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 10:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    api_key = _sharpapi_key()
+    if not api_key: return []
+    league = SHARPAPI_LEAGUE_MAP.get(sport, sport)
+    try:
+        r = _http.get(f"{SHARPAPI_BASE}/opportunities/ev?leagues={league}&min_ev=0.02&limit=100",
+            headers={"Authorization":f"Bearer {api_key}","Accept":"application/json"},timeout=15)
+        if r.status_code != 200: return []
+        data  = r.json()
+        items = data if isinstance(data,list) else data.get("data",data.get("opportunities",[]))
+        results = [{"game":it.get("event_name",""),"market":it.get("market",""),
+            "selection":it.get("selection",""),"book":it.get("sportsbook",""),
+            "ev_pct":float(it.get("ev",it.get("expected_value",0)) or 0),
+            "fair_odds":it.get("fair_odds"),"book_odds":it.get("odds_american"),
+            "source":"sharpapi_ev","sport":sport} for it in items]
+        results.sort(key=lambda x: x["ev_pct"], reverse=True)
+        if results: _safe_save_pkl(cp, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_sharpapi_ev_opportunities({sport}): {e}"); return []
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
