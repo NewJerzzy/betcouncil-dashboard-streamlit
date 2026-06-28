@@ -12843,6 +12843,200 @@ def fetch_statmuse_league_leaders(sport, stat, n=10):
         print(f"[WARN] fetch_statmuse_league_leaders: {e}"); return []
 
 
+
+# ── FantasyPros Consensus Projections ─────────────────────────────────────────
+FANTASYPROS_URLS = {
+    "NBA":{"all":"https://www.fantasypros.com/nba/projections/players.php"},
+    "MLB":{"hitters":"https://www.fantasypros.com/mlb/projections/hitters.php",
+           "pitchers":"https://www.fantasypros.com/mlb/projections/pitchers.php"},
+    "NFL":{"qb":"https://www.fantasypros.com/nfl/projections/qb.php",
+           "rb":"https://www.fantasypros.com/nfl/projections/rb.php",
+           "wr":"https://www.fantasypros.com/nfl/projections/wr.php",
+           "te":"https://www.fantasypros.com/nfl/projections/te.php"},
+    "NHL":{"all":"https://www.fantasypros.com/nhl/projections/players.php"},
+}
+FP_HEADERS = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+               "Accept":"text/html,*/*","Referer":"https://www.fantasypros.com/"}
+
+def fetch_fantasypros_projections(sport: str) -> dict:
+    """FantasyPros expert consensus projections. Free, no auth. Cached 3h."""
+    cp = os.path.join(CACHE_DIR, f"fantasypros_{sport}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/3600 < 3:
+        c = _safe_load_pkl(cp)
+        if c: return c
+    urls = FANTASYPROS_URLS.get(sport, {})
+    if not urls: return {}
+    all_proj = {}
+    import re as _re
+    for position, url in urls.items():
+        try:
+            r = _http.get(url, headers=FP_HEADERS, timeout=15)
+            if r.status_code != 200: continue
+            html = r.text
+            m = _re.search(r'var ecrData\s*=\s*(\{.*?\});', html, _re.S)
+            if m:
+                try:
+                    for p in json.loads(m.group(1)).get("players",[]):
+                        nm = p.get("player_name","")
+                        if not nm: continue
+                        stats = {k:float(v) for k,v in p.items()
+                                 if k not in ("player_name","player_id","rank","team","pos")
+                                 and isinstance(v,(int,float))}
+                        if stats: all_proj[normalize_name(nm)] = {"name":nm,"pos":position,"projections":stats,"source":"fantasypros"}
+                    time.sleep(0.2); continue
+                except Exception: pass
+            tm = _re.search(r'<table[^>]*id="data"[^>]*>(.*?)</table>', html, _re.S|_re.I)
+            if not tm: time.sleep(0.2); continue
+            hdrs = [_re.sub(r'<[^>]+>','',h).strip().lower()
+                    for h in _re.findall(r'<th[^>]*>(.*?)</th>', tm.group(1), _re.S|_re.I)]
+            for row in _re.findall(r'<tr[^>]*>(.*?)</tr>', tm.group(1), _re.S|_re.I):
+                cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.S|_re.I)
+                if len(cells) < 2: continue
+                nm = _re.sub(r'<[^>]+>','',cells[0]).strip()
+                if not nm or nm.lower() == 'player': continue
+                stats = {}
+                for j,col in enumerate(hdrs[1:],1):
+                    if j < len(cells):
+                        try: stats[col] = float(_re.sub(r'<[^>]+>','',cells[j]).strip())
+                        except Exception: pass
+                if stats: all_proj[normalize_name(nm)] = {"name":nm,"pos":position,"projections":stats,"source":"fantasypros"}
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"[WARN] fantasypros {sport}/{position}: {e}")
+    if all_proj: _safe_save_pkl(cp, all_proj)
+    return all_proj
+
+
+# ── Closing Line Auto-Capture Database ───────────────────────────────────────
+def save_closing_line(player, prop, line, sport, over_odds=None, under_odds=None, source="pinnacle"):
+    """Auto-save closing line to Gist. Called from enrichment loop."""
+    try:
+        key = f"{normalize_name(player)}_{prop.lower().replace(' ','_')}_{date.today().isoformat()}"
+        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            gist = json.loads(r.read())
+        f  = gist.get("files",{}).get("betcouncil_closing_lines.json",{})
+        db = json.loads(f.get("content","{}")) if f else {}
+        db[key] = {"player":player,"prop":prop,"line":line,"sport":sport,
+                   "over_odds":over_odds,"under_odds":under_odds,"source":source,
+                   "timestamp":datetime.now().isoformat()}
+        if len(db) > 500:
+            for k in sorted(db, key=lambda x: db[x].get("timestamp",""))[:len(db)-500]: del db[k]
+        upd = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            data=json.dumps({"files":{"betcouncil_closing_lines.json":{"content":json.dumps(db,indent=2)}}}).encode(),
+            method="PATCH",
+            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json","Content-Type":"application/json"})
+        with urllib.request.urlopen(upd, timeout=10) as r:
+            return r.status == 200
+    except Exception as e:
+        print(f"[WARN] save_closing_line: {e}"); return False
+
+def load_closing_line(player, prop, date_str=None):
+    """Load closing line from Gist database."""
+    try:
+        if date_str is None: date_str = date.today().isoformat()
+        key = f"{normalize_name(player)}_{prop.lower().replace(' ','_')}_{date_str}"
+        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            gist = json.loads(r.read())
+        f = gist.get("files",{}).get("betcouncil_closing_lines.json",{})
+        return json.loads(f.get("content","{}")).get(key,{}) if f else {}
+    except Exception as e:
+        print(f"[WARN] load_closing_line: {e}"); return {}
+
+def fetch_all_closing_lines():
+    """Load full closing line DB from Gist. Cached 10 min."""
+    cp = os.path.join(CACHE_DIR, "closing_lines_db.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 10:
+        c = _safe_load_pkl(cp)
+        if c: return c
+    try:
+        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            gist = json.loads(r.read())
+        f  = gist.get("files",{}).get("betcouncil_closing_lines.json",{})
+        db = json.loads(f.get("content","{}")) if f else {}
+        _safe_save_pkl(cp, db); return db
+    except Exception as e:
+        print(f"[WARN] fetch_all_closing_lines: {e}"); return {}
+
+
+# ── Opponent Defense Rankings — All Sports ────────────────────────────────────
+ESPN_DEFENSE_URLS = {
+    "NBA":  "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams?limit=30&enable=stats",
+    "MLB":  "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams?limit=30&enable=stats",
+    "NFL":  "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32&enable=stats",
+    "NHL":  "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams?limit=32&enable=stats",
+    "WNBA": "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/teams?limit=14&enable=stats",
+}
+ESPN_DEF_HEADERS = {"User-Agent":"Mozilla/5.0","Accept":"application/json","Referer":"https://www.espn.com/"}
+
+def fetch_opponent_defense_rankings(sport: str) -> dict:
+    """Opponent defense rankings from ESPN public API. All sports. Cached 6h."""
+    cp = os.path.join(CACHE_DIR, f"defense_rankings_{sport}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/3600 < 6:
+        c = _safe_load_pkl(cp)
+        if c: return c
+    url = ESPN_DEFENSE_URLS.get(sport)
+    if not url: return {}
+    try:
+        r = _http.get(url, headers=ESPN_DEF_HEADERS, timeout=12)
+        if r.status_code != 200: return {}
+        data  = r.json()
+        teams = data.get("sports",[{}])[0].get("leagues",[{}])[0].get("teams",[]) if "sports" in data else data.get("teams",[])
+        rankings = {}; raw = []
+        for te in teams:
+            t    = te.get("team", te)
+            abbr = t.get("abbreviation","")
+            name = t.get("displayName","")
+            smap = {}
+            for sg in t.get("stats",{}).get("splits",[]):
+                for s in sg.get("stats",[]):
+                    if s.get("value") is not None:
+                        smap[s.get("name","").lower()] = float(s["value"])
+            pa = None
+            if sport=="NBA":    pa=smap.get("pointsagainst",smap.get("opppts"))
+            elif sport=="MLB":  pa=smap.get("era",smap.get("earnedrunavg"))
+            elif sport=="NFL":  pa=smap.get("pointsagainst",smap.get("totalyardsagainst"))
+            elif sport=="NHL":  pa=smap.get("goalsagainst",smap.get("goalsagainstpergame"))
+            elif sport=="WNBA": pa=smap.get("pointsagainst",smap.get("opppts"))
+            if abbr and pa is not None:
+                rankings[abbr]={"name":name,"pts_allowed":pa,"sport":sport}
+                raw.append((abbr,pa))
+        raw.sort(key=lambda x: x[1], reverse=True)
+        n=len(raw)
+        for rank,(abbr,_) in enumerate(raw,1):
+            if abbr in rankings:
+                rankings[abbr]["rank"]      = rank
+                rankings[abbr]["percentile"]= round((rank-1)/max(n-1,1),3)
+                rankings[abbr]["favorable"] = rank <= n//3
+        if rankings: _safe_save_pkl(cp, rankings)
+        return rankings
+    except Exception as e:
+        print(f"[WARN] fetch_opponent_defense_rankings({sport}): {e}"); return {}
+
+def get_defense_edge(opponent_team: str, sport: str, rankings: dict = None) -> dict:
+    """Get defensive edge multiplier for a prop matchup."""
+    if rankings is None: rankings = fetch_opponent_defense_rankings(sport)
+    if not rankings: return {"favorable":None,"rank":None,"note":"No data","edge_adj":1.0}
+    t = str(opponent_team).upper().strip()
+    d = rankings.get(t)
+    if not d:
+        for abbr,data in rankings.items():
+            if t in data.get("name","").upper() or abbr in t: d=data; break
+    if not d: return {"favorable":None,"rank":None,"note":f"{opponent_team} not found","edge_adj":1.0}
+    rank=d.get("rank",0); pct=d.get("percentile",0.5); n=len(rankings)
+    if pct<=0.25:   adj,note=1.08,f"🎯 Weak defense (#{rank}/{n})"
+    elif pct<=0.50: adj,note=1.03,f"📊 Below-avg defense (#{rank}/{n})"
+    elif pct<=0.75: adj,note=0.97,f"📊 Above-avg defense (#{rank}/{n})"
+    else:           adj,note=0.92,f"🛡️ Elite defense (#{rank}/{n})"
+    return {"favorable":d.get("favorable",False),"rank":rank,"n_teams":n,
+            "percentile":pct,"note":note,"edge_adj":adj,"sport":sport}
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.

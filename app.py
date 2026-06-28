@@ -43,6 +43,7 @@ except ImportError:
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     calibrate_tier_thresholds, compute_clv_with_tier, adjusted_edge, analyze_loss_postmortem,
+    optimize_daily_bet_sizing,
     normalize_stat_type, hot_streak_regression_risk,
     no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
     devig_best, compute_clv, compute_clv_novig,
@@ -10213,6 +10214,8 @@ def load_sport_data(sport):
     def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
+    def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
+    def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
     def _pf_betonline_off():   return fetch_betonline_offering(sport)
     def _pf_bovada_lines():    return fetch_bovada_game_lines(sport)
     def _pf_bovada_props():    return fetch_bovada_props(sport)
@@ -10260,7 +10263,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines,
-        _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
+        _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -10276,7 +10279,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw,
-     caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
+     fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -10360,6 +10363,8 @@ def load_sport_data(sport):
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
     st.session_state["heritage_game_lines"]  = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"] = bookmaker_lines_raw or []
+    st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
+    st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
     st.session_state["betonline_offering"]   = betonline_off_raw   or []
     st.session_state["bovada_game_lines"]    = bovada_lines_raw    or []
@@ -11860,6 +11865,12 @@ def load_sport_data(sport):
         _n_samp = len(prop.get("GameLog", prop.get("game_log", [])) or [])
         _std_d  = prop.get("StdDev")
         _avg_v  = prop.get("Avg", 0)
+        # Auto-save Pinnacle line to closing line database
+        if player and stat_norm and _pinn_line:
+            try:
+                save_closing_line(player, stat_norm, float(_pinn_line), sport, source="pinnacle")
+            except Exception:
+                pass
         adj_edge, calibrated = adjusted_edge(
             best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history,
             n_samples=_n_samp, std_dev=_std_d, avg=_avg_v
@@ -11892,6 +11903,41 @@ def load_sport_data(sport):
         clv_mult, clv_note = get_clv_edge_adjustment(sport, _get_cal_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
+        # ── Defense ranking adjustment ─────────────────────────────────────
+        if final_edge > 0 and prop.get("Matchup"):
+            try:
+                _opp = prop.get("Matchup","").split(" @ ")[0] if " @ " in prop.get("Matchup","") else ""
+                if _opp:
+                    _dr  = st.session_state.get("defense_rankings") or {}
+                    _de  = get_defense_edge(_opp, sport, _dr or None)
+                    if _de.get("rank"):
+                        prop["DefenseRank"] = _de["rank"]
+                        prop["DefenseNote"] = _de["note"]
+                        final_edge = final_edge * _de.get("edge_adj",1.0)
+                        if _de.get("favorable"):
+                            prop["SignalNotes"] = prop.get("SignalNotes","") + f" {_de['note']}"
+            except Exception:
+                pass
+
+        # ── FantasyPros projection cross-check ──────────────────────────────
+        if player:
+            try:
+                _fp  = st.session_state.get("fantasypros_proj",{}).get(normalize_name(player),{})
+                _fpp = _fp.get("projections",{})
+                _fpv = next((v for k,v in _fpp.items() if stat_norm and stat_norm[:4] in k.lower()),None)
+                if _fpv and float(line or 0) > 0:
+                    _gap = (_fpv - float(line)) / float(line)
+                    prop["FPProjection"] = _fpv
+                    prop["FPGap"]        = _gap
+                    if _gap > 0.08:
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📋 FP:{_fpv:.1f}"
+                        final_edge = min(final_edge*1.04, EDGE_CAP)
+                    elif _gap < -0.08:
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ FP under:{_fpv:.1f}"
+                        final_edge = final_edge*0.92
+            except Exception:
+                pass
+
         # ── Regression-to-mean discount (applied last — after all other mults) ──
         # Only penalises OVER edge. UNDER edge on a hot-streak player is
         # actually supported by the regression thesis, so we leave it alone.
