@@ -6579,7 +6579,7 @@ def scan_all_sports_best_plays():
                     continue
                 edge, prob, _ = compute_multi_signal_edge(line, avg, 112.0, False, 0, "OVER", stat_norm, 0.0, 2, "standard", sport)
                 ev_2 = calculate_prizepicks_ev(prob, 2)
-                tier = get_tier(edge, sport)
+                tier = get_tier(edge, sport, st.session_state.get("calibrated_thresholds"))
                 if edge >= 0.05:
                     results["best_props"].append({"Sport": sport, "Player": player, "Prop": stat_raw, "Line": line, "Side": "OVER", "Edge": edge, "EdgePct": f"{edge:.1%}", "EV_2pick": f"{ev_2:+.1%}", "Tier": tier, "Avg": avg, "Prob": prob})
             if games:
@@ -8403,7 +8403,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
         net = -wager
     if tier is None:
         if edge:
-            tier = get_tier(edge, sport)
+            tier = get_tier(edge, sport, st.session_state.get("calibrated_thresholds"))
         else:
             tier = "APPROVED"
     if prob is None:
@@ -9984,6 +9984,18 @@ def load_sport_data(sport):
                 if _db: st.session_state["nfl_player_db"] = _db
         _live_bl = fetch_nfl_live_baselines()
         if _live_bl: st.session_state["nfl_live_baselines"] = _live_bl
+
+    # ── Auto-calibrate tier thresholds from bet history ────────────────────
+    _sig_perf  = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _hist      = st.session_state.get("history", [])
+    _cal_thresholds = calibrate_tier_thresholds(_sig_perf, _hist, sport)
+    st.session_state["calibrated_thresholds"] = _cal_thresholds
+    if _cal_thresholds.get("_calibrated") and _cal_thresholds.get("_n_records", 0) >= 15:
+        _adj_log = _cal_thresholds.get("_log", {})
+        _adjusted = {k:v for k,v in _cal_thresholds.items() if not k.startswith("_")}
+        st.caption(f"📐 Thresholds auto-calibrated from {_cal_thresholds['_n_records']} {sport} bets: "
+                   f"SOV={_adjusted.get('SOVEREIGN',0):.3f} ELI={_adjusted.get('ELITE',0):.3f} "
+                   f"APP={_adjusted.get('APPROVED',0):.3f} LEAN={_adjusted.get('LEAN',0):.3f}")
 
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults

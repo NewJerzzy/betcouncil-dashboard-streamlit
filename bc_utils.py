@@ -18,15 +18,17 @@ SPORT_EWMA_DECAY = {"NBA": 0.82, "MLB": 0.90, "NHL": 0.85, "WNBA": 0.82, "NFL": 
 # config.py imports streamlit and cannot be imported here (circular import).
 # These pure-data constants are duplicated here verbatim from config.py.
 TIER_THRESHOLDS = {
-    "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
-    "MLB":    {"SOVEREIGN": 0.06, "ELITE": 0.03, "APPROVED": 0.015,"LEAN": 0.008},
-    "NFL":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
-    "NHL":    {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.015},
-    "WNBA":   {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    # Starting baselines — auto-calibrated from bet history via calibrate_tier_thresholds()
+    # MLB tightened (was too loose at 0.06 SOVEREIGN), LEAN raised across all sports
+    "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
+    "MLB":    {"SOVEREIGN": 0.08, "ELITE": 0.05, "APPROVED": 0.025,"LEAN": 0.010},
+    "NFL":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
+    "NHL":    {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.020},
+    "WNBA":   {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
     "GOLF":   {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
     "TENNIS": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
-    "SOCCER": {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.015},
-    "UFC":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.02},
+    "SOCCER": {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.020},
+    "UFC":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
 }
 
 GAME_TIER_THRESHOLDS = {
@@ -2505,17 +2507,132 @@ def calculate_prizepicks_ev(fair_prob, n_picks=2):
     breakeven = prizepicks_breakeven_prob(n_picks)
     return round(fair_prob - breakeven, 4)
 
-def get_tier(edge, sport  # Maps edge % to tier: SOVEREIGN/ELITE/APPROVED/LEAN/PASS
-="NBA") -> str:
+def calibrate_tier_thresholds(signal_performance: list, history: list, sport: str = "NBA") -> dict:
+    """
+    Auto-calibrate tier thresholds from observed bet outcomes.
+
+    Logic:
+    - For each tier (SOVEREIGN/ELITE/APPROVED/LEAN), compute observed hit rate
+    - Compare to expected hit rate implied by the model's predicted prob
+    - If model is overconfident (hit rate < predicted prob): tighten threshold (raise it)
+    - If model is underconfident (hit rate > predicted prob): loosen threshold (lower it)
+    - Requires minimum 15 bets per tier for adjustment, 30 for full confidence
+    - Adjustment capped at ±25% of current threshold to prevent wild swings
+    - Returns adjusted thresholds dict for the sport
+
+    Called automatically on each board load. Results stored in session_state.
+    """
+    from math import sqrt
+
+    # Base thresholds (fallback if insufficient data)
+    BASE_THRESHOLDS = {
+        "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
+        "MLB":    {"SOVEREIGN": 0.08, "ELITE": 0.05, "APPROVED": 0.025,"LEAN": 0.010},
+        "NFL":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
+        "NHL":    {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.020},
+        "WNBA":   {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
+        "GOLF":   {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+        "TENNIS": {"SOVEREIGN": 0.15, "ELITE": 0.10, "APPROVED": 0.05, "LEAN": 0.02},
+        "SOCCER": {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.020},
+        "UFC":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
+    }
+    base = BASE_THRESHOLDS.get(sport, BASE_THRESHOLDS["NBA"]).copy()
+
+    # Combine signal_performance + history for this sport
+    all_records = []
+    for r in (signal_performance or []):
+        if r.get("sport", "") == sport or not sport:
+            all_records.append(r)
+    for r in (history or []):
+        if r.get("sport", "") == sport and r.get("outcome") in ("WIN","LOSS"):
+            all_records.append({
+                "tier":    r.get("tier", ""),
+                "outcome": r.get("outcome", ""),
+                "win":     1 if r.get("outcome") == "WIN" else 0,
+                "prob":    r.get("prob", 0.5),
+                "edge":    r.get("edge", 0),
+            })
+
+    if not all_records:
+        return base
+
+    # Per-tier stats
+    tier_stats = {}
+    for rec in all_records:
+        tier = rec.get("tier", "")
+        if tier not in ("SOVEREIGN","ELITE","APPROVED","LEAN"):
+            continue
+        if tier not in tier_stats:
+            tier_stats[tier] = {"wins": 0, "total": 0, "prob_sum": 0.0}
+        ts = tier_stats[tier]
+        ts["total"] += 1
+        ts["wins"]  += int(rec.get("win", 0))
+        ts["prob_sum"] += float(rec.get("prob", 0.5) or 0.5)
+
+    adjusted = base.copy()
+    adjustment_log = {}
+
+    for tier, ts in tier_stats.items():
+        n = ts["total"]
+        if n < 15:
+            adjustment_log[tier] = f"n={n} < 15 min — no adjustment"
+            continue
+
+        hit_rate     = ts["wins"] / n
+        avg_pred_prob = ts["prob_sum"] / n
+        sem          = sqrt(hit_rate * (1 - hit_rate) / n)
+
+        # Calibration error: positive = overconfident, negative = underconfident
+        calibration_error = avg_pred_prob - hit_rate
+
+        # Confidence weight: more bets = more adjustment allowed
+        confidence = min(1.0, n / 30)  # full confidence at 30+ bets
+
+        # Adjustment direction:
+        # Overconfident (model predicts 65% but hitting 55%) → tighten (raise threshold)
+        # Underconfident (model predicts 55% but hitting 65%) → loosen (lower threshold)
+        current = base[tier]
+        max_adj  = current * 0.25  # cap at 25% change
+        raw_adj  = calibration_error * confidence * 0.5  # scale factor
+        adj      = max(-max_adj, min(max_adj, raw_adj))
+
+        new_threshold = round(current + adj, 4)
+        adjusted[tier] = new_threshold
+
+        direction = "tightened" if adj > 0 else "loosened"
+        adjustment_log[tier] = (
+            f"n={n}, hit={hit_rate:.1%}, pred={avg_pred_prob:.1%}, "
+            f"SEM=±{sem:.3f}, adj={adj:+.4f} ({direction}) → {new_threshold:.4f}"
+        )
+
+    # Enforce ordering: SOVEREIGN > ELITE > APPROVED > LEAN
+    tiers = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
+    for i in range(1, len(tiers)):
+        if adjusted[tiers[i]] >= adjusted[tiers[i-1]]:
+            adjusted[tiers[i]] = round(adjusted[tiers[i-1]] * 0.6, 4)
+
+    adjusted["_log"]         = adjustment_log
+    adjusted["_n_records"]   = len(all_records)
+    adjusted["_sport"]       = sport
+    adjusted["_calibrated"]  = True
+
+    return adjusted
+
+def get_tier(edge, sport="NBA", calibrated_thresholds=None) -> str:
+    """Maps edge to tier. Uses calibrated thresholds from session history if available."""
     try:
         edge = float(edge or 0)
     except (TypeError, ValueError):
         edge = 0.0
-    thresholds = TIER_THRESHOLDS.get(sport, TIER_THRESHOLDS["NBA"])
+    # Use calibrated thresholds if provided, else fall back to static TIER_THRESHOLDS
+    if calibrated_thresholds and calibrated_thresholds.get("_calibrated"):
+        thresholds = calibrated_thresholds
+    else:
+        thresholds = TIER_THRESHOLDS.get(sport, TIER_THRESHOLDS["NBA"])
     if edge >= thresholds["SOVEREIGN"]: return "SOVEREIGN"
     if edge >= thresholds["ELITE"]:     return "ELITE"
     if edge >= thresholds["APPROVED"]:  return "APPROVED"
-    if edge >= thresholds["LEAN"]: return "LEAN"
+    if edge >= thresholds["LEAN"]:      return "LEAN"
     return "PASS"
 
 # parlay_prob — moved to utils.py
