@@ -11318,6 +11318,20 @@ def fetch_betmgm_game_lines(sport: str) -> list:
         print(f"[WARN] fetch_betmgm_game_lines: {e}")
         return []
 
+def fetch_espnbet_game_lines(sport: str) -> list:
+    """ESPN BET game lines via Kambi (offering_id='espnbet'). Cached 60 min."""
+    return _fetch_kambi_game_lines("espnbet", sport, "ESPN BET")
+
+
+def fetch_fanatics_game_lines(sport: str) -> list:
+    """Fanatics Sportsbook game lines via Kambi (offering_id='fanaticssb'). Cached 60 min."""
+    return _fetch_kambi_game_lines("fanaticssb", sport, "Fanatics")
+
+
+def fetch_thescore_game_lines(sport: str) -> list:
+    """theScore Bet game lines via Kambi (offering_id='thescore'). Cached 60 min."""
+    return _fetch_kambi_game_lines("thescore", sport, "theScore")
+
 def fetch_sharpapi_lines(sport: str) -> list:
     """
     Fetch game lines from SharpAPI — 20+ books, Pinnacle no-vig EV pre-computed.

@@ -3315,6 +3315,18 @@ def compute_market_agreement_score(prop, public_betting=None):
         elif rlm.get("has_sharp"):
             score += 5
     
+    # ESPN BET / Fanatics / theScore (Kambi)
+    _kambi_new = {
+        "ESPN BET":  st.session_state.get("espnbet_game_lines", []),
+        "Fanatics":  st.session_state.get("fanatics_game_lines", []),
+        "theScore":  st.session_state.get("thescore_game_lines", []),
+    }
+    for _kname, _kdata in _kambi_new.items():
+        if _kdata:
+            _src_statuses.append({"Source": f"{_kname} (game lines)", "Status": f"🟢 {len(_kdata)} lines", "Action": "None"})
+        else:
+            _src_statuses.append({"Source": f"{_kname} (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
     # SharpAPI
     _sharpapi_st = st.session_state.get("sharpapi_lines", [])
     _sharpapi_props_st = st.session_state.get("sharpapi_props", [])
@@ -10454,6 +10466,9 @@ def load_sport_data(sport):
     def _pf_wynnbet_lines():   return fetch_wynnbet_game_lines(sport)
     def _pf_unibet_lines():    return fetch_unibet_game_lines(sport)
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
+    def _pf_espnbet_lines():   return fetch_espnbet_game_lines(sport)
+    def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
+    def _pf_thescore_lines():  return fetch_thescore_game_lines(sport)
     def _pf_sharpapi_lines():  return fetch_sharpapi_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
@@ -10503,6 +10518,7 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
+        _pf_espnbet_lines, _pf_fanatics_lines, _pf_thescore_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines,
         _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
@@ -10519,6 +10535,7 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
+     espnbet_lines_raw, fanatics_lines_raw, thescore_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw,
      caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
@@ -10590,6 +10607,9 @@ def load_sport_data(sport):
     st.session_state["wynnbet_game_lines"]   = wynnbet_lines_raw   or []
     st.session_state["unibet_game_lines"]    = unibet_lines_raw    or []
     st.session_state["bet365_game_lines"]    = bet365_lines_raw    or []
+    st.session_state["espnbet_game_lines"]   = espnbet_lines_raw   or []
+    st.session_state["fanatics_game_lines"]  = fanatics_lines_raw  or []
+    st.session_state["thescore_game_lines"]  = thescore_lines_raw  or []
     st.session_state["sharpapi_lines"]       = sharpapi_lines_raw  or []
     st.session_state["sharpapi_props"]       = sharpapi_props_raw  or []
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
