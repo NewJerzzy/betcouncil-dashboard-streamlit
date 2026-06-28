@@ -43,7 +43,7 @@ except ImportError:
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     calibrate_tier_thresholds, compute_clv_with_tier, adjusted_edge, analyze_loss_postmortem,
-    optimize_daily_bet_sizing,
+    optimize_daily_bet_sizing, correlated_parlay_kelly,
     normalize_stat_type, hot_streak_regression_risk,
     no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
     devig_best, compute_clv, compute_clv_novig,
@@ -16302,6 +16302,50 @@ with tabs[4]:
             f'</div>',
             unsafe_allow_html=True
         )
+
+    # ── Daily Bet Sizing Optimizer ─────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 💰 Daily Bet Sizing Optimizer")
+    st.caption("Optimal wager sizes for today's picks — accounts for tier Kelly, correlation, and daily risk cap.")
+    _board_for_sizing = [p for p in st.session_state.get("board_data",[])
+                         if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED","LEAN")
+                         and p.get("Edge",0) > 0]
+    if _board_for_sizing:
+        _bankroll_sz = st.session_state.get("bankroll", 100.0)
+        _max_risk_pct = st.slider("Max daily risk %", 5, 25, 15, key="max_risk_slider") / 100
+        _sized = optimize_daily_bet_sizing(
+            picks=_board_for_sizing[:20],
+            bankroll=_bankroll_sz,
+            max_daily_risk_pct=_max_risk_pct,
+        )
+        _sz_c1,_sz_c2,_sz_c3,_sz_c4 = st.columns(4)
+        _sz_c1.metric("Total Risk", f"${_sized['total_risk']:.2f}", f"{_sized['total_risk_pct']:.1%} of bankroll")
+        _sz_c2.metric("Corr Adj", f"{_sized['correlation_adj']:.0%}", help="Reduction from correlated picks")
+        _sz_c3.metric("Scale Applied", f"{_sized['scale_applied']:.0%}", help="Cap enforcement scaling")
+        _sz_c4.metric("Max Daily", f"${_sized['max_daily_risk']:.2f}")
+        if _sized.get("warning"):
+            st.warning(_sized["warning"])
+        st.markdown("**Recommended allocation per tier (per bet):**")
+        _ra = _sized.get("recommended_allocation",{})
+        _ra_cols = st.columns(4)
+        for ci,(_tier,_amt) in enumerate([("SOVEREIGN",_ra.get("SOVEREIGN",0)),
+                                           ("ELITE",_ra.get("ELITE",0)),
+                                           ("APPROVED",_ra.get("APPROVED",0)),
+                                           ("LEAN",_ra.get("LEAN",0))]):
+            _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#3b82f6","LEAN":"#f59e0b"}[_tier]
+            _ra_cols[ci].markdown(
+                f'<div style="background:#0d1520;border:1px solid {_tc}44;border-radius:8px;padding:10px;text-align:center">'
+                f'<div style="color:{_tc};font-size:11px;font-weight:700">{_tier}</div>'
+                f'<div style="color:#e8f0f8;font-size:18px;font-weight:700">${_amt:.2f}</div>'
+                f'</div>', unsafe_allow_html=True)
+        # Show sized picks
+        _sized_df = [{"Player":p.get("Player",""),"Prop":p.get("Prop",""),"Tier":p.get("Tier",""),
+                       "Edge":f"{p.get('Edge',0):.1%}","Wager":f"${p.get('adj_wager',0):.2f}"}
+                     for p in _sized.get("picks_sized",[]) if p.get("adj_wager",0) > 0]
+        if _sized_df:
+            st.dataframe(_sized_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Load a board to see sizing recommendations.")
 
     # ── Projection Confidence Overview ──────────────────────
     st.markdown("---")

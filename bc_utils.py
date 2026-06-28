@@ -2669,6 +2669,170 @@ def calculate_prizepicks_ev(fair_prob, n_picks=2):
     breakeven = prizepicks_breakeven_prob(n_picks)
     return round(fair_prob - breakeven, 4)
 
+
+def correlated_parlay_kelly(legs: list, bankroll: float,
+                             base_kelly_fraction: float = 0.15) -> dict:
+    """
+    Compute Kelly sizing for a correlated parlay.
+
+    Standard Kelly assumes independence between legs. In parlays:
+    - Same-game legs are highly correlated (r ≈ 0.3-0.7)
+    - Same-sport same-day legs are moderately correlated (r ≈ 0.1-0.3)
+    - Cross-sport legs are near-independent (r ≈ 0.0-0.1)
+
+    Method: Adjust the joint win probability for correlation using
+    copula-style adjustment, then apply fractional Kelly.
+
+    legs: list of {prob, odds_american, tier, sport, matchup, player, prop}
+    bankroll: current bankroll
+    base_kelly_fraction: fractional Kelly multiplier (default 0.15)
+
+    Returns: {
+        kelly_pct, wager, edge, joint_prob_independent,
+        joint_prob_correlated, correlation_discount,
+        leg_analysis, warnings
+    }
+    """
+    from math import log, exp, sqrt, prod
+
+    if not legs:
+        return {"kelly_pct": 0.0, "wager": 0.0, "warnings": ["No legs provided"]}
+
+    warnings = []
+
+    # ── Step 1: Extract leg probabilities and parlay odds ─────────────────
+    leg_probs  = []
+    leg_odds_f = []  # decimal odds per leg
+
+    for leg in legs:
+        prob = float(leg.get("prob", 0.5) or 0.5)
+        odds = leg.get("odds_american", leg.get("BestOdds", leg.get("OverOdds", "-110")))
+        try:
+            odds_f = float(str(odds).replace("+",""))
+            if odds_f > 0:
+                dec = odds_f / 100 + 1
+            else:
+                dec = 100 / abs(odds_f) + 1
+        except Exception:
+            dec = 1.91  # default -110
+        leg_probs.append(max(0.01, min(0.99, prob)))
+        leg_odds_f.append(dec)
+
+    # ── Step 2: Compute correlation matrix ───────────────────────────────
+    n = len(legs)
+    # Correlation between each pair of legs
+    corr_matrix = [[1.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i+1, n):
+            leg_i = legs[i]
+            leg_j = legs[j]
+            mi = leg_i.get("matchup","")
+            mj = leg_j.get("matchup","")
+            si = leg_i.get("sport","")
+            sj = leg_j.get("sport","")
+
+            # Same matchup → high correlation
+            if mi and mj and mi == mj:
+                r = 0.45
+            # Same sport, same day → moderate correlation
+            elif si and sj and si == sj:
+                r = 0.20
+            # Cross sport → near independent
+            else:
+                r = 0.05
+
+            corr_matrix[i][j] = r
+            corr_matrix[j][i] = r
+
+    # ── Step 3: Joint probability (independent) ───────────────────────────
+    joint_prob_indep = 1.0
+    for p in leg_probs:
+        joint_prob_indep *= p
+
+    # ── Step 4: Correlation adjustment to joint probability ───────────────
+    # Using Pearson copula approximation:
+    # P(all win | correlated) ≈ P(all win | indep) * prod(correction factors)
+    # For positive correlation: joint prob is HIGHER than independent product
+    # because wins tend to come together
+    avg_corr = 0.0
+    n_pairs  = 0
+    for i in range(n):
+        for j in range(i+1, n):
+            avg_corr += corr_matrix[i][j]
+            n_pairs  += 1
+    avg_corr = avg_corr / n_pairs if n_pairs > 0 else 0.0
+
+    # Correlation discount on Kelly (positive correlation = more variance = smaller Kelly)
+    # Satchell & Thorp correction: Kelly_corr = Kelly_indep * (1 - avg_corr * (n-1) / (2*n))
+    corr_discount = 1.0 - avg_corr * (n - 1) / (2 * n)
+    corr_discount = max(0.30, min(1.0, corr_discount))
+
+    # Adjusted joint prob (wins cluster together with positive correlation)
+    joint_prob_corr = joint_prob_indep ** (1.0 - avg_corr * 0.3)
+    joint_prob_corr = max(0.001, min(0.999, joint_prob_corr))
+
+    # ── Step 5: Parlay decimal odds ──────────────────────────────────────
+    parlay_dec_odds = 1.0
+    for dec in leg_odds_f:
+        parlay_dec_odds *= dec
+    # Sportsbook takes a cut — apply standard vig discount
+    parlay_dec_odds *= 0.97  # ~3% total vig
+
+    # ── Step 6: Kelly criterion on the parlay ────────────────────────────
+    b = parlay_dec_odds - 1
+    p = joint_prob_corr
+    q = 1 - p
+    kelly_full = max(0.0, (b * p - q) / b)
+
+    # Apply correlation discount and fractional Kelly
+    kelly_pct  = kelly_full * base_kelly_fraction * corr_discount
+    kelly_pct  = min(kelly_pct, 0.10)  # cap parlay at 10% (half of singles cap)
+    wager      = round(bankroll * kelly_pct, 2)
+    wager      = max(1.0, wager)
+
+    # ── Step 7: Warnings ─────────────────────────────────────────────────
+    if n > 4:
+        warnings.append(f"⚠️ {n}-leg parlays have compounding variance — consider splitting into smaller combos")
+    if avg_corr > 0.35:
+        warnings.append(f"⚠️ High average correlation ({avg_corr:.2f}) — same-game legs reduce edge")
+    if joint_prob_corr < 0.15:
+        warnings.append(f"⚠️ Joint win probability only {joint_prob_corr:.1%} — long shot parlay")
+    if kelly_pct < 0.005:
+        warnings.append("ℹ️ Kelly recommends less than 0.5% — marginal EV parlay")
+    n_same_game = sum(1 for i in range(n) for j in range(i+1,n)
+                      if legs[i].get("matchup","") == legs[j].get("matchup","") and legs[i].get("matchup"))
+    if n_same_game > 0:
+        warnings.append(f"ℹ️ {n_same_game} same-game leg pair(s) detected — correlation accounted for in sizing")
+
+    # ── Step 8: Per-leg analysis ─────────────────────────────────────────
+    leg_analysis = []
+    for i, (leg, prob, dec) in enumerate(zip(legs, leg_probs, leg_odds_f)):
+        individual_ev = prob * dec - 1
+        leg_analysis.append({
+            "player":     leg.get("player", leg.get("Player","")),
+            "prop":       leg.get("prop", leg.get("Prop","")),
+            "prob":       prob,
+            "dec_odds":   round(dec,3),
+            "individual_ev": round(individual_ev, 4),
+            "tier":       leg.get("tier", leg.get("Tier","")),
+        })
+
+    return {
+        "kelly_pct":               round(kelly_pct, 4),
+        "wager":                   wager,
+        "edge":                    round(kelly_full, 4),
+        "joint_prob_independent":  round(joint_prob_indep, 4),
+        "joint_prob_correlated":   round(joint_prob_corr, 4),
+        "parlay_dec_odds":         round(parlay_dec_odds, 3),
+        "avg_correlation":         round(avg_corr, 3),
+        "correlation_discount":    round(corr_discount, 3),
+        "n_legs":                  n,
+        "leg_analysis":            leg_analysis,
+        "warnings":                warnings,
+        "method":                  "Pearson copula + Satchell-Thorp correlation discount",
+    }
+
+
 def calibrate_tier_thresholds(signal_performance: list, history: list, sport: str = "NBA") -> dict:
     """
     Auto-calibrate tier thresholds from observed bet outcomes.
