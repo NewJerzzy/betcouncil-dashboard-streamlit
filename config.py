@@ -1487,3 +1487,6 @@ NFL_STAT_NORMALIZE_MAP = {
     "rec tds": "receiving_touchdowns", "pass att": "pass_attempts",
     "completions": "completions", "longest rec": "longest_reception",
 }
+
+BOOKMAKER_CF      = ""  # cf_clearance cookie
+BOOKMAKER_SESSID  = ""  # PHPSESSID cookie

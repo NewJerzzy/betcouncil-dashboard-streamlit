@@ -12619,6 +12619,136 @@ def fetch_soccer_standings(league: str = "usa.1", season: int = 2026) -> list:
 
 # ── PropSwap (secondary market pricing) ──────────────────────────────────────
 
+
+BOOKMAKER_SPORT_PATHS = {
+    "MLB":  "baseball",
+    "NBA":  "basketball/nba",
+    "NFL":  "football/nfl",
+    "NHL":  "hockey/nhl",
+    "WNBA": "basketball/wnba",
+}
+
+
+def fetch_bookmaker_game_lines(sport: str) -> list:
+    """
+    Fetch Bookmaker.eu game lines via HTML scraping (server-rendered page).
+    Auth: cf_clearance + PHPSESSID cookies stored in Streamlit secrets.
+    Cached 20 min.
+    """
+    sport_path = BOOKMAKER_SPORT_PATHS.get(sport)
+    if not sport_path:
+        return []
+
+    try:
+        cf   = BOOKMAKER_CF   if BOOKMAKER_CF   else ""
+        sess = BOOKMAKER_SESSID if BOOKMAKER_SESSID else ""
+    except Exception:
+        cf = sess = ""
+
+    cache_path = os.path.join(CACHE_DIR, f"bookmaker_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+
+    try:
+        url = f"https://lines.bookmaker.eu/en/sports/{sport_path}/"
+        cookie_parts = []
+        if cf:   cookie_parts.append(f"cf_clearance={cf}")
+        if sess: cookie_parts.append(f"PHPSESSID={sess}")
+        headers = {
+            "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+            "Referer":         "https://lines.bookmaker.eu/en/sports/",
+            "upgrade-insecure-requests": "1",
+        }
+        if cookie_parts:
+            headers["Cookie"] = "; ".join(cookie_parts)
+
+        r = _http.get(url, headers=headers, timeout=20)
+        if r.status_code != 200:
+            print(f"[WARN] fetch_bookmaker_game_lines HTTP {r.status_code}")
+            return []
+
+        html = r.text
+        results = []
+
+        # Try JSON embedded in script tag
+        import re as _re
+        for pattern in [
+            r'var\s+lines\s*=\s*(\[.*?\]);',
+            r'var\s+events\s*=\s*(\[.*?\]);',
+            r'"events"\s*:\s*(\[.*?\])',
+        ]:
+            jm = _re.search(pattern, html, _re.S)
+            if jm:
+                try:
+                    events = json.loads(jm.group(1))
+                    for ev in events:
+                        home = ev.get("home", ev.get("homeTeam", ""))
+                        away = ev.get("away", ev.get("awayTeam", ""))
+                        if not home or not away: continue
+                        game = f"{away} @ {home}"
+                        for mkt, sel, odds_key in [
+                            ("Moneyline", away, "awayML"),
+                            ("Moneyline", home, "homeML"),
+                        ]:
+                            odds = ev.get(odds_key, "")
+                            if odds:
+                                results.append({"game":game,"home":home,"away":away,
+                                    "market":mkt,"selection":sel,"odds":odds,
+                                    "book":"Bookmaker","sport":sport,"source":"bookmaker"})
+                    if results:
+                        _safe_save_pkl(cache_path, results)
+                        return results
+                except Exception:
+                    pass
+
+        # HTML table parsing — Bookmaker renders odds in data attributes
+        rows = _re.findall(
+            r'data-away="([^"]+)"[^>]*data-home="([^"]+)"[^>]*'
+            r'(?:data-away-ml="([^"]*)")?[^>]*(?:data-home-ml="([^"]*)")?'
+            r'(?:[^>]*data-total-line="([^"]*)")?'
+            r'(?:[^>]*data-over-price="([^"]*)")?'
+            r'(?:[^>]*data-under-price="([^"]*)")?'
+            r'(?:[^>]*data-away-spread="([^"]*)")?'
+            r'(?:[^>]*data-home-spread="([^"]*)")?',
+            html, _re.S
+        )
+        for row in rows:
+            away, home = row[0].strip(), row[1].strip()
+            if not away or not home: continue
+            game = f"{away} @ {home}"
+            away_ml  = row[2] if len(row) > 2 else ""
+            home_ml  = row[3] if len(row) > 3 else ""
+            tot_line = row[4] if len(row) > 4 else ""
+            over_p   = row[5] if len(row) > 5 else ""
+            under_p  = row[6] if len(row) > 6 else ""
+            away_sp  = row[7] if len(row) > 7 else ""
+            home_sp  = row[8] if len(row) > 8 else ""
+            for mkt, sel, odds in [
+                ("Moneyline", away, away_ml),
+                ("Moneyline", home, home_ml),
+                ("Total", f"Over {tot_line}",  over_p),
+                ("Total", f"Under {tot_line}", under_p),
+                ("Spread", f"{away} {away_sp}", away_sp),
+                ("Spread", f"{home} {home_sp}", home_sp),
+            ]:
+                if odds and odds not in ("", "0", "EV"):
+                    results.append({"game":game,"home":home,"away":away,
+                        "market":mkt,"selection":sel,"odds":odds,
+                        "book":"Bookmaker","sport":sport,"source":"bookmaker"})
+
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+
+    except Exception as e:
+        print(f"[WARN] fetch_bookmaker_game_lines: {e}")
+        return []
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
