@@ -18480,7 +18480,7 @@ with tabs[9]:
     # Heritage Sports
     _her = st.session_state.get("heritage_game_lines", [])
     _src_statuses.append({"Source": "Heritage Sports (sharp lines)",
-        "Status": f"🟢 {len(_her)} lines" if _her else ("⚪ Not loaded" if HERITAGE_GSID else "🟡 Add HERITAGE_GSID"),
+        "Status": f"🟢 {len(_her)} lines" if _her else ("⚪ Not loaded" if st.secrets.get("HERITAGE_GSID") else "🟡 Add HERITAGE_GSID"),
         "Action": "None"})
 
 
