@@ -16446,6 +16446,179 @@ with tabs[4]:
     else:
         st.info(f"Activates after 10 resolved bets with CLV data. ({_clb_total} tracked so far)")
 
+
+        st.markdown("---")
+        st.markdown("### 🎯 Calibration Dashboard — Predicted vs Actual Hit Rate")
+        st.caption(
+            "If your model is well-calibrated, the bars should match the diagonal. "
+            "Bars above diagonal = underconfident (model is too conservative). "
+            "Bars below = overconfident (model claims more edge than it has)."
+        )
+
+        # ── Build calibration data from history ──────────────────────────────
+        _hist_all = st.session_state.get("history", [])
+        _resolved  = [r for r in _hist_all if r.get("outcome") in ("WIN","LOSS")]
+
+        if len(_resolved) >= 10:
+            # ── Tier calibration ─────────────────────────────────────────────
+            _tier_cal = {}
+            for _r in _resolved:
+                _t = _r.get("tier","")
+                if _t not in ("SOVEREIGN","ELITE","APPROVED","LEAN"): continue
+                _tier_cal.setdefault(_t, {"wins":0,"total":0,"prob_sum":0.0})
+                _tier_cal[_t]["total"] += 1
+                _tier_cal[_t]["wins"]  += int(_r.get("win",0))
+                _tier_cal[_t]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
+
+            _tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
+            _tier_colors = {
+                "SOVEREIGN": "#a855f7",
+                "ELITE":     "#22c55e",
+                "APPROVED":  "#3b82f6",
+                "LEAN":      "#f59e0b",
+            }
+
+            if _tier_cal:
+                _cal_cols = st.columns(len(_tier_cal))
+                _col_idx  = 0
+                for _tier in _tier_order:
+                    if _tier not in _tier_cal: continue
+                    _tc   = _tier_cal[_tier]
+                    _n    = _tc["total"]
+                    _hr   = _tc["wins"] / _n if _n else 0
+                    _pp   = _tc["prob_sum"] / _n if _n else 0.5
+                    _err  = _pp - _hr  # positive = overconfident
+                    _color = _tier_colors.get(_tier, "#6a7a8a")
+                    _err_color = "#22c55e" if abs(_err) < 0.03 else ("#ffd700" if abs(_err) < 0.07 else "#e04040")
+                    _status = "✅ Calibrated" if abs(_err) < 0.03 else ("⚠️ Overconfident" if _err > 0 else "⚡ Underconfident")
+                    _cal_cols[_col_idx].markdown(
+                        f'<div style="background:#0d1520;border:1px solid {_color}40;border-radius:10px;padding:12px;text-align:center">'
+                        f'<div style="font-size:10px;color:{_color};font-weight:700;text-transform:uppercase;letter-spacing:1px">{_tier}</div>'
+                        f'<div style="font-size:11px;color:#6a7a8a;margin:4px 0">n={_n} bets</div>'
+                        f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
+                        f'<span style="font-size:11px;color:#8899aa">Predicted</span>'
+                        f'<span style="font-size:14px;font-weight:700;color:#e8f0f8">{_pp:.1%}</span></div>'
+                        f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
+                        f'<span style="font-size:11px;color:#8899aa">Actual</span>'
+                        f'<span style="font-size:14px;font-weight:700;color:{_color}">{_hr:.1%}</span></div>'
+                        f'<div style="background:#1a2a3a;border-radius:4px;height:6px;margin:8px 0">'
+                        f'<div style="background:{_color};border-radius:4px;height:6px;width:{min(100,_hr*100):.0f}%"></div></div>'
+                        f'<div style="font-size:11px;color:{_err_color};font-weight:600">{_status}</div>'
+                        f'<div style="font-size:10px;color:{_err_color}">Error: {_err:+.1%}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    _col_idx += 1
+
+                st.markdown("")
+
+            # ── Probability bucket calibration (reliability diagram) ──────────
+            st.markdown("#### 📈 Reliability Diagram — by Probability Bucket")
+            st.caption("Each bucket shows: how often the model predicted that probability range vs how often it actually hit.")
+
+            _buckets = {}
+            _bucket_labels = ["40-45%","45-50%","50-55%","55-60%","60-65%","65-70%","70%+"]
+            _bucket_ranges = [(0.40,0.45),(0.45,0.50),(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),(0.70,1.0)]
+            for _lo,_hi in _bucket_ranges:
+                _buckets[(_lo,_hi)] = {"wins":0,"total":0,"pred_sum":0.0}
+            for _r in _resolved:
+                _p = float(_r.get("prob",0) or 0)
+                for (_lo,_hi) in _bucket_ranges:
+                    if _lo <= _p < _hi:
+                        _buckets[(_lo,_hi)]["total"] += 1
+                        _buckets[(_lo,_hi)]["wins"]  += int(_r.get("win",0))
+                        _buckets[(_lo,_hi)]["pred_sum"] += _p
+                        break
+
+            _rel_rows = []
+            for (_lo,_hi),_label in zip(_bucket_ranges,_bucket_labels):
+                _b = _buckets[(_lo,_hi)]
+                if _b["total"] < 3: continue
+                _actual = _b["wins"] / _b["total"]
+                _pred   = _b["pred_sum"] / _b["total"]
+                _diff   = _actual - _pred
+                _rel_rows.append({
+                    "Bucket": _label,
+                    "n": _b["total"],
+                    "Predicted": f"{_pred:.1%}",
+                    "Actual":    f"{_actual:.1%}",
+                    "Gap":       f"{_diff:+.1%}",
+                    "Status":    "✅" if abs(_diff) < 0.04 else ("⚡" if _diff > 0 else "⚠️"),
+                })
+            if _rel_rows:
+                st.dataframe(_rel_rows, use_container_width=True, hide_index=True)
+
+            # ── Sport calibration breakdown ───────────────────────────────────
+            st.markdown("#### 🏆 By Sport")
+            _sport_cal = {}
+            for _r in _resolved:
+                _sp = _r.get("sport","")
+                if not _sp: continue
+                _sport_cal.setdefault(_sp, {"wins":0,"total":0,"prob_sum":0.0,"edge_sum":0.0})
+                _sport_cal[_sp]["total"]    += 1
+                _sport_cal[_sp]["wins"]     += int(_r.get("win",0))
+                _sport_cal[_sp]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
+                _sport_cal[_sp]["edge_sum"] += float(_r.get("edge",0) or 0)
+
+            _sport_rows = []
+            for _sp, _sc in sorted(_sport_cal.items(), key=lambda x:-x[1]["total"]):
+                _n  = _sc["total"]
+                _hr = _sc["wins"] / _n
+                _pp = _sc["prob_sum"] / _n
+                _ae = _sc["edge_sum"] / _n
+                _err = _pp - _hr
+                _sport_rows.append({
+                    "Sport":      _sp,
+                    "Bets":       _n,
+                    "Hit Rate":   f"{_hr:.1%}",
+                    "Pred Prob":  f"{_pp:.1%}",
+                    "Avg Edge":   f"{_ae:+.2%}",
+                    "Cal Error":  f"{_err:+.1%}",
+                    "Status":     "✅ Good" if abs(_err) < 0.04 else ("⚠️ Over" if _err > 0 else "⚡ Under"),
+                })
+            if _sport_rows:
+                st.dataframe(_sport_rows, use_container_width=True, hide_index=True)
+
+            # ── Calibration trend (last 30 vs lifetime) ───────────────────────
+            st.markdown("#### 📅 Recent vs Lifetime")
+            _recent = [r for r in _resolved[-30:] if r.get("prob")]
+            if len(_recent) >= 5:
+                _r_hr   = sum(r.get("win",0) for r in _recent) / len(_recent)
+                _r_pp   = sum(float(r.get("prob",0.5)) for r in _recent) / len(_recent)
+                _l_hr   = sum(r.get("win",0) for r in _resolved) / len(_resolved)
+                _l_pp   = sum(float(r.get("prob",0.5)) for r in _resolved) / len(_resolved)
+                _tc1,_tc2,_tc3,_tc4 = st.columns(4)
+                _tc1.metric("Last 30 Hit Rate",    f"{_r_hr:.1%}", f"{_r_hr-_l_hr:+.1%} vs lifetime")
+                _tc2.metric("Last 30 Avg Prob",    f"{_r_pp:.1%}", f"{_r_pp-_l_pp:+.1%} vs lifetime")
+                _tc3.metric("Lifetime Hit Rate",   f"{_l_hr:.1%}")
+                _tc4.metric("Lifetime Avg Prob",   f"{_l_pp:.1%}", f"Error: {_l_pp-_l_hr:+.1%}")
+
+            # ── Auto-calibration status ───────────────────────────────────────
+            st.markdown("---")
+            _cal_thresh = st.session_state.get("calibrated_thresholds", {})
+            if _cal_thresh.get("_calibrated"):
+                st.markdown("#### ⚙️ Active Threshold Calibration")
+                st.caption(f"Auto-calibrated from {_cal_thresh.get('_n_records',0)} {_cal_thresh.get('_sport','')} bets")
+                _thresh_rows = []
+                for _t in ["SOVEREIGN","ELITE","APPROVED","LEAN"]:
+                    _base = {"SOVEREIGN":0.12,"ELITE":0.08,"APPROVED":0.04,"LEAN":0.03}.get(_t,0)
+                    _cur  = _cal_thresh.get(_t, _base)
+                    _log  = _cal_thresh.get("_log",{}).get(_t,"")
+                    _thresh_rows.append({
+                        "Tier":      _t,
+                        "Base":      f"{_base:.3f}",
+                        "Current":   f"{_cur:.3f}",
+                        "Change":    f"{_cur-_base:+.4f}",
+                        "Direction": "⬆️ Tighter" if _cur > _base else ("⬇️ Looser" if _cur < _base else "➡️ Unchanged"),
+                        "Detail":    _log[:60] if _log else "—",
+                    })
+                st.dataframe(_thresh_rows, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"⏳ Auto-calibration activates after 15+ bets per tier. Currently {len(_resolved)} resolved bets logged.")
+        else:
+            st.info(f"📊 Log and resolve **{max(0,10-len(_resolved))} more bets** to unlock the calibration dashboard. Currently {len(_resolved)} resolved.")
+
+
     st.markdown("### 📍 Pinnacle CLV Tracker")
     pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
     if len(pinnacle_data) >= 5:
