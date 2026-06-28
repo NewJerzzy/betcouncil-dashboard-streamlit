@@ -13221,6 +13221,93 @@ def fetch_betslib_models() -> list:
         print(f"[WARN] fetch_betslib_models: {e}"); return []
 
 
+
+def fetch_betslib_events(sport: str = None, category: str = "upcoming", limit: int = 50) -> list:
+    """
+    BetsLib public events endpoint — NO AUTH REQUIRED.
+    category: "upcoming" | "live" | "finished"
+    Returns list of {game, home, away, sport, commence_time, status,
+                     best_odds, sure_bet_count, prediction_count, source}
+    Cached 5 min for live, 20 min for upcoming.
+    """
+    sport_slug = BETSLIB_SPORT_MAP.get(sport) if sport else None
+    cache_key  = f"betslib_events_{sport or 'all'}_{category}"
+    cp         = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    ttl        = 5 if category == "live" else 20
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < ttl:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    try:
+        hdrs = {
+            "Accept":          "application/json, text/plain, */*",
+            "Origin":          "https://signalodds.com",
+            "Referer":         "https://signalodds.com/",
+            "x-client-source": "web",
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        url = f"{BETSLIB_BASE}/events?limit={limit}&sort_by=commence_time&category={category}"
+        if sport_slug:
+            url += f"&sport={sport_slug}"
+        r = _http.get(url, headers=hdrs, timeout=15)
+        if r.status_code != 200:
+            print(f"[WARN] fetch_betslib_events HTTP {r.status_code}"); return []
+        raw   = r.json()
+        items = raw if isinstance(raw, list) else raw.get("data", raw.get("events", raw.get("results", [])))
+        results = []
+        for ev in items:
+            home = ev.get("home_team", ev.get("home", {}))
+            away = ev.get("away_team", ev.get("away", {}))
+            if isinstance(home, dict): home = home.get("name", home.get("full_name", ""))
+            if isinstance(away, dict): away = away.get("name", away.get("full_name", ""))
+            if not home and not away: continue
+            # Parse best odds
+            bods = {}
+            for bo in ev.get("best_odds", ev.get("odds", [])):
+                outcome = bo.get("outcome_name", bo.get("outcome", ""))
+                dec     = float(bo.get("odds", bo.get("price", 1.0)) or 1.0)
+                book    = bo.get("bookmaker_name", bo.get("bookmaker", bo.get("book", "")))
+                if outcome not in bods or dec > bods[outcome]["dec"]:
+                    try:
+                        amer = int((dec-1)*100) if dec >= 2.0 else int(-100/(dec-1))
+                    except Exception:
+                        amer = 0
+                    bods[outcome] = {"book":book,"dec":dec,"american":amer}
+            results.append({
+                "game":             f"{away} @ {home}",
+                "home":             home,
+                "away":             away,
+                "sport":            ev.get("sport", ev.get("sport_key", sport or "")),
+                "commence_time":    ev.get("commence_time", ev.get("start_time", "")),
+                "status":           ev.get("status", category),
+                "best_odds":        bods,
+                "home_ml":          bods.get(home, {}).get("american"),
+                "away_ml":          bods.get(away, {}).get("american"),
+                "best_book_home":   bods.get(home, {}).get("book", ""),
+                "best_book_away":   bods.get(away, {}).get("book", ""),
+                "sure_bet_count":   ev.get("sure_bet_count", 0) or 0,
+                "prediction_count": ev.get("prediction_count", 0) or 0,
+                "has_sure_bet":     (ev.get("sure_bet_count", 0) or 0) > 0,
+                "is_live":          category == "live" or ev.get("status","") == "live",
+                "league":           ev.get("league", ev.get("competition", {}) or {}).get("name","") if isinstance(ev.get("league",{}),dict) else ev.get("league",""),
+                "source":           "betslib",
+                "raw_id":           ev.get("id",""),
+            })
+        if results: _safe_save_pkl(cp, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_betslib_events({sport},{category}): {e}"); return []
+
+
+def fetch_betslib_live_events(sport: str = None) -> list:
+    """Live events from BetsLib — public, no auth. Cached 5 min."""
+    return fetch_betslib_events(sport=sport, category="live", limit=50)
+
+
+def fetch_betslib_upcoming_events(sport: str = None) -> list:
+    """Upcoming events from BetsLib — public, no auth. Cached 20 min."""
+    return fetch_betslib_events(sport=sport, category="upcoming", limit=50)
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
