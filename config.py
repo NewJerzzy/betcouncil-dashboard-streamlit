@@ -1337,6 +1337,25 @@ PARLAYSAVANT_MLB_PROP_MAP = {
 PARLAY_API_BASE = "https://parlay-api.com/v1"
 PARLAY_API_KEY  = st.secrets.get("PARLAY_API_KEY", "")
 SHARPAPI_KEY   = st.secrets.get("SHARPAPI_KEY", "")
+BETMGM_COOKIE  = st.secrets.get("BETMGM_COOKIE", "")
+BETMGM_STATE   = st.secrets.get("BETMGM_STATE", "az")
+
+# BetMGM sport/region/competition IDs
+BETMGM_SPORT_MAP = {
+    "MLB":  {"sportId": 23,  "regionId": 9,  "competitionId": 75},
+    "NBA":  {"sportId": 6,   "regionId": 9,  "competitionId": 6004},
+    "NFL":  {"sportId": 16,  "regionId": 9,  "competitionId": 53},
+    "NHL":  {"sportId": 28,  "regionId": 9,  "competitionId": 146},
+    "WNBA": {"sportId": 113, "regionId": 9,  "competitionId": 8661},
+}
+
+BETMGM_WIDGET_MAP = {
+    "MLB":  "baseball/mlb-gamelines-comp",
+    "NBA":  "basketball/nba-gamelines-comp",
+    "NFL":  "american-football/nfl-gamelines-comp",
+    "NHL":  "hockey/nhl-gamelines-comp",
+    "WNBA": "basketball/wnba-gamelines-comp",
+}
 SHARPAPI_BASE  = "https://api.sharpapi.io/api/v1"
 PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
 POLYMARKET_PATH = os.path.join(CACHE_DIR, "polymarket_markets.json")

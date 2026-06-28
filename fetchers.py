@@ -10903,6 +10903,114 @@ def fetch_unibet_game_lines(sport: str) -> list:
     return _fetch_kambi_game_lines("unibet", sport, "Unibet")
 
 
+def fetch_betmgm_game_lines(sport: str) -> list:
+    """
+    Fetch BetMGM game lines (ML/spread/total) via widgetdata API.
+    No Bearer token needed — uses session cookies from BETMGM_COOKIE secret.
+    Cookie lasts ~24h. State: BETMGM_STATE (default az).
+    Returns list of {game, home, away, market, selection, odds, book, sport, source}
+    Cached 15 min.
+    """
+    cookie = BETMGM_COOKIE
+    state  = BETMGM_STATE or "az"
+    ids    = BETMGM_SPORT_MAP.get(sport, {})
+    widget = BETMGM_WIDGET_MAP.get(sport, "")
+    if not ids or not widget:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"betmgm_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 15:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        sport_id  = ids["sportId"]
+        region_id = ids["regionId"]
+        comp_id   = ids["competitionId"]
+        url = (
+            f"https://www.{state}.betmgm.com/en/sports/api/widget/widgetdata"
+            f"?layoutSize=Small&page=CompetitionLobby"
+            f"&sportId={sport_id}&regionId={region_id}"
+            f"&competitionId={comp_id}&compoundCompetitionId=1:{comp_id}"
+            f"&widgetId=/mobilesports-v1.0/layout/layout_us/modules/{widget}"
+            f"&shouldIncludePayload=true"
+        )
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+            "Referer": f"https://www.{state}.betmgm.com/en/sports",
+            "sports-api-version": "SportsAPIv2",
+            "x-bwin-sports-api": "prod",
+            "x-device-type": "desktop_Windows 11",
+            "x-from-product": "host-app",
+        }
+        if cookie:
+            headers["cookie"] = cookie
+
+        r = _http.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"[WARN] fetch_betmgm_game_lines HTTP {r.status_code}")
+            return []
+
+        data = r.json()
+        results = []
+
+        # Parse widgetdata response — nested structure
+        payload = data.get("payload", data)
+        if isinstance(payload, str):
+            import json as _json
+            payload = _json.loads(payload)
+
+        # Navigate to fixtures
+        fixtures = []
+        if isinstance(payload, dict):
+            for key in ("fixtures", "events", "items", "data"):
+                if key in payload:
+                    fixtures = payload[key]
+                    break
+            # Try deeper nesting
+            if not fixtures:
+                for v in payload.values():
+                    if isinstance(v, list) and v:
+                        fixtures = v
+                        break
+
+        for fix in fixtures:
+            if not isinstance(fix, dict):
+                continue
+            home = fix.get("homeTeam", {}).get("name", "") or fix.get("home", "")
+            away = fix.get("awayTeam", {}).get("name", "") or fix.get("away", "")
+            if not home or not away:
+                continue
+            game = f"{away} @ {home}"
+
+            markets = fix.get("markets", fix.get("betOffers", []))
+            for mkt in markets:
+                market_name = mkt.get("name", mkt.get("betOfferType", {}).get("name", ""))
+                for outcome in mkt.get("outcomes", mkt.get("betOffers", [])):
+                    label  = outcome.get("label", outcome.get("name", ""))
+                    price  = outcome.get("odds", outcome.get("americanOdds", outcome.get("price")))
+                    if price is None:
+                        continue
+                    results.append({
+                        "game":      game,
+                        "home":      home,
+                        "away":      away,
+                        "market":    market_name,
+                        "selection": label,
+                        "odds":      price,
+                        "book":      "BetMGM",
+                        "sport":     sport,
+                        "source":    "betmgm_lines",
+                    })
+
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_betmgm_game_lines: {e}")
+        return []
+
 def fetch_sharpapi_lines(sport: str) -> list:
     """
     Fetch game lines from SharpAPI — 20+ books, Pinnacle no-vig EV pre-computed.
