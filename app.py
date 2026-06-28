@@ -18210,6 +18210,29 @@ with tabs[9]:
         _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": "⚪ Load board to activate", "Action": "Snapshot engine ready"})
 
 
+    # StatMuse (on-demand player trends)
+    try:
+        _sm_n = len([f for f in os.listdir(CACHE_DIR) if f.startswith("statmuse_")])
+    except Exception:
+        _sm_n = 0
+    _src_statuses.append({"Source": "StatMuse (player trends)",
+        "Status": f"🟢 {_sm_n} cached" if _sm_n else "⚪ On-demand per prop",
+        "Action": "None"})
+
+    # Bookmaker.eu
+    _bkr = st.session_state.get("bookmaker_game_lines", [])
+    _src_statuses.append({"Source": "Bookmaker.eu (sharp lines)",
+        "Status": f"🟢 {len(_bkr)} lines" if _bkr else "🟡 Add BOOKMAKER_CF + BOOKMAKER_SESSID",
+        "Action": "None"})
+
+    # Heritage Sports
+    _her = st.session_state.get("heritage_game_lines", [])
+    _src_statuses.append({"Source": "Heritage Sports (sharp lines)",
+        "Status": f"🟢 {len(_her)} lines" if _her else ("⚪ Not loaded" if HERITAGE_GSID else "🟡 Add HERITAGE_GSID"),
+        "Action": "None"})
+
+
+
     _green  = sum(1 for s in _src_statuses if "🟢" in s["Status"])
     _red    = sum(1 for s in _src_statuses if "🔴" in s["Status"])
     _yellow = sum(1 for s in _src_statuses if "🟡" in s["Status"])

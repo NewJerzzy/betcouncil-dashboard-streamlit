@@ -12749,6 +12749,100 @@ def fetch_bookmaker_game_lines(sport: str) -> list:
         return []
 
 
+
+# ── StatMuse ──────────────────────────────────────────────────────────────────
+STATMUSE_SPORT_MAP = {"MLB":"mlb","NBA":"nba","NFL":"nfl","NHL":"nhl","WNBA":"wnba","TENNIS":"tennis","GOLF":"pga"}
+STATMUSE_HEADERS = {
+    "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+    "Accept":"text/html,application/xhtml+xml,*/*;q=0.8",
+    "Accept-Language":"en-US,en;q=0.9",
+    "Referer":"https://www.statmuse.com/",
+}
+
+def _sm_url(query, sport):
+    import re as _r
+    s=_r.sub(r"[^a-z0-9\s-]","",query.lower().replace("'","").replace(".","")).replace(" ","-")
+    return f"https://www.statmuse.com/{STATMUSE_SPORT_MAP.get(sport,'mlb')}/ask/{_r.sub(r'-+','-',s).strip('-')}"
+
+def _sm_parse(html):
+    import re as _r
+    out={"text":"","stats":[]}
+    try:
+        m=_r.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',html,_r.S)
+        if m:
+            p=json.loads(m.group(1)).get("props",{}).get("pageProps",{})
+            a=p.get("answer",p.get("card",{}))
+            if isinstance(a,dict):
+                out["text"]=a.get("summary",a.get("text",a.get("sentence","")))
+                out["stats"]=a.get("rows",a.get("data",a.get("stats",[])))[:20]
+            elif isinstance(a,str): out["text"]=a
+        if not out["text"]:
+            out["text"]=_r.sub(r"\s+"," ",_r.sub(r"<[^>]+>"," ",html)).strip()[:300]
+    except Exception as e: out["error"]=str(e)
+    return out
+
+def fetch_statmuse_player(player_name, stat_query, sport="MLB"):
+    """StatMuse player stat query. Free/no auth. Cached 2h."""
+    import re as _r
+    cp=os.path.join(CACHE_DIR,f"statmuse_{_r.sub(r'[^a-z0-9]','_',player_name.lower())[:20]}_{_r.sub(r'[^a-z0-9]','_',stat_query.lower())[:20]}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/3600<2:
+        c=_safe_load_pkl(cp)
+        if c: c["cached"]=True; return c
+    try:
+        r=_http.get(_sm_url(f"{player_name} {stat_query}",sport),headers=STATMUSE_HEADERS,timeout=15)
+        if r.status_code!=200: return {"error":f"HTTP {r.status_code}","source":"statmuse","text":""}
+        out=_sm_parse(r.text)
+        out.update({"source":"statmuse","player":player_name,"stat":stat_query,"sport":sport,"cached":False})
+        if out.get("text") or out.get("stats"): _safe_save_pkl(cp,out)
+        return out
+    except Exception as e:
+        print(f"[WARN] fetch_statmuse_player: {e}"); return {"error":str(e),"source":"statmuse","text":""}
+
+def fetch_statmuse_prop_context(player_name, prop_type, line, sport="MLB"):
+    """L10 hit rate vs prop line from StatMuse."""
+    pmap={"hits":"hits last 10 games","home_runs":"home runs last 10 games","rbi":"rbi last 10 games",
+          "total_bases":"total bases last 10 games","strikeouts":"strikeouts last 10 games",
+          "pitcher_ks":"strikeouts last 5 starts","points":"points last 10 games",
+          "rebounds":"rebounds last 10 games","assists":"assists last 10 games",
+          "passing_yards":"passing yards last 5 games","rushing_yards":"rushing yards last 5 games",
+          "receiving_yards":"receiving yards last 5 games","goals":"goals last 10 games"}
+    pn=prop_type.lower().replace(" ","_").replace("-","_")
+    out=fetch_statmuse_player(player_name,pmap.get(pn,f"{prop_type} last 10 games"),sport)
+    hr=None
+    try:
+        rows=out.get("stats",[])
+        if rows and isinstance(rows,list):
+            ov=tot=0
+            for row in rows[-10:]:
+                if isinstance(row,dict):
+                    for k,v in row.items():
+                        if pn[:3] in k.lower():
+                            try:
+                                if float(v)>=float(line): ov+=1
+                                tot+=1
+                            except Exception: pass
+                            break
+            if tot>0: hr=ov/tot
+    except Exception: pass
+    out.update({"hit_rate_l10":hr,"prop_line":line,"prop_type":prop_type,"supporting_bet":(hr is not None and hr>=0.60)})
+    return out
+
+def fetch_statmuse_league_leaders(sport, stat, n=10):
+    """League leaders for a stat. Cached 6h."""
+    import re as _r
+    cp=os.path.join(CACHE_DIR,f"statmuse_lead_{sport}_{_r.sub(r'[^a-z0-9]','_',stat.lower())[:20]}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/3600<6:
+        c=_safe_load_pkl(cp); return c if c else []
+    try:
+        r=_http.get(_sm_url(f"leaders in {stat}",sport),headers=STATMUSE_HEADERS,timeout=15)
+        if r.status_code!=200: return []
+        leaders=_sm_parse(r.text).get("stats",[])[:n]
+        if leaders: _safe_save_pkl(cp,leaders)
+        return leaders
+    except Exception as e:
+        print(f"[WARN] fetch_statmuse_league_leaders: {e}"); return []
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
