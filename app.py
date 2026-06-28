@@ -42,7 +42,7 @@ except ImportError:
 
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
-    calibrate_tier_thresholds, compute_clv_with_tier, adjusted_edge,
+    calibrate_tier_thresholds, compute_clv_with_tier, adjusted_edge, analyze_loss_postmortem,
     normalize_stat_type, hot_streak_regression_risk,
     no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
     devig_best, compute_clv, compute_clv_novig,
@@ -15975,6 +15975,87 @@ with tabs[4]:
             st.dataframe(pd.DataFrame(roi_rows), width="stretch", hide_index=True)
     else:
         st.caption("Need 5+ resolved bets for ROI analysis.")
+
+        st.markdown("---")
+        st.markdown("### 🔬 Loss Post-Mortem Analyzer")
+        st.caption("Select any losing bet to understand why it lost — variance, bad process, or known risk factor.")
+
+        _losses_pm = [h for h in st.session_state.history if h.get("outcome") == "LOSS"]
+        if not _losses_pm:
+            st.info("No losing bets logged yet. Post-mortem activates when you log your first LOSS.")
+        else:
+            # Build selector labels
+            _loss_labels = []
+            for _lh in _losses_pm[-30:]:  # last 30 losses
+                _lbl = f"{_lh.get('timestamp','?')[:10]} | {_lh.get('player','?')} {_lh.get('prop','?')} {_lh.get('line','?')} {_lh.get('side','?')} [{_lh.get('tier','?')}]"
+                _loss_labels.append(_lbl)
+
+            _sel_loss = st.selectbox("Select a losing bet to analyze:", _loss_labels[::-1], key="pm_loss_sel")
+            _sel_idx  = _loss_labels[::-1].index(_sel_loss)
+            _sel_bet  = _losses_pm[-30:][::-1][_sel_idx]
+
+            # Run post-mortem
+            _pm = analyze_loss_postmortem(_sel_bet, st.session_state.history)
+
+            # Verdict header
+            _pm_colors = {
+                "GOOD PROCESS":      "#22c55e",
+                "LIKELY VARIANCE":   "#0ea5a0",
+                "MARGINAL BET":      "#f59e0b",
+                "RISK FACTOR":       "#f59e0b",
+                "UNCLEAR":           "#6a7a8a",
+            }
+            _pm_color = next((v for k,v in _pm_colors.items() if k in _pm["verdict"]), "#6a7a8a")
+            _conf_color = {"HIGH":"#22c55e","MEDIUM":"#f59e0b","LOW":"#6a7a8a"}.get(_pm["confidence"],"#6a7a8a")
+
+            st.markdown(
+                f'<div style="background:#0d1520;border:2px solid {_pm_color}44;border-radius:12px;padding:16px;margin:8px 0">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+                f'<span style="font-size:18px;font-weight:700;color:{_pm_color}">⚖️ {_pm["verdict"]}</span>'
+                f'<span style="font-size:12px;color:{_conf_color};background:{_conf_color}22;padding:3px 10px;border-radius:10px">Confidence: {_pm["confidence"]}</span>'
+                f'</div>'
+                f'<div style="color:#8899aa;font-size:12px">{_sel_bet.get("player","")} {_sel_bet.get("prop","")} {_sel_bet.get("line","")} {_sel_bet.get("side","")} | {_sel_bet.get("sport","")} | {_sel_bet.get("tier","")} | Edge: {_sel_bet.get("edge",0):.1%} | Prob: {_sel_bet.get("prob",0):.0%}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+            # Detail cards
+            _pm_cols = st.columns(2)
+            with _pm_cols[0]:
+                if _pm["clv_note"]:
+                    st.markdown(f"**📈 Closing Line Value**")
+                    st.caption(_pm["clv_note"])
+                if _pm["variance_note"]:
+                    st.markdown(f"**🎲 Variance**")
+                    st.caption(_pm["variance_note"])
+                if _pm["tier_note"]:
+                    st.markdown(f"**🏆 Tier**")
+                    st.caption(_pm["tier_note"])
+
+            with _pm_cols[1]:
+                if _pm["signals_note"]:
+                    st.markdown(f"**⚡ Signal Flags**")
+                    st.caption(_pm["signals_note"])
+                if _pm["pattern_note"]:
+                    st.markdown(f"**📊 Historical Pattern**")
+                    st.caption(_pm["pattern_note"])
+
+            # Reasons breakdown
+            if _pm["reasons"]:
+                st.markdown("**🔍 Analysis Breakdown:**")
+                for _r in _pm["reasons"]:
+                    st.caption(f"• {_r}")
+
+            # Recommendation
+            st.markdown(
+                f'<div style="background:#0a1a0a;border:1px solid #22c55e44;border-radius:8px;padding:12px;margin-top:8px">'
+                f'<span style="color:#22c55e;font-weight:600">💡 Recommendation:</span>'
+                f'<span style="color:#e8f0f8;font-size:13px"> {_pm["recommendation"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+
     st.markdown("---")
     st.markdown("### \U0001f921 Injury Performance Tracker")
     injury_results, n_injured = analyze_injury_performance()

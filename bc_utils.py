@@ -2243,6 +2243,156 @@ def compute_dff_propstats_edge(propstats_data, model_edge):
 
 # ── 1. Market Move Quality ──────────────────────────────────────
 
+
+def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
+    """
+    Generate a post-mortem analysis for a losing bet.
+    Explains WHY it lost based on model signals, variance, and patterns.
+    Returns: {verdict, reasons, clv_note, variance_note, signals_note,
+              pattern_note, recommendation, confidence}
+    """
+    from math import sqrt
+
+    player  = record.get("player", "")
+    prop    = record.get("prop", "")
+    line    = record.get("line", 0)
+    side    = record.get("side", "OVER")
+    sport   = record.get("sport", "")
+    tier    = record.get("tier", "")
+    edge    = float(record.get("edge", 0) or 0)
+    prob    = float(record.get("prob", 0.5) or 0.5)
+    signals = record.get("signal_values", {})
+    clv     = record.get("clv_capture", {})
+    outcome = record.get("outcome", "LOSS")
+    notes   = record.get("notes", "")
+
+    reasons      = []
+    verdict      = ""
+    confidence   = "LOW"
+
+    # ── CLV Analysis ────────────────────────────────────────────────────
+    clv_vs_novig = clv.get("clv_vs_novig")
+    clv_resolved = clv.get("clv_resolved", False)
+    clv_note     = ""
+    if clv_resolved and clv_vs_novig is not None:
+        if clv_vs_novig > 0.02:
+            clv_note = f"✅ Beat closing line by {clv_vs_novig:+.1%} — GOOD PROCESS despite loss"
+            reasons.append("CLV positive — loss was variance, not a model error")
+            confidence = "HIGH"
+        elif clv_vs_novig > -0.01:
+            clv_note = f"➡️ Near closing line ({clv_vs_novig:+.1%}) — borderline"
+            reasons.append("CLV neutral — inconclusive whether this was value")
+        else:
+            clv_note = f"⚠️ Lost to closing line by {clv_vs_novig:.1%} — possible bad bet"
+            reasons.append("CLV negative — closing line moved against you (sharp money disagreed)")
+    else:
+        clv_note = "⏳ CLV not resolved — closing line not captured"
+
+    # ── Variance Analysis ────────────────────────────────────────────────
+    variance_note = ""
+    if prob > 0:
+        # Expected loss rate at this probability
+        expected_loss_rate = 1 - prob
+        # At prob=0.60, you should lose 40% of the time — is this in range?
+        if prob >= 0.60:
+            variance_note = f"📊 Model gave {prob:.0%} win probability — losses expected {expected_loss_rate:.0%} of the time. This is within normal variance."
+            reasons.append(f"Normal variance — {prob:.0%} plays lose {expected_loss_rate:.0%} of the time")
+        elif prob >= 0.52:
+            variance_note = f"📊 Model gave {prob:.0%} win probability — this was a thin edge. Higher variance expected."
+            reasons.append("Thin edge bet — higher loss rate is expected at this probability")
+        else:
+            variance_note = f"⚠️ Model gave only {prob:.0%} win probability — this may have been below minimum threshold"
+            reasons.append("Low model confidence — prob below 52% threshold")
+
+    # ── Signal Analysis ──────────────────────────────────────────────────
+    signals_note = ""
+    signal_flags = []
+    sa = record.get("signals_active", {})
+    if sa.get("back_to_back"):
+        signal_flags.append("⚡ Back-to-back game — rest penalty was active")
+    if sa.get("blowout_risk"):
+        signal_flags.append("🏀 Blowout risk flag — garbage time reduces stats")
+    if not sa.get("sharp_flag"):
+        signal_flags.append("📉 No sharp signal — this was purely a statistical pick")
+    if sa.get("weather_active"):
+        signal_flags.append("🌧️ Weather signal was active — may have impacted result")
+    if signal_flags:
+        signals_note = " | ".join(signal_flags)
+        reasons.extend(signal_flags)
+
+    # ── Pattern Analysis (vs historical losses) ──────────────────────────
+    pattern_note = ""
+    if all_history:
+        similar = [h for h in all_history
+                   if h.get("sport") == sport
+                   and h.get("prop","").lower() == str(prop).lower()
+                   and h.get("outcome") in ("WIN","LOSS")]
+        if len(similar) >= 5:
+            similar_wr = sum(1 for h in similar if h.get("outcome") == "WIN") / len(similar)
+            if similar_wr < 0.45:
+                pattern_note = f"⚠️ {player} {prop} hitting only {similar_wr:.0%} in your history ({len(similar)} bets) — consider reducing exposure"
+                reasons.append(f"Historical underperformance on {prop} for this player")
+            elif similar_wr >= 0.60:
+                pattern_note = f"✅ Despite this loss, {player} {prop} hits {similar_wr:.0%} in your history — stay the course"
+
+    # ── Tier Assessment ──────────────────────────────────────────────────
+    tier_note = ""
+    if tier == "LEAN":
+        tier_note = "💡 LEAN tier bet — higher loss rate expected, smaller Kelly sizing correct"
+        reasons.append("LEAN tier — losses are normal and priced into the sizing")
+    elif tier in ("SOVEREIGN", "ELITE"):
+        tier_note = f"🔍 {tier} tier loss — review model inputs for this play"
+        if confidence != "HIGH":
+            reasons.append(f"Unexpected {tier} tier loss — worth reviewing data quality")
+            confidence = "MEDIUM"
+
+    # ── Final Verdict ────────────────────────────────────────────────────
+    if clv_vs_novig and clv_vs_novig > 0.015:
+        verdict = "GOOD PROCESS — variance loss"
+        confidence = "HIGH"
+    elif edge > 0.05 and prob > 0.58:
+        verdict = "LIKELY VARIANCE — model edge was real"
+        confidence = "MEDIUM"
+    elif prob < 0.53:
+        verdict = "MARGINAL BET — edge may have been insufficient"
+        confidence = "MEDIUM"
+    elif sa.get("back_to_back") or sa.get("blowout_risk"):
+        verdict = "RISK FACTOR ACTIVE — known risk materialized"
+        confidence = "MEDIUM"
+    else:
+        verdict = "UNCLEAR — insufficient data for definitive verdict"
+        confidence = "LOW"
+
+    # ── Recommendation ────────────────────────────────────────────────────
+    if "GOOD PROCESS" in verdict:
+        recommendation = "Continue betting this type. Beating CLV is the long-term edge — losses at 60% probability plays are expected 40% of the time."
+    elif "LEAN" in tier:
+        recommendation = "Consider skipping LEAN tier plays or reducing size further. Focus bankroll on ELITE/SOVEREIGN."
+    elif pattern_note and "underperformance" in pattern_note.lower():
+        recommendation = f"Reduce exposure on {prop} props for this player until pattern reverses."
+    else:
+        recommendation = "No action needed — maintain strategy and log more bets to improve calibration."
+
+    return {
+        "verdict":        verdict,
+        "confidence":     confidence,
+        "clv_note":       clv_note,
+        "variance_note":  variance_note,
+        "signals_note":   signals_note,
+        "pattern_note":   pattern_note,
+        "tier_note":      tier_note,
+        "reasons":        reasons,
+        "recommendation": recommendation,
+        "player":         player,
+        "prop":           prop,
+        "line":           line,
+        "side":           side,
+        "tier":           tier,
+        "edge":           edge,
+        "prob":           prob,
+    }
+
+
 def get_clv_summary(history):
     """
     Compute CLV statistics across all resolved bets.
