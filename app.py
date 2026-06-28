@@ -13282,7 +13282,7 @@ with st.sidebar:
     )
     # ── END RISK HEADER ────────────────────────────────────
 
-    st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.bankroll), step=10.0)
+    st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.get("bankroll", 100.0)), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
     st.markdown(f'<div style="font-size:16px;color:{dc_color};margin-top:-12px;margin-bottom:8px;">{dc} today</div>', unsafe_allow_html=True)
