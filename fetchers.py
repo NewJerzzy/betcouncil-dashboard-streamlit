@@ -61,7 +61,7 @@ try:
         ACTION_NETWORK_PROP_TYPE_MAP, ODDS_API_SPORT_MAP,
         PLAYER_AVERAGES_SOCCER, PLAYER_AVERAGES_UFC,
         DEFAULT_AVERAGES, STAT_NORMALIZE,
-        BOVADA_SPORT_MAP, BOVADA_HEADERS,
+        BOVADA_BASE, BOVADA_SPORT_MAP, BOVADA_HEADERS, BOVADA_PATH,
         # ── Additional constants used in fetchers but previously missing from import ──
         BDL_API_KEY, BDL_PLAYER_IDS,
         ESPN_ATHLETE_IDS, ESPN_SLUG_MAP,
@@ -145,6 +145,30 @@ except ImportError:
     GIST_API = "https://api.github.com/gists"
     SCRAPEDO_KEY = ""
     CBS_SPORT_MAP = {}
+    BOVADA_BASE = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+    BOVADA_PATH = os.path.join(os.path.dirname(__file__), ".cache", "bovada_lines.json")
+    BOVADA_SPORT_MAP = {
+        "NBA": "basketball/nba", "NFL": "football/nfl",
+        "MLB": "baseball/mlb",   "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
+    }
+    BOVADA_HEADERS = {
+        "Accept": "application/json", "Origin": "https://www.bovada.lv",
+        "Referer": "https://www.bovada.lv/sports",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "x-channel": "desktop", "x-sport-context": "BASE",
+        "cookie": "LANG=en; Device-Type=Desktop|false; odds_format=AMERICAN;",
+    }
+    # New sources
+    SHARPAPI_KEY   = ""
+    SHARPAPI_BASE  = "https://api.sharpapi.io/api/v1"
+    BETMGM_COOKIE  = ""
+    BETMGM_STATE   = "az"
+    BETMGM_SPORT_MAP = {}
+    BETMGM_WIDGET_MAP = {}
+    CAESARS_COMP_IDS = {}
+    CAESARS_PROP_TABS = {}
+    GITHUB_TOKEN   = ""
+    GITHUB_GIST_ID = ""
 
 # ── OddsWrap optional dependency ────────────────────────────────────────────
 try:
