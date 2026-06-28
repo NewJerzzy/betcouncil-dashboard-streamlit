@@ -10903,6 +10903,147 @@ def fetch_unibet_game_lines(sport: str) -> list:
     return _fetch_kambi_game_lines("unibet", sport, "Unibet")
 
 
+def fetch_betonline_offering(sport: str) -> list:
+    """BetOnline game lines via offering-by-league POST API. No auth. Cached 15 min."""
+    sport_map = {
+        "MLB":  ("Baseball", "mlb",   "baseball"),
+        "NBA":  ("Basketball","nba",  "basketball"),
+        "NFL":  ("Football",  "nfl",  "football"),
+        "NHL":  ("Hockey",    "nhl",  "hockey"),
+        "WNBA": ("Basketball","wnba", "basketball"),
+    }
+    if sport not in sport_map: return []
+    sport_display, league_slug, sport_slug = sport_map[sport]
+    cache_path = os.path.join(CACHE_DIR, f"betonline_offering_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 15:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        payload = json.dumps({
+            "Sport": sport_display, "League": league_slug,
+            "ScheduleText": None, "filterTime": 0,
+            "type": "prematch", "league": league_slug, "sport": sport_slug,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api-offering.betonline.ag/api/offering/Sports/offering-by-league",
+            data=payload, method="POST",
+            headers={
+                "Accept": "application/json", "Content-Type": "application/json",
+                "Origin": "https://www.betonline.ag", "Referer": "https://www.betonline.ag/",
+                "gsetting": "bolsassite", "utc-offset": "420",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            if r.status != 200: return []
+            data = json.loads(r.read())
+        results = []
+        def extract(obj):
+            if isinstance(obj, list):
+                for i in obj: yield from extract(i)
+            elif isinstance(obj, dict):
+                if "participants" in obj or "moneyLine" in obj: yield obj
+                else:
+                    for v in obj.values():
+                        if isinstance(v, (list,dict)): yield from extract(v)
+        for event in extract(data):
+            parts = event.get("participants", [])
+            if len(parts) < 2: continue
+            away = parts[0].get("name",""); home = parts[1].get("name","")
+            if not home or not away: continue
+            game = f"{away} @ {home}"
+            ml = event.get("moneyLine",{})
+            if ml.get("awayOdds"): results.append({"game":game,"home":home,"away":away,"market":"Moneyline","selection":away,"odds":ml["awayOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+            if ml.get("homeOdds"): results.append({"game":game,"home":home,"away":away,"market":"Moneyline","selection":home,"odds":ml["homeOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+            sp = event.get("spread", event.get("runLine",{}))
+            if sp.get("awayOdds"): results.append({"game":game,"home":home,"away":away,"market":"Spread","selection":f"{away} {sp.get('awayHandicap','')}","odds":sp["awayOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+            if sp.get("homeOdds"): results.append({"game":game,"home":home,"away":away,"market":"Spread","selection":f"{home} {sp.get('homeHandicap','')}","odds":sp["homeOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+            tot = event.get("total", event.get("overUnder",{}))
+            tl = tot.get("totalLine", tot.get("line",""))
+            if tot.get("overOdds"):  results.append({"game":game,"home":home,"away":away,"market":"Total","selection":f"Over {tl}","odds":tot["overOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+            if tot.get("underOdds"): results.append({"game":game,"home":home,"away":away,"market":"Total","selection":f"Under {tl}","odds":tot["underOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+        if results: _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_betonline_offering: {e}"); return []
+
+
+CAESARS_COMP_IDS = {
+    "MLB": "04f90892-3afa-4e84-acce-5b89f151063d",
+    "NBA": "aeaaf4d8-1f8c-4f22-bb50-79c2a3fcff37",
+    "NFL": "007d7c61-07a7-4e18-bb40-15104b6eac92",
+    "NHL": "144fe91b-f078-4ccd-ac3a-d77c2de451a5",
+}
+CAESARS_PROP_TABS = {
+    "MLB": ["SCHEDULE|Batter Props","SCHEDULE|Pitcher Props"],
+    "NBA": ["SCHEDULE|Player Props"],
+    "NFL": ["SCHEDULE|Player Props"],
+    "NHL": ["SCHEDULE|Player Props"],
+}
+
+def _get_caesars_tokens():
+    try:
+        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            tokens = json.loads(json.loads(r.read()).get("files",{}).get("betcouncil_caesars_tokens.json",{}).get("content","{}"))
+            return tokens.get("bearer_jwt",""), tokens.get("waf_token","")
+    except Exception as e:
+        print(f"[WARN] _get_caesars_tokens: {e}"); return "",""
+
+def fetch_caesars_props(sport: str) -> list:
+    """Caesars player props via americanwagering.com. Bearer from Gist. Cached 20 min."""
+    import urllib.parse as _up
+    comp_id = CAESARS_COMP_IDS.get(sport)
+    tabs    = CAESARS_PROP_TABS.get(sport, [])
+    if not comp_id or not tabs: return []
+    cache_path = os.path.join(CACHE_DIR, f"caesars_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    bearer, waf = _get_caesars_tokens()
+    if not bearer: return []
+    hdrs = {
+        "Accept":"application/json","Authorization":f"Bearer {bearer}",
+        "Content-Type":"application/json","Origin":"https://sportsbook.caesars.com",
+        "Referer":"https://sportsbook.caesars.com/","x-app-version":"7.50.0",
+        "x-aws-waf-token":waf,"x-platform":"cordova-desktop",
+        "x-unique-device-id":"d1231cdb-6e59-4f9c-9402-d250d10085e4","sessionid":bearer,
+        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+    results = []
+    for tab in tabs:
+        try:
+            url = (f"https://api.americanwagering.com/regions/us/locations/az/brands/czr"
+                   f"/sb/v4/sports/{sport.lower()}/competitions/{comp_id}/tabs/{_up.quote(tab,safe='')}")
+            r = _http.get(url, headers=hdrs, timeout=15)
+            if r.status_code == 401: print("[WARN] Caesars token expired"); break
+            if r.status_code != 200: continue
+            for comp in r.json().get("competitions",[]):
+                for event in comp.get("events",[]):
+                    for mkt in event.get("markets",[]):
+                        mn = mkt.get("name","")
+                        player = mn.split(" - ")[0] if " - " in mn else mn
+                        prop_t = mn.split(" - ")[-1] if " - " in mn else mn
+                        ov=un=ln=""
+                        for oc in mkt.get("outcomes",[]):
+                            nm=oc.get("name",""); pr=oc.get("price",{}); od=pr.get("a",pr.get("d",""))
+                            hd=str(oc.get("handicap",""))
+                            if hd and hd!="None": ln=hd
+                            if "Over" in nm or "over" in nm: ov=str(int(float(od))) if od else "N/A"
+                            elif "Under" in nm or "under" in nm: un=str(int(float(od))) if od else "N/A"
+                        if player and (ov or un):
+                            results.append({"Player":player,"Prop":prop_t,"Line":ln,
+                                "OverOdds":ov or "N/A","UnderOdds":un or "N/A",
+                                "Book":"Caesars","Sport":sport,"source":"caesars_props"})
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"[WARN] fetch_caesars_props {tab}: {e}")
+    if results: _safe_save_pkl(cache_path, results)
+    return results
+
 def fetch_bovada_game_lines(sport: str) -> list:
     """
     Fetch Bovada game lines via public coupon API — no auth required.
