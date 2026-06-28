@@ -9974,6 +9974,17 @@ def check_prediction_stability(board, sport):
 
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
+    # ── NFL: auto-build player DB + live baselines on first weekly load ────
+    if sport == "NFL":
+        _nfl_db_path = os.path.join(CACHE_DIR, "nfl_player_db.pkl")
+        _db_stale = not os.path.exists(_nfl_db_path) or (time.time() - os.path.getmtime(_nfl_db_path))/86400 > 7
+        if _db_stale:
+            with st.spinner("🏈 Building NFL player database..."):
+                _db = fetch_nfl_full_player_database()
+                if _db: st.session_state["nfl_player_db"] = _db
+        _live_bl = fetch_nfl_live_baselines()
+        if _live_bl: st.session_state["nfl_live_baselines"] = _live_bl
+
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
     if sport in ["Golf", "Tennis", "UFC", "Soccer"]:

@@ -5093,6 +5093,51 @@ def fetch_soccer_player_stats(player_name):
             pass
     return result
 
+def fetch_nfl_live_baselines(force_refresh=False) -> dict:
+    """
+    Fetch live NFL position baselines from ESPN stats leaders.
+    Automatically called on first NFL board load each week.
+    Cached 7 days.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_live_baselines.pkl")
+    if not force_refresh and os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 86400 < 7:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    season = date.today().year if date.today().month >= 8 else date.today().year - 1
+    try:
+        r = _http.get(
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/leaders"
+            f"?season={season}&seasontype=2&limit=32",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json",
+                     "Referer": "https://www.espn.com/"},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return {}
+        baselines = {}
+        for cat in r.json().get("categories", []):
+            cat_name = cat.get("name", "").lower()
+            values = [float(l.get("value",0)) for l in cat.get("leaders",[])[:24] if l.get("value",0)]
+            if not values: continue
+            avg = sum(values) / len(values) / 17  # per game
+            if "passing" in cat_name and "yard" in cat_name:
+                baselines.setdefault("QB",{})["passing_yards"] = round(avg,1)
+            elif "passing" in cat_name and "touchdown" in cat_name:
+                baselines.setdefault("QB",{})["passing_touchdowns"] = round(avg,2)
+            elif "rushing" in cat_name and "yard" in cat_name:
+                baselines.setdefault("RB",{})["rushing_yards"] = round(avg,1)
+            elif "receiving" in cat_name and "yard" in cat_name:
+                baselines.setdefault("WR",{})["receiving_yards"] = round(avg,1)
+            elif "reception" in cat_name:
+                baselines.setdefault("WR",{})["receptions"] = round(avg,1)
+        if baselines:
+            _safe_save_pkl(cache_path, baselines)
+        return baselines
+    except Exception as e:
+        print(f"[WARN] fetch_nfl_live_baselines: {e}")
+        return {}
+
 def fetch_nfl_player_stats(player_name: str) -> dict:
     """
     Fetch NFL player season stats from ESPN public athlete API.
