@@ -117,6 +117,9 @@ except ImportError:
     LEAGUE_AVG_ERA = 4.25
     ACTION_NETWORK_BASE = "https://api.actionnetwork.com/web/v2/scoreboard/publicbetting"
     ACTION_NETWORK_BOOK_IDS = "15,30,4727,4795,79,2988,69,68,75,123,71"
+    ACTION_NETWORK_SPORT_MAP = {"NBA":"nba","MLB":"mlb","NHL":"nhl","NFL":"nfl","WNBA":"wnba"}
+    ACTION_NETWORK_LEAGUE_IDS = {"NFL":1,"MLB":2,"NHL":3,"NBA":4,"WNBA":5}
+    ACTION_NETWORK_PROP_TYPE_MAP = {}
     BETONLINE_PATH = ""
     BETONLINE_PROP_PRICE_URL = ""
     BETONLINE_PROP_SPORT_CODES = 0
@@ -11067,6 +11070,152 @@ def fetch_caesars_props(sport: str) -> list:
             print(f"[WARN] fetch_caesars_props {tab}: {e}")
     if results: _safe_save_pkl(cache_path, results)
     return results
+
+def fetch_kalshi_markets(sport: str) -> list:
+    """
+    Fetch Kalshi prediction market contracts for sports props.
+    Public API — no auth needed. Cached 30 min.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"kalshi_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        sport_keywords = {
+            "MLB": ["baseball", "mlb", "runs", "strikeouts", "hits"],
+            "NBA": ["basketball", "nba", "points", "rebounds", "assists"],
+            "NFL": ["football", "nfl", "touchdowns", "yards"],
+            "NHL": ["hockey", "nhl", "goals"],
+        }
+        keywords = sport_keywords.get(sport, [sport.lower()])
+        results = []
+        for kw in keywords[:2]:  # limit to 2 keywords to save calls
+            r = _http.get(
+                "https://api.elections.kalshi.com/trade-api/v2/markets",
+                params={"status": "open", "series_ticker": kw.upper(), "limit": 100},
+                headers={"Accept": "application/json"},
+                timeout=12,
+            )
+            if r.status_code != 200:
+                continue
+            for mkt in r.json().get("markets", []):
+                results.append({
+                    "title":      mkt.get("title", ""),
+                    "ticker":     mkt.get("ticker", ""),
+                    "yes_bid":    mkt.get("yes_bid"),
+                    "no_bid":     mkt.get("no_bid"),
+                    "volume":     mkt.get("volume"),
+                    "sport":      sport,
+                    "source":     "kalshi",
+                })
+            time.sleep(0.2)
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_kalshi_markets: {e}")
+        return []
+
+
+def fetch_polymarket_markets(sport: str) -> list:
+    """
+    Fetch Polymarket prediction markets for sports.
+    Public API — no auth needed. Cached 30 min.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"polymarket_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        sport_tags = {
+            "MLB": "Baseball", "NBA": "Basketball",
+            "NFL": "Football", "NHL": "Hockey",
+        }
+        tag = sport_tags.get(sport)
+        if not tag:
+            return []
+        r = _http.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"tag": tag, "active": "true", "closed": "false", "limit": 100},
+            headers={"Accept": "application/json"},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return []
+        results = []
+        for mkt in r.json():
+            results.append({
+                "question":    mkt.get("question", ""),
+                "slug":        mkt.get("slug", ""),
+                "yes_price":   mkt.get("outcomePrices", [""])[0] if mkt.get("outcomePrices") else None,
+                "volume":      mkt.get("volume"),
+                "sport":       sport,
+                "source":      "polymarket",
+            })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_polymarket_markets: {e}")
+        return []
+
+
+def fetch_covers_consensus(sport: str) -> dict:
+    """
+    Fetch Covers.com public consensus betting data via ScraperAPI proxy.
+    Returns {matchup: {home_pct, away_pct, over_pct, under_pct}}
+    Cached 30 min.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"covers_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        sport_map = {
+            "MLB": "mlb", "NBA": "nba", "NFL": "nfl", "NHL": "nhl"
+        }
+        slug = sport_map.get(sport)
+        if not slug:
+            return {}
+        # Covers blocks datacenter IPs — use ScraperAPI proxy
+        proxy_url = (
+            f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}"
+            f"&url=https://www.covers.com/sport/{slug}/consensus"
+        )
+        r = _http.get(proxy_url, timeout=20)
+        if r.status_code != 200:
+            return {}
+        # Parse HTML for consensus percentages
+        import re as _re
+        html = r.text
+        results = {}
+        # Look for JSON data embedded in page
+        m = _re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});', html, _re.S)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                games = data.get("consensus", {}).get("games", [])
+                for game in games:
+                    home = game.get("homeTeam", {}).get("name", "")
+                    away = game.get("awayTeam", {}).get("name", "")
+                    if home and away:
+                        results[f"{away} @ {home}"] = {
+                            "home_pct":  game.get("homeConsensus"),
+                            "away_pct":  game.get("awayConsensus"),
+                            "over_pct":  game.get("overConsensus"),
+                            "under_pct": game.get("underConsensus"),
+                        }
+            except Exception:
+                pass
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_covers_consensus: {e}")
+        return {}
 
 def fetch_bovada_game_lines(sport: str) -> list:
     """
