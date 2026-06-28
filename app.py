@@ -16150,20 +16150,31 @@ with tabs[4]:
 
     # ── Season Regime ────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### 📅 Season Regime")
-    st.caption("Detects current season phase and applies appropriate signal weight adjustments.")
-    _regime_sport = st.session_state.get("last_sport","NBA")
-    _regime = detect_season_regime(_regime_sport)
-    _radj = _regime.get("adjustments",{})
-    _rcolor = "#378add" if _regime["regime"] == "Mid Season" else "#22c55e" if "Playoffs" in _regime["regime"] else "#6a7a8a" if "Off-season" in _regime["regime"] else "#e8a020"
-    st.markdown(
-        f'<div style="background:#0a0e14;border:1px solid {_rcolor}44;border-radius:6px;padding:0.7rem;">'
-        f'<span style="color:{_rcolor};font-weight:700;">{_regime_sport} — {_regime["regime"]}</span>'
-        f'<br><span style="color:#8a9ab0;font-size:0.9rem;">{_regime["description"]}</span>'
-        + (f'<br><span style="color:#e8a020;font-size:0.85rem;">Active adjustments: {_radj}</span>' if _radj else "")
-        + '</div>',
-        unsafe_allow_html=True
-    )
+    st.markdown("### 📅 Season Regime — All Sports")
+    st.caption("Live season phase detection for all sports. Off-season suppresses stale signals automatically.")
+    _all_sports_regime = ["NBA","MLB","NFL","NHL","WNBA","GOLF","TENNIS","SOCCER","UFC"]
+    _regime_color_map = {
+        "Off-season":"#e04040","Preseason":"#f59e0b","Early Season":"#f59e0b",
+        "Mid Season":"#22c55e","Late Season":"#0ea5a0","Playoffs":"#a855f7",
+    }
+    _rcols = st.columns(3)
+    for _rsi, _rsp in enumerate(_all_sports_regime):
+        _regime = detect_season_regime(_rsp)
+        _rphase = _regime["regime"]
+        _rcolor = _regime_color_map.get(_rphase, "#6a7a8a")
+        _radj   = _regime.get("adjustments", {})
+        _radj_str = ", ".join(f"{k}:{v:+.2f}" for k,v in _radj.items()) if _radj else "none"
+        _rdesc = _regime["description"][:55] + "..." if len(_regime["description"]) > 55 else _regime["description"]
+        _rcols[_rsi % 3].markdown(
+            f'<div style="background:#0a0e14;border:1px solid {_rcolor}55;border-radius:8px;padding:10px;margin-bottom:8px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+            f'<span style="color:#e8f0f8;font-weight:700;font-size:13px;">{_rsp}</span>'
+            f'<span style="color:{_rcolor};font-size:11px;font-weight:600;background:{_rcolor}22;padding:2px 8px;border-radius:10px;">{_rphase}</span></div>'
+            f'<div style="color:#6a7a8a;font-size:11px;margin-top:4px;">{_rdesc}</div>'
+            f'<div style="color:#e8a020;font-size:10px;margin-top:3px;">adj: {_radj_str}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
     # ── Projection Confidence Overview ──────────────────────
     st.markdown("---")
