@@ -13037,6 +13037,88 @@ def get_defense_edge(opponent_team: str, sport: str, rankings: dict = None) -> d
             "percentile":pct,"note":note,"edge_adj":adj,"sport":sport}
 
 
+
+# ── Signal Odds — Free AI predictions + 60+ book best odds ───────────────────
+SIGNALODDS_SLUGS = {
+    "MLB":"baseball-mlb","NBA":"basketball-nba","NFL":"american-football-nfl",
+    "NHL":"ice-hockey-nhl","WNBA":"basketball-wnba","UFC":"mixed-martial-arts-ufc",
+}
+SIGNALODDS_HEADERS = {
+    "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+    "Accept":"text/html,application/xhtml+xml,*/*;q=0.9",
+    "Accept-Language":"en-US,en;q=0.9",
+    "Referer":"https://signalodds.com/",
+}
+
+def _so_dec_to_amer(dec):
+    try:
+        if dec >= 2.0: return int((dec-1)*100)
+        else:          return int(-100/(dec-1))
+    except Exception: return 0
+
+def fetch_signalodds_events(sport: str) -> list:
+    """
+    Signal Odds: today's events with best odds from 60+ bookmakers + sure bet flags.
+    Parses initialEvents JSON from Next.js page (HTML or RSC wire format).
+    Free, no auth. Cached 20 min.
+    """
+    slug = SIGNALODDS_SLUGS.get(sport)
+    if not slug: return []
+    cp = os.path.join(CACHE_DIR, f"signalodds_{sport}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 20:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    try:
+        r = _http.get(f"https://signalodds.com/leagues/{slug}",
+                      headers=SIGNALODDS_HEADERS, timeout=20)
+        if r.status_code != 200: return []
+        html = r.text
+        # Try __NEXT_DATA__ first
+        events_raw = []
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+        if m:
+            try:
+                events_raw = json.loads(m.group(1)).get("props",{}).get("pageProps",{}).get("initialEvents",[])
+            except Exception: pass
+        # RSC wire format fallback
+        if not events_raw:
+            m2 = re.search(r'"initialEvents":(\[.*?\]),"initialTotalEvents"', html, re.S)
+            if m2:
+                try: events_raw = json.loads(m2.group(1))
+                except Exception: pass
+        results = []
+        for ev in events_raw:
+            home = ev.get("home_team",{}).get("full_name","")
+            away = ev.get("away_team",{}).get("full_name","")
+            if not home or not away: continue
+            # Parse best_odds
+            bods = {}
+            for bo in ev.get("best_odds",[]):
+                outcome = bo.get("outcome_name","")
+                dec     = bo.get("odds",1.0)
+                if outcome not in bods or dec > bods[outcome]["dec"]:
+                    bods[outcome] = {"book":bo.get("bookmaker_name",""),"dec":dec,
+                                     "american":_so_dec_to_amer(dec)}
+            sure = ev.get("sure_bet_count",0) or 0
+            results.append({
+                "game":f"{away} @ {home}","home":home,"away":away,"sport":sport,
+                "commence_time":ev.get("commence_time",""),
+                "sure_bet_count":sure,"prediction_count":ev.get("prediction_count",0) or 0,
+                "odds_api_key":ev.get("odds_api_key",""),
+                "best_odds":bods,
+                "home_ml":bods.get(home,{}).get("american"),
+                "away_ml":bods.get(away,{}).get("american"),
+                "best_book_home":bods.get(home,{}).get("book",""),
+                "best_book_away":bods.get(away,{}).get("book",""),
+                "has_sure_bet":sure > 0,
+                "source":"signalodds","slug":ev.get("slug",""),
+            })
+        if results: _safe_save_pkl(cp, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_signalodds_events({sport}): {e}"); return []
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
