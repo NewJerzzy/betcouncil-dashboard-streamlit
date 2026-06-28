@@ -10903,6 +10903,172 @@ def fetch_unibet_game_lines(sport: str) -> list:
     return _fetch_kambi_game_lines("unibet", sport, "Unibet")
 
 
+def fetch_bovada_game_lines(sport: str) -> list:
+    """
+    Fetch Bovada game lines via public coupon API — no auth required.
+    Endpoint: /services/sports/event/coupon/events/A/description/{sport_path}
+    Returns list of {game, home, away, market, selection, odds, book, sport, source}
+    Cached 15 min.
+    """
+    sport_map = {
+        "MLB":  "baseball/mlb",
+        "NBA":  "basketball/nba",
+        "NFL":  "football/nfl",
+        "NHL":  "hockey/nhl",
+        "WNBA": "basketball/wnba",
+    }
+    sport_path = sport_map.get(sport)
+    if not sport_path:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"bovada_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 15:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        url = (
+            f"https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+            f"/{sport_path}?marketFilterId=def&preMatchOnly=true&eventsLimit=5000&lnGrp=2&lang=en"
+        )
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+            "Referer": f"https://www.bovada.lv/sports/{sport_path}",
+            "x-channel": "desktop",
+            "x-sport-context": "BASE",
+            "cookie": "LANG=en; Device-Type=Desktop|false; odds_format=AMERICAN;",
+        }
+        r = _http.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"[WARN] fetch_bovada_game_lines HTTP {r.status_code}")
+            return []
+
+        data = r.json()
+        results = []
+        for group in data:
+            for event in group.get("events", []):
+                competitors = event.get("competitors", [])
+                if len(competitors) < 2:
+                    continue
+                away = competitors[0].get("name", "")
+                home = competitors[1].get("name", "")
+                game = f"{away} @ {home}"
+
+                for display_grp in event.get("displayGroups", []):
+                    for market in display_grp.get("markets", []):
+                        market_desc = market.get("description", "")
+                        for outcome in market.get("outcomes", []):
+                            label = outcome.get("description", "")
+                            price = outcome.get("price", {})
+                            american = price.get("american", "")
+                            if not american or american in ("EVEN", ""):
+                                american = price.get("decimal", "")
+                            results.append({
+                                "game":      game,
+                                "home":      home,
+                                "away":      away,
+                                "market":    market_desc,
+                                "selection": label,
+                                "odds":      american,
+                                "book":      "Bovada",
+                                "sport":     sport,
+                                "source":    "bovada_lines",
+                            })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_bovada_game_lines: {e}")
+        return []
+
+
+def fetch_bovada_props(sport: str) -> list:
+    """
+    Fetch Bovada player props via public props API — no auth required.
+    Endpoint: /services/sports/event/coupon/events/A/description/{sport}-season-props
+    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source}
+    Cached 20 min.
+    """
+    props_map = {
+        "MLB":  "baseball/mlb-season-props",
+        "NBA":  "basketball/nba-season-props",
+        "NFL":  "football/nfl-season-props",
+        "NHL":  "hockey/nhl-season-props",
+    }
+    props_path = props_map.get(sport)
+    if not props_path:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"bovada_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None: return cached
+    try:
+        url = (
+            f"https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+            f"/{props_path}?azSorting=true&lang=en"
+        )
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+            "Referer": f"https://www.bovada.lv/sports/{props_path}",
+            "x-channel": "desktop",
+            "x-sport-context": "BASE",
+            "cookie": "LANG=en; Device-Type=Desktop|false; odds_format=AMERICAN;",
+        }
+        r = _http.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"[WARN] fetch_bovada_props HTTP {r.status_code}")
+            return []
+
+        data = r.json()
+        results = []
+        for group in data:
+            for event in group.get("events", []):
+                for display_grp in event.get("displayGroups", []):
+                    for market in display_grp.get("markets", []):
+                        market_desc = market.get("description", "")
+                        outcomes = market.get("outcomes", [])
+                        # Pair Over/Under outcomes
+                        over_odds = under_odds = line = player = ""
+                        for outcome in outcomes:
+                            desc  = outcome.get("description", "")
+                            price = outcome.get("price", {})
+                            odds  = price.get("american", "")
+                            hdp   = price.get("handicap", "")
+                            if not player:
+                                # Player name often in market description
+                                player = market_desc.split(" - ")[0] if " - " in market_desc else market_desc
+                            if hdp:
+                                line = str(hdp)
+                            if "Over" in desc or "over" in desc:
+                                over_odds = odds
+                            elif "Under" in desc or "under" in desc:
+                                under_odds = odds
+                            else:
+                                over_odds = odds  # moneyline-style prop
+
+                        if player:
+                            prop_type = market_desc.split(" - ")[-1] if " - " in market_desc else market_desc
+                            results.append({
+                                "Player":     player,
+                                "Prop":       prop_type,
+                                "Line":       line,
+                                "OverOdds":   over_odds or "N/A",
+                                "UnderOdds":  under_odds or "N/A",
+                                "Book":       "Bovada",
+                                "Sport":      sport,
+                                "source":     "bovada_props",
+                            })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_bovada_props: {e}")
+        return []
+
 def fetch_betmgm_game_lines(sport: str) -> list:
     """
     Fetch BetMGM game lines (ML/spread/total) via widgetdata API.
