@@ -172,6 +172,10 @@ except ImportError:
     CAESARS_PROP_TABS = {}
     GITHUB_TOKEN   = ""
     GITHUB_GIST_ID = ""
+    NFL_POSITION_BASELINES = {}
+    NFL_STAT_NORMALIZE_MAP = {}
+    NFL_TEAM_ABBR_MAP = {}
+    NFL_PROP_MARKETS = []
 
 # ── OddsWrap optional dependency ────────────────────────────────────────────
 try:
@@ -4612,6 +4616,88 @@ def fetch_nba_team_defense():
             pickle.dump(team_def, f)
     return team_def
 
+def fetch_nfl_roster(team_abbr: str) -> list:
+    """
+    Fetch current NFL team roster from ESPN.
+    Returns list of {name, position, jersey, athlete_id}
+    Cached 7 days (rosters don't change often).
+    """
+    cache_path = os.path.join(CACHE_DIR, f"nfl_roster_{team_abbr}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 86400 < 7:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    try:
+        r = _http.get(
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_abbr}/roster",
+            timeout=12
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        players = []
+        for group in data.get("athletes", []):
+            for athlete in group.get("items", []):
+                players.append({
+                    "name":       athlete.get("fullName", ""),
+                    "position":   athlete.get("position", {}).get("abbreviation", ""),
+                    "jersey":     athlete.get("jersey", ""),
+                    "athlete_id": str(athlete.get("id", "")),
+                    "team":       team_abbr,
+                })
+        if players:
+            _safe_save_pkl(cache_path, players)
+        return players
+    except Exception as e:
+        print(f"[WARN] fetch_nfl_roster({team_abbr}): {e}")
+        return []
+
+
+def fetch_nfl_full_player_database() -> dict:
+    """
+    Build full NFL player database from all 32 team rosters.
+    Returns {normalize_name(player): {name, position, team, athlete_id}}
+    Cached 7 days. Run once before season.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_player_db.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 86400 < 7:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    all_teams = list(NFL_TEAM_ABBR_MAP.values())
+    db = {}
+    for team in all_teams:
+        try:
+            roster = fetch_nfl_roster(team)
+            for p in roster:
+                key = normalize_name(p["name"])
+                db[key] = p
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"[WARN] nfl_db {team}: {e}")
+
+    if db:
+        _safe_save_pkl(cache_path, db)
+        print(f"[NFL] Player database built: {len(db)} players")
+    return db
+
+
+def get_nfl_player_position(player_name: str, db: dict = None) -> str:
+    """Quick position lookup from NFL player database."""
+    if db is None:
+        db = _safe_load_pkl(os.path.join(CACHE_DIR, "nfl_player_db.pkl")) or {}
+    key = normalize_name(player_name)
+    return db.get(key, {}).get("position", "")
+
+
+def get_nfl_player_baseline(player_name: str, stat: str, db: dict = None) -> float:
+    """Get position-based baseline for an NFL player prop."""
+    pos = get_nfl_player_position(player_name, db)
+    baselines = NFL_POSITION_BASELINES.get(pos, {})
+    stat_norm = NFL_STAT_NORMALIZE_MAP.get(stat.lower(), stat.lower().replace(" ","_"))
+    return baselines.get(stat_norm, 0.0)
+
 def fetch_nfl_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "nfl_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -5007,103 +5093,91 @@ def fetch_soccer_player_stats(player_name):
             pass
     return result
 
-def fetch_nfl_player_stats(player_name):
+def fetch_nfl_player_stats(player_name: str) -> dict:
     """
-    Fetch NFL player 2025 season stats from ESPN.
-    Handles QB, RB, WR, TE automatically by position.
-    Cached 6h during season.
+    Fetch NFL player season stats from ESPN public athlete API.
+    Handles QB/RB/WR/TE automatically.
+    Cached 6h during season, 24h off-season.
+    Returns {passing_yards, rushing_yards, receiving_yards, receptions,
+             targets, touchdowns, position, team, games_played}
     """
-    cache_key = f"nfl_player_{normalize_name(player_name)}"
-    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    norm = normalize_name(player_name)
+    cache_path = os.path.join(CACHE_DIR, f"nfl_player_{norm[:20]}.pkl")
+    cache_hours = 6 if date.today().month in (9,10,11,12,1) else 24
     if os.path.exists(cache_path):
-        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_h < 6:
-            try:
-                return _safe_load_pkl(cache_path)
-            except Exception:
-                pass
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < cache_hours:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+    try:
+        # Step 1: Search for player
+        search_url = f"https://site.api.espn.com/apis/common/v3/search?query={urllib.parse.quote(player_name)}&limit=5&type=player&sport=football&league=nfl"
+        r = _http.get(search_url, timeout=10)
+        if r.status_code != 200:
+            return {}
+        results = r.json().get("items", [])
+        if not results:
+            return {}
+        # Find best match
+        athlete_id = None
+        for item in results:
+            if item.get("type") == "player":
+                athlete_id = item.get("id")
+                break
+        if not athlete_id:
+            return {}
 
-    # Check hardcoded ESPN IDs first (fast path)
-    pid = ESPN_ATHLETE_IDS.get("NFL", {}).get(player_name)
-    if not pid:
-        # Search full NFL roster
-        roster_data = _espn_get(
-            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/athletes?limit=1000&active=true",
-            "nfl_roster", ttl_hours=12
-        )
-        if roster_data:
-            norm = normalize_name(player_name)
-            match = next((a for a in roster_data.get("athletes", [])
-                          if normalize_name(a.get("displayName", "")) == norm), None)
-            if match:
-                pid = match.get("id")
+        # Step 2: Get stats
+        stats_url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/athletes/{athlete_id}/stats"
+        r2 = _http.get(stats_url, timeout=10)
+        if r2.status_code != 200:
+            return {}
+        data = r2.json()
 
-    if not pid:
-        return None
+        result = {
+            "player":       player_name,
+            "athlete_id":   athlete_id,
+            "position":     data.get("athlete", {}).get("position", {}).get("abbreviation", ""),
+            "team":         data.get("athlete", {}).get("team", {}).get("abbreviation", ""),
+            "games_played": 0,
+        }
 
-    stats_data = _espn_get(
-        f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/athletes/{pid}/stats?season=2025",
-        f"nfl_{pid}_stats_2025", ttl_hours=6
-    )
-    if not stats_data:
-        return None
+        # Parse stat categories
+        for cat in data.get("stats", []):
+            cat_name = cat.get("name", "").lower()
+            for stat in cat.get("stats", []):
+                sname = stat.get("name", "").lower().replace(" ", "_")
+                sval  = stat.get("value")
+                if sval is None: continue
+                if "passing" in cat_name:
+                    if "yard" in sname: result["passing_yards"] = float(sval)
+                    if "touchdown" in sname: result["passing_touchdowns"] = float(sval)
+                    if "attempt" in sname: result["pass_attempts"] = float(sval)
+                    if "completion" in sname: result["completions"] = float(sval)
+                elif "rushing" in cat_name:
+                    if "yard" in sname: result["rushing_yards"] = float(sval)
+                    if "touchdown" in sname: result["rushing_touchdowns"] = float(sval)
+                elif "receiving" in cat_name:
+                    if "yard" in sname: result["receiving_yards"] = float(sval)
+                    if "reception" in sname or "catch" in sname: result["receptions"] = float(sval)
+                    if "target" in sname: result["targets"] = float(sval)
+                    if "touchdown" in sname: result["receiving_touchdowns"] = float(sval)
+                if "game" in sname and "played" in sname:
+                    result["games_played"] = int(sval)
 
-    stat_map = {}
-    for cat in stats_data.get("categories", []):
-        for s in cat.get("stats", []):
-            stat_map[s.get("name", "")] = s.get("value", 0)
+        # Per-game averages
+        gp = result.get("games_played", 1) or 1
+        for k in ["passing_yards","rushing_yards","receiving_yards","receptions",
+                   "targets","passing_touchdowns","rushing_touchdowns","receiving_touchdowns",
+                   "pass_attempts","completions"]:
+            if k in result:
+                result[f"{k}_per_game"] = round(result[k] / gp, 2)
 
-    if not stat_map:
-        return None
-
-    games = max(1, int(stat_map.get("gamesPlayed", 1)))
-    result = {}
-
-    # QB stats
-    pass_yds = float(stat_map.get("passingYards", 0))
-    if pass_yds > 0:
-        result.update({
-            "PASS_YDS": round(pass_yds / games, 1),
-            "PASS_TD":  round(float(stat_map.get("passingTouchdowns", 0)) / games, 2),
-            "PASS_ATT": round(float(stat_map.get("passingAttempts", 0)) / games, 1),
-            "PASS_CMP": round(float(stat_map.get("completions", 0)) / games, 1),
-        })
-
-    # RB/WR/TE stats
-    rush_yds = float(stat_map.get("rushingYards", 0))
-    if rush_yds > 0:
-        result.update({
-            "RUSH_YDS": round(rush_yds / games, 1),
-            "RUSH_TD":  round(float(stat_map.get("rushingTouchdowns", 0)) / games, 2),
-            "RUSH_ATT": round(float(stat_map.get("rushingAttempts", 0)) / games, 1),
-        })
-
-    rec_yds = float(stat_map.get("receivingYards", 0))
-    if rec_yds > 0:
-        result.update({
-            "REC_YDS": round(rec_yds / games, 1),
-            "REC":     round(float(stat_map.get("receptions", 0)) / games, 1),
-            "REC_TD":  round(float(stat_map.get("receivingTouchdowns", 0)) / games, 2),
-            "TARGETS": round(float(stat_map.get("receivingTargets", 0)) / games, 1),
-        })
-
-    # Combined TD
-    total_td = (float(stat_map.get("passingTouchdowns", 0)) +
-                float(stat_map.get("rushingTouchdowns", 0)) +
-                float(stat_map.get("receivingTouchdowns", 0)))
-    if total_td > 0:
-        result["TD"] = round(total_td / games, 2)
-
-    if result:
-        result["n_games"] = games
-        result["_source"] = "ESPN"
-        try:
-            with open(cache_path, "wb") as f:
-                pickle.dump(result, f)
-        except Exception:
-            pass
+        _safe_save_pkl(cache_path, result)
         return result
-    return None
+    except Exception as e:
+        print(f"[WARN] fetch_nfl_player_stats({player_name}): {e}")
+        return {}
+
 
 def fetch_wnba_player_stats(player_name):
     """

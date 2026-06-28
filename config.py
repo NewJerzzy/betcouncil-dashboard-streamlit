@@ -1369,3 +1369,76 @@ GIST_API = "https://api.github.com/gists"
 SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "19f5a819c2ec471888ffd80ec807078527e259c1515")
 
 BOVADA_PATH = os.path.join(CACHE_DIR, "bovada_lines.json")
+
+# ── NFL prop baselines (2024 season averages) ──────────────────────────────
+NFL_PROP_MARKETS = [
+    "passing_yards", "rushing_yards", "receiving_yards",
+    "receptions", "passing_touchdowns", "rushing_touchdowns",
+    "pass_attempts", "completions", "targets",
+    "passing_attempts", "longest_reception",
+]
+
+NFL_POSITION_BASELINES = {
+    # QB averages per game (2024 season)
+    "QB": {
+        "passing_yards":       240.0,
+        "pass_attempts":        34.0,
+        "completions":          22.0,
+        "passing_touchdowns":    1.6,
+        "rushing_yards":        18.0,
+    },
+    # RB averages per game
+    "RB": {
+        "rushing_yards":        55.0,
+        "receptions":            3.5,
+        "receiving_yards":       28.0,
+        "rushing_touchdowns":    0.4,
+        "targets":               4.5,
+    },
+    # WR averages per game
+    "WR": {
+        "receiving_yards":       52.0,
+        "receptions":             4.2,
+        "targets":                6.5,
+        "receiving_touchdowns":   0.3,
+        "longest_reception":     22.0,
+    },
+    # TE averages per game
+    "TE": {
+        "receiving_yards":       38.0,
+        "receptions":             3.1,
+        "targets":                4.5,
+        "receiving_touchdowns":   0.25,
+    },
+}
+
+NFL_TEAM_ABBR_MAP = {
+    "Arizona Cardinals": "ARI", "Atlanta Falcons": "ATL",
+    "Baltimore Ravens": "BAL", "Buffalo Bills": "BUF",
+    "Carolina Panthers": "CAR", "Chicago Bears": "CHI",
+    "Cincinnati Bengals": "CIN", "Cleveland Browns": "CLE",
+    "Dallas Cowboys": "DAL", "Denver Broncos": "DEN",
+    "Detroit Lions": "DET", "Green Bay Packers": "GB",
+    "Houston Texans": "HOU", "Indianapolis Colts": "IND",
+    "Jacksonville Jaguars": "JAX", "Kansas City Chiefs": "KC",
+    "Las Vegas Raiders": "LV", "Los Angeles Chargers": "LAC",
+    "Los Angeles Rams": "LAR", "Miami Dolphins": "MIA",
+    "Minnesota Vikings": "MIN", "New England Patriots": "NE",
+    "New Orleans Saints": "NO", "New York Giants": "NYG",
+    "New York Jets": "NYJ", "Philadelphia Eagles": "PHI",
+    "Pittsburgh Steelers": "PIT", "San Francisco 49ers": "SF",
+    "Seattle Seahawks": "SEA", "Tampa Bay Buccaneers": "TB",
+    "Tennessee Titans": "TEN", "Washington Commanders": "WAS",
+}
+
+NFL_STAT_NORMALIZE_MAP = {
+    "pass yds": "passing_yards", "passing yds": "passing_yards",
+    "pass yards": "passing_yards", "rush yds": "rushing_yards",
+    "rushing yds": "rushing_yards", "rush yards": "rushing_yards",
+    "rec yds": "receiving_yards", "receiving yds": "receiving_yards",
+    "recv yards": "receiving_yards", "recs": "receptions",
+    "catches": "receptions", "tgts": "targets",
+    "pass tds": "passing_touchdowns", "rush tds": "rushing_touchdowns",
+    "rec tds": "receiving_touchdowns", "pass att": "pass_attempts",
+    "completions": "completions", "longest rec": "longest_reception",
+}
