@@ -1367,3 +1367,5 @@ SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009
 # ── Additional constants for fetchers ──
 GIST_API = "https://api.github.com/gists"
 SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "19f5a819c2ec471888ffd80ec807078527e259c1515")
+
+BOVADA_PATH = os.path.join(CACHE_DIR, "bovada_lines.json")
