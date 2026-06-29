@@ -16352,6 +16352,70 @@ with tabs[4]:
         unsafe_allow_html=True
     )
 
+
+    # ── Scanbet Auto-Fetch (runs in user's browser) ───────────────────────────
+    # This HTML/JS runs in your browser when you load BetCouncil.
+    # Your browser has valid Cloudflare cookies → can access Scanbet GraphQL.
+    # Result is pushed directly to Gist, then read by BetCouncil on next refresh.
+    
+    _scanbet_filter_ids = {
+        "MLB": "f3e9a7ebfb522115",
+        "NBA": None, "NFL": None, "NHL": None,
+    }
+    _scanbet_filter = _scanbet_filter_ids.get(sport_sel)
+    
+    if _scanbet_filter:
+        _scanbet_js = f"""
+        <script>
+        (function() {{
+            // Only run once per 5 minutes
+            var lastRun = localStorage.getItem('scanbet_last_run_{sport_sel}');
+            var now = Date.now();
+            if (lastRun && (now - parseInt(lastRun)) < 300000) {{
+                console.log('[BetCouncil] Scanbet: skipping (ran recently)');
+                return;
+            }}
+            
+            fetch('https://scanbet.io/graphql', {{
+                method: 'POST',
+                headers: {{'content-type': 'application/json'}},
+                body: JSON.stringify({{
+                    operationName: 'GetEvents',
+                    variables: {{input: {{filterId: '{_scanbet_filter}', page: 1, bookmakerId: 1}}}},
+                    query: 'query GetEvents($input:GetEventsInput!){{events(input:$input){{pageData{{sports{{sportName leagues{{leagueName events{{eventId home away eventOdds{{odds parseTime}}}}}}}}}}}}}}'
+                }})
+            }})
+            .then(r => r.json())
+            .then(data => {{
+                // Push to Gist
+                return fetch('https://api.github.com/gists/{GITHUB_GIST_ID}', {{
+                    method: 'PATCH',
+                    headers: {{
+                        'Authorization': 'token {GITHUB_TOKEN}',
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github.v3+json'
+                    }},
+                    body: JSON.stringify({{
+                        files: {{
+                            'betcouncil_scanbet_drops.json': {{
+                                content: JSON.stringify(data, null, 2)
+                            }}
+                        }}
+                    }})
+                }});
+            }})
+            .then(r => {{
+                if (r.ok) {{
+                    localStorage.setItem('scanbet_last_run_{sport_sel}', Date.now().toString());
+                    console.log('[BetCouncil] ✅ Scanbet drops auto-pushed to Gist');
+                }}
+            }})
+            .catch(e => console.log('[BetCouncil] Scanbet fetch error:', e));
+        }})();
+        </script>
+        """
+        st.components.v1.html(_scanbet_js, height=0, scrolling=False)
+
     # ── Season Regime ────────────────────────────────────────
     st.markdown("---")
     st.markdown("### 📅 Season Regime — All Sports")
