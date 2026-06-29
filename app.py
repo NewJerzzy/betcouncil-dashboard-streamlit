@@ -16353,64 +16353,100 @@ with tabs[4]:
     )
 
 
-    # ── Scanbet Auto-Fetch (runs in user's browser) ───────────────────────────
-    # This HTML/JS runs in your browser when you load BetCouncil.
-    # Your browser has valid Cloudflare cookies → can access Scanbet GraphQL.
-    # Result is pushed directly to Gist, then read by BetCouncil on next refresh.
-    
-    _scanbet_filter_ids = {
-        "MLB": "f3e9a7ebfb522115",
-        "NBA": None, "NFL": None, "NHL": None,
+    # ── Scanbet Auto-Fetch — All Sports (runs in user's browser) ────────────
+    # JS runs in YOUR browser on board load — bypasses Cloudflare automatically.
+    # Sports with known filterId: direct GetEvents call.
+    # Sports with sportId: GenerateFilterHash first, then GetEvents.
+    # Result pushed to Gist → BetCouncil reads on next board load.
+    _scanbet_sport_map = {
+        "MLB":    {"filterId": "f3e9a7ebfb522115", "sportId": 8},
+        "NBA":    {"filterId": None,                "sportId": 4},
+        "NFL":    {"filterId": None,                "sportId": 11},
+        "UFC":    {"filterId": None,                "sportId": 7},
+        "TENNIS": {"filterId": "c470e5ce21f765bf", "sportId": None},
+        "SOCCER": {"filterId": "195765953ceb385a", "sportId": None},
+        "NHL":    {"filterId": None,                "sportId": 6},
     }
-    _scanbet_filter = _scanbet_filter_ids.get(sport_sel)
-    
-    if _scanbet_filter:
+    _sbs = _scanbet_sport_map.get(sport_sel, {})
+    _sb_filter_id = _sbs.get("filterId","") or ""
+    _sb_sport_id  = _sbs.get("sportId") or 0
+
+    if _sb_filter_id or _sb_sport_id:
         _scanbet_js = f"""
         <script>
         (function() {{
-            // Only run once per 5 minutes
-            var lastRun = localStorage.getItem('scanbet_last_run_{sport_sel}');
+            var sport = '{sport_sel}';
+            var filterId = '{_sb_filter_id}';
+            var sportId  = {_sb_sport_id};
+            var gistId   = '{GITHUB_GIST_ID}';
+            var gistTok  = '{GITHUB_TOKEN}';
+            var throttleKey = 'scanbet_last_run_' + sport;
             var now = Date.now();
+            var lastRun = localStorage.getItem(throttleKey);
             if (lastRun && (now - parseInt(lastRun)) < 300000) {{
-                console.log('[BetCouncil] Scanbet: skipping (ran recently)');
+                console.log('[BetCouncil] Scanbet ' + sport + ': skipping (ran < 5min ago)');
                 return;
             }}
-            
-            fetch('https://scanbet.io/graphql', {{
-                method: 'POST',
-                headers: {{'content-type': 'application/json'}},
-                body: JSON.stringify({{
-                    operationName: 'GetEvents',
-                    variables: {{input: {{filterId: '{_scanbet_filter}', page: 1, bookmakerId: 1}}}},
-                    query: 'query GetEvents($input:GetEventsInput!){{events(input:$input){{pageData{{sports{{sportName leagues{{leagueName events{{eventId home away eventOdds{{odds parseTime}}}}}}}}}}}}}}'
-                }})
-            }})
-            .then(r => r.json())
-            .then(data => {{
-                // Push to Gist
-                return fetch('https://api.github.com/gists/{GITHUB_GIST_ID}', {{
+
+            var GQL_URL = 'https://scanbet.io/graphql';
+            var EVENTS_QUERY = 'query GetEvents($input:GetEventsInput!){{events(input:$input){{pageData{{sports{{sportName leagues{{leagueName events{{eventId home away eventOdds{{odds parseTime}}}}}}}}}}totalPages page}}}}';
+
+            function pushToGist(data) {{
+                return fetch('https://api.github.com/gists/' + gistId, {{
                     method: 'PATCH',
                     headers: {{
-                        'Authorization': 'token {GITHUB_TOKEN}',
+                        'Authorization': 'token ' + gistTok,
                         'Content-Type': 'application/json',
                         'Accept': 'application/vnd.github.v3+json'
                     }},
-                    body: JSON.stringify({{
-                        files: {{
-                            'betcouncil_scanbet_drops.json': {{
-                                content: JSON.stringify(data, null, 2)
-                            }}
-                        }}
-                    }})
+                    body: JSON.stringify({{files: {{'betcouncil_scanbet_drops.json': {{content: JSON.stringify(data, null, 2)}}}}}})
+                }}).then(function(r) {{
+                    if (r.ok) {{
+                        localStorage.setItem(throttleKey, Date.now().toString());
+                        console.log('[BetCouncil] ✅ Scanbet ' + sport + ' drops pushed (' + (data.data && data.data.events ? 'got events' : 'no events') + ')');
+                    }}
                 }});
-            }})
-            .then(r => {{
-                if (r.ok) {{
-                    localStorage.setItem('scanbet_last_run_{sport_sel}', Date.now().toString());
-                    console.log('[BetCouncil] ✅ Scanbet drops auto-pushed to Gist');
-                }}
-            }})
-            .catch(e => console.log('[BetCouncil] Scanbet fetch error:', e));
+            }}
+
+            function getEvents(fid) {{
+                fetch(GQL_URL, {{
+                    method: 'POST',
+                    headers: {{'content-type': 'application/json'}},
+                    body: JSON.stringify({{
+                        operationName: 'GetEvents',
+                        variables: {{input: {{filterId: fid, page: 1, bookmakerId: 1}}}},
+                        query: EVENTS_QUERY
+                    }})
+                }}).then(function(r) {{ return r.json(); }})
+                  .then(function(data) {{ pushToGist(data); }})
+                  .catch(function(e) {{ console.log('[BetCouncil] Scanbet GetEvents error:', e); }});
+            }}
+
+            if (filterId) {{
+                // Direct — already have filterId
+                getEvents(filterId);
+            }} else if (sportId) {{
+                // Generate filterId first via GenerateFilterHash mutation
+                fetch(GQL_URL, {{
+                    method: 'POST',
+                    headers: {{'content-type': 'application/json'}},
+                    body: JSON.stringify({{
+                        operationName: 'GenerateFilterHash',
+                        variables: {{input: {{
+                            bookmakerId: 1,
+                            filters: {{updateTimeFilter:'all_time',startTimeFilter:'all_time',minInitialMax:0,minCurrentMax:0}},
+                            selectedSports: {{sportIds:[sportId],allSportsSelected:false,allLeaguesSelected:true,selectedLeagues:[{{sportId:sportId,allSportLeaguesSelected:true,leagueIds:[]}}]}}
+                        }}}},
+                        query: 'mutation GenerateFilterHash($input:GenerateFilterHashInput!){{generateFilterHash(input:$input){{filterId}}}}'
+                    }})
+                }}).then(function(r) {{ return r.json(); }})
+                  .then(function(d) {{
+                    var fid = d && d.data && d.data.generateFilterHash && d.data.generateFilterHash.filterId;
+                    if (fid) {{ getEvents(fid); }}
+                    else {{ console.log('[BetCouncil] Scanbet: could not generate filterId for sport', sportId); }}
+                  }})
+                  .catch(function(e) {{ console.log('[BetCouncil] Scanbet GenerateFilterHash error:', e); }});
+            }}
         }})();
         </script>
         """
