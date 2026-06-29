@@ -13786,6 +13786,294 @@ def _parse_legacy_scanbet(raw_list: list) -> list:
     return results
 
 
+
+# ── Browser Harvester Gist Readers ───────────────────────────────────────────
+# These read data pushed by the browser-side auto-harvester in BetCouncil.
+# Primary source = browser harvester (residential IP, bypasses WAFs).
+# Secondary source = existing server-side scrapers (fallback if harvester fails).
+# Status tracking lets BetCouncil show which source is active.
+
+def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
+    """Read a file from the BetCouncil Gist. Cached locally."""
+    cp = os.path.join(CACHE_DIR, f"gist_{filename.replace('.json','')}.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < cache_minutes:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}",
+                     "Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            gist = json.loads(r.read())
+        f = gist.get("files",{}).get(filename,{})
+        if not f: return {}
+        data = json.loads(f.get("content","{}"))
+        _safe_save_pkl(cp, data)
+        return data
+    except Exception as e:
+        print(f"[WARN] _read_gist_file({filename}): {e}")
+        return {}
+
+
+def _is_fresh(data: dict, max_age_minutes: int = 30) -> bool:
+    """Check if harvested data is recent enough to use."""
+    ts = data.get("captured_at","")
+    if not ts: return False
+    try:
+        from datetime import datetime, timezone
+        captured = datetime.fromisoformat(ts.replace("Z","+00:00"))
+        age = (datetime.now(timezone.utc) - captured).total_seconds() / 60
+        return age <= max_age_minutes
+    except Exception:
+        return False
+
+
+def fetch_evsharps_jwt_from_gist() -> str:
+    """
+    Get fresh EVSharps JWT from Gist (pushed by browser harvester).
+    Falls back to SECRETS if harvester data is stale.
+    Returns JWT string or empty string.
+    """
+    data = _read_gist_file("betcouncil_tokens.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=55):
+        jwt = data.get("ev_jwt","")
+        if jwt:
+            print(f"[EVSharps] Using auto-harvested JWT (age OK)")
+            return jwt
+    # Fallback to Streamlit secret
+    try:
+        import streamlit as st
+        jwt = st.secrets.get("EV_JWT","")
+        if jwt:
+            print("[EVSharps] Fallback: using EV_JWT from Streamlit secrets")
+        return jwt
+    except Exception:
+        return ""
+
+
+def fetch_caesars_waf_from_gist() -> str:
+    """
+    Get Caesars WAF token from Gist (pushed by browser harvester).
+    Falls back to CAESARS_WAF_TOKEN secret.
+    """
+    data = _read_gist_file("betcouncil_caesars_tokens.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        waf = data.get("waf_token","")
+        if waf:
+            print("[Caesars] Using auto-harvested WAF token")
+            return waf
+    try:
+        import streamlit as st
+        return st.secrets.get("CAESARS_WAF_TOKEN","")
+    except Exception:
+        return ""
+
+
+def fetch_fanduel_props_from_gist(sport: str) -> list:
+    """
+    PRIMARY: Read FanDuel props from Gist (pushed by browser harvester).
+    SECONDARY: Falls back to fetch_fanduel_props_sharpapi() if stale.
+    Returns (props_list, source_label)
+    """
+    data = _read_gist_file(f"betcouncil_fd_props_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("props", data.get("data",[]))
+        if raw:
+            # Parse FanDuel API format
+            results = _parse_fanduel_harvested(raw, sport)
+            if results:
+                print(f"[FanDuel] PRIMARY: {len(results)} props from browser harvester")
+                return results, "browser_harvester"
+
+    # Secondary fallback
+    try:
+        secondary = fetch_fanduel_props_sharpapi(sport)
+        if secondary:
+            print(f"[FanDuel] SECONDARY: {len(secondary)} props from SharpAPI")
+            return secondary, "sharpapi_fallback"
+    except Exception:
+        pass
+    return [], "unavailable"
+
+
+def _parse_fanduel_harvested(raw, sport: str) -> list:
+    """Parse FanDuel browser-harvested data into BetCouncil prop format."""
+    results = []
+    try:
+        # Handle various FD API response structures
+        if isinstance(raw, dict):
+            # Try common FD API structures
+            items = (raw.get("attachments",{}).get("markets",{}).values() or
+                     raw.get("markets",[]) or
+                     raw.get("events",[]) or [])
+            if isinstance(items, dict): items = list(items.values())
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            return []
+
+        for item in items:
+            if not isinstance(item, dict): continue
+            market_name = item.get("marketName", item.get("market_name",""))
+            if not market_name: continue
+            runners = item.get("runners", item.get("selections", item.get("outcomes",[])))
+            for runner in (runners if isinstance(runners,list) else []):
+                name      = runner.get("runnerName", runner.get("name",""))
+                handicap  = runner.get("handicap", runner.get("line",""))
+                win_odds  = runner.get("winRunnerOdds",{})
+                american  = (win_odds.get("americanDisplayOdds",{}).get("americanOdds") if isinstance(win_odds,dict)
+                             else runner.get("price", runner.get("odds","")))
+                if not name: continue
+                # Split "Player OVER X.X" format
+                side = "OVER" if "over" in str(name).lower() or "over" in str(market_name).lower() else "UNDER"
+                player = name.replace(" Over","").replace(" Under","").replace(" over","").replace(" under","").strip()
+                results.append({
+                    "Player":    player,
+                    "Prop":      market_name,
+                    "Line":      handicap,
+                    "OverOdds":  american if side=="OVER" else "N/A",
+                    "UnderOdds": american if side=="UNDER" else "N/A",
+                    "Book":      "FanDuel",
+                    "Sport":     sport,
+                    "source":    "fanduel_browser_harvest",
+                })
+    except Exception as e:
+        print(f"[WARN] _parse_fanduel_harvested: {e}")
+    return results
+
+
+def fetch_betmgm_props_from_gist(sport: str) -> list:
+    """
+    PRIMARY: BetMGM props from Gist (browser harvester).
+    SECONDARY: Falls back to existing fetch_betmgm_props() scraper.
+    """
+    data = _read_gist_file(f"betcouncil_mgm_props_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw:
+            results = _parse_betmgm_harvested(raw, sport)
+            if results:
+                print(f"[BetMGM] PRIMARY: {len(results)} props from browser harvester")
+                return results, "browser_harvester"
+
+    # Secondary: existing scraper
+    try:
+        from fetchers import fetch_betmgm_props as _fetch_mgm
+        secondary = _fetch_mgm(sport)
+        if secondary:
+            print(f"[BetMGM] SECONDARY: {len(secondary)} props from scraper")
+            return secondary, "scraper_fallback"
+    except Exception:
+        pass
+    return [], "unavailable"
+
+
+def _parse_betmgm_harvested(raw, sport: str) -> list:
+    """Parse BetMGM browser-harvested data."""
+    results = []
+    try:
+        widgets = raw.get("widgets", raw.get("bettables", []))
+        if isinstance(widgets, dict): widgets = list(widgets.values())
+        for widget in (widgets if isinstance(widgets,list) else []):
+            if not isinstance(widget,dict): continue
+            markets = widget.get("markets", widget.get("fixtures",[]))
+            for market in (markets if isinstance(markets,list) else []):
+                if not isinstance(market,dict): continue
+                market_name = market.get("name","")
+                for outcome in market.get("outcomes", market.get("selections",[])):
+                    if not isinstance(outcome,dict): continue
+                    name  = outcome.get("name","")
+                    odds  = outcome.get("americanOdds", outcome.get("price",""))
+                    line  = outcome.get("attr", outcome.get("handicap",""))
+                    if not name: continue
+                    results.append({
+                        "Player":    name.replace(" Over","").replace(" Under","").strip(),
+                        "Prop":      market_name,
+                        "Line":      line,
+                        "OverOdds":  odds if "over" in name.lower() else "N/A",
+                        "UnderOdds": odds if "under" in name.lower() else "N/A",
+                        "Book":      "BetMGM",
+                        "Sport":     sport,
+                        "source":    "betmgm_browser_harvest",
+                    })
+    except Exception as e:
+        print(f"[WARN] _parse_betmgm_harvested: {e}")
+    return results
+
+
+def fetch_action_network_from_gist(sport: str) -> dict:
+    """
+    PRIMARY: Action Network sharp splits from Gist (browser harvester).
+    SECONDARY: Falls back to fetch_action_network_props() scraper.
+    Returns dict of game data with sharp split percentages.
+    """
+    data = _read_gist_file(f"betcouncil_actionnetwork_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=18):
+        raw = data.get("data",{})
+        if raw:
+            print(f"[ActionNetwork] PRIMARY: using browser harvester data")
+            return raw, "browser_harvester"
+
+    # Secondary: existing scraper
+    try:
+        from fetchers import fetch_action_network_props as _fetch_an
+        secondary = _fetch_an(sport)
+        if secondary:
+            print(f"[ActionNetwork] SECONDARY: using scraper")
+            return secondary, "scraper_fallback"
+    except Exception:
+        pass
+    return {}, "unavailable"
+
+
+def get_harvester_status() -> dict:
+    """
+    Check status of all browser harvesters.
+    Returns dict of {source: {active, age_minutes, source_label, warning}}
+    Used by sidebar to show which sources are primary vs fallback.
+    """
+    status = {}
+    checks = [
+        ("EVSharps JWT",      "betcouncil_tokens.json",          55),
+        ("Caesars WAF",       "betcouncil_caesars_tokens.json",   22),
+        ("FanDuel MLB",       "betcouncil_fd_props_MLB.json",     28),
+        ("FanDuel NBA",       "betcouncil_fd_props_NBA.json",     28),
+        ("BetMGM MLB",        "betcouncil_mgm_props_MLB.json",    28),
+        ("BetMGM NBA",        "betcouncil_mgm_props_NBA.json",    28),
+        ("Action Net MLB",    "betcouncil_actionnetwork_MLB.json",18),
+        ("Scanbet Drops",     "betcouncil_scanbet_drops.json",    10),
+    ]
+    for name, filename, max_age in checks:
+        try:
+            data = _read_gist_file(filename, cache_minutes=2)
+            if not data:
+                status[name] = {"active":False,"age_minutes":None,
+                                "source":"none","warning":"No data — board load required"}
+                continue
+            ts = data.get("captured_at","")
+            fresh = _is_fresh(data, max_age_minutes=max_age)
+            age = None
+            if ts:
+                try:
+                    from datetime import datetime, timezone
+                    captured = datetime.fromisoformat(ts.replace("Z","+00:00"))
+                    age = round((datetime.now(timezone.utc)-captured).total_seconds()/60, 1)
+                except Exception:
+                    pass
+            src = data.get("source","unknown")
+            status[name] = {
+                "active":      fresh,
+                "age_minutes": age,
+                "source":      src,
+                "warning":     "" if fresh else f"Stale ({age}min old) — reload BetCouncil to refresh",
+            }
+        except Exception as e:
+            status[name] = {"active":False,"age_minutes":None,
+                            "source":"error","warning":str(e)[:60]}
+    return status
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.

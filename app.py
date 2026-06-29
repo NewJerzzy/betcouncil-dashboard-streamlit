@@ -10370,8 +10370,29 @@ def load_sport_data(sport):
     st.session_state["heritage_game_lines"]  = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"] = bookmaker_lines_raw or []
     st.session_state["fanduel_props_sa"]    = fd_props_sa_raw     or []
+    # Override with browser harvester if fresher
+    try:
+        from fetchers import fetch_fanduel_props_from_gist as _fd_gist
+        _fd_primary, _fd_src = _fd_gist(sport)
+        if _fd_primary:
+            st.session_state["fanduel_props"]    = _fd_primary
+            st.session_state["fanduel_props_src"] = _fd_src
+        elif fd_props_sa_raw:
+            st.session_state["fanduel_props"]    = fd_props_sa_raw
+            st.session_state["fanduel_props_src"] = "sharpapi"
+    except Exception:
+        pass
     st.session_state["sharpapi_line_drops"] = sharpapi_drops_raw  or []
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
+    # Action Network: primary=browser harvester, secondary=scraper
+    try:
+        from fetchers import fetch_action_network_from_gist as _an_gist
+        _an_data, _an_src = _an_gist(sport)
+        if _an_data:
+            st.session_state["action_network_data"] = _an_data
+            st.session_state["action_network_src"]  = _an_src
+    except Exception:
+        pass
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
@@ -18776,6 +18797,29 @@ with tabs[9]:
         "Status": (f"🟢 {len(_so_bl)} AI picks | {len(_so_live)} live | {_so_sb} sure bets"
                    if _so_bl or _so_live else "🟡 Add SIGNAL_ODDS_JWT to Streamlit secrets"),
         "Action": "None"})
+
+    # ── Browser Harvester Status Panel ─────────────────────────────────────
+    try:
+        from fetchers import get_harvester_status as _get_hs
+        _hs = _get_hs()
+        _h_active  = sum(1 for v in _hs.values() if v.get("active"))
+        _h_total   = len(_hs)
+        _h_warn    = [f"{k}: {v['warning']}" for k,v in _hs.items() if not v.get("active") and v.get("warning")]
+        _src_statuses.append({
+            "Source": f"🌐 Browser Harvester ({_h_active}/{_h_total} active)",
+            "Status": (f"🟢 All sources live" if _h_active == _h_total
+                       else f"🟡 {_h_active}/{_h_total} active — {len(_h_warn)} stale"),
+            "Action": "None"
+        })
+        # Show individual warnings
+        for _hw in _h_warn[:3]:
+            _src_statuses.append({
+                "Source": f"  ⚠️ {_hw[:50]}",
+                "Status": "🔴 Stale — reload to refresh",
+                "Action": "None"
+            })
+    except Exception as _he:
+        _src_statuses.append({"Source": "Browser Harvester", "Status": f"⚠️ {str(_he)[:50]}", "Action": "None"})
 
     # StatMuse (on-demand player trends)
     try:
