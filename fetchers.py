@@ -13613,6 +13613,179 @@ def _parse_scanbet_drop(d: dict, ts: str) -> list:
     return results
 
 
+
+# ── Scanbet GraphQL — Pinnacle Line Movement History ─────────────────────────
+# GraphQL endpoint: POST https://scanbet.io/graphql
+# Blocked from datacenter — must be called from browser (bookmarklet) or local machine
+# Data pushed to Gist file: betcouncil_scanbet_drops.json
+# Bookmarklet runs the query and pushes result to Gist automatically
+
+# Filter IDs for each sport/league (from URL: scanbet.io/pinnacle/sports?filter=XXX)
+SCANBET_FILTER_IDS = {
+    "MLB":    "f3e9a7ebfb522115",  # confirmed working
+    "NFL":    None,  # navigate to scanbet.io, click NFL, copy filter= from URL
+    "NBA":    None,
+    "NHL":    None,
+    "SOCCER": None,
+}
+
+# Odds array positions (9 values per snapshot)
+# [0]=home_ml [1]=away_ml [2]=spread_val [3]=away_spread_juice
+# [4]=spread_val2 [5]=home_spread_juice [6]=total [7]=over_juice [8]=under_juice
+SCANBET_ODDS_IDX = {
+    "home_ml": 0, "away_ml": 1,
+    "spread":  2, "away_spread_juice": 3,
+    "total":   6, "over_juice": 7, "under_juice": 8,
+}
+
+
+def _dec_to_amer(dec):
+    """Convert decimal odds to American."""
+    try:
+        d = float(dec)
+        if d >= 2.0: return int((d-1)*100)
+        else:        return int(-100/(d-1))
+    except Exception: return 0
+
+
+def _dec_to_prob(dec):
+    """Convert decimal odds to implied probability."""
+    try: return 1.0 / float(dec)
+    except Exception: return 0.5
+
+
+def fetch_scanbet_drops_from_gist() -> list:
+    """
+    Read Pinnacle line movement data from Gist (pushed by browser bookmarklet).
+    Parses Scanbet GraphQL response format — full odds history per game.
+    Detects drops: compares first snapshot (opener) vs last snapshot (current).
+    Returns list of {game, home, away, sport, market, selection,
+                     opener_odds, current_odds, opener_prob, current_prob,
+                     drop_pct, is_steam, n_snapshots, source}
+    Cached 5 min.
+    """
+    cp = os.path.join(CACHE_DIR, "scanbet_drops_gist.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 5:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}",
+                     "Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            gist = json.loads(r.read())
+
+        f = gist.get("files",{}).get("betcouncil_scanbet_drops.json",{})
+        if not f: return []
+
+        raw = json.loads(f.get("content","{}"))
+        # Handle both direct GraphQL response and wrapped format
+        if isinstance(raw, dict) and "data" in raw:
+            sports_data = raw["data"]["events"]["pageData"]["sports"]
+        elif isinstance(raw, list):
+            # Legacy format from old bookmarklet
+            return _parse_legacy_scanbet(raw)
+        else:
+            return []
+
+        results = []
+        for sport_obj in sports_data:
+            sport_name = sport_obj.get("sportName","")
+            # Map Scanbet sport names to BetCouncil sport codes
+            sport_map = {"Baseball":"MLB","Basketball":"NBA","Football":"NFL",
+                         "Ice Hockey":"NHL","Soccer":"SOCCER","Tennis":"TENNIS"}
+            sport_code = sport_map.get(sport_name, sport_name.upper()[:6])
+
+            for league_obj in sport_obj.get("leagues",[]):
+                league = league_obj.get("leagueName","")
+                if isinstance(league, list): league = league[0] if league else ""
+
+                for event in league_obj.get("events",[]):
+                    home = event.get("home","")
+                    away = event.get("away","")
+                    game = f"{away} @ {home}"
+                    snapshots = event.get("eventOdds",[])
+
+                    if len(snapshots) < 2:
+                        continue  # No movement
+
+                    opener  = snapshots[0]["odds"]
+                    current = snapshots[-1]["odds"]
+                    n_snaps = len(snapshots)
+
+                    # Detect drops for each market
+                    markets = [
+                        ("Moneyline", "home", SCANBET_ODDS_IDX["home_ml"], home),
+                        ("Moneyline", "away", SCANBET_ODDS_IDX["away_ml"], away),
+                        ("Total",     "over", SCANBET_ODDS_IDX["over_juice"], "Over"),
+                        ("Total",     "under",SCANBET_ODDS_IDX["under_juice"],"Under"),
+                    ]
+
+                    for market, side, idx, label in markets:
+                        try:
+                            open_dec = opener[idx]
+                            curr_dec = current[idx]
+                            if not open_dec or not curr_dec: continue
+
+                            open_prob = _dec_to_prob(open_dec)
+                            curr_prob = _dec_to_prob(curr_dec)
+                            drop_pct  = curr_prob - open_prob  # positive = prob up = line moved toward this side
+
+                            # Only report meaningful moves (>1%)
+                            if abs(drop_pct) < 0.01: continue
+
+                            results.append({
+                                "game":         game,
+                                "home":         home,
+                                "away":         away,
+                                "sport":        sport_code,
+                                "league":       league,
+                                "market":       market,
+                                "selection":    label,
+                                "opener_odds":  _dec_to_amer(open_dec),
+                                "current_odds": _dec_to_amer(curr_dec),
+                                "opener_dec":   open_dec,
+                                "current_dec":  curr_dec,
+                                "opener_prob":  round(open_prob, 4),
+                                "current_prob": round(curr_prob, 4),
+                                "drop_pct":     round(drop_pct, 4),
+                                "is_steam":     drop_pct > 0,  # prob went UP = money on this side
+                                "n_snapshots":  n_snaps,
+                                "source":       "scanbet_graphql",
+                            })
+                        except Exception:
+                            continue
+
+        # Sort by absolute drop magnitude
+        results.sort(key=lambda x: abs(x["drop_pct"]), reverse=True)
+
+        if results:
+            _safe_save_pkl(cp, results)
+            print(f"[Scanbet] {len(results)} line movements detected across {len(sports_data)} sports")
+
+        return results
+
+    except Exception as e:
+        print(f"[WARN] fetch_scanbet_drops_from_gist: {e}")
+        return []
+
+
+def _parse_legacy_scanbet(raw_list: list) -> list:
+    """Parse legacy bookmarklet format (list of {timestamp, data})."""
+    results = []
+    for entry in raw_list:
+        data = entry.get("data",{})
+        if isinstance(data, dict) and "data" in data:
+            try:
+                sports = data["data"]["events"]["pageData"]["sports"]
+                results.extend(fetch_scanbet_drops_from_gist.__wrapped__({"data":{"events":{"pageData":{"sports":sports}}}}))
+            except Exception:
+                pass
+    return results
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
