@@ -14160,6 +14160,11 @@ def get_harvester_status() -> dict:
         ("MyBookie lines",               "betcouncil_mybookie_MLB.json",       28),
         ("ParlaySavant +EV",             "betcouncil_parlaysavant_MLB.json",   22),
         ("Bet365 lines",                 "betcouncil_bet365_MLB.json",         28),
+        ("Pregame sharp plays",          "betcouncil_pregame_MLB.json",        32),
+        ("Betr props",                   "betcouncil_betr_MLB.json",           22),
+        ("FantasyLabs ownership",        "betcouncil_fantasylabs_MLB.json",    32),
+        ("Rotowire injuries",            "betcouncil_rotowire_MLB.json",       18),
+        ("NumberFire projections",       "betcouncil_numberfire_MLB.json",     32),
     ]
     from datetime import datetime, timezone
     status = {}
@@ -14384,6 +14389,55 @@ def fetch_bet365_from_gist(sport: str) -> tuple:
         s = _f(sport)
         if s: return s, "scraper_fallback"
     except Exception: pass
+    return {}, "unavailable"
+
+
+
+def fetch_pregame_from_gist(sport: str) -> tuple:
+    data = _read_gist_file(f"betcouncil_pregame_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=32):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_betr_from_gist(sport: str) -> tuple:
+    data = _read_gist_file(f"betcouncil_betr_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_betr_direct as _f; s=_f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+def fetch_fantasylabs_from_gist(sport: str) -> tuple:
+    data = _read_gist_file(f"betcouncil_fantasylabs_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=32):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_fantasylabs_lineups as _f; s=_f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+def fetch_rotowire_from_gist(sport: str) -> tuple:
+    data = _read_gist_file(f"betcouncil_rotowire_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=18):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_rotowire_injuries as _f; s=_f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+def fetch_numberfire_from_gist(sport: str) -> tuple:
+    data = _read_gist_file(f"betcouncil_numberfire_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=32):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
     return {}, "unavailable"
 
 

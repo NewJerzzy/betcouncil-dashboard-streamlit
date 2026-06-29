@@ -10401,6 +10401,11 @@ def load_sport_data(sport):
         ("fetch_mybookie_from_gist",           "mybookie_lines_h",       "mybookie_src"),
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
         ("fetch_bet365_from_gist",             "bet365_lines_h",         "bet365_src"),
+        ("fetch_pregame_from_gist",            "pregame_plays_h",        "pregame_src"),
+        ("fetch_betr_from_gist",               "betr_props_h",           "betr_src"),
+        ("fetch_fantasylabs_from_gist",        "fantasylabs_data_h",     "fantasylabs_src"),
+        ("fetch_rotowire_from_gist",           "rotowire_injuries_h",    "rotowire_src"),
+        ("fetch_numberfire_from_gist",         "numberfire_proj_h",      "numberfire_src"),
     ]
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         try:
@@ -16781,6 +16786,71 @@ with tabs[4]:
                 }}).then(function(r){{return r.json();}}).then(function(data){{
                     pushGist('betcouncil_novig_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
                 }}).catch(function(e){{console.log('[BetCouncil] Novig error:',e.message);}});
+            }});
+        }}
+
+        // ── 17. MyBookie game lines (every 25 min) ───────────────────────
+        var mbSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','UFC':'mma'}};
+        var mbSport=mbSportMap[sport];
+        if(mbSport){{
+            throttled('mybookie_'+sport,1500000,function(){{
+                fetch('https://mybookie.ag/api/v1/sports/'+mbSport+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://mybookie.ag/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_mybookie_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] MyBookie error:',e.message);}});
+            }});
+        }}
+
+        // ── 18. ParlaySavant +EV props (every 20 min) ────────────────────
+        throttled('parlaysavant_'+sport,1200000,function(){{
+            fetch('https://parlaysavant.com/api/props?sport='+sport.toLowerCase()+'&type=positive_ev&limit=100',{{headers:{{'Accept':'application/json','Referer':'https://parlaysavant.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_parlaysavant_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] ParlaySavant error:',e.message);}});
+        }});
+
+        // ── 19. Bet365 game lines (every 25 min) ─────────────────────────
+        var b365Map={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'ice-hockey','UFC':'mma','SOCCER':'soccer'}};
+        var b365Sport=b365Map[sport];
+        if(b365Sport){{
+            throttled('bet365_'+sport,1500000,function(){{
+                fetch('https://www.bet365.com/SportsBook.API/web?lid=1&zid=0&pd=&cid=97&ctid=97',{{headers:{{'Accept':'application/json','Referer':'https://www.bet365.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bet365_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Bet365 error:',e.message);}});
+            }});
+        }}
+
+        // ── 20. Pregame.com sharp plays (every 30 min) ───────────────────
+        throttled('pregame_'+sport,1800000,function(){{
+            fetch('https://pregame.com/api/sharp-plays?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://pregame.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pregame_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Pregame error:',e.message);}});
+        }});
+
+        // ── 21. Betr props (every 20 min) ────────────────────────────────
+        throttled('betr_'+sport,1200000,function(){{
+            fetch('https://api.fantasy.betr.app/api/v1/picks?league='+sport.toLowerCase()+'&type=over_under',{{headers:{{'Accept':'application/json','Referer':'https://betr.app/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betr_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Betr error:',e.message);}});
+        }});
+
+        // ── 22. FantasyLabs ownership projections (every 30 min) ──────────
+        var flSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        var flSport=flSportMap[sport];
+        if(flSport){{
+            throttled('fantasylabs_'+sport,1800000,function(){{
+                fetch('https://www.fantasylabs.com/api/player_models/1/'+flSport+'/?projectionsource=4',{{headers:{{'Accept':'application/json','Referer':'https://www.fantasylabs.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_fantasylabs_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] FantasyLabs error:',e.message);}});
+            }});
+        }}
+
+        // ── 23. Rotowire injuries/lineups (every 15 min) ─────────────────
+        var rwSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+        var rwSport=rwSportMap[sport];
+        if(rwSport){{
+            throttled('rotowire_'+sport,900000,function(){{
+                fetch('https://www.rotowire.com/'+rwSport+'/tables/injury-report.php',{{headers:{{'Accept':'application/json','Referer':'https://www.rotowire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_rotowire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Rotowire error:',e.message);}});
+            }});
+        }}
+
+        // ── 24. Sleeper ADP/ownership data (every 30 min) ────────────────
+        throttled('sleeper_'+sport,1800000,function(){{
+            fetch('https://api.sleeper.app/v1/players/'+sport.toLowerCase(),{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_sleeper_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Sleeper error:',e.message);}});
+        }});
+
+        // ── 25. NumberFire projections (every 30 min) ────────────────────
+        var nfSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        var nfSport=nfSportMap[sport];
+        if(nfSport){{
+            throttled('numberfire_'+sport,1800000,function(){{
+                fetch('https://www.numberfire.com/api/v1/'+nfSport+'/projections',{{headers:{{'Accept':'application/json','Referer':'https://www.numberfire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_numberfire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] NumberFire error:',e.message);}});
             }});
         }}
 
