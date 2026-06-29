@@ -14256,6 +14256,90 @@ def _parse_prizepicks_harvested(raw, sport: str) -> list:
     return results
 
 
+
+def fetch_evsharps_ev_from_gist(sport: str) -> tuple:
+    """PRIMARY: EVSharps EV data from browser harvester. SECONDARY: server scraper."""
+    data = _read_gist_file(f"betcouncil_evsharps_ev_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_ev_opportunities as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+def fetch_underdog_from_gist(sport: str) -> tuple:
+    """PRIMARY: Underdog props from browser harvester. SECONDARY: scraper."""
+    data = _read_gist_file(f"betcouncil_underdog_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data",{})
+        if raw:
+            props = _parse_underdog_harvested(raw, sport)
+            if props: return props, "browser_harvester"
+    try:
+        from fetchers import fetch_underdog_props as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return [], "unavailable"
+
+def _parse_underdog_harvested(raw, sport: str) -> list:
+    """Parse Underdog beta/v5/over_under_lines."""
+    results = []
+    try:
+        lines   = raw.get("over_under_lines", raw if isinstance(raw,list) else [])
+        players = {p["id"]:p for p in raw.get("players",[]) if isinstance(p,dict)}
+        for line in (lines if isinstance(lines,list) else []):
+            if not isinstance(line,dict): continue
+            pid   = line.get("player_id","")
+            pinfo = players.get(pid,{})
+            name  = (pinfo.get("first_name","") + " " + pinfo.get("last_name","")).strip() or line.get("title","")
+            stat  = line.get("stat_value","")
+            if not name or not stat: continue
+            results.append({"Player":name,"Prop":line.get("stat_type",""),"Line":stat,
+                            "OverOdds":"3x","UnderOdds":"3x","Book":"Underdog","Sport":sport,
+                            "source":"underdog_browser_harvest"})
+    except Exception as e:
+        print(f"[WARN] _parse_underdog_harvested: {e}")
+    return results
+
+def fetch_bovada_from_gist(sport: str) -> tuple:
+    """PRIMARY: Bovada lines from browser harvester. SECONDARY: scraper."""
+    data = _read_gist_file(f"betcouncil_bovada_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_bovada_game_lines as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+def fetch_novig_from_gist(sport: str) -> tuple:
+    """PRIMARY: Novig props from browser harvester. SECONDARY: scraper."""
+    data = _read_gist_file(f"betcouncil_novig_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_novig_props as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+def fetch_polymarket_from_gist(sport: str) -> tuple:
+    """Polymarket prediction markets from browser harvester."""
+    data = _read_gist_file(f"betcouncil_polymarket_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=32):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.

@@ -10393,6 +10393,11 @@ def load_sport_data(sport):
         ("fetch_oddsjam_from_gist",         "oddsjam_ev",             "oddsjam_src"),
         ("fetch_propswap_from_gist",        "propswap_listings",      "propswap_src"),
         ("fetch_prizepicks_from_gist",       "prizepicks_props_h",     "prizepicks_src"),
+        ("fetch_evsharps_ev_from_gist",      "evsharps_ev_data",       "evsharps_ev_src"),
+        ("fetch_underdog_from_gist",          "underdog_props_h",       "underdog_src"),
+        ("fetch_bovada_from_gist",            "bovada_lines_h",         "bovada_src"),
+        ("fetch_novig_from_gist",             "novig_props_h",          "novig_src"),
+        ("fetch_polymarket_from_gist",        "polymarket_data",        "polymarket_src"),
     ]
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         try:
@@ -16710,6 +16715,71 @@ with tabs[4]:
                 pushGist('betcouncil_propswap_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
             }}).catch(function(e){{console.log('[BetCouncil] PropSwap error:',e.message);}});
         }});
+
+        // ── 12. EVSharps EV data (every 25 min) ─────────────────────────
+        throttled('evsharps_ev_' + sport, 1500000, function() {{
+            var evSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','UFC':'mma'}};
+            var evSport = evSportMap[sport];
+            if (!evSport) return;
+            var evJwt = localStorage.getItem('bc_ev_jwt') || '';
+            var evHdrs = {{'Accept':'application/json'}};
+            if (evJwt) evHdrs['Authorization'] = 'Bearer ' + evJwt;
+            fetch('https://api-production-3a3b.up.railway.app/api/ev?sport=' + evSport, {{headers:evHdrs}})
+            .then(function(r){{return r.json();}}).then(function(data){{
+                pushGist('betcouncil_evsharps_ev_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                console.log('[BetCouncil] ✅ EVSharps EV ' + sport + ' harvested');
+            }}).catch(function(e){{console.log('[BetCouncil] EVSharps EV error:',e.message);}});
+        }});
+
+        // ── 13. Underdog Fantasy props (every 20 min) ────────────────────
+        var udSportMap = {{'MLB':'MLB','NBA':'NBA','NFL':'NFL','NHL':'NHL','WNBA':'WNBA'}};
+        var udSport = udSportMap[sport];
+        if (udSport) {{
+            throttled('underdog_' + sport, 1200000, function() {{
+                fetch('https://api.underdogfantasy.com/beta/v5/over_under_lines?sport_id=' + udSport, {{
+                    headers:{{'Accept':'application/json','Referer':'https://underdogfantasy.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_underdog_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    console.log('[BetCouncil] ✅ Underdog ' + sport + ' harvested');
+                }}).catch(function(e){{console.log('[BetCouncil] Underdog error:',e.message);}});
+            }});
+        }}
+
+        // ── 14. Bovada game lines (every 20 min) ─────────────────────────
+        var bvSportMap = {{'MLB':'/baseball/mlb','NBA':'/basketball/nba','NFL':'/football/nfl','NHL':'/hockey/nhl','UFC':'/fighting/ufc'}};
+        var bvPath = bvSportMap[sport];
+        if (bvPath) {{
+            throttled('bovada_' + sport, 1200000, function() {{
+                fetch('https://www.bovada.lv/services/sports/event/v2/events/A/description' + bvPath + '?lang=en', {{
+                    headers:{{'Accept':'application/json','Referer':'https://www.bovada.lv/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_bovada_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    console.log('[BetCouncil] ✅ Bovada ' + sport + ' harvested');
+                }}).catch(function(e){{console.log('[BetCouncil] Bovada error:',e.message);}});
+            }});
+        }}
+
+        // ── 15. Polymarket prediction markets (every 30 min) ─────────────
+        throttled('polymarket_' + sport, 1800000, function() {{
+            fetch('https://gamma-api.polymarket.com/markets?tag=' + sport.toLowerCase() + '&limit=50&active=true', {{
+                headers:{{'Accept':'application/json'}}
+            }}).then(function(r){{return r.json();}}).then(function(data){{
+                pushGist('betcouncil_polymarket_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+            }}).catch(function(e){{console.log('[BetCouncil] Polymarket error:',e.message);}});
+        }});
+
+        // ── 16. Novig props (every 20 min) ───────────────────────────────
+        var nvSportMap = {{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+        var nvSport = nvSportMap[sport];
+        if (nvSport) {{
+            throttled('novig_' + sport, 1200000, function() {{
+                fetch('https://api.novig.com/lines?sport=' + nvSport + '&market=player_props', {{
+                    headers:{{'Accept':'application/json','Referer':'https://novig.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_novig_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] Novig error:',e.message);}});
+            }});
+        }}
 
     }})();
     </script>
