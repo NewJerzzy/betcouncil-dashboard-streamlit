@@ -11919,6 +11919,23 @@ def load_sport_data(sport):
         clv_mult, clv_note = get_clv_edge_adjustment(sport, _get_cal_tier(final_edge, sport))
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
+        # ── Scanbet Pinnacle drops (bookmarklet) ────────────────────────────
+        if home_team or away_team:
+            try:
+                _sbd = st.session_state.get("scanbet_drops", [])
+                _sb_hit = next((d for d in _sbd if d.get("is_steam") and (
+                    normalize_name(home_team or "") in normalize_name(d.get("game",""))
+                    or normalize_name(away_team or "") in normalize_name(d.get("game",""))
+                )), None)
+                if _sb_hit:
+                    _dp = _sb_hit.get("drop_pct",0)
+                    prop["ScanbetSteam"] = True
+                    prop["SignalNotes"]  = prop.get("SignalNotes","") + f" 📡 Pinnacle drop:{_dp:+.1%}"
+                    if abs(_dp) > 0.04:
+                        final_edge = min(final_edge * 1.07, EDGE_CAP)
+            except Exception:
+                pass
+
         # ── SharpAPI Pinnacle steam detection ────────────────────────────────
         if home_team or away_team:
             try:
@@ -18441,6 +18458,18 @@ with tabs[9]:
     _src_statuses.append({"Source": "FanDuel props (SharpAPI)",
         "Status": (f"🟢 {len(_fd_sa_st)} props" if _fd_sa_st
                    else ("🟡 Add SHARPAPI_KEY to secrets" if not _sharpapi_key_present else "⚪ Loading...")),
+        "Action": "None"})
+
+    # Scanbet Pinnacle drops (bookmarklet)
+    _sbd = fetch_scanbet_drops_from_gist() if "fetch_scanbet_drops_from_gist" in dir() else []
+    try:
+        from fetchers import fetch_scanbet_drops_from_gist as _fsbd
+        _sbd = _fsbd()
+    except Exception: _sbd = []
+    st.session_state["scanbet_drops"] = _sbd
+    _src_statuses.append({"Source": "Scanbet (Pinnacle drops)",
+        "Status": (f"🟢 {len(_sbd)} drops in last hour" if _sbd
+                   else "⚪ Run bookmarklet on scanbet.io to populate"),
         "Action": "None"})
 
     # SharpAPI line movement + EV

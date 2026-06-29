@@ -13535,6 +13535,84 @@ def fetch_fanduel_props_sharpapi(sport: str) -> list:
         return []
 
 
+
+def fetch_scanbet_drops_from_gist() -> list:
+    """
+    Read Pinnacle line drops captured by the BetCouncil Scanbet bookmarklet.
+    Data pushed to Gist by browser bookmarklet running Socket.IO on scanbet.io.
+    Returns list of {game, sport, market, old_odds, new_odds, drop_pct, timestamp}
+    Cached 5 min.
+    """
+    cp = os.path.join(CACHE_DIR, "scanbet_drops_gist.pkl")
+    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 5:
+        c = _safe_load_pkl(cp)
+        if c is not None: return c
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers={"Authorization":f"token {GITHUB_TOKEN}",
+                     "Accept":"application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            gist = json.loads(r.read())
+        f = gist.get("files",{}).get("betcouncil_scanbet_drops.json",{})
+        if not f: return []
+        raw = json.loads(f.get("content","[]"))
+        # Parse drops into BetCouncil format
+        results = []
+        cutoff  = time.time() - 3600  # only last 1 hour
+        for entry in raw:
+            try:
+                ts   = entry.get("timestamp","")
+                data = entry.get("data",{})
+                if isinstance(data, list):
+                    for d in data: results.extend(_parse_scanbet_drop(d, ts))
+                elif isinstance(data, dict):
+                    results.extend(_parse_scanbet_drop(data, ts))
+            except Exception:
+                pass
+        # Filter to recent
+        results = [r for r in results if r.get("timestamp","") >= 
+                   __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H')][:200]
+        if results: _safe_save_pkl(cp, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_scanbet_drops_from_gist: {e}"); return []
+
+def _parse_scanbet_drop(d: dict, ts: str) -> list:
+    """Parse a single scanbet drop event into BetCouncil format."""
+    results = []
+    try:
+        game   = d.get("eventName", d.get("event_name", d.get("name","")))
+        sport  = d.get("sport", d.get("sportName",""))
+        market = d.get("market", d.get("marketName",""))
+        # Handle nested movements
+        movements = d.get("movements", d.get("odds", [d] if "oldOdds" in d or "old_odds" in d else []))
+        for m in (movements if isinstance(movements,list) else [movements]):
+            old_odds = m.get("oldOdds", m.get("old_odds", m.get("openOdds")))
+            new_odds = m.get("newOdds", m.get("new_odds", m.get("currentOdds")))
+            if old_odds and new_odds:
+                try:
+                    def to_prob(o):
+                        o=float(o)
+                        return 100/(o+100) if o>0 else -o/(-o+100)
+                    dp = to_prob(new_odds) - to_prob(old_odds)
+                    results.append({
+                        "game":      game,
+                        "sport":     sport,
+                        "market":    market,
+                        "selection": m.get("selection", m.get("name","")),
+                        "old_odds":  old_odds,
+                        "new_odds":  new_odds,
+                        "drop_pct":  round(dp,4),
+                        "is_steam":  dp > 0,
+                        "timestamp": ts,
+                        "source":    "scanbet_bookmarklet",
+                    })
+                except Exception: pass
+    except Exception: pass
+    return results
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
