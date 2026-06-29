@@ -10384,15 +10384,25 @@ def load_sport_data(sport):
         pass
     st.session_state["sharpapi_line_drops"] = sharpapi_drops_raw  or []
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
-    # Action Network: primary=browser harvester, secondary=scraper
-    try:
-        from fetchers import fetch_action_network_from_gist as _an_gist
-        _an_data, _an_src = _an_gist(sport)
-        if _an_data:
-            st.session_state["action_network_data"] = _an_data
-            st.session_state["action_network_src"]  = _an_src
-    except Exception:
-        pass
+    # ── Browser harvester data → session state (primary/secondary) ─────────
+    _harvester_sources = [
+        ("fetch_action_network_from_gist",  "action_network_data",   "action_network_src"),
+        ("fetch_covers_from_gist",          "covers_consensus",       "covers_src"),
+        ("fetch_draftkings_props_from_gist","dk_props_harvested",     "dk_props_src"),
+        ("fetch_unabated_from_gist",        "unabated_lines_h",       "unabated_src"),
+        ("fetch_oddsjam_from_gist",         "oddsjam_ev",             "oddsjam_src"),
+        ("fetch_propswap_from_gist",        "propswap_listings",      "propswap_src"),
+    ]
+    for _fn_name, _ss_key, _src_key in _harvester_sources:
+        try:
+            import fetchers as _ftch
+            _fn   = getattr(_ftch, _fn_name)
+            _data, _src = _fn(sport)
+            if _data:
+                st.session_state[_ss_key] = _data
+                st.session_state[_src_key] = _src
+        except Exception:
+            pass
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
@@ -18854,25 +18864,38 @@ with tabs[9]:
     # ── Browser Harvester Status Panel ─────────────────────────────────────
     try:
         from fetchers import get_harvester_status as _get_hs
-        _hs = _get_hs()
-        _h_active  = sum(1 for v in _hs.values() if v.get("active"))
-        _h_total   = len(_hs)
-        _h_warn    = [f"{k}: {v['warning']}" for k,v in _hs.items() if not v.get("active") and v.get("warning")]
+        _hs       = _get_hs()
+        _h_active = sum(1 for v in _hs.values() if v.get("active"))
+        _h_total  = len(_hs)
+        _h_stale  = {k:v for k,v in _hs.items() if not v.get("active")}
+        # Summary row
         _src_statuses.append({
-            "Source": f"🌐 Browser Harvester ({_h_active}/{_h_total} active)",
-            "Status": (f"🟢 All sources live" if _h_active == _h_total
-                       else f"🟡 {_h_active}/{_h_total} active — {len(_h_warn)} stale"),
+            "Source": f"🌐 Auto-Harvester ({_h_active}/{_h_total} live)",
+            "Status": (f"🟢 All {_h_total} sources active"
+                       if _h_active == _h_total
+                       else f"🟡 {_h_active}/{_h_total} live | {len(_h_stale)} stale/pending"),
             "Action": "None"
         })
-        # Show individual warnings
-        for _hw in _h_warn[:3]:
+        # Detail rows for each source
+        for _sname, _sv in _hs.items():
+            _age_str = f"{_sv['age_minutes']}min" if _sv.get("age_minutes") else "no data"
+            _src_str = _sv.get("source","?")
+            if _sv.get("active"):
+                _icon = "🟢"
+                _stat = f"Live ({_age_str} | {_src_str})"
+            elif _sv.get("age_minutes") is None:
+                _icon = "⚪"
+                _stat = "Pending — load a board to activate"
+            else:
+                _icon = "🟡"
+                _stat = f"Stale ({_age_str}) — auto-refreshes on board load"
             _src_statuses.append({
-                "Source": f"  ⚠️ {_hw[:50]}",
-                "Status": "🔴 Stale — reload to refresh",
+                "Source": f"  {_icon} {_sname}",
+                "Status": _stat,
                 "Action": "None"
             })
     except Exception as _he:
-        _src_statuses.append({"Source": "Browser Harvester", "Status": f"⚠️ {str(_he)[:50]}", "Action": "None"})
+        _src_statuses.append({"Source": "Auto-Harvester", "Status": f"⚠️ {str(_he)[:60]}", "Action": "None"})
 
     # StatMuse (on-demand player trends)
     try:
