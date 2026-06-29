@@ -10392,6 +10392,7 @@ def load_sport_data(sport):
         ("fetch_unabated_from_gist",        "unabated_lines_h",       "unabated_src"),
         ("fetch_oddsjam_from_gist",         "oddsjam_ev",             "oddsjam_src"),
         ("fetch_propswap_from_gist",        "propswap_listings",      "propswap_src"),
+        ("fetch_prizepicks_from_gist",       "prizepicks_props_h",     "prizepicks_src"),
     ]
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         try:

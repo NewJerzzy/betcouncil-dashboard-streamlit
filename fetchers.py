@@ -14190,6 +14190,72 @@ def get_harvester_status() -> dict:
     return status
 
 
+
+def fetch_prizepicks_from_gist(sport: str) -> tuple:
+    """
+    PRIMARY: PrizePicks props from browser harvester.
+    SECONDARY: Falls back to fetch_prizepicks_props() CDN scraper.
+    Returns (props_list, source_label)
+    """
+    data = _read_gist_file(f"betcouncil_prizepicks_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data",{})
+        if raw:
+            props = _parse_prizepicks_harvested(raw, sport)
+            if props:
+                print(f"[PrizePicks] PRIMARY: {len(props)} props from browser harvester")
+                return props, "browser_harvester"
+    try:
+        secondary = fetch_prizepicks_props(sport)
+        if secondary:
+            print(f"[PrizePicks] SECONDARY: {len(secondary)} props from CDN scraper")
+            return secondary, "scraper_fallback"
+    except Exception:
+        pass
+    return [], "unavailable"
+
+
+def _parse_prizepicks_harvested(raw, sport: str) -> list:
+    """Parse PrizePicks api.prizepicks.com/projections response format."""
+    results = []
+    try:
+        items    = raw if isinstance(raw, list) else raw.get("data", [])
+        included = raw.get("included", []) if isinstance(raw, dict) else []
+        players  = {}
+        for inc in included:
+            if isinstance(inc, dict) and inc.get("type") in ("new_player","player"):
+                pid  = inc.get("id","")
+                attr = inc.get("attributes",{})
+                players[pid] = {"name":attr.get("name",""),"team":attr.get("team",""),
+                                "position":attr.get("position","")}
+        for item in items:
+            if not isinstance(item, dict): continue
+            attr      = item.get("attributes",{})
+            line      = attr.get("line_score", attr.get("line"))
+            stat_type = attr.get("stat_type","")
+            desc      = attr.get("description","")
+            rels      = item.get("relationships",{})
+            p_rel     = rels.get("new_player", rels.get("player",{}))
+            pid       = p_rel.get("data",{}).get("id","") if isinstance(p_rel.get("data"),dict) else ""
+            pinfo     = players.get(pid, {})
+            pname     = pinfo.get("name","") or desc
+            if not pname or not stat_type or line is None: continue
+            results.append({
+                "Player":    pname,
+                "Prop":      stat_type,
+                "Line":      line,
+                "OverOdds":  "-110",
+                "UnderOdds": "-110",
+                "Team":      pinfo.get("team",""),
+                "Book":      "PrizePicks",
+                "Sport":     sport,
+                "source":    "prizepicks_browser_harvest",
+            })
+    except Exception as e:
+        print(f"[WARN] _parse_prizepicks_harvested: {e}")
+    return results
+
+
 def fetch_propswap_listings(sport: str = "baseball") -> list:
     """
     Fetch PropSwap secondary market ticket listings.
