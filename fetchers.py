@@ -14156,6 +14156,10 @@ def get_harvester_status() -> dict:
         ("DraftKings props",            "betcouncil_dk_props_MLB.json",       22),
         ("Unabated sharp lines",        "betcouncil_unabated_MLB.json",       32),
         ("OddsJam +EV",                 "betcouncil_oddsjam_MLB.json",        22),
+        ("PrizePicks props",             "betcouncil_prizepicks_MLB.json",     22),
+        ("MyBookie lines",               "betcouncil_mybookie_MLB.json",       28),
+        ("ParlaySavant +EV",             "betcouncil_parlaysavant_MLB.json",   22),
+        ("Bet365 lines",                 "betcouncil_bet365_MLB.json",         28),
     ]
     from datetime import datetime, timezone
     status = {}
@@ -14337,6 +14341,49 @@ def fetch_polymarket_from_gist(sport: str) -> tuple:
     if data and _is_fresh(data, max_age_minutes=32):
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+
+
+def fetch_mybookie_from_gist(sport: str) -> tuple:
+    """PRIMARY: MyBookie lines from browser harvester. SECONDARY: server scraper."""
+    data = _read_gist_file(f"betcouncil_mybookie_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_mybookie_lines as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+
+def fetch_parlaysavant_from_gist(sport: str) -> tuple:
+    """PRIMARY: ParlaySavant +EV from browser harvester. SECONDARY: server scraper."""
+    data = _read_gist_file(f"betcouncil_parlaysavant_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_parlaysavant_props as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
+    return {}, "unavailable"
+
+
+def fetch_bet365_from_gist(sport: str) -> tuple:
+    """PRIMARY: Bet365 lines from browser harvester. SECONDARY: server scraper."""
+    data = _read_gist_file(f"betcouncil_bet365_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    try:
+        from fetchers import fetch_bet365_game_lines as _f
+        s = _f(sport)
+        if s: return s, "scraper_fallback"
+    except Exception: pass
     return {}, "unavailable"
 
 

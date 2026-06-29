@@ -10398,6 +10398,9 @@ def load_sport_data(sport):
         ("fetch_bovada_from_gist",            "bovada_lines_h",         "bovada_src"),
         ("fetch_novig_from_gist",             "novig_props_h",          "novig_src"),
         ("fetch_polymarket_from_gist",        "polymarket_data",        "polymarket_src"),
+        ("fetch_mybookie_from_gist",           "mybookie_lines_h",       "mybookie_src"),
+        ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
+        ("fetch_bet365_from_gist",             "bet365_lines_h",         "bet365_src"),
     ]
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         try:
