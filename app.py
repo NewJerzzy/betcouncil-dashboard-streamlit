@@ -16647,6 +16647,59 @@ with tabs[4]:
             }});
         }}
 
+        // ── 6. Covers.com consensus betting % (every 20 min) ─────────
+        var coversSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        var coversSport = coversSportMap[sport];
+        if (coversSport) {{
+            throttled('covers_' + sport, 1200000, function() {{
+                fetch('https://www.covers.com/api/widget/matchups?sport=' + coversSport, {{
+                    headers: {{'Accept':'application/json','Referer':'https://www.covers.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_covers_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] Covers error:',e.message);}});
+            }});
+        }}
+
+        // ── 7. DraftKings props (every 20 min) ───────────────────────
+        var dkCatMap = {{'MLB':84240,'NBA':42648,'NFL':88808,'NHL':42133,'UFC':9}};
+        var dkCat = dkCatMap[sport];
+        if (dkCat) {{
+            throttled('dk_props_' + sport, 1200000, function() {{
+                fetch('https://sportsbook.draftkings.com/api/odds/v1/categories/' + dkCat + '/subcategories?format=json', {{
+                    headers:{{'Accept':'application/json','Referer':'https://sportsbook.draftkings.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_dk_props_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] DK props error:',e.message);}});
+            }});
+        }}
+
+        // ── 8. Unabated sharp lines (every 30 min) ───────────────────
+        throttled('unabated_' + sport, 1800000, function() {{
+            fetch('https://unabated.com/api/lines?sport=' + sport.toLowerCase(), {{
+                headers:{{'Accept':'application/json','Referer':'https://unabated.com/'}}
+            }}).then(function(r){{return r.json();}}).then(function(data){{
+                pushGist('betcouncil_unabated_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+            }}).catch(function(e){{console.log('[BetCouncil] Unabated error:',e.message);}});
+        }});
+
+        // ── 9. OddsJam +EV (every 20 min) ────────────────────────────
+        throttled('oddsjam_' + sport, 1200000, function() {{
+            fetch('https://oddsjam.com/api/v2/positive-ev?sport=' + sport.toLowerCase() + '&sportsbook=pinnacle', {{
+                headers:{{'Accept':'application/json','Referer':'https://oddsjam.com/'}}
+            }}).then(function(r){{return r.json();}}).then(function(data){{
+                pushGist('betcouncil_oddsjam_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+            }}).catch(function(e){{console.log('[BetCouncil] OddsJam error:',e.message);}});
+        }});
+
+        // ── 10. PropSwap secondary market (every 30 min) ─────────────
+        throttled('propswap_' + sport, 1800000, function() {{
+            fetch('https://www.propswap.com/api/listings?sport=' + sport.toLowerCase() + '&status=active&limit=100', {{
+                headers:{{'Accept':'application/json','Referer':'https://www.propswap.com/'}}
+            }}).then(function(r){{return r.json();}}).then(function(data){{
+                pushGist('betcouncil_propswap_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+            }}).catch(function(e){{console.log('[BetCouncil] PropSwap error:',e.message);}});
+        }});
+
     }})();
     </script>
     """
