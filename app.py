@@ -59,7 +59,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_sharp_consensus_no_vig, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_game_line_consensus, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_sharp_consensus_no_vig, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     rest_adjusted_std_dev, score_rlm, devig_ensemble, pace_adjust_mlb_prop,
     record_line, detect_steam_move, get_opener_gap, detect_market_maker_divergence,
     compute_line_velocity, classify_book_role)
@@ -5683,6 +5683,42 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         away_ml = game.get("OddsAPI ML Away", game.get("Bovada ML Away", "N/A"))
     home_team = home_teams.get(matchup, "")
     away_team = away_teams.get(matchup, "")
+
+    # ── Multi-book consensus — replaces single-source ESPN line with full
+    # visibility across every scraped book (Pinnacle anchor, consensus
+    # median, sharp/public agreement-or-disagreement). Falls back cleanly
+    # to the ESPN/OddsAPI line above if no books matched this matchup.
+    try:
+        _gl_consensus = build_game_line_consensus(home_team, away_team, {
+            "pinnacle_game_lines":  st.session_state.get("pinnacle_game_lines", []),
+            "betrivers_game_lines": st.session_state.get("betrivers_game_lines", []),
+            "fanatics_game_lines":  st.session_state.get("fanatics_game_lines", []),
+            "espnbet_game_lines":   st.session_state.get("espnbet_game_lines", []),
+            "hardrock_game_lines":  st.session_state.get("hardrock_game_lines", []),
+            "wynnbet_game_lines":   st.session_state.get("wynnbet_game_lines", []),
+            "unibet_game_lines":    st.session_state.get("unibet_game_lines", []),
+            "bet365_game_lines":    st.session_state.get("bet365_game_lines", []),
+            "betmgm_game_lines":    st.session_state.get("betmgm_game_lines", []),
+            "heritage_game_lines":  st.session_state.get("heritage_game_lines", []),
+            "bookmaker_game_lines": st.session_state.get("bookmaker_game_lines", []),
+            "bovada_game_lines":    st.session_state.get("bovada_game_lines", []),
+        })
+    except Exception:
+        _gl_consensus = {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
+                          "spread": {}, "total": {}, "moneyline": {}}
+
+    # Prefer consensus median, then Pinnacle, then the ESPN/OddsAPI line
+    # already resolved above — never fully replaces, only upgrades it.
+    if _gl_consensus.get("spread", {}).get("consensus") is not None:
+        spread_str = f"{home_team} {_gl_consensus['spread']['consensus']:+.1f}" if home_team else spread_str
+    if _gl_consensus.get("total", {}).get("consensus") is not None:
+        total_str = _gl_consensus["total"]["consensus"]
+    if _gl_consensus.get("moneyline", {}).get("home_consensus_prob") is not None:
+        # Keep the original market home_ml/away_ml for display/EV math below —
+        # the consensus probability is exposed separately via _gl_consensus
+        # and consumed directly by the ML edge block further down.
+        pass
+
     # Normalize abbreviations to full names for power rating lookups
     _PR_MAP = {
         "ARI":"Arizona Diamondbacks","ATL":"Atlanta Braves","BAL":"Baltimore Orioles",
@@ -5952,7 +5988,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_game_tier(abs(spread_edge_pct), sport)
-                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts"})
+                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0)})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
@@ -6333,7 +6369,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_game_tier(abs(total_edge_pct), sport)
-                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value"})
+                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0)})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
@@ -6344,22 +6380,32 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         if home_ml and away_ml and home_ml != "N/A" and away_ml != "N/A":
             h_ml = float(str(home_ml).replace("+",""))
             a_ml = float(str(away_ml).replace("+",""))
-            # Use ensemble devig (Probit+Shin blend) not raw implied prob
-            try:
-                from bc_utils import devig_ensemble
-                _ens = devig_ensemble(h_ml, a_ml, market_type="ml",
-                                      liquidity="high" if sport in ("NFL","MLB") else "medium")
-                h_implied = _ens["fair_prob"]
+            # Prefer multi-book consensus / Pinnacle-anchored implied probability
+            # over a single-line devig — same role Pinnacle no-vig plays for props.
+            _ml_consensus = _gl_consensus.get("moneyline", {}) if isinstance(_gl_consensus, dict) else {}
+            if _ml_consensus.get("pinnacle_home_prob") is not None:
+                h_implied = _ml_consensus["pinnacle_home_prob"]
                 a_implied = 1 - h_implied
-            except Exception:
-                if h_ml < 0:
-                    h_implied = abs(h_ml) / (abs(h_ml) + 100)
-                else:
-                    h_implied = 100 / (h_ml + 100)
-                if a_ml < 0:
-                    a_implied = abs(a_ml) / (abs(a_ml) + 100)
-                else:
-                    a_implied = 100 / (a_ml + 100)
+            elif _ml_consensus.get("home_consensus_prob") is not None:
+                h_implied = _ml_consensus["home_consensus_prob"]
+                a_implied = _ml_consensus.get("away_consensus_prob", 1 - h_implied)
+            else:
+                # Fall back to single-line devig (ensemble Probit+Shin blend)
+                try:
+                    from bc_utils import devig_ensemble
+                    _ens = devig_ensemble(h_ml, a_ml, market_type="ml",
+                                          liquidity="high" if sport in ("NFL","MLB") else "medium")
+                    h_implied = _ens["fair_prob"]
+                    a_implied = 1 - h_implied
+                except Exception:
+                    if h_ml < 0:
+                        h_implied = abs(h_ml) / (abs(h_ml) + 100)
+                    else:
+                        h_implied = 100 / (h_ml + 100)
+                    if a_ml < 0:
+                        a_implied = abs(a_ml) / (abs(a_ml) + 100)
+                    else:
+                        a_implied = 100 / (a_ml + 100)
             if home_team in power_ratings and away_team in power_ratings:
                 h_power = power_ratings[home_team]
                 a_power = power_ratings[away_team]
@@ -6384,7 +6430,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         fair_prob = a_fair
                     tier = _get_cal_tier(ml_edge, sport)
                     ev = fair_prob * (abs(float(str(home_ml if h_ml_edge > a_ml_edge else away_ml).replace("+",""))) / 100) - (1 - fair_prob)
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"})
+                    _ml_note = f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"
+                    if _ml_consensus.get("n_books", 0) >= 2:
+                        _ml_note += f" ({_ml_consensus['n_books']}-book consensus)"
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", "")})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
@@ -6544,11 +6593,41 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     }
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_live_power_ratings(sport, fallback_ratings):
+    """
+    TeamRankings.com live predictive power ratings as primary source,
+    falling back to the static hardcoded dict when the scrape is empty/
+    fails or for sports without a verified name-mapping table yet.
+    Cached 6h to match the underlying fetcher's own cache window.
+    """
+    try:
+        live = fetch_teamrankings_power_ratings(sport)
+    except Exception:
+        live = {}
+    if not live:
+        return fallback_ratings, "static_fallback"
+    merged = dict(fallback_ratings)
+    matched = 0
+    for team, rating in live.items():
+        if team in merged:
+            merged[team] = rating
+            matched += 1
+    # Only trust the live overlay if most of the static teams actually
+    # matched a TeamRankings name — otherwise the name map is incomplete
+    # and we'd be silently leaving half the league on stale data.
+    if fallback_ratings and matched / len(fallback_ratings) < 0.7:
+        return fallback_ratings, "static_fallback_low_match"
+    return merged, "teamrankings_live"
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     power_ratings = power_map.get(sport, {})
+    if sport == "MLB" and power_ratings:
+        power_ratings, _pr_source = get_live_power_ratings(sport, power_ratings)
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings, mlb_pitchers=mlb_pitchers)
         # Append all games — not just those with best_bet
@@ -15233,11 +15312,21 @@ with tabs[2]:
             if st.session_state.get("show_ml_debug", False):
                 st.caption(f"🔧 {_g.get('matchup','?')}: HomeML={_g.get('HomeML','MISSING')} AwayML={_g.get('AwayML','MISSING')} MLPick={_g.get('MLPick','MISSING')} MLEdge={_g.get('MLEdge','MISSING')} | keys with ML: {[k for k in _g.keys() if 'ml' in k.lower() or 'ML' in k]}")
             # Game card header
+            _gl_agree = next((r.get("market_agreement") for r in _g.get("recommendations", []) if r.get("market_agreement")), None)
+            _gl_agree_note = next((r.get("market_agreement_note") for r in _g.get("recommendations", []) if r.get("market_agreement_note")), "")
+            _gl_n_books = max([r.get("n_books", 0) for r in _g.get("recommendations", [])] or [0])
+            _gl_badge_color = {"STRONG_AGREE": "#22c55e", "MODERATE_AGREE": "#e8a020", "DISAGREE": "#e04040"}.get(_gl_agree, "#4a5a6a")
+            _gl_badge_label = {"STRONG_AGREE": "✓ Market Agrees", "MODERATE_AGREE": "⚠ Mixed Signals", "DISAGREE": "🔥 Sharp/Public Split"}.get(_gl_agree, "")
+            _gl_badge_html = (
+                f'<span title="{_gl_agree_note}" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:{_gl_badge_color}22;color:{_gl_badge_color};border:0.5px solid {_gl_badge_color}44;margin-left:auto;">{_gl_badge_label} ({_gl_n_books} books)</span>'
+                if _gl_agree_note else ''
+            )
             st.markdown(
                 f'<div style="background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_gsport}</span>'
                 f'<span style="font-size:14px;font-weight:500;color:#e8f0f8;">{_matchup}</span>'
-                f'<span style="font-size:15px;color:var(--color-text-tertiary);margin-left:auto;">{_gtime}</span>'
+                f'<span style="font-size:15px;color:var(--color-text-tertiary);{"margin-left:auto;" if not _gl_badge_html else ""}">{_gtime}</span>'
+                + _gl_badge_html +
                 f'</div>',
                 unsafe_allow_html=True
             )

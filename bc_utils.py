@@ -4077,6 +4077,204 @@ def classify_book_role(book: str) -> dict:
         }
 
 
+def _gl_normalize_long_format(raw_lines: list, book_name: str) -> list:
+    """
+    Normalize the long-format game-line scrapers (Bovada, BetMGM — one row
+    per market/selection) into the same clean per-game shape used by
+    Pinnacle/BetRivers: {Matchup, Home, Away, HomeML, AwayML, Spread, Total}.
+    """
+    by_game = {}
+    for row in raw_lines or []:
+        home = row.get("home", "")
+        away = row.get("away", "")
+        if not home or not away:
+            continue
+        key = (away, home)
+        g = by_game.setdefault(key, {
+            "Matchup": row.get("game", f"{away} @ {home}"),
+            "Home": home, "Away": away,
+            "HomeML": None, "AwayML": None, "Spread": None, "Total": None,
+            "Book": book_name,
+        })
+        market = (row.get("market") or "").lower()
+        selection = (row.get("selection") or "").lower()
+        odds = row.get("odds")
+        if "moneyline" in market or market == "money line":
+            if home.lower() in selection or selection == home.lower():
+                g["HomeML"] = odds
+            elif away.lower() in selection or selection == away.lower():
+                g["AwayML"] = odds
+        elif "spread" in market or "run line" in market or "puck line" in market:
+            try:
+                num = re.search(r"([+-]?[\d.]+)", selection)
+                if num and (home.lower() in selection):
+                    g["Spread"] = float(num.group(1))
+            except Exception:
+                pass
+        elif "total" in market or "over/under" in market:
+            try:
+                num = re.search(r"([\d.]+)", selection)
+                if num:
+                    g["Total"] = float(num.group(1))
+            except Exception:
+                pass
+    return list(by_game.values())
+
+
+def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lines: dict) -> dict:
+    """
+    Aggregate every scraped book's game line for one matchup into a single
+    consensus view — the game-line equivalent of trusting Pinnacle no-vig
+    for props, but with full multi-book visibility instead of comparing
+    against just one (usually ESPN-sourced) line.
+
+    Args:
+        matchup_home, matchup_away: team names/abbrevs for the game in question
+        all_book_lines: {book_key: list_of_game_dicts} — already-normalized
+            per-game shape ({Home, Away, HomeML, AwayML, Spread, Total}) for
+            clean books, OR raw long-format rows for Bovada/BetMGM (auto-
+            normalized internally).
+
+    Returns:
+        {
+          "spread": {"consensus": float, "pinnacle": float, "n_books": int,
+                     "books": {book: spread}, "divergence": {...}},
+          "total":  {... same shape ...},
+          "moneyline": {"home_consensus_prob": float, "away_consensus_prob": float,
+                        "pinnacle_home_prob": float, "n_books": int},
+          "agreement": "STRONG_AGREE" | "MODERATE_AGREE" | "DISAGREE" | "NO_DATA",
+          "agreement_note": str,
+        }
+    """
+    _LONG_FORMAT_BOOKS = {"bovada", "betmgm"}
+
+    def _match_game(games_list):
+        for g in games_list or []:
+            gh = (g.get("Home") or g.get("home") or "")
+            ga = (g.get("Away") or g.get("away") or "")
+            if normalize_name(gh) == normalize_name(matchup_home) and \
+               normalize_name(ga) == normalize_name(matchup_away):
+                return g
+        return None
+
+    spread_by_book, total_by_book = {}, {}
+    home_ml_by_book, away_ml_by_book = {}, {}
+
+    for book_key, lines in (all_book_lines or {}).items():
+        if not lines:
+            continue
+        games_list = lines
+        if book_key in _LONG_FORMAT_BOOKS:
+            games_list = _gl_normalize_long_format(lines, book_key)
+        g = _match_game(games_list)
+        if not g:
+            continue
+        spread_val = g.get("Spread")
+        total_val  = g.get("Total")
+        home_ml    = g.get("HomeML")
+        away_ml    = g.get("AwayML")
+        try:
+            if spread_val not in (None, "N/A", ""):
+                spread_by_book[book_key] = float(str(spread_val).replace("+", ""))
+        except (ValueError, TypeError):
+            pass
+        try:
+            if total_val not in (None, "N/A", ""):
+                total_by_book[book_key] = float(str(total_val).replace("+", ""))
+        except (ValueError, TypeError):
+            pass
+        try:
+            if home_ml not in (None, "N/A", ""):
+                home_ml_by_book[book_key] = float(str(home_ml).replace("+", ""))
+        except (ValueError, TypeError):
+            pass
+        try:
+            if away_ml not in (None, "N/A", ""):
+                away_ml_by_book[book_key] = float(str(away_ml).replace("+", ""))
+        except (ValueError, TypeError):
+            pass
+
+    def _median(vals):
+        if not vals:
+            return None
+        s = sorted(vals)
+        n = len(s)
+        mid = n // 2
+        return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+
+    def _market_block(by_book, market_key):
+        vals = list(by_book.values())
+        consensus = _median(vals)
+        pinnacle = by_book.get("pinnacle_game_lines") or by_book.get("pinnacle")
+        lines_for_divergence = {
+            book: {market_key: val} for book, val in by_book.items()
+        }
+        divergence = detect_market_maker_divergence(lines_for_divergence) if len(by_book) >= 2 else {
+            "divergence_detected": False, "gap": 0.0, "signal_strength": "NONE"
+        }
+        return {
+            "consensus": round(consensus, 2) if consensus is not None else None,
+            "pinnacle": round(pinnacle, 2) if pinnacle is not None else None,
+            "n_books": len(by_book),
+            "books": {k: round(v, 2) for k, v in by_book.items()},
+            "divergence": divergence,
+        }
+
+    spread_block = _market_block(spread_by_book, "spread")
+    total_block  = _market_block(total_by_book, "total")
+
+    home_implied = away_implied = pinnacle_home_implied = None
+    if home_ml_by_book and away_ml_by_book:
+        h_probs, a_probs = [], []
+        for book in set(home_ml_by_book) & set(away_ml_by_book):
+            h_ml, a_ml = home_ml_by_book[book], away_ml_by_book[book]
+            try:
+                ens = devig_ensemble(h_ml, a_ml, market_type="ml")
+                h_probs.append(ens["fair_prob"])
+                a_probs.append(1 - ens["fair_prob"])
+                if book in ("pinnacle_game_lines", "pinnacle"):
+                    pinnacle_home_implied = round(ens["fair_prob"], 4)
+            except Exception:
+                continue
+        if h_probs:
+            home_implied = round(sum(h_probs) / len(h_probs), 4)
+            away_implied = round(sum(a_probs) / len(a_probs), 4)
+
+    ml_block = {
+        "home_consensus_prob": home_implied,
+        "away_consensus_prob": away_implied,
+        "pinnacle_home_prob": pinnacle_home_implied,
+        "n_books": len(set(home_ml_by_book) & set(away_ml_by_book)),
+    }
+
+    n_total_books = len(set(spread_by_book) | set(total_by_book) | set(home_ml_by_book))
+    if n_total_books == 0:
+        agreement, agreement_note = "NO_DATA", "No book data available for this matchup."
+    else:
+        strong_div = spread_block["divergence"].get("signal_strength") == "STRONG" or \
+                     total_block["divergence"].get("signal_strength") == "STRONG"
+        moderate_div = spread_block["divergence"].get("signal_strength") == "MODERATE" or \
+                       total_block["divergence"].get("signal_strength") == "MODERATE"
+        if strong_div:
+            agreement = "DISAGREE"
+            agreement_note = "Sharp books (Pinnacle/BetOnline) and square books diverge significantly — market hasn't settled yet."
+        elif moderate_div:
+            agreement = "MODERATE_AGREE"
+            agreement_note = "Some divergence between sharp and square books — moderate confidence."
+        else:
+            agreement = "STRONG_AGREE"
+            agreement_note = f"{n_total_books} books broadly agree on this line — high market confidence."
+
+    return {
+        "spread": spread_block,
+        "total": total_block,
+        "moneyline": ml_block,
+        "agreement": agreement,
+        "agreement_note": agreement_note,
+        "n_books_total": n_total_books,
+    }
+
+
 def detect_market_maker_divergence(lines_by_book: dict) -> dict:
     """
     Detect when price setters and price takers disagree on a line.

@@ -12120,6 +12120,119 @@ def _pinn_american(price):
         return None
 
 
+_TEAMRANKINGS_SPORT_PATHS = {
+    "NBA": "nba", "WNBA": "wnba", "MLB": "mlb", "NHL": "nhl", "NFL": "nfl",
+}
+
+# Maps TeamRankings' short display names to the abbreviations/full names
+# used elsewhere in app.py's power_ratings dicts. Extend as needed when a
+# team comes back N/A in the merged ratings.
+_TEAMRANKINGS_NAME_MAP = {
+    "MLB": {
+        "LA Dodgers": "Los Angeles Dodgers", "NY Yankees": "New York Yankees",
+        "Philadelphia": "Philadelphia Phillies", "Boston": "Boston Red Sox",
+        "Milwaukee": "Milwaukee Brewers", "Chi Cubs": "Chicago Cubs",
+        "NY Mets": "New York Mets", "San Diego": "San Diego Padres",
+        "Texas": "Texas Rangers", "Toronto": "Toronto Blue Jays",
+        "Atlanta": "Atlanta Braves", "Seattle": "Seattle Mariners",
+        "Arizona": "Arizona Diamondbacks", "Detroit": "Detroit Tigers",
+        "Tampa Bay": "Tampa Bay Rays", "Houston": "Houston Astros",
+        "Cincinnati": "Cincinnati Reds", "SF Giants": "San Francisco Giants",
+        "Kansas City": "Kansas City Royals", "Cleveland": "Cleveland Guardians",
+        "Baltimore": "Baltimore Orioles", "Minnesota": "Minnesota Twins",
+        "St. Louis": "St. Louis Cardinals", "Pittsburgh": "Pittsburgh Pirates",
+        "Sacramento": "Athletics", "LA Angels": "Los Angeles Angels",
+        "Miami": "Miami Marlins", "Washington": "Washington Nationals",
+        "Chi Sox": "Chicago White Sox", "Colorado": "Colorado Rockies",
+    },
+}
+
+
+def fetch_teamrankings_power_ratings(sport: str) -> dict:
+    """
+    Live, daily-updating predictive power ratings from TeamRankings.com —
+    free, no auth, no login. Replaces/augments the static hardcoded
+    *_POWER_RATINGS dicts in config.py, which never self-update.
+
+    Returns {team_name: rating_float} using the same team-name keys as the
+    existing power_ratings dicts (full names for MLB/WNBA, abbreviations
+    for NBA/NFL/NHL handled by the caller's own normalization).
+    Cached 6 hours (ratings don't move fast intra-day).
+    """
+    path = _TEAMRANKINGS_SPORT_PATHS.get(sport)
+    if not path:
+        return {}
+
+    cache_path = os.path.join(CACHE_DIR, f"teamrankings_power_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    url = f"https://www.teamrankings.com/{path}/rankings/"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return {}
+        html = resp.text
+    except Exception as e:
+        print(f"[WARN] fetch_teamrankings_power_ratings({sport}): {e}")
+        return {}
+
+    ratings = {}
+    try:
+        # Primary pattern: standard TR ratings table rows.
+        # <tr ...><td>1</td><td class="text-right">1.09</td><td>...><a ...>LA Dodgers</a>...
+        patterns = [
+            re.compile(
+                r'<tr[^>]*>\s*<td[^>]*>\s*(\d+)\s*</td>\s*<td[^>]*>\s*(-?[\d.]+)\s*</td>\s*<td[^>]*>.*?<a[^>]*>([^<(]+?)\s*(?:\([^)]*\))?\s*</a>',
+                re.S
+            ),
+            # Fallback: looser match in case rank/rating column order or
+            # wrapper tags differ from the primary pattern's assumption.
+            re.compile(
+                r'<a[^>]*href="/mlb/team/[^"]*"[^>]*>([^<(]+?)\s*(?:\([^)]*\))?\s*</a>\s*</td>\s*<td[^>]*>\s*(-?[\d.]+)\s*</td>',
+                re.S
+            ),
+        ]
+        for i, pat in enumerate(patterns):
+            matches = pat.findall(html)
+            if not matches:
+                continue
+            for m in matches:
+                if i == 0:
+                    _rank, rating_str, team_name = m
+                else:
+                    team_name, rating_str = m
+                team_name = team_name.strip()
+                if not team_name:
+                    continue
+                try:
+                    rating_val = float(rating_str)
+                except ValueError:
+                    continue
+                name_map = _TEAMRANKINGS_NAME_MAP.get(sport, {})
+                mapped_name = name_map.get(team_name, team_name)
+                ratings[mapped_name] = rating_val
+            if ratings:
+                break
+        # Sanity check: a real ratings page has 28-32 teams depending on
+        # sport. Fewer than ~20 means the parser likely matched garbage
+        # (e.g. an unrelated table) — discard rather than poison the model.
+        _min_teams = {"MLB": 25, "NBA": 25, "WNBA": 10, "NHL": 25, "NFL": 28}.get(sport, 20)
+        if len(ratings) < _min_teams:
+            print(f"[WARN] fetch_teamrankings_power_ratings({sport}): only parsed {len(ratings)} teams, expected >= {_min_teams} — discarding (page structure may have changed)")
+            return {}
+    except Exception as e:
+        print(f"[WARN] fetch_teamrankings_power_ratings({sport}) parse: {e}")
+        return {}
+
+    if ratings:
+        _safe_save_pkl(cache_path, ratings)
+    return ratings
+
+
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
     Pinnacle game lines via arcadia guest API (no auth).
