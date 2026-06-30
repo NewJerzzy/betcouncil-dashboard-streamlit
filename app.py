@@ -59,7 +59,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_game_line_consensus, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_game_line_consensus, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, correlated_parlay_kelly, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     rest_adjusted_std_dev, score_rlm, devig_ensemble, pace_adjust_mlb_prop,
     record_line, detect_steam_move, get_opener_gap, detect_market_maker_divergence,
     compute_line_velocity, classify_book_role)
@@ -6429,11 +6429,12 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         ml_edge = a_ml_edge
                         fair_prob = a_fair
                     tier = _get_cal_tier(ml_edge, sport)
-                    ev = fair_prob * (abs(float(str(home_ml if h_ml_edge > a_ml_edge else away_ml).replace("+",""))) / 100) - (1 - fair_prob)
+                    _ml_picked_odds = home_ml if h_ml_edge > a_ml_edge else away_ml
+                    ev = fair_prob * (abs(float(str(_ml_picked_odds).replace("+",""))) / 100) - (1 - fair_prob)
                     _ml_note = f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"
                     if _ml_consensus.get("n_books", 0) >= 2:
                         _ml_note += f" ({_ml_consensus['n_books']}-book consensus)"
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", "")})
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", "")})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
@@ -14472,23 +14473,40 @@ with tabs[0]:
             except (TypeError, KeyError, IndexError, ValueError):
                 pass
         if len(top_games) >= 2:
-            g_probs = [min(0.65, 0.5 + g.get("best_edge",0.05)) for g in top_games]
-            g_combined = parlay_prob(g_probs)
-            g_be = prizepicks_breakeven_prob(len(top_games))
-            g_ev = calculate_prizepicks_ev(g_combined, len(top_games))
+            _kelly_legs = []
+            for g in top_games:
+                bb = g.get("best_bet", {})
+                _bb_odds = bb.get("odds", "-110")
+                _kelly_legs.append({
+                    "prob": min(0.65, 0.5 + g.get("best_edge", 0.05)),
+                    "odds_american": _bb_odds,
+                    "tier": bb.get("tier", ""),
+                    "sport": g.get("Sport", g.get("sport", "")),
+                    "matchup": g.get("matchup", ""),
+                    "player": g.get("matchup", ""),
+                    "prop": bb.get("type", ""),
+                })
+            _bankroll_games = st.session_state.get("bankroll", 100.0)
+            _gk = correlated_parlay_kelly(_kelly_legs, _bankroll_games)
+            g_combined = _gk.get("joint_prob_correlated", parlay_prob([l["prob"] for l in _kelly_legs]))
+            g_ev = _gk.get("edge", 0.0)
             g_ev_color = "#378add" if g_ev > 0 else "#e04040"
             g_legs = ""
             for g in top_games:
                 bb = g.get("best_bet",{})
                 g_legs += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;"><span style="color:#378add;font-size:1.0rem;">{bb.get("type","")}</span> <span style="color:#e8f0f8;font-size:1.0rem;">{g.get("matchup","")} — {bb.get("pick","")}</span> <span style="color:var(--color-text-tertiary);font-size:1.0rem;">({bb.get("edge_pct","")})</span></div>'
+            _gk_warn_html = ""
+            if _gk.get("warnings"):
+                _gk_warn_html = "".join(f'<div style="font-size:0.85rem;color:#e8a020;margin-top:0.3rem;">{w}</div>' for w in _gk["warnings"][:2])
             st.markdown(f"""
             <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
                     <span style="color:#e8f0f8;font-weight:700;">{len(top_games)}-Game Parlay</span>
-                    <span style="color:{g_ev_color};font-weight:700;">{g_ev:+.1%} EV</span>
+                    <span style="color:{g_ev_color};font-weight:700;">{g_ev:+.1%} edge</span>
                 </div>
-                <div style="font-size:1.0rem;color:#8a9ab0;margin-bottom:0.7rem;">Combined: <span style="color:#e8f0f8;">{g_combined:.1%}</span> · Breakeven: {g_be:.1%}</div>
+                <div style="font-size:1.0rem;color:#8a9ab0;margin-bottom:0.7rem;">Combined (correlation-adj): <span style="color:#e8f0f8;">{g_combined:.1%}</span> · Suggested wager: <span style="color:#22c55e;">${_gk.get("wager",0):.2f}</span> ({_gk.get("kelly_pct",0):.1%} bankroll)</div>
                 {g_legs}
+                {_gk_warn_html}
             </div>
             """, unsafe_allow_html=True)
         else:
