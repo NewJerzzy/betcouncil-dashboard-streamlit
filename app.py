@@ -11948,9 +11948,9 @@ def load_sport_data(sport):
             best_prob = over_prob
             best_signals = over_signals
         # SEM inputs for adjusted_edge
-        _n_samp = len(prop.get("GameLog", prop.get("game_log", [])) or [])
-        _std_d  = prop.get("StdDev")
-        _avg_v  = prop.get("Avg", 0)
+        _n_samp = len(p.get("GameLog", p.get("game_log", [])) or [])
+        _std_d  = p.get("StdDev")
+        _avg_v  = p.get("Avg", 0)
         # Auto-save Pinnacle line to closing line database
         if player and stat_norm and _pinn_line:
             try:
@@ -12002,10 +12002,10 @@ def load_sport_data(sport):
                 if _sb_hit:
                     _dp    = _sb_hit.get("drop_pct",0)
                     _nsnap = _sb_hit.get("n_snapshots",0)
-                    prop["ScanbetSteam"]     = True
-                    prop["ScanbetDropPct"]   = _dp
-                    prop["ScanbetSnapshots"] = _nsnap
-                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📡 Pinnacle:{_dp:+.1%}({_nsnap}snaps)"
+                    p["ScanbetSteam"]     = True
+                    p["ScanbetDropPct"]   = _dp
+                    p["ScanbetSnapshots"] = _nsnap
+                    p["SignalNotes"] = p.get("SignalNotes","") + f" 📡 Pinnacle:{_dp:+.1%}({_nsnap}snaps)"
                     # Stronger signal with more snapshots confirming the move
                     if abs(_dp) > 0.05 and _nsnap >= 5:
                         final_edge = min(final_edge * 1.09, EDGE_CAP)  # strong confirmed steam
@@ -12024,26 +12024,26 @@ def load_sport_data(sport):
                 )), None)
                 if _steam:
                     _dp = _steam.get("drop_pct",0)
-                    prop["SteamMove"]   = True
-                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🔥 Steam:{_dp:+.1%}"
+                    p["SteamMove"]   = True
+                    p["SignalNotes"] = p.get("SignalNotes","") + f" 🔥 Steam:{_dp:+.1%}"
                     if abs(_dp) > 0.05:
                         final_edge = min(final_edge * 1.06, EDGE_CAP)
             except Exception:
                 pass
 
         # ── Defense ranking adjustment ─────────────────────────────────────
-        if final_edge > 0 and prop.get("Matchup"):
+        if final_edge > 0 and p.get("Matchup"):
             try:
-                _opp = prop.get("Matchup","").split(" @ ")[0] if " @ " in prop.get("Matchup","") else ""
+                _opp = p.get("Matchup","").split(" @ ")[0] if " @ " in p.get("Matchup","") else ""
                 if _opp:
                     _dr  = st.session_state.get("defense_rankings") or {}
                     _de  = get_defense_edge(_opp, sport, _dr or None)
                     if _de.get("rank"):
-                        prop["DefenseRank"] = _de["rank"]
-                        prop["DefenseNote"] = _de["note"]
+                        p["DefenseRank"] = _de["rank"]
+                        p["DefenseNote"] = _de["note"]
                         final_edge = final_edge * _de.get("edge_adj",1.0)
                         if _de.get("favorable"):
-                            prop["SignalNotes"] = prop.get("SignalNotes","") + f" {_de['note']}"
+                            p["SignalNotes"] = p.get("SignalNotes","") + f" {_de['note']}"
             except Exception:
                 pass
 
@@ -12058,10 +12058,10 @@ def load_sport_data(sport):
                     _bl_conf = _bl_hit.get("confidence",0)
                     _bl_ev   = _bl_hit.get("ev",0)
                     if _bl_conf >= 0.65 and _bl_ev > 0:
-                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🤖 SO:{_bl_conf:.0%} EV:{_bl_ev:.2f}"
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" 🤖 SO:{_bl_conf:.0%} EV:{_bl_ev:.2f}"
                         final_edge = min(final_edge*1.05, EDGE_CAP)
                     elif _bl_conf < 0.40:
-                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ SO fade:{_bl_conf:.0%}"
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ SO fade:{_bl_conf:.0%}"
                         final_edge = final_edge*0.92
             except Exception:
                 pass
@@ -12074,13 +12074,13 @@ def load_sport_data(sport):
                 _fpv = next((v for k,v in _fpp.items() if stat_norm and stat_norm[:4] in k.lower()),None)
                 if _fpv and float(line or 0) > 0:
                     _gap = (_fpv - float(line)) / float(line)
-                    prop["FPProjection"] = _fpv
-                    prop["FPGap"]        = _gap
+                    p["FPProjection"] = _fpv
+                    p["FPGap"]        = _gap
                     if _gap > 0.08:
-                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📋 FP:{_fpv:.1f}"
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" 📋 FP:{_fpv:.1f}"
                         final_edge = min(final_edge*1.04, EDGE_CAP)
                     elif _gap < -0.08:
-                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ FP under:{_fpv:.1f}"
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ FP under:{_fpv:.1f}"
                         final_edge = final_edge*0.92
             except Exception:
                 pass
