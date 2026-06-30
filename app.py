@@ -18902,8 +18902,10 @@ with tabs[7]:
             parsed_date = col_confirm1.date_input("Date of these bets", value=date.today(), key="parsed_bet_date")
             if col_confirm1.button("✅ Submit All Parsed Bets", key="submit_parsed_bets"):
                 submitted = 0
+                _skipped_pending = 0
                 for bet in parsed_bets:
-                    if bet.get("outcome") not in ("WIN","LOSS"):
+                    if bet.get("outcome") not in ("WIN","LOSS","PUSH"):
+                        _skipped_pending += 1
                         continue
                     bet_date_str = datetime.combine(parsed_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
                     _raw_date = str(bet.get("date","")).strip()
@@ -18920,11 +18922,14 @@ with tabs[7]:
                     except (ValueError, TypeError):
                         continue
                 if submitted > 0:
-                    st.success(f"✅ Submitted {submitted} bets — Bankroll: ${st.session_state.bankroll:.2f}")
+                    _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
+                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.bankroll:.2f}")
                     st.session_state["parsed_bets"] = []
                     st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                     st.session_state["ocr_raw_text"] = ""
                     st.rerun()
+                elif _skipped_pending:
+                    st.warning(f"All {_skipped_pending} parsed bet(s) are still PENDING — nothing to log yet.")
             if col_confirm2.button("❌ Clear Parsed Bets", key="clear_parsed_bets"):
                 st.session_state["parsed_bets"] = []
                 st.session_state["ocr_raw_text"] = ""
