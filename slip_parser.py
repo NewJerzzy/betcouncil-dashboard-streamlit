@@ -315,7 +315,19 @@ def _parse_pp_ocr_inline(raw_text):
                 line = float(post_nums[0])
         # result_raw stores the OVER-side result; it is corrected for UNDER
         # bets in the COMBINE loop below once entry["side"] is known.
-        result_raw = "LOSS" if has_x else ("WIN" if actual >= line and line > 0 else "WIN" if actual > 0 else "LOSS")
+        # A prior version's fallback clause ("WIN" if actual > 0 else
+        # "LOSS") scored ANY nonzero actual stat as a win regardless of
+        # whether it actually cleared the line -- e.g. actual=5 vs line=6
+        # (a real loss) was being scored WIN simply because 5 > 0. Fixed
+        # to a direct actual-vs-line comparison with no such fallback.
+        if has_x:
+            result_raw = "LOSS"
+        elif line > 0:
+            result_raw = "WIN" if actual >= line else "LOSS"
+        else:
+            # No usable line was extracted -- can't determine a real
+            # result, so don't fabricate one either direction.
+            result_raw = "PENDING"
         prop_name = pm.group(1)
         # Normalize prop aliases
         prop_name = re.sub(r"(?i)^Ks$", "Strikeouts", prop_name)
@@ -432,20 +444,28 @@ def parse_bovada_slip_text(text: str) -> list:
                 sport = sname
                 break
 
-        # Outcome
+        # Outcome — check the explicit WIN/LOSS status line first since
+        # it's the most reliable signal; fall back to parsing a winnings
+        # dollar amount only if no explicit status line is found. A prior
+        # version checked "winnings" in tl FIRST and, if that branch's
+        # regex failed to extract a number (e.g. real Bovada slips show
+        # "Winnings\n+ $7.29" with a leading + sign the old regex didn't
+        # handle), it never fell through to check the Win/Loss line at
+        # all -- silently leaving every real winning/losing slip as
+        # PENDING even though the status was right there in the text.
         outcome = "PENDING"
-        if "winnings" in tl:
-            win_match = re.search(r'winnings\s*\$?\s*([\d.]+)', tl)
+        if "\nloss\n" in tl or tl.strip().endswith("loss"):
+            outcome = "LOSS"
+        elif "\nwin\n" in tl or tl.strip().endswith("win"):
+            outcome = "WIN"
+        elif "winnings" in tl:
+            win_match = re.search(r'winnings\s*\n?\s*[+\-]?\s*\$?\s*([\d.]+)', tl)
             if win_match:
                 try:
                     winnings = float(win_match.group(1))
                     outcome = "WIN" if winnings > 0 else "LOSS"
                 except ValueError:
                     pass
-        elif "\nloss\n" in tl or tl.strip().endswith("loss"):
-            outcome = "LOSS"
-        elif "\nwin\n" in tl or tl.strip().endswith("win"):
-            outcome = "WIN"
 
         # Wager
         wager = 0.0
@@ -465,14 +485,19 @@ def parse_bovada_slip_text(text: str) -> list:
             except ValueError:
                 pass
 
-        # Parse each leg — accept both LF and CRLF line endings
-        legs = re.findall(r'\*\s+(.+?)\s*\r?\n(.+?)(?:\r?\n|$)', text, re.MULTILINE)
+        # Parse each leg — each leg is a 3-line block: matchup, date/time,
+        # then the actual pick line with odds (e.g. "Under 10.5 (-110)
+        # (Game) Total"). A prior version only captured 2 lines, which
+        # grabbed the date as the "pick" and silently produced zero bets
+        # since the date line never matches the odds pattern below.
+        # Accepts both LF and CRLF line endings.
+        legs = re.findall(r'\*\s+(.+?)\s*\r?\n(.+?)\r?\n(.+?)(?:\r?\n|$)', text, re.MULTILINE)
         date_str = ""
         date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
         if date_match:
             date_str = date_match.group(1)
 
-        for matchup, pick_line in legs:
+        for matchup, _leg_date, pick_line in legs:
             matchup = matchup.strip()
             pick_line = pick_line.strip()
             pick_match = re.match(r'^(.+?)\s*\(([+-]?\d+)\)', pick_line)
@@ -533,16 +558,18 @@ def parse_mybookie_slip_text(text: str) -> list:
               sport = sname
               break
 
-      # Outcome
+      # Outcome — ONLY trust an explicit settled-status indicator. A
+      # prior version also matched on the literal "Win: <amount>" text,
+      # but MyBookie shows that label as the POTENTIAL PAYOUT on every
+      # slip, settled or not (e.g. "Risk: 1.00 Win: 1.89" on a slip with
+      # no result yet) -- that heuristic was misclassifying still-open,
+      # unresolved bets as already-won, which would have logged fake
+      # wins into history the moment an unsettled slip was submitted.
       outcome = "PENDING"
-      if "straight bet - win" in tl or tl.rstrip().endswith("win"):
+      if "straight bet - win" in tl:
           outcome = "WIN"
-      elif "straight bet - loss" in tl or tl.rstrip().endswith("loss"):
+      elif "straight bet - loss" in tl:
           outcome = "LOSS"
-      elif re.search(r'win:\s*0\.00', tl):
-          outcome = "LOSS"
-      elif re.search(r'win:\s*[1-9]', tl):
-          outcome = "WIN"
 
       # Wager
       wager = 0.0
