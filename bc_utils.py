@@ -1737,51 +1737,73 @@ def hot_streak_regression_risk(
     n_recent: int = 5,
     threshold: float = 0.30,  # raised from 0.25 — NBA research: <30% gap is noise
 ) -> dict:
-    """Flag when recent average is unsustainably above the season average.
+    """Flag when recent average is unsustainably above OR below the season
+    average — mean reversion cuts both directions.
 
-    Returns an edge_mult < 1.0 to discount OVER edge when a player is on a
-    hot streak that is likely to mean-revert. UNDER edge is unaffected.
+    Hot streak (recent >> season) discounts OVER edge: the book line is
+    likely inflated by recency, so a model OVER edge is less trustworthy.
+    Cold streak (recent << season) discounts UNDER edge: same logic in
+    reverse — a slumping player is likely to regress back up toward their
+    true talent level, making a model UNDER edge less trustworthy.
 
     Args:
         recent_avg: Average over last N games (L5 or L10).
         season_avg: Full-season baseline (true talent level).
         n_recent:   Games in the recent sample (fewer = softer penalty).
-        threshold:  Gap fraction to trigger risk (default 0.25 = 25% above).
+        threshold:  Gap fraction to trigger risk (default 0.30 = 30% away).
 
     Returns:
-        {risk, gap_pct, edge_mult, note}
+        {risk, gap_pct, edge_mult, direction, note}
+        direction: "HOT" (discount OVER), "COLD" (discount UNDER), or "NONE"
     """
     if not recent_avg or not season_avg or season_avg <= 0:
-        return {"risk": "NONE", "gap_pct": 0.0, "edge_mult": 1.0, "note": ""}
+        return {"risk": "NONE", "gap_pct": 0.0, "edge_mult": 1.0, "direction": "NONE", "note": ""}
 
     gap_pct = (recent_avg - season_avg) / season_avg
-    if gap_pct < threshold:
-        return {"risk": "NONE", "gap_pct": round(gap_pct, 3), "edge_mult": 1.0, "note": ""}
+    abs_gap = abs(gap_pct)
+    if abs_gap < threshold:
+        return {"risk": "NONE", "gap_pct": round(gap_pct, 3), "edge_mult": 1.0, "direction": "NONE", "note": ""}
 
+    direction = "HOT" if gap_pct > 0 else "COLD"
     confidence = min(n_recent / 10, 1.0)
 
-    if gap_pct >= 0.50:
+    if abs_gap >= 0.50:
         risk      = "HIGH"
         edge_mult = max(0.70, 1.0 - 0.30 * confidence)
-        note      = (f"🔥 Hot streak: L{n_recent} avg {recent_avg:.1f} is "
-                     f"{gap_pct:.0%} above season avg {season_avg:.1f}. "
+        if direction == "HOT":
+            note = (f"🔥 Hot streak: L{n_recent} avg {recent_avg:.1f} is "
+                     f"{abs_gap:.0%} above season avg {season_avg:.1f}. "
                      "Regression likely — OVER edge discounted.")
-    elif gap_pct >= 0.35:
+        else:
+            note = (f"🥶 Cold streak: L{n_recent} avg {recent_avg:.1f} is "
+                     f"{abs_gap:.0%} below season avg {season_avg:.1f}. "
+                     "Regression likely — UNDER edge discounted.")
+    elif abs_gap >= 0.35:
         risk      = "MEDIUM"
         edge_mult = max(0.80, 1.0 - 0.20 * confidence)
-        note      = (f"📈 Elevated: L{n_recent} avg {recent_avg:.1f} is "
-                     f"{gap_pct:.0%} above season avg {season_avg:.1f}. "
+        if direction == "HOT":
+            note = (f"📈 Elevated: L{n_recent} avg {recent_avg:.1f} is "
+                     f"{abs_gap:.0%} above season avg {season_avg:.1f}. "
+                     "Moderate regression risk — discount applied.")
+        else:
+            note = (f"📉 Depressed: L{n_recent} avg {recent_avg:.1f} is "
+                     f"{abs_gap:.0%} below season avg {season_avg:.1f}. "
                      "Moderate regression risk — discount applied.")
     else:
         risk      = "LOW"
         edge_mult = max(0.92, 1.0 - 0.08 * confidence)
-        note      = (f"L{n_recent} avg {recent_avg:.1f} is {gap_pct:.0%} "
+        if direction == "HOT":
+            note = (f"L{n_recent} avg {recent_avg:.1f} is {abs_gap:.0%} "
                      f"above season avg {season_avg:.1f} — minor regression risk.")
+        else:
+            note = (f"L{n_recent} avg {recent_avg:.1f} is {abs_gap:.0%} "
+                     f"below season avg {season_avg:.1f} — minor regression risk.")
 
     return {
         "risk":      risk,
         "gap_pct":   round(gap_pct, 3),
         "edge_mult": round(edge_mult, 3),
+        "direction": direction,
         "note":      note,
     }
 

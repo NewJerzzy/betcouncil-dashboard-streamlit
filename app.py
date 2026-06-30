@@ -11672,7 +11672,7 @@ def load_sport_data(sport):
             _n_recent = _rolling_player.get("n_games", 5)
             _regression_risk = hot_streak_regression_risk(
                 _recent_stat, _season_stat,
-                n_recent=_n_recent, threshold=0.25
+                n_recent=_n_recent
             )
 
         player_team = PLAYER_TEAM_MAP.get(player, "")
@@ -12179,10 +12179,15 @@ def load_sport_data(sport):
                 pass
 
         # ── Regression-to-mean discount (applied last — after all other mults) ──
-        # Only penalises OVER edge. UNDER edge on a hot-streak player is
-        # actually supported by the regression thesis, so we leave it alone.
+        # HOT streak penalises OVER edge (recency-inflated line, regression
+        # likely to push the player back down). COLD streak penalises UNDER
+        # edge the same way in reverse (slump likely to regress back up).
+        # The opposite side of each is actually supported by the regression
+        # thesis, so it's left alone.
         if _regression_risk["risk"] != "NONE" and _regression_risk["edge_mult"] < 1.0:
-            if best_side == "OVER" and final_edge > 0:
+            _reg_dir = _regression_risk.get("direction", "HOT")
+            if ((_reg_dir == "HOT" and best_side == "OVER") or
+                (_reg_dir == "COLD" and best_side == "UNDER")) and final_edge > 0:
                 final_edge = round(final_edge * _regression_risk["edge_mult"], 4)
                 if _regression_risk["note"]:
                     avg_dict["regression_note"] = _regression_risk["note"]
