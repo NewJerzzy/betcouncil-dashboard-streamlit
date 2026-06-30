@@ -10089,7 +10089,7 @@ def load_sport_data(sport):
     min_edge = st.session_state.min_edge
     skip_def = st.session_state.skip_defaults
     if sport in ["Golf", "Tennis", "UFC", "Soccer"]:
-        props = scrape_prizepicks(sport)
+        props = scrape_prizepicks_with_gist_fallback(sport)
         if not props:
             _gist_fb = fetch_auto_scraped_props(sport)
             if _gist_fb:
@@ -10231,7 +10231,7 @@ def load_sport_data(sport):
     # ── PARALLEL FETCH — all independent data sources fire simultaneously ──
     # Groups fetches with no inter-dependencies into one ThreadPoolExecutor call.
     # _fetch_parallel was built last session but never wired in — now connected.
-    def _pf_prizepicks():   return scrape_prizepicks(sport)
+    def _pf_prizepicks():   return scrape_prizepicks_with_gist_fallback(sport)
     def _pf_underdog():     return fetch_underdog_props(sport)
     def _pf_dk_sal():       return []  # fetch_dk_salaries not implemented
     def _pf_pinnacle():     return fetch_pinnacle_game_lines(sport)

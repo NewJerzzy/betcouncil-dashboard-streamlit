@@ -9872,34 +9872,9 @@ def fetch_betr_direct(sport):
                     if stat_type is None:
                         stat_type = (proj.get("label") or proj.get("name") or "").upper().replace(" ", "_") or None
 
-                    # ── marketId shape logger (first prop only) ─────────────────
-                    # Log a raw marketId sample on the very first projection so the
-                    # base64 decode assumption can be verified from the System tab.
-                    # Writes once per sport per session (guarded by props being empty).
-                    if not props and _raw_mid:
-                        try:
-                            import base64 as _b64_log
-                            _padded = _raw_mid + "=" * (-len(_raw_mid) % 4)
-                            _decoded_sample = _b64_log.b64decode(_padded).decode("utf-8", errors="replace")
-                        except Exception:
-                            _decoded_sample = "(not base64)"
-                        log_error_to_session(
-                            "fetch_betr_direct",
-                            f"marketId sample — raw: {_raw_mid[:80]} | "
-                            f"decoded: {_decoded_sample[:120]} | "
-                            f"stat_type extracted: {stat_type}",
-                            "info",
-                        )
-                        try:
-                            _mid_path = os.path.join(CACHE_DIR, f"betr_market_id_sample_{sport}.txt")
-                            with open(_mid_path, "w") as _mf:
-                                _mf.write(
-                                    "raw:     " + str(_raw_mid) + "\n" +
-                                    "decoded: " + str(_decoded_sample) + "\n" +
-                                    "stat_type: " + str(stat_type) + "\n"
-                                )
-                        except Exception:
-                            pass
+                    # NOTE: marketId confirmed NOT base64 (decode always fails,
+                    # stat_type correctly falls back to the label). Diagnostic
+                    # logger removed 2026-06-30 now that this is settled.
 
                     try:
                         props.append({
