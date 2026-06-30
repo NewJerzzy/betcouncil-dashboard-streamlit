@@ -13741,6 +13741,19 @@ st.markdown(f"""
 
 
 
+# ── Safety net: guarantee core session_state keys exist before any tab
+# renders, independent of the _ss init block above. Protects against rare
+# Streamlit Cloud reconnect/rerun race conditions where a script execution
+# can reach this point with a session_state that was reset or reconnected
+# mid-flight, bypassing the normal top-of-script initialization.
+for _safety_k, _safety_v in {
+    "bankroll": DEFAULT_BANKROLL, "day_start_br": DEFAULT_BANKROLL,
+    "history": [], "locks": [], "min_edge": MIN_EDGE_DEFAULT,
+    "skip_defaults": True, "board_data": [],
+}.items():
+    if _safety_k not in st.session_state:
+        st.session_state[_safety_k] = _safety_v
+
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ── Background EV Auto-Refresh (every 2 min) ─────────────────────────────────
@@ -19429,15 +19442,15 @@ with tabs[9]:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**Configuration**")
-        st.write(f"Bankroll: ${st.session_state.bankroll:.2f}")
-        st.write(f"Min Edge: {st.session_state.min_edge*100:.0f}%")
-        st.write(f"Skip unknown players: {st.session_state.skip_defaults}")
+        st.write(f"Bankroll: ${st.session_state.get('bankroll', DEFAULT_BANKROLL):.2f}")
+        st.write(f"Min Edge: {st.session_state.get('min_edge', MIN_EDGE_DEFAULT)*100:.0f}%")
+        st.write(f"Skip unknown players: {st.session_state.get('skip_defaults', True)}")
         st.write(f"Kelly fraction: {KELLY_FRACTION}")
     with c2:
         st.markdown("**Session Stats**")
-        st.write(f"Active locks: {len(st.session_state.locks)}")
-        st.write(f"History entries: {len(st.session_state.history)}")
-        st.write(f"Props loaded: {len(st.session_state.board_data)}")
+        st.write(f"Active locks: {len(st.session_state.get('locks', []))}")
+        st.write(f"History entries: {len(st.session_state.get('history', []))}")
+        st.write(f"Props loaded: {len(st.session_state.get('board_data', []))}")
         st.write(f"Session time: {get_session_time()}")
     st.markdown("---")
 
