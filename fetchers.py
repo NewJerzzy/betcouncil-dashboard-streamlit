@@ -11292,14 +11292,28 @@ def fetch_kalshi_markets(sport: str) -> list:
             if r.status_code != 200:
                 continue
             for mkt in r.json().get("markets", []):
+                _yes_bid = mkt.get("yes_bid")
+                _no_bid  = mkt.get("no_bid")
+                try:
+                    # Kalshi prices are in cents (0-100); implied prob from
+                    # mid of yes_bid/no_ask when available, else yes_bid alone.
+                    _implied_prob = float(_yes_bid) / 100.0 if _yes_bid is not None else 0.5
+                except (TypeError, ValueError):
+                    _implied_prob = 0.5
+                try:
+                    _volume = float(mkt.get("volume") or 0)
+                except (TypeError, ValueError):
+                    _volume = 0.0
                 results.append({
-                    "title":      mkt.get("title", ""),
-                    "ticker":     mkt.get("ticker", ""),
-                    "yes_bid":    mkt.get("yes_bid"),
-                    "no_bid":     mkt.get("no_bid"),
-                    "volume":     mkt.get("volume"),
-                    "sport":      sport,
-                    "source":     "kalshi",
+                    "title":        mkt.get("title", ""),
+                    "event":        mkt.get("title", ""),
+                    "ticker":       mkt.get("ticker", ""),
+                    "yes_bid":      _yes_bid,
+                    "no_bid":       _no_bid,
+                    "implied_prob": _implied_prob,
+                    "volume":       _volume,
+                    "sport":        sport,
+                    "source":       "kalshi",
                 })
             time.sleep(0.2)
         if results:
@@ -11338,13 +11352,23 @@ def fetch_polymarket_markets(sport: str) -> list:
             return []
         results = []
         for mkt in r.json():
+            _yes_price = mkt.get("outcomePrices", [""])[0] if mkt.get("outcomePrices") else None
+            try:
+                _implied_prob = float(_yes_price) if _yes_price not in (None, "") else 0.5
+            except (TypeError, ValueError):
+                _implied_prob = 0.5
+            try:
+                _volume = float(mkt.get("volume") or 0)
+            except (TypeError, ValueError):
+                _volume = 0.0
             results.append({
-                "question":    mkt.get("question", ""),
-                "slug":        mkt.get("slug", ""),
-                "yes_price":   mkt.get("outcomePrices", [""])[0] if mkt.get("outcomePrices") else None,
-                "volume":      mkt.get("volume"),
-                "sport":       sport,
-                "source":      "polymarket",
+                "question":     mkt.get("question", ""),
+                "slug":         mkt.get("slug", ""),
+                "yes_price":    _yes_price,
+                "implied_prob": _implied_prob,
+                "volume":       _volume,
+                "sport":        sport,
+                "source":       "polymarket",
             })
         if results:
             _safe_save_pkl(cache_path, results)
