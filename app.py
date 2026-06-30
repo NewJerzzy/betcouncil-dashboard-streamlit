@@ -18746,64 +18746,6 @@ with tabs[7]:
                 st.rerun()
             else:
                 st.error("Enter a player name.")
-        st.markdown("---")
-        st.markdown("### 📜 Bulk Import — PrizePicks History Export")
-        st.caption(
-            "Paste your full PrizePicks history (copied directly from the app's history "
-            "page) to bulk-log every resolved slip at once. This is the right tool for "
-            "backfilling past results — the Slip Analyzer tab is for analyzing upcoming "
-            "slips and deliberately skips already-resolved bets."
-        )
-        _pp_hist_text = st.text_area(
-            "Paste PrizePicks history here",
-            height=200,
-            key="pp_history_bulk_paste",
-            placeholder="Jun 29, 2026\n\n4-Pick $6.00\n\n$1.00 Flex Play\n\nV. Dijk, R. Weathers, M. Keys, T. Gibson\n\nVirgil van Dijk\nRyan Weathers\nMadison Keys\nTalia Gibson\nLOST\n..."
-        )
-        _pp_hist_sport = st.selectbox("Sport for these picks", ["MLB","NBA","WNBA","NHL","NFL"], key="pp_hist_sport")
-        if st.button("📥 Parse & Preview", key="pp_hist_parse_btn"):
-            _parsed_slips = parse_prizepicks_history_text(_pp_hist_text)
-            st.session_state["pp_hist_parsed"] = _parsed_slips
-            if _parsed_slips:
-                _n_win = sum(1 for s in _parsed_slips if s["outcome"] == "WIN")
-                _n_loss = sum(1 for s in _parsed_slips if s["outcome"] == "LOSS")
-                _n_push = sum(1 for s in _parsed_slips if s["outcome"] == "PUSH")
-                _n_skip = sum(1 for s in _parsed_slips if s["outcome"] is None)
-                _total_picks = sum(len(s["players"]) for s in _parsed_slips)
-                st.success(f"Parsed {len(_parsed_slips)} slips ({_total_picks} total picks): {_n_win} won, {_n_loss} lost, {_n_push} push/refund" + (f", {_n_skip} unresolved (skipped)" if _n_skip else ""))
-                st.dataframe(
-                    [{"Date": s["date"], "Picks": s["n_picks"], "Stake": f"${s['stake']:.2f}",
-                      "Players": ", ".join(s["players"]), "Result": s["outcome"] or "—"}
-                     for s in _parsed_slips],
-                    use_container_width=True, hide_index=True
-                )
-            else:
-                st.warning("No slips parsed — check the paste matches PrizePicks' history export format.")
-        if st.session_state.get("pp_hist_parsed"):
-            _resolved_slips = [s for s in st.session_state["pp_hist_parsed"] if s["outcome"] is not None]
-            st.caption(f"Ready to log {len(_resolved_slips)} resolved slip(s) ({sum(len(s['players']) for s in _resolved_slips)} picks) as **{_pp_hist_sport}**. Unresolved slips are skipped automatically.")
-            if st.button("✅ Confirm & Log All Resolved Slips", key="pp_hist_confirm_btn", type="primary"):
-                _logged_total = 0
-                for _slip in _resolved_slips:
-                    _slip_date_str = _slip["date"] + " 00:00" if _slip["date"] else datetime.now().strftime("%Y-%m-%d %H:%M")
-                    try:
-                        _slip_date_str = datetime.strptime(_slip["date"], "%b %d, %Y").strftime("%Y-%m-%d %H:%M")
-                    except (ValueError, TypeError):
-                        pass
-                    for _player in _slip["players"]:
-                        try:
-                            log_manual_bet(
-                                player=_player, prop="Combo", line=0.0, side="OVER",
-                                sport=_pp_hist_sport, outcome=_slip["outcome"],
-                                wager=_slip["stake"], pick_count=_slip["n_picks"], bet_type="prop",
-                                source="PrizePicks", bet_date=_slip_date_str,
-                            )
-                            _logged_total += 1
-                        except (ValueError, TypeError, ZeroDivisionError):
-                            pass
-                st.session_state["pp_hist_parsed"] = []
-                st.success(f"✅ Logged {_logged_total} picks from {len(_resolved_slips)} resolved slips into history.")
-                st.rerun()
     with log_tab1:
         # Use a counter key so we can reset the uploader after submitting
         if "uploader_key" not in st.session_state:
@@ -18853,26 +18795,78 @@ with tabs[7]:
                     st.caption("No OCR text yet — upload a screenshot above.")
 
         with input_txt:
-            st.caption("Paste Bovada or MyBookie text slips — extracted bets are reviewed below before logging.")
+            st.caption(
+                "Paste any slip text — PrizePicks (single slip or full multi-day "
+                "history), Bovada, or MyBookie. The format is auto-detected, no "
+                "need to pick a source."
+            )
             pasted_slip = st.text_area(
-                "Paste slip text (Bovada or MyBookie)",
-                height=180,
-                placeholder="Paste your Bovada or MyBookie slip text here...",
+                "Paste slip text",
+                height=220,
+                placeholder="Paste your PrizePicks, Bovada, or MyBookie slip text here — single slip or your full history at once.",
                 key="pasted_slip_text"
             )
-            _slip_src = st.radio("Slip source:", ["Bovada", "MyBookie"], horizontal=True, key="slip_source_radio")
             if st.button("🔍 Parse Text Slip", key="parse_text_slip_btn"):
                 if pasted_slip and pasted_slip.strip():
-                    if _slip_src == "Bovada":
-                        _parsed = parse_bovada_slip_text(pasted_slip)
-                    else:
-                        _parsed = parse_mybookie_slip_text(pasted_slip)
+                    _parsed = []
+                    _detected_src = ""
+
+                    # 1. PrizePicks bulk history export (multiple slips,
+                    #    date headers, "N-Pick $X.XX" per slip).
+                    _pp_hist_slips = parse_prizepicks_history_text(pasted_slip)
+                    if _pp_hist_slips:
+                        for _slip in _pp_hist_slips:
+                            if _slip["outcome"] is None:
+                                continue  # unresolved, skip
+                            _slip_date_str = ""
+                            try:
+                                _slip_date_str = datetime.strptime(_slip["date"], "%b %d, %Y").strftime("%Y-%m-%d")
+                            except (ValueError, TypeError):
+                                pass
+                            for _player in _slip["players"]:
+                                _parsed.append({
+                                    # The bulk-history export has no per-player
+                                    # sport tag in the text (unlike a single
+                                    # expanded slip), and slips often mix
+                                    # sports (e.g. MLB + World Cup in one
+                                    # parlay) -- marking MULTI rather than
+                                    # guessing MLB, which would silently
+                                    # miscategorize every non-MLB pick.
+                                    "player": _player, "prop": "Combo", "line": 0.0,
+                                    "side": "OVER", "sport": "MULTI",
+                                    "outcome": _slip["outcome"], "wager": _slip["stake"],
+                                    "pick_count": _slip["n_picks"], "bet_type": "prop",
+                                    "source": "PrizePicks", "date": _slip_date_str,
+                                })
+                        _detected_src = "PrizePicks (bulk history)"
+
+                    # 2. PrizePicks single expanded slip ("Show details" view).
+                    if not _parsed:
+                        _pp_single = _parse_pp_ocr_inline(pasted_slip)
+                        if _pp_single:
+                            _parsed = _pp_single
+                            _detected_src = "PrizePicks"
+
+                    # 3. Bovada.
+                    if not _parsed:
+                        _bov = parse_bovada_slip_text(pasted_slip)
+                        if _bov:
+                            _parsed = _bov
+                            _detected_src = "Bovada"
+
+                    # 4. MyBookie.
+                    if not _parsed:
+                        _mb = parse_mybookie_slip_text(pasted_slip)
+                        if _mb:
+                            _parsed = _mb
+                            _detected_src = "MyBookie"
+
                     if _parsed:
                         st.session_state["parsed_bets"] = _parsed
-                        st.success(f"✅ Found {len(_parsed)} bet(s) from {_slip_src} slip — review below")
+                        st.success(f"✅ Found {len(_parsed)} bet(s) — detected as {_detected_src} — review below")
                         st.rerun()
                     else:
-                        st.warning(f"Could not parse {_slip_src} slip. Check format and try again.")
+                        st.warning("Could not parse this slip. Check the format and try again, or use the screenshot upload instead.")
                 else:
                     st.warning("Please paste your slip text first.")
 
