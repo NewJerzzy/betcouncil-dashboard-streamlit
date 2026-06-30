@@ -8480,6 +8480,86 @@ def track_bet_dialog(prop):
         st.rerun()
 
 
+def parse_prizepicks_history_text(raw_text: str) -> list:
+    """
+    Parse PrizePicks' own history-page export format (copy-paste from the
+    app) into structured slip records for bulk historical logging.
+
+    Expected per-slip block shape (blank-line separated):
+        <N>-Pick $<stake>
+        $<per-pick> Flex Play   (or "Power Play", or "BONUS Power Play")
+        <abbreviated names line — skipped>
+        <full player name>
+        <full player name>
+        ... (N total)
+        Win | LOST | Refund
+
+    Date headers ("Jun 29, 2026") apply to every slip until the next date
+    header. Slips with no recognized result line are returned with
+    outcome=None so the caller can skip unresolved/pending entries rather
+    than silently logging them as something they're not.
+
+    Returns: list of {date, n_picks, stake, players, outcome}
+    """
+    if not raw_text or not raw_text.strip():
+        return []
+
+    _date_re = re.compile(r'^[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}$')
+    _slip_header_re = re.compile(r'^(\d+)-Pick\s+\$([\d.]+)$')
+    _play_type_re = re.compile(r'^(?:\$[\d.]+|BONUS)\s+(?:Flex|Power)\s+Play$', re.IGNORECASE)
+    _abbrev_names_re = re.compile(r'^[A-Z][\w.\-]*\.\s')
+    _result_re = re.compile(r'^(Win|LOST|Refund)$', re.IGNORECASE)
+    _result_map = {"WIN": "WIN", "LOST": "LOSS", "REFUND": "PUSH"}
+
+    lines = [l.strip() for l in raw_text.split("\n")]
+    n = len(lines)
+    i = 0
+    current_date = None
+    slips = []
+
+    while i < n:
+        line = lines[i]
+        if not line:
+            i += 1
+            continue
+        if _date_re.match(line):
+            current_date = line
+            i += 1
+            continue
+        _sm = _slip_header_re.match(line)
+        if _sm:
+            n_picks = int(_sm.group(1))
+            stake = float(_sm.group(2))
+            i += 1
+            while i < n and not lines[i]:
+                i += 1
+            if i < n and _play_type_re.match(lines[i]):
+                i += 1
+            while i < n and not lines[i]:
+                i += 1
+            if i < n and _abbrev_names_re.match(lines[i]):
+                i += 1
+            while i < n and not lines[i]:
+                i += 1
+            players = []
+            while i < n and lines[i] and not _result_re.match(lines[i]):
+                players.append(lines[i])
+                i += 1
+            outcome = None
+            if i < n and _result_re.match(lines[i]):
+                outcome = _result_map.get(lines[i].upper())
+                i += 1
+            if players:
+                slips.append({
+                    "date": current_date, "n_picks": n_picks, "stake": stake,
+                    "players": players, "outcome": outcome,
+                })
+            continue
+        i += 1
+
+    return slips
+
+
 def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None):
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
@@ -8488,6 +8568,9 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
         else:
             profit = round(wager * 0.909, 2)
         net = profit
+    elif outcome == "PUSH":
+        profit = 0
+        net = 0  # stake returned, no win and no loss
     else:
         profit = 0
         net = -wager
@@ -8496,13 +8579,21 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
             tier = get_tier(edge, sport, st.session_state.get("calibrated_thresholds"))
         else:
             tier = "APPROVED"
+    # NEVER fabricate a probability from the known outcome (was: 0.60 if WIN
+    # else 0.45) -- that's not a prediction, it's reverse-engineering a
+    # plausible number from the answer, which would make calibration math
+    # look artificially good without representing any real model output.
+    # If no real prob was supplied, mark this record as having no usable
+    # prediction; calibration/reliability code should skip it rather than
+    # be fed a fake number.
+    _has_real_prob = prob is not None
     if prob is None:
-        prob = 0.60 if outcome == "WIN" else 0.45
+        prob = 0.5  # neutral placeholder, never used for calibration math
     record = {
         "player": player, "prop": prop, "line": line, "side": side, "sport": sport,
         "outcome": outcome, "wager": wager, "profit": profit, "loss": wager if outcome == "LOSS" else 0,
         "net": net, "pick_count": pick_count, "bet_type": bet_type, "source": source,
-        "tier": tier, "edge": edge or 0, "prob": prob, "stat_type": prop,
+        "tier": tier, "edge": edge or 0, "prob": prob, "has_real_prob": _has_real_prob, "stat_type": prop,
         "timestamp": bet_date, "resolved_date": bet_date, "manual_entry": True, "notes": notes,
         # Signal values at time of bet — foundation for attribution analysis
         "signal_values": signals or {},
@@ -17541,16 +17632,26 @@ with tabs[4]:
         # ── Build calibration data from history ──────────────────────────────
         _hist_all = st.session_state.get("history", [])
         _resolved  = [r for r in _hist_all if r.get("outcome") in ("WIN","LOSS")]
+        # Calibration specifically requires a REAL predicted probability to
+        # mean anything -- comparing "predicted vs actual" is meaningless if
+        # the predicted number was a placeholder. Manual entries used to
+        # fabricate prob from the known outcome (0.60 if WIN else 0.45) when
+        # none was supplied -- those are excluded from calibration math only
+        # (has_real_prob is explicitly False). Non-manual entries and manual
+        # entries with a real supplied prob are trusted normally. Excluded
+        # bets still count fully toward hit rate, P&L, and every other
+        # metric that doesn't require a real prediction.
+        _cal_resolved = [r for r in _resolved if r.get("has_real_prob", True) is not False]
 
-        if len(_resolved) >= 10:
+        if len(_cal_resolved) >= 10:
             # ── Tier calibration ─────────────────────────────────────────────
             _tier_cal = {}
-            for _r in _resolved:
+            for _r in _cal_resolved:
                 _t = _r.get("tier","")
                 if _t not in ("SOVEREIGN","ELITE","APPROVED","LEAN"): continue
                 _tier_cal.setdefault(_t, {"wins":0,"total":0,"prob_sum":0.0})
                 _tier_cal[_t]["total"] += 1
-                _tier_cal[_t]["wins"]  += int(_r.get("win",0))
+                _tier_cal[_t]["wins"]  += int(_r.get("outcome") == "WIN")
                 _tier_cal[_t]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
 
             _tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
@@ -17604,12 +17705,12 @@ with tabs[4]:
             _bucket_ranges = [(0.40,0.45),(0.45,0.50),(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),(0.70,1.0)]
             for _lo,_hi in _bucket_ranges:
                 _buckets[(_lo,_hi)] = {"wins":0,"total":0,"pred_sum":0.0}
-            for _r in _resolved:
+            for _r in _cal_resolved:
                 _p = float(_r.get("prob",0) or 0)
                 for (_lo,_hi) in _bucket_ranges:
                     if _lo <= _p < _hi:
                         _buckets[(_lo,_hi)]["total"] += 1
-                        _buckets[(_lo,_hi)]["wins"]  += int(_r.get("win",0))
+                        _buckets[(_lo,_hi)]["wins"]  += int(_r.get("outcome") == "WIN")
                         _buckets[(_lo,_hi)]["pred_sum"] += _p
                         break
 
@@ -17634,12 +17735,12 @@ with tabs[4]:
             # ── Sport calibration breakdown ───────────────────────────────────
             st.markdown("#### 🏆 By Sport")
             _sport_cal = {}
-            for _r in _resolved:
+            for _r in _cal_resolved:
                 _sp = _r.get("sport","")
                 if not _sp: continue
                 _sport_cal.setdefault(_sp, {"wins":0,"total":0,"prob_sum":0.0,"edge_sum":0.0})
                 _sport_cal[_sp]["total"]    += 1
-                _sport_cal[_sp]["wins"]     += int(_r.get("win",0))
+                _sport_cal[_sp]["wins"]     += int(_r.get("outcome") == "WIN")
                 _sport_cal[_sp]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
                 _sport_cal[_sp]["edge_sum"] += float(_r.get("edge",0) or 0)
 
@@ -17664,12 +17765,12 @@ with tabs[4]:
 
             # ── Calibration trend (last 30 vs lifetime) ───────────────────────
             st.markdown("#### 📅 Recent vs Lifetime")
-            _recent = [r for r in _resolved[-30:] if r.get("prob")]
+            _recent = [r for r in _cal_resolved[-30:] if r.get("prob")]
             if len(_recent) >= 5:
-                _r_hr   = sum(r.get("win",0) for r in _recent) / len(_recent)
+                _r_hr   = sum(1 for r in _recent if r.get("outcome") == "WIN") / len(_recent)
                 _r_pp   = sum(float(r.get("prob",0.5)) for r in _recent) / len(_recent)
-                _l_hr   = sum(r.get("win",0) for r in _resolved) / len(_resolved)
-                _l_pp   = sum(float(r.get("prob",0.5)) for r in _resolved) / len(_resolved)
+                _l_hr   = sum(1 for r in _cal_resolved if r.get("outcome") == "WIN") / len(_cal_resolved)
+                _l_pp   = sum(float(r.get("prob",0.5)) for r in _cal_resolved) / len(_cal_resolved)
                 _tc1,_tc2,_tc3,_tc4 = st.columns(4)
                 _tc1.metric("Last 30 Hit Rate",    f"{_r_hr:.1%}", f"{_r_hr-_l_hr:+.1%} vs lifetime")
                 _tc2.metric("Last 30 Avg Prob",    f"{_r_pp:.1%}", f"{_r_pp-_l_pp:+.1%} vs lifetime")
@@ -18645,6 +18746,64 @@ with tabs[7]:
                 st.rerun()
             else:
                 st.error("Enter a player name.")
+        st.markdown("---")
+        st.markdown("### 📜 Bulk Import — PrizePicks History Export")
+        st.caption(
+            "Paste your full PrizePicks history (copied directly from the app's history "
+            "page) to bulk-log every resolved slip at once. This is the right tool for "
+            "backfilling past results — the Slip Analyzer tab is for analyzing upcoming "
+            "slips and deliberately skips already-resolved bets."
+        )
+        _pp_hist_text = st.text_area(
+            "Paste PrizePicks history here",
+            height=200,
+            key="pp_history_bulk_paste",
+            placeholder="Jun 29, 2026\n\n4-Pick $6.00\n\n$1.00 Flex Play\n\nV. Dijk, R. Weathers, M. Keys, T. Gibson\n\nVirgil van Dijk\nRyan Weathers\nMadison Keys\nTalia Gibson\nLOST\n..."
+        )
+        _pp_hist_sport = st.selectbox("Sport for these picks", ["MLB","NBA","WNBA","NHL","NFL"], key="pp_hist_sport")
+        if st.button("📥 Parse & Preview", key="pp_hist_parse_btn"):
+            _parsed_slips = parse_prizepicks_history_text(_pp_hist_text)
+            st.session_state["pp_hist_parsed"] = _parsed_slips
+            if _parsed_slips:
+                _n_win = sum(1 for s in _parsed_slips if s["outcome"] == "WIN")
+                _n_loss = sum(1 for s in _parsed_slips if s["outcome"] == "LOSS")
+                _n_push = sum(1 for s in _parsed_slips if s["outcome"] == "PUSH")
+                _n_skip = sum(1 for s in _parsed_slips if s["outcome"] is None)
+                _total_picks = sum(len(s["players"]) for s in _parsed_slips)
+                st.success(f"Parsed {len(_parsed_slips)} slips ({_total_picks} total picks): {_n_win} won, {_n_loss} lost, {_n_push} push/refund" + (f", {_n_skip} unresolved (skipped)" if _n_skip else ""))
+                st.dataframe(
+                    [{"Date": s["date"], "Picks": s["n_picks"], "Stake": f"${s['stake']:.2f}",
+                      "Players": ", ".join(s["players"]), "Result": s["outcome"] or "—"}
+                     for s in _parsed_slips],
+                    use_container_width=True, hide_index=True
+                )
+            else:
+                st.warning("No slips parsed — check the paste matches PrizePicks' history export format.")
+        if st.session_state.get("pp_hist_parsed"):
+            _resolved_slips = [s for s in st.session_state["pp_hist_parsed"] if s["outcome"] is not None]
+            st.caption(f"Ready to log {len(_resolved_slips)} resolved slip(s) ({sum(len(s['players']) for s in _resolved_slips)} picks) as **{_pp_hist_sport}**. Unresolved slips are skipped automatically.")
+            if st.button("✅ Confirm & Log All Resolved Slips", key="pp_hist_confirm_btn", type="primary"):
+                _logged_total = 0
+                for _slip in _resolved_slips:
+                    _slip_date_str = _slip["date"] + " 00:00" if _slip["date"] else datetime.now().strftime("%Y-%m-%d %H:%M")
+                    try:
+                        _slip_date_str = datetime.strptime(_slip["date"], "%b %d, %Y").strftime("%Y-%m-%d %H:%M")
+                    except (ValueError, TypeError):
+                        pass
+                    for _player in _slip["players"]:
+                        try:
+                            log_manual_bet(
+                                player=_player, prop="Combo", line=0.0, side="OVER",
+                                sport=_pp_hist_sport, outcome=_slip["outcome"],
+                                wager=_slip["stake"], pick_count=_slip["n_picks"], bet_type="prop",
+                                source="PrizePicks", bet_date=_slip_date_str,
+                            )
+                            _logged_total += 1
+                        except (ValueError, TypeError, ZeroDivisionError):
+                            pass
+                st.session_state["pp_hist_parsed"] = []
+                st.success(f"✅ Logged {_logged_total} picks from {len(_resolved_slips)} resolved slips into history.")
+                st.rerun()
     with log_tab1:
         # Use a counter key so we can reset the uploader after submitting
         if "uploader_key" not in st.session_state:
