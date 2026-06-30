@@ -14160,6 +14160,21 @@ def get_harvester_status() -> dict:
         ("MyBookie lines",               "betcouncil_mybookie_MLB.json",       28),
         ("ParlaySavant +EV",             "betcouncil_parlaysavant_MLB.json",   22),
         ("Bet365 lines",                 "betcouncil_bet365_MLB.json",         28),
+        ("SportsInsights steam",         "betcouncil_sportsinsights_MLB.json", 18),
+        ("OddsShark consensus",          "betcouncil_oddsshark_MLB.json",      22),
+        ("VegasInsider lines",           "betcouncil_vegasinsider_MLB.json",   22),
+        ("Props.cash cross-book",        "betcouncil_propscash_MLB.json",      22),
+        ("BaseballPress lineups",        "betcouncil_baseballpress.json",       18),
+        ("BettingPros consensus",        "betcouncil_bettingpros_MLB.json",    22),
+        ("Stokastic DFS proj",           "betcouncil_stokastic_MLB.json",      32),
+        ("RotoGrinders ownership",       "betcouncil_rotogrinders_MLB.json",   32),
+        ("OddsPortal history",           "betcouncil_oddsportal_MLB.json",     65),
+        ("Outlier +EV",                  "betcouncil_outlier_MLB.json",        22),
+        ("Smarkets exchange",            "betcouncil_smarkets_MLB.json",       28),
+        ("Pickwise props",               "betcouncil_pickwise_MLB.json",       22),
+        ("Weather data",                 "betcouncil_weather_MLB.json",        65),
+        ("ScoresAndOdds %",              "betcouncil_scoresandodds_MLB.json",  18),
+        ("Kalshi markets",               "betcouncil_kalshi2_MLB.json",        32),
         ("Pregame sharp plays",          "betcouncil_pregame_MLB.json",        32),
         ("Betr props",                   "betcouncil_betr_MLB.json",           22),
         ("FantasyLabs ownership",        "betcouncil_fantasylabs_MLB.json",    32),
@@ -14438,6 +14453,83 @@ def fetch_numberfire_from_gist(sport: str) -> tuple:
     if data and _is_fresh(data, max_age_minutes=32):
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+
+
+def fetch_sportsinsights_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_sportsinsights_{sport}.json",5)
+    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_oddsshark_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_oddsshark_{sport}.json",5)
+    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_vegasinsider_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_vegasinsider_{sport}.json",5)
+    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_propscash_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_propscash_{sport}.json",5)
+    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_baseballpress_from_gist():
+    data=_read_gist_file("betcouncil_baseballpress.json",5)
+    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_bettingpros_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_bettingpros_{sport}.json",5)
+    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_stokastic_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_stokastic_{sport}.json",5)
+    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_rotogrinders_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_rotogrinders_{sport}.json",5)
+    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_oddsportal_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_oddsportal_{sport}.json",5)
+    if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_outlier_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_outlier_{sport}.json",5)
+    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_smarkets_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_smarkets_{sport}.json",5)
+    if data and _is_fresh(data,28): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_pickwise_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_pickwise_{sport}.json",5)
+    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_weather_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_weather_{sport}.json",5)
+    if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_scoresandodds_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_scoresandodds_{sport}.json",5)
+    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_kalshi2_from_gist(sport):
+    data=_read_gist_file(f"betcouncil_kalshi2_{sport}.json",5)
+    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
     return {}, "unavailable"
 
 

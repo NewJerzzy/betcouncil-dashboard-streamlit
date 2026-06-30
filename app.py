@@ -10406,7 +10406,32 @@ def load_sport_data(sport):
         ("fetch_fantasylabs_from_gist",        "fantasylabs_data_h",     "fantasylabs_src"),
         ("fetch_rotowire_from_gist",           "rotowire_injuries_h",    "rotowire_src"),
         ("fetch_numberfire_from_gist",         "numberfire_proj_h",      "numberfire_src"),
+        ("fetch_sportsinsights_from_gist",     "sportsinsights_data",    "sportsinsights_src"),
+        ("fetch_oddsshark_from_gist",          "oddsshark_data",         "oddsshark_src"),
+        ("fetch_vegasinsider_from_gist",       "vegasinsider_data",      "vegasinsider_src"),
+        ("fetch_propscash_from_gist",          "propscash_data",         "propscash_src"),
+        ("fetch_bettingpros_from_gist",        "bettingpros_data",       "bettingpros_src"),
+        ("fetch_stokastic_from_gist",          "stokastic_data",         "stokastic_src"),
+        ("fetch_rotogrinders_from_gist",       "rotogrinders_data",      "rotogrinders_src"),
+        ("fetch_oddsportal_from_gist",         "oddsportal_data",        "oddsportal_src"),
+        ("fetch_outlier_from_gist",            "outlier_ev_data",        "outlier_src"),
+        ("fetch_smarkets_from_gist",           "smarkets_data",          "smarkets_src"),
+        ("fetch_pickwise_from_gist",           "pickwise_data",          "pickwise_src"),
+        ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
+        ("fetch_kalshi2_from_gist",            "kalshi2_data",           "kalshi2_src"),
     ]
+    if sport == "MLB":
+        try:
+            from fetchers import fetch_baseballpress_from_gist as _fbp
+            _bp_data, _bp_src = _fbp()
+            if _bp_data: st.session_state["baseballpress_lineups"] = _bp_data
+        except Exception: pass
+    if sport in ("NFL","MLB"):
+        try:
+            from fetchers import fetch_weather_from_gist as _fwx
+            _wx_data, _ = _fwx(sport)
+            if _wx_data: st.session_state["weather_data"] = _wx_data
+        except Exception: pass
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         try:
             import fetchers as _ftch
@@ -16851,6 +16876,131 @@ with tabs[4]:
         if(nfSport){{
             throttled('numberfire_'+sport,1800000,function(){{
                 fetch('https://www.numberfire.com/api/v1/'+nfSport+'/projections',{{headers:{{'Accept':'application/json','Referer':'https://www.numberfire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_numberfire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] NumberFire error:',e.message);}});
+
+        // ── 26. SportsInsights betting % + steam (every 15 min) ──────────────
+        throttled('sportsinsights_'+sport,900000,function(){{
+            fetch('https://www.sportsinsights.com/api/sportsbookodds/'+sport.toLowerCase()+'?sportsbooks=1,2,3,4,5,6,7,8',{{headers:{{'Accept':'application/json','Referer':'https://www.sportsinsights.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_sportsinsights_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{
+                // Try alternate endpoint
+                fetch('https://www.sportsinsights.com/betting-trends/?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://www.sportsinsights.com/'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{pushGist('betcouncil_sportsinsights_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest_alt'}});}}).catch(function(e2){{console.log('[BetCouncil] SportsInsights error:',e2.message);}});
+            }});
+        }});
+
+        // ── 27. OddsShark consensus + line history (every 20 min) ────────────
+        var osMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+        var osSport=osMap[sport];
+        if(osSport){{
+            throttled('oddsshark_'+sport,1200000,function(){{
+                fetch('https://www.oddsshark.com/api/scores/'+osSport+'/date/'+new Date().toISOString().split('T')[0].replace(/-/g,''),{{headers:{{'Accept':'application/json','Referer':'https://www.oddsshark.com/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_oddsshark_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] OddsShark error:',e.message);}});
+            }});
+        }}
+
+        // ── 28. VegasInsider opening vs current lines (every 20 min) ─────────
+        var viMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','UFC':'mma'}};
+        var viSport=viMap[sport];
+        if(viSport){{
+            throttled('vegasinsider_'+sport,1200000,function(){{
+                fetch('https://www.vegasinsider.com/api/odds/'+viSport+'/?ajax=1',{{headers:{{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.vegasinsider.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_vegasinsider_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] VegasInsider error:',e.message);}});
+            }});
+        }}
+
+        // ── 29. Props.cash cross-book prop lines (every 20 min) ──────────────
+        throttled('propscash_'+sport,1200000,function(){{
+            fetch('https://props.cash/api/props?sport='+sport.toLowerCase()+'&limit=200',{{headers:{{'Accept':'application/json','Referer':'https://props.cash/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_propscash_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Props.cash error:',e.message);}});
+        }});
+
+        // ── 30. BaseballPress MLB lineups (every 15 min, MLB only) ───────────
+        if(sport==='MLB'){{
+            throttled('baseballpress',900000,function(){{
+                fetch('https://www.baseballpress.com/lineups',{{headers:{{'Accept':'application/json, text/html','Referer':'https://www.baseballpress.com/'}}}}).then(function(r){{return r.text();}}).then(function(html){{
+                    // Extract lineup JSON from page
+                    var match=html.match(/window\.__LINEUPS__\s*=\s*(\{{.*?\}})/s);
+                    var data=match?JSON.parse(match[1]):{{raw:html.substring(0,5000)}};
+                    pushGist('betcouncil_baseballpress.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] BaseballPress error:',e.message);}});
+            }});
+        }}
+
+        // ── 31. BettingPros expert consensus (every 20 min) ──────────────────
+        var bpMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        var bpSport=bpMap[sport];
+        if(bpSport){{
+            throttled('bettingpros_'+sport,1200000,function(){{
+                fetch('https://www.bettingpros.com/api/v3/picks/?sport='+bpSport+'&market=game&page_size=50',{{headers:{{'Accept':'application/json','Referer':'https://www.bettingpros.com/','X-APP-CLIENT':'web'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bettingpros_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BettingPros error:',e.message);}});
+            }});
+        }}
+
+        // ── 32. Stokastic DFS projections + ownership (every 30 min) ─────────
+        var stoMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        var stoSport=stoMap[sport];
+        if(stoSport){{
+            throttled('stokastic_'+sport,1800000,function(){{
+                fetch('https://stokastic.com/api/projections/'+stoSport+'?slate=main&site=dk',{{headers:{{'Accept':'application/json','Referer':'https://stokastic.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_stokastic_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Stokastic error:',e.message);}});
+            }});
+        }}
+
+        // ── 33. RotoGrinders ownership projections (every 30 min) ────────────
+        var rgMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        var rgSport=rgMap[sport];
+        if(rgSport){{
+            throttled('rotogrinders_'+sport,1800000,function(){{
+                fetch('https://rotogrinders.com/api/lineups/'+rgSport+'?site=fanduel&type=classic',{{headers:{{'Accept':'application/json','Referer':'https://rotogrinders.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_rotogrinders_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] RotoGrinders error:',e.message);}});
+            }});
+        }}
+
+        // ── 34. OddsPortal historical odds archive (every 60 min) ────────────
+        var opMap={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'hockey','SOCCER':'soccer'}};
+        var opSport=opMap[sport];
+        if(opSport){{
+            throttled('oddsportal_'+sport,3600000,function(){{
+                fetch('https://www.oddsportal.com/api/v1/events/'+opSport+'/today',{{headers:{{'Accept':'application/json','Referer':'https://www.oddsportal.com/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_oddsportal_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] OddsPortal error:',e.message);}});
+            }});
+        }}
+
+        // ── 35. Outlier.bet +EV finder (every 20 min) ────────────────────────
+        throttled('outlier_'+sport,1200000,function(){{
+            fetch('https://outlier.bet/api/opportunities?sport='+sport.toLowerCase()+'&min_ev=0.02',{{headers:{{'Accept':'application/json','Referer':'https://outlier.bet/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_outlier_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Outlier error:',e.message);}});
+        }});
+
+        // ── 36. Smarkets exchange odds (every 25 min) ────────────────────────
+        var smMap={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'ice-hockey','SOCCER':'football'}};
+        var smSport=smMap[sport];
+        if(smSport){{
+            throttled('smarkets_'+sport,1500000,function(){{
+                fetch('https://api.smarkets.com/v3/events/?state=upcoming&type=sport_event&sport='+smSport+'&limit=20',{{headers:{{'Accept':'application/json','Referer':'https://smarkets.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_smarkets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Smarkets error:',e.message);}});
+            }});
+        }}
+
+        // ── 37. Pickwise prop picks + projections (every 20 min) ─────────────
+        throttled('pickwise_'+sport,1200000,function(){{
+            fetch('https://www.pickwise.com/api/picks?sport='+sport.toLowerCase()+'&type=props&limit=50',{{headers:{{'Accept':'application/json','Referer':'https://www.pickwise.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pickwise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Pickwise error:',e.message);}});
+        }});
+
+        // ── 38. NFL Weather / Baseball weather (every 60 min) ────────────────
+        if(sport==='NFL'){{
+            throttled('nflweather',3600000,function(){{
+                fetch('https://www.nflweather.com/api/week-weather',{{headers:{{'Accept':'application/json','Referer':'https://www.nflweather.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_weather_NFL.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] NFLWeather error:',e.message);}});
+            }});
+        }}
+        if(sport==='MLB'){{
+            throttled('mlbweather',3600000,function(){{
+                fetch('https://api.openweathermap.org/data/2.5/forecast?q=Chicago&appid=demo&units=imperial',{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_weather_MLB.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] MLB weather error:',e.message);}});
+            }});
+        }}
+
+        // ── 39. Scores and Odds betting % (every 15 min) ─────────────────────
+        var soMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+        var soSport2=soMap[sport];
+        if(soSport2){{
+            throttled('scoresandodds_'+sport,900000,function(){{
+                fetch('https://www.scoresandodds.com/api/'+soSport2+'/betting-trends',{{headers:{{'Accept':'application/json','Referer':'https://www.scoresandodds.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_scoresandodds_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] ScoresAndOdds error:',e.message);}});
+            }});
+        }}
+
+        // ── 40. Kalshi prediction markets (every 30 min) ─────────────────────
+        throttled('kalshi_'+sport,1800000,function(){{
+            fetch('https://trading-api.kalshi.com/trade-api/v2/events/?status=open&series_ticker='+sport,{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_kalshi2_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Kalshi error:',e.message);}});
+        }});
+
             }});
         }}
 
