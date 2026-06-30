@@ -10282,7 +10282,10 @@ def load_sport_data(sport):
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
-    def _pf_game_lines():   return fetch_game_lines(sport)
+    def _pf_game_lines():
+        if sport in ("Tennis", "UFC", "Soccer"):
+            return fetch_h2h_game_lines(sport)
+        return fetch_game_lines(sport)
     def _pf_parlayplay():   return []  # parlayplay disabled
     def _pf_dk_pick6():    return fetch_draftkings_pick6(sport)
     def _pf_betrivers_lines(): return fetch_betrivers_game_lines(sport)

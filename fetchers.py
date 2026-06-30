@@ -7040,6 +7040,91 @@ def fetch_game_lines(sport):
         return [], playoff, home_teams, away_teams
     return today_games, playoff, home_teams, away_teams
 
+def fetch_h2h_game_lines(sport):
+    """
+    Game-line fetcher for head-to-head (non-North-American-team) sports —
+    Tennis (ATP/WTA), UFC, Soccer. Same ESPN scoreboard odds shape and
+    contract as fetch_game_lines() (games, is_playoff, home_teams,
+    away_teams) so it can feed analyze_all_games()/analyze_game_edge()
+    through the same pipeline, including the multi-book market consensus
+    layer. Kept separate from fetch_game_lines() because that function's
+    post-ESPN enrichment (TEAM_ABBREV_TO_FRAGMENT, SBR/OddsAPI overlay
+    matching) is built specifically around North American team
+    abbreviations and would silently mismatch player/fighter names.
+
+    Soccer is a 3-way market (home/draw/away) — "Spread" is repurposed to
+    carry the draw odds (e.g. "Draw +240") when present, since these sports
+    don't have a true spread; analyze_game_edge's per-sport branches treat
+    it as informational context, not a real ATS line. For Tennis/UFC,
+    Spread stays "N/A" since there's no spread market on a 1v1 matchup.
+    """
+    _h2h_slug_map = {
+        "Tennis": [("tennis/atp", "ATP"), ("tennis/wta", "WTA")],
+        "UFC":    [("mma/ufc", "UFC")],
+        "Soccer": [("soccer/eng.1", "EPL"), ("soccer/usa.1", "MLS")],
+    }
+    slugs = _h2h_slug_map.get(sport)
+    if not slugs:
+        return [], False, {}, {}
+
+    games, home_teams, away_teams = [], {}, {}
+    playoff = False
+    today = date.today()
+    date_str = today.strftime("%Y%m%d")
+
+    for path, league_label in slugs:
+        try:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
+            resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            events = data.get("events", [])
+            for event in events:
+                competitors_raw = []
+                for comp in event.get("competitions", []):
+                    competitors_raw = comp.get("competitors", [])
+                if len(competitors_raw) < 2:
+                    continue
+                p1 = competitors_raw[0].get("athlete", {}).get("displayName") or \
+                     competitors_raw[0].get("team", {}).get("displayName", "")
+                p2 = competitors_raw[1].get("athlete", {}).get("displayName") or \
+                     competitors_raw[1].get("team", {}).get("displayName", "")
+                if not p1 or not p2:
+                    continue
+                matchup = f"{p2} @ {p1}" if sport != "Soccer" else event.get("shortName", f"{p2} @ {p1}")
+                status = event.get("status", {}).get("type", {}).get("description", "")
+
+                total = "N/A"
+                home_ml = "N/A"
+                away_ml = "N/A"
+                draw_odds = "N/A"
+                provider = "ESPN"
+                for comp in event.get("competitions", []):
+                    odds_data = comp.get("odds", [{}])[0] if comp.get("odds") else {}
+                    total      = odds_data.get("overUnder", "N/A")
+                    home_ml    = odds_data.get("homeTeamOdds", {}).get("moneyLine", "N/A")
+                    away_ml    = odds_data.get("awayTeamOdds", {}).get("moneyLine", "N/A")
+                    draw_odds  = odds_data.get("drawOdds", {}).get("moneyLine", "N/A")
+                    provider   = odds_data.get("provider", {}).get("name", "ESPN")
+
+                spread = f"Draw {draw_odds}" if (sport == "Soccer" and draw_odds not in ("N/A", None, "")) else "N/A"
+
+                home_teams[matchup] = p1
+                away_teams[matchup] = p2
+                games.append({
+                    "Matchup": matchup, "Status": status, "Spread": spread,
+                    "Total": total, "Home ML": home_ml, "Away ML": away_ml,
+                    "Odds Source": provider, "Date": today.strftime("%a %b %d"),
+                    "Sport": sport, "League": league_label,
+                })
+        except Exception as e:
+            print(f"[WARN] fetch_h2h_game_lines({sport},{path}): {e}")
+            continue
+
+    return games, playoff, home_teams, away_teams
+
+
 def fetch_alt_lines(sport):
     """
     Fetch alternate spread lines from OddsAPI.
