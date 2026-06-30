@@ -1857,6 +1857,79 @@ def compute_signal_attribution(history=None):
         })
     return rows, n
 
+def optimize_daily_bet_sizing(picks, bankroll, max_daily_risk_pct=0.15):
+    """
+    Size today's picks against a daily risk cap.
+
+    Each pick should already carry 'KellyAdvisedPct' (set in the per-prop
+    Kelly sizing pass in app.py) and 'Edge'. Raw wagers are summed, then:
+      1. A correlation discount (via compute_parlay_correlation) shrinks
+         wagers when many picks share a player or known-correlated props.
+      2. If total risk still exceeds max_daily_risk_pct of bankroll, all
+         wagers are scaled down proportionally to fit the cap.
+
+    Returns a dict matching the Daily Bet Sizing Optimizer UI contract:
+      total_risk, total_risk_pct, correlation_adj, scale_applied,
+      max_daily_risk, warning, recommended_allocation (by tier),
+      picks_sized (each pick + 'adj_wager').
+    """
+    max_daily_risk = round(bankroll * max_daily_risk_pct, 2)
+    if not picks or bankroll <= 0:
+        return {
+            "total_risk": 0.0, "total_risk_pct": 0.0,
+            "correlation_adj": 0.0, "scale_applied": 1.0,
+            "max_daily_risk": max_daily_risk, "warning": "",
+            "recommended_allocation": {}, "picks_sized": [],
+        }
+
+    corr_score, _corr_pairs = compute_parlay_correlation(picks)
+    correlation_adj = round(corr_score * 0.5, 2)  # cap discount at 50%
+
+    raw_wagers = []
+    for p in picks:
+        kelly_pct = p.get("KellyAdvisedPct", 0.0) or 0.0
+        raw_wager = bankroll * kelly_pct * (1 - correlation_adj)
+        raw_wagers.append(max(0.0, raw_wager))
+
+    total_raw = sum(raw_wagers)
+    scale_applied = 1.0
+    if total_raw > max_daily_risk and total_raw > 0:
+        scale_applied = max_daily_risk / total_raw
+
+    picks_sized = []
+    tier_totals = {}
+    total_risk = 0.0
+    for p, raw_wager in zip(picks, raw_wagers):
+        adj_wager = round(raw_wager * scale_applied, 2)
+        sized = dict(p)
+        sized["adj_wager"] = adj_wager
+        picks_sized.append(sized)
+        total_risk += adj_wager
+        tier = p.get("Tier", "APPROVED")
+        tier_totals.setdefault(tier, []).append(adj_wager)
+
+    recommended_allocation = {
+        tier: round(sum(amts) / len(amts), 2) for tier, amts in tier_totals.items()
+    }
+
+    warning = ""
+    if scale_applied < 1.0:
+        warning = f"⚠️ Raw Kelly sizing exceeded daily cap — scaled to {scale_applied:.0%} to stay within ${max_daily_risk:.2f} max risk."
+    elif correlation_adj >= 0.25:
+        warning = f"⚠️ High correlation across today's picks ({correlation_adj:.0%} discount applied) — consider trimming overlapping props."
+
+    return {
+        "total_risk": round(total_risk, 2),
+        "total_risk_pct": round(total_risk / bankroll, 4) if bankroll else 0.0,
+        "correlation_adj": correlation_adj,
+        "scale_applied": round(scale_applied, 4),
+        "max_daily_risk": max_daily_risk,
+        "warning": warning,
+        "recommended_allocation": recommended_allocation,
+        "picks_sized": picks_sized,
+    }
+
+
 def compute_parlay_correlation(props):
     """
     Compute correlation score for a set of props.
