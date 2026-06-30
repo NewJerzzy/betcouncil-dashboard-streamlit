@@ -4,15 +4,21 @@ Moved from app.py to keep app.py under 1 MB.
 All functions callable from app.py via: from fetchers import *
 """
 import os, time, pickle, json, re, csv, io, hashlib
+import urllib.request
+import urllib.parse
 try:
     from curl_cffi import requests as cf
 except ImportError:
     cf = None
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry as _Retry
+try:
+    from config import BOOKMAKER_CF, BOOKMAKER_SESSID
+except ImportError:
+    BOOKMAKER_CF = BOOKMAKER_SESSID = ""
 
 def _make_retry_session() -> requests.Session:
     """Shared requests.Session with automatic retry.
@@ -4525,6 +4531,8 @@ def fetch_mlb_full_roster_ids(force_refresh=False):
     return all_ids
 
 def fetch_nhl_rolling_averages():
+    import sys as _sys
+    ewma_average = getattr(_sys.modules.get("app"), "ewma_average", None) or (lambda vals, decay=0.85, sport=None: round(sum(vals)/len(vals), 2) if vals else 0.0)
     cache_path = os.path.join(CACHE_DIR, "nhl_rolling_avgs.pkl")
     rolling = {}
     for player_name, player_id in NHL_PLAYER_IDS.items():
@@ -4699,6 +4707,8 @@ def get_nfl_player_baseline(player_name: str, stat: str, db: dict = None) -> flo
     return baselines.get(stat_norm, 0.0)
 
 def fetch_nfl_rolling_averages():
+    import sys as _sys
+    ewma_average = getattr(_sys.modules.get("app"), "ewma_average", None) or (lambda vals, decay=0.85, sport=None: round(sum(vals)/len(vals), 2) if vals else 0.0)
     cache_path = os.path.join(CACHE_DIR, "nfl_rolling_avgs.pkl")
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
@@ -8132,6 +8142,9 @@ def fetch_mlb_confirmed_lineups_with_fallback():
     filters to batting_order 0-9 + inning==0 to keep only starters.
     """
     lineups = fetch_mlb_confirmed_lineups()
+    # TODO: fetch_sleeper_mlb_scoreboard() is referenced in the docstring above
+    # but was never implemented — this fallback path is currently always a
+    # silent no-op (caught by the except below).
     try:
         sleeper_games = fetch_sleeper_mlb_scoreboard()
         for g in (sleeper_games or {}).values():
@@ -8245,7 +8258,7 @@ def fetch_draftkings_direct(sport):
                     side = "OVER"
                 # Extract line from label if not in fields
                 if line is None:
-                    _lm = _re.search(r"([\d.]+)", label)
+                    _lm = re.search(r"([\d.]+)", label)
                     if _lm:
                         try: line = float(_lm.group(1))
                         except (ValueError, TypeError, ZeroDivisionError): pass
@@ -8301,7 +8314,7 @@ def fetch_draftkings_direct(sport):
                                                 odds_am = outcome.get("oddsAmerican", "") or outcome.get("displayOdds", {}).get("american", "—")
                                                 side = "UNDER" if "Under" in o_label else "OVER"
                                                 if line is None:
-                                                    _lm2 = _re.search(r"([\d.]+)", o_label)
+                                                    _lm2 = re.search(r"([\d.]+)", o_label)
                                                     if _lm2:
                                                         try: line = float(_lm2.group(1))
                                                         except (ValueError, TypeError): pass
@@ -11439,6 +11452,9 @@ def fetch_dk_salaries(sport="NBA"):
         return {}
 
 def fetch_mlb_rolling_averages():
+    import sys as _sys
+    ewma_average = getattr(_sys.modules.get("app"), "ewma_average", None) or (lambda vals, decay=0.85, sport=None: round(sum(vals)/len(vals), 2) if vals else 0.0)
+    PLAYER_AVERAGES = getattr(_sys.modules.get("app"), "PLAYER_AVERAGES", None) or {}
     cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
     rolling = {}
     # Use full active roster IDs (all 30 teams) instead of hardcoded 29-player list
@@ -11521,6 +11537,16 @@ def fetch_mlb_rolling_averages():
 # Works in deployed app via curl_cffi TLS impersonation.
 # Cached 6-24h per sport. Falls back to hardcoded baselines.
 # ═══════════════════════════════════════════════════════════
+
+def _write_pp_lkg(sport: str, props: list) -> None:
+    """Write PrizePicks props to the last-known-good pickle cache."""
+    try:
+        lkg_path = os.path.join(CACHE_DIR, f"pp_last_known_good_{sport}.pkl")
+        with open(lkg_path, "wb") as _f:
+            pickle.dump(props, _f)
+    except OSError:
+        pass
+
 
 def scrape_prizepicks_with_gist_fallback(sport):
     """
@@ -14230,7 +14256,7 @@ def fetch_prizepicks_from_gist(sport: str) -> tuple:
                 print(f"[PrizePicks] PRIMARY: {len(props)} props from browser harvester")
                 return props, "browser_harvester"
     try:
-        secondary = fetch_prizepicks_props(sport)
+        secondary = scrape_prizepicks(sport)
         if secondary:
             print(f"[PrizePicks] SECONDARY: {len(secondary)} props from CDN scraper")
             return secondary, "scraper_fallback"

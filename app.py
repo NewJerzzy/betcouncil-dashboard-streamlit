@@ -6436,9 +6436,13 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             _steam_signals["spread_opener_gap"] = _spread_gap
 
         # Market maker divergence — build lines_by_book from available data
+        # TODO: game_lines_data was never wired up (no such param/variable in
+        # this function) — guarded to avoid NameError until a real per-book
+        # lines source (e.g. aggregated session_state lines by matchup) is wired in.
         _lines_by_book = {}
-        if game_lines_data:
-            for _bk_data in game_lines_data:
+        _game_lines_data = []
+        if _game_lines_data:
+            for _bk_data in _game_lines_data:
                 _bk_name = _bk_data.get("Book", _bk_data.get("book", ""))
                 _bk_total = _bk_data.get("Total", _bk_data.get("total"))
                 _bk_spread = _bk_data.get("Spread", _bk_data.get("spread"))
@@ -11952,6 +11956,7 @@ def load_sport_data(sport):
         _std_d  = p.get("StdDev")
         _avg_v  = p.get("Avg", 0)
         # Auto-save Pinnacle line to closing line database
+        _pinn_line = None  # not yet wired to a per-prop Pinnacle source in this loop
         if player and stat_norm and _pinn_line:
             try:
                 save_closing_line(player, stat_norm, float(_pinn_line), sport, source="pinnacle")
@@ -12712,7 +12717,8 @@ def load_sport_data(sport):
 
     # ── Tier-based Kelly sizing ─────────────────────────────────────────────
     # Apply KELLY_BY_TIER so SOVEREIGN gets 25%, ELITE 20%, APPROVED 15%, LEAN 8%
-    _bm_mult = bankroll_multiplier.get("multiplier", 1.0) if isinstance(bankroll_multiplier, dict) else 1.0
+    _bankroll_mult_data = compute_bankroll_multiplier()
+    _bm_mult = _bankroll_mult_data.get("multiplier", 1.0) if isinstance(_bankroll_mult_data, dict) else 1.0
     for prop in enriched:
         _tier = prop.get("Tier", "APPROVED")
         _tier_frac = KELLY_BY_TIER.get(_tier, KELLY_FRACTION)
@@ -13118,14 +13124,27 @@ def load_sport_data(sport):
         st.session_state["depth_chart_changes"] = _depth_changes
         save_depth_chart_snapshot(sport, _curr_depth)
     if sport == "NFL":
-        _practice_data = fetch_nfl_practice_participation()
-        st.session_state["nfl_practice"] = _practice_data
-        _nfl_inactives = fetch_nfl_inactives()
-        st.session_state["nfl_inactives"] = _nfl_inactives
+        # TODO: fetch_nfl_practice_participation / fetch_nfl_inactives not yet
+        # implemented in fetchers.py — guarded to avoid NameError until built.
+        if "fetch_nfl_practice_participation" in globals():
+            try:
+                st.session_state["nfl_practice"] = fetch_nfl_practice_participation()
+            except Exception:
+                pass
+        if "fetch_nfl_inactives" in globals():
+            try:
+                st.session_state["nfl_inactives"] = fetch_nfl_inactives()
+            except Exception:
+                pass
     if sport == "NHL":
-        _nhl_goalies = fetch_nhl_starting_goalies()
-        if _nhl_goalies:
-            st.session_state["nhl_starting_goalies"] = _nhl_goalies
+        # TODO: fetch_nhl_starting_goalies not yet implemented in fetchers.py
+        if "fetch_nhl_starting_goalies" in globals():
+            try:
+                _nhl_goalies = fetch_nhl_starting_goalies()
+                if _nhl_goalies:
+                    st.session_state["nhl_starting_goalies"] = _nhl_goalies
+            except Exception:
+                pass
     if sport == "GOLF":
         _golf_lb = fetch_golf_leaderboard()
         if _golf_lb:
