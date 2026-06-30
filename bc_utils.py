@@ -4210,6 +4210,40 @@ def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lin
         }
     """
     _LONG_FORMAT_BOOKS = {"bovada", "betmgm"}
+    _SPORTSLINE_BOOKS_MAP = {
+        "betmgm":     "sportsline_betmgm",
+        "caesars":    "sportsline_caesars",
+        "draftkings": "sportsline_draftkings",
+        "fanduel":    "sportsline_fanduel",
+        "bet365":     "sportsline_bet365",
+        "consensus":  "sportsline_consensus",
+    }
+
+    def _expand_sportsline(sl_games):
+        """
+        SportsLine returns one game entry with a nested Books dict
+        ({betmgm: {line, odds, open}, caesars: ...}).
+        Expand each book into a separate flat game entry so every book
+        contributes independently to the consensus spread count.
+        """
+        expanded = {}
+        for g in (sl_games or []):
+            home = g.get("Home", "")
+            away = g.get("Away", "")
+            for book_short, book_key in _SPORTSLINE_BOOKS_MAP.items():
+                home_bk = (g.get("Books") or {}).get(book_short)
+                if not home_bk:
+                    continue
+                expanded.setdefault(book_key, []).append({
+                    "Home":    home,
+                    "Away":    away,
+                    "Spread":  home_bk.get("line"),
+                    "SpreadOpen": home_bk.get("open"),
+                    "Total":   None,    # SportsLine spread page; totals on separate endpoint
+                    "HomeML":  None,
+                    "AwayML":  None,
+                })
+        return expanded
 
     def _match_game(games_list):
         for g in games_list or []:
@@ -4219,6 +4253,16 @@ def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lin
                normalize_name(ga) == normalize_name(matchup_away):
                 return g
         return None
+
+    # Pre-process SportsLine data: expand per-book nested dicts into
+    # individual flat game entries so every book SportsLine tracks
+    # contributes independently to the consensus count.
+    _sl_raw = (all_book_lines or {}).get("sportsline_game_lines")
+    if _sl_raw:
+        _sl_expanded = _expand_sportsline(_sl_raw)
+        all_book_lines = {k: v for k, v in all_book_lines.items()
+                          if k != "sportsline_game_lines"}
+        all_book_lines.update(_sl_expanded)
 
     spread_by_book, total_by_book = {}, {}
     home_ml_by_book, away_ml_by_book = {}, {}

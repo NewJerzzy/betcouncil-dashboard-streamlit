@@ -12862,6 +12862,196 @@ BOOKMAKER_SPORT_PATHS = {
 }
 
 
+_SPORTSLINE_SPORT_PATHS = {
+    "NFL":  "nfl",
+    "MLB":  "mlb",
+    "NBA":  "nba",
+    "NHL":  "nhl",
+    "WNBA": "wnba",
+    "Soccer": "mls",
+}
+
+# Column indices in the SportsLine odds table (0-based after splitting on |).
+# Layout: | img+team | proj | consensus | BetMGM | Caesars | DraftKings | FanDuel | Bet365 |
+_SL_COL_CONSENSUS = 3
+_SL_COL_BETMGM    = 4
+_SL_COL_CAESARS   = 5
+_SL_COL_DK        = 6
+_SL_COL_FD        = 7
+_SL_COL_BET365    = 8
+
+
+def _sl_parse_col(cell: str) -> dict:
+    """
+    Parse one odds cell from the SportsLine table.
+    Handles both negative juice (-110) and positive juice (+100):
+      "+4.5-110 Open: +4.5"  →  {line: 4.5,  odds: -110, open: 4.5}
+      "-7.5-110 Open: -7.5"  →  {line: -7.5, odds: -110, open: -7.5}
+      "-1.5+100 Open: -1.5"  →  {line: -1.5, odds: 100,  open: -1.5}
+    Returns None when the cell is empty or "--".
+    """
+    if not cell or cell.strip() in ("--", ""):
+        return None
+    # Negative juice: LINE-JUICE  (e.g. +4.5-110, -7-115)
+    m = re.search(r'([+-]?[\d.]+)-(\d{2,3})\s+Open:\s+([+-]?[\d.]+)', cell)
+    if m:
+        return {
+            "line": float(m.group(1)),
+            "odds": -int(m.group(2)),
+            "open": float(m.group(3)),
+        }
+    # Positive juice: LINE+JUICE (e.g. -1.5+100, +3+100)
+    m2 = re.search(r'([+-]?[\d.]+)\+(\d{2,3})\s+Open:\s+([+-]?[\d.]+)', cell)
+    if m2:
+        return {
+            "line": float(m2.group(1)),
+            "odds": int(m2.group(2)),
+            "open": float(m2.group(3)),
+        }
+    return None
+
+
+def fetch_sportsline_game_lines(sport: str) -> list:
+    """
+    Scrape SportsLine.com's odds comparison table (NFL/MLB/NBA/NHL/WNBA/Soccer).
+
+    Returns a list of game dicts in the same shape as the other game-line
+    fetchers (Home/Away/Spread/Total/HomeML/AwayML + per-book breakdown),
+    including the consensus line, opening line, and line-movement flags --
+    same format as fetch_pinnacle_game_lines/fetch_betrivers_game_lines so
+    it plugs directly into build_game_line_consensus().
+
+    SportsLine's table is rendered as plain text by the fetch stack (confirmed
+    live -- no Cloudflare/JS-rendering issue, plain HTTP GET works). Columns:
+      consensus | BetMGM | Caesars | DraftKings | FanDuel | Bet365
+
+    This is the equivalent of having a free, no-auth line-shopping feed that
+    also tracks opening lines, which your current scrapers don't provide in one
+    place. The opening-line column enables line-movement / steam detection for
+    every game on the board.
+    """
+    path = _SPORTSLINE_SPORT_PATHS.get(sport)
+    if not path:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"sportsline_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 0.25:  # 15min cache
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    url = f"https://www.sportsline.com/{path}/odds/"
+    try:
+        resp = _http.get(url, headers={**HEADERS, "Accept": "text/html,application/xhtml+xml"},
+                         timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return []
+        html = resp.text
+    except Exception as e:
+        print(f"[WARN] fetch_sportsline_game_lines({sport}): {e}")
+        return []
+
+    games = []
+    try:
+        _team_re = re.compile(r'svg\)\s+([\w\' ]+?)\s*\|', re.S)
+        _date_re = re.compile(
+            r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+,\s+[\d:APMUTC ]+on\s+\w+'
+        )
+
+        rows = [r for r in html.split('\n') if r.strip().startswith('|')]
+        current_game: dict = {}
+        current_date: str = ""
+        pending_away: dict = {}
+
+        for row in rows:
+            # Date/network row
+            if _date_re.search(row) and row.count('|') <= 4:
+                current_date = _date_re.search(row).group(0)
+                continue
+
+            # Team row
+            tm = _team_re.search(row)
+            if not tm:
+                continue
+            team_name = tm.group(1).strip()
+            cols = [c.strip() for c in row.split('|')]
+            if len(cols) < 6:
+                continue
+
+            sl_data = {
+                "team":      team_name,
+                "consensus": _sl_parse_col(cols[_SL_COL_CONSENSUS] if len(cols) > _SL_COL_CONSENSUS else ""),
+                "betmgm":    _sl_parse_col(cols[_SL_COL_BETMGM]    if len(cols) > _SL_COL_BETMGM    else ""),
+                "caesars":   _sl_parse_col(cols[_SL_COL_CAESARS]   if len(cols) > _SL_COL_CAESARS   else ""),
+                "draftkings":_sl_parse_col(cols[_SL_COL_DK]        if len(cols) > _SL_COL_DK        else ""),
+                "fanduel":   _sl_parse_col(cols[_SL_COL_FD]        if len(cols) > _SL_COL_FD        else ""),
+                "bet365":    _sl_parse_col(cols[_SL_COL_BET365]    if len(cols) > _SL_COL_BET365    else ""),
+            }
+
+            if not pending_away:
+                # First team in the pair = away
+                pending_away = sl_data
+                pending_away["date"] = current_date
+            else:
+                # Second team = home; build the game dict
+                away_data = pending_away
+                home_data = sl_data
+                pending_away = {}
+
+                # Consensus line from the away team row (always the underdog row
+                # in SportsLine's layout when a favorite exists, but we just
+                # use whichever has a line value).
+                _cons_away = away_data.get("consensus")
+                _cons_home = home_data.get("consensus")
+                spread      = _cons_home["line"] if _cons_home else (
+                              -_cons_away["line"] if _cons_away else None)
+                open_spread = _cons_home["open"] if _cons_home else (
+                              -_cons_away["open"] if _cons_away else None)
+                line_moved  = (
+                    spread is not None and open_spread is not None
+                    and abs(spread - open_spread) >= 0.5
+                )
+
+                game = {
+                    "Matchup":     f"{away_data['team']} @ {home_data['team']}",
+                    "Home":        home_data["team"],
+                    "Away":        away_data["team"],
+                    "Date":        away_data.get("date", current_date),
+                    "Sport":       sport,
+                    "Spread":      spread,
+                    "SpreadOpen":  open_spread,
+                    "LineMoved":   line_moved,
+                    "Source":      "SportsLine",
+                    # Per-book spreads for build_game_line_consensus()
+                    "Books": {
+                        "consensus":  _cons_home,
+                        "betmgm":     home_data.get("betmgm"),
+                        "caesars":    home_data.get("caesars"),
+                        "draftkings": home_data.get("draftkings"),
+                        "fanduel":    home_data.get("fanduel"),
+                        "bet365":     home_data.get("bet365"),
+                    },
+                    # Away-team book spreads for completeness
+                    "AwayBooks": {
+                        "consensus":  _cons_away,
+                        "betmgm":     away_data.get("betmgm"),
+                        "caesars":    away_data.get("caesars"),
+                        "draftkings": away_data.get("draftkings"),
+                        "fanduel":    away_data.get("fanduel"),
+                        "bet365":     away_data.get("bet365"),
+                    },
+                }
+                games.append(game)
+    except Exception as e:
+        print(f"[WARN] fetch_sportsline_game_lines({sport}) parse: {e}")
+        return []
+
+    if games:
+        _safe_save_pkl(cache_path, games)
+    return games
+
+
 def fetch_bookmaker_game_lines(sport: str) -> list:
     """
     Fetch Bookmaker.eu game lines via HTML scraping (server-rendered page).
