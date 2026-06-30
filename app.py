@@ -11998,6 +11998,9 @@ def load_sport_data(sport):
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
         # ── Scanbet Pinnacle line movement (GraphQL) ───────────────────────
+        _sb_matchup = next((g["Matchup"] for g in games if player_team and player_team in g.get("Matchup","")), "")
+        home_team = home_teams.get(_sb_matchup, "")
+        away_team = away_teams.get(_sb_matchup, "")
         if home_team or away_team:
             try:
                 _sbd = st.session_state.get("scanbet_drops", [])
