@@ -11963,9 +11963,12 @@ def load_sport_data(sport):
             except Exception:
                 pass
         adj_edge, calibrated = adjusted_edge(
-            best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history,
-            n_samples=_n_samp, std_dev=_std_d, avg=_avg_v
+            best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history
         )
+        # TODO: _n_samp/_std_d/_avg_v computed above were intended as SEM
+        # inputs for adjusted_edge but the function doesn't accept them yet —
+        # dropped from the call to stop the TypeError. Wire in a real SEM-
+        # weighted calibration formula when this feature gets built out.
         final_edge = adj_edge if calibrated else best_edge
         eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
         if (an_grade in ("A+", "A", "A-") and _get_cal_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")):
@@ -12267,6 +12270,10 @@ def load_sport_data(sport):
         # DFF PropStats — hit rate confirmation signal
         _dff_pid = get_dff_player_id(player, sport)
         if _dff_pid:
+            # NOTE: fetch_dff_propstats is a dead stub (dailyfantasyfuel.com
+            # is Cloudflare-blocked) — always returns {}. Call matches its
+            # real signature so this doesn't TypeError; direction/last_n
+            # were never accepted params.
             _dff_ps = fetch_dff_propstats(
                 player_id  = _dff_pid,
                 sport      = sport,
@@ -12274,8 +12281,6 @@ def load_sport_data(sport):
                 line       = line,
                 team       = p.get("Team",""),
                 opponent   = p.get("Opponent",""),
-                direction  = "over" if pick_dir == "OVER" else "under",
-                last_n     = 10,
             )
             if _dff_ps:
                 _ps_adj, _ps_note = compute_dff_propstats_edge(_dff_ps, final_edge)
