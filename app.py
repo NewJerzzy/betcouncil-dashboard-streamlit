@@ -12293,11 +12293,23 @@ def load_sport_data(sport):
                          if normalize_name(h.get("player","")) == normalize_name(player)])
         _inj_status = injuries.get(normalize_name(player), {}).get("status","") if isinstance(injuries, dict) else ""
         _lineup_conf = p.get("LineupStatus","").startswith("✅") if p.get("LineupStatus") else None
+        # Real Pinnacle agreement: how close our model's probability is to
+        # Pinnacle's no-vig probability for the same side. Small gap = they
+        # agree = genuine external confirmation. Previously this passed our
+        # own model edge (final_edge) here, which rewarded large self-edges
+        # as if they were market confirmation -- backwards, since a bigger
+        # edge from us alone is more often model error than real value.
+        _pinn_agreement_gap = None
+        if _pn_nv is not None:
+            try:
+                _pinn_agreement_gap = abs(float(best_prob) - float(_pn_nv))
+            except (TypeError, ValueError):
+                _pinn_agreement_gap = None
         _proj_conf = compute_projection_confidence(
             player=player, prop=stat_norm, line=line, sport=sport,
             sample_n=_sample_n, injury_status=_inj_status,
             lineup_confirmed=_lineup_conf,
-            market_edge=final_edge,
+            market_edge=_pinn_agreement_gap,
         )
         # Confidence affects final tier — LOW confidence can downgrade
         if _proj_conf["score"] < 40 and tier in ("SOVEREIGN","ELITE"):

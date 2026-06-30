@@ -2234,7 +2234,9 @@ def compute_projection_confidence(player, prop, line, sport,
       Sample size (25pts):   10+ games = full, <5 = penalized
       Injury certainty (25pts): Active = full, Questionable = half, Out = zero
       Lineup confirmed (20pts): MLB lineup confirmed = full
-      Market agreement (20pts): If Pinnacle agrees = full
+      Market agreement (20pts): market_edge is the |gap| between our
+        model's probability and Pinnacle's no-vig probability -- tight
+        agreement (<=2%) = full, wide divergence (>10%) = minimal
       Volatility (10pts):    Low std dev = confident
     
     80-100 = HIGH confidence (trust the projection)
@@ -2273,14 +2275,23 @@ def compute_projection_confidence(player, prop, line, sport,
     else:
         score += 14  # Unknown — neutral
 
-    # Market agreement (20pts)
+    # Market agreement (20pts) -- market_edge here is the GAP between our
+    # model's probability and Pinnacle's no-vig probability for the same
+    # side (0 = perfect agreement). Small gap = genuine external
+    # confirmation = high confidence. Large gap = either we found real
+    # value Pinnacle missed, or our model is wrong -- can't tell which
+    # from this signal alone, so it should reduce confidence, not inflate
+    # it like a stale version of this function used to.
     if market_edge is not None:
-        if abs(market_edge) >= 0.05:
-            score += 20   # Strong market signal
-        elif abs(market_edge) >= 0.02:
+        gap = abs(market_edge)
+        if gap <= 0.02:
+            score += 20   # Tight agreement with Pinnacle
+        elif gap <= 0.05:
             score += 14
-        else:
+        elif gap <= 0.10:
             score += 8
+        else:
+            score += 2   # Large divergence -- unconfirmed, treat cautiously
 
     # Volatility (10pts)
     if volatility is not None:
