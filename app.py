@@ -57,6 +57,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     devig_odds, compute_std_dev, calculate_edge,
     compute_fair_prob, tier_badge, is_game_total_prop, classify_regime, parlay_prob,
     parlay_payout, poisson_prob_over, compute_fair_prob_negbinom, compute_fair_prob_skellam,
+    mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
     _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_game_line_consensus, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, correlated_parlay_kelly, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
@@ -6457,6 +6458,40 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 _ml_divisor = {"NBA": 4, "NFL": 4, "WNBA": 4, "MLB": 1.5, "NHL": 7}.get(sport, 7)
                 h_fair = 1 / (1 + math.exp(-power_diff / _ml_divisor))
                 a_fair = 1 - h_fair
+
+                # NFL: Log5 adjustment using power-rating-implied win percentages.
+                # Log5 strips schedule bias from the sigmoid output, giving a
+                # cleaner H2H probability when both teams are far from .500.
+                # Blend: 70% sigmoid (already opponent-adjusted via power ratings)
+                # + 30% Log5 (corrects for extreme mismatches more accurately).
+                if sport == "NFL":
+                    try:
+                        _p_h = h_fair          # sigmoid is already a win prob estimate
+                        _p_a = a_fair
+                        _log5_h = mc_log5_win_prob(_p_h, _p_a)
+                        h_fair = round(0.70 * h_fair + 0.30 * _log5_h, 4)
+                        a_fair = round(1.0 - h_fair, 4)
+                    except Exception:
+                        pass
+
+
+                # expected scoring (MLB James formula, NHL goals-for/against,
+                # Soccer xG) the MC simulation gives a probability directly from
+                # the actual scoring distribution, not just the rating gap.
+                # Blend 40% MC / 60% power-rating sigmoid when MC data is available.
+                _mc_h = _mc_a = None
+                _mu_h_mc = locals().get("_mu_home")
+                _mu_a_mc = locals().get("_mu_away")
+                if sport in ("MLB", "NHL", "Soccer") and _mu_h_mc and _mu_a_mc:
+                    try:
+                        _mc_result = mc_simulate_game(_mu_h_mc, _mu_a_mc)
+                        _mc_h = _mc_result["home_win_prob"]
+                        _mc_a = _mc_result["away_win_prob"] + _mc_result["draw_prob"] * 0.5
+                    except Exception:
+                        pass
+                if _mc_h is not None:
+                    h_fair = round(0.60 * h_fair + 0.40 * _mc_h, 4)
+                    a_fair = round(1.0 - h_fair, 4)
                 h_ml_edge = h_fair - h_implied
                 a_ml_edge = a_fair - a_implied
                 best_ml_edge = max(h_ml_edge, a_ml_edge)

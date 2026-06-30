@@ -782,6 +782,194 @@ def compute_fair_prob_skellam(line, mu_a, mu_b, side="OVER"):
     return round(max(0.20, min(0.80, prob)), 4)
 
 
+# ── Monte Carlo Game Simulation Engine ──────────────────────────────────────
+# Based on open-source NBA/MLB Monte Carlo frameworks (matsonj/nba-monte-carlo,
+# norrisja/NBA-Monte-Carlo-Simulator) and the statistical methodologies from
+# Kumagai et al. (2024) on sport-specific variance structures.
+#
+# Architecture:
+#   - Poisson-based scoring simulation (correct distribution for discrete,
+#     low-to-medium scoring events like MLB runs, NHL goals, NBA possessions)
+#   - Opponent-adjusted lambda via multiplicative normalization against league avg
+#     (the same James-formula concept already used in analyze_game_edge's MLB block,
+#     now formalized as a general cross-sport function)
+#   - Convergent iteration: runs in 1,000-sim chunks, stops when win-pct delta
+#     drops below epsilon (0.05%), avoiding wasted computation on easy matchups
+#     while getting full 10,000+ sims on tight games that need them
+#   - Log-5 head-to-head adjustment for sports where true win% is the cleaner
+#     input than per-game scoring rates (NFL drive-level variance, futures, etc.)
+
+_MC_LEAGUE_DEFAULTS = {
+    # (league_avg_scoring, home_court_advantage, hca_unit)
+    # hca_unit: "points" for scoring-distribution sports, "prob" for Log5 sports
+    "NBA":    (115.0,  2.5,  "points"),
+    "WNBA":   (82.0,   2.0,  "points"),
+    "NHL":    (3.0,    0.10, "points"),
+    "MLB":    (4.4,    0.10, "points"),   # runs per team per game
+    "Soccer": (1.35,   0.15, "points"),   # goals per team per game (EPL ~2.7 combined)
+    "NFL":    (23.0,   2.5,  "points"),
+    "NCAA":   (70.0,   3.5,  "points"),   # college basketball
+}
+
+
+def mc_calculate_lambdas(home_off: float, home_def: float,
+                          away_off: float, away_def: float,
+                          sport: str = "MLB") -> tuple:
+    """
+    Compute opponent-adjusted expected scoring (lambda) for each team.
+
+    Uses multiplicative normalization against league average — the same
+    mathematical structure as the Bill James runs-created formula already
+    in analyze_game_edge, now expressed as a general function usable
+    across all sports:
+
+        lambda_home = league_avg * (home_off/league_avg) * (away_def/league_avg) + hca/2
+        lambda_away = league_avg * (away_off/league_avg) * (home_def/league_avg) - hca/2
+
+    Args:
+        home_off: Home team offensive rating (pts/runs/goals scored per game)
+        home_def: Home team defensive rating (pts/runs/goals allowed per game)
+        away_off: Away team offensive rating
+        away_def: Away team defensive rating
+        sport:    Sport key for league defaults
+
+    Returns:
+        (lambda_home, lambda_away) — expected scoring per game for each team,
+        minimum-clamped to 0.1 to prevent degenerate Poisson inputs.
+    """
+    league_avg, hca, _ = _MC_LEAGUE_DEFAULTS.get(sport, (4.4, 0.10, "points"))
+    home_factor = (home_off / league_avg) * (away_def / league_avg)
+    away_factor = (away_off / league_avg) * (home_def / league_avg)
+    lambda_home = (league_avg * home_factor) + (hca / 2)
+    lambda_away = (league_avg * away_factor) - (hca / 2)
+    return max(0.1, lambda_home), max(0.1, lambda_away)
+
+
+def mc_log5_win_prob(p_home: float, p_away: float) -> float:
+    """
+    Bill James Log-5 head-to-head win probability.
+    Strips schedule bias from season win percentages to isolate the true
+    expected H2H result. Used for NFL (high-variance, drive-based) and any
+    sport where per-game scoring rates are less reliable than overall W%:
+
+        W_home = (P_H - P_H*P_A) / (P_H + P_A - 2*P_H*P_A)
+
+    Returns 0.5 on degenerate inputs (both teams .500, etc.)
+    """
+    denom = p_home + p_away - 2 * p_home * p_away
+    if denom < 1e-9:
+        return 0.5
+    return round(max(0.05, min(0.95, (p_home - p_home * p_away) / denom)), 4)
+
+
+def mc_simulate_game(lambda_home: float, lambda_away: float,
+                      chunk_size: int = 1000,
+                      max_iterations: int = 30000,
+                      epsilon: float = 0.0005) -> dict:
+    """
+    Convergent Monte Carlo game simulator using vectorized Poisson sampling.
+
+    Runs in chunks of `chunk_size` simulations, checking convergence after
+    each chunk. Stops early when the delta in win probability between
+    consecutive chunks drops below `epsilon` (default 0.05%), giving:
+      - Fast convergence on mismatches (often 2-4k sims)
+      - Full depth on tight games (up to max_iterations)
+
+    Standard errors at convergence:
+      - 1,000 sims: SE ≈ 1.55%, CI ±3.0% (too wide for real edge detection)
+      - 10,000 sims: SE ≈ 0.49%, CI ±0.96% (edge-grade precision)
+      - 30,000 sims: SE ≈ 0.28%, CI ±0.55% (for very tight matchups)
+
+    Ties are broken by a fair coin flip (single sudden-death possession/inning),
+    which is the correct treatment for sports without draws (MLB, NBA, NHL, NFL).
+    Soccer ties are preserved as draws since a draw is a legitimate outcome.
+
+    Args:
+        lambda_home: Expected home scoring (from mc_calculate_lambdas)
+        lambda_away: Expected away scoring
+        chunk_size:  Vectorized batch size (balances numpy overhead vs granularity)
+        max_iterations: Hard cap on total simulations
+        epsilon:     Convergence threshold (default 0.05% = 0.0005)
+
+    Returns:
+        {
+          "home_win_prob": float,   # P(home wins)
+          "away_win_prob": float,   # P(away wins)
+          "draw_prob":     float,   # P(draw) -- non-zero for soccer only
+          "home_exp":      float,   # lambda_home (input, for reference)
+          "away_exp":      float,   # lambda_away
+          "n_sims":        int,     # simulations run before convergence
+          "converged":     bool,    # True if stopped via epsilon, False if hit cap
+        }
+    """
+    home_wins = 0
+    away_wins = 0
+    draws = 0
+    total_sims = 0
+    previous_win_pct = -1.0
+    is_soccer = abs(lambda_home - 1.35) < 1.5 and abs(lambda_away - 1.35) < 1.5 \
+                and lambda_home < 4.0 and lambda_away < 4.0
+
+    converged = False
+    while total_sims < max_iterations:
+        h_scores = np.random.poisson(lambda_home, chunk_size)
+        a_scores = np.random.poisson(lambda_away, chunk_size)
+
+        if is_soccer:
+            # Soccer: draws are real outcomes, preserve them
+            draws     += int(np.sum(h_scores == a_scores))
+            home_wins += int(np.sum(h_scores > a_scores))
+            away_wins += int(np.sum(h_scores < a_scores))
+        else:
+            # All other sports: break ties with a fair coin
+            ties = h_scores == a_scores
+            h_scores[ties] += np.random.binomial(1, 0.5, size=int(np.sum(ties)))
+            home_wins += int(np.sum(h_scores > a_scores))
+            away_wins += int(np.sum(h_scores < a_scores))
+
+        total_sims += chunk_size
+        current_win_pct = home_wins / total_sims
+        if total_sims > chunk_size and abs(current_win_pct - previous_win_pct) < epsilon:
+            converged = True
+            break
+        previous_win_pct = current_win_pct
+
+    n = max(total_sims, 1)
+    return {
+        "home_win_prob": round(home_wins / n, 4),
+        "away_win_prob": round(away_wins / n, 4),
+        "draw_prob":     round(draws / n, 4),
+        "home_exp":      round(lambda_home, 3),
+        "away_exp":      round(lambda_away, 3),
+        "n_sims":        total_sims,
+        "converged":     converged,
+    }
+
+
+def mc_game_prob(home_off: float, home_def: float,
+                  away_off: float, away_def: float,
+                  sport: str = "MLB") -> dict:
+    """
+    One-call convenience wrapper: calculates opponent-adjusted lambdas and
+    runs the convergent Monte Carlo simulation.
+
+    Args:
+        home_off: Home team offensive rating (per-game scoring)
+        home_def: Home team defensive rating (per-game scoring allowed)
+        away_off: Away team offensive rating
+        away_def: Away team defensive rating
+        sport:    Sport key — determines league average and HCA defaults
+
+    Returns:
+        Full mc_simulate_game() dict plus the calculated lambdas.
+    """
+    lam_h, lam_a = mc_calculate_lambdas(home_off, home_def, away_off, away_def, sport)
+    result = mc_simulate_game(lam_h, lam_a)
+    return result
+
+
+
+
 ELO_DEFAULT_RATING = 1500.0
 ELO_K_FACTOR = {"NFL": 20, "NBA": 20, "WNBA": 20, "NHL": 20, "Soccer": 20, "MLB": 20}
 
