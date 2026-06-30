@@ -6109,6 +6109,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 except Exception:
                     pass
                 fair_total = base_total + era_adj + park_adj + wind_adj_total + l10_ou_adj
+                _mu_home = _mu_away = None  # set below if James-formula data available
                 # ── James matchup formula blend ────────────────────────────
                 # Formula: home_runs = (home_RS × away_RA) / league_avg
                 #          away_runs = (away_RS × home_RA) / league_avg
@@ -6129,6 +6130,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         # Clamp James projection to sane range (6–14 runs)
                         _james_total = max(6.0, min(14.0, _james_total))
                         fair_total = round(fair_total * 0.60 + _james_total * 0.40, 2)
+                        # Capture per-team expected runs for Skellam-based total
+                        # probability below (more correct than a linear edge
+                        # heuristic for a low-scoring discrete-event sport).
+                        _mu_home = max(0.5, _james_home)
+                        _mu_away = max(0.5, _james_away)
                 except Exception:
                     pass
             elif sport == "NHL":
@@ -6138,6 +6144,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 a_ga = NHL_TEAM_GOALS_AGAINST.get(away_full, NHL_TEAM_GOALS_AGAINST.get(away_team, NHL_GOALS_DEFAULT))
                 home_expected = (h_gf + a_ga) / 2
                 away_expected = (a_gf + h_ga) / 2
+                _mu_home = max(0.5, home_expected)
+                _mu_away = max(0.5, away_expected)
                 fair_total = home_expected + away_expected
                 # ── ATS Stats NHL L10 O/U momentum nudge ──────────────────
                 try:
@@ -6236,9 +6244,12 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     if _a_soc.get("cs_rate", 0) > 0.35:
                         _cs_adj -= 0.15
                     fair_total = round(fair_total + _cs_adj, 2)
+                    _mu_home = max(0.3, _home_exp)
+                    _mu_away = max(0.3, _away_exp)
                 else:
                     _league_total = _SOCCER_LEAGUE_BASELINES.get(_soc_league, 2.72)
                     fair_total = round((_league_total / 2) * 1.12 + (_league_total / 2) * 0.88, 2)
+                    _mu_home = _mu_away = None
             elif sport == "UFC":
                 # ── UFC fair_total: projected rounds ─────────────────────
                 _ufc_f1 = home_full or home_team
@@ -6339,19 +6350,47 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 fair_total = max(130.0, min(148.0, fair_total))
             if fair_total is not None:
                 total_edge = fair_total - total_val
-                total_edge_pct = total_edge / 50.0
-                if sport == "MLB":
-                    total_edge_pct = total_edge / 10.0
-                elif sport == "NHL":
-                    total_edge_pct = total_edge / 8.0
-                elif sport == "NFL":
-                    total_edge_pct = total_edge / 30.0
-                elif sport == "WNBA":
-                    total_edge_pct = total_edge / 30.0
-                elif sport == "Soccer":
-                    total_edge_pct = total_edge / 4.0
-                elif sport == "UFC":
-                    total_edge_pct = total_edge / 3.0
+                # For low-scoring, discrete-event sports (MLB runs, NHL goals,
+                # Soccer goals), use the Skellam distribution -- the difference
+                # of two independent Poisson processes -- to get a real
+                # probability-based edge instead of a linear divide-by-scale
+                # heuristic. This is the statistically correct distribution
+                # for these sports (matches how sharp shops actually price
+                # totals/spreads on discrete low-scoring events) and is more
+                # accurate than treating the gap as a flat percentage of an
+                # arbitrary scale constant. Falls back to the linear heuristic
+                # when per-team expected scoring wasn't available this game.
+                _mu_h = locals().get("_mu_home")
+                _mu_a = locals().get("_mu_away")
+                _used_skellam = False
+                if sport in ("MLB", "NHL", "Soccer") and _mu_h and _mu_a:
+                    try:
+                        # Always evaluate the SAME side that total_edge (and
+                        # therefore the downstream side="OVER" if total_edge>0
+                        # selection) implies, so the Skellam-derived magnitude
+                        # can never disagree with which side actually gets
+                        # recommended.
+                        _skellam_side = "OVER" if total_edge > 0 else "UNDER"
+                        _skellam_prob = compute_fair_prob_skellam(total_val, _mu_h, _mu_a, _skellam_side)
+                        _raw_edge_pct = max(-0.20, min(0.20, _skellam_prob - 0.524))
+                        total_edge_pct = _raw_edge_pct if total_edge > 0 else -_raw_edge_pct
+                        _used_skellam = True
+                    except Exception:
+                        _used_skellam = False
+                if not _used_skellam:
+                    total_edge_pct = total_edge / 50.0
+                    if sport == "MLB":
+                        total_edge_pct = total_edge / 10.0
+                    elif sport == "NHL":
+                        total_edge_pct = total_edge / 8.0
+                    elif sport == "NFL":
+                        total_edge_pct = total_edge / 30.0
+                    elif sport == "WNBA":
+                        total_edge_pct = total_edge / 30.0
+                    elif sport == "Soccer":
+                        total_edge_pct = total_edge / 4.0
+                    elif sport == "UFC":
+                        total_edge_pct = total_edge / 3.0
                 elif sport == "Tennis":
                     total_edge_pct = total_edge / 10.0
                 elif sport == "Golf":
