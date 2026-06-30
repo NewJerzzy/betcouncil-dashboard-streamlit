@@ -129,7 +129,16 @@ def _parse_pp_ocr_inline(raw_text):
     if _pm:
         _payout = float(_pm.group(1).replace(",", ""))
 
-    _header_win = bool(re.search(r"\bWin\b", raw_text[:200], re.I))
+    # The green "Win" badge appears as its own standalone line right after
+    # the slip-type header (e.g. "4-Pick Flex Play\nWin\n$1.00 to win
+    # $1.80"). A prior version matched any "\bWin\b" in the first 200
+    # chars, which also matches the word "win" inside the ALWAYS-PRESENT
+    # "$X to win $Y" slip-terms phrasing -- that phrase describes the
+    # potential payout and is shown identically whether the slip won or
+    # lost, so it can't be used as a result signal. PrizePicks has no
+    # equivalent "Loss" badge at all -- absence of the Win badge plus all
+    # legs Final means the slip lost.
+    _header_win = bool(re.search(r"^\s*Win\s*$", raw_text[:200], re.I | re.M))
 
     # ── Sport tag scan ───────────────────────────────────────────────────────
     sports_re = r"\b(" + "|".join(re.escape(s) for s in SPORTS) + r")\b"
@@ -294,6 +303,12 @@ def _parse_pp_ocr_inline(raw_text):
         lead_start = prop_matches[pidx-1].end() if pidx > 0 else 0
         lead = clean[lead_start:pm.start()].strip()
         has_x = "x" in lead.lower().split()
+        # "Did not play" / DNP legs are voided by PrizePicks (push, not a
+        # real win or loss) -- e.g. a player scratched after the slip was
+        # placed. Without this check, a DNP leg's actual=0 would be
+        # compared against its line and almost always score as a false
+        # LOSS, even on slips PrizePicks itself still paid out.
+        _is_dnp = bool(re.search(r"did not play", lead, re.I))
         trail_end = prop_matches[pidx+1].start() if pidx+1 < len(prop_matches) else len(clean)
         trail = clean[pm.end():trail_end].strip()
         # Exclude dollar-prefixed numbers when scanning for lines
@@ -320,7 +335,9 @@ def _parse_pp_ocr_inline(raw_text):
         # whether it actually cleared the line -- e.g. actual=5 vs line=6
         # (a real loss) was being scored WIN simply because 5 > 0. Fixed
         # to a direct actual-vs-line comparison with no such fallback.
-        if has_x:
+        if _is_dnp:
+            result_raw = "PUSH"
+        elif has_x:
             result_raw = "LOSS"
         elif line > 0:
             result_raw = "WIN" if actual >= line else "LOSS"
@@ -365,7 +382,14 @@ def _parse_pp_ocr_inline(raw_text):
 
     # ── PENDING DETECTION ────────────────────────────────────────────────────
     _is_pending = not _has_final and not _header_win
-    _overall = "PENDING" if _is_pending else ("WIN" if _header_win or (_payout > _wager and _payout > 0) else "LOSS")
+    # No payout-vs-wager fallback: _payout is parsed from the static "to
+    # pay $X" / "to win $X" slip-terms text, which is identical whether
+    # the slip won or lost (it describes the potential payout, not an
+    # actual result) -- using it as a win signal was the root cause of
+    # losing slips being misreported as WIN. The only reliable overall
+    # signal is the explicit Win badge; its absence on a fully-settled
+    # (all legs Final) slip means LOSS.
+    _overall = "PENDING" if _is_pending else ("WIN" if _header_win else "LOSS")
 
     # Arrow-based OVER/UNDER (↑=OVER ↓=UNDER)
     _arrow_sides = ["OVER" if a in "↑⬆▲" else "UNDER"
@@ -395,20 +419,30 @@ def _parse_pp_ocr_inline(raw_text):
         _act  = entry.get("actual") or 0.0
         _ln   = entry.get("line") or 0.0
         _raw  = entry.get("result", "")
-        if _side == "UNDER" and not _is_pending and _ln > 0 and _act is not None:
+        if _side == "UNDER" and not _is_pending and _ln > 0 and _act is not None and entry.get("result") != "PUSH":
             entry["result"] = "WIN" if _act <= _ln else "LOSS"
         if _is_pending:
             entry["result"] = "PENDING"
             entry["outcome"] = "PENDING"
             entry["actual"] = None
-        elif _header_win:
-            entry["result"] = "WIN"
-            entry["outcome"] = "WIN"
-        elif not entry.get("result") or entry.get("result") not in ("WIN", "LOSS"):
+        elif entry.get("result") in ("WIN", "LOSS", "PUSH"):
+            # Trust the real per-leg actual-vs-line computation (or PUSH
+            # for a voided/DNP leg). A Flex Play parlay can win overall
+            # with one or more legs having individually missed their
+            # number (that's the whole point of Flex Play -- it pays out
+            # on partial hits) -- a prior version forced every leg's
+            # outcome to match the overall slip result, which silently
+            # overwrote real per-leg losses as wins on any winning
+            # multi-pick slip. overall_result (already stored above) is
+            # kept as the separate slip-level fact; this field is the
+            # individual leg's own result.
+            # is the individual leg's own result.
+            entry["outcome"] = entry["result"]
+        else:
+            # No usable per-leg actual/line was extracted -- only fall
+            # back to the slip-level result as a last resort.
             entry["result"] = _overall
             entry["outcome"] = _overall
-        else:
-            entry["outcome"] = entry.get("result", _overall)
         out.append(entry)
     return out
 
