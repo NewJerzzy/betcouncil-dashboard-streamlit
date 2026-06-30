@@ -3457,13 +3457,14 @@ def check_portfolio_correlation(new_prop, existing_locks, player_team_map, posit
             break
     return warnings
 
-def power_rating_spread_divergence(home_team, away_team, spread_str):
+def power_rating_spread_divergence(home_team, away_team, spread_str, sport="NBA"):
     try:
         if not spread_str or spread_str in ("N/A", "—"):
             return 0, ""
         spread_val = float(str(spread_str).replace("+", "").strip())
-        home_rating = NBA_POWER_RATINGS.get(home_team, 104)
-        away_rating = NBA_POWER_RATINGS.get(away_team, 104)
+        _pr_map = {"NBA": NBA_POWER_RATINGS}.get(sport, NBA_POWER_RATINGS)
+        home_rating = _pr_map.get(home_team, 104)
+        away_rating = _pr_map.get(away_team, 104)
         power_diff = home_rating - away_rating
         implied_spread = -power_diff
         divergence = abs(spread_val - implied_spread)
