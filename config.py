@@ -643,6 +643,7 @@ WNBA_POWER_RATINGS = {
     "Atlanta Dream": 104.0, "Indiana Fever": 103.5,
     "Washington Mystics": 102.0, "Los Angeles Sparks": 101.0,
     "Toronto Tempo": 103.0, "Golden State Valkyries": 102.5,
+    "Portland Fire": 100.0,
 }
 
 MLB_POWER_RATINGS = {

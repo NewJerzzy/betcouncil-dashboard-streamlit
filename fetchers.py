@@ -12120,6 +12120,16 @@ _TEAMRANKINGS_NAME_MAP = {
         "Miami": "Miami Marlins", "Washington": "Washington Nationals",
         "Chi Sox": "Chicago White Sox", "Colorado": "Colorado Rockies",
     },
+    "WNBA": {
+        "New York": "New York Liberty", "Las Vegas": "Las Vegas Aces",
+        "Connecticut": "Connecticut Sun", "Minnesota": "Minnesota Lynx",
+        "Seattle": "Seattle Storm", "Dallas": "Dallas Wings",
+        "Chicago": "Chicago Sky", "Phoenix": "Phoenix Mercury",
+        "Atlanta": "Atlanta Dream", "Indiana": "Indiana Fever",
+        "Washington": "Washington Mystics", "LA Sparks": "Los Angeles Sparks",
+        "Los Angeles": "Los Angeles Sparks", "Toronto": "Toronto Tempo",
+        "Golden State": "Golden State Valkyries", "Portland": "Portland Fire",
+    },
 }
 
 

@@ -6626,7 +6626,7 @@ def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     power_ratings = power_map.get(sport, {})
-    if sport == "MLB" and power_ratings:
+    if sport in ("MLB", "WNBA") and power_ratings:
         power_ratings, _pr_source = get_live_power_ratings(sport, power_ratings)
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings, mlb_pitchers=mlb_pitchers)
