@@ -676,9 +676,31 @@ def devig_odds(american_odds):
 
 
 # calculate_edge — single source of truth for sportsbook edge
-def calculate_edge(fair_prob, side="OVER", sport="NBA"):
-    """Returns signed edge: positive = good bet. Breakeven = 52.4% (-110 juice)."""
-    return round(float(fair_prob) - 0.524, 4)
+def calculate_edge(fair_prob, side="OVER", sport="NBA", odds=None):
+    """
+    Returns signed edge: positive = good bet.
+    Breakeven is derived from the actual odds offered when provided
+    (e.g. -130 -> 56.5% breakeven, +120 -> 45.5% breakeven), instead of
+    always assuming standard -110 juice (52.4%). A flat 6% "edge" at -130
+    and +120 are very different bets -- this corrects for that.
+    Falls back to the -110 standard breakeven when odds is None, so every
+    existing call site keeps working unchanged.
+    """
+    try:
+        fair_prob = float(fair_prob)
+    except (TypeError, ValueError):
+        fair_prob = 0.5
+    breakeven = 0.524
+    if odds not in (None, "", "N/A"):
+        try:
+            o = float(str(odds).replace("+", ""))
+            if o > 0:
+                breakeven = 100 / (o + 100)
+            elif o < 0:
+                breakeven = abs(o) / (abs(o) + 100)
+        except (TypeError, ValueError):
+            pass
+    return round(fair_prob - breakeven, 4)
 
 
 def compute_std_dev(game_values, decay=0.85, sport=None):
@@ -1380,12 +1402,23 @@ def make_display_df(props):
     return pd.DataFrame(rows)
 
 
-def compute_market_edge(fair_prob, side="OVER"):
+def compute_market_edge(fair_prob, side="OVER", odds=None):
+    """
+    Edge of the model's fair probability against the market.
+    Breakeven derived from the actual offered odds when provided, instead
+    of always assuming -110 (52.4%). Falls back to -110 when odds is None.
+    """
     market_implied = 0.524
-    if side.upper() == "OVER":
-        edge = fair_prob - market_implied
-    else:
-        edge = fair_prob - market_implied
+    if odds not in (None, "", "N/A"):
+        try:
+            o = float(str(odds).replace("+", ""))
+            if o > 0:
+                market_implied = 100 / (o + 100)
+            elif o < 0:
+                market_implied = abs(o) / (abs(o) + 100)
+        except (TypeError, ValueError):
+            pass
+    edge = fair_prob - market_implied
     return round(edge, 4)
 
 # devig_odds — moved to utils.py
@@ -1754,10 +1787,19 @@ def hot_streak_regression_risk(
 
 
 # ── Extracted from app.py (2026-06-25) — pure computation, no Streamlit deps ──
-def check_prop_line_fairness(line, consensus_prob, side="OVER"):
+def check_prop_line_fairness(line, consensus_prob, side="OVER", odds=None):
     if consensus_prob is None:
         return "UNKNOWN", ""
     market_implied = 0.524
+    if odds not in (None, "", "N/A"):
+        try:
+            o = float(str(odds).replace("+", ""))
+            if o > 0:
+                market_implied = 100 / (o + 100)
+            elif o < 0:
+                market_implied = abs(o) / (abs(o) + 100)
+        except (TypeError, ValueError):
+            pass
     if side.upper() == "OVER":
         gap = market_implied - consensus_prob
     else:

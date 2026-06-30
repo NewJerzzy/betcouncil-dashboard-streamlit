@@ -9208,7 +9208,7 @@ GLOBAL_AWAY_ADJ  = -0.05
 # Future extraction target: models.py
 # ═══════════════════════════════════════════════════════════
 def compute_multi_signal_edge(  # Calculates edge using 12 weighted signals (Base, Def, Loc, Rest, Pace + overlays)
-line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None, player_name=""):
+line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat_key="PTS", pace_adj=0.0, days_rest=2, odds_type="standard", sport="NBA", std_dev=None, weights=None, player_name="", over_odds=None, under_odds=None):
     if player_avg <= 0:
         return 0.0, 0.5, {}
     signals = {}
@@ -9304,9 +9304,9 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             try:
                 base_edge = prob - float(_ev_be)
             except (ValueError, TypeError):
-                base_edge = calculate_edge(prob, side, sport)
+                base_edge = calculate_edge(prob, side, sport, odds=(over_odds if side.upper() == "OVER" else under_odds))
         else:
-            base_edge = calculate_edge(prob, side, sport)
+            base_edge = calculate_edge(prob, side, sport, odds=(over_odds if side.upper() == "OVER" else under_odds))
         fair_prob = prob
     else:
         # ── S1: Sport-specific stabilized base probability ─────────────
@@ -9379,7 +9379,7 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
         else:
             fair_prob = compute_fair_prob(line, player_avg, std_dev, side)
 
-        base_edge = compute_market_edge(fair_prob, side)
+        base_edge = compute_market_edge(fair_prob, side, odds=(over_odds if side.upper() == "OVER" else under_odds))
     signals["base"] = base_edge
     signals["fair_prob_base"] = fair_prob
     signals["model_prob"] = fair_prob
@@ -11950,7 +11950,7 @@ def load_sport_data(sport):
         if std_dev is not None and days_rest is not None:
             std_dev = rest_adjusted_std_dev(std_dev, int(days_rest), sport)
         consensus_prob, consensus_books = compute_consensus_probability(sport, player, stat_raw, line, side)
-        fairness_grade, fairness_note = check_prop_line_fairness(line, consensus_prob, side)
+        fairness_grade, fairness_note = check_prop_line_fairness(line, consensus_prob, side, odds=(p.get("OverOdds") if side.upper() == "OVER" else p.get("UnderOdds")))
         player_parts = player.split()
         if len(player_parts) >= 2:
             abbr_key = f"{player_parts[0][0]}.{player_parts[-1]}".lower()
@@ -11966,17 +11966,17 @@ def load_sport_data(sport):
         an_money = an_data.get("money_pct", 0)
         if sport == "MLB" and avg is not None:
             avg = pace_adjust_mlb_prop(avg, stat_norm)
-        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player)
+        over_edge, over_prob, over_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "OVER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player, over_odds=p.get("OverOdds"), under_odds=p.get("UnderOdds"))
         over_edge = max(-EDGE_CAP, min(EDGE_CAP, over_edge + blowout_adj + weather_adj + game_total_adj + referee_adj + pitcher_adj + h2h_adj))
-        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player)
+        under_edge, under_prob, under_signals = compute_multi_signal_edge(line, avg, opp_def_rating, is_home, usage_boost, "UNDER", stat_norm, pace_adj, days_rest, odds_type, sport, std_dev, weights=_preloaded_weights, player_name=player, over_odds=p.get("OverOdds"), under_odds=p.get("UnderOdds"))
         under_edge = max(-EDGE_CAP, min(EDGE_CAP, under_edge - blowout_adj - weather_adj - game_total_adj - referee_adj - pitcher_adj - h2h_adj))
         if consensus_prob is not None:
             blended_over_prob = round(consensus_prob * 0.60 + over_prob * 0.40, 4)
             blended_under_prob = round((1 - consensus_prob) * 0.60 + under_prob * 0.40, 4)
             over_prob = max(0.20, min(0.80, blended_over_prob))
             under_prob = max(0.20, min(0.80, blended_under_prob))
-            over_edge  = calculate_edge(over_prob,  "OVER",  sport)
-            under_edge = calculate_edge(under_prob, "UNDER", sport)
+            over_edge  = calculate_edge(over_prob,  "OVER",  sport, odds=p.get("OverOdds"))
+            under_edge = calculate_edge(under_prob, "UNDER", sport, odds=p.get("UnderOdds"))
 
         # ── Multi-Sharp Ensemble — P_final = W_user*P_user + W_pin*P_pin + W_circa*P_circa ──
         # Circa co-equal sharp anchor for NFL/props. Pinnacle leads MLB/NHL.
@@ -12015,8 +12015,8 @@ def load_sport_data(sport):
             _ensemble_under = round(1.0 - _ensemble_over, 4)
             over_prob  = _ensemble_over
             under_prob = _ensemble_under
-            over_edge  = calculate_edge(over_prob,  "OVER",  sport)
-            under_edge = calculate_edge(under_prob, "UNDER", sport)
+            over_edge  = calculate_edge(over_prob,  "OVER",  sport, odds=p.get("OverOdds"))
+            under_edge = calculate_edge(under_prob, "UNDER", sport, odds=p.get("UnderOdds"))
         if fairness_grade == "BAD":
             over_edge = over_edge * 0.75
             under_edge = under_edge * 0.75
