@@ -5703,6 +5703,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             "bookmaker_game_lines":  st.session_state.get("bookmaker_game_lines", []),
             "bovada_game_lines":     st.session_state.get("bovada_game_lines", []),
             "sportsline_game_lines": st.session_state.get("sportsline_game_lines", []),
+            "sbr_game_lines":        st.session_state.get("sbr_game_lines", []),
         })
     except Exception:
         _gl_consensus = {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
@@ -5989,7 +5990,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_game_tier(abs(spread_edge_pct), sport)
-                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0)})
+                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
@@ -6409,7 +6410,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_game_tier(abs(total_edge_pct), sport)
-                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0)})
+                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
@@ -6474,7 +6475,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _ml_note = f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"
                     if _ml_consensus.get("n_books", 0) >= 2:
                         _ml_note += f" ({_ml_consensus['n_books']}-book consensus)"
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", "")})
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
@@ -10432,6 +10433,7 @@ def load_sport_data(sport):
     def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_sportsline_lines(): return fetch_sportsline_game_lines(sport)
+    def _pf_sbr_lines():        return fetch_sbr_game_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
     def _pf_fd_props_sa():   return fetch_fanduel_props_sharpapi(sport)
     def _pf_sharpapi_drops(): return fetch_sharpapi_line_drops(sport)
@@ -10487,7 +10489,7 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
-        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines,
+        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines,
         _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
@@ -10503,7 +10505,7 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
-     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw,
+     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw,
      signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
@@ -10589,6 +10591,7 @@ def load_sport_data(sport):
     st.session_state["heritage_game_lines"]   = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"]  = bookmaker_lines_raw or []
     st.session_state["sportsline_game_lines"] = sportsline_lines_raw or []
+    st.session_state["sbr_game_lines"]        = sbr_lines_raw or []
     st.session_state["fanduel_props_sa"]    = fd_props_sa_raw     or []
     # Override with browser harvester if fresher
     try:
@@ -15505,12 +15508,22 @@ with tabs[2]:
                 f'<span title="{_gl_agree_note}" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:{_gl_badge_color}22;color:{_gl_badge_color};border:0.5px solid {_gl_badge_color}44;margin-left:auto;">{_gl_badge_label} ({_gl_n_books} books)</span>'
                 if _gl_agree_note else ''
             )
+            # Public betting % badge from SBR data
+            _gl_pub_h = next((r.get("public_pct_home") for r in _g.get("recommendations", []) if r.get("public_pct_home") is not None), None)
+            _gl_pub_a = next((r.get("public_pct_away") for r in _g.get("recommendations", []) if r.get("public_pct_away") is not None), None)
+            _gl_svp   = next((r.get("sharp_vs_public") for r in _g.get("recommendations", []) if r.get("sharp_vs_public")), None)
+            _gl_pub_html = ""
+            if _gl_pub_h is not None:
+                _pub_color = "#e04040" if _gl_svp == "FADE_PUBLIC" else ("#e8a020" if _gl_svp == "WITH_PUBLIC" else "#4a7a9b")
+                _pub_icon  = "🎯" if _gl_svp == "FADE_PUBLIC" else ("⚡" if _gl_svp == "WITH_PUBLIC" else "👥")
+                _home_name = _g.get("matchup","").split(" @ ")[-1] if " @ " in _g.get("matchup","") else "Home"
+                _gl_pub_html = f'<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:{_pub_color}22;color:{_pub_color};border:0.5px solid {_pub_color}44;margin-left:6px;" title="Public money: {_gl_pub_h}% on {_home_name}">{_pub_icon} {_gl_pub_h}%/{_gl_pub_a}% public</span>'
             st.markdown(
                 f'<div style="background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_gsport}</span>'
                 f'<span style="font-size:14px;font-weight:500;color:#e8f0f8;">{_matchup}</span>'
-                f'<span style="font-size:15px;color:var(--color-text-tertiary);{"margin-left:auto;" if not _gl_badge_html else ""}">{_gtime}</span>'
-                + _gl_badge_html +
+                f'<span style="font-size:15px;color:var(--color-text-tertiary);">{_gtime}</span>'
+                + _gl_pub_html + _gl_badge_html +
                 f'</div>',
                 unsafe_allow_html=True
             )

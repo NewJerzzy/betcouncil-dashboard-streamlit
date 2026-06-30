@@ -12911,6 +12911,159 @@ def _sl_parse_col(cell: str) -> dict:
     return None
 
 
+_SBR_SPORT_PATHS = {
+    "NFL":    "nfl-football",
+    "MLB":    "mlb-baseball",
+    "NBA":    "nba-basketball",
+    "NHL":    "nhl-hockey",
+    "WNBA":   "wnba-basketball",
+    "Soccer": "major-league-soccer",
+}
+
+_SBR_BOOK_MAP = {
+    "betmgm_usa":      "betmgm",
+    "betmgm_ohio":     "betmgm",
+    "fanduel_usa":     "fanduel",
+    "fanduel_ohio":    "fanduel",
+    "caesars_usa":     "caesars",
+    "caesars_ohio":    "caesars",
+    "bet365_usa":      "bet365",
+    "bet365_ohio":     "bet365",
+    "draftkings_usa":  "draftkings",
+    "draftkings_ohio": "draftkings",
+    "fanatics_usa":    "fanatics",
+    "fanatics_ohio":   "fanatics",
+}
+
+
+def fetch_sbr_game_lines(sport: str) -> list:
+    """
+    Scrape SportsbookReview.com (SBR) moneyline odds comparison table.
+
+    Returns a list of game dicts with per-book moneylines, opening lines,
+    and public betting percentages -- the only source in the stack that
+    provides public money split, which is a direct sharp-vs-public signal.
+
+    Shape per game:
+      {Home, Away, Sport, GameTime, HomeML, AwayML,
+       HomeMLOpen, AwayMLOpen,
+       PublicPctHome, PublicPctAway,   <- % of public bets on each side
+       Books: {betmgm: {home_ml, away_ml}, fanduel: {...}, ...},
+       Source: "SBR"}
+
+    SBR covers: NFL / MLB / NBA / NHL / WNBA / MLS (Soccer).
+    Confirmed accessible via plain HTTP GET (no Cloudflare/JS wall).
+    Covers the Moneyline market natively; spread/totals are on sub-paths
+    (/pointspread/ and /totals/) that use the same HTML structure so this
+    function can be extended to those markets by changing the URL suffix.
+    """
+    path = _SBR_SPORT_PATHS.get(sport)
+    if not path:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"sbr_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 0.25:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    url = f"https://www.sportsbookreview.com/betting-odds/{path}/"
+    try:
+        resp = _http.get(
+            url,
+            headers={**HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return []
+        html = resp.text
+    except Exception as e:
+        print(f"[WARN] fetch_sbr_game_lines({sport}): {e}")
+        return []
+
+    games = []
+    try:
+        _team_re  = re.compile(r'\[\*\*([A-Z]{2,3})\*\*\s*-?\s*([^\]]*)\]')
+        _pct_re   = re.compile(r'(\d+)%')
+        _open_re  = re.compile(r'^([+-]\d+)$', re.M)
+        _book_re  = re.compile(
+            r'\[([+-]\d+)([+-]\d+)\]\(https://c\.sportsbookreview\.com/([^)]+)\)'
+        )
+        _time_re  = re.compile(r'(\d+:\d+\s*[AP]M\s*[A-Z]{2,3})')
+
+        # Split into per-game blocks by game-time lines
+        blocks = re.split(r'\d+:\d+\s*[AP]M\s*[A-Z]{2,3}', html)
+        time_tags = _time_re.findall(html)
+
+        for idx, block in enumerate(blocks[1:], 0):   # skip header
+            game_time = time_tags[idx] if idx < len(time_tags) else ""
+            teams  = _team_re.findall(block)
+            if len(teams) < 2:
+                continue
+            away_abbr, away_pitcher = teams[0][0], teams[0][1].strip()
+            home_abbr, home_pitcher = teams[1][0], teams[1][1].strip()
+
+            pcts = _pct_re.findall(block)
+            away_pct = int(pcts[0]) if len(pcts) > 0 else None
+            home_pct = int(pcts[1]) if len(pcts) > 1 else None
+
+            # Opening ML: plain +/- numbers not inside []
+            clean_for_open = re.sub(r'\[[^\]]+\]', '', block)
+            opens = _open_re.findall(clean_for_open)
+            away_open = int(opens[0]) if len(opens) > 0 else None
+            home_open = int(opens[1]) if len(opens) > 1 else None
+
+            # Per-book odds
+            book_hits = _book_re.findall(block)
+            books_ml = {}
+            for away_odds_str, home_odds_str, book_slug in book_hits:
+                book_key = _SBR_BOOK_MAP.get(book_slug.split("_")[0] + "_usa",
+                           _SBR_BOOK_MAP.get(book_slug, book_slug.split("_")[0]))
+                try:
+                    books_ml[book_key] = {
+                        "away_ml": int(away_odds_str),
+                        "home_ml": int(home_odds_str) * (-1 if int(home_odds_str) > 0 and away_odds_str.startswith("+") else 1),
+                    }
+                except (ValueError, TypeError):
+                    pass
+
+            # Best available ML (lowest juice for each side)
+            best_away_ml = min(
+                (v["away_ml"] for v in books_ml.values() if v.get("away_ml")),
+                key=lambda x: abs(x), default=away_open
+            ) if books_ml else away_open
+            best_home_ml = min(
+                (v["home_ml"] for v in books_ml.values() if v.get("home_ml")),
+                key=lambda x: abs(x), default=home_open
+            ) if books_ml else home_open
+
+            games.append({
+                "Home":          home_abbr,
+                "Away":          away_abbr,
+                "HomePitcher":   home_pitcher,
+                "AwayPitcher":   away_pitcher,
+                "GameTime":      game_time,
+                "Sport":         sport,
+                "HomeML":        best_home_ml,
+                "AwayML":        best_away_ml,
+                "HomeMLOpen":    home_open,
+                "AwayMLOpen":    away_open,
+                "PublicPctHome": home_pct,
+                "PublicPctAway": away_pct,
+                "Books":         books_ml,
+                "Source":        "SBR",
+                "Matchup":       f"{away_abbr} @ {home_abbr}",
+            })
+    except Exception as e:
+        print(f"[WARN] fetch_sbr_game_lines({sport}) parse: {e}")
+        return []
+
+    if games:
+        _safe_save_pkl(cache_path, games)
+    return games
+
+
 def fetch_sportsline_game_lines(sport: str) -> list:
     """
     Scrape SportsLine.com's odds comparison table (NFL/MLB/NBA/NHL/WNBA/Soccer).

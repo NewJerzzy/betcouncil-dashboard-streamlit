@@ -4327,6 +4327,26 @@ def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lin
             "divergence": divergence,
         }
 
+    # Extract public betting percentages from SBR data specifically --
+    # no other scraper in the stack provides this signal. Positive divergence
+    # (sharp money on the side the public is fading) is a classic steam signal.
+    _public_pct_home = _public_pct_away = None
+    _sbr_raw = (all_book_lines or {}).get("sbr_game_lines")
+    if _sbr_raw:
+        _sbr_match = _match_game(_sbr_raw)
+        if _sbr_match:
+            _public_pct_home = _sbr_match.get("PublicPctHome")
+            _public_pct_away = _sbr_match.get("PublicPctAway")
+            # Also feed SBR's per-book MLs into the ML consensus
+            for _bk, _bml in (_sbr_match.get("Books") or {}).items():
+                _bk_key = f"sbr_{_bk}"
+                if _bml.get("home_ml") and _bk_key not in home_ml_by_book:
+                    try:
+                        home_ml_by_book[_bk_key] = float(_bml["home_ml"])
+                        away_ml_by_book[_bk_key] = float(_bml["away_ml"])
+                    except (TypeError, ValueError):
+                        pass
+
     spread_block = _market_block(spread_by_book, "spread")
     total_block  = _market_block(total_by_book, "total")
 
@@ -4372,6 +4392,23 @@ def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lin
             agreement = "STRONG_AGREE"
             agreement_note = f"{n_total_books} books broadly agree on this line — high market confidence."
 
+    # Sharp-vs-public divergence: when sharp books price a team as favorite
+    # but the public is betting the other side heavily (>65%), it's a
+    # classic reverse-line-movement / sharp-fade signal.
+    _sharp_vs_public = None
+    if _public_pct_home is not None and home_implied is not None:
+        # Model/sharp-implied home win prob vs public betting %
+        _model_home_fav = home_implied > 0.50
+        _public_home_fav = _public_pct_home > 50
+        if _model_home_fav != _public_home_fav and (
+            _public_pct_home > 65 or _public_pct_away > 65
+        ):
+            _sharp_vs_public = "FADE_PUBLIC"  # sharp money disagrees with heavy public lean
+        elif _model_home_fav == _public_home_fav and (
+            _public_pct_home > 65 or _public_pct_away > 65
+        ):
+            _sharp_vs_public = "WITH_PUBLIC"  # sharp money agrees with heavy public lean
+
     return {
         "spread": spread_block,
         "total": total_block,
@@ -4379,6 +4416,9 @@ def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lin
         "agreement": agreement,
         "agreement_note": agreement_note,
         "n_books_total": n_total_books,
+        "public_pct_home": _public_pct_home,
+        "public_pct_away": _public_pct_away,
+        "sharp_vs_public": _sharp_vs_public,
     }
 
 
