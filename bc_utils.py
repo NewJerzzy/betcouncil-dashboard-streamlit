@@ -14,7 +14,7 @@ from functools import lru_cache
 from scipy import stats as scipy_stats
 
 # Inline to avoid circular import through config.py (which imports streamlit)
-SPORT_EWMA_DECAY = {"NBA": 0.82, "MLB": 0.90, "NHL": 0.85, "WNBA": 0.82, "NFL": 0.78}
+SPORT_EWMA_DECAY = {"NBA": 0.85, "MLB": 0.92, "NHL": 0.88, "WNBA": 0.85, "NFL": 0.80}
 
 # ── Constants inlined from config.py ────────────────────────────────────────
 # config.py imports streamlit and cannot be imported here (circular import).
@@ -722,8 +722,8 @@ _STD_DEV_FALLBACK = {
     "MLB": 0.42,                   # medium variance
     "NHL": 0.38,
     "NFL": 0.50,                   # high variance per game
-    "GOLF": 0.55, "TENNIS": 0.48,
-    "UFC": 0.60, "SOCCER": 0.45,
+    "Golf": 0.55, "Tennis": 0.48,
+    "UFC": 0.60, "Soccer": 0.45,
 }
 
 def compute_fair_prob(line, avg, std_dev, side="OVER", sport=None):
@@ -1998,26 +1998,68 @@ def compute_parlay_correlation(props):
     """
     Compute correlation score for a set of props.
     Returns (score 0-1, list of correlated pairs).
+
+    Three correlation sources, combined:
+      1. Same player, multiple props (highest correlation — one game
+         script drives all of them).
+      2. Same team, correlated stat types (teammates whose stats move
+         together with pace/game script — e.g. two starters both going
+         OVER on points correlates with the game staying competitive and
+         high-paced; a star player's assists correlate with teammates'
+         points).
+      3. Cross-stat correlation pairs, expanded well beyond the original
+         5-pair list to cover the major combo-stat relationships across
+         NBA/WNBA, NFL, MLB, NHL.
+    Negative/diversifying correlation (e.g. two players who compete for
+    the same usage, like a team's two leading scorers on the same team
+    both needing a big offensive night) is intentionally NOT modeled here
+    — that requires possession-share data this function doesn't have
+    access to; treating it as zero-correlation (rather than guessing a
+    negative number) is the safer default until that data is wired in.
     """
     if not props or len(props) < 2:
         return 0.0, []
+
+    # Same-stat-family combo correlations — props sharing a player AND a
+    # combo-stat relationship move together (e.g. Points + PRA both OVER
+    # almost always resolve the same way since PRA includes Points).
     KNOWN_CORR = [
-        ("Points","PRA"), ("Rebounds","PRA"), ("Assists","PRA"),
-        ("Points","Fantasy Score"), ("Hits","Total Bases"),
+        # NBA/WNBA combo stats
+        ("Points", "PRA"), ("Rebounds", "PRA"), ("Assists", "PRA"),
+        ("Points", "Pts+Ast"), ("Assists", "Pts+Ast"),
+        ("Points", "Pts+Reb"), ("Rebounds", "Pts+Reb"),
+        ("Rebounds", "Reb+Ast"), ("Assists", "Reb+Ast"),
+        ("Points", "Fantasy Score"), ("Rebounds", "Fantasy Score"),
+        ("Assists", "Fantasy Score"), ("3-PT Made", "Points"),
+        ("Steals", "Steals+Blocks"), ("Blocks", "Steals+Blocks"),
+        # MLB combo stats
+        ("Hits", "Total Bases"), ("Hits", "Hits+Runs+RBIs"),
+        ("Runs", "Hits+Runs+RBIs"), ("RBIs", "Hits+Runs+RBIs"),
+        ("Home Runs", "Total Bases"), ("Strikeouts", "Outs Recorded"),
+        # NFL combo stats
+        ("Passing Yards", "Passing+Rushing Yards"),
+        ("Rushing Yards", "Passing+Rushing Yards"),
+        ("Receptions", "Receiving Yards"), ("Receiving Yards", "Yards+Receptions"),
+        ("Rushing Yards", "Rushing+Receiving Yards"),
+        ("Receiving Yards", "Rushing+Receiving Yards"),
+        ("Passing TDs", "Passing Yards"),
+        # NHL combo stats
+        ("Goals", "Points"), ("Assists", "Points"), ("Shots on Goal", "Points"),
     ]
+
     corr_pairs = []
     score = 0.0
-    players = [p.get("Player","") for p in props]
-    # Same player = high correlation
+
+    players = [p.get("Player", "") for p in props]
     from collections import Counter
     dupes = [pl for pl, cnt in Counter(players).items() if cnt >= 2 and pl]
     for pl in dupes:
         corr_pairs.append(f"{pl} has multiple props")
         score += 0.35
-    # Known correlated prop types
-    prop_types = [(p.get("Player",""), p.get("Prop","")) for p in props]
-    for i, (pl1, pr1) in enumerate(prop_types):
-        for j, (pl2, pr2) in enumerate(prop_types):
+
+    prop_types = [(p.get("Player", ""), p.get("Prop", ""), p.get("Team", "")) for p in props]
+    for i, (pl1, pr1, tm1) in enumerate(prop_types):
+        for j, (pl2, pr2, tm2) in enumerate(prop_types):
             if i >= j:
                 continue
             if pl1 == pl2:
@@ -2025,6 +2067,21 @@ def compute_parlay_correlation(props):
                     if (ca in pr1 and cb in pr2) or (cb in pr1 and ca in pr2):
                         corr_pairs.append(f"{pl1}: {pr1}+{pr2}")
                         score += 0.25
+            elif tm1 and tm2 and tm1 == tm2:
+                # Same team, different players — game-script correlation.
+                # Lower weight than same-player since it's a softer link
+                # (both depend on the team having a good/competitive game
+                # rather than directly sharing the same underlying stat).
+                _same_family = (
+                    pr1.split()[0] == pr2.split()[0] if pr1 and pr2 else False
+                )
+                if _same_family:
+                    corr_pairs.append(f"{pl1} & {pl2} ({tm1}): correlated {pr1}")
+                    score += 0.12
+                else:
+                    corr_pairs.append(f"{pl1} & {pl2}: same team ({tm1})")
+                    score += 0.06
+
     return round(min(1.0, score), 2), corr_pairs
 
 def generate_weight_recommendations(history=None, sport="NBA"):
@@ -3526,76 +3583,6 @@ def detect_sharp_movement(movements):
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
     return False, "", 0
-
-def compute_sharp_consensus_no_vig(odds_data, matchup, market="total"):
-    """
-    Builds consensus fair price from the three sharpest books:
-    Pinnacle, Circa Sports, BetOnline.
-    
-    Stronger signal than single-book no-vig because:
-    - Eliminates idiosyncratic book error
-    - Captures true market consensus
-    - Reduces noise from temporary imbalances
-    
-    Returns: {"fair_prob": float, "books_used": list, 
-              "consensus_line": float, "agreement": str}
-    """
-    SHARP_BOOKS = ["pinnacle", "circa_sports", "betonlineag"]
-    SHARP_LABELS = {
-        "pinnacle":    "Pinnacle",
-        "circa_sports": "Circa",
-        "betonlineag": "BetOnline",
-    }
-    
-    book_probs = {}
-    book_lines = {}
-    
-    for game in (odds_data or []):
-        if matchup.lower() not in game.get("Matchup","").lower():
-            continue
-        for book_key, label in SHARP_LABELS.items():
-            over_key  = f"{label} Over"
-            under_key = f"{label} Under"
-            line_key  = f"{label} Total"
-            over_ml   = game.get(over_key)
-            under_ml  = game.get(under_key)
-            if over_ml and under_ml:
-                try:
-                    prob = no_vig_prob(int(over_ml), int(under_ml))
-                    book_probs[label] = prob
-                    if game.get(line_key):
-                        book_lines[label] = float(game[line_key])
-                except (ValueError, TypeError, ZeroDivisionError):
-                    pass
-
-    if not book_probs:
-        return None
-
-    books_used  = list(book_probs.keys())
-    avg_prob    = sum(book_probs.values()) / len(book_probs)
-    avg_line    = sum(book_lines.values()) / len(book_lines) if book_lines else None
-
-    # Agreement check — how spread are the sharp books?
-    if len(book_probs) >= 2:
-        spread = max(book_probs.values()) - min(book_probs.values())
-        if spread < 0.01:
-            agreement = "STRONG"   # books within 1% — high conviction
-        elif spread < 0.03:
-            agreement = "MODERATE"
-        else:
-            agreement = "DIVERGENT"  # sharp books disagree — flag it
-    else:
-        agreement = "SINGLE_BOOK"
-
-    return {
-        "fair_prob":       round(avg_prob, 4),
-        "book_probs":      book_probs,
-        "books_used":      books_used,
-        "consensus_line":  round(avg_line, 1) if avg_line else None,
-        "agreement":       agreement,
-        "n_books":         len(book_probs),
-        "label":           f"Consensus ({'/'.join(b[:3] for b in books_used)})",
-    }
 
 def get_pinnacle_edge(model_prob, pinnacle_prob, side="OVER"):
     """

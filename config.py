@@ -302,6 +302,12 @@ SPORT_SIGNAL_WEIGHTS = {
     # Soccer/UFC — lower data confidence, base dominates
     "Soccer": {"base": 0.60, "defense": 0.20, "location": 0.12, "rest": 0.05, "pace": 0.03, "usage": 0.74},
     "UFC":    {"base": 0.70, "defense": 0.10, "location": 0.10, "rest": 0.10, "pace": 0.00, "usage": 0.74},
+
+    # Tennis: no true "defense" concept (1v1, no possession), no pace stat —
+    # base rate (serve/return stat history) and rest (travel, back-to-back
+    # tournament days) carry almost all the signal. Location is meaningful
+    # for surface specialists at home tournaments but minor overall.
+    "Tennis": {"base": 0.75, "defense": 0.00, "location": 0.08, "rest": 0.12, "pace": 0.00, "usage": 0.05},
 }
 
 SIGNAL_RELIABILITY = {
@@ -383,7 +389,7 @@ DEFAULT_AVERAGES = {
     "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
     "Soccer": {"GOALS": 0.25, "ASSISTS": 0.15, "SHOTS": 2.5},
     "UFC": {"SIG_STR": 30, "TAKEDOWNS": 1.0, "CONTROL_TIME": 4.0},
-    "Golf": {}, "Tennis": {},
+    "Golf": {}, "Tennis": {"GAMES_WON": 6.0, "ACES": 6.0, "DOUBLE_FAULTS": 3.0, "SETS_WON": 1.5},
 }
 
 STAT_NORMALIZE = {
@@ -409,6 +415,9 @@ STAT_NORMALIZE = {
     ("Soccer", "Shots"): "SHOTS",
     ("UFC", "Significant Strikes"): "SIG_STR", ("UFC", "Takedowns"): "TAKEDOWNS",
     ("UFC", "Control Time"): "CONTROL_TIME",
+    ("Tennis", "Games Won"): "GAMES_WON", ("Tennis", "Total Games"): "GAMES_WON",
+    ("Tennis", "Aces"): "ACES", ("Tennis", "Double Faults"): "DOUBLE_FAULTS",
+    ("Tennis", "Sets Won"): "SETS_WON",
 }
 
 TEAMMATE_OUT_BOOST = {
