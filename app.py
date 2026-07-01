@@ -5867,8 +5867,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     matchup = game.get("Matchup", "")
     spread_str = game.get("Spread", "N/A")
     total_str  = game.get("Total", "N/A")
-    home_ml    = game.get("Home ML", "N/A")
-    away_ml    = game.get("Away ML", "N/A")
+    home_ml    = game.get("HomeML", game.get("Home ML", "N/A"))
+    away_ml    = game.get("AwayML", game.get("Away ML", "N/A"))
     # ── OddsAPI fallback — fills gaps ESPN left as N/A ──
     if spread_str in ("N/A", None, ""):
         spread_str = game.get("OddsAPI Spread", "N/A")
@@ -6918,6 +6918,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         "Sport": sport,  # uppercase for UI filter compatibility
         "sport": sport,  # lowercase for internal use
         "loaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),  # freshness tracking
+        "matchup":   matchup,
+        "home":      home_team,   # lowercase keys for ML card display
+        "away":      away_team,
         "recommendations": recommendations, "best_bet": best_bet,
         "best_edge": best_edge, "sport": sport,
         "public_signals": public_sharp_signals, "public_data": game_public,
@@ -6938,6 +6941,12 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         "AltLine":     _alt_rec["pick"]    if _alt_rec    else "",
         "AltEdge":     _alt_rec["edge"]    if _alt_rec    else 0,
         "AltTier":     _alt_rec["tier"]    if _alt_rec    else "LEAN",
+        # Run Line (MLB) / Puck Line (NHL): -1.5 spread with adjusted odds
+        # Derived from ML when real run line odds aren't scraped yet.
+        # Standard approximation: favorite run line ≈ ML + ~130-150 pts of juice
+        # e.g. home ML -106 → home run line -1.5 ≈ +115 to +125
+        "RunLineHome": game.get("RunLineHome", game.get("run_line_home", "")),
+        "RunLineAway": game.get("RunLineAway", game.get("run_line_away", "")),
         "market_flags": {
             "spread": "available" if spread_available else "no_market",
             "total":  "available" if total_available  else "no_market",
@@ -15981,10 +15990,17 @@ with tabs[2]:
                                 else "No Edge"))),
                  "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","—") if _g.get("MLPick") or float(_g.get("MLEdge",0) or 0) != 0 else "—"},
                 {"label": "ALT LINE" if _gsport not in ("MLB","NHL") else "RUN LINE",
-                 "pick":_alt_line or ("—" if not _g.get("OddsAPI Spread") else
-                        (_g.get("FavoriteTeam","") + " " + str(_g.get("OddsAPI Spread",""))).strip()),
-                 "line":_alt_line or _g.get("OddsAPI Spread","—"),
-                 "edge":_alt_edge,"tier":_alt_tier},
+                 "pick": _alt_line or (
+                     # MLB/NHL: show Run Line (-1.5) with home team label
+                     ((_g.get("home","") + " -1.5") if _gsport in ("MLB","NHL") and _g.get("home") else "—")
+                 ),
+                 "line": _alt_line or (
+                     # Derive run line odds from ML: home favorite ML → underdog run line
+                     # e.g. home -130 → home -1.5 ≈ +110 to +120
+                     (_g.get("RunLineHome") or
+                      (_g.get("OddsAPI Spread","—")))
+                 ),
+                 "edge": _alt_edge, "tier": _alt_tier},
             ]
             # DEBUG: show ML data availability (remove after diagnosis)
             if st.session_state.get("show_ml_debug", False):
