@@ -48,6 +48,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
     devig_best, compute_clv, compute_clv_novig,
     kelly_with_edge_decay, compute_brier_score, compute_calibration_zscore,
+    adaptive_kelly_fraction, platt_calibrate_prob, time_decay_edge_factor,
     EV_BEST_COMBOS, get_best_devig_combo,
     load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat,
     is_date_valid_for_today, find_player_avg, market_efficiency_score,
@@ -13042,15 +13043,32 @@ def load_sport_data(sport):
             "EVRLMNote":         ev_rlm_note,
             "EVSteamFlag":       ev_steam_flag,
             "EVSharpMove":       ev_sharp_move,
-            # Edge-decay Kelly (time-aware bet sizing)
-            "KellyDecay": kelly_with_edge_decay(
-                final_edge,
-                -110,   # default odds — refined when actual book odds available
-                time_to_lock_minutes=None,
-                pinnacle_open=(_ev_sig.get("pn_novig") is not None) if _ev_sig else False,
-                circa_open=(_ev_sig.get("circa_novig") is not None) if _ev_sig else False,
-            ),
         })
+        # ── Elite Kelly Sizing Pipeline (computed after dict appended) ──────
+        # Platt calibration, time-decay, and adaptive fraction are computed
+        # outside the dict literal then stored on the last-appended prop.
+        _cal_history  = st.session_state.get("history", [])
+        _raw_prob_str = enriched[-1].get("Prob") or enriched[-1].get("FairProb") or (0.5 + final_edge / 2)
+        try:
+            _raw_prob_f = float(str(_raw_prob_str).replace("%","")) / (100 if "%" in str(_raw_prob_str) else 1)
+        except (ValueError, TypeError):
+            _raw_prob_f = 0.5 + final_edge / 2
+        _cal_prob     = platt_calibrate_prob(_raw_prob_f, _cal_history, sport=sport)
+        _decayed_edge = time_decay_edge_factor(final_edge, minutes_to_lock=None, decay_model="exponential")
+        _base_frac    = KELLY_BY_TIER.get(tier, 0.15)
+        _adapt_frac   = adaptive_kelly_fraction(_base_frac, _cal_history, sport=sport,
+                                                 market=enriched[-1].get("Prop", "GENERAL"))
+        _kelly_decay  = kelly_with_edge_decay(
+            _decayed_edge, -110,
+            time_to_lock_minutes=None,
+            pinnacle_open=(_ev_sig.get("pn_novig") is not None) if _ev_sig else False,
+            circa_open=(_ev_sig.get("circa_novig") is not None) if _ev_sig else False,
+            fraction=_adapt_frac,
+        )
+        enriched[-1]["KellyDecay"]            = _kelly_decay
+        enriched[-1]["KellyAdaptiveFraction"] = _adapt_frac
+        enriched[-1]["KellyCalibProb"]        = _cal_prob
+        enriched[-1]["KellyDecayedEdge"]      = _decayed_edge
     # Add H2H signal to each prop (uses cached game logs if available)
     for prop in enriched:
         player = prop.get("Player","")
@@ -13320,14 +13338,27 @@ def load_sport_data(sport):
 
 
 
-    # ── Tier-based Kelly sizing ─────────────────────────────────────────────
-    # Apply KELLY_BY_TIER so SOVEREIGN gets 25%, ELITE 20%, APPROVED 15%, LEAN 8%
+    # ── Tier-based Kelly sizing with Adaptive Calibration ───────────────────
+    # Apply KELLY_BY_TIER as base, then scale by per-sport Brier score and
+    # apply time-decay to edge before sizing (elite calibration loop).
     _bankroll_mult_data = compute_bankroll_multiplier()
     _bm_mult = _bankroll_mult_data.get("multiplier", 1.0) if isinstance(_bankroll_mult_data, dict) else 1.0
+    _cal_history = st.session_state.get("history", [])
     for prop in enriched:
-        _tier = prop.get("Tier", "APPROVED")
+        _tier      = prop.get("Tier", "APPROVED")
         _tier_frac = KELLY_BY_TIER.get(_tier, KELLY_FRACTION)
-        _edge = prop.get("Edge", 0.0) or 0.0
+        _edge      = prop.get("Edge", 0.0) or 0.0
+        _prop_sport = prop.get("Sport", sport)
+        _prop_market = prop.get("Prop", "GENERAL")
+
+        # Use pre-computed adaptive fraction if available (set during enrichment)
+        # otherwise compute it here
+        _adapt_frac = prop.get("KellyAdaptiveFraction") or adaptive_kelly_fraction(
+            _tier_frac, _cal_history, sport=_prop_sport, market=_prop_market
+        )
+        # Use pre-computed decayed edge if available, otherwise apply decay now
+        _eff_edge = prop.get("KellyDecayedEdge") or time_decay_edge_factor(_edge)
+
         _odds_a = prop.get("BestOdds", prop.get("OverOdds", "-110"))
         try:
             _odds_f = float(str(_odds_a).replace("+","")) if _odds_a not in ("N/A","—","") else -110
@@ -13335,17 +13366,18 @@ def load_sport_data(sport):
                 _b = _odds_f / 100
             else:
                 _b = 100 / abs(_odds_f)
-            _p = _edge + (1 / (1 + _b))  # implied prob + edge
+            _p = _eff_edge + (1 / (1 + _b))
             _p = min(max(_p, 0.01), 0.99)
             _q = 1 - _p
             _kelly_full = (_b * _p - _q) / _b
             _kelly_full = max(0.0, _kelly_full)
         except Exception:
-            _kelly_full = _edge  # fallback to edge
-        _kelly_pct = round(_kelly_full * _tier_frac * _bm_mult, 4)
+            _kelly_full = _eff_edge
+        _kelly_pct = round(_kelly_full * _adapt_frac * _bm_mult, 4)
         _kelly_pct = min(_kelly_pct, KELLY_CAP)
-        prop["KellyFraction"]   = _tier_frac
-        prop["KellyAdvisedPct"] = _kelly_pct if _kelly_pct >= KELLY_MIN else 0.0
+        prop["KellyFraction"]       = _adapt_frac
+        prop["KellyAdvisedPct"]     = _kelly_pct if _kelly_pct >= KELLY_MIN else 0.0
+        prop["KellyEffectiveEdge"]  = round(_eff_edge, 4)
 
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
@@ -16639,6 +16671,39 @@ with tabs[4]:
                 st.warning("⚠️ Brier Score > 0.25 — model underperforming random. Throttle user weight by 10% and audit feature extraction.")
             if _zscore.get("alert"):
                 st.warning(f"⚠️ CLV Z-Score |{_z:.2f}| > 2.0 — model is {_z_label}. Consider rebalancing sharp anchor weights.")
+
+            # Per-sport Brier breakdown + adaptive Kelly multiplier
+            _per_sport = _brier.get("per_sport", {})
+            if _per_sport:
+                st.markdown("**Per-Sport Calibration & Adaptive Kelly Multiplier**")
+                st.caption("Kelly fraction auto-scales based on per-sport Brier score. Green = boosted, red = throttled.")
+                _sp_cols = st.columns(min(len(_per_sport), 6))
+                for _i, (_sp, _sd) in enumerate(sorted(_per_sport.items())):
+                    if _i >= 6:
+                        break
+                    _sp_bs    = _sd.get("brier_score", 0.25)
+                    _sp_grade = _sd.get("grade", "—")
+                    _base     = 0.15
+                    _adapted  = adaptive_kelly_fraction(_base, [], sport=_sp)  # uses global BS
+                    # recalculate with actual data
+                    try:
+                        import math as _m
+                        _anchor_bs = 0.22
+                        _scale = _anchor_bs + _m.log(_anchor_bs / max(_sp_bs, 0.01)) * 2.5
+                        _scale = max(0.33, min(1.5, _scale))
+                        _adapted = round(_base * _scale, 3)
+                    except Exception:
+                        pass
+                    _sp_color = "#22c55e" if _adapted > _base else ("#e8a020" if _adapted > _base * 0.6 else "#e04040")
+                    _mult_str = f"{'↑' if _adapted >= _base else '↓'}{_adapted/(_base or 1):.1f}x Kelly"
+                    _sp_cols[_i].markdown(
+                        f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:8px;text-align:center;">'
+                        f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">{_sp}</div>'
+                        f'<div style="font-size:16px;font-weight:700;color:{_sp_color}">BS {_sp_bs:.3f}</div>'
+                        f'<div style="font-size:11px;color:{_sp_color}">{_mult_str}</div>'
+                        f'<div style="font-size:9px;color:#6a7a8a">{_sp_grade} · n={_sd.get("n","?")}</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
             st.markdown("---")
         st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
         st.caption(
