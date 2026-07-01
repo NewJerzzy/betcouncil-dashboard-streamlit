@@ -1130,8 +1130,8 @@ def compute_consensus_probability(sport, player_name, stat_name, line_val, side=
     return consensus, books_used
 
 def check_daily_risk_limits(sport=None):
-    bankroll = st.session_state.bankroll
-    day_start = st.session_state.day_start_br
+    bankroll = st.session_state.get("bankroll", DEFAULT_BANKROLL)
+    day_start = st.session_state.get("day_start_br", 0)
     if day_start > 0:
         daily_change = (bankroll - day_start) / day_start
         if daily_change <= -DAILY_RISK_CONTROLS["max_daily_loss_pct"]:
@@ -1139,12 +1139,12 @@ def check_daily_risk_limits(sport=None):
         if daily_change >= DAILY_RISK_CONTROLS["stop_win_pct"]:
             return False, f"🏆 Stop-win triggered (+{daily_change:.1%}). Lock in today's profits."
     today = date.today().strftime("%Y-%m-%d")
-    today_locks = [l for l in st.session_state.history if l.get("timestamp", "").startswith(today)]
-    today_locks += [l for l in st.session_state.locks if l.get("timestamp", "").startswith(today)]
+    today_locks = [l for l in st.session_state.get("history", []) if l.get("timestamp", "").startswith(today)]
+    today_locks += [l for l in st.session_state.get("locks", []) if l.get("timestamp", "").startswith(today)]
     if len(today_locks) >= DAILY_RISK_CONTROLS["max_locks_per_day"]:
         return False, f"🛑 Max {DAILY_RISK_CONTROLS['max_locks_per_day']} locks per day reached."
     if sport:
-        sport_locks = [l for l in st.session_state.locks if l.get("sport") == sport]
+        sport_locks = [l for l in st.session_state.get("locks", []) if l.get("sport") == sport]
         if len(sport_locks) >= DAILY_RISK_CONTROLS["max_same_sport_locks"]:
             return False, f"⚠️ Max {DAILY_RISK_CONTROLS['max_same_sport_locks']} {sport} locks reached."
     return True, ""
@@ -4813,16 +4813,16 @@ def kelly_unit(prob, bankroll, n_picks=2, american_odds=None):
 
 
 def active_unit():
-    return round(st.session_state.bankroll * KELLY_FRACTION * KELLY_CAP, 2)
+    return round(st.session_state.get("bankroll", DEFAULT_BANKROLL) * KELLY_FRACTION * KELLY_CAP, 2)
 
 def get_session_time():
-    elapsed = int(time.time() - st.session_state.session_start)
+    elapsed = int(time.time() - st.session_state.get("session_start", time.time()))
     return f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
 def get_daily_change():
-    if st.session_state.day_start_br == 0:
+    if st.session_state.get("day_start_br", 0) == 0:
         return "0.0%"
-    change = (st.session_state.bankroll - st.session_state.day_start_br) / st.session_state.day_start_br * 100
+    change = (st.session_state.bankroll - st.session_state.get("day_start_br", 0)) / st.session_state.get("day_start_br", 0) * 100
     return f"{'+' if change >= 0 else ''}{change:.1f}"
 
 def blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup):
@@ -8490,7 +8490,7 @@ def generate_gem_summary():
                 lines.append(f"{tier}: {stats['hit_rate']:.1%} hit rate ({stats['n']} bets) | Predicted: {stats['avg_predicted']:.1%} | Error: {stats['calibration_error']:+.3f}")
         lines.append("")
     # Add calibration summary to gem brief
-    _cal_summary_gem = get_calibration_summary(st.session_state.history)
+    _cal_summary_gem = get_calibration_summary(st.session_state.get("history", []))
     lines.append(f"Calibration: {_cal_summary_gem}")
     # Add signal correlation warnings to gem brief
     _gem_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
@@ -8831,7 +8831,7 @@ def track_bet_dialog(prop):
             tier=tier, edge=edge, prob=prob, notes=notes
         )
         # Store odds for CLV tracking
-        _hist = st.session_state.history
+        _hist = st.session_state.get("history", [])
         if _hist:
             _hist[-1]["odds_taken"] = odds
             save_to_gist("history", _hist)
@@ -9024,10 +9024,10 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     except Exception:
         _logger.debug("Silent except at line 8799")
         pass
-    st.session_state.history.append(record)
-    save_json_data(HISTORY_PATH, st.session_state.history)
-    save_to_gist("history", st.session_state.history)
-    st.session_state.bankroll += net
+    st.session_state.setdefault("history", []).append(record)
+    save_json_data(HISTORY_PATH, st.session_state.get("history", []))
+    save_to_gist("history", st.session_state.get("history", []))
+    st.session_state["bankroll"] = st.session_state.get("bankroll", DEFAULT_BANKROLL) + net
     save_json_data(BANKROLL_PATH, st.session_state.bankroll)
     save_to_gist("bankroll", st.session_state.bankroll)
     record_signal_performance(record, outcome)
@@ -9077,7 +9077,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     # Prevents running 10x per session when board reloads.
     # Key: {sport}_{n_resolved_bets} — changes only when a
     # new resolved bet (WIN/LOSS) is logged.
-    _n_resolved = sum(1 for h in st.session_state.history
+    _n_resolved = sum(1 for h in st.session_state.get("history", [])
                       if h.get("outcome") in ("WIN","LOSS"))
     _opt_key = f"_opt_last_run_{sport}"
     _last_run = st.session_state.get(_opt_key, -1)
@@ -10605,8 +10605,8 @@ def load_sport_data(sport):
                    f"SOV={_adjusted.get('SOVEREIGN',0):.3f} ELI={_adjusted.get('ELITE',0):.3f} "
                    f"APP={_adjusted.get('APPROVED',0):.3f} LEAN={_adjusted.get('LEAN',0):.3f}")
 
-    min_edge = st.session_state.min_edge
-    skip_def = st.session_state.skip_defaults
+    min_edge = st.session_state.get("min_edge", MIN_EDGE_DEFAULT)
+    skip_def = st.session_state.get("skip_defaults", False)
     if sport in ["Golf", "Tennis", "UFC", "Soccer"]:
         props = scrape_prizepicks_with_gist_fallback(sport)
         if not props:
@@ -12788,7 +12788,7 @@ def load_sport_data(sport):
         tier = _get_cal_tier(final_edge, sport)
 
         # ── Role change detection — applied to final_edge ──────
-        _role_change = detect_role_changes(player, sport, {}, st.session_state.history)
+        _role_change = detect_role_changes(player, sport, {}, st.session_state.get("history", []))
         if not _role_change:
             _rc_team = p.get("Team","")
             _role_change = check_depth_chart_role_change(player, _rc_team, sport)
@@ -12821,7 +12821,7 @@ def load_sport_data(sport):
             final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _stat_adj)), 4)
 
         # ── Projection confidence score ─────────────────────────
-        _sample_n = len([h for h in st.session_state.history
+        _sample_n = len([h for h in st.session_state.get("history", [])
                          if normalize_name(h.get("player","")) == normalize_name(player)])
         _inj_status = injuries.get(normalize_name(player), {}).get("status","") if isinstance(injuries, dict) else ""
         _lineup_conf = p.get("LineupStatus","").startswith("✅") if p.get("LineupStatus") else None
@@ -12991,15 +12991,15 @@ def load_sport_data(sport):
         sem_display, sem_n = compute_sem_for_tier(tier_stats, tier)
         ev_2pick = calculate_prizepicks_ev(best_prob, 2)
         ev_3pick = calculate_prizepicks_ev(best_prob, 3)
-        wager_2pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 2)
-        wager_3pick = kelly_unit_prizepicks(best_prob, st.session_state.bankroll, 3)
+        wager_2pick = kelly_unit_prizepicks(best_prob, st.session_state.get("bankroll", DEFAULT_BANKROLL), 2)
+        wager_3pick = kelly_unit_prizepicks(best_prob, st.session_state.get("bankroll", DEFAULT_BANKROLL), 3)
         season_stat = PLAYER_AVERAGES.get(sport, {}).get(player, {}).get(stat_norm, avg)
         recency_flag, trend = get_recency_context(player, stat_norm, season_stat, avg, sport)
         signals_active = {"base_positive": best_signals.get("base", 0) > 0, "defense_positive": best_signals.get("defense", 0) > 0, "location_home": is_home, "back_to_back": days_rest == 0, "sharp_flag": bool(sharp_flag), "weather_active": weather_adj != 0, "blowout_risk": blowout_adj < 0, "usage_boost": usage_boost > 0, "h2h_positive": h2h_adj > 0, "h2h_negative": h2h_adj < 0}
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
-            "Wager": kelly_unit(best_prob, st.session_state.bankroll), "Tier": tier,
+            "Wager": kelly_unit(best_prob, st.session_state.get("bankroll", DEFAULT_BANKROLL)), "Tier": tier,
             "Quality": "Lookup" if not using_default else "Default", "Model": "MultiSignal",
             "Sport": sport, "Injury": injury_flag, "SEM": sem_display, "SEM_n": sem_n,
             "SignalBase": best_signals.get("base", 0), "SignalDefense": best_signals.get("defense", 0),
@@ -13507,7 +13507,7 @@ def load_sport_data(sport):
         upgrade = get_best_alt_line_recommendation(
             prop["Player"], prop["Prop"], prop["Line"], prop["Prob"],
             float(str(prop.get("EV_2pick","0%")).replace("%","").replace("+","")) / 100,
-            prop["Avg"], prop.get("StdDev"), sport, st.session_state.bankroll,
+            prop["Avg"], prop.get("StdDev"), sport, st.session_state.get("bankroll", DEFAULT_BANKROLL),
         )
         if upgrade:
             alt_line_upgrades.append(upgrade)
@@ -13922,7 +13922,7 @@ if "persistence_loaded" not in st.session_state:
         save_json_data(HISTORY_PATH, _clean_history)
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
-    st.session_state.day_start_br = st.session_state.bankroll
+    st.session_state["day_start_br"] = st.session_state.bankroll
     # Comprehensive Elo update, decoupled from locks/button gate (was: only
     # ran when "Check Results via ESPN" was clicked AND locks existed —
     # meaning Elo silently stalled on any day with zero active locks).
@@ -14114,17 +14114,17 @@ with st.sidebar:
     st.caption("Only show props where the model's projected edge exceeds this threshold. Higher = fewer but stronger plays.")
     st.session_state.min_edge = st.slider(
         "Min Edge (%)", 0, 15,
-        int(st.session_state.min_edge * 100), step=1,
+        int(st.session_state.get("min_edge", MIN_EDGE_DEFAULT) * 100), step=1,
         help="Edge = model's estimated advantage over the book line. 0% shows all props. 5%+ = APPROVED or better."
     ) / 100.0
 
     st.session_state.skip_defaults = st.checkbox(
         "Skip unknown players",
-        value=st.session_state.skip_defaults,
+        value=st.session_state.get("skip_defaults", False),
         help="Hide props for players not in the stats database. Unchecking may show props with less accurate projections."
     )
     st.markdown("---")
-    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.last_sport) if st.session_state.last_sport in SPORTS else 0)
+    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.get("last_sport", SPORTS[0])) if st.session_state.last_sport in SPORTS else 0)
     if st.button("Load Board", width="stretch"):
         try:
             for f in os.listdir(CACHE_DIR):
@@ -14284,12 +14284,12 @@ with st.sidebar:
         st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
     elif _pp_status == "unavailable":
         st.warning("⚠️ PrizePicks unavailable — run betcouncil_auto_scraper.py to populate")
-    _wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
-    _losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
+    _wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
+    _losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
     if _wins + _losses > 0:
         _total = _wins + _losses
         _hit_rate = _wins / _total
-        _net = sum(h.get("net", 0) for h in st.session_state.history)
+        _net = sum(h.get("net", 0) for h in st.session_state.get("history", []))
         _color = "green" if _net >= 0 else "red"
         _hit_color = "#22c55e" if _hit_rate >= 0.577 else "#e04040"
         st.markdown(f"""
@@ -14302,7 +14302,7 @@ with st.sidebar:
 </div>""", unsafe_allow_html=True)
     if st.button("Reset Bankroll", width="stretch"):
         st.session_state.bankroll = DEFAULT_BANKROLL
-        st.session_state.day_start_br = DEFAULT_BANKROLL
+        st.session_state["day_start_br"] = DEFAULT_BANKROLL
         save_json_data(BANKROLL_PATH, st.session_state.bankroll)
         save_to_gist("bankroll", st.session_state.bankroll)
         st.rerun()
@@ -14310,7 +14310,7 @@ with st.sidebar:
 # =========================
 # COMMAND BAR
 # =========================
-pending = len([l for l in st.session_state.locks if l.get("status") == "PENDING"])
+pending = len([l for l in st.session_state.get("locks", []) if l.get("status") == "PENDING"])
 dc = get_daily_change()
 dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
 scan_t = st.session_state.last_scan_time or "—"
@@ -15050,7 +15050,7 @@ with tabs[0]:
 
         # Card 5 — Tier Performance
         with _d5:
-            _resolved = [h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")]
+            _resolved = [h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")]
             if len(_resolved) >= 10:
                 _tier_perf_html = ""
                 for _tier, _color in [("SOVEREIGN","#22c55e"),("ELITE","#378add"),("APPROVED","#e8a020"),("LEAN","#8a9ab0")]:
@@ -15708,7 +15708,7 @@ with tabs[1]:
                             _already = any(
                                 normalize_name(l.get("player",""))==normalize_name(_lr["_player"]) and
                                 str(l.get("line",""))==str(_lr["_line"])
-                                for l in st.session_state.locks
+                                for l in st.session_state.get("locks", [])
                             )
                             if not _already:
                                 st.session_state.locks.append({
@@ -15806,7 +15806,7 @@ with tabs[1]:
                     _already = any(
                         normalize_name(l.get("player",""))==normalize_name(_lp.get("Player","")) and
                         str(l.get("line",""))==str(_lp.get("Line",""))
-                        for l in st.session_state.locks
+                        for l in st.session_state.get("locks", [])
                     )
                     if not _already:
                         st.session_state.locks.append({
@@ -15832,7 +15832,7 @@ with tabs[1]:
                         _already = any(
                             normalize_name(l.get("player",""))==normalize_name(_p.get("Player","")) and
                             str(l.get("line",""))==str(_p.get("Line",""))
-                            for l in st.session_state.locks
+                            for l in st.session_state.get("locks", [])
                         )
                         if not _already:
                             st.session_state.locks.append({
@@ -15902,7 +15902,7 @@ with tabs[2]:
     with _slip_ctrl3:
         _cur_slip = st.session_state.get("current_slip_id")
         if _cur_slip:
-            _slip_locks_count = sum(1 for l in st.session_state.locks if l.get("timestamp","") == _cur_slip)
+            _slip_locks_count = sum(1 for l in st.session_state.get("locks", []) if l.get("timestamp","") == _cur_slip)
             st.markdown(f'<div style="background:#0a0e14;border:1px solid #22c55e44;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:#22c55e;">📎 Active slip: {_slip_locks_count} picks locked</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:var(--color-text-tertiary);">No active slip — tap Start New Slip to group picks</div>', unsafe_allow_html=True)
@@ -16047,7 +16047,7 @@ with tabs[2]:
                     _glk_key = f"glk_{_gi}_{_pk['label']}"
                     _already_glk = any(
                         l.get("player","") == _matchup and l.get("prop","") == _pk["label"]
-                        for l in st.session_state.locks
+                        for l in st.session_state.get("locks", [])
                     )
                     if _already_glk:
                         st.markdown('<div style="text-align:center;color:#22c55e;font-size:15px;padding:4px;">✅ Locked</div>', unsafe_allow_html=True)
@@ -16532,7 +16532,7 @@ with tabs[3]:
             if skipped and BDL_API_KEY:
                 nba_skipped = [s for s in skipped if "nba" in s.lower() or any(
                     normalize_name(l.get("player","")) in s.lower()
-                    for l in st.session_state.locks if l.get("sport","") == "NBA"
+                    for l in st.session_state.get("locks", []) if l.get("sport","") == "NBA"
                 )]
                 if nba_skipped:
                     st.caption(f"Trying BDL for {len(nba_skipped)} missed NBA picks...")
@@ -16592,7 +16592,7 @@ with tabs[3]:
                         resolved += bdl_resolved
 
             # Also resolve game line locks
-            game_locks = [l for l in st.session_state.locks.copy() if l.get("bet_type") == "game"]
+            game_locks = [l for l in st.session_state.get("locks", []).copy() if l.get("bet_type") == "game"]
             if game_locks and resolved == 0:
                 # Try ESPN scoreboard for final scores
                 for sport_key in ["NBA","MLB","NFL","NHL"]:
@@ -16648,9 +16648,9 @@ with tabs[3]:
     st.markdown("## 📊 Ledger")
     if st.session_state.history:
         total_bets = len(st.session_state.history)
-        wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
-        losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
-        net = sum(h.get("net", 0) for h in st.session_state.history)
+        wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
+        losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
+        net = sum(h.get("net", 0) for h in st.session_state.get("history", []))
         hit_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
         net_color = "#22c55e" if net >= 0 else "#e04040"
         st.markdown(
@@ -16674,7 +16674,7 @@ with tabs[3]:
         with roi_col1:
             st.markdown("**By Tier**")
             tier_stats_roi = {}
-            for h in st.session_state.history:
+            for h in st.session_state.get("history", []):
                 t = h.get("tier","Unknown")
                 if t not in tier_stats_roi:
                     tier_stats_roi[t] = {"w":0,"l":0,"net":0}
@@ -16694,7 +16694,7 @@ with tabs[3]:
         with roi_col2:
             st.markdown("**By Sport**")
             sport_stats_roi = {}
-            for h in st.session_state.history:
+            for h in st.session_state.get("history", []):
                 s = h.get("sport","Unknown")
                 if s not in sport_stats_roi:
                     sport_stats_roi[s] = {"w":0,"l":0,"net":0}
@@ -16720,7 +16720,7 @@ with tabs[4]:
         _resolved_hist, _clv_changed = resolve_clv_records(st.session_state.history)
         if _clv_changed:
             st.session_state.history = _resolved_hist
-            save_json_data(HISTORY_PATH, st.session_state.history)
+            save_json_data(HISTORY_PATH, st.session_state.get("history", []))
 
     # ── CLV Performance Dashboard ───────────────────────────────────────
     _clv_sum = get_clv_summary(st.session_state.get("history", []))
@@ -16917,10 +16917,10 @@ with tabs[4]:
 
         # Quick stats row at top
         total_bets = len(st.session_state.history)
-        wins = sum(1 for h in st.session_state.history if h.get("outcome") == "WIN")
-        losses = sum(1 for h in st.session_state.history if h.get("outcome") == "LOSS")
-        pending = sum(1 for h in st.session_state.history if h.get("outcome") == "PENDING")
-        total_net = sum(h.get("net", 0) for h in st.session_state.history)
+        wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
+        losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
+        pending = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "PENDING")
+        total_net = sum(h.get("net", 0) for h in st.session_state.get("history", []))
         win_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
         net_color = "#22c55e" if total_net >= 0 else "#e04040"
         st.markdown(
@@ -16999,7 +16999,7 @@ with tabs[4]:
         if st.button("Clear History"):
             st.session_state.history = []
             save_json_data(HISTORY_PATH, [])
-            save_to_gist("history", st.session_state.history)
+            save_to_gist("history", st.session_state.get("history", []))
             st.rerun()
         st.markdown("---")
         if len(st.session_state.history) >= 5:
@@ -17022,7 +17022,7 @@ with tabs[4]:
                     st.line_chart(rc["cumulative"])
     st.markdown("---")
     st.markdown("### \U0001f4b0 ROI by Category")
-    resolved_h = [h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")]
+    resolved_h = [h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")]
     if len(resolved_h) >= 5:
         pick_roi = {}
         for h in resolved_h:
@@ -17048,7 +17048,7 @@ with tabs[4]:
         st.markdown("### 🔬 Loss Post-Mortem Analyzer")
         st.caption("Select any losing bet to understand why it lost — variance, bad process, or known risk factor.")
 
-        _losses_pm = [h for h in st.session_state.history if h.get("outcome") == "LOSS"]
+        _losses_pm = [h for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS"]
         if not _losses_pm:
             st.info("No losing bets logged yet. Post-mortem activates when you log your first LOSS.")
         else:
@@ -17212,11 +17212,11 @@ with tabs[4]:
             st.markdown(f"- {pattern}")
         st.caption("These patterns auto-update every time you load the board. Weight optimizer will incorporate them at 50 bets.")
     # ── NFL Prop ROI by Position ──────────────────────────────
-    if st.session_state.get("last_sport") == "NFL" or any(h.get("sport") == "NFL" for h in st.session_state.history):
+    if st.session_state.get("last_sport") == "NFL" or any(h.get("sport") == "NFL" for h in st.session_state.get("history", [])):
         st.markdown("---")
         st.markdown("### 🏈 NFL Prop ROI by Position")
         st.caption("Tracks win rate and ROI separately for QB/RB/WR/TE/K props. Activates after 10 NFL bets.")
-        _nfl_bets = [h for h in st.session_state.history if h.get("sport") == "NFL" and h.get("outcome") in ("WIN","LOSS")]
+        _nfl_bets = [h for h in st.session_state.get("history", []) if h.get("sport") == "NFL" and h.get("outcome") in ("WIN","LOSS")]
         if len(_nfl_bets) >= 10:
             # Classify prop by position
             _pos_groups = {
@@ -17998,7 +17998,7 @@ with tabs[4]:
     st.markdown("### 📊 Per-Signal ROI Audit")
     st.caption("Which signals actually predict wins? Updates as resolved bets accumulate.")
     _sig_audit = compute_signal_roi_audit(st.session_state.history)
-    _resolved_count = len([h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")])
+    _resolved_count = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
     if _sig_audit:
         _audit_rows = []
         for _sn, _sd in _sig_audit.items():
@@ -18078,7 +18078,7 @@ with tabs[4]:
     st.caption("Compares recent 50-bet ROI vs all-time. Fires alert if model performance diverges.")
     _drift = compute_model_drift(st.session_state.history)
     if _drift is None:
-        _total_res = len([h for h in st.session_state.history if h.get("outcome") in ("WIN","LOSS")])
+        _total_res = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
         st.info(f"Model drift detection activates at 60+ resolved bets. Current: {_total_res}.")
     else:
         _dc = "#22c55e" if not _drift["alert"] else "#e04040"
@@ -18209,7 +18209,7 @@ with tabs[4]:
     if _cal_buckets is None:
         st.info(f"Calibration tracking activates at 30 resolved bets. Current: {_cal_n}. Need {30 - _cal_n} more.")
     else:
-        _cal_summary = get_calibration_summary(st.session_state.history)
+        _cal_summary = get_calibration_summary(st.session_state.get("history", []))
         _avg_err = sum(abs(float(b["Error"].replace("%","").replace("+",""))/100) for b in _cal_buckets) / len(_cal_buckets)
         if _avg_err < 0.03:
             st.success(f"✅ {_cal_summary}")
@@ -18845,7 +18845,7 @@ with tabs[5]:
                     norm = normalize_name(r["player"])
                     board_match = next((b for b in board if normalize_name(b.get("Player","")) == norm and b.get("Prop","").lower() == r["stat"].lower()), None)
                     if board_match:
-                        already = any(l.get("player") == r["player"] and l.get("prop") == r["stat"] for l in st.session_state.locks)
+                        already = any(l.get("player") == r["player"] and l.get("prop") == r["stat"] for l in st.session_state.get("locks", []))
                         if not already:
                             st.session_state.locks.append({
                                 "player": r["player"], "prop": r["stat"],
@@ -21637,7 +21637,7 @@ with tabs[9]:
                 save_to_gist("history", [])
                 # Reset bankroll
                 st.session_state.bankroll = 1000.0
-                st.session_state.day_start_br = 1000.0
+                st.session_state["day_start_br"] = 1000.0
                 save_json_data(BANKROLL_PATH, {"bankroll": 1000.0})
                 save_to_gist("bankroll", {"bankroll": 1000.0})
                 # Reset SEM calibration
