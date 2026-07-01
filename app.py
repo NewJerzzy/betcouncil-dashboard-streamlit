@@ -143,9 +143,9 @@ from itertools import combinations
 _SS_DEFAULTS = {
     # Core state
     "board_loaded": False, "active_sport": "NBA",
-    "history": [], "locks": [], "bankroll": DEFAULT_BANKROLL,
-    "day_start_br": DEFAULT_BANKROLL, "session_start": 0,
-    "min_edge": MIN_EDGE_DEFAULT, "skip_defaults": False,
+    "history": [], "locks": [], "bankroll": 468.49,
+    "day_start_br": 468.49, "session_start": 0,
+    "min_edge": 0.02, "skip_defaults": False,
     "last_sport": "MLB", "open_bets": [],
     # UI state
     "parsed_bets": [], "bet_history": [], "vision_debug": {},
