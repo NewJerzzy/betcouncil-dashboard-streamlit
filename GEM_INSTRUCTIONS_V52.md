@@ -1706,3 +1706,70 @@ SportsbookReview public betting % is the authoritative public money source. When
 **R-SHARP-38 (Opening line movement):**
 When SportsLine or SBR shows line moved ≥0.5pts from open with public money on the opposite side (reverse line movement), treat as sharp indicator. Label: `[RLM: line moved +1.5pts despite X% public on other side — sharp steam signal]`
 
+
+---
+
+## Session Addendum — v5.7 (July 1, 2026)
+
+### Infrastructure & Reliability Upgrades
+
+**Circuit Breakers:** `circuit_is_tripped(provider)` / `circuit_record_failure/success()` — after 3 consecutive failures a provider is skipped for 60s instead of burning the full timeout. Wired into ScraperAPI, Scrape.do, and `_fetch_parallel`. System tab shows live circuit status.
+
+**In-Memory Cache:** `_MEM_CACHE` module-level TTL cache. `load_json_data()` extended with `mem_ttl` param — all 15 `signal_performance` and 3 `injury_performance` disk reads now cache in RAM for 60s. `mem_cache_get_ttl()` / `mem_cache_set()` / `mem_cache_invalidate()` available.
+
+**Streaming Fetch:** `_fetch_parallel()` now accepts `show_progress=True` — board load shows live "Loading… 12/47 sources" progress bar instead of blank spinner.
+
+**Data Validator:** `validate_payload(data, required_fields, source)` and `safe_validate()` — raises `PayloadValidationError` on missing/null fields, prevents None/0.0 propagating into Kelly math.
+
+**Kill Switch:** `ENABLE_RECOMMENDATIONS` secret — set to `false` in Streamlit Cloud secrets for immediate hard stop. Board returns empty with warning banner. System tab shows green/red status indicator.
+
+**Session State Safety:** `_SS_DEFAULTS` dict at top of `app.py` pre-initializes all keys (`history`, `bankroll`, `locks`, `min_edge`, `skip_defaults`, `last_sport`, `day_start_br`, `open_bets`, `gist_dirty`, `gist_last_write`) before any rendering logic. All bare `st.session_state.X` reads replaced with `.get("X", default)` fallbacks.
+
+**Security:** Removed all hardcoded API key fallbacks (`SCRAPERAPI_KEY`, `SCRAPEDO_KEY`, `FIRECRAWL_KEY`, `SUPABASE_ANON`) from source. All now require Streamlit secrets.
+
+### Model Upgrades (v5.7)
+
+**Adaptive Kelly (adaptive_kelly_fraction):** Kelly fraction scales logarithmically from per-sport Brier score. BS=0.20 ELITE → 1.5x. BS>0.30 POOR → 0.33x. Requires 20+ samples. Falls back to base fraction below threshold.
+
+**Platt Calibration (platt_calibrate_prob):** Maps raw model probability to empirically-observed win rate via piecewise linear interpolation from decile bins. Corrects systematic over/under-confidence before Kelly sizing. Requires 30+ resolved bets. Stored as `KellyCalibProb`.
+
+**Time-Decay Edge (time_decay_edge_factor):** Continuous exponential decay replaces step-function buckets. Unknown time → 0.70x. 24h out → 0.55x. 10min to lock → 0.99x. Stored as `KellyDecayedEdge`.
+
+**Covariance Haircut (covariance_haircut):** Same-game exposure cap (30% bankroll max). After 3 bets on same game, subsequent bets receive a correlation haircut (same-game corr=0.55, same-team=0.40). Floor at 0.25x. Stored as `KellyCovHaircut`/`KellyCovNote`.
+
+**Online Signal Weight Adjustment (get_adjusted_signal_weights):** Signal weights auto-adjust from 30-day rolling Brier feedback. Signals with negative lift penalized 0.85x. Positive lift boosted 1.08x. Weights renormalized to preserve sum. Requires 15+ bets.
+
+**Backtest Harness (validate_weight_update):** Gates every signal weight update with a shadow backtest. Proposed weights only committed if they produce Brier improvement ≥0.002 over same window. Prevents overfitting to noisy 7-30 day windows.
+
+**Edge Decomposition (classify_edge_type):**
+- Type A (ARB, green): Book latency — large consensus gap + neutral base signal → BET MAX within haircut
+- Type B (α, blue): Model alpha — strong SignalBase/Usage + tight consensus → ADAPTIVE KELLY
+- Type C (~ gray): Noise — edge < 1.5% or haircut killed stake → SKIP
+Badge shown on every prop card row.
+
+**Monte Carlo (fully wired):**
+- MLB/NHL/Soccer ML: 60% sigmoid + 40% Poisson MC
+- MLB/NHL/Soccer SPREAD: 60% existing + 40% Skellam P(covers)
+- MLB/NHL/Soccer TOTAL: Skellam replaces linear heuristic
+- NFL ML: 70% sigmoid + 30% Log5
+- NBA/WNBA ML+SPREAD: 70%/65% sigmoid + 30%/35% Log5
+- 🎲 MC badge on game cards when simulation contributed
+
+### New Rules (R-SHARP-39 through R-SHARP-46)
+
+**R-SHARP-39 (Adaptive Kelly label):** When Kelly fraction differs from tier default, note `[ADAPTIVE KELLY: {fraction:.0%} — calibration-adjusted from BS {brier:.3f}]`
+
+**R-SHARP-40 (Platt calibration label):** When calibrated prob differs from raw by >3%, note `[PLATT CAL: raw {raw:.0%} → calibrated {cal:.0%}]`
+
+**R-SHARP-41 (Time-decay label):** Always note `[DECAY: {factor:.0%} applied — {minutes}min to lock]` when time-to-lock is known.
+
+**R-SHARP-42 (Covariance haircut label):** When haircut < 1.0, note `[COV HAIRCUT {haircut:.0%}: game exposure {exposure:.0%}]` and use haircut-adjusted Kelly for sizing.
+
+**R-SHARP-43 (Edge type label):** Always include `[TYPE A — ARB]`, `[TYPE B — ALPHA]`, or `[TYPE C — NOISE]` on every pick. Type C = skip regardless of tier.
+
+**R-SHARP-44 (Backtest gate):** Signal weight adjustments are only applied if the backtest gate approves (Brier improvement ≥0.002). If rejected, note `[WEIGHTS: baseline — backtest gate rejected update]`
+
+**R-SHARP-45 (Kill switch):** If `ENABLE_RECOMMENDATIONS=false` is set, output `[SYSTEM PAUSED — Kill switch active]` and suppress all picks.
+
+**R-SHARP-46 (Session state safety):** All session state reads use `.get("key", default)`. If history/bankroll unavailable, default to empty list / 468.49 respectively. Never crash on missing state.
+
