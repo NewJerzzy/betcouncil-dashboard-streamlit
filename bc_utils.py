@@ -1125,11 +1125,42 @@ def classify_regime(signals, edge, line_moved):
 
 
 
-def load_json_data(path, default):
+def load_json_data(path, default, mem_ttl: int = 0):
+    """Load JSON from disk with optional in-memory TTL cache.
+
+    Args:
+        path:    File path to load from.
+        default: Value to return if file missing or corrupt.
+        mem_ttl: If > 0, cache the result in _MEM_CACHE for this many seconds.
+                 Use for high-frequency reads (signal_performance, sem_calibration)
+                 to avoid disk I/O on every rerun. Leave at 0 for writes that need
+                 to be immediately re-read (bankroll, bet_history).
+    """
+    if mem_ttl > 0:
+        _cache_key = f"_ljd_{path}"
+        try:
+            # Import here to avoid circular dep — _MEM_CACHE lives in app.py
+            import sys as _sys
+            _app = _sys.modules.get("app") or _sys.modules.get("__main__")
+            if _app and hasattr(_app, "mem_cache_get_ttl"):
+                _cached = _app.mem_cache_get_ttl(_cache_key)
+                if _cached is not None:
+                    return _cached
+        except Exception:
+            pass
+
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
-                return json.load(f)
+                result = json.load(f)
+            if mem_ttl > 0:
+                try:
+                    _app = _sys.modules.get("app") or _sys.modules.get("__main__")
+                    if _app and hasattr(_app, "mem_cache_set"):
+                        _app.mem_cache_set(_cache_key, result, ttl_seconds=mem_ttl)
+                except Exception:
+                    pass
+            return result
         except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
             return default
     return default

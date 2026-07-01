@@ -158,6 +158,158 @@ _cap_list("errors", 50)
 _cap_list("parsed_bets", 200)
 _cap_list("bet_history", 500)
 
+# ── Circuit Breaker ───────────────────────────────────────────
+# Tracks failure counts per provider. After 3 consecutive failures,
+# trips the circuit for 60 seconds so dead providers are skipped
+# instantly rather than burning the full request timeout every call.
+# This is the single biggest "speed killer" fix: a dead proxy that
+# takes 20s to timeout would previously block every fetch that hit it.
+# With the circuit breaker it's skipped after 3 failures for 60s.
+
+_CB_THRESHOLD  = 3     # failures before trip
+_CB_RESET_SECS = 60    # seconds to stay tripped
+
+def _cb_key(provider: str) -> str:
+    return f"_cb_{provider.lower().replace('.','_').replace('-','_')}"
+
+def circuit_is_tripped(provider: str) -> bool:
+    """Return True if the provider's circuit is currently open (tripped)."""
+    import time as _t
+    k = _cb_key(provider)
+    state = st.session_state.get(k, {})
+    if not state:
+        return False
+    if state.get("tripped") and _t.time() - state.get("tripped_at", 0) < _CB_RESET_SECS:
+        return True
+    if state.get("tripped"):
+        # Auto-reset after timeout
+        state["tripped"] = False
+        state["fail_count"] = 0
+        st.session_state[k] = state
+    return False
+
+def circuit_record_failure(provider: str) -> None:
+    """Record a provider failure. Trips the circuit after _CB_THRESHOLD failures."""
+    import time as _t
+    k = _cb_key(provider)
+    state = st.session_state.get(k, {"fail_count": 0, "tripped": False, "tripped_at": 0})
+    state["fail_count"] = state.get("fail_count", 0) + 1
+    if state["fail_count"] >= _CB_THRESHOLD:
+        state["tripped"]    = True
+        state["tripped_at"] = _t.time()
+        _logger.warning("Circuit breaker TRIPPED for %s after %d failures", provider, _CB_THRESHOLD)
+    st.session_state[k] = state
+
+def circuit_record_success(provider: str) -> None:
+    """Reset failure count on success."""
+    k = _cb_key(provider)
+    st.session_state[k] = {"fail_count": 0, "tripped": False, "tripped_at": 0}
+
+def circuit_status() -> dict:
+    """Return status of all tracked circuits for the System tab display."""
+    import time as _t
+    result = {}
+    for k, v in st.session_state.items():
+        if k.startswith("_cb_") and isinstance(v, dict):
+            provider = k[4:].replace("_", " ").title()
+            tripped = v.get("tripped", False)
+            remaining = 0
+            if tripped:
+                remaining = max(0, int(_CB_RESET_SECS - (_t.time() - v.get("tripped_at", 0))))
+                if remaining == 0:
+                    tripped = False
+            result[provider] = {
+                "fail_count": v.get("fail_count", 0),
+                "tripped":    tripped,
+                "reset_in":   remaining,
+            }
+    return result
+
+# ── In-Memory Cache Layer ─────────────────────────────────────
+# High-frequency lookups (signal_performance, sem_calibration, etc.)
+# are cached in RAM via session_state rather than hitting disk on
+# every rerun. Disk (pickle/json) is reserved for data that must
+# survive container restarts (bankroll, CLV history, Gist-backed state).
+
+_MEM_CACHE: dict = {}   # module-level dict — survives reruns, cleared on container restart
+
+def mem_cache_get(key: str, default=None):
+    """Read from in-memory cache. Faster than pickle for hot-path data."""
+    return _MEM_CACHE.get(key, default)
+
+def mem_cache_set(key: str, value, ttl_seconds: int = 300):
+    """Write to in-memory cache with TTL. Evicts stale entries on read."""
+    import time as _t
+    _MEM_CACHE[key] = {"v": value, "exp": _t.time() + ttl_seconds}
+
+def mem_cache_get_ttl(key: str, default=None):
+    """Read from in-memory cache, respecting TTL expiry."""
+    import time as _t
+    entry = _MEM_CACHE.get(key)
+    if entry is None:
+        return default
+    if _t.time() > entry.get("exp", 0):
+        del _MEM_CACHE[key]
+        return default
+    return entry["v"]
+
+def mem_cache_invalidate(key: str) -> None:
+    _MEM_CACHE.pop(key, None)
+
+# ── Data Payload Validator ────────────────────────────────────
+# Validates incoming API responses have expected fields before
+# feeding data into the model. Tags records as SKIPPED with a
+# reason when validation fails, preventing garbage-in-garbage-out
+# in Kelly sizing and edge calculations.
+
+class PayloadValidationError(ValueError):
+    """Raised when an API response is missing required fields."""
+    pass
+
+def validate_payload(data, required_fields: list, source: str = "unknown") -> bool:
+    """
+    Validate an API response dict has all required fields with non-None values.
+    Raises PayloadValidationError with a clear message on failure so the caller
+    can tag the record as SKIPPED rather than propagating None/0.0 into math.
+
+    Args:
+        data:            The parsed API response (dict or list)
+        required_fields: Field names that must be present and non-None
+        source:          Provider name for error messages
+
+    Returns:
+        True if valid
+
+    Raises:
+        PayloadValidationError if data is empty or any required field is missing
+    """
+    if not data:
+        raise PayloadValidationError(f"[{source}] Empty or null payload")
+    if isinstance(data, list):
+        if len(data) == 0:
+            raise PayloadValidationError(f"[{source}] Empty list payload")
+        return True   # list shape — caller validates individual items
+    for field in required_fields:
+        if field not in data:
+            raise PayloadValidationError(f"[{source}] Missing required field: '{field}'")
+        if data[field] is None:
+            raise PayloadValidationError(f"[{source}] Field '{field}' is None")
+    return True
+
+def safe_validate(data, required_fields: list, source: str = "unknown") -> tuple:
+    """
+    Non-raising version of validate_payload. Returns (is_valid, error_msg).
+    Use when you want to log and skip rather than raise.
+    """
+    try:
+        validate_payload(data, required_fields, source)
+        return True, None
+    except PayloadValidationError as e:
+        _logger.warning("Payload validation failed: %s", e)
+        return False, str(e)
+
+
+
 def _ss_set(key, value, expected_type=None):
     """Type-safe session state write."""
     if expected_type and not isinstance(value, expected_type):
@@ -1768,7 +1920,7 @@ def compute_signal_interactions(performance_data=None):
     Activates at 50+ resolved bets.
     """
     if performance_data is None:
-        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
     if len(resolved) < 50:
         return None, len(resolved)
@@ -4702,13 +4854,13 @@ def record_injury_performance(lock, outcome, injuries):
         "edge": lock.get("edge", 0),
         "prob": lock.get("prob", 0),
     }
-    existing = load_json_data(INJURY_PERFORMANCE_PATH, [])
+    existing = load_json_data(INJURY_PERFORMANCE_PATH, [], mem_ttl=60)
     existing.append(record)
     save_json_data(INJURY_PERFORMANCE_PATH, existing)
     save_to_gist("injury_performance", existing)
 
 def analyze_injury_performance():
-    data = load_json_data(INJURY_PERFORMANCE_PATH, [])
+    data = load_json_data(INJURY_PERFORMANCE_PATH, [], mem_ttl=60)
     if not data:
         return None, 0
     injured = [d for d in data if d.get("was_injured") and d.get("outcome") in ("WIN","LOSS")]
@@ -4768,13 +4920,13 @@ def record_signal_performance(lock, outcome):
         "signal_blowout_risk": int(signals_active.get("blowout_risk", False)),
         "signal_usage_boost": int(signals_active.get("usage_boost", False)),
     }
-    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     performance.append(record)
     save_json_data(SIGNAL_PERFORMANCE_PATH, performance)
     save_to_gist("signal_performance", performance)
 
 def analyze_signal_performance():
-    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     resolved = [p for p in performance if p.get("outcome") in ("WIN", "LOSS")]
     if len(resolved) < 20:
         return None, len(resolved)
@@ -4855,7 +5007,7 @@ def compute_signal_correlation_matrix(performance_data=None):
     Activates at 20+ resolved bets.
     """
     if performance_data is None:
-        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
     if len(resolved) < 20:
         return None, len(resolved), []
@@ -4946,7 +5098,7 @@ def compute_signal_lift_analysis(performance_data=None):
     Activates at 30+ resolved bets.
     """
     if performance_data is None:
-        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
     if len(resolved) < 30:
         return None, len(resolved)
@@ -5014,7 +5166,7 @@ def compute_signal_stability(performance_data=None, window_days=30):
     Activates at 30+ resolved bets.
     """
     if performance_data is None:
-        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+        performance_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     resolved = [p for p in performance_data if p.get("outcome") in ("WIN","LOSS")]
     if len(resolved) < 30:
         return None, len(resolved)
@@ -5081,7 +5233,7 @@ def compute_signal_stability(performance_data=None, window_days=30):
 
 
 def compute_optimized_weights(sport):
-    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     sport_data = [p for p in performance if p.get("sport") == sport and p.get("outcome") in ("WIN", "LOSS")]
     if len(sport_data) < WEIGHT_OPTIMIZER_MIN_BETS:
         return None
@@ -7155,7 +7307,7 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
             _log("ScrapeOps", "ERR", error=e)
 
     # ── 2. ScraperAPI ────────────────────────────────────────
-    if SCRAPERAPI_KEY:
+    if SCRAPERAPI_KEY and not circuit_is_tripped("ScraperAPI"):
         try:
             r = _HTTP_DIRECT.get(f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={quote(url, safe='')}&premium=true&country_code=us",
                 timeout=timeout
@@ -7163,22 +7315,31 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
             _log("ScraperAPI", r.status_code, len(r.text))
             if r.status_code in (403, 429, 402):
                 st.session_state["scraperapi_exhausted"] = True
+                circuit_record_failure("ScraperAPI")
             elif _is_valid(r):
+                circuit_record_success("ScraperAPI")
                 return r
+            else:
+                circuit_record_failure("ScraperAPI")
         except (requests.RequestException, KeyError, ValueError) as e:
             _log("ScraperAPI", "ERR", error=e)
+            circuit_record_failure("ScraperAPI")
 
     # ── 3. Scrape.do ─────────────────────────────────────────
-    if SCRAPEDO_KEY:
+    if SCRAPEDO_KEY and not circuit_is_tripped("Scrape.do"):
         try:
             r = _HTTP_DIRECT.get(f"https://api.scrape.do?token={SCRAPEDO_KEY}&url={quote(url, safe='')}&super=true",
                 timeout=timeout
             )
             _log("Scrape.do", r.status_code, len(r.text))
             if _is_valid(r):
+                circuit_record_success("Scrape.do")
                 return r
+            else:
+                circuit_record_failure("Scrape.do")
         except (requests.RequestException, KeyError, ValueError) as e:
             _log("Scrape.do", "ERR", error=e)
+            circuit_record_failure("Scrape.do")
 
     # ── 4. Direct (fallback) ─────────────────────────────────
     return _http.get(url, headers=headers or {}, timeout=timeout)
@@ -8312,7 +8473,7 @@ def generate_gem_summary():
     _cal_summary_gem = get_calibration_summary(st.session_state.history)
     lines.append(f"Calibration: {_cal_summary_gem}")
     # Add signal correlation warnings to gem brief
-    _gem_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _gem_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _, _gem_corr_n, _gem_corr_warnings = compute_signal_correlation_matrix(_gem_perf)
     if _gem_corr_warnings:
         lines.append(f"Signal Overlap Warnings: {'; '.join(_gem_corr_warnings[:2])}")
@@ -10022,10 +10183,16 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
     return prob, confirms, note
 
 
-def _fetch_parallel(fns: list) -> list:
+def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
     """Run multiple fetch functions in parallel threads, return results in order.
     Uses pre-allocated index-based result and timing slots to prevent cross-thread
     mutation race conditions on shared collections.
+
+    Args:
+        fns:           List of zero-argument callables to execute in parallel.
+        show_progress: When True, shows a st.progress bar that updates as each
+                       fetch completes, reducing perceived latency from "spinner
+                       for 10s" to "3 of 47 signals loaded" live feedback.
     """
     if not fns:
         return []
@@ -10034,8 +10201,12 @@ def _fetch_parallel(fns: list) -> list:
     import threading
     n = len(fns)
     results  = [None] * n
-    timings  = [None] * n   # pre-allocated — each thread writes to its own index only
-    _lock    = threading.Lock()  # only needed for session_state write at the end
+    timings  = [None] * n
+    _lock    = threading.Lock()
+    _done    = [0]  # mutable counter for progress tracking
+
+    _prog_bar  = st.progress(0, text="Loading data sources…") if show_progress else None
+    _prog_text = st.empty() if show_progress else None
 
     def _timed(fn, idx):
         name = getattr(fn, '__name__', f'fn_{idx}').replace('_pf_','').replace('fetch_','')
@@ -10049,6 +10220,7 @@ def _fetch_parallel(fns: list) -> list:
             elapsed = round(_time.perf_counter() - t0, 2)
             timings[idx] = {"name": name, "time": elapsed, "status": f"❌ {type(e).__name__}: {str(e)[:40]}"}
             _logger.warning("_fetch_parallel worker %s failed: %s: %s", name, type(e).__name__, e)
+            circuit_record_failure(name)
             return None
 
     with ThreadPoolExecutor(max_workers=min(n, 20)) as ex:
@@ -10060,6 +10232,23 @@ def _fetch_parallel(fns: list) -> list:
             except Exception as _ex:
                 results[idx] = None
                 _logger.warning("_fetch_parallel future[%d] raised: %s: %s", idx, type(_ex).__name__, _ex)
+            # Update progress bar as each future completes
+            if _prog_bar is not None:
+                _done[0] += 1
+                _pct = _done[0] / n
+                _name = (timings[idx] or {}).get("name", "")
+                try:
+                    _prog_bar.progress(_pct, text=f"Loading… {_done[0]}/{n} sources ✓ {_name}")
+                except Exception:
+                    pass
+
+    # Clear progress indicators
+    if _prog_bar is not None:
+        try:
+            _prog_bar.empty()
+            _prog_text.empty() if _prog_text else None
+        except Exception:
+            pass
 
     # Write timing summary to session state under a lock to prevent partial writes
     # if _fetch_parallel is ever called concurrently (rare but possible).
@@ -10371,7 +10560,7 @@ def load_sport_data(sport):
         if _live_bl: st.session_state["nfl_live_baselines"] = _live_bl
 
     # ── Auto-calibrate tier thresholds from bet history ────────────────────
-    _sig_perf  = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _sig_perf  = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _hist      = st.session_state.get("history", [])
     _cal_thresholds = calibrate_tier_thresholds(_sig_perf, _hist, sport)
     st.session_state["calibrated_thresholds"] = _cal_thresholds
@@ -10662,7 +10851,7 @@ def load_sport_data(sport):
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
     ]
-    _results = _fetch_parallel(_parallel_fns)
+    _results = _fetch_parallel(_parallel_fns, show_progress=True)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
@@ -13711,7 +13900,7 @@ if "persistence_loaded" not in st.session_state:
     # bet outcomes that feed the System tab's "Resolved Bets" count and signal health
     # analysis. Gist-back it the same way history already is, so it survives restarts.
     gist_sig_perf = load_from_gist("signal_performance", None)
-    _local_sig_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _local_sig_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _gist_sig_perf  = gist_sig_perf if isinstance(gist_sig_perf, list) else []
     _seen_sig_keys = set()
     _merged_sig_perf = []
@@ -13723,7 +13912,7 @@ if "persistence_loaded" not in st.session_state:
     if len(_merged_sig_perf) > len(_local_sig_perf):
         save_json_data(SIGNAL_PERFORMANCE_PATH, _merged_sig_perf)
     gist_inj_perf = load_from_gist("injury_performance", None)
-    _local_inj_perf = load_json_data(INJURY_PERFORMANCE_PATH, [])
+    _local_inj_perf = load_json_data(INJURY_PERFORMANCE_PATH, [], mem_ttl=60)
     _gist_inj_perf  = gist_inj_perf if isinstance(gist_inj_perf, list) else []
     _seen_inj_keys = set()
     _merged_inj_perf = []
@@ -14728,7 +14917,7 @@ with tabs[0]:
 
         # Card 4 — Signal Health
         with _d4:
-            _sig_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+            _sig_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
             _sig_resolved = [p for p in _sig_perf if p.get("outcome") in ("WIN","LOSS")]
             if len(_sig_resolved) >= 10:
                 _sig_html = ""
@@ -16773,7 +16962,7 @@ with tabs[4]:
     # ── Signal Correlation Matrix ──────────────────────────────
     st.markdown("### 🔗 Signal Correlation Matrix")
     st.caption("Are your signals independent? High phi (ϕ) = signals fire together frequently = possible double-counting. Run this after 20+ bets.")
-    _perf_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _perf_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _corr_rows, _corr_n, _corr_warnings = compute_signal_correlation_matrix(_perf_data)
     if _corr_rows is None:
         st.info(f"Correlation matrix activates at 20 resolved bets. Current: {_corr_n}.")
@@ -17721,7 +17910,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 📋 Weekly Model Report")
     st.caption("Auto-generated weekly performance summary. No manual analysis needed.")
-    _perf_data_wr = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _perf_data_wr = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _weekly = generate_weekly_model_report(st.session_state.history, _perf_data_wr)
     if _weekly:
         _wr1, _wr2 = st.columns(2)
@@ -17792,7 +17981,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 🔗 Signal Interaction Analysis")
     st.caption("Which signal combinations are stronger than either signal alone? Activates at 50 resolved bets.")
-    _perf_data_int = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _perf_data_int = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _int_rows, _int_n = compute_signal_interactions(_perf_data_int)
     if _int_rows is None:
         st.info(f"Signal interaction analysis activates at 50 resolved bets. Current: {_int_n}.")
@@ -20615,9 +20804,46 @@ with tabs[9]:
         st.info("Add FIRECRAWL_KEY to Streamlit secrets to enable Covers public betting consensus data.")
 
     st.markdown("---")
+    st.markdown("### ⚡ Network Health — Circuit Breakers & Fetch Timings")
+    st.caption("Tripped circuits are skipped instantly rather than burning the full timeout. Auto-reset after 60s.")
+
+    _cb_status = circuit_status()
+    _ft_timings = st.session_state.get("fetch_timings", {})
+
+    _cb_col1, _cb_col2 = st.columns(2)
+    with _cb_col1:
+        st.markdown("**Circuit Breaker Status**")
+        if not _cb_status:
+            st.success("✅ All circuits healthy — no providers tripped")
+        else:
+            for _prov, _cs in sorted(_cb_status.items()):
+                if _cs["tripped"]:
+                    st.error(f"🔴 **{_prov}** — TRIPPED (resets in {_cs['reset_in']}s, {_cs['fail_count']} failures)")
+                elif _cs["fail_count"] > 0:
+                    st.warning(f"🟡 **{_prov}** — {_cs['fail_count']}/{_CB_THRESHOLD} failures (not yet tripped)")
+                else:
+                    st.success(f"🟢 **{_prov}** — Healthy")
+
+    with _cb_col2:
+        st.markdown("**Fetch Timings (last board load)**")
+        if not _ft_timings:
+            st.info("No timing data yet — load the board first")
+        else:
+            _ft_sorted = sorted(_ft_timings.items(), key=lambda x: x[1].get("time", 0), reverse=True)
+            _ft_rows = []
+            for _src, _td in _ft_sorted[:15]:
+                _t_val = _td.get("time", 0)
+                _status = _td.get("status", "?")
+                _color = "#e04040" if "❌" in _status else ("#e8a020" if _t_val > 5 else "#22c55e")
+                _ft_rows.append({"Source": _src[:30], "Time (s)": f"{_t_val:.2f}", "Status": _status})
+            if _ft_rows:
+                import pandas as _pd_sys
+                st.dataframe(_pd_sys.DataFrame(_ft_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
     st.caption("Quick health check on signal quality. Full details in History tab.")
-    _sys_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [])
+    _sys_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _sys_resolved = [p for p in _sys_perf if p.get("outcome") in ("WIN","LOSS")]
     _scol1, _scol2, _scol3 = st.columns(3)
     _scol1.metric("Resolved Bets", len(_sys_resolved), help="Signal analysis needs 20+")
