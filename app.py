@@ -141,18 +141,30 @@ from itertools import combinations
 
 # --- Session State Schema (prevents KeyError on missing keys) ---
 _SS_DEFAULTS = {
+    # Core state
     "board_loaded": False, "active_sport": "NBA",
+    "history": [], "locks": [], "bankroll": DEFAULT_BANKROLL,
+    "day_start_br": DEFAULT_BANKROLL, "session_start": 0,
+    "min_edge": MIN_EDGE_DEFAULT, "skip_defaults": False,
+    "last_sport": "MLB", "open_bets": [],
+    # UI state
     "parsed_bets": [], "bet_history": [], "vision_debug": {},
     "ocr_raw_text": "", "errors": [], "recommendations": [],
     "game_analysis": [], "show_ml_debug": False,
+    # Props cache per sport
     "oddspapi_props_NBA": [], "oddspapi_props_MLB": [],
     "oddspapi_props_NHL": [], "oddspapi_props_WNBA": [],
     "oddspapi_props_NFL": [],
-    "bc_telemetry": {},        # performance timing metrics
-    "fetch_timings": {},       # per-source fetch diagnostics
+    # Performance / telemetry
+    "bc_telemetry": {}, "fetch_timings": {},
+    # Gist batching
+    "gist_dirty": {}, "gist_last_write": {},
 }
 for _k, _v in _SS_DEFAULTS.items():
     st.session_state.setdefault(_k, _v)
+# session_start needs current time on first load, not a static value
+if not st.session_state.get("session_start"):
+    st.session_state["session_start"] = time.time()
 
 def _cap_list(key, max_len=200):
     if key in st.session_state and isinstance(st.session_state[key], list):
