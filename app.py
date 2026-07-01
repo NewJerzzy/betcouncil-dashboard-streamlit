@@ -144,6 +144,8 @@ _SS_DEFAULTS = {
     "oddspapi_props_NBA": [], "oddspapi_props_MLB": [],
     "oddspapi_props_NHL": [], "oddspapi_props_WNBA": [],
     "oddspapi_props_NFL": [],
+    "bc_telemetry": {},        # performance timing metrics
+    "fetch_timings": {},       # per-source fetch diagnostics
 }
 for _k, _v in _SS_DEFAULTS.items():
     st.session_state.setdefault(_k, _v)
@@ -241,7 +243,7 @@ def _build_api_session():
         total=3,                          # max 3 retries
         backoff_factor=0.5,               # 0.5s, 1s, 2s between retries
         status_forcelist=(500, 502, 503, 504, 429),  # retry on server errors + rate limit
-        allowed_methods=["GET", "POST"],
+        allowed_methods=frozenset(["GET", "POST", "PATCH"]),
         raise_on_status=False,            # don't raise — let caller check status_code
     )
     adapter = HTTPAdapter(
@@ -9970,38 +9972,53 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
 
 def _fetch_parallel(fns: list) -> list:
     """Run multiple fetch functions in parallel threads, return results in order.
-    Records per-source timing in st.session_state['fetch_timings'] for profiler UI.
+    Uses pre-allocated index-based result and timing slots to prevent cross-thread
+    mutation race conditions on shared collections.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
-    results = [None] * len(fns)
-    timings = {}
+    import threading
+    n = len(fns)
+    results  = [None] * n
+    timings  = [None] * n   # pre-allocated — each thread writes to its own index only
+    _lock    = threading.Lock()  # only needed for session_state write at the end
+
     def _timed(fn, idx):
         name = getattr(fn, '__name__', f'fn_{idx}').replace('_pf_','').replace('fetch_','')
-        t0 = _time.time()
+        t0 = _time.perf_counter()
         try:
-            result = fn()
-            elapsed = round(_time.time() - t0, 2)
-            timings[name] = {"time": elapsed, "status": "✅"}
+            result  = fn()
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings[idx] = {"name": name, "time": elapsed, "status": "✅"}
             return result
         except Exception as e:
-            elapsed = round(_time.time() - t0, 2)
-            timings[name] = {"time": elapsed, "status": f"❌ {type(e).__name__}: {str(e)[:30]}"}
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings[idx] = {"name": name, "time": elapsed, "status": f"❌ {type(e).__name__}: {str(e)[:40]}"}
             _logger.warning("_fetch_parallel worker %s failed: %s: %s", name, type(e).__name__, e)
             return None
-    with ThreadPoolExecutor(max_workers=min(len(fns), 20)) as ex:
+
+    with ThreadPoolExecutor(max_workers=min(n, 20)) as ex:
         futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
         for fut in as_completed(futures):
             idx = futures[fut]
             try:
-                results[idx] = fut.result(timeout=20)
+                results[idx] = fut.result(timeout=25)
             except Exception as _ex:
                 results[idx] = None
                 _logger.warning("_fetch_parallel future[%d] raised: %s: %s", idx, type(_ex).__name__, _ex)
-    # NOTE: fetch_timings session_state write removed — was inside @st.cache_data
-    # which causes Streamlit warnings and silent drops on cache hits. Timings
-    # are diagnostic; callers needing them can read from the returned results.
+
+    # Write timing summary to session state under a lock to prevent partial writes
+    # if _fetch_parallel is ever called concurrently (rare but possible).
+    try:
+        with _lock:
+            st.session_state["fetch_timings"] = {
+                t["name"]: {"time": t["time"], "status": t["status"]}
+                for t in timings if t is not None
+            }
+    except Exception:
+        pass
     return results
+
 
 
 
