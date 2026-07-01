@@ -10578,16 +10578,10 @@ def check_prediction_stability(board, sport):
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
     # ── Kill Switch ───────────────────────────────────────────────────────
-    # If ENABLE_RECOMMENDATIONS is False in Streamlit secrets, suppress all
-    # pick generation and return an empty board immediately. Data fetches,
-    # history, system tab, and all other non-pick functionality still work.
+    # If ENABLE_RECOMMENDATIONS is False in Streamlit secrets, return empty
+    # board immediately. Caller is responsible for displaying the warning
+    # in the correct UI context (not inside a spinner or sidebar).
     if not ENABLE_RECOMMENDATIONS:
-        st.warning(
-            "🔴 **Recommendations disabled.** Set `ENABLE_RECOMMENDATIONS = true` in "
-            "Streamlit Cloud secrets (Settings → Secrets) to re-enable the board. "
-            "All historical data, system monitoring, and logging remain active.",
-            icon="🛑"
-        )
         return [], [], 0, 0, [], []
     if sport == "NFL":
         _nfl_db_path = os.path.join(CACHE_DIR, "nfl_player_db.pkl")
@@ -14176,6 +14170,14 @@ with st.sidebar:
             st.session_state.board_data = board
             st.session_state.games = games
             st.session_state["board_loaded"]       = True
+        # Kill switch warning rendered after spinner in correct main-area context
+        if not ENABLE_RECOMMENDATIONS:
+            st.warning(
+                "🔴 **Recommendations disabled.** Set `ENABLE_RECOMMENDATIONS = true` "
+                "in Streamlit Cloud secrets (Settings → Secrets) to re-enable the board. "
+                "All historical data, system monitoring, and logging remain active.",
+                icon="🛑"
+            )
             st.session_state["last_sport_loaded"]  = sport_sel
             st.session_state["ev_auto_refresh_ts"] = 0   # trigger immediate first snapshot
             # Cache last good props per sport for fallback
