@@ -664,9 +664,9 @@ _ODDS_API_KEY_STATUS = _check_odds_api_key_status()
 
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
 SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
-SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "d12e7cbef86733f18c1faf7e96009c00")
-SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "19f5a819c2ec471888ffd80ec807078527e259c1515")
-FIRECRAWL_KEY  = st.secrets.get("FIRECRAWL_KEY",  "fc-296afd1583694440938141e0bc113a38")
+SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "")
+SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "")
+FIRECRAWL_KEY  = st.secrets.get("FIRECRAWL_KEY",  "")
 SPORTMONKS_API_KEY = st.secrets.get("SPORTMONKS_API_KEY", "")
 UNIFIED_API_KEY = st.secrets.get("UNIFIED_API_KEY", "")
 RAPIDAPI_KEY = st.secrets.get("RAPIDAPI_KEY", "")
@@ -3080,6 +3080,7 @@ def _capture_clv_closing_lines():
                     if pname and ptype:
                         ev_lookup[(pname, ptype)] = item
         except Exception:
+            _logger.debug("Silent except at line 3083")
             pass
 
         for bet in pending:
@@ -3132,6 +3133,7 @@ def _capture_clv_closing_lines():
         if updated or any(True for _ in pending):
             save_json_data(CLV_PATH, clv_data)
     except Exception:
+        _logger.debug("Silent except at line 3135")
         pass
 
 
@@ -3943,7 +3945,7 @@ def get_ev_movement_from_snapshots(current_ev_data):
 _EV_TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 
 SUPABASE_URL    = "https://nkdhryqpiulrepmphwmt.supabase.co"
-SUPABASE_ANON   = "sb_publishable_mMniM5v3auOHfF72hlVL_w_LUNlh3yt"
+SUPABASE_ANON   = st.secrets.get("SUPABASE_ANON", "")
 
 
 def _ev_refresh_token():
@@ -3957,6 +3959,7 @@ def _ev_refresh_token():
         return (st.secrets.get("EV_REFRESH_TOKEN")
                 or st.secrets.get("ev_refresh_token"))
     except Exception:
+        _logger.debug("Silent except at line 3960")
         return None
 
 
@@ -3980,6 +3983,7 @@ def _ev_do_refresh(refresh_token):
                 "refresh_token": data.get("refresh_token", refresh_token),
             }
     except Exception:
+        _logger.debug("Silent except at line 3983")
         pass
     return None
 
@@ -4016,6 +4020,7 @@ def _get_ev_jwt():
     try:
         return st.secrets.get("EV_JWT") or st.secrets.get("ev_jwt")
     except Exception:
+        _logger.debug("Silent except at line 4019")
         return None
 
 
@@ -4513,6 +4518,7 @@ def _get_fanduel_px_context():
     try:
         px_context = st.secrets.get("FANDUEL_PX_CONTEXT", "")
     except Exception:
+        _logger.debug("Silent except at line 4516")
         pass
     if not px_context:
         # Picks up tokens pushed by fanduel-harvester-cdp.js (local Playwright
@@ -4550,6 +4556,7 @@ def _get_fanduel_state():
     try:
         state = (st.secrets.get("FANDUEL_STATE", "az") or "az").lower()
     except Exception:
+        _logger.debug("Silent except at line 4553")
         pass
     return state
 
@@ -5235,6 +5242,7 @@ def compute_clv_signal_feedback(sport: str) -> dict:
         clv_data  = load_json_data(CLV_PATH, [])
         history   = load_json_data(HISTORY_PATH, [])
     except Exception:
+        _logger.debug("Silent except at line 5238")
         return {}
 
     # Only use resolved records with valid CLV for this sport
@@ -5544,6 +5552,7 @@ def _fetch_live_team_woba_splits() -> dict:
                 with open(cache_path, "rb") as f:
                     return pickle.load(f)
             except Exception:
+                _logger.debug("Silent except at line 5547")
                 pass
 
     season = date.today().year
@@ -5555,6 +5564,7 @@ def _fetch_live_team_woba_splits() -> dict:
             return {}
         teams = teams_r.json().get("teams", [])
     except Exception:
+        _logger.debug("Silent except at line 5558")
         return {}
 
     vs_rhp, vs_lhp = {}, {}
@@ -5601,6 +5611,7 @@ def _fetch_live_team_woba_splits() -> dict:
             with open(cache_path, "wb") as f:
                 pickle.dump(result, f)
         except Exception:
+            _logger.debug("Silent except at line 5604")
             pass
     return result
 
@@ -5658,6 +5669,7 @@ def _enrich_pitchers_savant(pitchers: dict) -> dict:
             enriched[team].update(live_stats)
             seen_ids[pid] = live_stats
         except Exception:
+            _logger.debug("Silent except at line 5661")
             pass
     return enriched
 
@@ -5863,6 +5875,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         if _h_div and _h_div == _a_div:
                             spread_edge_pct *= 0.85  # ~15% edge compression
                     except Exception:
+                        _logger.debug("Silent except at line 5866")
                         pass
                     # ── 2. Short week / Thursday penalty ─────────────────
                     # Road favorites on Thursday (4-day turnaround) cover at
@@ -5876,6 +5889,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                                 # Home team also on short week — smaller penalty
                                 spread_edge_pct *= 0.90
                     except Exception:
+                        _logger.debug("Silent except at line 5879")
                         pass
                     # ── 3. Primetime road favorite fade ──────────────────
                     # Road favorites in primetime slots (Thu/Mon night games)
@@ -5885,6 +5899,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         if _is_primetime and favored_team == away_team:
                             spread_edge_pct *= 0.88
                     except Exception:
+                        _logger.debug("Silent except at line 5888")
                         pass
                     # ── 4. QB injury check ────────────────────────────────
                     # If starting QB is on the inactives list, spread edge
@@ -5906,6 +5921,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                                 else:
                                     spread_edge_pct *= 1.20  # favors other side
                     except Exception:
+                        _logger.debug("Silent except at line 5909")
                         pass
                     # ── 5. Defensive unit adjustment ──────────────────────
                     # If the favored team faces an elite pass defense (top
@@ -5921,6 +5937,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         elif _pass_allowed > 260:     # poor pass D
                             spread_edge_pct *= 1.10
                     except Exception:
+                        _logger.debug("Silent except at line 5924")
                         pass
                 if sport == "Soccer":
                     # ── Soccer GF/GA differential adjustment ─────────────
@@ -5938,6 +5955,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                             # ±0.5 GD/game → ±0.04 edge adjustment
                             spread_edge_pct += _gd_diff * 0.08
                     except Exception:
+                        _logger.debug("Silent except at line 5941")
                         pass
                 if sport == "UFC":
                     # ── UFC striking differential for spread/ML ───────────
@@ -5948,6 +5966,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _f2_str = float(_f2s.get("SIG_STR", 35) or 35)
                         spread_edge_pct += (_f1_str - _f2_str) / 100.0
                     except Exception:
+                        _logger.debug("Silent except at line 5951")
                         pass
                 if sport == "Tennis":
                     # ── Tennis serve efficiency ML/spread signal ──────────
@@ -5965,6 +5984,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                             _p1s2 or {}, _p2s2 or {}, surface=_surf2
                         )
                     except Exception:
+                        _logger.debug("Silent except at line 5968")
                         pass
                 if sport == "Golf":
                     # ── Golf SG differential for H2H spread edge ─────────
@@ -5979,6 +5999,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _sg_diff = (_sg_net(_p1g) - _sg_net(_p2g)) * 0.06
                         spread_edge_pct += max(-0.08, min(0.08, _sg_diff))
                     except Exception:
+                        _logger.debug("Silent except at line 5982")
                         pass
                 spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct))
                 # Apply RLM + steam + market divergence multipliers
@@ -5988,6 +6009,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _div_m  = 1.05 if _mkt_divergence.get("signal_strength") in ("STRONG","MODERATE") else 1.0
                     spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct * min(1.25, _rlm_m * _stm_m * _div_m)))
                 except Exception:
+                    _logger.debug("Silent except at line 5991")
                     pass
 
                 # ── Monte Carlo spread refinement ─────────────────────────
@@ -6032,6 +6054,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                                 0.65 * spread_edge_pct + 0.35 * _mc_spread_edge
                             ))
                 except Exception:
+                    _logger.debug("Silent except at line 6035")
                     pass
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
@@ -6071,6 +6094,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _a_d = (_a_ou[0] - 5) * 1.5
                         fair_total += max(-7.5, min(7.5, (_h_d + _a_d) / 2))
                 except Exception:
+                    _logger.debug("Silent except at line 6074")
                     pass
             elif sport == "WNBA":
                 # WNBA totals — pace-adjusted, base ~165 per 2025 season
@@ -6137,6 +6161,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                                 elif _wd in _in:
                                     wind_adj_total = -min(1.5, _ws * 0.06)  # wind in  → UNDER
                 except Exception:
+                    _logger.debug("Silent except at line 6140")
                     pass
                 # ── ATS Stats L10 O/U momentum adjustment ─────────────────
                 # If both teams trend heavily Over or Under in their last 10,
@@ -6156,6 +6181,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         a_ou_delta = (a_ou[0] - 5) * 0.12
                         l10_ou_adj = max(-0.6, min(0.6, (h_ou_delta + a_ou_delta) / 2))
                 except Exception:
+                    _logger.debug("Silent except at line 6159")
                     pass
                 fair_total = base_total + era_adj + park_adj + wind_adj_total + l10_ou_adj
                 _mu_home = _mu_away = None  # set below if James-formula data available
@@ -6185,6 +6211,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _mu_home = max(0.5, _james_home)
                         _mu_away = max(0.5, _james_away)
                 except Exception:
+                    _logger.debug("Silent except at line 6188")
                     pass
             elif sport == "NHL":
                 h_gf = NHL_TEAM_GOALS_FOR.get(home_full, NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT))
@@ -6209,6 +6236,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _a_d = (_a_ou[0] - 5) * 0.08
                         fair_total += max(-0.4, min(0.4, (_h_d + _a_d) / 2))
                 except Exception:
+                    _logger.debug("Silent except at line 6212")
                     pass
             elif sport == "NFL":
                 h_power = power_ratings.get(home_team, 104.0)
@@ -6233,6 +6261,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         # Blend 40% James / 60% power-rating-based
                         fair_total = round(fair_total * 0.60 + _james_total * 0.40, 1)
                 except Exception:
+                    _logger.debug("Silent except at line 6236")
                     pass
                 # ── ATS Stats NFL L10 O/U momentum nudge ──────────────────
                 try:
@@ -6247,6 +6276,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _a_d = (_a_ou[0] - 5) * 1.0
                         fair_total += max(-5.0, min(5.0, (_h_d + _a_d) / 2))
                 except Exception:
+                    _logger.debug("Silent except at line 6250")
                     pass
                 # ── 6. NFL weather adjustment on totals ───────────────────
                 # Cold temp (<32°F) suppresses scoring; wind >15mph does too.
@@ -6267,6 +6297,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                             _wx_adj -= (_wind - 15) * 0.15
                         fair_total += max(-7.0, min(0.0, _wx_adj))  # weather only suppresses
                 except Exception:
+                    _logger.debug("Silent except at line 6270")
                     pass
             elif sport == "Soccer":
                 # ── Soccer fair_total: James matchup formula ──────────────
@@ -6392,6 +6423,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         except (ValueError, TypeError):
                             pass
                 except Exception:
+                    _logger.debug("Silent except at line 6395")
                     pass
                 # fair_total = combined projected strokes (H2H pairing)
                 fair_total = round(_p1_proj + _p2_proj, 1)
@@ -6453,6 +6485,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         total_edge_pct *= _t_mult
                     total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 except Exception:
+                    _logger.debug("Silent except at line 6456")
                     pass
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
@@ -6518,6 +6551,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         h_fair = round(0.70 * h_fair + 0.30 * _log5_h, 4)
                         a_fair = round(1.0 - h_fair, 4)
                     except Exception:
+                        _logger.debug("Silent except at line 6521")
                         pass
 
                 # NBA/WNBA: composite ratings → Log5 blend for ML.
@@ -6530,6 +6564,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         h_fair = round(0.70 * h_fair + 0.30 * _log5_nba_ml, 4)
                         a_fair = round(1.0 - h_fair, 4)
                     except Exception:
+                        _logger.debug("Silent except at line 6533")
                         pass
 
 
@@ -6546,6 +6581,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _mc_h = _mc_result["home_win_prob"]
                         _mc_a = _mc_result["away_win_prob"] + _mc_result["draw_prob"] * 0.5
                     except Exception:
+                        _logger.debug("Silent except at line 6549")
                         pass
                 if _mc_h is not None:
                     h_fair = round(0.60 * h_fair + 0.40 * _mc_h, 4)
@@ -6595,6 +6631,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 record_line("betonline", _game_key, "total", _tv, 0, 0)
                 record_line("pinnacle",  _game_key, "total", _tv, 0, 0)
             except Exception:
+                _logger.debug("Silent except at line 6598")
                 pass
 
         if spread_str not in ("N/A", None, ""):
@@ -6602,6 +6639,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 _sv = float(str(spread_str).split()[-1].replace("+",""))
                 record_line("betonline", _game_key, "spread", _sv, 0, 0)
             except Exception:
+                _logger.debug("Silent except at line 6605")
                 pass
 
         # Steam detection on total and spread
@@ -6655,6 +6693,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             }
 
     except Exception:
+        _logger.debug("Silent except at line 6658")
         pass
 
     # Market availability flags for UI labeling
@@ -6838,6 +6877,7 @@ def fetch_mlb_player_season_avg(player_name, player_id=None):
                 with open(cache_path, "rb") as f:
                     return pickle.load(f)
             except Exception:
+                _logger.debug("Silent except at line 6841")
                 pass
 
     # Resolve player ID
@@ -6908,6 +6948,7 @@ def fetch_mlb_player_season_avg(player_name, player_id=None):
             with open(cache_path, "wb") as f:
                 pickle.dump(result, f)
         except Exception:
+            _logger.debug("Silent except at line 6911")
             pass
         return result
     return None
@@ -6933,6 +6974,7 @@ def _espn_get(url, cache_key, ttl_hours=12):
                 with open(cache_path, "rb") as f:
                     return pickle.load(f)
             except Exception:
+                _logger.debug("Silent except at line 6936")
                 pass
     try:
         resp = _http.get(url, headers=HEADERS, timeout=12)
@@ -6975,6 +7017,7 @@ def _fetch_nfl_team_stats_power() -> dict:
                 with open(cache_path, "rb") as f:
                     return pickle.load(f)
             except Exception:
+                _logger.debug("Silent except at line 6978")
                 pass
     try:
         season = date.today().year
@@ -7033,6 +7076,7 @@ def _fetch_nfl_team_stats_power() -> dict:
                 pickle.dump(ratings, f)
         return ratings
     except Exception:
+        _logger.debug("Silent except at line 7036")
         return {}
 
 
@@ -8779,6 +8823,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
                     float(_cons_nv) - float(prob), 4
                 )
     except Exception:
+        _logger.debug("Silent except at line 8782")
         pass
     # ── Enhance record with tier-based CLV quality before saving ──────────
     try:
@@ -8796,6 +8841,7 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
             record["clv_threshold"]  = _clv_detail.get("threshold", 0)
             record["clv_confirmed"]  = _clv_detail.get("edge_confirmed", False)
     except Exception:
+        _logger.debug("Silent except at line 8799")
         pass
     st.session_state.history.append(record)
     save_json_data(HISTORY_PATH, st.session_state.history)
@@ -8935,6 +8981,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                     data_source_label = "🌐 Live BDL season avg"
                     confidence_label = "2025 season"
         except Exception:
+            _logger.debug("Silent except at line 8938")
             pass
 
     # ── 4. MLB live season avg (statsapi.mlb.com, any active player) ───────────
@@ -8962,6 +9009,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                     data_source_label = f"⚾ MLB 2025 season avg"
                     confidence_label = f"{n_g} games"
         except Exception:
+            _logger.debug("Silent except at line 8965")
             pass
 
     # ── 5. PLAYER_AVERAGES hardcoded table ───────────────────────────────────
@@ -9032,6 +9080,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                             _live["live_sets"] = _t_match.get("sets")
                             _live["live_round"] = _t_match.get("round")
                     except Exception:
+                        _logger.debug("Silent except at line 9035")
                         pass
                 _stat_lookup = {
                     "Aces": "Aces", "Double Faults": "Double Faults",
@@ -9057,6 +9106,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                             _live["live_thru"] = _g_match.get("thru")
                             _live["live_tournament"] = _g_match.get("tournament")
                     except Exception:
+                        _logger.debug("Silent except at line 9060")
                         pass
                 _stat_lookup = {
                     "Strokes": "Strokes", "Birdies": "Birdies",
@@ -9107,6 +9157,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                 if _val and float(_val) > 0:
                     avg = float(_val)
         except Exception:
+            _logger.debug("Silent except at line 9110")
             pass
 
     # ── 8. League baselines (last numeric fallback before line-anchor) ────────
@@ -9202,6 +9253,7 @@ def parse_bet_screenshot_ocr(image_bytes):
         if fmt not in ("jpeg", "webp", "png"):
             fmt = "png"
     except Exception:
+        _logger.debug("Silent except at line 9205")
         pass
     media_type = f"image/{fmt}"
 
@@ -9975,6 +10027,8 @@ def _fetch_parallel(fns: list) -> list:
     Uses pre-allocated index-based result and timing slots to prevent cross-thread
     mutation race conditions on shared collections.
     """
+    if not fns:
+        return []
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
     import threading
@@ -10016,6 +10070,7 @@ def _fetch_parallel(fns: list) -> list:
                 for t in timings if t is not None
             }
     except Exception:
+        _logger.debug("Silent except at line 10021")
         pass
     return results
 
@@ -10438,6 +10493,7 @@ def load_sport_data(sport):
                 MLB_TEAM_WOBA_VS_RHP.update(_live_woba.get("vs_rhp", {}))
                 MLB_TEAM_WOBA_VS_LHP.update(_live_woba.get("vs_lhp", {}))
         except Exception:
+            _logger.debug("Silent except at line 10443")
             pass
         _mlb_lineups = _mlb_pre.get("lineups") or {}
         if _mlb_lineups:
@@ -10712,6 +10768,7 @@ def load_sport_data(sport):
             st.session_state["fanduel_props"]    = fd_props_sa_raw
             st.session_state["fanduel_props_src"] = "sharpapi"
     except Exception:
+        _logger.debug("Silent except at line 10717")
         pass
     st.session_state["sharpapi_line_drops"] = sharpapi_drops_raw  or []
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
@@ -10772,6 +10829,7 @@ def load_sport_data(sport):
                 st.session_state[_ss_key] = _data
                 st.session_state[_src_key] = _src
         except Exception:
+            _logger.debug("Silent except at line 10777")
             pass
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
@@ -12288,6 +12346,7 @@ def load_sport_data(sport):
             try:
                 save_closing_line(player, stat_norm, float(_pinn_line), sport, source="pinnacle")
             except Exception:
+                _logger.debug("Silent except at line 12293")
                 pass
         adj_edge, calibrated = adjusted_edge(
             best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history
@@ -12350,6 +12409,7 @@ def load_sport_data(sport):
                     elif abs(_dp) > 0.03:
                         final_edge = min(final_edge * 1.05, EDGE_CAP)  # moderate steam
             except Exception:
+                _logger.debug("Silent except at line 12355")
                 pass
 
         # ── SharpAPI Pinnacle steam detection ────────────────────────────────
@@ -12367,6 +12427,7 @@ def load_sport_data(sport):
                     if abs(_dp) > 0.05:
                         final_edge = min(final_edge * 1.06, EDGE_CAP)
             except Exception:
+                _logger.debug("Silent except at line 12372")
                 pass
 
         # ── Defense ranking adjustment ─────────────────────────────────────
@@ -12383,6 +12444,7 @@ def load_sport_data(sport):
                         if _de.get("favorable"):
                             p["SignalNotes"] = p.get("SignalNotes","") + f" {_de['note']}"
             except Exception:
+                _logger.debug("Silent except at line 12388")
                 pass
 
         # ── Signal Odds / BetsLib AI prediction overlay ────────────────────
@@ -12402,6 +12464,7 @@ def load_sport_data(sport):
                         p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ SO fade:{_bl_conf:.0%}"
                         final_edge = final_edge*0.92
             except Exception:
+                _logger.debug("Silent except at line 12407")
                 pass
 
         # ── FantasyPros projection cross-check ──────────────────────────────
@@ -12421,6 +12484,7 @@ def load_sport_data(sport):
                         p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ FP under:{_fpv:.1f}"
                         final_edge = final_edge*0.92
             except Exception:
+                _logger.debug("Silent except at line 12426")
                 pass
 
         # ── Regression-to-mean discount (applied last — after all other mults) ──
@@ -13482,11 +13546,13 @@ def load_sport_data(sport):
             try:
                 st.session_state["nfl_practice"] = fetch_nfl_practice_participation()
             except Exception:
+                _logger.debug("Silent except at line 13487")
                 pass
         if "fetch_nfl_inactives" in globals():
             try:
                 st.session_state["nfl_inactives"] = fetch_nfl_inactives()
             except Exception:
+                _logger.debug("Silent except at line 13492")
                 pass
     if sport == "NHL":
         # TODO: fetch_nhl_starting_goalies not yet implemented in fetchers.py
@@ -13496,6 +13562,7 @@ def load_sport_data(sport):
                 if _nhl_goalies:
                     st.session_state["nhl_starting_goalies"] = _nhl_goalies
             except Exception:
+                _logger.debug("Silent except at line 13501")
                 pass
     if sport == "GOLF":
         _golf_lb = fetch_golf_leaderboard()
@@ -13596,6 +13663,7 @@ if "persistence_loaded" not in st.session_state:
         try:
             _capture_clv_closing_lines()
         except Exception:
+            _logger.debug("Silent except at line 13601")
             pass
         # FIX #6: resolve_clv_records was only called on History tab load.
         # Now runs on the 10-min timer so CLV resolves automatically post-game
@@ -13605,6 +13673,7 @@ if "persistence_loaded" not in st.session_state:
             if _hist:
                 resolve_clv_records(_hist)
         except Exception:
+            _logger.debug("Silent except at line 13610")
             pass
         st.session_state["_clv_snap_last_run"] = time.time()
 
@@ -13631,9 +13700,11 @@ if "persistence_loaded" not in st.session_state:
                     if os.path.exists(_rp):
                         os.remove(_rp)
                 except Exception:
+                    _logger.debug("Silent except at line 13636")
                     pass
             save_to_gist("betcouncil_active_season", _cur_season)
     except Exception:
+        _logger.debug("Silent except at line 13639")
         pass
     # signal_performance.json lives only on local CACHE_DIR, which is ephemeral on
     # Streamlit Cloud — it resets on every redeploy/restart, silently losing logged
@@ -16986,7 +17057,7 @@ with tabs[4]:
             fetch('https://nkdhryqpiulrepmphwmt.supabase.co/auth/v1/token?grant_type=refresh_token', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json',
-                           'apikey': 'sb_publishable_mMniM5v3auOHfF72hlVL_w_LUNlh3yt'}},
+                           'apikey': '{SUPABASE_ANON}'}},
                 body: JSON.stringify({{refresh_token: 'z325a7doims5'}})
             }}).then(function(r) {{ return r.json(); }})
               .then(function(d) {{
