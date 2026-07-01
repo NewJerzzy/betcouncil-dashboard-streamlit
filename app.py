@@ -4834,7 +4834,7 @@ def get_session_time():
 def get_daily_change():
     if st.session_state.get("day_start_br", 0) == 0:
         return "0.0%"
-    change = (st.session_state.bankroll - st.session_state.get("day_start_br", 0)) / st.session_state.get("day_start_br", 0) * 100
+    change = (st.session_state.get("bankroll", 468.49) - st.session_state.get("day_start_br", 0)) / st.session_state.get("day_start_br", 0) * 100
     return f"{'+' if change >= 0 else ''}{change:.1f}"
 
 def blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup):
@@ -9049,8 +9049,8 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     save_json_data(HISTORY_PATH, st.session_state.get("history", []))
     save_to_gist("history", st.session_state.get("history", []))
     st.session_state["bankroll"] = st.session_state.get("bankroll", DEFAULT_BANKROLL) + net
-    save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-    save_to_gist("bankroll", st.session_state.bankroll)
+    save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", 468.49))
+    save_to_gist("bankroll", st.session_state.get("bankroll", 468.49))
     record_signal_performance(record, outcome)
     # ── Auto-record CLV from history bet ───────────────────────
     # Don't require Track This Bet — if we have a line and outcome,
@@ -13943,7 +13943,7 @@ if "persistence_loaded" not in st.session_state:
         save_json_data(HISTORY_PATH, _clean_history)
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
-    st.session_state["day_start_br"] = st.session_state.bankroll
+    st.session_state["day_start_br"] = st.session_state.get("bankroll", 468.49)
     # Comprehensive Elo update, decoupled from locks/button gate (was: only
     # ran when "Check Results via ESPN" was clicked AND locks existed —
     # meaning Elo silently stalled on any day with zero active locks).
@@ -14324,8 +14324,8 @@ with st.sidebar:
     if st.button("Reset Bankroll", width="stretch"):
         st.session_state.bankroll = DEFAULT_BANKROLL
         st.session_state["day_start_br"] = DEFAULT_BANKROLL
-        save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-        save_to_gist("bankroll", st.session_state.bankroll)
+        save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", 468.49))
+        save_to_gist("bankroll", st.session_state.get("bankroll", 468.49))
         st.rerun()
 
 # =========================
@@ -14346,7 +14346,7 @@ st.markdown(f"""
     </div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
-    <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.bankroll:.2f}</div><div style="font-size:15px;color:{dc_color};">{dc} today</div></div>
+    <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.get("bankroll", 468.49):.2f}</div><div style="font-size:15px;color:{dc_color};">{dc} today</div></div>
     <div class="metric-box"><div class="metric-label">Unit</div><div class="metric-value teal-text">${active_unit():.2f}</div></div>
     <div class="metric-box"><div class="metric-label">Min Edge</div><div class="metric-value gold-text">{st.session_state.min_edge*100:.0f}%</div></div>
     <div class="metric-box"><div class="metric-label">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
@@ -16674,8 +16674,8 @@ with tabs[3]:
 
     # Ledger section
     st.markdown("## 📊 Ledger")
-    if st.session_state.history:
-        total_bets = len(st.session_state.history)
+    if st.session_state.get("history", []):
+        total_bets = len(st.session_state.get("history", []))
         wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
         losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
         net = sum(h.get("net", 0) for h in st.session_state.get("history", []))
@@ -16695,7 +16695,7 @@ with tabs[3]:
         st.info("No bet history yet.")
 
     # ROI by Tier + Sport
-    if st.session_state.history:
+    if st.session_state.get("history", []):
         st.markdown("---")
         st.markdown("#### 📊 ROI by Tier & Sport")
         roi_col1, roi_col2 = st.columns(2)
@@ -16745,7 +16745,7 @@ with tabs[4]:
     # ── Auto-resolve CLV for settled bets ──────────────────────────────
     # Buchdahl methodology: compare placement odds vs current market (closing proxy)
     if st.session_state.get("history"):
-        _resolved_hist, _clv_changed = resolve_clv_records(st.session_state.history)
+        _resolved_hist, _clv_changed = resolve_clv_records(st.session_state.get("history", []))
         if _clv_changed:
             st.session_state.history = _resolved_hist
             save_json_data(HISTORY_PATH, st.session_state.get("history", []))
@@ -16939,12 +16939,12 @@ with tabs[4]:
         st.markdown("---")
 
 
-    if st.session_state.history:
-        hist_df = pd.DataFrame(st.session_state.history)
+    if st.session_state.get("history", []):
+        hist_df = pd.DataFrame(st.session_state.get("history", []))
         hist_df = hist_df.iloc[::-1].reset_index(drop=True)
 
         # Quick stats row at top
-        total_bets = len(st.session_state.history)
+        total_bets = len(st.session_state.get("history", []))
         wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
         losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
         pending = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "PENDING")
@@ -17030,7 +17030,7 @@ with tabs[4]:
             save_to_gist("history", st.session_state.get("history", []))
             st.rerun()
         st.markdown("---")
-        if len(st.session_state.history) >= 5:
+        if len(st.session_state.get("history", [])) >= 5:
             resolved = hist_df[hist_df["outcome"].isin(["WIN","LOSS"])] if "outcome" in hist_df.columns else pd.DataFrame()
             if not resolved.empty:
                 col_a, col_b = st.columns(2)
@@ -17091,7 +17091,7 @@ with tabs[4]:
             _sel_bet  = _losses_pm[-30:][::-1][_sel_idx]
 
             # Run post-mortem
-            _pm = analyze_loss_postmortem(_sel_bet, st.session_state.history)
+            _pm = analyze_loss_postmortem(_sel_bet, st.session_state.get("history", []))
 
             # Verdict header
             _pm_colors = {
@@ -18025,7 +18025,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 📊 Per-Signal ROI Audit")
     st.caption("Which signals actually predict wins? Updates as resolved bets accumulate.")
-    _sig_audit = compute_signal_roi_audit(st.session_state.history)
+    _sig_audit = compute_signal_roi_audit(st.session_state.get("history", []))
     _resolved_count = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
     if _sig_audit:
         _audit_rows = []
@@ -18043,7 +18043,7 @@ with tabs[4]:
     elif _resolved_count < 20:
         st.info(f"Signal ROI audit activates at 20 resolved bets. ({_resolved_count}/20)")
     if _resolved_count >= 100:
-        _bq_weights, _learned = get_bq_weights(st.session_state.history)
+        _bq_weights, _learned = get_bq_weights(st.session_state.get("history", []))
         if _learned:
             st.success("✅ BQ weights are now learned from your results (500+ bets)")
         elif _resolved_count >= 200:
@@ -18055,7 +18055,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 🔬 Signal Attribution Engine")
     st.caption("Which signals actually created profit? Activates at 20 resolved bets.")
-    _attr_rows, _attr_n = compute_signal_attribution(st.session_state.history)
+    _attr_rows, _attr_n = compute_signal_attribution(st.session_state.get("history", []))
     if _attr_rows is None:
         st.info(f"Signal attribution activates at 20 resolved bets. Current: {_attr_n}.")
     else:
@@ -18104,7 +18104,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 📡 Model Drift Detection")
     st.caption("Compares recent 50-bet ROI vs all-time. Fires alert if model performance diverges.")
-    _drift = compute_model_drift(st.session_state.history)
+    _drift = compute_model_drift(st.session_state.get("history", []))
     if _drift is None:
         _total_res = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
         st.info(f"Model drift detection activates at 60+ resolved bets. Current: {_total_res}.")
@@ -18126,7 +18126,7 @@ with tabs[4]:
     st.markdown("### 📋 Weekly Model Report")
     st.caption("Auto-generated weekly performance summary. No manual analysis needed.")
     _perf_data_wr = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
-    _weekly = generate_weekly_model_report(st.session_state.history, _perf_data_wr)
+    _weekly = generate_weekly_model_report(st.session_state.get("history", []), _perf_data_wr)
     if _weekly:
         _wr1, _wr2 = st.columns(2)
         with _wr1:
@@ -18162,7 +18162,7 @@ with tabs[4]:
         _pm_date = st.date_input("Analyze date",
                                   value=date.today() - __import__("datetime").timedelta(days=1),
                                   key="pm_date")
-    _pm = generate_post_mortem(st.session_state.history, _pm_date.strftime("%Y-%m-%d"))
+    _pm = generate_post_mortem(st.session_state.get("history", []), _pm_date.strftime("%Y-%m-%d"))
     if _pm:
         _pm_color = "#22c55e" if _pm["net"] > 0 else "#e04040" if _pm["net"] < 0 else "#8a9ab0"
         st.markdown(
@@ -18217,7 +18217,7 @@ with tabs[4]:
     st.markdown("### ⚖️ Weight Adjustment Recommendations")
     st.caption("Data-driven suggestions after 100+ bets. Human approval required — never auto-applies.")
     _sport_wr = st.session_state.get("last_sport","NBA")
-    _recs, _recs_n = generate_weight_recommendations(st.session_state.history, _sport_wr)
+    _recs, _recs_n = generate_weight_recommendations(st.session_state.get("history", []), _sport_wr)
     if _recs is None:
         st.info(f"Weight recommendations activate after 100 {_sport_wr} bets. Current: {_recs_n}.")
     elif _recs:
@@ -18233,7 +18233,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 🎯 Probability Calibration")
     st.caption("Are your predicted probabilities accurate? Compares model prediction vs actual hit rate per probability bucket. Activates at 30 resolved bets.")
-    _cal_buckets, _cal_n = compute_calibration_buckets(st.session_state.history)
+    _cal_buckets, _cal_n = compute_calibration_buckets(st.session_state.get("history", []))
     if _cal_buckets is None:
         st.info(f"Calibration tracking activates at 30 resolved bets. Current: {_cal_n}. Need {30 - _cal_n} more.")
     else:
@@ -18252,7 +18252,7 @@ with tabs[4]:
     st.markdown("---")
     st.markdown("### 📐 Closing Line Beat Rate")
     st.caption("Does the model project correctly vs where the closing line ends up? Higher = genuine market edge.")
-    _clb_rate, _clb_total = get_closing_line_hit_rate(st.session_state.history)
+    _clb_rate, _clb_total = get_closing_line_hit_rate(st.session_state.get("history", []))
     if _clb_rate is not None:
         _clb1, _clb2, _clb3 = st.columns(3)
         _clb1.metric("Beat Closing Line", f"{_clb_rate:.1%}")
@@ -19562,7 +19562,7 @@ with tabs[7]:
                         continue
                 if submitted > 0:
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
-                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.bankroll:.2f}")
+                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get("bankroll", 468.49):.2f}")
                     st.session_state["parsed_bets"] = []
                     st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                     st.session_state["ocr_raw_text"] = ""
@@ -21099,7 +21099,7 @@ with tabs[9]:
         st.rerun()
     st.markdown("---")
     st.markdown("### \U0001f4ca SEM Calibration")
-    tier_stats_s = compute_tier_stats(st.session_state.history)
+    tier_stats_s = compute_tier_stats(st.session_state.get("history", []))
     if tier_stats_s:
         sem_df = pd.DataFrame([{"Tier": tier, "Bets": s["n"], "Hit Rate": f"{s['hit_rate']:.1%}", "Predicted": f"{s['avg_predicted']:.1%}", "SEM": f"\u00b1{s['sem']:.3f}" if s['sem'] else "\u2014"} for tier, s in tier_stats_s.items()])
         st.dataframe(sem_df, width="stretch")
