@@ -17324,7 +17324,7 @@ with tabs[4]:
             throttled('baseballpress',900000,function(){{
                 fetch('https://www.baseballpress.com/lineups',{{headers:{{'Accept':'application/json, text/html','Referer':'https://www.baseballpress.com/'}}}}).then(function(r){{return r.text();}}).then(function(html){{
                     // Extract lineup JSON from page
-                    var match=html.match(/window\.__LINEUPS__\s*=\s*(\{{.*?\}})/s);
+                    var lbr="\x7B",rbr="\x7D";var reLP=new RegExp("window\\\\.__LINEUPS__\\\\s*=\\\\s*("+"\\\\"+lbr+"[^]*?"+"\\\\"+rbr+")","s");var match=html.match(reLP);
                     var data=match?JSON.parse(match[1]):{{raw:html.substring(0,5000)}};
                     pushGist('betcouncil_baseballpress.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
                 }}).catch(function(e){{console.log('[BetCouncil] BaseballPress error:',e.message);}});
