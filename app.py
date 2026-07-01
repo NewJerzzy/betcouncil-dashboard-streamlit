@@ -5860,7 +5860,7 @@ def _enrich_pitchers_savant(pitchers: dict) -> dict:
 
 
 
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=3601)   # ttl bumped to bust stale cache missing home/away team name keys
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, mlb_pitchers=None):
     if power_ratings is None:
         power_ratings = NBA_POWER_RATINGS
@@ -15985,7 +15985,19 @@ with tabs[2]:
                 {"label":"SPREAD",
                  "pick":(_g.get("SpreadPick") or
                          ("No Market" if _g.get("Spread","N/A") in ("N/A","",None)
-                          else _g.get("Spread","—"))),
+                          else (
+                              # Show which team covers: home team covers negative spread
+                              (_g.get("home","") + " " + str(_g.get("Spread",""))) if (
+                                  _g.get("home") and
+                                  str(_g.get("Spread","")).lstrip("+-").replace(".","").isdigit() and
+                                  float(str(_g.get("Spread","0")).replace("+","")) < 0
+                              ) else (
+                                  (_g.get("away","") + " " + str(_g.get("Spread",""))) if (
+                                      _g.get("away") and
+                                      str(_g.get("Spread","")).lstrip("+-").replace(".","").isdigit()
+                                  ) else _g.get("Spread","—")
+                              )
+                          ))),
                  "note": ("" if _g.get("SpreadPick") else
                           ("" if _g.get("Spread","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="SPREAD" for r in _g.get("recommendations",[]))
