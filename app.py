@@ -51,6 +51,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     adaptive_kelly_fraction, platt_calibrate_prob, time_decay_edge_factor,
     compute_game_exposure, covariance_haircut, _MAX_GAME_EXPOSURE,
     compute_signal_performance, get_adjusted_signal_weights,
+    validate_weight_update, classify_edge_type,
     EV_BEST_COMBOS, get_best_devig_combo,
     load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat,
     is_date_valid_for_today, find_player_avg, market_efficiency_score,
@@ -13411,6 +13412,18 @@ def load_sport_data(sport):
             prop["KellyCovHaircut"]    = _haircut
             prop["KellyCovNote"]       = _haircut_note
 
+        # ── Edge Type Classification ───────────────────────────────────────
+        # Classify every prop into Type A (Arbitrage), B (Alpha), or C (Noise)
+        # so the user knows WHY an edge exists and how to act on it.
+        _cons_gap  = abs(float(prop.get("ConsensusGap") or prop.get("LineGap") or 0))
+        _pinn_gap  = abs(float(prop.get("PinnacleGap") or prop.get("PnNovigGap") or 0))
+        _edge_type = classify_edge_type(prop, consensus_gap=_cons_gap, pinnacle_gap=_pinn_gap)
+        prop["EdgeType"]       = _edge_type["type"]
+        prop["EdgeTypeLabel"]  = _edge_type["label"]
+        prop["EdgeTypeAction"] = _edge_type["action"]
+        prop["EdgeTypeColor"]  = _edge_type["color"]
+        prop["EdgeTypeReason"] = _edge_type["reason"]
+
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
     for prop in enriched:
@@ -15530,6 +15543,7 @@ with tabs[1]:
                 "_dff_hr":     f"{_p.get('DFFHitRateL10',0):.0%}" if _p.get("DFFHitRateL10") else "",
                 "_dff_note":   _p.get("DFFPropNote",""),
                 "_risk":       _p.get("RiskLevel",""),
+                "_p":          _p,   # full prop dict for edge type badge and other display
                 "_mmq":        _p.get("MarketMoveQuality",0),
                 "_mins_stab":  _p.get("MinutesStability",""),
                 "_bq_score":   _bq,
@@ -15601,15 +15615,25 @@ with tabs[1]:
             _conf_color = "#22c55e" if _r.get("_conflict")=="ALIGNED" else "#e04040" if _r.get("_conflict")=="CONFLICTED" else "#e8a020"
             _rely_color = "#22c55e" if _r["_rel"] in ("4/4","3/4") else "var(--color-text-tertiary)"
             _gs = "15px" if _r["_grade"] in ("A+","A") else "13px"
+            # Edge type badge
+            _et      = _r.get("_p", {}).get("EdgeType", "")
+            _et_col  = _r.get("_p", {}).get("EdgeTypeColor", "#6a7a8a")
+            _et_lbl  = {"A": "ARB", "B": "α", "C": "~"}.get(_et, "?")
+            _et_html = (f'<span title="{_r.get("_p",{}).get("EdgeTypeLabel","")}: '
+                        f'{_r.get("_p",{}).get("EdgeTypeReason","")}" '
+                        f'style="background:{_et_col}22;color:{_et_col};font-size:9px;'
+                        f'font-weight:700;padding:2px 4px;border-radius:3px;">{_et_lbl}</span>'
+                        ) if _et else ""
             _row = (
                 f'<div style="display:grid;grid-template-columns:'
-                f'12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 55px 65px;'
+                f'12px 175px 55px 40px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 55px 65px;'
                 f'gap:3px;padding:6px 8px;background:{_bg};'
                 f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;">'
                 f'<span style="width:3px;height:30px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
                 f'<span style="font-weight:600;color:var(--color-text-primary);">{_r["_player"][:24]}</span>'
                 f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
                 f'padding:2px 5px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
+                f'{_et_html}'
                 f'<span style="color:var(--color-text-secondary);font-size:11px;">{_r["_prop"][:13]} {_r["_side"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-primary);font-weight:600;">{_r["_line"]}</span>'
                 f'<span style="text-align:center;font-size:{_gs};font-weight:800;color:{_gc};">{_r["_grade"]}</span>'

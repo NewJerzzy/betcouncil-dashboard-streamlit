@@ -846,7 +846,153 @@ def get_adjusted_signal_weights(base_weights: dict, history: list,
             adjusted[k] = round(adjusted[k] * norm_factor, 4)
         notes.append(f"Renormalized to preserve total weight sum ({orig_sum:.3f})")
 
+    # ── Backtest Gate ────────────────────────────────────────────────────
+    # Before committing the adjusted weights, run a shadow backtest to
+    # confirm they actually improve Brier score on the same history window.
+    # If the proposed weights are worse or within noise, revert to base.
+    _approved, _cur_bs, _prop_bs, _reason = validate_weight_update(
+        base_weights, adjusted, history, sport=sport, min_improvement=0.002
+    )
+    notes.append(f"Backtest gate: {_reason}")
+    if not _approved:
+        return base_weights.copy(), sig_perf, notes
+
     return adjusted, sig_perf, notes
+
+
+# ── Backtest Harness — Weight Update Gatekeeper ───────────────────────────
+# Wraps the signal weight adjustment in a validation gate. Before any proposed
+# weight update is applied, this runs a shadow backtest against the same
+# historical window using BOTH the current and proposed weights, and only
+# commits the update if the proposed weights produce a lower (better) Brier
+# score. This prevents the online learning loop from overfitting to a noisy
+# 7-30 day window and self-sabotaging the model.
+#
+# Without this gate: a bad stretch of 10 bets where "pace" signal happened
+# to be high could penalize pace weight, even though it's a real signal and
+# the losses were just variance. The gate requires the proposed weights to
+# demonstrate measurable improvement before being committed.
+
+def _shadow_brier(weights: dict, history: list, sport: str = None) -> float:
+    """
+    Run a shadow backtest using the given weights and return the Brier score.
+
+    For each resolved bet in history, re-computes what the model's probability
+    WOULD HAVE BEEN under the given weights (by re-weighting the stored signal
+    contributions), then computes Brier score against actual outcomes.
+
+    This is a lightweight simulation — it doesn't re-run the full model, it
+    re-weights the stored per-signal scores to approximate what the model would
+    have output under different weights.
+
+    Args:
+        weights: Signal weight dict to evaluate (same structure as SPORT_SIGNAL_WEIGHTS)
+        history: Bet history with per-signal scores and outcomes
+        sport:   Optional sport filter
+
+    Returns:
+        Brier score (float, lower is better). Returns 0.25 (coin-flip baseline)
+        when insufficient data.
+    """
+    resolved = [
+        h for h in history
+        if h.get("outcome") in ("WIN", "LOSS")
+        and h.get("prob") is not None
+        and (sport is None or h.get("sport") == sport)
+    ]
+    if len(resolved) < 20:
+        return 0.25   # baseline — insufficient data
+
+    sig_keys = ["base", "defense", "location", "rest", "pace", "usage", "blowout"]
+    scores = []
+    for r in resolved:
+        # Extract per-signal contribution scores stored on the bet
+        sig_scores = {}
+        for sig in sig_keys:
+            raw = r.get(f"Signal{sig.capitalize()}") or r.get(f"signal_{sig}") or 0
+            try:
+                sig_scores[sig] = float(raw)
+            except (ValueError, TypeError):
+                sig_scores[sig] = 0.0
+
+        # Re-weight the signals under proposed weights
+        raw_prob_str = r.get("prob", 0.5)
+        try:
+            base_p = float(str(raw_prob_str).replace("%","")) / (
+                100 if "%" in str(raw_prob_str) else 1)
+            base_p = max(0.01, min(0.99, base_p))
+        except (ValueError, TypeError):
+            base_p = 0.5
+
+        # Compute weighted signal delta under proposed weights
+        total_w   = sum(weights.get(s, 0) for s in sig_keys if s != "usage")
+        sig_delta = sum(
+            sig_scores[s] * weights.get(s, 0)
+            for s in sig_keys if s != "usage" and total_w > 0
+        ) / (total_w if total_w > 0 else 1)
+
+        # Map signal delta to probability shift (clamp to reasonable range)
+        proposed_p = max(0.01, min(0.99, base_p + sig_delta * 0.15))
+
+        y = 1.0 if r["outcome"] == "WIN" else 0.0
+        scores.append((proposed_p - y) ** 2)
+
+    if not scores:
+        return 0.25
+    return round(sum(scores) / len(scores), 4)
+
+
+def validate_weight_update(current_weights: dict, proposed_weights: dict,
+                            history: list, sport: str = None,
+                            min_improvement: float = 0.002) -> tuple:
+    """
+    Backtest gatekeeper: only approves a proposed weight update if it
+    demonstrably improves Brier score over the same historical window.
+
+    Logic:
+    1. Run shadow backtest with current_weights → current_brier
+    2. Run shadow backtest with proposed_weights → proposed_brier
+    3. Gate: approve only if proposed_brier < current_brier - min_improvement
+
+    The min_improvement threshold (default 0.002) prevents approving updates
+    that are within noise — a 0.2% Brier improvement in a 30-bet window is
+    not statistically meaningful. Requiring a minimum delta ensures the update
+    reflects genuine signal, not sampling variance.
+
+    Args:
+        current_weights:  Current SPORT_SIGNAL_WEIGHTS for this sport
+        proposed_weights: Output of get_adjusted_signal_weights()
+        history:          Bet history for the shadow backtest
+        sport:            Sport key for filtering
+        min_improvement:  Minimum Brier reduction required to approve (default 0.002)
+
+    Returns:
+        (approved, current_brier, proposed_brier, reason)
+        approved:        True if update should be committed
+        current_brier:   Brier score under current weights
+        proposed_brier:  Brier score under proposed weights
+        reason:          Human-readable explanation for display
+    """
+    current_brier  = _shadow_brier(current_weights,  history, sport)
+    proposed_brier = _shadow_brier(proposed_weights, history, sport)
+    improvement    = current_brier - proposed_brier
+
+    if current_brier == 0.25 and proposed_brier == 0.25:
+        return False, current_brier, proposed_brier, \
+               "Insufficient history for backtest validation — keeping current weights"
+
+    if improvement >= min_improvement:
+        return True, current_brier, proposed_brier, \
+               (f"✅ APPROVED: proposed BS {proposed_brier:.4f} vs current {current_brier:.4f} "
+                f"(improvement {improvement:.4f} ≥ threshold {min_improvement:.4f})")
+    elif improvement > 0:
+        return False, current_brier, proposed_brier, \
+               (f"⚠️ REJECTED: improvement {improvement:.4f} below threshold {min_improvement:.4f} "
+                f"(noise, not signal) — keeping current weights")
+    else:
+        return False, current_brier, proposed_brier, \
+               (f"❌ REJECTED: proposed weights WORSE by {-improvement:.4f} "
+                f"(proposed BS {proposed_brier:.4f} vs current {current_brier:.4f}) — reverting")
 
 
 def adaptive_kelly_fraction(base_fraction: float, history: list,
@@ -1124,7 +1270,146 @@ def time_decay_edge_factor(edge: float, minutes_to_lock: float = None,
     }
 
 
-def compute_calibration_zscore(history) -> dict:
+# ── Edge Decomposition Matrix — Type A / B / C Classifier ────────────────
+# Classifies every pick by the PRIMARY SOURCE of its edge. This is the
+# structural upgrade from "I have an edge" to "I know WHY I have an edge"
+# and therefore how to size and act on it.
+#
+# Type A (Arbitrage / Latency):
+#   The line difference exists because a book is SLOW — they haven't updated
+#   after news (injury, lineup change, weather). The edge is pure market
+#   inefficiency, not model insight. Best action: bet max (subject to
+#   covariance haircut) before the book catches up.
+#   Indicators: large consensus divergence + neutral/zero base signal +
+#               sharp book and slow book showing >1.0pt gap
+#
+# Type B (Alpha / Model Insight):
+#   The market is efficient (consensus is tight), but your model sees value
+#   that the market doesn't — driven by deep signal (recent performance,
+#   usage boost, defense mismatch). Best action: adaptive Kelly stake.
+#   Indicators: strong SignalBase or SignalUsage + consensus is tight +
+#               edge > 4% with model probability > market probability
+#
+# Type C (Noise / Correlation):
+#   The edge is too thin, driven by minor signal fluctuations, or disappears
+#   when covariance exposure is accounted for. Best action: skip or hedge.
+#   Indicators: edge < 1.5%, OR covariance haircut drops stake below minimum,
+#               OR edge is driven only by low-reliability signals
+
+_TYPE_A_MIN_CONSENSUS_GAP = 1.0   # pts difference between sharp and slow book
+_TYPE_A_MAX_BASE_SIGNAL   = 0.04  # base signal must be near-neutral for pure arb
+_TYPE_B_MIN_EDGE          = 0.04  # 4% edge minimum for Alpha classification
+_TYPE_B_MIN_SIGNAL        = 0.05  # base or usage signal strength
+_TYPE_C_MAX_EDGE          = 0.015 # below this = noise
+_TYPE_C_MIN_KELLY         = 0.005 # below this = covariance killed the stake
+
+
+def classify_edge_type(prop: dict, consensus_gap: float = 0.0,
+                        pinnacle_gap: float = 0.0) -> dict:
+    """
+    Classify the pick into Type A (Arbitrage), Type B (Alpha), or Type C (Noise).
+
+    Args:
+        prop:           Enriched prop dict with all signal scores and Kelly
+        consensus_gap:  Spread between sharpest book and slowest book on this line
+        pinnacle_gap:   How far this prop's line is from Pinnacle's price
+
+    Returns:
+        {
+          "type":        "A" | "B" | "C",
+          "label":       Human-readable label
+          "action":      Recommended action string
+          "color":       Display color hex
+          "reason":      Primary reason for classification
+          "confidence":  float 0-1 (how strongly this type was detected)
+        }
+    """
+    edge         = abs(float(prop.get("Edge", 0) or 0))
+    base_signal  = abs(float(prop.get("SignalBase", 0) or 0))
+    usage_signal = abs(float(prop.get("SignalUsage", 0) or 0))
+    defense_sig  = abs(float(prop.get("SignalDefense", 0) or 0))
+    kelly_final  = float(prop.get("KellyAdvisedPct", 0) or 0)
+    haircut      = float(prop.get("KellyCovHaircut", 1.0) or 1.0)
+    has_sharp    = bool(prop.get("EVSharpMove") or prop.get("EVSteamFlag"))
+
+    # ── Type C: Noise / Correlation — check first (fastest exit) ─────────
+    if edge < _TYPE_C_MAX_EDGE:
+        return {
+            "type":       "C",
+            "label":      "Type C — Noise",
+            "action":     "SKIP",
+            "color":      "#6a7a8a",
+            "reason":     f"Edge {edge:.1%} below noise floor {_TYPE_C_MAX_EDGE:.1%}",
+            "confidence": 0.9,
+        }
+    if kelly_final < _TYPE_C_MIN_KELLY and haircut < 0.6:
+        return {
+            "type":       "C",
+            "label":      "Type C — Correlation Killed",
+            "action":     "SKIP or HEDGE",
+            "color":      "#6a7a8a",
+            "reason":     f"Covariance haircut {haircut:.0%} reduced stake below minimum",
+            "confidence": 0.85,
+        }
+
+    # ── Type A: Arbitrage / Latency ───────────────────────────────────────
+    # Book is slow; model's base signal is neutral (we're not predicting anything,
+    # we're just capturing a market inefficiency before it closes)
+    _a_score = 0.0
+    if consensus_gap >= _TYPE_A_MIN_CONSENSUS_GAP:
+        _a_score += 0.4
+    if pinnacle_gap >= 0.5:
+        _a_score += 0.3
+    if base_signal <= _TYPE_A_MAX_BASE_SIGNAL:
+        _a_score += 0.2
+    if has_sharp:
+        _a_score += 0.1
+
+    # ── Type B: Alpha / Model Insight ─────────────────────────────────────
+    _b_score = 0.0
+    if edge >= _TYPE_B_MIN_EDGE:
+        _b_score += 0.3
+    if base_signal >= _TYPE_B_MIN_SIGNAL:
+        _b_score += 0.3
+    if usage_signal >= _TYPE_B_MIN_SIGNAL:
+        _b_score += 0.2
+    if defense_sig >= _TYPE_B_MIN_SIGNAL:
+        _b_score += 0.1
+    if consensus_gap < _TYPE_A_MIN_CONSENSUS_GAP:
+        _b_score += 0.1   # market is tight = alpha is model-derived, not latency
+
+    if _a_score >= _b_score and _a_score >= 0.4:
+        return {
+            "type":       "A",
+            "label":      "Type A — Arbitrage",
+            "action":     "BET MAX (within haircut)",
+            "color":      "#22c55e",
+            "reason":     f"Line gap {consensus_gap:.1f}pts + neutral base signal — book is slow",
+            "confidence": round(min(_a_score, 1.0), 2),
+        }
+    elif _b_score >= 0.4:
+        return {
+            "type":       "B",
+            "label":      "Type B — Alpha",
+            "action":     "ADAPTIVE KELLY",
+            "color":      "#378add",
+            "reason":     (f"Model edge driven by base={base_signal:.2f} / "
+                           f"usage={usage_signal:.2f} — market consensus is tight"),
+            "confidence": round(min(_b_score, 1.0), 2),
+        }
+    else:
+        # Neither A nor B is strongly detected — classify as C
+        return {
+            "type":       "C",
+            "label":      "Type C — Mixed/Uncertain",
+            "action":     "LEAN only (quarter Kelly)",
+            "color":      "#e8a020",
+            "reason":     f"Edge {edge:.1%} present but source unclear (A={_a_score:.2f}, B={_b_score:.2f})",
+            "confidence": round(max(_a_score, _b_score), 2),
+        }
+
+
+
     """
     Z-score of model predictions vs closing market (Pinnacle no-vig).
     Z > 2.0 = model significantly overestimates edge (danger)
