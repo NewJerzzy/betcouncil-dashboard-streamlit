@@ -1409,7 +1409,7 @@ def classify_edge_type(prop: dict, consensus_gap: float = 0.0,
         }
 
 
-
+def compute_calibration_zscore(history) -> dict:
     """
     Z-score of model predictions vs closing market (Pinnacle no-vig).
     Z > 2.0 = model significantly overestimates edge (danger)
