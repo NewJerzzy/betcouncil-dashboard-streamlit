@@ -558,6 +558,16 @@ elif not GITHUB_TOKEN:
     )
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
+# ── Global Kill Switch ───────────────────────────────────────────────────────
+# Set ENABLE_RECOMMENDATIONS=false in Streamlit Cloud secrets to immediately
+# suppress all board recommendations, edge calculations, and pick output.
+# The app remains fully operational (data fetches, history, system tab all work)
+# but the board returns no picks and shows a maintenance banner instead.
+# Use this if the model behaves erratically or you need an emergency hard stop.
+# Default: True (recommendations enabled) when secret is missing or any truthy value.
+_er_raw = st.secrets.get("ENABLE_RECOMMENDATIONS", "true")
+ENABLE_RECOMMENDATIONS = str(_er_raw).lower() not in ("false", "0", "off", "no", "disabled")
+
 # OddsPapi constants
 ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
 PARLAY_API_KEY = st.secrets.get("PARLAY_API_KEY", "")
@@ -10567,7 +10577,18 @@ def check_prediction_stability(board, sport):
 
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
-    # ── NFL: auto-build player DB + live baselines on first weekly load ────
+    # ── Kill Switch ───────────────────────────────────────────────────────
+    # If ENABLE_RECOMMENDATIONS is False in Streamlit secrets, suppress all
+    # pick generation and return an empty board immediately. Data fetches,
+    # history, system tab, and all other non-pick functionality still work.
+    if not ENABLE_RECOMMENDATIONS:
+        st.warning(
+            "🔴 **Recommendations disabled.** Set `ENABLE_RECOMMENDATIONS = true` in "
+            "Streamlit Cloud secrets (Settings → Secrets) to re-enable the board. "
+            "All historical data, system monitoring, and logging remain active.",
+            icon="🛑"
+        )
+        return [], [], 0, 0, [], []
     if sport == "NFL":
         _nfl_db_path = os.path.join(CACHE_DIR, "nfl_player_db.pkl")
         _db_stale = not os.path.exists(_nfl_db_path) or (time.time() - os.path.getmtime(_nfl_db_path))/86400 > 7
@@ -20968,6 +20989,12 @@ with tabs[9]:
         st.info("Add FIRECRAWL_KEY to Streamlit secrets to enable Covers public betting consensus data.")
 
     st.markdown("---")
+    # ── Kill Switch Status ────────────────────────────────────────────────
+    if not ENABLE_RECOMMENDATIONS:
+        st.error("🔴 **KILL SWITCH ACTIVE** — Recommendations suppressed. Set `ENABLE_RECOMMENDATIONS = true` in Streamlit secrets to re-enable.", icon="🛑")
+    else:
+        st.success("🟢 **System Active** — Recommendations enabled. Set `ENABLE_RECOMMENDATIONS = false` in secrets for emergency stop.", icon="✅")
+
     st.markdown("### ⚡ Network Health — Circuit Breakers & Fetch Timings")
     st.caption("Tripped circuits are skipped instantly rather than burning the full timeout. Auto-reset after 60s.")
 
