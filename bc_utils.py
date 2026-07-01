@@ -1483,6 +1483,7 @@ def mc_simulate_game(lambda_home: float, lambda_away: float,
     draws = 0
     total_sims = 0
     previous_win_pct = -1.0
+    import numpy as np
     is_soccer = abs(lambda_home - 1.35) < 1.5 and abs(lambda_away - 1.35) < 1.5 \
                 and lambda_home < 4.0 and lambda_away < 4.0
 
