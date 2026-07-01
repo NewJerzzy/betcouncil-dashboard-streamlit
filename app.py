@@ -5921,7 +5921,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         pass
 
     # Normalize abbreviations to full names for power rating lookups
-    _PR_MAP = {
+    _PR_MAP_MLB = {
         "ARI":"Arizona Diamondbacks","ATL":"Atlanta Braves","BAL":"Baltimore Orioles",
         "BOS":"Boston Red Sox","CHC":"Chicago Cubs","CWS":"Chicago White Sox",
         "CIN":"Cincinnati Reds","CLE":"Cleveland Guardians","COL":"Colorado Rockies",
@@ -5933,7 +5933,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         "SEA":"Seattle Mariners","SF":"San Francisco Giants","STL":"St. Louis Cardinals",
         "TB":"Tampa Bay Rays","TEX":"Texas Rangers","TOR":"Toronto Blue Jays",
         "WSH":"Washington Nationals",
-        # NHL abbreviations
+    }
+    _PR_MAP_NHL = {
         "TOR":"Toronto Maple Leafs","BOS":"Boston Bruins","TBL":"Tampa Bay Lightning",
         "FLA":"Florida Panthers","MTL":"Montreal Canadiens","BUF":"Buffalo Sabres",
         "OTT":"Ottawa Senators","PIT":"Pittsburgh Penguins","PHI":"Philadelphia Flyers",
@@ -5944,8 +5945,45 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         "VGK":"Vegas Golden Knights","LAK":"Los Angeles Kings","ANA":"Anaheim Ducks",
         "SJS":"San Jose Sharks","SEA":"Seattle Kraken","VAN":"Vancouver Canucks",
         "CGY":"Calgary Flames","EDM":"Edmonton Oilers","STL":"St. Louis Blues",
-        "DET":"Detroit Red Wings",
+        "DET":"Detroit Red Wings","ATL":"Atlanta Thrashers",
     }
+    _PR_MAP_NBA = {
+        "GSW":"Golden State Warriors","LAL":"Los Angeles Lakers","LAC":"Los Angeles Clippers",
+        "NYK":"New York Knicks","NOP":"New Orleans Pelicans","SAS":"San Antonio Spurs",
+        "OKC":"Oklahoma City Thunder","UTA":"Utah Jazz","MEM":"Memphis Grizzlies",
+        "BKN":"Brooklyn Nets","MIA":"Miami Heat","BOS":"Boston Celtics",
+        "PHI":"Philadelphia 76ers","TOR":"Toronto Raptors","CHI":"Chicago Bulls",
+        "MIL":"Milwaukee Bucks","IND":"Indiana Pacers","ATL":"Atlanta Hawks",
+        "CLE":"Cleveland Cavaliers","DET":"Detroit Pistons","ORL":"Orlando Magic",
+        "WAS":"Washington Wizards","CHA":"Charlotte Hornets","PHX":"Phoenix Suns",
+        "DAL":"Dallas Mavericks","DEN":"Denver Nuggets","MIN":"Minnesota Timberwolves",
+        "POR":"Portland Trail Blazers","SAC":"Sacramento Kings","HOU":"Houston Rockets",
+    }
+    _PR_MAP_NFL = {
+        "NE":"New England Patriots","NO":"New Orleans Saints","GB":"Green Bay Packers",
+        "LAR":"Los Angeles Rams","NYG":"New York Giants","NYJ":"New York Jets",
+        "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers","KC":"Kansas City Chiefs",
+        "LAC":"Los Angeles Chargers","MIA":"Miami Dolphins","BUF":"Buffalo Bills",
+        "BAL":"Baltimore Ravens","CIN":"Cincinnati Bengals","CLE":"Cleveland Browns",
+        "PIT":"Pittsburgh Steelers","HOU":"Houston Texans","IND":"Indianapolis Colts",
+        "JAX":"Jacksonville Jaguars","TEN":"Tennessee Titans","DEN":"Denver Broncos",
+        "LV":"Las Vegas Raiders","SEA":"Seattle Seahawks","ARI":"Arizona Cardinals",
+        "ATL":"Atlanta Falcons","CAR":"Carolina Panthers","CHI":"Chicago Bears",
+        "DAL":"Dallas Cowboys","DET":"Detroit Lions","MIN":"Minnesota Vikings",
+        "PHI":"Philadelphia Eagles","WAS":"Washington Commanders","NYG":"New York Giants",
+    }
+    _PR_MAP_WNBA = {
+        "ATL":"Atlanta Dream","CHI":"Chicago Sky","CON":"Connecticut Sun",
+        "DAL":"Dallas Wings","IND":"Indiana Fever","LV":"Las Vegas Aces",
+        "LA":"Los Angeles Sparks","MIN":"Minnesota Lynx","NY":"New York Liberty",
+        "PHX":"Phoenix Mercury","SEA":"Seattle Storm","WAS":"Washington Mystics",
+        "GS":"Golden State Valkyries","POR":"Portland Fire",
+    }
+    _sport_pr_maps = {
+        "MLB": _PR_MAP_MLB, "NHL": _PR_MAP_NHL, "NBA": _PR_MAP_NBA,
+        "NFL": _PR_MAP_NFL, "WNBA": _PR_MAP_WNBA,
+    }
+    _PR_MAP = _sport_pr_maps.get(sport, _PR_MAP_MLB)
     home_full = _PR_MAP.get(home_team, home_team)
     away_full = _PR_MAP.get(away_team, away_team)
     recommendations = []
