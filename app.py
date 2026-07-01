@@ -10906,7 +10906,7 @@ def load_sport_data(sport):
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
     ]
-    _results = _fetch_parallel(_parallel_fns, show_progress=True)
+    _results = _fetch_parallel(_parallel_fns, show_progress=False)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
