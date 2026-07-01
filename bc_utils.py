@@ -566,6 +566,289 @@ def compute_brier_score(history) -> dict:
     }
 
 
+# ── Game-Exposure Covariance Matrix & Correlation Haircut ─────────────────
+# Vegas desks are hyper-aware of portfolio correlation. If you have three
+# bets tied to the same game (e.g., team total OVER + leading scorer OVER +
+# game spread), your real risk isn't the sum of individual Kelly stakes —
+# it's the combined variance. This module implements a covariance-adjusted
+# Kelly haircut for over-concentrated same-game exposure.
+
+_SAME_GAME_CORR   = 0.55   # correlation between props on the same game
+_SAME_TEAM_CORR   = 0.40   # correlation between props on the same team
+_SAME_SPORT_CORR  = 0.10   # baseline cross-game same-sport correlation
+_MAX_GAME_EXPOSURE = 0.30  # max fraction of bankroll on a single game
+
+def compute_game_exposure(open_bets: list) -> dict:
+    """
+    Compute total exposure per game across all open bets.
+
+    Args:
+        open_bets: List of open bet dicts, each with:
+                   {kelly_pct, bankroll, matchup, team, player, sport}
+
+    Returns:
+        {
+          "by_game":   {matchup: total_exposure_fraction},
+          "by_team":   {team: total_exposure_fraction},
+          "max_game":  float,   # highest single-game exposure
+          "over_limit": bool,   # any game over _MAX_GAME_EXPOSURE
+        }
+    """
+    by_game = {}
+    by_team = {}
+
+    for bet in (open_bets or []):
+        matchup  = bet.get("matchup") or bet.get("Matchup") or "UNKNOWN"
+        team     = bet.get("team")    or bet.get("Team")    or ""
+        kelly    = float(bet.get("kelly_pct") or bet.get("KellyAdvisedPct") or 0)
+
+        by_game[matchup] = by_game.get(matchup, 0.0) + kelly
+        if team:
+            by_team[team] = by_team.get(team, 0.0) + kelly
+
+    max_game = max(by_game.values(), default=0.0)
+    return {
+        "by_game":    by_game,
+        "by_team":    by_team,
+        "max_game":   round(max_game, 4),
+        "over_limit": max_game > _MAX_GAME_EXPOSURE,
+    }
+
+
+def covariance_haircut(base_kelly: float, matchup: str, team: str,
+                        open_bets: list) -> tuple:
+    """
+    Apply a correlation-adjusted haircut to Kelly stake when the portfolio
+    already has significant exposure to the same game or team.
+
+    The haircut is proportional to existing game exposure:
+    - No existing exposure → no haircut (1.0x)
+    - At _MAX_GAME_EXPOSURE → maximum haircut (0.3x)
+    - Scales linearly between, with steeper reduction for same-team bets
+
+    Args:
+        base_kelly:  Proposed Kelly fraction before haircut
+        matchup:     Game identifier (e.g. "LAL @ GSW")
+        team:        Team the bet is primarily on (for tighter correlation)
+        open_bets:   Currently open/pending bets in the portfolio
+
+    Returns:
+        (adjusted_kelly, haircut_factor, note)
+        note explains the haircut reason for display
+    """
+    if not open_bets:
+        return base_kelly, 1.0, ""
+
+    exposure = compute_game_exposure(open_bets)
+    game_exp = exposure["by_game"].get(matchup, 0.0)
+    team_exp = exposure["by_team"].get(team, 0.0) if team else 0.0
+
+    # No existing exposure on this game
+    if game_exp <= 0 and team_exp <= 0:
+        return base_kelly, 1.0, ""
+
+    # Compute correlation penalty:
+    # Same-team exposure uses higher correlation (0.40 vs 0.55 for game)
+    # because team-level props share more underlying drivers
+    _game_penalty = min(1.0, game_exp / _MAX_GAME_EXPOSURE) * _SAME_GAME_CORR
+    _team_penalty = min(1.0, team_exp / _MAX_GAME_EXPOSURE) * _SAME_TEAM_CORR
+
+    # Combined haircut: take max of game and team penalties (don't double-count)
+    penalty     = max(_game_penalty, _team_penalty)
+    haircut     = max(0.25, 1.0 - penalty)   # floor at 0.25x (never zero)
+    adjusted    = round(base_kelly * haircut, 4)
+
+    if penalty > 0.30:
+        note = f"⚠️ CORR HAIRCUT {haircut:.0%}: game exposure {game_exp:.0%} → throttled"
+    elif penalty > 0.10:
+        note = f"↓ Corr haircut {haircut:.0%}: moderate game exposure {game_exp:.0%}"
+    else:
+        note = ""
+
+    return adjusted, round(haircut, 3), note
+
+
+# ── Online Signal Weight Adjustment (Feature Importance Monitoring) ────────
+# Elite models don't use static signal weights. This module back-propagates
+# Brier score performance per signal to automatically adjust weights when a
+# signal becomes noisy or loses predictive power.
+#
+# Method: For each resolved bet in history, check which signals were "high"
+# (above their median absolute value) and whether the bet was correct. Signals
+# that consistently fire on WRONG predictions get their weight penalized for
+# the next N days. Signals that fire on CORRECT predictions get a small boost.
+#
+# This is a simplified version of the feature importance feedback loop used
+# by professional quantitative desks.
+
+_SIGNAL_KEYS = ["base", "defense", "location", "rest", "pace", "usage", "blowout"]
+_SIGNAL_PENALTY_WINDOW = 7    # days to apply penalty
+_SIGNAL_PENALTY_FACTOR = 0.85 # weight multiplier when signal is underperforming
+_SIGNAL_BOOST_FACTOR   = 1.08 # weight multiplier when signal is over-performing
+_MIN_SIGNAL_BETS       = 15   # minimum bets per signal before adjusting
+
+def compute_signal_performance(history: list, window_days: int = 30) -> dict:
+    """
+    Measure per-signal Brier score contribution over a rolling window.
+
+    For each signal key, splits bets into "signal high" vs "signal low" groups
+    and computes the win rate for each, revealing which signals are actually
+    adding predictive value vs noise.
+
+    Returns:
+        {
+          signal_key: {
+            "win_rate_high":  float,  # win rate when signal was strong
+            "win_rate_low":   float,  # win rate when signal was weak/absent
+            "lift":           float,  # win_rate_high - win_rate_low (positive = useful)
+            "n_high":         int,    # sample size for high-signal group
+            "n_low":          int,
+            "is_useful":      bool,   # lift > 0.03 with sufficient n
+            "penalty_factor": float,  # recommended weight adjustment
+          }
+        }
+    """
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.now() - timedelta(days=window_days)
+    resolved = [
+        h for h in history
+        if h.get("outcome") in ("WIN", "LOSS")
+        and h.get("timestamp")
+    ]
+
+    # Filter to window
+    def _parse_dt(ts):
+        try:
+            return datetime.fromisoformat(str(ts)[:19])
+        except Exception:
+            return datetime.min
+
+    windowed = [h for h in resolved if _parse_dt(h.get("timestamp","")) >= cutoff]
+    if len(windowed) < _MIN_SIGNAL_BETS:
+        return {}
+
+    result = {}
+    for sig in _SIGNAL_KEYS:
+        sig_key = f"Signal{sig.capitalize()}"
+        values = []
+        for h in windowed:
+            v = h.get(sig_key) or h.get(f"signal_{sig}") or 0
+            try:
+                values.append(float(v))
+            except (ValueError, TypeError):
+                values.append(0.0)
+
+        if not values or all(v == 0 for v in values):
+            continue
+
+        # Split into high/low based on median absolute value
+        median_abs = sorted(abs(v) for v in values)[len(values) // 2]
+        high_wins = low_wins = high_n = low_n = 0
+
+        for h, v in zip(windowed, values):
+            is_win = h["outcome"] == "WIN"
+            if abs(v) >= median_abs:
+                high_n   += 1
+                high_wins += int(is_win)
+            else:
+                low_n   += 1
+                low_wins += int(is_win)
+
+        if high_n < 5 or low_n < 5:
+            continue
+
+        wr_high = high_wins / high_n
+        wr_low  = low_wins  / low_n
+        lift    = wr_high - wr_low
+
+        # Determine adjustment factor
+        if lift >= 0.05 and high_n >= _MIN_SIGNAL_BETS:
+            factor = _SIGNAL_BOOST_FACTOR   # signal is adding value
+            useful = True
+        elif lift <= -0.03 and high_n >= _MIN_SIGNAL_BETS:
+            factor = _SIGNAL_PENALTY_FACTOR  # signal is adding noise
+            useful = False
+        else:
+            factor = 1.0    # neutral — don't adjust
+            useful = lift > 0.01
+
+        result[sig] = {
+            "win_rate_high":  round(wr_high, 4),
+            "win_rate_low":   round(wr_low, 4),
+            "lift":           round(lift, 4),
+            "n_high":         high_n,
+            "n_low":          low_n,
+            "is_useful":      useful,
+            "penalty_factor": round(factor, 4),
+        }
+
+    return result
+
+
+def get_adjusted_signal_weights(base_weights: dict, history: list,
+                                  sport: str = "NBA",
+                                  window_days: int = 30) -> tuple:
+    """
+    Return dynamically-adjusted signal weights based on recent performance.
+
+    Starts from the hardcoded base weights in SPORT_SIGNAL_WEIGHTS and applies
+    per-signal performance adjustments derived from compute_signal_performance().
+    Weights are renormalized after adjustment so they sum to the same total
+    as the original (preserving the model's overall scale).
+
+    Args:
+        base_weights: Dict of {signal: weight} from SPORT_SIGNAL_WEIGHTS
+        history:      Bet history for signal performance measurement
+        sport:        Sport key (for display/logging only)
+        window_days:  Rolling window for signal performance measurement
+
+    Returns:
+        (adjusted_weights, signal_perf, adjustment_notes)
+        adjusted_weights:  {signal: adjusted_weight}
+        signal_perf:       raw compute_signal_performance() output
+        adjustment_notes:  list of human-readable adjustment descriptions
+    """
+    sig_perf = compute_signal_performance(history, window_days=window_days)
+    if not sig_perf:
+        return base_weights.copy(), {}, ["Insufficient data — using hardcoded weights"]
+
+    adjusted = base_weights.copy()
+    notes    = []
+    changed  = False
+
+    for sig, perf in sig_perf.items():
+        if sig not in adjusted:
+            continue
+        factor = perf["penalty_factor"]
+        if factor == 1.0:
+            continue
+        old_w = adjusted[sig]
+        new_w = round(old_w * factor, 4)
+        adjusted[sig] = new_w
+        changed = True
+        direction = "⬆️ BOOSTED" if factor > 1 else "⬇️ PENALIZED"
+        notes.append(
+            f"{direction} {sig}: {old_w:.3f} → {new_w:.3f} "
+            f"(lift={perf['lift']:+.3f}, n={perf['n_high']})"
+        )
+
+    if not changed:
+        return base_weights.copy(), sig_perf, ["All signals performing normally — no adjustments"]
+
+    # Renormalize the adjustable weights (exclude usage which is a multiplier, not additive)
+    _additive_keys = [k for k in adjusted if k != "usage"]
+    orig_sum  = sum(base_weights.get(k, 0) for k in _additive_keys)
+    adj_sum   = sum(adjusted.get(k, 0)     for k in _additive_keys)
+    if adj_sum > 0 and orig_sum > 0:
+        norm_factor = orig_sum / adj_sum
+        for k in _additive_keys:
+            adjusted[k] = round(adjusted[k] * norm_factor, 4)
+        notes.append(f"Renormalized to preserve total weight sum ({orig_sum:.3f})")
+
+    return adjusted, sig_perf, notes
+
+
 def adaptive_kelly_fraction(base_fraction: float, history: list,
                              sport: str = None, market: str = None,
                              min_fraction: float = 0.05,

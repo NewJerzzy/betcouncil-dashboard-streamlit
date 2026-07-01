@@ -49,6 +49,8 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     devig_best, compute_clv, compute_clv_novig,
     kelly_with_edge_decay, compute_brier_score, compute_calibration_zscore,
     adaptive_kelly_fraction, platt_calibrate_prob, time_decay_edge_factor,
+    compute_game_exposure, covariance_haircut, _MAX_GAME_EXPOSURE,
+    compute_signal_performance, get_adjusted_signal_weights,
     EV_BEST_COMBOS, get_best_devig_combo,
     load_json_data, detect_season_regime, format_rlm_display, track_closing_line_beat,
     is_date_valid_for_today, find_player_avg, market_efficiency_score,
@@ -5248,6 +5250,12 @@ def compute_optimized_weights(sport):
         "signal_sharp_flag":       "pace",   # sharp money correlates with pace/volume bets
     }
     base_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]).copy()
+    # Apply online feature importance adjustment from Brier feedback
+    _history_for_weights = st.session_state.get("history", [])
+    if len(_history_for_weights) >= 15:
+        base_weights, _, _ = get_adjusted_signal_weights(
+            base_weights, _history_for_weights, sport=sport, window_days=30
+        )
     lifts = {}
     for signal_key, weight_key in signal_to_weight.items():
         with_signal = [r for r in sport_data if r.get(signal_key, 0) == 1]
@@ -9661,9 +9669,18 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
             sport_optimizer = from_optimizer.get(sport, {})
             if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
-                st.session_state[_cache_key] = sport_optimizer["weights"]
+                _base_w = sport_optimizer["weights"]
             else:
-                st.session_state[_cache_key] = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+                _base_w = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+            # Apply online feature importance adjustment
+            _hist_for_adj = st.session_state.get("history", [])
+            if len(_hist_for_adj) >= 15:
+                _adj_w, _, _ = get_adjusted_signal_weights(
+                    dict(_base_w), _hist_for_adj, sport=sport, window_days=30
+                )
+                st.session_state[_cache_key] = _adj_w
+            else:
+                st.session_state[_cache_key] = dict(_base_w)
         weights = st.session_state[_cache_key]
     if stat_key in ["HR", "GOALS"]:
         # ── S1 MLB HR: Platoon-stabilized Poisson ─────────────────────
@@ -13379,6 +13396,21 @@ def load_sport_data(sport):
         prop["KellyAdvisedPct"]     = _kelly_pct if _kelly_pct >= KELLY_MIN else 0.0
         prop["KellyEffectiveEdge"]  = round(_eff_edge, 4)
 
+        # ── Covariance Haircut ─────────────────────────────────────────────
+        # Apply correlation-adjusted reduction when portfolio already has
+        # significant exposure to the same game or team, preventing the
+        # combined variance from exceeding single-game risk limits.
+        if _kelly_pct >= KELLY_MIN:
+            _open_bets = st.session_state.get("open_bets", [])
+            _matchup   = prop.get("Matchup") or prop.get("matchup") or ""
+            _team      = prop.get("Team") or prop.get("Opponent") or ""
+            _adj_kelly, _haircut, _haircut_note = covariance_haircut(
+                _kelly_pct, _matchup, _team, _open_bets
+            )
+            prop["KellyAdvisedPct"]    = _adj_kelly if _adj_kelly >= KELLY_MIN else 0.0
+            prop["KellyCovHaircut"]    = _haircut
+            prop["KellyCovNote"]       = _haircut_note
+
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
     for prop in enriched:
@@ -16705,6 +16737,49 @@ with tabs[4]:
                         f'</div>', unsafe_allow_html=True
                     )
             st.markdown("---")
+
+            # ── Online Signal Performance Monitoring ─────────────────────
+            _sig_perf = compute_signal_performance(
+                st.session_state.get("history", []), window_days=30
+            )
+            if _sig_perf:
+                st.markdown("**Signal Feature Importance — L30 Days**")
+                st.caption("Signals with negative lift are being auto-penalized in weight. Positive lift = boosted.")
+                _sig_cols = st.columns(min(len(_sig_perf), 7))
+                for _si, (_sig, _sp) in enumerate(sorted(_sig_perf.items(),
+                                                          key=lambda x: -abs(x[1]["lift"]))):
+                    if _si >= 7: break
+                    _lift      = _sp["lift"]
+                    _factor    = _sp["penalty_factor"]
+                    _useful    = _sp["is_useful"]
+                    _sc        = "#22c55e" if _useful and _lift > 0.03 else ("#e04040" if not _useful else "#e8a020")
+                    _icon      = "✅" if _factor > 1 else ("⚠️" if _factor < 1 else "➖")
+                    _sig_cols[_si].markdown(
+                        f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:8px;text-align:center;">'
+                        f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">{_sig}</div>'
+                        f'<div style="font-size:16px;font-weight:700;color:{_sc}">{_lift:+.3f}</div>'
+                        f'<div style="font-size:11px;color:{_sc}">{_icon} {_factor:.2f}x wt</div>'
+                        f'<div style="font-size:9px;color:#6a7a8a">n={_sp["n_high"]}</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+            else:
+                st.info("Signal performance monitoring requires 15+ resolved bets.")
+
+            # ── Game Exposure / Covariance Panel ─────────────────────────
+            _open_bets = st.session_state.get("open_bets", [])
+            if _open_bets:
+                st.markdown("**Portfolio Game Exposure (Covariance Monitor)**")
+                st.caption(f"Max single-game exposure cap: {int(_MAX_GAME_EXPOSURE*100)}% bankroll. Bets over this receive a correlation haircut.")
+                _exp = compute_game_exposure(_open_bets)
+                if _exp["over_limit"]:
+                    st.warning(f"⚠️ Over-concentrated: max game exposure {_exp['max_game']:.0%} exceeds {int(_MAX_GAME_EXPOSURE*100)}% cap — Kelly haircut active")
+                _exp_rows = [{"Game": g, "Exposure": f"{v:.1%}"} for g, v in
+                             sorted(_exp["by_game"].items(), key=lambda x: -x[1])[:10]]
+                if _exp_rows:
+                    import pandas as _pd_exp
+                    st.dataframe(_pd_exp.DataFrame(_exp_rows), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
         st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
         st.caption(
             f"CLV measures whether you beat the no-vig closing line (Pinnacle+Circa consensus). "
