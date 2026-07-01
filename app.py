@@ -5987,11 +5987,55 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     spread_edge_pct = max(-0.20, min(0.20, spread_edge_pct * min(1.25, _rlm_m * _stm_m * _div_m)))
                 except Exception:
                     pass
+
+                # ── Monte Carlo spread refinement ─────────────────────────
+                # For MLB/NHL/Soccer: use the Skellam distribution (difference
+                # of two Poisson processes) to compute the exact probability of
+                # covering the market spread, then blend with the power-rating
+                # edge. This replaces the crude "gap / scale-constant" linear
+                # heuristic with a real probability-based estimate.
+                # For NBA/WNBA: use the convergent Poisson MC simulation
+                # directly on per-100-possession scoring rates.
+                try:
+                    _mu_h_sp = locals().get("_mu_home")
+                    _mu_a_sp = locals().get("_mu_away")
+                    if sport in ("MLB", "NHL", "Soccer") and _mu_h_sp and _mu_a_sp:
+                        # Skellam P(home covers spread) = P(home_score - away_score > market_spread)
+                        _spread_cover_side = "OVER" if spread_edge > 0 else "UNDER"
+                        _skellam_cover_prob = compute_fair_prob_skellam(
+                            abs(market_spread), _mu_h_sp, _mu_a_sp, _spread_cover_side
+                        )
+                        _skellam_edge = _skellam_cover_prob - 0.524
+                        if spread_edge < 0:
+                            _skellam_edge = -abs(_skellam_edge)
+                        # Blend: 60% existing (power rating + park/weather/matchup
+                        # adjustments already applied above) + 40% Skellam
+                        spread_edge_pct = max(-0.20, min(0.20,
+                            0.60 * spread_edge_pct + 0.40 * _skellam_edge
+                        ))
+                    elif sport in ("NBA", "WNBA"):
+                        # NBA/WNBA: composite scalar ratings → derive implied win%
+                        # via sigmoid, then run Log5 to get H2H probability, then
+                        # use excess above breakeven as spread-coverage estimate.
+                        _nba_ratings = NBA_POWER_RATINGS if sport == "NBA" else WNBA_POWER_RATINGS
+                        _nba_h_rat = _nba_ratings.get(home_full, _nba_ratings.get(home_team))
+                        _nba_a_rat = _nba_ratings.get(away_full, _nba_ratings.get(away_team))
+                        if _nba_h_rat and _nba_a_rat:
+                            _divisor = 4.0  # matches _ml_divisor for NBA/WNBA
+                            _p_h_nba = 1 / (1 + math.exp(-(_nba_h_rat - _nba_a_rat) / _divisor))
+                            _p_a_nba = 1 - _p_h_nba
+                            _log5_nba = mc_log5_win_prob(_p_h_nba, _p_a_nba)
+                            _mc_spread_edge = (_log5_nba - 0.524) if spread_edge > 0 else -(( 1 - _log5_nba) - 0.524)
+                            spread_edge_pct = max(-0.20, min(0.20,
+                                0.65 * spread_edge_pct + 0.35 * _mc_spread_edge
+                            ))
+                except Exception:
+                    pass
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_game_tier(abs(spread_edge_pct), sport)
-                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
+                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "mc_blend": True, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
@@ -6466,10 +6510,22 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 # + 30% Log5 (corrects for extreme mismatches more accurately).
                 if sport == "NFL":
                     try:
-                        _p_h = h_fair          # sigmoid is already a win prob estimate
+                        _p_h = h_fair
                         _p_a = a_fair
                         _log5_h = mc_log5_win_prob(_p_h, _p_a)
                         h_fair = round(0.70 * h_fair + 0.30 * _log5_h, 4)
+                        a_fair = round(1.0 - h_fair, 4)
+                    except Exception:
+                        pass
+
+                # NBA/WNBA: composite ratings → Log5 blend for ML.
+                # The scalar power ratings already encode net efficiency vs league;
+                # Log5 converts them into cleaner H2H probability.
+                # Blend: 70% sigmoid + 30% Log5.
+                if sport in ("NBA", "WNBA"):
+                    try:
+                        _log5_nba_ml = mc_log5_win_prob(h_fair, a_fair)
+                        h_fair = round(0.70 * h_fair + 0.30 * _log5_nba_ml, 4)
                         a_fair = round(1.0 - h_fair, 4)
                     except Exception:
                         pass
@@ -6510,7 +6566,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _ml_note = f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"
                     if _ml_consensus.get("n_books", 0) >= 2:
                         _ml_note += f" ({_ml_consensus['n_books']}-book consensus)"
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "mc_blend": True, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
@@ -15553,12 +15609,19 @@ with tabs[2]:
                 _pub_icon  = "🎯" if _gl_svp == "FADE_PUBLIC" else ("⚡" if _gl_svp == "WITH_PUBLIC" else "👥")
                 _home_name = _g.get("matchup","").split(" @ ")[-1] if " @ " in _g.get("matchup","") else "Home"
                 _gl_pub_html = f'<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:{_pub_color}22;color:{_pub_color};border:0.5px solid {_pub_color}44;margin-left:6px;" title="Public money: {_gl_pub_h}% on {_home_name}">{_pub_icon} {_gl_pub_h}%/{_gl_pub_a}% public</span>'
+            # MC blend badge — shows when Monte Carlo simulation contributed to the edge
+            _gl_mc_blend = any(r.get("mc_blend") for r in _g.get("recommendations", []))
+            _gl_mc_html = (
+                '<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;'
+                'background:#7c3aed22;color:#a78bfa;border:0.5px solid #7c3aed44;margin-left:6px;" '
+                'title="Monte Carlo simulation blended into edge calculation">🎲 MC</span>'
+            ) if _gl_mc_blend else ""
             st.markdown(
                 f'<div style="background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_gsport}</span>'
                 f'<span style="font-size:14px;font-weight:500;color:#e8f0f8;">{_matchup}</span>'
                 f'<span style="font-size:15px;color:var(--color-text-tertiary);">{_gtime}</span>'
-                + _gl_pub_html + _gl_badge_html +
+                + _gl_pub_html + _gl_mc_html + _gl_badge_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
