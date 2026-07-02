@@ -1174,7 +1174,7 @@ def check_daily_risk_limits(sport=None):
 #   3. Replace load_from_gist("history") with db.execute(SELECT)
 #   4. Keep Gist for bankroll + locks (small payloads)
 #
-# Trigger: len(st.session_state.history) > 500
+# Trigger: len(st.session_state.get("history", [])) > 500
 #
 # def _get_sqlite_db():
 #     """Initialize SQLite DB on Streamlit Cloud persistent volume."""
@@ -14200,7 +14200,7 @@ with st.sidebar:
         help="Hide props for players not in the stats database. Unchecking may show props with less accurate projections."
     )
     st.markdown("---")
-    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.get("last_sport", SPORTS[0])) if st.session_state.last_sport in SPORTS else 0)
+    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.get("last_sport", SPORTS[0])) if st.session_state.get("last_sport") in SPORTS else 0)
     if st.button("Load Board", width="stretch"):
         try:
             for f in os.listdir(CACHE_DIR):
@@ -14389,8 +14389,8 @@ with st.sidebar:
 pending = len([l for l in st.session_state.get("locks", []) if l.get("status") == "PENDING"])
 dc = get_daily_change()
 dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
-scan_t = st.session_state.last_scan_time or "—"
-staleness_label_bar, _ = get_edge_staleness(st.session_state.last_scan_time)
+scan_t = st.session_state.get("last_scan_time", 0) or "—"
+staleness_label_bar, _ = get_edge_staleness(st.session_state.get("last_scan_time", 0))
 st.markdown(f"""
 <div class="command-bar">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
@@ -14403,7 +14403,7 @@ st.markdown(f"""
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
     <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.get("bankroll", 468.49):.2f}</div><div style="font-size:15px;color:{dc_color};">{dc} today</div></div>
     <div class="metric-box"><div class="metric-label">Unit</div><div class="metric-value teal-text">${active_unit():.2f}</div></div>
-    <div class="metric-box"><div class="metric-label">Min Edge</div><div class="metric-value gold-text">{st.session_state.min_edge*100:.0f}%</div></div>
+    <div class="metric-box"><div class="metric-label">Min Edge</div><div class="metric-value gold-text">{st.session_state.get("min_edge", MIN_EDGE_DEFAULT)*100:.0f}%</div></div>
     <div class="metric-box"><div class="metric-label">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
     <div class="metric-box"><div class="metric-label">Props Loaded</div><div class="metric-value teal-text">{len(st.session_state.board_data)}</div></div>
     <div class="metric-box"><div class="metric-label">Edge Freshness</div><div class="metric-value" style="font-size:14px;">{staleness_label_bar}</div></div>
@@ -14807,7 +14807,7 @@ with tabs[0]:
             # Signal chart visible by default — no expander needed
             # Why This Play is the key differentiator, should be visible
             try:
-                chart_html = render_signal_chart(lock_prop, st.session_state.last_sport)
+                chart_html = render_signal_chart(lock_prop, st.session_state.get("last_sport", SPORTS[0]))
                 if chart_html:
                     st.markdown(
                         f'<div style="margin-top:-4px;margin-bottom:12px;">'
@@ -15446,7 +15446,7 @@ with tabs[0]:
 # ----- TAB 1: EV OPTIMIZER (DFF-style) -----
 with tabs[1]:
     _board  = st.session_state.board_data or []
-    _sport  = st.session_state.last_sport or "NBA"
+    _sport  = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
     _kalshi = st.session_state.get("kalshi_markets", [])
     _poly   = st.session_state.get("polymarket_markets", [])
     _covers = st.session_state.get("covers_consensus", [])
@@ -15970,7 +15970,7 @@ with tabs[2]:
     # Fall back to raw games if game_analysis not loaded yet
     _game_analysis_full = st.session_state.get("game_analysis", [])
     _raw_games = st.session_state.games or []
-    _sport2 = st.session_state.last_sport or "NBA"
+    _sport2 = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
     # Only use game_analysis if it matches current sport — prevents stale cross-sport data
     _ga_sport = _game_analysis_full[0].get("Sport", _game_analysis_full[0].get("sport","")) if _game_analysis_full else ""
     _games = _game_analysis_full if (_game_analysis_full and _ga_sport == _sport2) else _raw_games
