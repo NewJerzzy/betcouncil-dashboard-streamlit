@@ -14100,6 +14100,17 @@ def load_sport_data(sport):
     if _betonline:
         st.session_state["betonline_lines"] = _betonline
 
+    # Paddy Power game lines — direct HTML harvest, no Odds API quota cost.
+    # UK book: strongest on soccer/tennis, thinner on NBA/NFL/NHL/MLB — used
+    # as a line-shop supplement, not a primary source. Wrapped defensively
+    # since the parser's __NUXT__ selector hasn't been confirmed live yet.
+    try:
+        _paddypower = fetch_paddypower_lines(sport)
+        if _paddypower:
+            st.session_state["paddypower_lines"] = _paddypower
+    except Exception:
+        _logger.debug("Paddy Power fetch failed silently at board load")
+
     # Auto scraper props (MyBookie/BetOnline from local machine)
     _auto_props = fetch_auto_scraped_props(sport)
     if _auto_props:

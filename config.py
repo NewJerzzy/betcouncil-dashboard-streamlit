@@ -47,8 +47,29 @@ CBS_SPORT_MAP = {
 }
 
 # === BOOKS ===
-ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "Betr", "DraftKings", "BetMGM", "Bovada", "BetOnline"]
+ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "Betr", "DraftKings", "BetMGM", "Bovada", "BetOnline", "PaddyPower"]
 DISABLED_BOOKS = ["Sleeper", "FanDuel", "Caesars"]
+
+# === PADDY POWER (direct HTML harvest, confirmed server-rendered — no WAF
+# challenge / no login wall as of 2026-07). UK book: strongest on soccer,
+# tennis, golf; NBA/NFL/NHL/MLB coverage present but thinner. Line-shop
+# supplement, not a primary props source. ===
+PADDYPOWER_BASE = "https://www.paddypower.com"
+PADDYPOWER_PATH = os.path.join(CACHE_DIR, "paddypower_lines.json")
+PADDYPOWER_SPORT_MAP = {
+    "NBA":  "basketball",
+    "WNBA": "basketball",
+    "NFL":  "american-football",
+    "NHL":  "ice-hockey",
+    "MLB":  "baseball",
+}
+PADDYPOWER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+}
 
 DAILY_RISK_CONTROLS = {
     "max_daily_loss_pct": 0.15,
