@@ -5860,7 +5860,7 @@ def _enrich_pitchers_savant(pitchers: dict) -> dict:
 
 
 
-@st.cache_data(ttl=3601)   # ttl bumped to bust stale cache missing home/away team name keys
+@st.cache_data(ttl=1800)   # 30min TTL -- was 3601, bumped again to force fresh results with team name fix
 def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, mlb_pitchers=None):
     if power_ratings is None:
         power_ratings = NBA_POWER_RATINGS
@@ -5869,6 +5869,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     total_str  = game.get("Total", "N/A")
     home_ml    = game.get("HomeML", game.get("Home ML", "N/A"))
     away_ml    = game.get("AwayML", game.get("Away ML", "N/A"))
+    # Fill ML gaps from OddsAPI/SBR overlay when ESPN didn't provide them
+    if home_ml in ("N/A", None, ""):
+        home_ml = game.get("OddsAPI ML Home", game.get("Bovada ML Home", "N/A"))
+    if away_ml in ("N/A", None, ""):
+        away_ml = game.get("OddsAPI ML Away", game.get("Bovada ML Away", "N/A"))
     # ── OddsAPI fallback — fills gaps ESPN left as N/A ──
     if spread_str in ("N/A", None, ""):
         spread_str = game.get("OddsAPI Spread", "N/A")
@@ -14096,69 +14101,81 @@ if "persistence_loaded" not in st.session_state:
 # SIDEBAR (Full as in original)
 # =========================
 with st.sidebar:
-    st.markdown('<div style="text-align:center;margin-bottom:16px;"><div style="width:44px;height:44px;background:linear-gradient(135deg,#0ea5a0,#065f5e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:inline-flex;align-items:center;justify-content:center;font-size:22px;">⚡</div><div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">BetCouncil</div><div style="font-size:14px;color:#4a8a8a;">v4.6 · Complete</div></div>', unsafe_allow_html=True)
-
-    # ── ODDS_API_KEY sidebar alert ──────────────────────────────────────────
+    # ── Brand ─────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="padding:16px 0 12px;border-bottom:1px solid #1a2a3a;margin-bottom:14px;">'
+        '<div style="font-size:22px;font-weight:800;color:#e8f0f8;letter-spacing:1px;font-family:monospace;">BetCouncil</div>'
+        '<div style="font-size:11px;color:#4a8a8a;letter-spacing:2px;margin-top:2px;">v4.7 · LIVE ENGINE</div>'
+        '</div>', unsafe_allow_html=True
+    )
     if _ODDS_API_KEY_STATUS == "missing":
-        st.sidebar.warning("⚠️ ODDS_API_KEY missing — Game Lines show fallback odds only")
+        st.sidebar.warning("⚠️ ODDS_API_KEY missing — fallback odds only")
     elif _ODDS_API_KEY_STATUS == "invalid":
-        st.sidebar.error("🔴 ODDS_API_KEY invalid/expired — update in Secrets")
-
-    # ── PERSISTENT RISK HEADER ─────────────────────────────
-    # Always visible — sharp bettors need stop-loss status
-    # before interacting with anything else
-    _today_str   = date.today().strftime("%Y-%m-%d")
-    _bankroll_now = float(st.session_state.get("bankroll", 0))
+        st.sidebar.error("🔴 ODDS_API_KEY invalid/expired")
+    _today_str    = date.today().strftime("%Y-%m-%d")
+    _bankroll_now = float(st.session_state.get("bankroll", 468.49))
     _day_start    = float(st.session_state.get("day_start_br", _bankroll_now) or _bankroll_now)
     _daily_chg    = (_bankroll_now - _day_start) / _day_start if _day_start > 0 else 0
     _max_loss_pct = DAILY_RISK_CONTROLS.get("stop_loss_pct", 0.15)
     _max_win_pct  = DAILY_RISK_CONTROLS.get("stop_win_pct", 0.25)
-    _today_locks  = [l for l in st.session_state.get("locks",[])
-                     if l.get("timestamp","").startswith(_today_str)]
-    _n_locks      = len(_today_locks)
-    _max_locks    = DAILY_RISK_CONTROLS.get("max_locks_per_day", 8)
-
-    if _daily_chg <= -_max_loss_pct:
-        _risk_status      = "🛑 STOP-LOSS"
-        _risk_status_color = "#e04040"
-        _risk_border      = "#e04040"
-    elif _daily_chg >= _max_win_pct:
-        _risk_status      = "🏆 STOP-WIN"
-        _risk_status_color = "#e8a020"
-        _risk_border      = "#e8a020"
-    elif _n_locks >= _max_locks:
-        _risk_status      = "🛑 MAX LOCKS"
-        _risk_status_color = "#e04040"
-        _risk_border      = "#e04040"
-    elif _n_locks >= _max_locks - 2:
-        _risk_status      = "⚠️ NEAR LIMIT"
-        _risk_status_color = "#e8a020"
-        _risk_border      = "#e8a020"
-    else:
-        _risk_status      = "🟢 NORMAL"
-        _risk_status_color = "#22c55e"
-        _risk_border      = "#22c55e33"
-
+    _today_locks  = [l for l in st.session_state.get("locks", []) if l.get("timestamp","").startswith(_today_str)]
+    _n_locks  = len(_today_locks)
+    _max_locks = DAILY_RISK_CONTROLS.get("max_locks_per_day", 8)
+    if _daily_chg <= -_max_loss_pct: _risk_status = "🛑 STOP-LOSS"; _risk_color = "#e04040"
+    elif _daily_chg >= _max_win_pct: _risk_status = "🏆 STOP-WIN";  _risk_color = "#e8a020"
+    elif _n_locks >= _max_locks:     _risk_status = "🛑 MAX LOCKS"; _risk_color = "#e04040"
+    elif _n_locks >= _max_locks-2:   _risk_status = "⚠️ NEAR LIMIT"; _risk_color = "#e8a020"
+    else:                            _risk_status = "● NORMAL";     _risk_color = "#22c55e"
     _chg_color = "#22c55e" if _daily_chg >= 0 else "#e04040"
-    st.markdown(
-        f'<div style="background:#0a0e14;border:1px solid {_risk_border};'
-        f'border-left:3px solid {_risk_border};border-radius:8px;'
-        f'padding:10px 12px;margin-bottom:12px;">'
+    _chg_str   = f"{_daily_chg:+.1%} today"
+    # Bankroll tile
+    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">💰 BANKROLL</div>'
+        f'<div style="font-size:26px;font-weight:800;color:#e8f0f8;">${_bankroll_now:,.2f}</div>'
+        f'<div style="font-size:12px;color:{_chg_color};margin-top:2px;">{_chg_str}</div>'
+        f'</div>', unsafe_allow_html=True)
+    # Integrity tile
+    _brier_data   = compute_brier_score(st.session_state.get("history", []))
+    _brier_life   = (_brier_data.get("lifetime") or {})
+    _bs_val       = _brier_life.get("brier_score", 0.25)
+    _integrity    = max(0, min(100, int((1 - (_bs_val / 0.25)) * 100)))
+    _integrity_color = "#22c55e" if _integrity >= 70 else ("#e8a020" if _integrity >= 50 else "#e04040")
+    _regime_data  = detect_season_regime("MLB")
+    _regime_label = _regime_data.get("label", "REGULAR FLOOR")
+    _edge_thresh  = _regime_data.get("edge_floor", 0.045)
+    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;'
-        f'letter-spacing:0.06em;">Risk Status</span>'
-        f'<span style="color:{_risk_status_color};font-size:12px;font-weight:700;">'
-        f'{_risk_status}</span></div>'
-        f'<div style="display:flex;justify-content:space-between;margin-top:6px;">'
-        f'<span style="color:#8a9ab0;font-size:11px;">Locks: '
-        f'<b style="color:#e8f0f8;">{_n_locks}/{_max_locks}</b></span>'
-        f'<span style="color:{_chg_color};font-size:11px;font-weight:600;">'
-        f'{_daily_chg:+.1%} today</span>'
-        f'</div></div>',
-        unsafe_allow_html=True
-    )
-    # ── END RISK HEADER ────────────────────────────────────
-
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">⊙ INTEGRITY</div>'
+        f'</div>'
+        f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100</span></div>'
+        f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
+        f'<div style="width:{_integrity}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
+        f'</div></div>', unsafe_allow_html=True)
+    # SEM tile
+    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
+        f'<div style="font-size:13px;font-weight:700;color:#22c55e;letter-spacing:1px;">● {_regime_label.upper()}</div>'
+        f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">({_edge_thresh:.1%} edge threshold)</div>'
+        f'</div>', unsafe_allow_html=True)
+    # Unit + Session tile
+    _unit_val = active_unit()
+    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">⊚ UNIT SIZE</div>'
+        f'<div style="font-size:24px;font-weight:800;color:#e8f0f8;">${_unit_val:.2f}</div>'
+        f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">{KELLY_FRACTION:.2f} Kelly Fraction</div>'
+        f'</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:14px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<div><div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">⏱ SESSION</div>'
+        f'<div style="font-size:22px;font-weight:700;color:#e8f0f8;font-family:monospace;">{get_session_time()}</div></div>'
+        f'<div style="text-align:right;">'
+        f'<div style="font-size:11px;color:{_risk_color};font-weight:700;">{_risk_status}</div>'
+        f'<div style="font-size:10px;color:#4a6a8a;">Locks: {_n_locks}/{_max_locks}</div>'
+        f'</div></div></div>', unsafe_allow_html=True)
+    if not ENABLE_RECOMMENDATIONS:
+        st.error("🔴 KILL SWITCH ACTIVE", icon="🛑")
+    st.markdown('<div style="font-size:10px;color:#2a3a4a;margin-bottom:10px;">8 MODELS ACTIVE · 14 SOURCES</div>', unsafe_allow_html=True)
+    st.markdown("---")
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.get("bankroll", 100.0)), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
@@ -15658,21 +15675,20 @@ with tabs[1]:
 
         _header = (
             '<div style="display:grid;grid-template-columns:'
-            '12px 175px 55px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 55px 65px;'
+            '12px 160px 55px 40px 90px 50px 48px 52px 45px 100px 48px 48px 48px 55px 65px;'
             'gap:3px;padding:6px 8px;background:var(--color-background-secondary);border-radius:6px 6px 0 0;'
             'font-size:10px;font-weight:700;color:var(--color-text-tertiary);text-transform:uppercase;'
             'letter-spacing:0.05em;position:sticky;top:0;z-index:10;">'
             '<span></span>'
             '<span>Player</span>'
             '<span>Tier</span>'
+            '<span>Type</span>'
             '<span>Prop</span>'
             '<span style="text-align:center">Line</span>'
             '<span style="text-align:center">Grade</span>'
             '<span style="text-align:center">Edge</span>'
             '<span style="text-align:center">Model</span>'
-            '<span style="text-align:center">Kalshi</span>'
-            '<span style="text-align:center">Poly</span>'
-            '<span style="text-align:center">Public</span>'
+            '<span style="text-align:center">Consensus</span>'
             '<span style="text-align:center">L5</span>'
             '<span style="text-align:center">L10</span>'
             '<span style="text-align:center">Szn</span>'
@@ -15706,24 +15722,49 @@ with tabs[1]:
                         f'style="background:{_et_col}22;color:{_et_col};font-size:9px;'
                         f'font-weight:700;padding:2px 4px;border-radius:3px;">{_et_lbl}</span>'
                         ) if _et else ""
+            # Build consensus bar: colored dots for each source
+            _p_dict = _r.get("_p", {})
+            _cons_sources = [
+                ("D",  "#378add" if _p_dict.get("DFFSignal") else "#1a2a3a"),   # DFF
+                ("G",  "#378add" if _p_dict.get("EVSharpEV") else "#1a2a3a"),   # EVSharps/Outlier
+                ("Cl", "#378add" if _p_dict.get("CLVCapture") else "#1a2a3a"),  # CLV
+                ("P",  "#378add" if _r.get("_kalshi") else "#1a2a3a"),           # Kalshi/Poly
+                ("S",  "#22c55e" if _p_dict.get("EVSharpMove") else "#1a2a3a"), # Sharp steam
+                ("G",  "#22c55e" if _r.get("_model_prob", 0) and int(str(_r.get("_model_prob",0)).replace("%","") or 0) >= 60 else "#1a2a3a"),  # Grade
+                ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "#1a2a3a"),  # Better line
+            ]
+            _cons_bar = "".join([
+                f'<span style="display:inline-block;width:14px;height:14px;border-radius:50%;'
+                f'background:{col};font-size:7px;font-weight:700;color:#ffffff;'
+                f'text-align:center;line-height:14px;margin-right:1px;" title="{lbl}">{lbl[0]}</span>'
+                for lbl, col in _cons_sources
+            ])
+            # Filled bar count for % display
+            _filled = sum(1 for _, c in _cons_sources if c != "#1a2a3a")
+            _cons_pct = int(_filled / len(_cons_sources) * 100)
+            _cons_cell = (
+                f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">'
+                f'{_cons_bar}'
+                f'<span style="font-size:8px;color:#4a6a8a;">{_cons_pct}%</span>'
+                f'</div>'
+            )
+
             _row = (
                 f'<div style="display:grid;grid-template-columns:'
-                f'12px 175px 55px 40px 95px 50px 48px 52px 45px 52px 52px 52px 48px 48px 48px 55px 65px;'
+                f'12px 160px 55px 40px 90px 50px 48px 52px 45px 100px 48px 48px 48px 55px 65px;'
                 f'gap:3px;padding:6px 8px;background:{_bg};'
                 f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;">'
                 f'<span style="width:3px;height:30px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
-                f'<span style="font-weight:600;color:var(--color-text-primary);">{_r["_player"][:24]}</span>'
+                f'<span style="font-weight:600;color:var(--color-text-primary);">{_r["_player"][:22]}</span>'
                 f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
                 f'padding:2px 5px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
                 f'{_et_html}'
-                f'<span style="color:var(--color-text-secondary);font-size:11px;">{_r["_prop"][:13]} {_r["_side"]}</span>'
+                f'<span style="color:var(--color-text-secondary);font-size:11px;">{_r["_prop"][:12]} {_r["_side"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-primary);font-weight:600;">{_r["_line"]}</span>'
                 f'<span style="text-align:center;font-size:{_gs};font-weight:800;color:{_gc};">{_r["_grade"]}</span>'
                 f'<span style="text-align:center;font-size:13px;font-weight:700;color:{_gc};">{_e_str}</span>'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_model_prob"]}%</span>'
-                f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">{_r["_kalshi"] or "—"}</span>'
-                f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">{_r["_poly"] or "—"}</span>'
-                f'<span style="text-align:center;color:var(--color-text-tertiary);font-size:11px;">{_r["_pub_pct"] or "—"}</span>'
+                f'{_cons_cell}'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l5"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l10"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_szn"]}</span>'
@@ -16039,7 +16080,7 @@ with tabs[2]:
                            else ("" if any(r.get("type")=="MONEYLINE" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
                  "line":_g.get("HomeML",_g.get("ML","—")),"edge":float(_g.get("MLEdge",0) or 0),"tier":_g.get("MLTier","—") if _g.get("MLPick") or float(_g.get("MLEdge",0) or 0) != 0 else "—"},
-                {"label": "ALT LINE" if _gsport not in ("MLB","NHL") else "RUN LINE",
+                {"label": "ALT LINE",
                  "pick": _alt_line or (
                      # MLB/NHL: show Run Line (-1.5) with home team label
                      ((_g.get("home","") + " -1.5") if _gsport in ("MLB","NHL") and _g.get("home") else "—")
