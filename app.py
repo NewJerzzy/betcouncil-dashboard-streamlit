@@ -345,6 +345,7 @@ st.markdown("""<style>
     --bc-green: #22c55e;
     --bc-red: #e04040;
     --bc-gold: #e8a020;
+    --bc-gold-bright: #f5c518;
     --bc-bg: #0a0e14;
     --bc-bg2: #1e2d3d;
     --bc-text: #e8f0f8;
@@ -352,6 +353,99 @@ st.markdown("""<style>
     --bc-dim: #6a7a8a;
     --bc-blue: #378add;
     --bc-bg-card: #0d1520;
+    --bc-navy: #060c14;
+}
+
+/* ── SOVEREIGN GLOW ANIMATION ──────────────────────────── */
+@keyframes sovereign-pulse {
+    0%   { box-shadow: 0 0 0px 0px rgba(248,197,24,0.0), 0 0 8px rgba(248,197,24,0.15); }
+    50%  { box-shadow: 0 0 12px 3px rgba(248,197,24,0.35), 0 0 24px rgba(248,197,24,0.15); }
+    100% { box-shadow: 0 0 0px 0px rgba(248,197,24,0.0), 0 0 8px rgba(248,197,24,0.15); }
+}
+@keyframes elite-pulse {
+    0%   { box-shadow: 0 0 0px 0px rgba(55,138,221,0.0); }
+    50%  { box-shadow: 0 0 10px 2px rgba(55,138,221,0.30); }
+    100% { box-shadow: 0 0 0px 0px rgba(55,138,221,0.0); }
+}
+
+.row-sovereign {
+    border-left: 3px solid var(--bc-gold-bright) !important;
+    animation: sovereign-pulse 2.5s ease-in-out infinite;
+    background: rgba(248,197,24,0.04) !important;
+}
+.row-elite {
+    border-left: 3px solid var(--bc-blue) !important;
+    animation: elite-pulse 3s ease-in-out infinite;
+}
+.row-approved {
+    border-left: 3px solid var(--bc-gold) !important;
+}
+.row-lean {
+    border-left: 3px solid #2a3a4a !important;
+}
+
+/* ── MONOSPACE ODDS ────────────────────────────────────── */
+.odds-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px;
+}
+.odds-pos { color: #22c55e; }
+.odds-neg { color: #e8f0f8; }
+.odds-ev  { color: #00d4aa; }
+
+/* ── STICKY BOARD SUMMARY BAR ──────────────────────────── */
+.bc-summary-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: linear-gradient(90deg, #060c14ee, #0d1520ee);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #1a2a3a;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+.bc-summary-pill {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+}
+.bc-sov-pill  { background: rgba(248,197,24,0.15); color: #f5c518; border: 1px solid rgba(248,197,24,0.3); }
+.bc-elite-pill { background: rgba(55,138,221,0.15); color: #378add; border: 1px solid rgba(55,138,221,0.3); }
+.bc-appr-pill  { background: rgba(232,160,32,0.12); color: #e8a020; border: 1px solid rgba(232,160,32,0.25); }
+.bc-action-pill { background: rgba(0,212,170,0.12); color: #00d4aa; border: 1px solid rgba(0,212,170,0.25); }
+
+/* ── LINE MOVEMENT ARROWS ──────────────────────────────── */
+.line-up   { color: #22c55e; font-size: 11px; }
+.line-down { color: #e04040; font-size: 11px; }
+.line-flat { color: #4a6a8a; font-size: 11px; }
+
+/* ── GAME LINE CARDS ───────────────────────────────────── */
+.gl-market-card {
+    background: #0d1520;
+    border: 1px solid #1a2a3a;
+    border-radius: 8px;
+    padding: 12px 14px;
+    position: relative;
+    overflow: hidden;
+}
+.gl-market-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #1a3a5a, transparent);
+}
+.gl-market-card.has-edge::before {
+    background: linear-gradient(90deg, transparent, var(--bc-gold), transparent);
+    animation: sovereign-pulse 2s ease-in-out infinite;
 }
 </style>""", unsafe_allow_html=True)
 
@@ -15667,6 +15761,26 @@ with tabs[1]:
         except (ValueError, TypeError, ZeroDivisionError):
             _rows.sort(key=lambda x: str(x.get(_sk,"")), reverse=_sr)
 
+        # ── Sticky Summary Bar ─────────────────────────────────────────
+        _n_sov   = sum(1 for r in _rows if r.get("_tier") == "SOVEREIGN")
+        _n_elite = sum(1 for r in _rows if r.get("_tier") == "ELITE")
+        _n_appr  = sum(1 for r in _rows if r.get("_tier") == "APPROVED")
+        _total_action = sum(
+            (r.get("_p", {}).get("KellyAdvisedPct", 0) or 0) * _bankroll_now
+            for r in _rows if r.get("_tier") in ("SOVEREIGN", "ELITE", "APPROVED")
+        )
+        st.markdown(
+            f'<div class="bc-summary-bar">'
+            f'<span style="color:#4a6a8a;font-size:11px;letter-spacing:1px;text-transform:uppercase;">BOARD</span>'
+            f'<span class="bc-summary-pill bc-sov-pill">⚡ {_n_sov} SOVEREIGN</span>'
+            f'<span class="bc-summary-pill bc-elite-pill">▲ {_n_elite} ELITE</span>'
+            f'<span class="bc-summary-pill bc-appr-pill">● {_n_appr} APPROVED</span>'
+            f'<span style="flex:1"></span>'
+            f'<span class="bc-summary-pill bc-action-pill">💰 ${_total_action:.2f} total action</span>'
+            f'<span style="color:#2a3a4a;font-size:10px;">{len(_rows)} props loaded</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
         st.caption(f"Showing {len(_rows)} props | Sorted by {_sort_col}")
 
         # ── Render table ────────────────────────────────────────
@@ -15749,8 +15863,15 @@ with tabs[1]:
                 f'</div>'
             )
 
+            _tier_css = {
+                "SOVEREIGN": "row-sovereign",
+                "ELITE":     "row-elite",
+                "APPROVED":  "row-approved",
+                "LEAN":      "row-lean",
+            }.get(_r["_tier"], "row-lean")
+
             _row = (
-                f'<div style="display:grid;grid-template-columns:'
+                f'<div class="{_tier_css}" style="display:grid;grid-template-columns:'
                 f'12px 160px 55px 40px 90px 50px 48px 52px 45px 100px 48px 48px 48px 55px 65px;'
                 f'gap:3px;padding:6px 8px;background:{_bg};'
                 f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;">'
@@ -15759,11 +15880,11 @@ with tabs[1]:
                 f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
                 f'padding:2px 5px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
                 f'{_et_html}'
-                f'<span style="color:var(--color-text-secondary);font-size:11px;">{_r["_prop"][:12]} {_r["_side"]}</span>'
-                f'<span style="text-align:center;color:var(--color-text-primary);font-weight:600;">{_r["_line"]}</span>'
+                f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_prop"][:12]} {_r["_side"]}</span>'
+                f'<span class="odds-mono" style="text-align:center;">{_r["_line"]}</span>'
                 f'<span style="text-align:center;font-size:{_gs};font-weight:800;color:{_gc};">{_r["_grade"]}</span>'
-                f'<span style="text-align:center;font-size:13px;font-weight:700;color:{_gc};">{_e_str}</span>'
-                f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_model_prob"]}%</span>'
+                f'<span class="odds-mono" style="text-align:center;color:{_gc};">{_e_str}</span>'
+                f'<span class="odds-mono" style="text-align:center;color:var(--color-text-secondary);">{_r["_model_prob"]}%</span>'
                 f'{_cons_cell}'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l5"]}</span>'
                 f'<span style="text-align:center;color:var(--color-text-secondary);font-size:11px;">{_r["_l10"]}</span>'
@@ -16139,18 +16260,28 @@ with tabs[2]:
                     _pc_color = _tc2.get(_pk["tier"],"#6a7a8a")
                     _is_pos = _pk["edge"] > 0
                     _edge_color = _pc_color if _is_pos else "#e04040"
+                    _has_edge = abs(_pk["edge"]) >= 0.02
+                    _lm = _line_movement or {}
+                    _lm_dir = _lm.get("direction", "")
+                    _lm_arrow = (
+                        '<span class="line-up">↑</span>' if _lm_dir == "up" else
+                        '<span class="line-down">↓</span>' if _lm_dir == "down" else
+                        '<span class="line-flat">–</span>'
+                    ) if _lm else ""
+                    _gl_card_class = "gl-market-card has-edge" if _has_edge else "gl-market-card"
                     st.markdown(
-                        f'<div style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:12px 14px;background:#0a0e14;{"border-radius:0 0 0 6px;" if _idx==0 else ("border-radius:0 0 6px 0;" if _idx==2 else "")}">'
+                        f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:12px 14px;background:#0a0e14;">'
                         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-                        f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#4a6a8a;">{_pk["label"]}</span>'
-                        f'<span style="font-size:18px;font-weight:700;padding:1px 6px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
+                        f'<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:#4a6a8a;text-transform:uppercase;">{_pk["label"]}</span>'
+                        f'<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
                         f'</div>'
                         f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">'
-                        f'<span style="font-size:18px;font-weight:700;color:#e8f0f8;">{_pk["pick"]}</span>'
-                        f'<span style="font-size:15px;color:#8a9ab0;">{_pk["line"]}</span>'
+                        f'<span class="odds-mono" style="font-size:16px;color:#e8f0f8;">{_pk["pick"]}</span>'
+                        f'<span class="odds-mono" style="font-size:12px;color:#4a6a8a;">{_pk["line"]}</span>'
+                        f'{_lm_arrow}'
                         f'</div>'
                         + (f'<div style="font-size:10px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
-                        + f'<span style="font-size:18px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
+                        + f'<span class="odds-mono" style="font-size:13px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
