@@ -12136,6 +12136,22 @@ def load_sport_data(sport):
     st.session_state["game_sharp_flags"] = game_sharp_flags
     history = load_json_data(HISTORY_PATH, [])
     tier_stats = compute_tier_stats(history)
+    # ── OVER-only prop normalization ──────────────────────────────────────
+    # Fix any props where data source set Side=UNDER for markets that
+    # only exist as OVER bets (HR, Goals, TDs, Aces, Sacks).
+    # No sportsbook offers HR UNDER — it's always a binary OVER market.
+    _OVER_ONLY_STATS = {
+        "HR", "Home Runs", "Home Run", "Homeruns", "Homerun",
+        "GOALS", "Goals", "Goal",
+        "TD", "Touchdowns", "Touchdown",
+        "Aces", "ACES", "Sacks", "SACKS",
+    }
+    for _p in props:
+        _prop_key = _p.get("Prop","") or _p.get("stat_key","") or ""
+        _stat_n   = STAT_NORMALIZE.get((sport, _prop_key), _prop_key)
+        if _prop_key in _OVER_ONLY_STATS or _stat_n in _OVER_ONLY_STATS:
+            _p["Side"] = "OVER"   # no book offers HR/Goal/TD UNDER
+
     enriched = []
     skipped_def = skipped_edge = 0
 
@@ -12707,7 +12723,25 @@ def load_sport_data(sport):
         elif fairness_grade == "CAUTION":
             over_edge = over_edge * 0.90
             under_edge = under_edge * 0.90
-        if under_edge > over_edge and (under_edge - over_edge) > 0.05:
+        # ── OVER-only prop guard ───────────────────────────────────────────
+        # These are binary event markets — books only offer OVER (will it
+        # happen or not). No sportsbook offers an UNDER market for these.
+        # Prevent the model from ever recommending UNDER on them regardless
+        # of what the edge math says.
+        _OVER_ONLY_PROPS = {
+            "HR", "Home Runs", "Home Run", "Homeruns", "Homerun",
+            "GOALS", "Goals", "Goal",          # soccer/hockey: score a goal
+            "TD", "Touchdowns", "Touchdown",   # NFL: score a TD
+            "Aces", "ACES",                    # tennis: aces hit
+            "Sacks", "SACKS",                  # NFL: sack (defender)
+        }
+        _is_over_only = (
+            stat_norm in _OVER_ONLY_PROPS or
+            p.get("Prop", "") in _OVER_ONLY_PROPS or
+            p.get("stat_key", "") in _OVER_ONLY_PROPS
+        )
+
+        if under_edge > over_edge and (under_edge - over_edge) > 0.05 and not _is_over_only:
             best_edge = under_edge
             best_side = "UNDER"
             best_prob = under_prob
