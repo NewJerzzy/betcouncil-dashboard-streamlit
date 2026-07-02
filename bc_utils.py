@@ -2023,7 +2023,12 @@ def load_json_data(path, default, mem_ttl: int = 0):
                 except Exception:
                     pass
             return result
-        except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
+        except (pickle.UnpicklingError, OSError, EOFError, AttributeError,
+                json.JSONDecodeError, ValueError, UnicodeDecodeError):
+            # JSONDecodeError: file is corrupt/empty (interrupted write)
+            # ValueError: malformed JSON content
+            # UnicodeDecodeError: file encoding issue
+            _logger.warning("load_json_data: corrupt/unreadable file at %s -- returning default", path)
             return default
     return default
 
