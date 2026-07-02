@@ -9038,6 +9038,7 @@ def track_bet_dialog(prop):
             _hist[-1]["odds_taken"] = odds
             save_to_gist("history", _hist)
         st.success(f"Tracked ${stake:.0f} on {player} {side} {line}!")
+        st.caption("📝 This also appears in the **Log Bet** tab → Recent Activity, alongside bets logged there — same shared history.")
         st.rerun()
 
 
@@ -14608,6 +14609,47 @@ for _safety_k, _safety_v in {
 
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
+# ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
+# Sportsbooks keep the bet slip visible and stable no matter where the user
+# navigates. Streamlit has no native floating overlay, so this renders a
+# fixed-position widget every rerun, reading the same st.session_state.locks
+# store the rest of the app already writes to (game-line locks, board locks,
+# Log Bet entries) — nothing new to maintain, just a persistent view of it.
+_qs_all_locks   = st.session_state.get("locks", []) or []
+_qs_slip_id     = st.session_state.get("current_slip_id")
+_qs_slip_locks  = [l for l in _qs_all_locks if l.get("timestamp","") == _qs_slip_id] if _qs_slip_id else []
+_qs_show_locks  = _qs_slip_locks if _qs_slip_id else _qs_all_locks[-5:]
+_qs_count       = len(_qs_slip_locks) if _qs_slip_id else len(_qs_all_locks)
+_qs_label       = "Active Slip" if _qs_slip_id else "Recent Locks"
+
+if _qs_count:
+    _qs_rows_html = "".join(
+        f'<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;'
+        f'border-bottom:1px solid #1a2a3a;font-size:11px;">'
+        f'<span style="color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;">'
+        f'{l.get("player","")[:18]} {l.get("side","")} {l.get("prop","") or l.get("line","")}</span>'
+        f'<span style="color:#f5c518;font-weight:700;">{l.get("tier","")[:3]}</span>'
+        f'</div>'
+        for l in list(reversed(_qs_show_locks))[:6]
+    )
+    st.markdown(
+        f'''<div style="position:fixed;bottom:18px;right:18px;z-index:200;width:220px;
+             background:linear-gradient(160deg,#0d1520f2,#060c14f2);backdrop-filter:blur(10px);
+             border:1px solid rgba(232,160,32,0.35);border-radius:10px;
+             box-shadow:0 6px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(232,160,32,0.08);
+             padding:10px 12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-size:11px;font-weight:700;letter-spacing:0.6px;color:#f5c518;text-transform:uppercase;">
+              🎯 {_qs_label}
+            </span>
+            <span style="font-size:11px;font-weight:700;color:#e6edf3;background:rgba(232,160,32,0.15);
+                  border-radius:10px;padding:1px 8px;">{_qs_count}</span>
+          </div>
+          {_qs_rows_html}
+        </div>''',
+        unsafe_allow_html=True
+    )
+
 # ── Background EV Auto-Refresh (every 2 min) ─────────────────────────────────
 # Silently re-fetches /api/ev, computes line movement deltas, and updates
 # sharp alerts — no board reload required. Runs as long as the tab is open.
@@ -15951,9 +15993,10 @@ with tabs[1]:
             _row = (
                 f'<div class="{_tier_css}" style="display:grid;grid-template-columns:'
                 f'12px 160px 55px 40px 90px 50px 48px 52px 45px 100px 48px 48px 48px 55px 65px;'
-                f'gap:3px;padding:6px 8px;background:{_bg};'
-                f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;">'
-                f'<span style="width:3px;height:30px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
+                f'gap:3px;padding:3px 8px;background:{_bg};'
+                f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;'
+                f'min-height:22px;">'
+                f'<span style="width:3px;height:20px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
                 f'<span style="font-weight:600;color:var(--color-text-primary);">{_r["_player"][:22]}</span>'
                 f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
                 f'padding:2px 5px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
@@ -19618,6 +19661,30 @@ with tabs[7]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
+
+    # ── UNIFIED RECENT ACTIVITY ────────────────────────────────────────
+    # Every entry point (⚡ quick-track dialog on prop cards, Quick Single
+    # Bet below, Bulk Entry, Screenshot/Text OCR) writes through the same
+    # log_manual_bet() → st.session_state.history. This panel surfaces
+    # that shared feed so all logging paths read as one connected system
+    # instead of separate, disconnected tools.
+    _recent_logs = [h for h in st.session_state.get("history", []) if h.get("manual_entry")]
+    _recent_logs = sorted(_recent_logs, key=lambda h: h.get("timestamp",""), reverse=True)[:5]
+    if _recent_logs:
+        with st.expander(f"🕒 Recent Activity — last {len(_recent_logs)} logged (any entry point)", expanded=False):
+            for _rl in _recent_logs:
+                _rl_color = "#22c55e" if _rl.get("outcome") == "WIN" else ("#e04040" if _rl.get("outcome") == "LOSS" else "#8a9ab0")
+                st.markdown(
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                    f'padding:5px 10px;border-bottom:1px solid #1a2a3a;font-size:0.85rem;">'
+                    f'<span style="color:#e6edf3;">{_rl.get("player","—")} {_rl.get("side","")} {_rl.get("line","")} '
+                    f'<span style="color:#6a7a8a;">{_rl.get("prop","")}</span></span>'
+                    f'<span style="color:{_rl_color};font-weight:700;">{_rl.get("outcome","—")}</span>'
+                    f'<span style="color:#6a7a8a;font-size:0.75rem;">{_rl.get("source","")} · {_rl.get("timestamp","")}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
     log_tab1, log_tab2 = st.tabs(["Screenshot / Text", "Bulk Entry"])
     with log_tab2:
         st.markdown("### 🎯 Log a PrizePicks Parlay as a Group")
