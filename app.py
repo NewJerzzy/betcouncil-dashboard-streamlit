@@ -477,6 +477,50 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 .sem-green { color: #0ea5a0; font-weight: 600; }
 .sem-yellow { color: #e8a020; font-weight: 600; }
 .sem-gray { color: #6a7a8a; }
+
+/* ── SPORTSBOOK-STYLE TAB NAV ──────────────────────────────
+   Turns Streamlit's default plain tab strip into a sticky,
+   pill-highlighted category bar (the pattern top-rated books
+   use for their sport/market nav row: sticky, high-contrast
+   active state, condensed uppercase labels, instant feedback). */
+.stTabs [data-baseweb="tab-list"] {
+    position: sticky;
+    top: 0;
+    z-index: 99;
+    gap: 4px;
+    background: linear-gradient(90deg, #060c14ee, #0d1520ee);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #1a2a3a;
+    padding: 6px 8px 0 8px;
+    margin-bottom: 4px;
+    overflow-x: auto;
+}
+.stTabs [data-baseweb="tab"] {
+    height: 38px;
+    border-radius: 8px 8px 0 0;
+    padding: 0 14px;
+    background: transparent;
+    color: #8a9ab0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(14,165,160,0.08);
+    color: #e8f0f8;
+}
+.stTabs [aria-selected="true"] {
+    background: rgba(232,160,32,0.10) !important;
+    color: #f5c518 !important;
+    border: 1px solid rgba(232,160,32,0.35) !important;
+    border-bottom: 2px solid #f5c518 !important;
+    box-shadow: 0 -2px 8px rgba(232,160,32,0.08);
+}
+.stTabs [data-baseweb="tab-highlight"] { background: transparent !important; }
+.stTabs [data-baseweb="tab-border"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
