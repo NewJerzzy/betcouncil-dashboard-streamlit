@@ -16788,10 +16788,17 @@ with tabs[3]:
                 f'<div style="color:#e8a020;font-size:1.0rem;">Wager: ${wager} → Potential: ${potential}</div>'
             if wager > 0 else ""
             )
+            # "1-Pick Slip" was a misleading label — PrizePicks' real minimum
+            # is 2 picks, so this only ever appeared for a single prop locked
+            # individually (Quick Lock / board search), not an actual slip.
+            if n == 1:
+                _slip_label = "Game Bet" if _is_game_slip else "Single Prop"
+            else:
+                _slip_label = f"{n}-Pick Slip"
             st.markdown(
                 f'<div style="background:#0a0e14;border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
                 f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
-                f'<div><span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{n}-Pick Slip</span> ' +
+                f'<div><span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{_slip_label}</span> ' +
                 f'<span style="color:#378add;font-size:1.0rem;margin-left:8px;">{sport}</span> ' +
                 f'<span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:8px;">{ts}</span></div>' +
                 f'{_slip_wager_html}' +
@@ -16799,16 +16806,25 @@ with tabs[3]:
                 unsafe_allow_html=True
             )
 
-            # Individual picks in the slip
+            # Individual picks — condensed into a 2-column grid instead of one
+            # full-width row per pick, so a 4-6 pick slip doesn't take up an
+            # entire page. Single-column only for 1-pick "slips".
+            _pick_cells = []
             for lock in slip_locks:
                 tier_color = TIER_COLORS.get(lock.get("tier","LEAN"), "#7a8a9a")
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-left:3px solid {tier_color};margin-bottom:0.3rem;background:#0d1520;border-radius:0 4px 4px 0;">' +
-                    f'<div><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{lock.get("player","")}</span> ' +
-                    f'<span style="color:{tier_color};font-size:1.0rem;">{lock.get("side","OVER")} {lock.get("line","")} {lock.get("prop","")}</span></div>' +
-                    f'<span style="color:{tier_color};font-size:1.0rem;font-weight:600;">{lock.get("tier","")} | +{lock.get("edge",0)*100:.1f}%</span></div>',
-                    unsafe_allow_html=True
+                _pick_cells.append(
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-left:3px solid {tier_color};background:#0d1520;border-radius:0 4px 4px 0;overflow:hidden;">' +
+                    f'<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#e8f0f8;font-weight:600;font-size:0.95rem;">{lock.get("player","")}</span> ' +
+                    f'<span style="color:{tier_color};font-size:0.9rem;">{lock.get("side","OVER")} {lock.get("line","")} {lock.get("prop","")}</span></div>' +
+                    f'<span style="color:{tier_color};font-size:0.85rem;font-weight:600;white-space:nowrap;margin-left:6px;">{lock.get("tier","")} +{lock.get("edge",0)*100:.1f}%</span></div>'
                 )
+            _grid_cols = "1fr" if n == 1 else "1fr 1fr"
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:{_grid_cols};gap:0.3rem;margin-bottom:0.3rem;">'
+                + "".join(_pick_cells) +
+                '</div>',
+                unsafe_allow_html=True
+            )
 
             st.markdown('</div>', unsafe_allow_html=True)
 
