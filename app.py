@@ -16788,17 +16788,16 @@ with tabs[3]:
                 f'<div style="color:#e8a020;font-size:1.0rem;">Wager: ${wager} → Potential: ${potential}</div>'
             if wager > 0 else ""
             )
-            # "1-Pick Slip" was a misleading label — PrizePicks' real minimum
-            # is 2 picks, so this only ever appeared for a single prop locked
-            # individually (Quick Lock / board search), not an actual slip.
-            if n == 1:
-                _slip_label = "Game Bet" if _is_game_slip else "Single Prop"
-            else:
-                _slip_label = f"{n}-Pick Slip"
+            # Neither "1-Pick Slip" nor "Single Prop" reads right for a lone
+            # locked pick sitting in a slip-card layout — dropping the label
+            # entirely for that case rather than trying to name it "correctly".
+            # Multi-pick groupings keep the label since it's unambiguous there.
+            _slip_label = "" if n == 1 else f"{n}-Pick Slip"
+            _slip_label_html = f'<span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{_slip_label}</span> ' if _slip_label else ""
             st.markdown(
                 f'<div style="background:#0a0e14;border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
                 f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
-                f'<div><span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{_slip_label}</span> ' +
+                f'<div>{_slip_label_html}' +
                 f'<span style="color:#378add;font-size:1.0rem;margin-left:8px;">{sport}</span> ' +
                 f'<span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:8px;">{ts}</span></div>' +
                 f'{_slip_wager_html}' +
