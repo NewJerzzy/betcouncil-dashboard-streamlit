@@ -16095,6 +16095,16 @@ with tabs[1]:
                                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                     "prob":      _lk_prop.get("Prob",0.5),
                                 })
+                                # Capture Pinnacle CLV at lock-time — this was
+                                # previously dead code (record_pinnacle_line
+                                # existed but was never called from anywhere),
+                                # which is why the Pinnacle CLV Tracker stayed
+                                # stuck on "need 5 more" no matter how many
+                                # bets were resolved.
+                                try:
+                                    record_pinnacle_line(st.session_state.locks[-1], _board)
+                                except Exception:
+                                    pass
                                 save_json_data(LOCKS_PATH, st.session_state.locks)
                                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
                                 st.success(f"Locked {_lr['_player']} {_lr['_prop']}")
@@ -16189,6 +16199,10 @@ with tabs[1]:
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "prob": _lp.get("Prob",0.5),
                         })
+                        try:
+                            record_pinnacle_line(st.session_state.locks[-1], _board)
+                        except Exception:
+                            pass
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"Locked {len(_pb_sel)} portfolio bets")
@@ -16215,6 +16229,10 @@ with tabs[1]:
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob": _p.get("Prob",0.5),
                             })
+                            try:
+                                record_pinnacle_line(st.session_state.locks[-1], _board)
+                            except Exception:
+                                pass
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"Locked {len([p for p in _board if p.get('Tier') in ('SOVEREIGN','ELITE')])} plays")
@@ -18831,46 +18849,25 @@ with tabs[4]:
         p2.metric("Positive Rate", f"{pos_rate:.1%}")
         p3.metric("Bets Tracked", len(pinnacle_data))
     else:
-        st.info(f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.")
-        if st.button("🔄 Backfill CLV from History", key="backfill_clv_btn"):
-            _history_all = st.session_state.get("history", [])
-            _clv_existing = load_json_data(CLV_PATH, [])
-            _existing_keys = set(
-                f"{normalize_name(c.get('player',''))}_{c.get('prop','')}_{c.get('timestamp','')[:10]}"
-                for c in _clv_existing
-            )
-            _added = 0
-            for _h in _history_all:
-                if _h.get("outcome") not in ("WIN","LOSS"):
-                    continue
-                _line = _h.get("line")
-                if not _line:
-                    continue
-                _key = f"{normalize_name(_h.get('player',''))}_{_h.get('prop','')}_{str(_h.get('timestamp',''))[:10]}"
-                if _key in _existing_keys:
-                    continue
-                _clv_existing.append({
-                    "player":       _h.get("player",""),
-                    "prop":         _h.get("prop",""),
-                    "locked_line":  float(_line),
-                    "closing_line": float(_line),
-                    "side":         _h.get("side","OVER"),
-                    "clv":          0.0,
-                    "outcome":      _h.get("outcome",""),
-                    "timestamp":    _h.get("timestamp",""),
-                    "sport":        _h.get("sport",""),
-                    "tier":         _h.get("tier",""),
-                    "edge":         _h.get("edge",0),
-                    "prob":         _h.get("prob",0.5),
-                    "backfilled":   True,
-                })
-                _added += 1
-            if _added > 0:
-                save_json_data(CLV_PATH, _clv_existing)
-                st.success(f"✅ Backfilled {_added} CLV entries from history. CLV tracker is now active.")
-                st.rerun()
-            else:
-                st.info("No new entries to backfill.")
+        # NOTE (2026-07): this used to stay stuck at "need 5 more" no matter
+        # how many bets were resolved (174+), because record_pinnacle_line()
+        # — the only function that writes PINNACLE_LINES_PATH — was built but
+        # never called from any lock-creation button. It's now wired into
+        # the EV Optimizer, Portfolio Builder, and Slip Analyzer lock
+        # actions, so this should start filling in from new locks going
+        # forward. There used to be a "Backfill CLV from History" button
+        # here too — removed, because it can't actually work: Pinnacle's
+        # closing line at the time of a past bet isn't something history
+        # ever stored, so the old backfill just wrote a fake 0.0 CLV
+        # placeholder (and to the wrong file, so it didn't even clear this
+        # message). Real CLV can only be captured going forward, at lock
+        # time.
+        st.info(
+            f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.\n\n"
+            "This only counts bets locked *after* Pinnacle capture was wired in — it can't be "
+            "backfilled from already-resolved bets, since the Pinnacle closing line at that moment "
+            "was never recorded. Lock a few new picks and this will start filling in."
+        )
 
 # ----- TAB 5: LOG BET -----
 
@@ -19257,6 +19254,10 @@ with tabs[5]:
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "sport": r["sport"]
                             })
+                            try:
+                                record_pinnacle_line(st.session_state.locks[-1], board)
+                            except Exception:
+                                pass
                             locked += 1
                 if locked:
                     save_json_data(LOCKS_PATH, st.session_state.locks)
