@@ -14352,6 +14352,35 @@ def get_harvester_status() -> dict:
         except Exception as e:
             status[name] = {"active":False,"age_minutes":None,
                             "source":"error","warning":f"🔴 Error: {str(e)[:50]}"}
+
+    # ── Paddy Power (direct HTML harvest — local pkl cache, not gist-backed) ──
+    try:
+        _pp_files = [f for f in os.listdir(CACHE_DIR) if f.startswith("paddypower_") and f.endswith(".pkl")]
+        if not _pp_files:
+            status["Paddy Power (direct)"] = {
+                "active": False, "age_minutes": None, "source": "none",
+                "warning": "⚪ No data yet — load a board first",
+            }
+        else:
+            _newest = max(_pp_files, key=lambda f: os.path.getmtime(os.path.join(CACHE_DIR, f)))
+            _age = round((time.time() - os.path.getmtime(os.path.join(CACHE_DIR, _newest))) / 60, 1)
+            _fresh = _age <= 10
+            try:
+                _n_games = len(_safe_load_pkl(os.path.join(CACHE_DIR, _newest)) or [])
+            except Exception:
+                _n_games = 0
+            status["Paddy Power (direct)"] = {
+                "active": _fresh and _n_games > 0,
+                "age_minutes": _age,
+                "source": "html_harvest",
+                "warning": ("" if (_fresh and _n_games > 0)
+                            else (f"🟡 Stale ({_age}min) — reload BetCouncil to refresh" if _fresh is False
+                                  else "🔴 Last fetch returned 0 games — parser may need a selector update")),
+            }
+    except Exception as e:
+        status["Paddy Power (direct)"] = {"active": False, "age_minutes": None,
+                                           "source": "error", "warning": f"🔴 Error: {str(e)[:50]}"}
+
     return status
 
 

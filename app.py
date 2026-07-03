@@ -19245,6 +19245,36 @@ with tabs[5]:
                     st.success(f"✅ Locked {locked} picks")
                     st.rerun()
 
+        # ── Log this slip as a placed bet (merged with Log Bet → Bulk Entry) ──
+        # Previously the only way to record an already-placed slip was to
+        # re-paste/re-type the same picks a second time in the Log Bet tab's
+        # Bulk Entry sub-tab. This reuses the exact same log_manual_bet()
+        # pipeline directly from the already-analyzed results — one parse,
+        # one place to enter the wager, done.
+        st.markdown("---")
+        with st.expander(f"📝 Log this slip as a placed bet ({len(results)} picks)", expanded=False):
+            st.caption("Already placed this slip for real? Log it here — no need to re-enter it in Log Bet → Bulk Entry, this writes to the same history.")
+            _ls_col1, _ls_col2, _ls_col3 = st.columns(3)
+            with _ls_col1:
+                _ls_wager = st.number_input("Total stake ($)", min_value=0.0, value=float(active_unit()) if callable(active_unit) else 10.0, step=1.0, key="log_slip_wager")
+            with _ls_col2:
+                _ls_outcome = st.selectbox("Outcome", ["PENDING", "WIN", "LOSS", "PUSH"], key="log_slip_outcome")
+            with _ls_col3:
+                _ls_source = st.text_input("Placed on (book/app)", value="PrizePicks", key="log_slip_source")
+
+            if st.button(f"✅ Log all {len(results)} picks as one parlay", key="log_slip_as_bet"):
+                _ls_slip_id = st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M")
+                for r in results:
+                    log_manual_bet(
+                        player=r["player"], prop=r["stat"], line=r["line"], side=r["side"],
+                        sport=r["sport"], outcome=_ls_outcome, wager=_ls_wager,
+                        pick_count=len(results), bet_type="prop", source=f"{_ls_source} (via Slip Analyzer)",
+                        bet_date=_ls_slip_id, tier=r["tier"], edge=r["edge"], prob=r["prob"],
+                        notes="Logged from Slip Analyzer",
+                    )
+                st.success(f"✅ Logged {len(results)} picks as one parlay — see Log Bet → Recent Activity")
+                st.rerun()
+
         # Generate slip summary report
         st.markdown("---")
         st.markdown("## 📋 Slip Analysis Report")
@@ -19700,6 +19730,7 @@ with tabs[7]:
     with log_tab2:
         st.markdown("### 🎯 Log a PrizePicks Parlay as a Group")
         st.caption("Enter the parlay as a whole — stake is for the entire entry, not per player.")
+        st.caption("💡 Already ran this slip through **🔍 Slip Analyzer**? Use its \"Log this slip as a placed bet\" button instead — it logs the same picks without re-typing them here.")
         _pk_col1, _pk_col2, _pk_col3 = st.columns(3)
         _pk_picks   = _pk_col1.selectbox("# of Picks", [2, 3, 4, 5, 6], index=0, key="pk_picks")
         _pk_stake   = _pk_col2.number_input("Stake ($)", min_value=1.0, step=5.0, value=10.0, key="pk_stake")
