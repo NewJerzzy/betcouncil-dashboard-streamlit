@@ -16812,11 +16812,21 @@ with tabs[3]:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
+            # Pick count → PrizePicks payout multiplier (2-pick=3x, 3-pick=5x,
+            # 4-pick=10x, 5-pick=20x) used when logging WIN/LOSS. This was a
+            # bare, unlabeled radio always shown full-width — confusing since
+            # it already silently defaulted to the correct value (slip size).
+            # Only actually needs touching for a PrizePicks Flex Play, where
+            # a slip can still pay out at a reduced count even if not every
+            # leg hits. Auto-default now, override tucked away for that case.
+            _radio_idx = max(0, min(n-2, 3))
+            n_pick = [2,3,4,5][_radio_idx]
+            with st.expander(f"⚙️ Flex Play? Adjust payout count (currently {n_pick}-pick)", expanded=False):
+                st.caption("Only change this if PrizePicks paid out at a different pick count than you entered (Flex Play).")
+                n_pick = st.radio("Payout pick count", [2,3,4,5], index=_radio_idx, horizontal=True, key=f"pc_{slip_key}")
+
             # Slip-level WIN/LOSS/VOID buttons
-            btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([2,1,1,1])
-            with btn_col1:
-                _radio_idx = max(0, min(n-2, 3))
-            n_pick = st.radio("Pick count:", [2,3,4,5], index=_radio_idx, horizontal=True, key=f"pc_{slip_key}")
+            btn_col2, btn_col3, btn_col4 = st.columns(3)
             with btn_col2:
                 if st.button("✅ WIN SLIP", key=f"win_{slip_key}", use_container_width=True):
                     for lock in slip_locks:
