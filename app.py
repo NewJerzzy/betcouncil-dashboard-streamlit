@@ -11083,7 +11083,37 @@ def load_sport_data(sport):
     def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
     def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
     def _pf_betonline_off():   return fetch_betonline_offering(sport)
-    def _pf_bovada_lines():    return fetch_bovada_game_lines(sport)
+    def _pf_bovada_lines():
+        _direct = fetch_bovada_game_lines(sport)
+        if _direct:
+            return _direct
+        # Direct server-side fetch to Bovada's public coupon API frequently
+        # returns empty from Streamlit Cloud's datacenter IP even though the
+        # same endpoint works fine from a residential browser (Cloudflare/
+        # rate-limiting treats datacenter IPs differently). Fall back to the
+        # Tampermonkey harvester's Gist-backed capture, which runs inside a
+        # real browser session and hits the identical public endpoint.
+        try:
+            _gist_data = load_from_gist(f"bovada_{sport}", None)
+            if not _gist_data or not _gist_data.get("rows"):
+                return []
+            _out = []
+            for _row in _gist_data["rows"]:
+                _american = _row.get("american_odds") or _row.get("decimal_odds") or ""
+                _out.append({
+                    "game":      f"{_row.get('away_team','')} @ {_row.get('home_team','')}",
+                    "home":      _row.get("home_team", ""),
+                    "away":      _row.get("away_team", ""),
+                    "market":    _row.get("market_type", ""),
+                    "selection": _row.get("selection", ""),
+                    "odds":      _american,
+                    "book":      "Bovada",
+                    "sport":     sport,
+                    "source":    "bovada_lines_harvester",
+                })
+            return _out
+        except Exception:
+            return []
     def _pf_bovada_props():    return fetch_bovada_props(sport)
     def _pf_sharpapi_props():  return fetch_sharpapi_props(sport)
     def _pf_savant_xstats():   return fetch_savant_statcast()
