@@ -2876,6 +2876,70 @@ def record_clv(lock, current_props):
     save_json_data(CLV_PATH, clv_data)
     return round(clv, 1)
 
+def record_pinnacle_game_line(lock, pinnacle_lines):
+    """
+    Game-line counterpart to record_pinnacle_line() — that one matches on
+    Player+Prop against prop data, which doesn't fit a game lock (its
+    "player" field holds the matchup string, e.g. "Lakers @ Celtics", and
+    "prop" holds SPREAD/TOTAL/ML/ALT LINE). This matches on matchup instead,
+    against fetch_pinnacle_game_lines() output (st.session_state
+    "pinnacle_game_lines"), and writes to the same PINNACLE_LINES_PATH so
+    the Pinnacle CLV Tracker reflects both props and game lines together.
+    Returns the CLV value, or None if no Pinnacle line was found (e.g. off
+    Streamlit Cloud's network, where Pinnacle's guest API is unreachable).
+    """
+    matchup   = lock.get("player", "")
+    prop_lbl  = lock.get("prop", "")
+    side      = lock.get("side", "")
+    try:
+        locked_line = float(str(lock.get("line", 0)).replace("+",""))
+    except (ValueError, TypeError):
+        return None
+    if not matchup or not pinnacle_lines:
+        return None
+
+    pin_game = next(
+        (g for g in pinnacle_lines
+         if normalize_name(g.get("Matchup","")) == normalize_name(matchup)
+         or normalize_name(matchup) in normalize_name(g.get("Matchup",""))),
+        None
+    )
+    if not pin_game:
+        return None
+
+    pinnacle_line = None
+    if prop_lbl == "SPREAD":
+        pinnacle_line = pin_game.get("Spread")
+    elif prop_lbl in ("TOTAL", "ALT LINE"):
+        pinnacle_line = pin_game.get("Total")
+    elif prop_lbl == "ML":
+        # ML lock stores an implied-line proxy, not a point spread — CLV on
+        # moneyline is normally price movement, not line movement, so this
+        # is skipped rather than computing a misleading number.
+        return None
+    if pinnacle_line is None:
+        return None
+
+    try:
+        pinnacle_line = float(pinnacle_line)
+    except (ValueError, TypeError):
+        return None
+
+    clv = (locked_line - pinnacle_line) if "OVER" in side.upper() or "HOME" in side.upper() else (pinnacle_line - locked_line)
+    record = {
+        "player": matchup, "prop": prop_lbl,
+        "locked_line": locked_line, "pinnacle_line": pinnacle_line,
+        "pinnacle_clv": round(clv, 1), "side": side,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "sport": lock.get("sport", ""), "tier": lock.get("tier", ""),
+        "positive": clv > 0, "bet_type": "game",
+    }
+    existing = load_json_data(PINNACLE_LINES_PATH, [])
+    existing.append(record)
+    save_json_data(PINNACLE_LINES_PATH, existing)
+    return round(clv, 1)
+
+
 def record_pinnacle_line(lock, props_data):
     player = lock.get("player", "")
     prop = lock.get("prop", "")

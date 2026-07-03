@@ -16486,6 +16486,10 @@ with tabs[2]:
                             "wager": 0,
                         }
                         st.session_state.locks.append(_new_game_lock)
+                        try:
+                            record_pinnacle_game_line(_new_game_lock, st.session_state.get("pinnacle_game_lines", []))
+                        except Exception:
+                            pass
                         save_json_data(LOCKS_PATH, st.session_state.locks)
                         save_to_gist("locks", st.session_state.locks)  # persists across restarts
                         st.rerun()
