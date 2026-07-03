@@ -15977,7 +15977,7 @@ with tabs[1]:
 
         _header = (
             '<div style="display:grid;grid-template-columns:'
-            '12px 160px 55px 40px 90px 50px 48px 52px 45px 100px 48px 48px 48px 55px 65px;'
+            '12px 160px 55px 54px 90px 50px 58px 52px 58px 80px 45px 45px 45px 47px 65px;'
             'gap:3px;padding:6px 8px;background:var(--color-background-secondary);border-radius:6px 6px 0 0;'
             'font-size:10px;font-weight:700;color:var(--color-text-tertiary);text-transform:uppercase;'
             'letter-spacing:0.05em;position:sticky;top:0;z-index:10;">'
@@ -16060,7 +16060,7 @@ with tabs[1]:
 
             _row = (
                 f'<div class="{_tier_css}" style="display:grid;grid-template-columns:'
-                f'12px 160px 55px 40px 90px 50px 48px 52px 45px 100px 48px 48px 48px 55px 65px;'
+                f'12px 160px 55px 54px 90px 50px 58px 52px 58px 80px 45px 45px 45px 47px 65px;'
                 f'gap:3px;padding:3px 8px;background:{_bg};'
                 f'border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;align-items:center;'
                 f'min-height:22px;">'
@@ -16149,6 +16149,58 @@ with tabs[1]:
                                 st.rerun()
                             else:
                                 st.info("Already locked")
+
+        # ── Lock any prop (covers the full board, not just the first 10
+        # rows that get quick-lock buttons above). A dedicated button per
+        # row for every row on a 50-100 row board isn't practical, so this
+        # is a searchable dropdown + one lock button instead — every prop
+        # shown in the table is reachable here regardless of table size.
+        if len(_rows) > 10:
+            st.markdown("**Lock any prop from this board:**")
+            _all_row_labels = [
+                f"{r['_player']} — {r['_side']} {r['_line']} {r['_prop']} ({r['_tier']}, +{r['_edge_pct']}%)"
+                for r in _rows
+            ]
+            _lk_pick_col1, _lk_pick_col2 = st.columns([4,1])
+            with _lk_pick_col1:
+                _lk_pick = st.selectbox("Search props", ["— select —"] + _all_row_labels,
+                                         key="fullboard_lock_search", label_visibility="collapsed")
+            with _lk_pick_col2:
+                if st.button("🔒 Lock", key="fullboard_lock_search_btn", use_container_width=True) and _lk_pick != "— select —":
+                    _lk_idx = _all_row_labels.index(_lk_pick)
+                    _lr2 = _rows[_lk_idx]
+                    _lk_prop2 = next((p for p in _board
+                                      if normalize_name(p.get("Player",""))==normalize_name(_lr2["_player"])
+                                      and str(p.get("Line",""))==str(_lr2["_line"])), None)
+                    if _lk_prop2:
+                        _already2 = any(
+                            normalize_name(l.get("player",""))==normalize_name(_lr2["_player"]) and
+                            str(l.get("line",""))==str(_lr2["_line"])
+                            for l in st.session_state.get("locks", [])
+                        )
+                        if not _already2:
+                            st.session_state.locks.append({
+                                "player":    _lk_prop2.get("Player",""),
+                                "prop":      _lk_prop2.get("Prop",""),
+                                "line":      _lk_prop2.get("Line",0),
+                                "side":      _lk_prop2.get("Side","OVER"),
+                                "tier":      _lk_prop2.get("Tier",""),
+                                "edge":      _lk_prop2.get("Edge",0),
+                                "sport":     _sport,
+                                "source":    "EV Optimizer",
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "prob":      _lk_prop2.get("Prob",0.5),
+                            })
+                            try:
+                                record_pinnacle_line(st.session_state.locks[-1], _board)
+                            except Exception:
+                                pass
+                            save_json_data(LOCKS_PATH, st.session_state.locks)
+                            save_to_gist("locks", st.session_state.locks)
+                            st.success(f"Locked {_lr2['_player']} {_lr2['_prop']}")
+                            st.rerun()
+                        else:
+                            st.info("Already locked")
 
         if not _rows:
             st.info("No props match current filters.")
