@@ -1343,7 +1343,15 @@ def check_daily_risk_limits(sport=None):
 _GIST_BATCH_WINDOW = 5.0  # seconds
 
 # Keys that must be flushed immediately rather than held in the batch window.
-_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance"})
+_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks"})
+# "locks" added 2026-07: WIN/LOSS/VOID slip buttons remove a lock from
+# st.session_state immediately, then call save_to_gist("locks", ...) — but
+# as a non-critical key that write was only QUEUED, flushed up to 5s later.
+# If the session ended (tab closed, Streamlit Cloud container recycled)
+# before that flush happened, the removal never reached the Gist — so the
+# next session loaded the stale copy with the "settled" lock still in it.
+# This is why settled slips could keep reappearing in Locks & Ledger even
+# after clicking Win/Loss Slip. Now flushes synchronously, same as history.
 
 def save_to_gist(data_type, data):
     """

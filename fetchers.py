@@ -3275,7 +3275,11 @@ def increment_api_counter(counter_path):
 
 # ── Gist batch-write constants (mirrors app.py module-level globals) ────────
 _GIST_BATCH_WINDOW   = 5.0   # seconds — flush after this many seconds of queued writes
-_GIST_CRITICAL_KEYS  = frozenset({"history", "bankroll", "signal_performance", "injury_performance"})
+_GIST_CRITICAL_KEYS  = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks"})
+# "locks" added 2026-07 — kept in sync with app.py's copy of this constant.
+# See app.py's _GIST_CRITICAL_KEYS comment for why: a queued (non-critical)
+# "locks" write could be lost if the session ended before the batch window
+# flushed, letting settled slips reappear after Win/Loss/Void.
 
 
 def _flush_batch_gist(dirty, now=None):
