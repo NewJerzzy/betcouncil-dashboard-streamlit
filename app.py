@@ -19456,8 +19456,8 @@ with tabs[6]:
         st.warning("BallsDontLie API key required. Add BALLSDONTLIE_API_KEY to Streamlit Secrets.")
     else:
         # ── Auto-suggest: search BDL as user types, populate from board if matched ──
-        # Pre-populate suggestions from today's loaded board (zero API calls)
-        board_player_names = sorted(set(p["Player"] for p in st.session_state.board_data)) if st.session_state.board_data else []
+        # (player-name suggestion list is now built per-sport further below,
+        # scoped to pl_sport_sel — see _board_names_this_sport)
 
         col_pl0, col_pl1, col_pl2 = st.columns([1,2,1])
         with col_pl0:
@@ -19473,15 +19473,23 @@ with tabs[6]:
                 st.session_state["pl_line"] = 0.0
         with col_pl1:
             pl_name_input = st.text_input("Player name", placeholder="Start typing a name…", key="pl_name")
-            # Auto-suggest from loaded board
+            # Auto-suggest from loaded board — scoped to pl_sport_sel, not just
+            # whatever sport the main board happens to be loaded for. Player
+            # Lookup has its own independent sport selector, so "soto" typed
+            # while the main board sits on NBA should still search MLB names.
+            _board_names_this_sport = sorted(set(
+                p["Player"] for p in st.session_state.board_data
+                if p.get("Sport", "").upper() == pl_sport_sel.upper()
+            )) if st.session_state.board_data else []
             if pl_name_input and len(pl_name_input) >= 3:
-                _matches = [n for n in board_player_names if normalize_name(pl_name_input) in normalize_name(n)]
+                _matches = [n for n in _board_names_this_sport if normalize_name(pl_name_input) in normalize_name(n)]
                 if _matches:
                     _selected = st.selectbox("Suggestions from today's board", ["— type to search —"] + _matches[:8], key="pl_suggest")
                     if _selected and _selected != "— type to search —":
                         pl_name_input = _selected
                         # Auto-fill opponent from board data
-                        _board_match = next((p for p in st.session_state.board_data if p["Player"] == _selected), None)
+                        _board_match = next((p for p in st.session_state.board_data
+                                             if p["Player"] == _selected and p.get("Sport","").upper() == pl_sport_sel.upper()), None)
                         if _board_match and not st.session_state.get("pl_opp"):
                             st.session_state["pl_opp_autofill"] = _board_match.get("Opponent", "")
                 elif len(pl_name_input) >= 4:
