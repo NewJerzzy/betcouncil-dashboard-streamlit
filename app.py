@@ -16444,9 +16444,15 @@ with tabs[2]:
                  "pick":(_g.get("MLPick") or
                          ("No Market" if _g.get("HomeML","N/A") in ("N/A","",None)
                           else (
-                              # Show favorite team + ML odds
+                              # Show favorite team + ML odds. Bug fix (2026-07):
+                              # this used to be `(FavoriteTeam+" "+FavoriteML).strip() or <rebuild>`,
+                              # but if FavoriteTeam was empty while FavoriteML had a
+                              # real value, the stripped result was still a non-empty
+                              # (team-less) string like "-131" — truthy in Python, so
+                              # the `or` never fell through to the team-name rebuild
+                              # below. Explicitly require FavoriteTeam to be present.
                               (_g.get("FavoriteTeam","") + " " + _g.get("FavoriteML","")).strip()
-                              or
+                              if _g.get("FavoriteTeam") else
                               # Rebuild from home/away + ML odds
                               # home/away may be full names (from game_analysis) or abbrevs (from raw games)
                               ((_g.get("home","") + " " + str(_g.get("HomeML","")))
