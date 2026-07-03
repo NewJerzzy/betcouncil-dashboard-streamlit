@@ -18052,47 +18052,62 @@ with tabs[4]:
             }}).catch(function(e) {{ console.log('[BetCouncil] Caesars harvest:', e.message); }});
         }});
 
-        // ── 3. FanDuel props auto-fetch (every 25 min, sport-specific) ──────
-        var fdSportMap = {{
-            'MLB': 'mlb', 'NBA': 'nba', 'NFL': 'nfl',
-            'NHL': 'nhl', 'UFC': 'mma'
-        }};
-        var fdLeague = fdSportMap[sport];
-        if (fdLeague) {{
-            throttled('fanduel_' + sport, 1500000, function() {{
-                // FanDuel props via their public-facing API
-                // sbapi.tnsgaming.com is the backend
-                var fdUrl = 'https://sbapi.tnsgaming.com/api/price-history/' + fdLeague + '/player-props?count=200';
-                fetch(fdUrl, {{
-                    headers: {{
-                        'Accept': 'application/json',
-                        'Origin': 'https://sportsbook.fanduel.com',
-                        'Referer': 'https://sportsbook.fanduel.com/'
+
+        // ── 3. FanDuel odds passive capture (hooks fetch, pushes on every getMarketPrices call) ──
+        if (!window.__bcFdHooked) {{
+            window.__bcFdHooked = true;
+            var __bcOrigFetch = window.fetch;
+            window.fetch = function() {{
+                var __bcArgs = arguments;
+                var __bcUrl = (typeof __bcArgs[0] === 'string') ? __bcArgs[0] : (__bcArgs[0] && __bcArgs[0].url);
+                var __bcReqInit = __bcArgs[1] || {{}};
+
+                return __bcOrigFetch.apply(this, __bcArgs).then(function(response) {{
+                    try {{
+                        if (__bcUrl && __bcUrl.indexOf('getMarketPrices') !== -1) {{
+                            // Capture x-px-context from the outgoing request headers
+                            var __bcPxContext = '';
+                            try {{
+                                var __bcHeaders = __bcReqInit.headers || {{}};
+                                if (__bcHeaders instanceof Headers) {{
+                                    __bcPxContext = __bcHeaders.get('x-px-context') || '';
+                                }} else {{
+                                    __bcPxContext = __bcHeaders['x-px-context'] || '';
+                                }}
+                            }} catch (eHead) {{}}
+
+                            var __bcClone = response.clone();
+                            __bcClone.json().then(function(data) {{
+                                if (Array.isArray(data) && data.length) {{
+                                    pushGist('betcouncil_fd_props_' + sport + '.json', {{
+                                        sport: sport,
+                                        captured_at: new Date().toISOString(),
+                                        markets: data,
+                                        source: 'betcouncil_auto_harvest_passive'
+                                    }});
+                                    console.log('[BetCouncil] ✅ FanDuel odds captured: ' + data.length + ' markets');
+
+                                    if (__bcPxContext) {{
+                                        pushGist('fanduel_tokens.json', {{
+                                            px_context: __bcPxContext,
+                                            captured_at: new Date().toISOString(),
+                                            source: 'betcouncil_auto_harvest_passive'
+                                        }});
+                                    }}
+                                }}
+                            }}).catch(function(eJson) {{
+                                console.log('[BetCouncil] FanDuel odds parse error:', eJson.message);
+                            }});
+                        }}
+                    }} catch (eOuter) {{
+                        console.log('[BetCouncil] FanDuel passive capture error:', eOuter.message);
                     }}
-                }}).then(function(r) {{ return r.json(); }})
-                  .then(function(data) {{
-                    pushGist('betcouncil_fd_props_' + sport + '.json', {{
-                        sport: sport,
-                        captured_at: new Date().toISOString(),
-                        props: data,
-                        source: 'betcouncil_auto_harvest'
-                    }});
-                  }}).catch(function(e) {{
-                    // Try alternate FD endpoint
-                    fetch('https://api.fanduel.com/fixtures?_format=json&_locale=en-US&sport=' + fdLeague, {{
-                        headers: {{'Accept': 'application/json'}}
-                    }}).then(function(r) {{ return r.json(); }})
-                      .then(function(d) {{
-                        pushGist('betcouncil_fd_props_' + sport + '.json', {{
-                            sport: sport, captured_at: new Date().toISOString(),
-                            data: d, source: 'betcouncil_fd_alt'
-                        }});
-                      }}).catch(function(e2) {{
-                        console.log('[BetCouncil] FanDuel harvest failed:', e2.message);
-                      }});
-                  }});
-            }});
+                    return response;
+                }});
+            }};
+            console.log('[BetCouncil] FanDuel passive harvester hooked — browse FanDuel props to capture odds');
         }}
+
 
         // ── 4. BetMGM props auto-fetch (every 25 min) ───────────────────────
         var mgmSportMap = {{
