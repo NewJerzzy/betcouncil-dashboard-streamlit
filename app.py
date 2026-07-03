@@ -19309,6 +19309,63 @@ with tabs[5]:
 
 
 @st.cache_data(ttl=1800)
+def search_players_by_name(query, sport):
+    """
+    Search for players by (partial) name, using whichever source actually
+    covers that sport — the old approach always hit BallsDontLie's NBA
+    endpoint (v1/players) regardless of selected sport, so an MLB search for
+    "soto" silently returned nothing since BDL's free tier is NBA-only.
+
+    Dispatches to the same live source each sport's game-log fetcher already
+    uses, so results are guaranteed to also be lookupable afterward:
+      MLB  -> statsapi.mlb.com (official, no auth)
+      NHL  -> search.d3.nhle.com (official, no auth)
+      NFL  -> local nfl_player_db.pkl (already built/cached — no live call)
+      NBA/WNBA -> BallsDontLie v1/players (needs BDL_API_KEY)
+
+    Returns a list of display-name strings (deduped, capped at 8).
+    """
+    sport = sport.upper()
+    try:
+        if sport == "MLB":
+            r = _http.get(
+                "https://statsapi.mlb.com/api/v1/people/search",
+                params={"names": query, "sportId": 1}, timeout=6)
+            if r.status_code != 200: return []
+            return [p.get("fullName", "") for p in r.json().get("people", [])[:8] if p.get("fullName")]
+
+        if sport == "NHL":
+            r = _http.get(
+                "https://search.d3.nhle.com/api/v1/search",
+                params={"q": query, "type": "player", "active": "true"}, timeout=6)
+            if r.status_code != 200: return []
+            _results = r.json()
+            if not isinstance(_results, list): return []
+            out = []
+            for p in _results[:8]:
+                _nm = p.get("name") or f"{p.get('firstName','')} {p.get('lastName','')}".strip()
+                if _nm: out.append(_nm)
+            return out
+
+        if sport == "NFL":
+            db = _safe_load_pkl(os.path.join(CACHE_DIR, "nfl_player_db.pkl")) or {}
+            q_norm = normalize_name(query)
+            return sorted({p["name"] for p in db.values()
+                           if q_norm in normalize_name(p.get("name",""))})[:8]
+
+        # NBA / WNBA — BallsDontLie
+        if not BDL_API_KEY:
+            return []
+        r = _http.get(
+            "https://api.balldontlie.io/v1/players",
+            headers={"Authorization": BDL_API_KEY},
+            params={"search": query, "per_page": 8}, timeout=6)
+        if r.status_code != 200: return []
+        return [f"{p['first_name']} {p['last_name']}" for p in r.json().get("data", [])]
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
 def fetch_mlb_player_game_logs(player_name, last_n=15):
     """Fetch MLB player recent game logs via MLB Stats API."""
     try:
@@ -19493,26 +19550,18 @@ with tabs[6]:
                         if _board_match and not st.session_state.get("pl_opp"):
                             st.session_state["pl_opp_autofill"] = _board_match.get("Opponent", "")
                 elif len(pl_name_input) >= 4:
-                    # Fall back to BDL search if not on today's board
-                    _bdl_cache_key = f"bdl_suggest_{pl_name_input[:6].lower()}"
-                    if _bdl_cache_key not in st.session_state:
-                        try:
-                            _sr = _http.get(
-                                "https://api.balldontlie.io/v1/players",
-                                headers={"Authorization": BDL_API_KEY},
-                                params={"search": pl_name_input, "per_page": 8},
-                                timeout=6
-                            )
-                            if _sr.status_code == 200:
-                                _sdata = _sr.json().get("data", [])
-                                st.session_state[_bdl_cache_key] = [
-                                    f"{p['first_name']} {p['last_name']}" for p in _sdata
-                                ]
-                        except (requests.RequestException, KeyError, ValueError):
-                            st.session_state[_bdl_cache_key] = []
-                    _bdl_matches = st.session_state.get(_bdl_cache_key, [])
+                    # Fall back to a live search — dispatches to the correct
+                    # source per sport (MLB Stats API, NHL search, local NFL
+                    # DB, or BallsDontLie for NBA/WNBA). See
+                    # search_players_by_name() for why this replaced a
+                    # BDL-only call that silently returned nothing for
+                    # non-NBA sports.
+                    _suggest_cache_key = f"namesearch_{pl_sport_sel}_{pl_name_input[:6].lower()}"
+                    if _suggest_cache_key not in st.session_state:
+                        st.session_state[_suggest_cache_key] = search_players_by_name(pl_name_input, pl_sport_sel)
+                    _bdl_matches = st.session_state.get(_suggest_cache_key, [])
                     if _bdl_matches:
-                        _selected2 = st.selectbox("Players found (BDL)", ["— select —"] + _bdl_matches, key="pl_bdl_suggest")
+                        _selected2 = st.selectbox("Players found", ["— select —"] + _bdl_matches, key="pl_bdl_suggest")
                         if _selected2 and _selected2 != "— select —":
                             pl_name_input = _selected2
             pl_name = pl_name_input
