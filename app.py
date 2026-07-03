@@ -11115,6 +11115,12 @@ def load_sport_data(sport):
         except Exception:
             return []
     def _pf_bovada_props():    return fetch_bovada_props(sport)
+    def _pf_polymarket():
+        try:
+            data, _src = fetch_polymarket_from_gist(sport)
+            return data
+        except Exception:
+            return {}
     def _pf_sharpapi_props():  return fetch_sharpapi_props(sport)
     def _pf_savant_xstats():   return fetch_savant_statcast()
     def _pf_savant_sprint():   return fetch_savant_sprint_speed()
@@ -11159,7 +11165,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines,
-        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props,
+        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_polymarket,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -11175,7 +11181,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw,
-     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw,
+     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, polymarket_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -11349,6 +11355,7 @@ def load_sport_data(sport):
     st.session_state["betonline_offering"]   = betonline_off_raw   or []
     st.session_state["bovada_game_lines"]    = bovada_lines_raw    or []
     st.session_state["bovada_props"]         = bovada_props_raw    or []
+    st.session_state["polymarket_data"]      = polymarket_raw      or {}
     st.session_state["savant_xstats"]        = savant_xstats_raw   or {}
     st.session_state["savant_sprint"]        = savant_sprint_raw   or {}
     st.session_state["savant_expected"]      = savant_expected_raw or {}
