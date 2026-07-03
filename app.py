@@ -102,6 +102,7 @@ from config import (
     _TENNIS_SURFACE_BASELINES_BO3, _TENNIS_SURFACE_BASELINES_BO5,
     _ATP_GRAND_SLAMS, _SLAM_SURFACE,
     _UFC_WEIGHTCLASS_BASELINES, _UFC_ROUND_DEFAULT, _UFC_CHAMPIONSHIP_ROUNDS,
+    PLAYER_LOOKUP_OPPONENT_OPTIONS,
 )
 import time as _time_mod
 from contextlib import contextmanager as _ctx
@@ -19468,7 +19469,7 @@ with tabs[6]:
             # explicitly and wipe the dependent fields when it flips.
             if st.session_state.get("_pl_last_sport") != pl_sport_sel:
                 st.session_state["_pl_last_sport"] = pl_sport_sel
-                st.session_state["pl_opp"] = ""
+                st.session_state["pl_opp"] = "— select opponent —"
                 st.session_state["pl_line"] = 0.0
         with col_pl1:
             pl_name_input = st.text_input("Player name", placeholder="Start typing a name…", key="pl_name")
@@ -19528,14 +19529,17 @@ with tabs[6]:
 
         col_pl4, col_pl5 = st.columns(2)
         with col_pl4:
-            # NOTE: st.text_input's `value=` param is silently ignored once its
-            # `key` already has session_state — must write session_state[key]
-            # directly before the widget renders for auto-fill to actually work.
+            # Dropdown scoped to the selected sport — replaces free text so
+            # there's no typo risk and no way for a stale cross-sport value
+            # to display (each sport has its own fixed option list).
+            _opp_options = ["— select opponent —"] + PLAYER_LOOKUP_OPPONENT_OPTIONS.get(pl_sport_sel, [])
             _opp_autofill = st.session_state.pop("pl_opp_autofill", "")
-            if _opp_autofill:
+            if _opp_autofill and _opp_autofill in _opp_options:
                 st.session_state["pl_opp"] = _opp_autofill
-            _opp_placeholder = {"NBA": "SAS", "WNBA": "LV", "MLB": "NYY", "NHL": "NYR", "NFL": "KC"}.get(pl_sport_sel, "SAS")
-            pl_opp = st.text_input("Opponent (abbr)", placeholder=_opp_placeholder, key="pl_opp")
+            elif st.session_state.get("pl_opp") not in _opp_options:
+                st.session_state["pl_opp"] = "— select opponent —"
+            _pl_opp_sel = st.selectbox("Opponent (abbr)", _opp_options, key="pl_opp")
+            pl_opp = "" if _pl_opp_sel == "— select opponent —" else _pl_opp_sel
         with col_pl5:
             pl_games = st.slider("Last N games", 5, 30, 15, key="pl_games")
 

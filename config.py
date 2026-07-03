@@ -1488,6 +1488,26 @@ NFL_PLAYER_PROP_REFERENCE = {
     },
 }
 
+# Canonical opponent-abbreviation lists per sport, used to turn the Player
+# Lookup "Opponent" field from free text into a dropdown — avoids typos and
+# stale cross-sport values (e.g. "SAS" surviving a switch from NBA to MLB).
+PLAYER_LOOKUP_OPPONENT_OPTIONS = {
+    "NBA": ["ATL","BOS","BKN","CHA","CHI","CLE","DAL","DEN","DET","GSW","HOU","IND",
+            "LAC","LAL","MEM","MIA","MIL","MIN","NOP","NYK","OKC","ORL","PHI","PHX",
+            "POR","SAC","SAS","TOR","UTA","WAS"],
+    "WNBA": ["ATL","CHI","CON","DAL","GSV","IND","LAS","LVA","MIN","NYL","PHX","SEA",
+             "TOR","WAS","POR"],
+    "MLB": ["ARI","ATL","BAL","BOS","CHC","CIN","CLE","COL","CWS","DET","HOU","KC",
+            "LAA","LAD","MIA","MIL","MIN","NYM","NYY","OAK","PHI","PIT","SD","SEA",
+            "SF","STL","TB","TEX","TOR","WSH"],
+    "NHL": ["ANA","BOS","BUF","CAR","CBJ","CGY","CHI","COL","DAL","DET","EDM","FLA",
+            "LAK","MIN","MTL","NJD","NSH","NYI","NYR","OTT","PHI","PIT","SEA","SJS",
+            "STL","TBL","TOR","UTA","VAN","VGK","WPG","WSH"],
+    "NFL": ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB",
+            "HOU","IND","JAX","KC","LV","LAC","LAR","MIA","MIN","NE","NO","NYG",
+            "NYJ","PHI","PIT","SF","SEA","TB","TEN","WAS"],
+}
+
 NFL_TEAM_ABBR_MAP = {
     "Arizona Cardinals": "ARI", "Atlanta Falcons": "ATL",
     "Baltimore Ravens": "BAL", "Buffalo Bills": "BUF",
