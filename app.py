@@ -19534,7 +19534,8 @@ with tabs[6]:
             _opp_autofill = st.session_state.pop("pl_opp_autofill", "")
             if _opp_autofill:
                 st.session_state["pl_opp"] = _opp_autofill
-            pl_opp = st.text_input("Opponent (abbr)", placeholder="SAS", key="pl_opp")
+            _opp_placeholder = {"NBA": "SAS", "WNBA": "LV", "MLB": "NYY", "NHL": "NYR", "NFL": "KC"}.get(pl_sport_sel, "SAS")
+            pl_opp = st.text_input("Opponent (abbr)", placeholder=_opp_placeholder, key="pl_opp")
         with col_pl5:
             pl_games = st.slider("Last N games", 5, 30, 15, key="pl_games")
 
