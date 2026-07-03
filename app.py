@@ -18027,30 +18027,58 @@ with tabs[4]:
               }}).catch(function(e) {{ console.log('[BetCouncil] EVSharps refresh error:', e); }});
         }});
 
-        // ── 2. Caesars WAF token auto-capture (every 20 min) ────────────────
-        throttled('caesars_waf', 1200000, function() {{
-            fetch('https://api.americanwagering.com/regions/us/locations/az/brands/czr/sb/v4/sports', {{
-                method: 'GET',
-                headers: {{
-                    'Accept': 'application/json',
-                    'x-app-version': '7.50.0',
-                    'x-platform': 'cordova-desktop',
-                    'origin': 'https://sportsbook.caesars.com',
-                    'referer': 'https://sportsbook.caesars.com/'
-                }}
-            }}).then(function(r) {{
-                var waf = r.headers.get('x-aws-waf-token') || '';
-                // Try to extract from request headers via fetch interceptor trick
-                return r.json().then(function(data) {{
-                    // Store whatever we can access
-                    pushGist('betcouncil_caesars_tokens.json', {{
-                        waf_captured_at: new Date().toISOString(),
-                        sports_data: data ? 'ok' : 'empty',
-                        source: 'betcouncil_auto_harvest'
-                    }});
+        // ── 2. Caesars auth token passive capture (hooks fetch, pushes on every authenticated call) ──
+        if (!window.__bcCzrHooked) {{
+            window.__bcCzrHooked = true;
+            var __bcOrigFetchCzr = window.fetch;
+            window.fetch = function() {{
+                var __bcArgsCzr = arguments;
+                var __bcUrlCzr = (typeof __bcArgsCzr[0] === 'string') ? __bcArgsCzr[0] : (__bcArgsCzr[0] && __bcArgsCzr[0].url);
+                var __bcReqInitCzr = __bcArgsCzr[1] || {{}};
+
+                return __bcOrigFetchCzr.apply(this, __bcArgsCzr).then(function(response) {{
+                    try {{
+                        if (__bcUrlCzr && __bcUrlCzr.indexOf('api.americanwagering.com') !== -1) {{
+                            var __bcAuthCzr = '';
+                            var __bcWafCzr = '';
+                            var __bcSessCzr = '';
+                            try {{
+                                var __bcHeadersCzr = __bcReqInitCzr.headers || {{}};
+                                if (__bcHeadersCzr instanceof Headers) {{
+                                    __bcAuthCzr = __bcHeadersCzr.get('authorization') || '';
+                                    __bcWafCzr = __bcHeadersCzr.get('x-aws-waf-token') || '';
+                                    __bcSessCzr = __bcHeadersCzr.get('sessionid') || '';
+                                }} else {{
+                                    __bcAuthCzr = __bcHeadersCzr['authorization'] || __bcHeadersCzr['Authorization'] || '';
+                                    __bcWafCzr = __bcHeadersCzr['x-aws-waf-token'] || '';
+                                    __bcSessCzr = __bcHeadersCzr['sessionid'] || '';
+                                }}
+                            }} catch (eHeadCzr) {{}}
+
+                            if (__bcAuthCzr && __bcAuthCzr.toLowerCase().indexOf('bearer ') === 0) {{
+                                var __bcBearerCzr = __bcAuthCzr.substring(7);
+                                if (__bcBearerCzr !== window.__bcCzrLastBearer) {{
+                                    window.__bcCzrLastBearer = __bcBearerCzr;
+                                    pushGist('betcouncil_caesars_tokens.json', {{
+                                        bearer_jwt: __bcBearerCzr,
+                                        waf_token: __bcWafCzr,
+                                        session_id: __bcSessCzr,
+                                        captured_at: new Date().toISOString(),
+                                        source: 'betcouncil_auto_harvest_passive'
+                                    }});
+                                    console.log('[BetCouncil] ✅ Caesars tokens captured (bearer + waf)');
+                                }}
+                            }}
+                        }}
+                    }} catch (eOuterCzr) {{
+                        console.log('[BetCouncil] Caesars passive capture error:', eOuterCzr.message);
+                    }}
+                    return response;
                 }});
-            }}).catch(function(e) {{ console.log('[BetCouncil] Caesars harvest:', e.message); }});
-        }});
+            }};
+            console.log('[BetCouncil] Caesars passive harvester hooked — browse Caesars to capture tokens');
+        }}
+
 
 
         // ── 3. FanDuel odds passive capture (hooks fetch, pushes on every getMarketPrices call) ──
