@@ -19458,9 +19458,18 @@ with tabs[6]:
         # Pre-populate suggestions from today's loaded board (zero API calls)
         board_player_names = sorted(set(p["Player"] for p in st.session_state.board_data)) if st.session_state.board_data else []
 
-        col_pl0, col_pl1, col_pl2, col_pl3 = st.columns([1,2,1,1])
+        col_pl0, col_pl1, col_pl2 = st.columns([1,2,1])
         with col_pl0:
             pl_sport_sel = st.selectbox("Sport", ["NBA","MLB","NHL","WNBA","NFL"], key="pl_sport_sel")
+            # Auto-clear stale opponent/line whenever sport changes — previously
+            # "SAS" (an NBA team) could stick around after switching to MLB
+            # because st.text_input's `value=` param is ignored on reruns once
+            # a widget key already has session state. Track sport changes
+            # explicitly and wipe the dependent fields when it flips.
+            if st.session_state.get("_pl_last_sport") != pl_sport_sel:
+                st.session_state["_pl_last_sport"] = pl_sport_sel
+                st.session_state["pl_opp"] = ""
+                st.session_state["pl_line"] = 0.0
         with col_pl1:
             pl_name_input = st.text_input("Player name", placeholder="Start typing a name…", key="pl_name")
             # Auto-suggest from loaded board
@@ -19510,13 +19519,22 @@ with tabs[6]:
             }
             _pl_stat_opts = _stat_options_by_sport.get(_pl_sport_for_stats, _stat_options_by_sport["NBA"])
             pl_stat = st.selectbox("Stat", _pl_stat_opts, key="pl_stat")
-        with col_pl3:
-            pl_line = st.number_input("Line (optional — leave 0 to skip)", min_value=0.0, value=0.0, step=0.5, key="pl_line")
+
+        # Line auto-defaults to the player's own average if left unset — this
+        # only needs manual entry to check against a specific book's number,
+        # so it's tucked away instead of taking up a full column every time.
+        with st.expander("⚙️ Set a specific line to check (optional — defaults to player's average)", expanded=False):
+            pl_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="pl_line")
 
         col_pl4, col_pl5 = st.columns(2)
         with col_pl4:
-            _opp_default = st.session_state.pop("pl_opp_autofill", "")
-            pl_opp = st.text_input("Opponent (abbr)", placeholder="SAS", value=_opp_default, key="pl_opp")
+            # NOTE: st.text_input's `value=` param is silently ignored once its
+            # `key` already has session_state — must write session_state[key]
+            # directly before the widget renders for auto-fill to actually work.
+            _opp_autofill = st.session_state.pop("pl_opp_autofill", "")
+            if _opp_autofill:
+                st.session_state["pl_opp"] = _opp_autofill
+            pl_opp = st.text_input("Opponent (abbr)", placeholder="SAS", key="pl_opp")
         with col_pl5:
             pl_games = st.slider("Last N games", 5, 30, 15, key="pl_games")
 
