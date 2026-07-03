@@ -18030,8 +18030,19 @@ with tabs[4]:
         var GIST_TOK = '{GITHUB_TOKEN}';
         var sport    = '{sport_sel}';
 
-        function pushGist(filename, content) {{
-            fetch('https://api.github.com/gists/' + GIST_ID, {{
+        // BUG FIX (2026-07): pushGist() used to fire concurrent PATCH requests
+        // against the same Gist whenever multiple harvest sources completed
+        // around the same time (common right after page load). GitHub's Gist
+        // API returns 409 Conflict when two PATCHes race, and the old code
+        // never checked r.ok or retried -- it logged nothing on failure, so
+        // some harvested updates were silently dropped every session with no
+        // visible symptom. Fixed by serializing all writes through a single
+        // promise chain (only one PATCH in flight at a time) with automatic
+        // retry-with-backoff specifically on 409.
+        var __bcGistQueue = Promise.resolve();
+
+        function __bcPushGistOnce(filename, content) {{
+            return fetch('https://api.github.com/gists/' + GIST_ID, {{
                 method: 'PATCH',
                 headers: {{
                     'Authorization': 'token ' + GIST_TOK,
@@ -18039,9 +18050,34 @@ with tabs[4]:
                     'Accept': 'application/vnd.github.v3+json'
                 }},
                 body: JSON.stringify({{files: {{[filename]: {{content: JSON.stringify(content, null, 2)}}}}}})
-            }}).then(function(r) {{
-                if (r.ok) console.log('[BetCouncil] ✅ Auto-pushed: ' + filename);
-            }}).catch(function(e) {{ console.log('[BetCouncil] Gist push error:', e); }});
+            }});
+        }}
+
+        function pushGist(filename, content) {{
+            __bcGistQueue = __bcGistQueue.then(function() {{
+                return __bcPushGistOnce(filename, content).then(function(r) {{
+                    if (r.ok) {{
+                        console.log('[BetCouncil] ✅ Auto-pushed: ' + filename);
+                        return;
+                    }}
+                    if (r.status === 409) {{
+                        // Conflict from a racing write elsewhere -- wait briefly and retry once.
+                        return new Promise(function(resolve) {{ setTimeout(resolve, 800); }})
+                            .then(function() {{ return __bcPushGistOnce(filename, content); }})
+                            .then(function(r2) {{
+                                if (r2.ok) {{
+                                    console.log('[BetCouncil] ✅ Auto-pushed (after retry): ' + filename);
+                                }} else {{
+                                    console.log('[BetCouncil] ⚠️ Gist push failed after retry: ' + filename + ' status=' + r2.status);
+                                }}
+                            }});
+                    }}
+                    console.log('[BetCouncil] ⚠️ Gist push failed: ' + filename + ' status=' + r.status);
+                }}).catch(function(e) {{
+                    console.log('[BetCouncil] Gist push error:', filename, e.message);
+                }});
+            }});
+            return __bcGistQueue;
         }}
 
         function throttled(key, ms, fn) {{
