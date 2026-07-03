@@ -14328,22 +14328,30 @@ with st.sidebar:
         f'<div style="font-size:26px;font-weight:800;color:#e8f0f8;">${_bankroll_now:,.2f}</div>'
         f'<div style="font-size:12px;color:{_chg_color};margin-top:2px;">{_chg_str}</div>'
         f'</div>', unsafe_allow_html=True)
-    # Integrity tile
+    # Calibration tile (was mislabeled "INTEGRITY" — this is actually a Brier-
+    # score-derived measure of how well predicted win probabilities have
+    # matched real outcomes, not a data/system integrity check. Renamed for
+    # clarity, and gated so a thin settled-bet sample (n<20) doesn't render
+    # as an alarming red score — Brier score on 2-3 bets is just noise.
     _brier_data   = compute_brier_score(st.session_state.get("history", []))
     _brier_life   = (_brier_data.get("lifetime") or {})
     _bs_val       = _brier_life.get("brier_score", 0.25)
+    _bs_n         = _brier_life.get("n", 0)
     _integrity    = max(0, min(100, int((1 - (_bs_val / 0.25)) * 100)))
-    _integrity_color = "#22c55e" if _integrity >= 70 else ("#e8a020" if _integrity >= 50 else "#e04040")
+    _thin_sample  = _bs_n < 20
+    _integrity_color = "#6a7a8a" if _thin_sample else ("#22c55e" if _integrity >= 70 else ("#e8a020" if _integrity >= 50 else "#e04040"))
     _regime_data  = detect_season_regime("MLB")
     _regime_label = _regime_data.get("label", "REGULAR FLOOR")
     _edge_thresh  = _regime_data.get("edge_floor", 0.045)
     st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">⊙ INTEGRITY</div>'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">↗ CALIBRATION</div>'
         f'</div>'
-        f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100</span></div>'
-        f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
-        f'<div style="width:{_integrity}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
+        + (f'<div style="font-size:16px;font-weight:700;color:#6a7a8a;margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
+           if _thin_sample else
+           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n})</span></div>')
+        + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
+        f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
     # SEM tile
     st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
