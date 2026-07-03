@@ -16543,18 +16543,18 @@ with tabs[2]:
                     ) if _lm else ""
                     _gl_card_class = "gl-market-card has-edge" if _has_edge else "gl-market-card"
                     st.markdown(
-                        f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:12px 14px;background:#0a0e14;">'
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-                        f'<span style="font-size:13px;font-weight:700;letter-spacing:1.2px;color:#4a6a8a;text-transform:uppercase;">{_pk["label"]}</span>'
-                        f'<span style="font-size:12px;font-weight:700;padding:2px 7px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
+                        f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:14px 16px;background:#0a0e14;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+                        f'<span style="font-size:15px;font-weight:700;letter-spacing:1.2px;color:#6a8aab;text-transform:uppercase;">{_pk["label"]}</span>'
+                        f'<span style="font-size:13px;font-weight:700;padding:3px 8px;border-radius:4px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
                         f'</div>'
-                        f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">'
-                        f'<span class="odds-mono" style="font-size:19px;color:#e8f0f8;">{_pk["pick"]}</span>'
-                        f'<span class="odds-mono" style="font-size:14px;color:#4a6a8a;">{_pk["line"]}</span>'
+                        f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;flex-wrap:wrap;">'
+                        f'<span class="odds-mono" style="font-size:24px;font-weight:700;color:#ffffff;">{_pk["pick"]}</span>'
+                        f'<span class="odds-mono" style="font-size:16px;color:#6a8aab;">{_pk["line"]}</span>'
                         f'{_lm_arrow}'
                         f'</div>'
-                        + (f'<div style="font-size:12px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
-                        + f'<span class="odds-mono" style="font-size:15px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
+                        + (f'<div style="font-size:14px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
+                        + f'<span class="odds-mono" style="font-size:17px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
