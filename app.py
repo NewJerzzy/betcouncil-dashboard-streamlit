@@ -7485,6 +7485,16 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
       2. ScraperAPI   (1k free credits/mo — backup)
       3. Scrape.do    (1k free credits/mo — backup)
       4. Direct request (fallback — will 403 on protected sites)
+
+    NOTE: this function is also defined in fetchers.py. Since app.py does
+    `from fetchers import *` and then redefines it here, THIS copy is the
+    one that actually executes (Python resolves to the later definition).
+    Known duplication risk — the two copies can silently drift apart if
+    only one gets updated. Left as-is rather than force-merged, since
+    fetchers.py can't see app.py's circuit_is_tripped/circuit_record_*
+    helpers (they're defined further down in app.py, not in fetchers.py),
+    so consolidating needs those helpers moved to fetchers.py or bc_utils.py
+    first — a real refactor, not a one-line fix.
     """
     from urllib.parse import quote
 
@@ -7519,11 +7529,24 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 timeout=timeout
             )
             _log("ScrapeOps", r.status_code, len(r.text))
-            # 403/429 = quota exhausted — flag and skip for rest of session
-            if r.status_code in (403, 429, 402):
+            # 403/429/402 = quota exhausted via status code. Also check for
+            # a 200 response carrying a quota-exceeded error body — some
+            # proxy APIs (ScrapeOps included, per support docs) return 200
+            # with an error payload rather than a 4xx when credits run out,
+            # which would otherwise never trip this check and silently keep
+            # burning real billable requests on every board load forever.
+            # This is the likely explanation for credits hitting 100% despite
+            # the exhaustion flag supposedly being active from an earlier run.
+            _quota_phrases = ("insufficient credit", "credit limit", "quota exceeded",
+                               "out of credits", "usage limit", "no credits remaining")
+            _body_says_exhausted = (
+                r.status_code == 200 and
+                any(_p in r.text[:500].lower() for _p in _quota_phrases)
+            )
+            if r.status_code in (403, 429, 402) or _body_says_exhausted:
                 st.session_state["scrapeops_exhausted"] = True
                 save_to_gist("scrapeops_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
-                _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}"))
+                _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}" + (" (200 w/ quota error body)" if _body_says_exhausted else "")))
             elif _is_valid(r):
                 return r
         except (KeyError, TypeError, ValueError) as e:
@@ -10466,7 +10489,14 @@ def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
             circuit_record_failure(name)
             return None
 
-    with ThreadPoolExecutor(max_workers=min(n, 20)) as ex:
+    # Worker cap raised from 20 → 40: this gets called with batches as large
+    # as ~75 fetch functions (see the main board-load parallel batch), all
+    # I/O-bound network calls. At 20 workers that's ~4 sequential waves of
+    # up to a 25s future-timeout each — a real, measurable chunk of the
+    # "board takes forever to load" complaint. Threads are cheap for I/O
+    # wait, so 40 is safe here (not CPU-bound work) and roughly halves the
+    # number of waves for the largest batches without touching smaller ones.
+    with ThreadPoolExecutor(max_workers=min(n, 40)) as ex:
         futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
         for fut in as_completed(futures):
             idx = futures[fut]
@@ -15994,7 +16024,7 @@ with tabs[1]:
                 ("Cl", "#378add" if _p_dict.get("CLVCapture") else "#1a2a3a"),  # CLV
                 ("P",  "#378add" if _r.get("_kalshi") else "#1a2a3a"),           # Kalshi/Poly
                 ("S",  "#22c55e" if _p_dict.get("EVSharpMove") else "#1a2a3a"), # Sharp steam
-                ("G",  "#22c55e" if _r.get("_model_prob", 0) and int(str(_r.get("_model_prob",0)).replace("%","") or 0) >= 60 else "#1a2a3a"),  # Grade
+                ("G",  "#22c55e" if _r.get("_model_prob", 0) and safe_float(str(_r.get("_model_prob",0)).replace("%",""), 0) >= 60 else "#1a2a3a"),  # Grade
                 ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "#1a2a3a"),  # Better line
             ]
             _cons_bar = "".join([
@@ -17294,6 +17324,40 @@ with tabs[4]:
             f'<div style="font-size:12px;color:#6a7a8a">1000 bet threshold</div></div>',
             unsafe_allow_html=True
         )
+        st.markdown("---")
+
+        # ── Pinnacle CLV Tracker (moved here — was 1600 lines away in its
+        # own separate section, even though it's the same CLV concept from
+        # a second data source. Now sits right next to Buchdahl CLV above.
+        st.markdown("### 📍 Pinnacle CLV Tracker")
+        pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
+        if len(pinnacle_data) >= 5:
+            avg_pclv = sum(r.get("pinnacle_clv", 0) for r in pinnacle_data) / len(pinnacle_data)
+            pos_rate = sum(1 for r in pinnacle_data if r.get("positive", False)) / len(pinnacle_data)
+            p1, p2, p3 = st.columns(3)
+            p1.metric("Avg Pinnacle CLV", f"{avg_pclv:+.2f}")
+            p2.metric("Positive Rate", f"{pos_rate:.1%}")
+            p3.metric("Bets Tracked", len(pinnacle_data))
+        else:
+            # NOTE (2026-07): this used to stay stuck at "need 5 more" no
+            # matter how many bets were resolved (174+), because
+            # record_pinnacle_line() — the only function that writes
+            # PINNACLE_LINES_PATH — was built but never called from any
+            # lock-creation button. It's now wired into the EV Optimizer,
+            # Portfolio Builder, Slip Analyzer, and Game Lines lock actions,
+            # so this should start filling in from new locks going forward.
+            # There used to be a "Backfill CLV from History" button here too
+            # — removed, because it can't actually work: Pinnacle's closing
+            # line at the time of a past bet isn't something history ever
+            # stored, so the old backfill just wrote a fake 0.0 CLV
+            # placeholder (and to the wrong file). Real CLV can only be
+            # captured going forward, at lock time.
+            st.info(
+                f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.\n\n"
+                "This only counts bets locked *after* Pinnacle capture was wired in — it can't be "
+                "backfilled from already-resolved bets, since the Pinnacle closing line at that moment "
+                "was never recorded. Lock a few new picks and this will start filling in."
+            )
         st.markdown("---")
         # ── Per-book CLV breakdown ─────────────────────────────────────────
         _clv_by_book = {}
@@ -18842,36 +18906,6 @@ with tabs[4]:
         else:
             st.info(f"📊 Log and resolve **{max(0,10-len(_resolved))} more bets** to unlock the calibration dashboard. Currently {len(_resolved)} resolved.")
 
-
-    st.markdown("### 📍 Pinnacle CLV Tracker")
-    pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
-    if len(pinnacle_data) >= 5:
-        avg_pclv = sum(r.get("pinnacle_clv", 0) for r in pinnacle_data) / len(pinnacle_data)
-        pos_rate = sum(1 for r in pinnacle_data if r.get("positive", False)) / len(pinnacle_data)
-        p1, p2, p3 = st.columns(3)
-        p1.metric("Avg Pinnacle CLV", f"{avg_pclv:+.2f}")
-        p2.metric("Positive Rate", f"{pos_rate:.1%}")
-        p3.metric("Bets Tracked", len(pinnacle_data))
-    else:
-        # NOTE (2026-07): this used to stay stuck at "need 5 more" no matter
-        # how many bets were resolved (174+), because record_pinnacle_line()
-        # — the only function that writes PINNACLE_LINES_PATH — was built but
-        # never called from any lock-creation button. It's now wired into
-        # the EV Optimizer, Portfolio Builder, and Slip Analyzer lock
-        # actions, so this should start filling in from new locks going
-        # forward. There used to be a "Backfill CLV from History" button
-        # here too — removed, because it can't actually work: Pinnacle's
-        # closing line at the time of a past bet isn't something history
-        # ever stored, so the old backfill just wrote a fake 0.0 CLV
-        # placeholder (and to the wrong file, so it didn't even clear this
-        # message). Real CLV can only be captured going forward, at lock
-        # time.
-        st.info(
-            f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.\n\n"
-            "This only counts bets locked *after* Pinnacle capture was wired in — it can't be "
-            "backfilled from already-resolved bets, since the Pinnacle closing line at that moment "
-            "was never recorded. Lock a few new picks and this will start filling in."
-        )
 
 # ----- TAB 5: LOG BET -----
 

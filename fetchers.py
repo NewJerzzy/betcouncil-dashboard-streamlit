@@ -3623,8 +3623,19 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
                 timeout=timeout
             )
             _log("ScrapeOps", r.status_code, len(r.text))
-            # 403/429 = quota exhausted — flag and skip for rest of session
-            if r.status_code in (403, 429, 402):
+            # 403/429/402 = quota exhausted via status code. Also check for a
+            # 200 response carrying a quota-exceeded error body — some proxy
+            # APIs return 200 with an error payload rather than a 4xx when
+            # credits run out, which would otherwise never trip this check.
+            # (Kept in sync with the same fix in app.py's shadowing copy of
+            # this function — see note there about the duplication.)
+            _quota_phrases = ("insufficient credit", "credit limit", "quota exceeded",
+                               "out of credits", "usage limit", "no credits remaining")
+            _body_says_exhausted = (
+                r.status_code == 200 and
+                any(_p in r.text[:500].lower() for _p in _quota_phrases)
+            )
+            if r.status_code in (403, 429, 402) or _body_says_exhausted:
                 st.session_state["scrapeops_exhausted"] = True
                 save_to_gist("scrapeops_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
                 _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}"))
