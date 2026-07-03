@@ -9651,12 +9651,22 @@ def parse_bet_screenshot_ocr(image_bytes):
             raw = ""
             _ocr_key = st.secrets.get("OCR_SPACE_API_KEY", "")
             if _ocr_key:
-                _ocr_resp = _http.post("https://api.ocr.space/parse/image",
-                    data={"apikey": _ocr_key, "language": "eng", "scale": "true"},
-                    files={"filename": (f"slip.{fmt}", image_bytes, media_type)}, timeout=15)
-                _ocr_json = _ocr_resp.json()
-                if _ocr_json.get("ParsedResults"):
-                    raw = _ocr_json["ParsedResults"][0].get("ParsedText", "")
+                try:
+                    _ocr_resp = _http.post("https://api.ocr.space/parse/image",
+                        data={"apikey": _ocr_key, "language": "eng", "scale": "true"},
+                        files={"filename": (f"slip.{fmt}", image_bytes, media_type)}, timeout=15)
+                    _ocr_json = _ocr_resp.json()
+                    if _ocr_json.get("ParsedResults"):
+                        raw = _ocr_json["ParsedResults"][0].get("ParsedText", "")
+                except requests.exceptions.RequestException as _ocr_net_err:
+                    # OCR.space unreachable/timed out/DNS failure — don't crash the
+                    # whole board render. Log it and fall through to local
+                    # pytesseract below, same as when no OCR_SPACE_API_KEY is set.
+                    st.session_state.setdefault("errors",[]).append({
+                        "time":   datetime.now().strftime("%H:%M:%S"),
+                        "source": "parse_bet_screenshot_ocr (OCR.space)",
+                        "error":  f"Network error reaching OCR.space: {str(_ocr_net_err)[:150]}",
+                    })
             if not raw:
                 try:
                     import pytesseract
@@ -9766,7 +9776,7 @@ def parse_bet_screenshot_ocr(image_bytes):
                 _item.setdefault("outcome", "LOSS")
                 _item.setdefault("actual", 0.0)
             return result
-        except (ValueError, IndexError, AttributeError) as e2:
+        except Exception as e2:
             st.session_state.setdefault("errors",[]).append({
                 "time":   datetime.now().strftime("%H:%M:%S"),
                 "source": "parse_bet_screenshot_ocr",
