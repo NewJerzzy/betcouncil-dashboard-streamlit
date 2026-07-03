@@ -14487,7 +14487,15 @@ with st.sidebar:
             st.session_state.board_data = board
             st.session_state.games = games
             st.session_state["board_loaded"]       = True
-        # Kill switch warning rendered after spinner in correct main-area context
+        # Kill switch warning rendered after spinner in correct main-area context.
+        # BUG FIX (2026-07): the entire game_analysis computation below used to be
+        # nested inside `if not ENABLE_RECOMMENDATIONS:`, meaning analyze_all_games()
+        # only ran when recommendations were DISABLED -- never in the normal enabled
+        # state. That silently left st.session_state["game_analysis"] empty on every
+        # regular board load, causing the Game Lines tab to fall back to raw
+        # unenriched game data (no team names on ML/Total, 0.0% edge everywhere).
+        # Only the warning banner itself is actually kill-switch-specific; everything
+        # else here is normal per-load bookkeeping and must always run.
         if not ENABLE_RECOMMENDATIONS:
             st.warning(
                 "🔴 **Recommendations disabled.** Set `ENABLE_RECOMMENDATIONS = true` "
@@ -14495,69 +14503,69 @@ with st.sidebar:
                 "All historical data, system monitoring, and logging remain active.",
                 icon="🛑"
             )
-            st.session_state["last_sport_loaded"]  = sport_sel
-            st.session_state["ev_auto_refresh_ts"] = 0   # trigger immediate first snapshot
-            # Cache last good props per sport for fallback
-            if board:
-                if "last_good_props" not in st.session_state:
-                    st.session_state["last_good_props"] = {}
-                st.session_state["last_good_props"][sport_sel] = board
-            st.session_state.last_sport = sport_sel
-            st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state.board_ready = True
-            st.session_state.n_skipped_def = n_def
-            st.session_state.n_skipped_edge = n_edge
-            if games and home_teams and away_teams:
-                game_analysis = analyze_all_games(games, sport_sel, home_teams, away_teams,
-                                                   mlb_pitchers=st.session_state.get("mlb_pitchers",{}))
-                st.session_state["game_analysis"] = game_analysis
-                # Store opening lines + line origins now that game_analysis exists
-                if game_analysis:
-                    store_opening_lines(game_analysis, sport_sel)
-                    st.session_state["line_origins"] = track_line_origin(game_analysis, sport_sel)
-                # Fetch alt lines and enrich game_analysis
-                _alt_lines_data = fetch_alt_lines(sport_sel)
-                if _alt_lines_data and game_analysis:
-                    st.session_state["alt_lines_data"] = _alt_lines_data
-                    for _ga in game_analysis:
-                        _ga_matchup = _ga.get("matchup","")
-                        _h_full = _ga.get("home","")
-                        _a_full = _ga.get("away","")
-                        _h_pr = _ga.get("home_power", 0)
-                        _a_pr = _ga.get("away_power", 0)
-                        if not _h_pr:
-                            # Get from power ratings
-                            _pr_lookup = dict(NBA_POWER_RATINGS)
-                            if sport_sel == "MLB":
-                                _pr_lookup.update(MLB_POWER_RATINGS)
-                            elif sport_sel == "NHL":
-                                _pr_lookup.update(NHL_POWER_RATINGS)
-                            elif sport_sel == "WNBA":
-                                _pr_lookup.update(WNBA_POWER_RATINGS)
-                            _h_pr = _pr_lookup.get(_h_full, 100)
-                            _a_pr = _pr_lookup.get(_a_full, 100)
-                        # Try matchup string first, then try matching by team names
-                        _best_alt = find_best_alt_line(
-                            _ga_matchup, sport_sel, _h_pr, _a_pr,
-                            _h_full, _a_full, _alt_lines_data
-                        )
-                        if not _best_alt:
-                            # Try matching by home team full name
-                            for _alt_key in _alt_lines_data:
-                                if _h_full in _alt_key or _a_full in _alt_key:
-                                    _best_alt = find_best_alt_line(
-                                        _alt_key, sport_sel, _h_pr, _a_pr,
-                                        _h_full, _a_full, _alt_lines_data
-                                    )
-                                    if _best_alt:
-                                        break
-                        if _best_alt:
-                            _ga["AltLine"]  = _best_alt["pick"]
-                            _ga["AltEdge"]  = _best_alt["edge"]
-                            _ga["AltTier"]  = _best_alt["tier"]
-                            _ga["AltBook"]  = _best_alt.get("book","")
-            else:
-                st.session_state["game_analysis"] = []
+        st.session_state["last_sport_loaded"]  = sport_sel
+        st.session_state["ev_auto_refresh_ts"] = 0   # trigger immediate first snapshot
+        # Cache last good props per sport for fallback
+        if board:
+            if "last_good_props" not in st.session_state:
+                st.session_state["last_good_props"] = {}
+            st.session_state["last_good_props"][sport_sel] = board
+        st.session_state.last_sport = sport_sel
+        st.session_state.last_scan_time = datetime.now().strftime("%H:%M:%S")
+        st.session_state.board_ready = True
+        st.session_state.n_skipped_def = n_def
+        st.session_state.n_skipped_edge = n_edge
+        if games and home_teams and away_teams:
+            game_analysis = analyze_all_games(games, sport_sel, home_teams, away_teams,
+                                               mlb_pitchers=st.session_state.get("mlb_pitchers",{}))
+            st.session_state["game_analysis"] = game_analysis
+            # Store opening lines + line origins now that game_analysis exists
+            if game_analysis:
+                store_opening_lines(game_analysis, sport_sel)
+                st.session_state["line_origins"] = track_line_origin(game_analysis, sport_sel)
+            # Fetch alt lines and enrich game_analysis
+            _alt_lines_data = fetch_alt_lines(sport_sel)
+            if _alt_lines_data and game_analysis:
+                st.session_state["alt_lines_data"] = _alt_lines_data
+                for _ga in game_analysis:
+                    _ga_matchup = _ga.get("matchup","")
+                    _h_full = _ga.get("home","")
+                    _a_full = _ga.get("away","")
+                    _h_pr = _ga.get("home_power", 0)
+                    _a_pr = _ga.get("away_power", 0)
+                    if not _h_pr:
+                        # Get from power ratings
+                        _pr_lookup = dict(NBA_POWER_RATINGS)
+                        if sport_sel == "MLB":
+                            _pr_lookup.update(MLB_POWER_RATINGS)
+                        elif sport_sel == "NHL":
+                            _pr_lookup.update(NHL_POWER_RATINGS)
+                        elif sport_sel == "WNBA":
+                            _pr_lookup.update(WNBA_POWER_RATINGS)
+                        _h_pr = _pr_lookup.get(_h_full, 100)
+                        _a_pr = _pr_lookup.get(_a_full, 100)
+                    # Try matchup string first, then try matching by team names
+                    _best_alt = find_best_alt_line(
+                        _ga_matchup, sport_sel, _h_pr, _a_pr,
+                        _h_full, _a_full, _alt_lines_data
+                    )
+                    if not _best_alt:
+                        # Try matching by home team full name
+                        for _alt_key in _alt_lines_data:
+                            if _h_full in _alt_key or _a_full in _alt_key:
+                                _best_alt = find_best_alt_line(
+                                    _alt_key, sport_sel, _h_pr, _a_pr,
+                                    _h_full, _a_full, _alt_lines_data
+                                )
+                                if _best_alt:
+                                    break
+                    if _best_alt:
+                        _ga["AltLine"]  = _best_alt["pick"]
+                        _ga["AltEdge"]  = _best_alt["edge"]
+                        _ga["AltTier"]  = _best_alt["tier"]
+                        _ga["AltBook"]  = _best_alt.get("book","")
+        else:
+            st.session_state["game_analysis"] = []
         if board:
             # Show which source the props came from
             sources = list(set(p.get("source","Unknown") for p in board if p.get("source")))
@@ -16537,16 +16545,16 @@ with tabs[2]:
                     st.markdown(
                         f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:12px 14px;background:#0a0e14;">'
                         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-                        f'<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:#4a6a8a;text-transform:uppercase;">{_pk["label"]}</span>'
-                        f'<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
+                        f'<span style="font-size:13px;font-weight:700;letter-spacing:1.2px;color:#4a6a8a;text-transform:uppercase;">{_pk["label"]}</span>'
+                        f'<span style="font-size:12px;font-weight:700;padding:2px 7px;border-radius:3px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
                         f'</div>'
                         f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">'
-                        f'<span class="odds-mono" style="font-size:16px;color:#e8f0f8;">{_pk["pick"]}</span>'
-                        f'<span class="odds-mono" style="font-size:12px;color:#4a6a8a;">{_pk["line"]}</span>'
+                        f'<span class="odds-mono" style="font-size:19px;color:#e8f0f8;">{_pk["pick"]}</span>'
+                        f'<span class="odds-mono" style="font-size:14px;color:#4a6a8a;">{_pk["line"]}</span>'
                         f'{_lm_arrow}'
                         f'</div>'
-                        + (f'<div style="font-size:10px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
-                        + f'<span class="odds-mono" style="font-size:13px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
+                        + (f'<div style="font-size:12px;color:#e8a020;margin-bottom:2px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
+                        + f'<span class="odds-mono" style="font-size:15px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
