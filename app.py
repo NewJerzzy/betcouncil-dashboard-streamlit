@@ -107,6 +107,7 @@ from config import (
 import time as _time_mod
 from contextlib import contextmanager as _ctx
 from fetchers import *  # extracted fetch_/compute_ functions
+from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
 
 def _bc_track(stage, duration, meta=None):
     try:
