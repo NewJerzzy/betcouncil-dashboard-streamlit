@@ -2645,7 +2645,9 @@ def compute_public_fade_signal(matchup, sport, model_pick_side):
     Returns: {public_pct, side, fade_signal, note}
     """
     covers_data = st.session_state.get("covers_consensus", [])
-    if not covers_data:
+    an_data    = st.session_state.get("action_network_data", {})
+    bpros_data = st.session_state.get("bettingpros_data", {})
+    if not covers_data and not an_data and not bpros_data:
         return None
     
     matchup_lower = matchup.lower()
@@ -2683,6 +2685,57 @@ def compute_public_fade_signal(matchup, sport, model_pick_side):
                     "note":        f"📊 {public_pct}% public on {public_side}",
                     "edge_adj":    0.0,
                 }
+    # ── ActionNetwork sharp-money splits ─────────────────────────────
+    if an_data:
+        _an_games = an_data if isinstance(an_data, list) else an_data.get("games", an_data.get("data", []))
+        if isinstance(_an_games, list):
+            for _ag in _an_games:
+                _teams   = _ag.get("teams", []) or []
+                _home    = next((t.get("full_name","") or t.get("name","") for t in _teams if t.get("is_home")), "")
+                _away    = next((t.get("full_name","") or t.get("name","") for t in _teams if not t.get("is_home")), "")
+                _an_m    = f"{_away} @ {_home}".lower()
+                if not any(w in _an_m for w in matchup_lower.split(" @ ")):
+                    continue
+                _an_odds = (_ag.get("odds") or [{}])
+                _an_o    = (_an_odds[0] if isinstance(_an_odds, list) and _an_odds
+                            else _an_odds if isinstance(_an_odds, dict) else {})
+                _an_hp   = _an_o.get("bet_pct_home") or _an_o.get("home_pct")
+                _an_ap   = _an_o.get("bet_pct_away") or _an_o.get("away_pct")
+                if _an_hp is None and _an_ap is None:
+                    continue
+                try:
+                    _anh = float(_an_hp or 50); _ana = float(_an_ap or 50)
+                    _pct = max(_anh, _ana)
+                    _side = _home if _anh >= _ana else _away
+                    if _pct >= 60:
+                        _fade = ("CONTRARIAN" if _side.lower() not in str(model_pick_side).lower()
+                                 else "WITH_PUBLIC")
+                        return {"public_pct": _pct, "side": _side, "fade_signal": _fade,
+                                "source": "action_network",
+                                "note": f"AN {_pct:.0f}% on {_side}",
+                                "edge_adj": 0.015 if _fade == "CONTRARIAN" else -0.01}
+                except (ValueError, TypeError):
+                    pass
+    # ── BettingPros expert consensus ─────────────────────────────────
+    if bpros_data:
+        _bp_items = (bpros_data if isinstance(bpros_data, list)
+                     else bpros_data.get("items", bpros_data.get("picks", bpros_data.get("data", []))))
+        if isinstance(_bp_items, list):
+            for _bi in _bp_items:
+                if not isinstance(_bi, dict): continue
+                _bpick = _bi.get("pick", _bi)
+                _bslug = (_bpick.get("slug","") or _bpick.get("matchup","") or "").lower()
+                if not any(w in _bslug for w in matchup_lower.split(" @ ")):
+                    continue
+                _bp_pct  = float(_bpick.get("consensus_pct") or _bpick.get("pct") or 0)
+                _bp_side = _bpick.get("pick_type","") or _bpick.get("side","")
+                if _bp_pct >= 60:
+                    _bpf = ("CONTRARIAN" if str(_bp_side).lower() not in str(model_pick_side).lower()
+                            else "WITH_PUBLIC")
+                    return {"public_pct": _bp_pct, "side": _bp_side, "fade_signal": _bpf,
+                            "source": "bettingpros",
+                            "note": f"BettingPros {_bp_pct:.0f}% on {_bp_side}",
+                            "edge_adj": 0.01 if _bpf == "CONTRARIAN" else -0.01}
     return None
 
 
@@ -12079,6 +12132,36 @@ def load_sport_data(sport):
                         elif _rv <= -1.0: _sav_ars_edge =  0.01; _sav_ars_note = f"Arsenal {_pt} RV{_rv:+.1f}/100"
                     _sv.update({"sav_arsenal": _pa, "sav_ars_edge": _sav_ars_edge,
                                 "sav_ars_note": _sav_ars_note})
+    # ── ParlaySavant +EV confirmation ────────────────────────────────────────
+    # parlaysavant_ev_h: +EV props from parlaysavant.com/api/props (Python direct
+    # or Tampermonkey Gist). Second-source confirmation → small edge boost.
+    _ps_ev = st.session_state.get("parlaysavant_ev_h", {})
+    if _ps_ev:
+        _ps_items = (_ps_ev if isinstance(_ps_ev, list)
+                     else _ps_ev.get("props", _ps_ev.get("data", _ps_ev.get("picks", []))))
+        if isinstance(_ps_items, list) and _ps_items:
+            _ps_idx = {}
+            for _pi in _ps_items:
+                if not isinstance(_pi, dict): continue
+                _pp  = normalize_name(_pi.get("player","") or _pi.get("name","") or "")
+                _pr  = (_pi.get("prop","") or _pi.get("stat","") or _pi.get("market","") or "").strip().lower()
+                _pev = _pi.get("ev") or _pi.get("ev_pct") or _pi.get("edge") or _pi.get("value", 0)
+                if _pp and _pr:
+                    _ps_idx[(_pp, _pr)] = _pev
+            for _sk, _sv in _ev_signal_lookup.items():
+                _pn, _prop_l = _sk[0], _sk[1].lower()
+                _ps_match = _ps_idx.get((_pn, _prop_l))
+                if _ps_match is None:
+                    for (_kp, _kr), _kev in _ps_idx.items():
+                        if _kp == _pn and (_kr in _prop_l or _prop_l in _kr):
+                            _ps_match = _kev; break
+                if _ps_match is not None:
+                    try:
+                        _ps_e = float(_ps_match) if isinstance(_ps_match, (int, float)) else 0.015
+                    except (ValueError, TypeError):
+                        _ps_e = 0.015
+                    _sv.update({"ps_ev_confirm": True, "ps_ev_edge": _ps_e,
+                                "ps_ev_note": f"ParlaySavant +EV confirm"})
 
 
     # ── /api/recap — save yesterday's results to session_state ───────────────
@@ -12303,6 +12386,23 @@ def load_sport_data(sport):
 
     if _mv_lookup or _mv_alerts:
         st.session_state["ev_movement_lookup"] = _mv_lookup
+        # oddsportal_data: today's opening lines — supplement ev_movement_lookup for CLV.
+        _op_data   = st.session_state.get("oddsportal_data", {})
+        _op_raw    = (_op_data if isinstance(_op_data, list)
+                      else _op_data.get("data", _op_data.get("events", [])))
+        _op_events = _op_raw if isinstance(_op_raw, list) else []
+        for _oe in _op_events:
+            if not isinstance(_oe, dict): continue
+            _ohm = _oe.get("home_team","") or _oe.get("home","")
+            _oam = _oe.get("away_team","") or _oe.get("away","")
+            _oml_h = _oe.get("opening_home_ml") or _oe.get("open_home_ml")
+            _oml_a = _oe.get("opening_away_ml") or _oe.get("open_away_ml")
+            if _ohm and _oam and (_oml_h is not None or _oml_a is not None):
+                _okey = f"{_oam} @ {_ohm}"
+                _mv_lookup.setdefault(_okey, {}).update(
+                    {"op_open_home_ml": _oml_h, "op_open_away_ml": _oml_a, "op_source": "oddsportal"})
+        if _op_events:
+            st.session_state["ev_movement_lookup"] = _mv_lookup
         st.session_state["sharp_alerts"]       = _mv_alerts
         if _mv_alerts:
             st.caption(f"📡 Movement: {len(_mv_alerts)} sharp alerts detected")
@@ -12310,6 +12410,11 @@ def load_sport_data(sport):
     # DFS platforms
     if ud_props_compare:
         all_alt_sources.extend([(p, "Underdog") for p in ud_props_compare])
+    # dk_props_harvested: DraftKings player prop lines from browser harvester / Python scraper.
+    # Wire into the same book-comparison pool as ud_props_compare.
+    _dk_h = st.session_state.get("dk_props_harvested", [])
+    if _dk_h and isinstance(_dk_h, list):
+        all_alt_sources.extend([(p, "DraftKings") for p in _dk_h if isinstance(p, dict)])
     parlayapi_props = st.session_state.get("parlayapi_props_cache", [])
     if parlayapi_props:
         pp_lines = [p for p in parlayapi_props if p.get("source","").lower() == "parlayplay"]
