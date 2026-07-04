@@ -1773,3 +1773,47 @@ Badge shown on every prop card row.
 
 **R-SHARP-46 (Session state safety):** All session state reads use `.get("key", default)`. If history/bankroll unavailable, default to empty list / 468.49 respectively. Never crash on missing state.
 
+---
+## Session Addendum — v5.8 (July 4, 2026)
+
+### Data Source Architecture — Major Upgrades
+
+#### Server-Side Sources (no browser tab required)
+The following sources now fetch automatically server-side on every board load:
+
+| Source | Method | Notes |
+|--------|--------|-------|
+| **FanDuel** | Action Network API (book_id=69) + sbapi fallback | PerimeterX blocks direct smp.* endpoint; sbapi content layer is public |
+| **Caesars** | Action Network API (book_id=123) | CloudFront 403s all datacenter IPs; AN is only viable server-side path |
+| **MyBookie** | Action Network API (book_id=8) + Tampermonkey Gist fallback | Cloudflare+reCAPTCHA block direct access; AN covers 15/15 MLB games |
+| **Bovada** | Direct server-side fetch (www.bovada.lv public API) | CORS only blocks browsers, not server-side Python; confirmed 200 from datacenter IPs |
+
+#### Browser Tab Required (Tampermonkey harvesters)
+Only **2 sites** still require a browser tab open while using BetCouncil:
+1. **Bet365** — WebSocket-based delta feed (btec-websocket.services.srarena.io); harvester intercepts live ticks + REST context and pushes joined game data to Gist every 15s
+2. **ParlaySavant** — Next.js server-rendered, NextAuth login gate; Tampermonkey DOM scraper on public tools pages
+
+#### Protocol
+1. Open Bet365 tab (logged in), browse any odds page
+2. Open ParlaySavant tab, browse any props/odds page under Tools
+3. Open BetCouncil and run the board
+
+All other sources (EVSharps, Underdog, Polymarket, Kalshi, Sleeper, Weather, Scanbet, ActionNetwork, Bovada, FanDuel, Caesars, MyBookie) are fully automatic.
+
+### Pipeline Fixes (July 4, 2026)
+- **Game Lines kill-switch bug fixed**: `analyze_all_games()` was nested inside `if not ENABLE_RECOMMENDATIONS` — it only ran when recommendations were DISABLED, silently leaving every game with 0.0% edge and no team names. Now runs unconditionally.
+- **Gist 409 conflict fix**: `pushGist()` now serializes all writes through a promise queue with retry-on-409, preventing harvested data from being silently dropped when multiple sources push simultaneously.
+- **5 dead session_state keys wired into signal logic**: `dk_props_harvested` → book comparison; `action_network_data` → fade signal (±0.015 edge_adj); `bettingpros_data` → expert consensus fade; `oddsportal_data` → CLV reference opening line; `parlaysavant_ev_h` → second-source EV confirmation.
+- **PrizePicks staleness window**: extended from same-day-only to 7 days so Gist data loads even when scraper hasn't run that day.
+- **MyBookie Playwright error eliminated**: removed dead Playwright fallback from `fetch_mybookie_from_gist()` since Action Network now handles all cases server-side.
+
+### Tampermonkey Harvesters Active
+| Script | Site | Pushes To Gist |
+|--------|------|----------------|
+| BetCouncil FanDuel Harvester | sportsbook.fanduel.com | betcouncil_fd_props_{sport}.json, fanduel_tokens.json |
+| BetCouncil Caesars Token Harvester | sportsbook.caesars.com | betcouncil_caesars_tokens.json |
+| BetCouncil Bovada Harvester | bovada.lv | betcouncil_bovada_{sport}.json |
+| BetCouncil MyBookie Harvester | mybookie.ag | betcouncil_mybookie_{sport}.json, betcouncil_mybookie_props_{sport}.json |
+| BetCouncil Bet365 Harvester | bet365.com + srarena.io | betcouncil_bet365_games.json |
+| BetCouncil ParlaySavant Harvester | parlaysavant.com | betcouncil_parlaysavant_{sport}_props_{market}.json |
+| BetCouncil PrizePicks Sync | app.prizepicks.com | betcouncil_prizepicks_{sport}.json |

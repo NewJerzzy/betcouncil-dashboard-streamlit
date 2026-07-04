@@ -152,3 +152,12 @@ T4: SportsLine (multi-book + opening lines), book scrapers
 T5: Props.cash/OddsJam/Outlier/ParlaySavant (prop EV)
 T6: Smarkets/Kalshi/Polymarket (exchanges)
 T7: BaseballPress/Weather/Rotowire/DFS ownership (context)
+
+### DATA SOURCES v5.8 (July 4, 2026)
+- FanDuel: Action Network (book_id=69) server-side + sbapi fallback — NO BROWSER TAB NEEDED
+- Caesars: Action Network (book_id=123) server-side — NO BROWSER TAB NEEDED
+- MyBookie: Action Network (book_id=8) server-side — NO BROWSER TAB NEEDED
+- Bovada: Direct server-side (www.bovada.lv public API) — NO BROWSER TAB NEEDED
+- Bet365: Tampermonkey WebSocket harvester — BROWSER TAB REQUIRED
+- ParlaySavant: Tampermonkey DOM scraper — BROWSER TAB REQUIRED
+- Protocol: Open Bet365 + ParlaySavant tabs, browse briefly, then run board
