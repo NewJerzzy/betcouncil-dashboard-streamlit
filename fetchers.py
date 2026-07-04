@@ -16119,3 +16119,275 @@ def fetch_action_network_lines(sport: str) -> list:
             pass
 
     return result
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FanDuel + Caesars game lines — server-side, no browser required
+# ═══════════════════════════════════════════════════════════════════════════
+# FANDUEL:
+#   Primary  – Action Network (book_id=69, FanDuel NJ).  Already in
+#              _AN_BOOK_IDS so the scoreboard request costs nothing extra.
+#              Confirmed: 15/15 MLB, 4/4 NBA, 16/16 NFL; no auth.
+#   Fallback – FanDuel sbapi: sbapi.{state}.sportsbook.fanduel.com/api/
+#              content-managed-page?page=SPORT&eventTypeId={id}&_ak=FhMFpcPWXMeyZxOx
+#              This is a different API from the PerimeterX-protected
+#              smp.*.sportsbook.fanduel.com endpoint.  No PX challenge,
+#              no auth; confirmed HTTP 200 from datacenter IPs.
+#              American odds are embedded directly in each runner:
+#              runners[].winRunnerOdds.americanDisplayOdds.americanOddsInt
+# CAESARS:
+#   api.americanwagering.com returns HTTP 403 from CloudFront on
+#   datacenter IPs.  Action Network (book_id=123, Caesars NJ) is the
+#   only viable server-side source.
+#   Confirmed: 14-15/15 MLB, 4/4 NBA, 16/16 NFL; no auth.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_FD_SBAPI_AK    = "FhMFpcPWXMeyZxOx"
+_FD_SBAPI_STATE = "nj"   # any US state works; nj confirmed 200
+_FD_SBAPI_ET    = {       # FanDuel eventTypeId → sport slug
+    "mlb":  7511,         # Baseball (27 MLB events confirmed live)
+    "nba":  7522,         # Basketball (NBA + WNBA share this ID)
+    "nfl":  6423,         # American Football (99 events confirmed)
+    "nhl":  7524,         # Ice Hockey
+    "wnba": 7522,         # shares Basketball ID with NBA
+}
+
+
+def _fetch_an_book_lines(sport: str, book_id: int, book_label: str) -> list:
+    """
+    Pull full-game lines from Action Network for any book already listed
+    in _AN_BOOK_IDS.  Reuses the same scoreboard request but filters to
+    the requested book_id instead of MyBookie (8).
+    Cached 10 minutes per (sport, book_id, date).
+    Returns same schema as fetch_action_network_lines().
+    """
+    slug  = _AN_SPORT_SLUGS.get(sport.lower().strip(), sport.lower().strip())
+    today = datetime.now().strftime("%Y%m%d")
+
+    cache_key  = f"an_lines_{slug}_{book_id}_{today}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_m = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_m < 10:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    url = (
+        f"https://api.actionnetwork.com/web/v1/scoreboard/{slug}"
+        f"?bookIds={_AN_BOOK_IDS}&date={today}&periods=event"
+    )
+    _an_hdrs = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+    try:
+        resp = _http.get(url, headers=_an_hdrs, timeout=15)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception:
+        return []
+
+    result = []
+    for g in data.get("games", []):
+        teams = g.get("teams", [])
+        if len(teams) < 2:
+            continue
+        away_id    = g.get("away_team_id")
+        home_id    = g.get("home_team_id")
+        team_by_id = {t["id"]: t for t in teams}
+        away_team  = team_by_id.get(away_id, teams[0])
+        home_team  = team_by_id.get(home_id, teams[1] if len(teams) > 1 else teams[0])
+        away_name  = away_team.get("full_name") or away_team.get("display_name", "")
+        home_name  = home_team.get("full_name") or home_team.get("display_name", "")
+
+        odds = next(
+            (o for o in g.get("odds", [])
+             if o.get("book_id") == book_id and o.get("type") == "game"),
+            None,
+        )
+        if not odds:
+            continue
+
+        result.append({
+            "Home":       home_name,
+            "Away":       away_name,
+            "HomeML":     odds.get("ml_home"),
+            "AwayML":     odds.get("ml_away"),
+            "Spread":     odds.get("spread_away"),
+            "SpreadOdds": odds.get("spread_away_line"),
+            "Total":      odds.get("total"),
+            "OverOdds":   odds.get("over"),
+            "UnderOdds":  odds.get("under"),
+            "book":       book_label,
+            "book_id":    book_id,
+        })
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
+
+
+def _fetch_fanduel_sbapi(sport: str) -> list:
+    """
+    Fallback FanDuel lines via state sbapi — no PerimeterX, no auth.
+    Distinct from the blocked smp.*.sportsbook.fanduel.com endpoint.
+    Prices are embedded: runners[].winRunnerOdds.americanDisplayOdds.americanOddsInt
+    Cached 10 minutes.
+    """
+    et = _FD_SBAPI_ET.get(sport.lower().strip())
+    if not et:
+        return []
+
+    cache_path = os.path.join(
+        CACHE_DIR,
+        f"fd_sbapi_{sport.lower()}_{datetime.now().strftime('%Y%m%d')}.pkl",
+    )
+    if os.path.exists(cache_path):
+        age_m = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_m < 10:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    url = (
+        f"https://sbapi.{_FD_SBAPI_STATE}.sportsbook.fanduel.com/api/content-managed-page"
+        f"?page=SPORT&eventTypeId={et}&_ak={_FD_SBAPI_AK}&timezone=America%2FNew_York"
+    )
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+    try:
+        resp = _http.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            print(f"[WARN] FanDuel sbapi HTTP {resp.status_code}")
+            return []
+        att = resp.json().get("attachments", {})
+    except Exception as e:
+        print(f"[WARN] _fetch_fanduel_sbapi: {e}")
+        return []
+
+    events  = att.get("events",  {})   # {eventId: {name, eventId, …}}
+    markets = att.get("markets", {})   # {marketId: {marketName, marketType, eventId, runners, …}}
+
+    # Group markets by eventId for O(n) lookup
+    by_event: dict = {}
+    for m in markets.values():
+        by_event.setdefault(str(m.get("eventId", "")), []).append(m)
+
+    def _price(runner: dict) -> "int | None":
+        return (
+            (runner.get("winRunnerOdds") or {})
+            .get("americanDisplayOdds", {})
+            .get("americanOddsInt")
+        )
+
+    result = []
+    for eid, ev in events.items():
+        ev_markets = by_event.get(str(eid), [])
+        if not ev_markets:
+            continue
+
+        # FanDuel uses "Home Team v Away Team" naming
+        name   = ev.get("name", "")
+        parts  = name.split(" v ", 1)
+        home_name = parts[0].strip() if len(parts) == 2 else name
+        away_name = parts[1].strip() if len(parts) == 2 else ""
+
+        row: dict = {"Home": home_name, "Away": away_name,
+                     "book": "FanDuel", "book_id": 69}
+
+        for m in ev_markets:
+            mname   = m.get("marketName", "")
+            mtype   = m.get("marketType", "")
+            runners = m.get("runners", [])
+
+            if mtype == "MATCH_ODDS" or mname == "Moneyline":
+                home_r = next((r for r in runners
+                               if r.get("result", {}).get("type") == "HOME"), None)
+                away_r = next((r for r in runners
+                               if r.get("result", {}).get("type") == "AWAY"), None)
+                if home_r:
+                    row["HomeML"] = _price(home_r)
+                if away_r:
+                    row["AwayML"] = _price(away_r)
+
+            elif "HANDICAP" in mtype or mname in ("Spread", "Run Line", "Puck Line"):
+                away_r = next((r for r in runners
+                               if r.get("result", {}).get("type") == "AWAY"), None)
+                if away_r:
+                    row["Spread"]     = away_r.get("handicap")
+                    row["SpreadOdds"] = _price(away_r)
+
+            elif "OVER_UNDER" in mtype or mname in ("Total Points", "Total Runs", "Total Goals"):
+                over_r  = next((r for r in runners
+                                if "over"  in r.get("runnerName", "").lower()), None)
+                under_r = next((r for r in runners
+                                if "under" in r.get("runnerName", "").lower()), None)
+                if over_r:
+                    row["Total"]    = over_r.get("handicap")
+                    row["OverOdds"] = _price(over_r)
+                if under_r:
+                    row["UnderOdds"] = _price(under_r)
+
+        if "HomeML" in row or "Spread" in row:
+            result.append(row)
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    return result
+
+
+def fetch_fanduel_lines(sport: str = "MLB") -> list:
+    """
+    FanDuel game lines (ML, spread, total) — no browser, no PerimeterX.
+
+    Primary:  Action Network (book_id=69, FanDuel NJ).  Confirmed live:
+              15/15 MLB, 4/4 NBA, 16/16 NFL; no auth required.
+    Fallback: FanDuel state sbapi (sbapi.nj.sportsbook.fanduel.com).
+              Public content API, completely separate from the PerimeterX-
+              protected smp.*.sportsbook.fanduel.com endpoint.
+              HTTP 200 from datacenter IPs confirmed; runner prices embedded.
+
+    sport: "MLB" | "NBA" | "NFL" | "NHL" | "WNBA"
+    Returns list of:
+      {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+       Total, OverOdds, UnderOdds, book="FanDuel", book_id=69}
+    """
+    result = _fetch_an_book_lines(sport, 69, "FanDuel")
+    if not result:
+        result = _fetch_fanduel_sbapi(sport)
+    return result
+
+
+def fetch_caesars_lines(sport: str = "MLB") -> list:
+    """
+    Caesars Sportsbook game lines (ML, spread, total) — no browser required.
+
+    Source: Action Network (book_id=123, Caesars NJ).
+    Confirmed live: 14–15/15 MLB, 4/4 NBA, 16/16 NFL; no auth required.
+    api.americanwagering.com (direct Caesars API) is CloudFront-403
+    from datacenter IPs — Action Network is the only viable server path.
+
+    sport: "MLB" | "NBA" | "NFL" | "NHL" | "WNBA"
+    Returns list of:
+      {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+       Total, OverOdds, UnderOdds, book="Caesars", book_id=123}
+    """
+    return _fetch_an_book_lines(sport, 123, "Caesars")
+
