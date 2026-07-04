@@ -12441,13 +12441,86 @@ def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
 
 
 def fetch_tennis_player_stats(player_id: str, tour: str = "atp") -> dict:
-    """Fetch tennis player stats from ESPN."""
-    url = f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/athletes/{player_id}"
-    try:
-        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
-        return r.json() if r.status_code == 200 else {}
-    except Exception:
+    """
+    Fetch tennis player season stats from ESPN by name-to-ID resolution.
+
+    player_id: player name string (e.g. "Novak Djokovic").  Parameter name
+               kept for caller compatibility in app.py — resolved internally
+               to an ESPN numeric athlete ID via the athletes roster endpoint.
+    tour:      "atp" or "wta" (default "atp").  Callers may auto-detect tour
+               from fetch_tennis_scoreboard() before passing here.
+    Cached 12h per player+tour.
+    """
+    cache_key  = f"tennis_player_{normalize_name(player_id)}_{tour}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 12:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    norm         = normalize_name(player_id)
+    roster_data  = _espn_get(
+        f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/athletes?limit=500",
+        f"tennis_{tour}_roster", ttl_hours=24
+    )
+    if not roster_data:
         return {}
+
+    match = next(
+        (a for a in roster_data.get("athletes", [])
+         if normalize_name(a.get("displayName", "")) == norm),
+        None
+    )
+    if not match:
+        return {}
+    pid = match.get("id")
+    if not pid:
+        return {}
+
+    stats_data = _espn_get(
+        f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/athletes/{pid}/statistics",
+        f"tennis_{tour}_{pid}_stats", ttl_hours=6
+    )
+    if not stats_data:
+        return {}
+
+    stat_map = {}
+    for cat in stats_data.get("categories", []):
+        for s in cat.get("stats", []):
+            stat_map[s.get("name", "")] = s.get("value", 0)
+
+    if not stat_map:
+        return {}
+
+    n_games = int(
+        stat_map.get("matchesPlayed",
+        stat_map.get("wins", 0)) + stat_map.get("losses", 0)
+    ) or 20
+    result = {
+        # Keys read by app.py _stat_lookup and n_games confidence label
+        "Aces":               float(stat_map.get("aces", 0)),
+        "Double Faults":      float(stat_map.get("doubleFaults", 0)),
+        "Games Won":          float(stat_map.get("gamesWon", stat_map.get("gameWinPercentage", 0))),
+        "Break Points Won":   float(stat_map.get("breakPointsConverted",
+                                                  stat_map.get("breakPointConversionPercentage", 0))),
+        # Keys read by compute_tennis_ml_edge()
+        "FirstServe%":        float(stat_map.get("firstServePercentage", 60)),
+        "WinPct":             float(stat_map.get("winPercentage",
+                                                  stat_map.get("matchWinPercentage", 50))),
+        "BreakPointsSaved%":  float(stat_map.get("breakPointsSavedPercentage", 60)),
+        # Metadata keys read by app.py live-data path
+        "n_games":            n_games,
+        "_tour":              tour.upper(),
+        "_source":            "ESPN",
+    }
+    try:
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+    except Exception:
+        pass
+    return result
 
 
 # ── Golf ──────────────────────────────────────────────────────────────────────
@@ -12473,13 +12546,93 @@ def fetch_golf_scoreboard(tour: str = "pga") -> dict:
 
 
 def fetch_golf_player_stats(player_id: str, tour: str = "pga") -> dict:
-    """Fetch golf player historical stats from ESPN."""
-    url = f"https://site.api.espn.com/apis/site/v2/sports/golf/{tour}/athletes/{player_id}/statistics"
-    try:
-        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
-        return r.json() if r.status_code == 200 else {}
-    except Exception:
+    """
+    Fetch golf player season stats from ESPN by name-to-ID resolution.
+
+    player_id: player name string (e.g. "Scottie Scheffler").  Parameter name
+               kept for caller compatibility in app.py — resolved internally
+               to an ESPN numeric athlete ID via the athletes roster endpoint.
+    tour:      "pga", "lpga", or "kft" (default "pga").
+    Cached 12h per player+tour.
+    """
+    cache_key  = f"golf_player_{normalize_name(player_id)}_{tour}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 12:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    norm         = normalize_name(player_id)
+    roster_data  = _espn_get(
+        f"https://site.api.espn.com/apis/site/v2/sports/golf/{tour}/athletes?limit=500",
+        f"golf_{tour}_roster", ttl_hours=24
+    )
+    if not roster_data:
         return {}
+
+    match = next(
+        (a for a in roster_data.get("athletes", [])
+         if normalize_name(a.get("displayName", "")) == norm),
+        None
+    )
+    if not match:
+        return {}
+    pid = match.get("id")
+    if not pid:
+        return {}
+
+    stats_data = _espn_get(
+        f"https://site.api.espn.com/apis/site/v2/sports/golf/{tour}/athletes/{pid}/statistics",
+        f"golf_{tour}_{pid}_stats", ttl_hours=6
+    )
+    if not stats_data:
+        return {}
+
+    stat_map = {}
+    for cat in stats_data.get("categories", []):
+        for s in cat.get("stats", []):
+            stat_map[s.get("name", "")] = s.get("value", 0)
+
+    if not stat_map:
+        return {}
+
+    n_rounds = int(stat_map.get("roundsPlayed", stat_map.get("events", 20))) or 20
+    result = {
+        # Keys read by app.py _sg_net() and _stat_lookup
+        "Birdies":    float(stat_map.get("birdies",
+                            stat_map.get("birdieAverage",
+                            stat_map.get("birdiePct", 3.8)))),
+        "Bogeys":     float(stat_map.get("bogeys",
+                            stat_map.get("bogeyAverage",
+                            stat_map.get("bogeysAvg", 3.2)))),
+        "Eagles":     float(stat_map.get("eagles",
+                            stat_map.get("eagleAverage", 0.1))),
+        "Strokes":    float(stat_map.get("scoringAverage",
+                            stat_map.get("strokesGainedTotal", 71.5))),
+        # Strokes gained — available where ESPN exposes SG data
+        "SG_Total":   float(stat_map.get("strokesGainedTotal", 0)),
+        "SG_Off_Tee": float(stat_map.get("strokesGainedOffTheTee", 0)),
+        "SG_App":     float(stat_map.get("strokesGainedApproach", 0)),
+        "SG_Putting": float(stat_map.get("strokesGainedPutting", 0)),
+        "FIR%":       float(stat_map.get("fairwaysHitPercentage",
+                            stat_map.get("fairwayPct", 60))),
+        "GIR%":       float(stat_map.get("greensInRegulationPercentage",
+                            stat_map.get("greenPct", 65))),
+        "Putts":      float(stat_map.get("puttingAverage",
+                            stat_map.get("puttsPerRound", 28))),
+        # Metadata keys read by app.py live-data path
+        "n_games":    n_rounds,
+        "_tour":      tour.upper(),
+        "_source":    "ESPN",
+    }
+    try:
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+    except Exception:
+        pass
+    return result
 
 
 # ── MMA / UFC ─────────────────────────────────────────────────────────────────
@@ -12505,13 +12658,88 @@ def fetch_ufc_scoreboard() -> dict:
 
 
 def fetch_ufc_fighter_stats(fighter_id: str) -> dict:
-    """Fetch UFC fighter stats from ESPN."""
-    url = f"https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes/{fighter_id}"
-    try:
-        r = _http.get(url, headers=_SPORT_HEADERS, timeout=15)
-        return r.json() if r.status_code == 200 else {}
-    except Exception:
+    """
+    Fetch UFC fighter career stats from ESPN by name-to-ID resolution.
+
+    fighter_id: fighter name string (e.g. "Jon Jones").  Parameter name
+                kept for caller compatibility in app.py — resolved internally
+                to an ESPN numeric athlete ID via the athletes roster endpoint.
+    Cached 12h per fighter.
+    """
+    cache_key  = f"ufc_fighter_{normalize_name(fighter_id)}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 12:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    norm         = normalize_name(fighter_id)
+    roster_data  = _espn_get(
+        "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes?limit=500",
+        "ufc_roster", ttl_hours=24
+    )
+    if not roster_data:
         return {}
+
+    match = next(
+        (a for a in roster_data.get("athletes", [])
+         if normalize_name(a.get("displayName", "")) == norm),
+        None
+    )
+    if not match:
+        return {}
+    pid = match.get("id")
+    if not pid:
+        return {}
+
+    stats_data = _espn_get(
+        f"https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes/{pid}/statistics",
+        f"ufc_{pid}_stats", ttl_hours=6
+    )
+    if not stats_data:
+        return {}
+
+    stat_map = {}
+    for cat in stats_data.get("categories", []):
+        for s in cat.get("stats", []):
+            stat_map[s.get("name", "")] = s.get("value", 0)
+
+    if not stat_map:
+        return {}
+
+    wins   = int(stat_map.get("wins",   match.get("wins",   0)))
+    losses = int(stat_map.get("losses", match.get("losses", 0)))
+    result = {
+        # Keys read by app.py _stat_lookup and spread edge math
+        "SIG_STR":      float(stat_map.get("significantStrikes",
+                              stat_map.get("sigStrikes",
+                              stat_map.get("significantStrikesPerMinute", 35)))),
+        "SIG_STR_ACC":  float(stat_map.get("significantStrikeAccuracy",
+                              stat_map.get("sigStrikeAccuracy", 45))),
+        "TAKEDOWNS":    float(stat_map.get("takedownAverage",
+                              stat_map.get("takedowns",
+                              stat_map.get("takedownsPerFight", 1.5)))),
+        "TD_ACC":       float(stat_map.get("takedownAccuracy", 40)),
+        "CONTROL_TIME": float(stat_map.get("controlTime",
+                              stat_map.get("avgControlTime", 0))),
+        "KD":           float(stat_map.get("knockdownAverage",
+                              stat_map.get("knockdowns",
+                              stat_map.get("knockdownsPerFight", 0.3)))),
+        "SUB_AVG":      float(stat_map.get("submissionAverage",
+                              stat_map.get("submissions", 0.5))),
+        # Metadata keys read by app.py live-data path
+        "n_games":      wins + losses or 10,
+        "_record":      f"{wins}-{losses}",
+        "_source":      "ESPN",
+    }
+    try:
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+    except Exception:
+        pass
+    return result
 
 
 # ── Soccer / MLS ──────────────────────────────────────────────────────────────
