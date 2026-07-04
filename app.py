@@ -20342,10 +20342,15 @@ with tabs[9]:
     _error_sources = {e.get("source","") for e in _errors if e.get("type","") != "info"}
 
     # PrizePicks
+    _pp_board = st.session_state.get("board", [])
+    _pp_count = len([p for p in _pp_board if "prizepicks" in str(p.get("source","")).lower() or "pp" in str(p.get("book","")).lower()]) if _pp_board else 0
+    _pp_count_str = f" ({_pp_count} props)" if _pp_count else ""
     if _pp_src == "gist_scraper":
-        _src_statuses.append({"Source": "PrizePicks", "Status": "🟢 Loaded via Gist (local scraper)", "Action": "Run scraper daily"})
+        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded via Gist{_pp_count_str}", "Action": "None"})
     elif _pp_src == "prizepicks_direct":
-        _src_statuses.append({"Source": "PrizePicks", "Status": "🟢 Connected via ScrapeOps", "Action": "None"})
+        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Connected via ScrapeOps{_pp_count_str}", "Action": "None"})
+    elif _pp_st == "ok" and _pp_count:
+        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded{_pp_count_str}", "Action": "None"})
     elif _pp_st == "unavailable":
         _src_statuses.append({"Source": "PrizePicks", "Status": "🔴 ScrapeOps exhausted + no Gist data", "Action": "Run betcouncil_auto_scraper.py"})
     else:

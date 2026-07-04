@@ -14876,11 +14876,10 @@ def fetch_mybookie_from_gist(sport: str) -> tuple:
     if data and _is_fresh(data, max_age_minutes=28):
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
-    try:
-        from fetchers import fetch_mybookie_lines as _f
-        s = _f(sport)
-        if s: return s, "scraper_fallback"
-    except Exception: pass
+    # NOTE: fetch_mybookie_lines (Playwright) removed as fallback here.
+    # Action Network (book_id=8) is now the primary in _pf_mybookie() in app.py
+    # and handles all cases where Gist is empty. Calling Playwright here
+    # caused "playwright not installed" errors on Streamlit Cloud.
     return {}, "unavailable"
 
 
