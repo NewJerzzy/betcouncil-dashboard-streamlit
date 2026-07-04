@@ -18057,7 +18057,7 @@ with tabs[4]:
         // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
         // header). MyBookie also has no public JSON API — their sportsbook is an
         // SPA; all data endpoints return HTML when called cross-origin. The
-        // previous URL (/api/v1/sports/{sport}/lines) returned HTML, not JSON.
+        // previous URL (/api/v1/sports/{{sport}}/lines) returned HTML, not JSON.
         // To harvest MyBookie data, add a Tampermonkey passive hook that fires
         // while browsing mybookie.ag and intercepts their internal XHR calls
         // (use DevTools → Network → XHR while on the sportsbook page to find
