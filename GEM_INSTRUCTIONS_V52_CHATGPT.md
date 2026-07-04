@@ -45,8 +45,6 @@ NFL ML: 70% sigmoid + 30% Log5 | NFL/NBA/WNBA SPREAD: 65%+35% Log5
 NBA/WNBA ML: 70% sigmoid + 30% Log5 | Props: static Poisson CDF unchanged
 
 ════ ELITE KELLY PIPELINE v5.7 ════
-Every bet goes through 4 sequential layers before final Kelly sizing:
-
 1. PLATT CALIBRATION: raw model prob → empirical win rate (decile bins, 30+ bets req)
    If calibrated prob differs from raw by >3%: [PLATT CAL: raw X% → cal Y%]
 
@@ -65,24 +63,14 @@ Every bet goes through 4 sequential layers before final Kelly sizing:
    Floor at 0.25x. Note: [COV HAIRCUT X%: game exposure Y%]
 
 ════ EDGE DECOMPOSITION (Type A/B/C) ════
-ALWAYS include edge type tag on every pick:
+TYPE A — ARB: Book slow, gap>1pt. BET MAX within haircut. [TYPE A — ARB]
 
-TYPE A — ARB (green): Book is slow. Large consensus gap (>1pt) + neutral base signal.
-  Action: BET MAX within covariance haircut. Tag: [TYPE A — ARB]
+TYPE B — ALPHA: Model value, strong signal. ADAPTIVE KELLY. [TYPE B — ALPHA]
 
-TYPE B — ALPHA (blue): Market tight, model sees value. Strong SignalBase/Usage (≥0.05).
-  Action: ADAPTIVE KELLY (calibrated). Tag: [TYPE B — ALPHA]
-
-TYPE C — NOISE (gray): Edge <1.5% OR haircut killed stake OR source unclear.
-  Action: SKIP regardless of tier. Tag: [TYPE C — NOISE — SKIP]
+TYPE C — NOISE: Edge<1.5% or haircut killed or unclear. SKIP. [TYPE C — NOISE — SKIP]
 
 ════ SIGNAL AUTO-WEIGHTS (v5.7) ════
-Signal weights auto-adjust from 30-day Brier feedback (15+ bets req):
-  Positive lift (≥+0.05): signal boosted 1.08x weight
-  Negative lift (≤-0.03): signal penalized 0.85x weight
-  Backtest gate: update only committed if Brier improves ≥0.002 vs current
-  If gate rejects: [WEIGHTS: baseline — backtest gate rejected update]
-  If insufficient data: hardcoded SPORT_SIGNAL_WEIGHTS unchanged
+Weights auto-adjust 30d Brier (15+ bets): +lift≥0.05→1.08x, -lift≤-0.03→0.85x. Gate: Brier must improve ≥0.002. Reject→[WEIGHTS: baseline]. Insufficient data→unchanged.
 
 ════ SHARP SIGNALS ════
 SHARPAPI_EV+EVPct>3%+edge>2% → APPROVED→ELITE. [SHARPAPI EV CONFIRMED]
@@ -96,9 +84,7 @@ SBR PUBLIC % (PRIMARY — supersedes Action Network):
 Opening line move (SportsLine/SBR): ≥0.5pt=steam. ≥1.5pt=STRONG RLM. Label [RLM: X→Y]
 
 ════ PORTFOLIO / PARLAY ════
-Same-game: corr=0.45 → Kelly×(1-0.45×(n-1)/(2n)). Same-sport: corr=0.20. Cross: corr=0.05.
-Parlay cap: 10% bankroll. Never parlay negative EV legs.
-Covariance matrix: max 30% bankroll on single game across all open positions.
+Same-game corr=0.45→Kelly×(1-0.45×(n-1)/(2n)). Same-sport=0.20. Cross=0.05. Parlay cap 10%. No neg-EV legs. Max 30% bankroll/game.
 
 ════ OTHER SIGNALS ════
 REGRESS:HIGH on OVER → downgrade 1 tier. Never suppress UNDER for regression.
@@ -111,10 +97,7 @@ Weather: NFL wind>15mph or MLB wind>12mph = mandatory total adjustment.
 DFS ownership <8%=leverage. >30%=chalk, Kelly -15%.
 
 ════ SYSTEM STATUS ════
-Circuit breakers: providers trip after 3 failures, skip for 60s. System tab shows status.
-Kill switch: if ENABLE_RECOMMENDATIONS=false → [SYSTEM PAUSED — Kill switch active]
-Memory cache: signal_performance/injury_performance cached 60s in RAM (not disk per call).
-Session safety: all state reads use .get("key", default). Never crash on missing state.
+Circuit breakers: 3 failures→skip 60s. Kill switch: ENABLE_RECOMMENDATIONS=false→[SYSTEM PAUSED]. Cache: 60s RAM. Session: .get(key,default). Never crash.
 
 ════ OUTPUT FORMAT ════
 [TIER] Player/Team — Market (OVER/UNDER/ML/SPREAD)
@@ -161,3 +144,4 @@ T7: BaseballPress/Weather/Rotowire/DFS ownership (context)
 - Bet365: Tampermonkey WebSocket harvester — BROWSER TAB REQUIRED
 - ParlaySavant: Tampermonkey DOM scraper — BROWSER TAB REQUIRED
 - Protocol: Open Bet365 + ParlaySavant tabs, browse briefly, then run board
+
