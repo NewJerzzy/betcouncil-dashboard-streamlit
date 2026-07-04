@@ -10394,7 +10394,14 @@ def load_sport_data(sport):
     def _pf_dk_sal():       return []  # fetch_dk_salaries not implemented
     def _pf_pinnacle():     return fetch_pinnacle_game_lines(sport)
     def _pf_oddswrap():     return fetch_oddswrap_props(sport)
-    def _pf_parlayapi():    return fetch_parlayapi_props(sport)
+    _parlayapi_key = f'parlayapi_props_{sport}'
+    def _pf_parlayapi():
+        if _parlayapi_key in st.session_state:
+            return st.session_state[_parlayapi_key]
+        result = fetch_parlayapi_props(sport)
+        if result:
+            st.session_state[_parlayapi_key] = result
+        return result
     _papi_key = f'oddsapi_props_{sport}'
     def _pf_odds_api():
         if _papi_key in st.session_state:
@@ -10403,7 +10410,14 @@ def load_sport_data(sport):
         if result:
             st.session_state[_papi_key] = result
         return result
-    def _pf_oddspapi():     return fetch_oddspapi_props(sport)
+    _oddspapi_key = f'oddspapi_props_{sport}'
+    def _pf_oddspapi():
+        if _oddspapi_key in st.session_state:
+            return st.session_state[_oddspapi_key]
+        result = fetch_oddspapi_props(sport)
+        if result:
+            st.session_state[_oddspapi_key] = result
+        return result
     def _pf_bdl():          return fetch_player_season_avg_bdl(sport) if sport == 'NBA' else []
     def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else {}
     def _pf_rw_injuries():
@@ -10666,8 +10680,22 @@ def load_sport_data(sport):
     def _pf_ev_recap():       return fetch_ev_recap() if sport in ("MLB",) else {}
     def _pf_ev_mlb():         return fetch_ev_mlb() if sport in ("MLB",) else {}
     def _pf_ev_trends():      return fetch_ev_trends() if sport in ("MLB",) else {}
-    def _pf_parlayapi_ev():   return fetch_parlayapi_ev(sport)
-    def _pf_parlayapi_arb():  return fetch_parlayapi_arbitrage(sport)
+    _parlayapi_ev_key = f'parlayapi_ev_{sport}'
+    def _pf_parlayapi_ev():
+        if _parlayapi_ev_key in st.session_state:
+            return st.session_state[_parlayapi_ev_key]
+        result = fetch_parlayapi_ev(sport)
+        if result:
+            st.session_state[_parlayapi_ev_key] = result
+        return result
+    _parlayapi_arb_key = f'parlayapi_arb_{sport}'
+    def _pf_parlayapi_arb():
+        if _parlayapi_arb_key in st.session_state:
+            return st.session_state[_parlayapi_arb_key]
+        result = fetch_parlayapi_arbitrage(sport)
+        if result:
+            st.session_state[_parlayapi_arb_key] = result
+        return result
     def _pf_unabated():       return fetch_unabated_lines(sport.lower())
 
     _parallel_fns = [
