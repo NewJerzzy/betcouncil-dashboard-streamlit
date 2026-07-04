@@ -6006,6 +6006,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             "bookmaker_game_lines":  st.session_state.get("bookmaker_game_lines", []),
             "bovada_game_lines":     st.session_state.get("bovada_game_lines", []),
             "mybookie_game_lines":   st.session_state.get("mybookie_game_lines", []),
+            "fanduel_game_lines":    st.session_state.get("fanduel_game_lines", []),
+            "caesars_game_lines":    st.session_state.get("caesars_game_lines", []),
             "sportsline_game_lines": st.session_state.get("sportsline_game_lines", []),
             "sbr_game_lines":        st.session_state.get("sbr_game_lines", []),
         })
@@ -10456,6 +10458,12 @@ def load_sport_data(sport):
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_sportsline_lines(): return fetch_sportsline_game_lines(sport)
     def _pf_sbr_lines():        return fetch_sbr_game_lines(sport)
+    def _pf_fanduel_lines():
+        _an = fetch_fanduel_lines(sport)
+        if _an: return _an
+        return []
+    def _pf_caesars_lines():
+        return fetch_caesars_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
     def _pf_fd_props_sa():   return fetch_fanduel_props_sharpapi(sport)
     def _pf_sharpapi_drops(): return fetch_sharpapi_line_drops(sport)
@@ -10669,7 +10677,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines,
-        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie,
+        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -10685,7 +10693,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw,
-     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw,
+     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -10860,6 +10868,8 @@ def load_sport_data(sport):
     st.session_state["bovada_game_lines"]    = bovada_lines_raw    or []
     st.session_state["bovada_props"]         = bovada_props_raw    or []
     st.session_state["mybookie_game_lines"]  = mybookie_raw        or []
+    st.session_state["fanduel_game_lines"]   = fanduel_lines_raw   or []
+    st.session_state["caesars_game_lines"]   = caesars_lines_raw   or []
     st.session_state["savant_xstats"]        = savant_xstats_raw   or {}
     st.session_state["savant_sprint"]        = savant_sprint_raw   or {}
     st.session_state["savant_expected"]      = savant_expected_raw or {}
