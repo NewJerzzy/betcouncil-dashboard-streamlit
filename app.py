@@ -18444,7 +18444,7 @@ with tabs[4]:
                         'Origin': 'https://www.actionnetwork.com',
                         'Referer': 'https://www.actionnetwork.com/'
                     }}
-                }}).then(function(r) {{ return r.json(); }})
+                }}).then(function(r) {{ if (!r.ok) throw new Error('AN ' + r.status); return r.json(); }})
                   .then(function(data) {{
                     pushGist('betcouncil_actionnetwork_' + sport + '.json', {{
                         sport: sport,
@@ -18567,11 +18567,13 @@ with tabs[4]:
         var nvSportMap = {{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
         var nvSport = nvSportMap[sport];
         if (nvSport) {{
-            throttled('novig_' + sport, 1200000, function() {{
-                fetch('https://api.novig.com/lines?sport=' + nvSport + '&market=player_props', {{
-                    headers:{{'Accept':'application/json','Referer':'https://novig.com/'}}
-                }}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_novig_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+            /* Novig: api.novig.com is DNS-dead (2025). Disabled browser fetch.
+   Python fallback uses fetch_novig_lines → SBR consensus. */
+// throttled('novig_' + sport, 1200000, function() {{
+//                 fetch('https://api.novig.com/lines?sport=' + nvSport + '&market=player_props', {{
+//                     headers:{{'Accept':'application/json','Referer':'https://novig.com/'}}
+//                 }}).then(function(r){{return r.json();}}).then(function(data){{
+//                     pushGist('betcouncil_novig_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
                 }}).catch(function(e){{console.log('[BetCouncil] Novig error:',e.message);}});
             }});
         }}

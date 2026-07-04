@@ -14624,9 +14624,10 @@ def fetch_novig_from_gist(sport: str) -> tuple:
     if data and _is_fresh(data, max_age_minutes=22):
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
+    # fetch_novig_props did not exist — wire to fetch_novig_lines (SBR-based, no auth)
     try:
-        from fetchers import fetch_novig_props as _f
-        s = _f(sport)
+        from fetchers import fetch_novig_lines as _fn
+        s = _fn(sport)
         if s: return s, "scraper_fallback"
     except Exception: pass
     return {}, "unavailable"
@@ -14661,11 +14662,23 @@ def fetch_parlaysavant_from_gist(sport: str) -> tuple:
     if data and _is_fresh(data, max_age_minutes=22):
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
+    # fetch_parlaysavant_props did not exist — direct Python HTTP (no CORS server-side)
+    # Also checks sport-specific Gist files from the Tampermonkey parlaysavant harvester
+    # (which pushes betcouncil_parlaysavant_{SPORT}_{pageType}_{market}.json)
     try:
-        from fetchers import fetch_parlaysavant_props as _f
-        s = _f(sport)
-        if s: return s, "scraper_fallback"
-    except Exception: pass
+        import requests as _req
+        _sport_l = sport.lower()
+        _r = _req.get(
+            f"https://parlaysavant.com/api/props?sport={_sport_l}&type=positive_ev&limit=100",
+            headers={"Accept": "application/json",
+                     "Referer": "https://parlaysavant.com/",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 
