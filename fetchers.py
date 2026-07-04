@@ -14749,8 +14749,27 @@ def fetch_vegasinsider_from_gist(sport):
     return {}, "unavailable"
 
 def fetch_propscash_from_gist(sport):
+    """Props.cash cross-book prop lines.
+    Tries Gist first (browser harvester); falls back to direct Python fetch
+    because CORS blocks browser requests from Streamlit's domain.
+    """
     data=_read_gist_file(f"betcouncil_propscash_{sport}.json",5)
     if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    # Browser harvester CORS-blocked — try direct Python HTTP request
+    try:
+        import requests as _req
+        _sport_l = sport.lower()
+        _r = _req.get(
+            f"https://props.cash/api/props?sport={_sport_l}&limit=200",
+            headers={"Accept": "application/json",
+                     "Referer": "https://props.cash/",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 def fetch_baseballpress_from_gist():
@@ -14759,8 +14778,26 @@ def fetch_baseballpress_from_gist():
     return {}, "unavailable"
 
 def fetch_bettingpros_from_gist(sport):
+    """BettingPros expert consensus picks.
+    Gist fallback + direct Python fetch (CORS-bypass).
+    """
     data=_read_gist_file(f"betcouncil_bettingpros_{sport}.json",5)
     if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    try:
+        import requests as _req
+        _bp_map = {"MLB":"mlb","NBA":"nba","NFL":"nfl","NHL":"nhl","WNBA":"wnba"}
+        _bp_s   = _bp_map.get(sport, sport.lower())
+        _r = _req.get(
+            f"https://www.bettingpros.com/api/v3/picks/?sport={_bp_s}&market=game&page_size=50",
+            headers={"Accept": "application/json",
+                     "Referer": "https://www.bettingpros.com/",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 def fetch_stokastic_from_gist(sport):
@@ -14774,13 +14811,50 @@ def fetch_rotogrinders_from_gist(sport):
     return {}, "unavailable"
 
 def fetch_oddsportal_from_gist(sport):
+    """OddsPortal historical odds archive.
+    Gist fallback + direct Python fetch (CORS-bypass).
+    """
     data=_read_gist_file(f"betcouncil_oddsportal_{sport}.json",5)
     if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester"
+    try:
+        import requests as _req
+        _op_map = {"MLB":"baseball","NBA":"basketball","NFL":"american-football",
+                   "NHL":"hockey","UFC":"mma","SOCCER":"soccer"}
+        _op_s = _op_map.get(sport)
+        if not _op_s: return {}, "unavailable"
+        _r = _req.get(
+            f"https://www.oddsportal.com/api/v1/events/{_op_s}/today",
+            headers={"Accept": "application/json",
+                     "Referer": "https://www.oddsportal.com/",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 def fetch_outlier_from_gist(sport):
+    """Outlier.bet +EV opportunities.
+    Gist fallback + direct Python fetch (CORS-bypass).
+    """
     data=_read_gist_file(f"betcouncil_outlier_{sport}.json",5)
     if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    try:
+        import requests as _req
+        _sport_l = sport.lower()
+        _r = _req.get(
+            f"https://outlier.bet/api/opportunities?sport={_sport_l}&min_ev=0.02",
+            headers={"Accept": "application/json",
+                     "Referer": "https://outlier.bet/",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 def fetch_smarkets_from_gist(sport):
@@ -14804,8 +14878,34 @@ def fetch_scoresandodds_from_gist(sport):
     return {}, "unavailable"
 
 def fetch_kalshi2_from_gist(sport):
+    """Kalshi prediction market contracts.
+    Gist fallback + direct Python fetch via public Kalshi API (CORS-bypass).
+    Note: JS used trading-api.kalshi.com; Python uses the public elections API.
+    """
     data=_read_gist_file(f"betcouncil_kalshi2_{sport}.json",5)
     if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
+    try:
+        import requests as _req
+        # Public Kalshi Markets API — no auth required for market listings
+        _r = _req.get(
+            "https://api.elections.kalshi.com/trade-api/v2/markets",
+            params={"status": "open", "series_ticker": sport, "limit": 100},
+            headers={"Accept": "application/json"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            return (_d if isinstance(_d, dict) else {}), "python_direct"
+        # Fallback: trading API (may require auth but worth trying)
+        _r2 = _req.get(
+            f"https://trading-api.kalshi.com/trade-api/v2/events/",
+            params={"status": "open", "series_ticker": sport},
+            headers={"Accept": "application/json"},
+            timeout=12)
+        if _r2.status_code == 200:
+            _d2 = _r2.json()
+            return (_d2 if isinstance(_d2, dict) else {}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 
