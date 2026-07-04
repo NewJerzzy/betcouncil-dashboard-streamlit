@@ -6053,6 +6053,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             "heritage_game_lines":   st.session_state.get("heritage_game_lines", []),
             "bookmaker_game_lines":  st.session_state.get("bookmaker_game_lines", []),
             "bovada_game_lines":     st.session_state.get("bovada_game_lines", []),
+            "mybookie_game_lines":   st.session_state.get("mybookie_game_lines", []),
             "sportsline_game_lines": st.session_state.get("sportsline_game_lines", []),
             "sbr_game_lines":        st.session_state.get("sbr_game_lines", []),
         })
@@ -11121,6 +11122,51 @@ def load_sport_data(sport):
             return data
         except Exception:
             return {}
+    def _pf_mybookie():
+        # BUG FIX (2026-07): fetch_mybookie_from_gist() has existed and had a
+        # working Tampermonkey harvester feeding it real data all night, but
+        # was never actually called anywhere in the board pipeline -- the
+        # harvested data was landing in the Gist and going completely unused.
+        # Also reshapes MyBookie's {Matchup,"Home ML","Away ML",...} harvester
+        # output into the clean {Home,Away,HomeML,AwayML,Spread,Total} shape
+        # build_game_line_consensus() actually expects (MyBookie is not in the
+        # _LONG_FORMAT_BOOKS auto-normalize set).
+        try:
+            raw, _src = fetch_mybookie_from_gist(sport)
+            if not raw:
+                return []
+            _out = []
+            for _g in raw:
+                _matchup = _g.get("Matchup", "") or ""
+                if " @ " in _matchup:
+                    _away, _home = [s.strip() for s in _matchup.split(" @ ", 1)]
+                elif " vs " in _matchup:
+                    _home, _away = [s.strip() for s in _matchup.split(" vs ", 1)]
+                else:
+                    _away, _home = _matchup, _matchup
+                _out.append({
+                    "Home":   _home,
+                    "Away":   _away,
+                    "HomeML": _g.get("Home ML"),
+                    "AwayML": _g.get("Away ML"),
+                    "Spread": _g.get("Spread"),
+                    "Total":  _g.get("Total"),
+                })
+            return _out
+        except Exception:
+            return []
+    def _pf_bettingpros():
+        try:
+            data, _src = fetch_bettingpros_from_gist(sport)
+            return data
+        except Exception:
+            return {}
+    def _pf_oddsportal():
+        try:
+            data, _src = fetch_oddsportal_from_gist(sport)
+            return data
+        except Exception:
+            return {}
     def _pf_bet365():
         try:
             _raw = load_from_gist("bet365_games", None)
@@ -11228,7 +11274,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines,
-        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_polymarket, _pf_bet365, _pf_polymarket,
+        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_polymarket, _pf_bet365, _pf_mybookie, _pf_bettingpros, _pf_oddsportal, _pf_polymarket,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -11244,7 +11290,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw,
-     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, polymarket_raw, bet365_raw, polymarket_raw,
+     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, polymarket_raw, bet365_raw, mybookie_raw, bettingpros_raw, oddsportal_raw, polymarket_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -11420,6 +11466,9 @@ def load_sport_data(sport):
     st.session_state["bovada_props"]         = bovada_props_raw    or []
     st.session_state["polymarket_data"]      = polymarket_raw      or {}
     st.session_state["bet365_game_lines"]    = bet365_raw          or []
+    st.session_state["mybookie_game_lines"]  = mybookie_raw        or []
+    st.session_state["bettingpros_data"]     = bettingpros_raw     or {}
+    st.session_state["oddsportal_data"]      = oddsportal_raw      or {}
     st.session_state["polymarket_data"]      = polymarket_raw      or {}
     st.session_state["savant_xstats"]        = savant_xstats_raw   or {}
     st.session_state["savant_sprint"]        = savant_sprint_raw   or {}
