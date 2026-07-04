@@ -1061,8 +1061,21 @@ def fetch_auto_scraped_props(sport="NBA"):
         #   (b) updated_at age — warn (not block) when data is same-day but >10h old
         gist_date = gist_content.get("date", "")
         if not is_date_valid_for_today(gist_date):
-            log_error_to_session("fetch_auto_scraped_props", f"Gist stale (date: {gist_date}, today: {date.today().isoformat()})", "warning")
-            return []
+            # Allow up to 7 days stale — better than an empty board while the
+            # PC auto-scraper is not running.  PrizePicks lines shift slowly.
+            try:
+                from datetime import date as _dc
+                _age = (_dc.today() - _dc.fromisoformat(gist_date)).days
+                if _age > 7:
+                    log_error_to_session("fetch_auto_scraped_props",
+                        f"Gist too stale ({_age}d old, date={gist_date}) — run betcouncil_auto_scraper.py", "warning")
+                    return []
+                log_error_to_session("fetch_auto_scraped_props",
+                    f"Gist {_age}d old ({gist_date}) — returning stale data, run scraper for fresh props", "warning")
+            except (ValueError, TypeError):
+                log_error_to_session("fetch_auto_scraped_props",
+                    f"Gist stale (date: {gist_date}) — skipping", "warning")
+                return []
         # Hour-based freshness from GitHub Gist updated_at timestamp
         try:
             _gist_json = r.json()
@@ -11327,7 +11340,21 @@ def scrape_prizepicks_with_gist_fallback(sport):
 
     lkg_path = os.path.join(CACHE_DIR, f"pp_last_known_good_{sport}.pkl")
 
-    # ── 1. Gist direct ────────────────────────────────────────────────────────
+    # ── 0. Dedicated PrizePicks Gist file (browser harvester / daily script) ───
+    # betcouncil_prizepicks_{sport}.json is written by the Tampermonkey script
+    # or scripts/fetch_prizepicks_daily.py.  Checked first because it is always
+    # sport-specific and fresher than the multi-book auto_scraped_props dump.
+    try:
+        _pp_h_props, _pp_h_src = fetch_prizepicks_from_gist(sport)
+        if _pp_h_props:
+            st.session_state["pp_source"] = _pp_h_src
+            st.session_state["pp_status"] = "ok"
+            _write_pp_lkg(sport, _pp_h_props)
+            return _pp_h_props
+    except Exception:
+        pass
+
+    # ── 1. Gist direct (auto_scraped_props.json from local PC scraper) ────────
     gist_props = fetch_auto_scraped_props(sport)
     if gist_props:
         st.session_state["pp_source"] = "gist_scraper"

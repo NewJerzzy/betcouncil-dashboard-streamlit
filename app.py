@@ -11981,6 +11981,106 @@ def load_sport_data(sport):
         st.session_state["ev_barrels_lookup"] = _ev_barrels_lookup
         st.session_state["ev_barrels_count"]  = len(ev_barrels_raw)
 
+    # ── Baseball Savant enrichment — xStats / Sprint / Expected / Batted-ball / Arsenal
+    # These 5 Savant leaderboards were fetched in the parallel pool and stored in
+    # session_state but never reached the scoring loop. This block backfills them into
+    # _ev_signal_lookup so every MLB prop row gains Savant-derived edge fields.
+    if sport == "MLB":
+        _sav_xstats   = savant_xstats_raw   or {}
+        _sav_sprint   = savant_sprint_raw   or {}
+        _sav_expected = savant_expected_raw or {}
+        _sav_arsenal  = savant_arsenal_raw  or {}
+        _sav_batted   = savant_batted_raw   or {}
+        for _sk, _sv in _ev_signal_lookup.items():
+            _pname = _sk[0]  # normalize_name lower-cases already
+            # ── xStats: barrel rate, hard-hit, exit velo, xwOBA ────────
+            _xs = _sav_xstats.get(_pname) or {}
+            if not _xs:
+                _pts = _pname.split()
+                if len(_pts) >= 2:
+                    _xs = _sav_xstats.get(f"{_pts[-1]}, {' '.join(_pts[:-1])}") or {}
+            if _xs:
+                _brl = _xs.get("barrel_batted_rate"); _hh = _xs.get("hard_hit_percent")
+                _sav_brl_edge = 0.0; _sav_brl_note = ""
+                if "Home Run" in _sk[1] or "Hits" in _sk[1]:
+                    try:
+                        if _brl is not None:
+                            if _brl >= 12.0:   _sav_brl_edge =  0.02; _sav_brl_note = f"SavBRL {_brl:.1f}%"
+                            elif _brl >= 8.0:  _sav_brl_edge =  0.01; _sav_brl_note = f"SavBRL {_brl:.1f}%"
+                            elif _brl <= 2.0:  _sav_brl_edge = -0.01; _sav_brl_note = f"SavBRL {_brl:.1f}%"
+                        if _hh is not None and not _sav_brl_note:
+                            if _hh >= 50.0:    _sav_brl_edge =  0.01; _sav_brl_note = f"SavHH {_hh:.0f}%"
+                            elif _hh <= 30.0:  _sav_brl_edge = -0.01; _sav_brl_note = f"SavHH {_hh:.0f}%"
+                    except (ValueError, TypeError):
+                        pass
+                _sv.update({"sav_xwoba": _xs.get("xwoba"), "sav_xba": _xs.get("xba"),
+                            "sav_xslg": _xs.get("xslg"), "sav_barrel_rate": _brl,
+                            "sav_hard_hit": _hh, "sav_exit_velo": _xs.get("exit_velocity_avg"),
+                            "sav_k_pct": _xs.get("strikeout_percent"), "sav_bb_pct": _xs.get("walk_percent"),
+                            "sav_brl_edge": _sav_brl_edge, "sav_brl_note": _sav_brl_note})
+            # ── Expected stats: xBA-diff catches regression risk ─────────
+            _xe = _sav_expected.get(_pname) or {}
+            if _xe:
+                _xwd = _xe.get("xwoba_diff"); _sav_reg_edge = 0.0; _sav_reg_note = ""
+                try:
+                    if _xwd is not None:
+                        if _xwd <= -0.030:   _sav_reg_edge =  0.02; _sav_reg_note = f"xwOBA+{abs(_xwd):.3f} under"
+                        elif _xwd <= -0.020: _sav_reg_edge =  0.01; _sav_reg_note = f"xwOBA+{abs(_xwd):.3f} under"
+                        elif _xwd >= 0.030:  _sav_reg_edge = -0.02; _sav_reg_note = f"xwOBA-{_xwd:.3f} over"
+                        elif _xwd >= 0.020:  _sav_reg_edge = -0.01; _sav_reg_note = f"xwOBA-{_xwd:.3f} over"
+                except (ValueError, TypeError):
+                    pass
+                _sv.update({"sav_xba_diff": _xe.get("xba_diff"), "sav_xslg_diff": _xe.get("xslg_diff"),
+                            "sav_xwoba_diff": _xwd, "sav_pa": _xe.get("pa"),
+                            "sav_reg_edge": _sav_reg_edge, "sav_reg_note": _sav_reg_note})
+            # ── Sprint speed: stolen-base props ─────────────────────────
+            _sp = _sav_sprint.get(_pname) or {}
+            if _sp:
+                _spd = _sp.get("sprint_speed"); _sav_spd_edge = 0.0; _sav_spd_note = ""
+                if "Stolen" in _sk[1] or "Base" in _sk[1]:
+                    try:
+                        if _spd is not None:
+                            if _spd >= 29.0:   _sav_spd_edge =  0.02; _sav_spd_note = f"Sprint {_spd:.1f}ft/s"
+                            elif _spd >= 27.5: _sav_spd_edge =  0.01; _sav_spd_note = f"Sprint {_spd:.1f}ft/s"
+                            elif _spd <= 24.0: _sav_spd_edge = -0.01; _sav_spd_note = f"Sprint {_spd:.1f}ft/s"
+                    except (ValueError, TypeError):
+                        pass
+                _sv.update({"sav_sprint_speed": _spd, "sav_bolts": _sp.get("bolts"),
+                            "sav_hp_to_1b": _sp.get("hp_to_1b"),
+                            "sav_spd_edge": _sav_spd_edge, "sav_spd_note": _sav_spd_note})
+            # ── Batted-ball: HR props favour high FB% and pull rate ──────
+            _bb = _sav_batted.get(_pname) or {}
+            if _bb:
+                _fbr = _bb.get("fb_rate"); _pull = _bb.get("pull_rate")
+                _sav_fb_edge = 0.0; _sav_fb_note = ""
+                if "Home Run" in _sk[1] or "Hits" in _sk[1]:
+                    try:
+                        if _fbr is not None:
+                            if _fbr >= 45.0:  _sav_fb_edge =  0.01; _sav_fb_note = f"FB% {_fbr:.0f}%"
+                            elif _fbr <= 25.0: _sav_fb_edge = -0.01; _sav_fb_note = f"FB% {_fbr:.0f}%"
+                        if _pull is not None and _sav_fb_note and _pull >= 45.0:
+                            _sav_fb_note += f" Pull {_pull:.0f}%"
+                    except (ValueError, TypeError):
+                        pass
+                _sv.update({"sav_gb_rate": _bb.get("gb_rate"), "sav_fb_rate": _fbr,
+                            "sav_ld_rate": _bb.get("ld_rate"), "sav_pu_rate": _bb.get("pu_rate"),
+                            "sav_pull_rate": _pull, "sav_oppo_rate": _bb.get("oppo_rate"),
+                            "sav_fb_edge": _sav_fb_edge, "sav_fb_note": _sav_fb_note})
+            # ── Pitch arsenal: pitcher K props — negative RV = effective ──
+            _pitcher_raw = (_sv.get("pitcher") or "").strip().lower()
+            if _pitcher_raw and "Strikeout" in _sk[1]:
+                _pa = _sav_arsenal.get(_pitcher_raw) or {}
+                if _pa:
+                    _best = min(_pa.items(), key=lambda x: x[1].get("rv_per_100", 0)) if _pa else None
+                    _sav_ars_edge = 0.0; _sav_ars_note = ""
+                    if _best:
+                        _pt, _pd = _best; _rv = _pd.get("rv_per_100", 0)
+                        if _rv <= -2.0:   _sav_ars_edge =  0.02; _sav_ars_note = f"Arsenal {_pt} RV{_rv:+.1f}/100"
+                        elif _rv <= -1.0: _sav_ars_edge =  0.01; _sav_ars_note = f"Arsenal {_pt} RV{_rv:+.1f}/100"
+                    _sv.update({"sav_arsenal": _pa, "sav_ars_edge": _sav_ars_edge,
+                                "sav_ars_note": _sav_ars_note})
+
+
     # ── /api/recap — save yesterday's results to session_state ───────────────
     # Not used for signal_lookup enrichment; exposed for a daily results widget.
     if ev_recap_raw and isinstance(ev_recap_raw, dict) and ev_recap_raw.get("data"):
