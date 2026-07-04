@@ -15203,3 +15203,804 @@ def get_propswap_sharp_signal(player: str, prop_type: str,
             }
     return {"sharp_signal": False, "premium_pct": 0.0}
 
+
+def fetch_dff_rosterfilter(sport, team, player_id, date_str=None):
+    """
+    Fetch DFF teammate roster context for a player.
+    
+    Endpoint: dailyfantasyfuel.com/rosterfilter/{SPORT}/{TEAM}/{DATE}/{PLAYERID}/ALL
+    Confirmed via DevTools — returns teammate AVG Mins, AVG PRA, with/without data.
+    
+    Returns dict with:
+      roster:      list of {player, avg_mins, avg_pra, with_val, without_val}
+      dependency:  HIGH/MEDIUM/LOW for each key teammate
+    """
+    if not date_str:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    sport_key = DFF_SPORT_MAP.get(sport, sport)
+    team_abbr  = DFF_TEAM_MAP.get(team, team)
+    
+    cache_key = f"{sport_key}_{team_abbr}_{player_id}_{date_str}"
+    
+    # Check memory cache first
+    cached = st.session_state.get("dff_cache", {})
+    if cache_key in cached:
+        return cached[cache_key]
+    
+    url = f"https://www.dailyfantasyfuel.com/rosterfilter/{sport_key}/{team_abbr}/{date_str}/{player_id}/ALL"
+    
+    try:
+        r = _http.get(url, headers=DFF_HEADERS, timeout=10)
+        if r.status_code not in (200, 304):
+            return {}
+        
+        data = r.json() if r.text else {}
+        if not data:
+            return {}
+        
+        # Parse roster — DFF returns "Current Roster" list
+        roster_raw = data.get("Current Roster", data.get("roster", data.get("teammates", [])))
+        
+        parsed_roster = []
+        for entry in roster_raw:
+            pname    = entry.get("player", entry.get("name", ""))
+            avg_mins = float(entry.get("AVG Mins", entry.get("avg_mins", 0)) or 0)
+            avg_pra  = float(entry.get("AVG PRA",  entry.get("avg_pra",  0)) or 0)
+            # With/without if available
+            with_val    = float(entry.get("With",    entry.get("with",    0)) or 0)
+            without_val = float(entry.get("Without", entry.get("without", 0)) or 0)
+            
+            if not pname:
+                continue
+            
+            # Compute dependency
+            if with_val > 0 and without_val > 0:
+                diff_pct = abs(with_val - without_val) / max(with_val, without_val)
+                if diff_pct >= 0.15:
+                    dependency = "HIGH"
+                elif diff_pct >= 0.07:
+                    dependency = "MEDIUM"
+                else:
+                    dependency = "LOW"
+            else:
+                dependency = "UNKNOWN"
+            
+            parsed_roster.append({
+                "player":      pname,
+                "avg_mins":    avg_mins,
+                "avg_pra":     avg_pra,
+                "with_val":    with_val,
+                "without_val": without_val,
+                "dependency":  dependency,
+            })
+        
+        result = {
+            "roster":     parsed_roster,
+            "player_id":  player_id,
+            "team":       team_abbr,
+            "date":       date_str,
+            "raw":        data,
+        }
+        
+        # Cache in session state
+        cached[cache_key] = result
+
+        # Persist to disk
+        all_cached = load_json_data(DFF_PATH, {})
+        all_cached[cache_key] = result
+        if len(all_cached) > 500:
+            oldest = sorted(all_cached.keys())[0]
+            del all_cached[oldest]
+        save_json_data(DFF_PATH, all_cached)
+        
+        return result
+    
+    except (requests.RequestException, ValueError, KeyError) as e:
+        st.session_state.setdefault("errors", []).append({
+            "source": "DFF", "error": str(e)[:80],
+            "time": datetime.now().strftime("%H:%M")
+        })
+        return {}
+
+
+def fetch_mlb_player_season_avg(player_name, player_id=None):
+    """
+    Fetch 2025 season averages for a single MLB player by name or ID.
+    Tries hitting + pitching. Returns stat dict or None.
+    Used by score_pick_standalone for on-demand MLB player lookup.
+    """
+    cache_key = f"mlb_season_{normalize_name(player_name)}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                _logger.debug("Silent except at line 6841")
+                pass
+
+    # Resolve player ID
+    if not player_id:
+        all_ids = st.session_state.get("mlb_roster_ids", {}) or MLB_PLAYER_IDS
+        player_id = all_ids.get(player_name)
+        if not player_id:
+            # Try normalized name match
+            norm = normalize_name(player_name)
+            player_id = next((v for k, v in all_ids.items() if normalize_name(k) == norm), None)
+        if not player_id:
+            return None
+
+    result = {}
+    for group in ("hitting", "pitching"):
+        try:
+            url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+                   f"?stats=season&group={group}&season=2025&gameType=R")
+            resp = _http.get(url, headers=HEADERS, timeout=8)
+            if resp.status_code != 200:
+                continue
+            splits = resp.json().get("stats", [{}])[0].get("splits", [])
+            if not splits:
+                continue
+            s = splits[0]["stat"]
+            if group == "hitting":
+                g = int(s.get("gamesPlayed", 0) or 0)
+                if g == 0:
+                    continue
+                ab = int(s.get("atBats", 1) or 1)
+                result.update({
+                    "H":   round(int(s.get("hits", 0)) / g, 2),
+                    "HR":  round(int(s.get("homeRuns", 0)) / g, 3),
+                    "RBI": round(int(s.get("rbi", 0)) / g, 2),
+                    "R":   round(int(s.get("runs", 0)) / g, 2),
+                    "TB":  round(int(s.get("totalBases", 0)) / g, 2),
+                    "n_games": g,
+                    "_type": "hitter",
+                })
+                # Derive Hitter FS: H*3 + HR*4 + RBI*2 + R*2 + BB*2 + SB*5 (PrizePicks formula)
+                bb = round(int(s.get("baseOnBalls", 0)) / g, 2)
+                sb = round(int(s.get("stolenBases", 0)) / g, 2)
+                result["Hitter FS"] = round(
+                    result["H"] * 3 + result["HR"] * 4 +
+                    result["RBI"] * 2 + result["R"] * 2 +
+                    bb * 2 + sb * 5, 1
+                )
+                result["H+R+RBI"] = round(result["H"] + result["R"] + result["RBI"], 2)
+            else:
+                g = int(s.get("gamesPlayed", 0) or 0)
+                if g == 0:
+                    continue
+                result.update({
+                    "SO":  round(int(s.get("strikeOuts", 0)) / g, 2),
+                    "ER":  round(int(s.get("earnedRuns", 0)) / g, 2),
+                    "H":   round(int(s.get("hits", 0)) / g, 2),
+                    "n_games": g,
+                    "_type": "pitcher",
+                })
+                # Pitcher FS: SO*3 - ER*2 + IP*1 (simplified)
+                ip = round(float(s.get("inningsPitched", 0) or 0) / g, 2)
+                result["Pitcher FS"] = round(result["SO"] * 3 - result["ER"] * 2 + ip, 1)
+        except Exception:
+            continue
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            _logger.debug("Silent except at line 6911")
+            pass
+        return result
+    return None
+
+
+# fetch_mlb_rolling_averages → fetchers.py
+
+
+# ═══════════════════════════════════════════════════════════
+# MODULE: LIVE STATS — Tennis, Golf, Soccer, UFC, NFL, WNBA
+# All use ESPN public API (site.api.espn.com) — free, no key.
+# Works in deployed app via curl_cffi TLS impersonation.
+# Cached 6-24h per sport. Falls back to hardcoded baselines.
+# ═══════════════════════════════════════════════════════════
+
+
+def fetch_odds_api_props(sport):
+    if not ODDS_API_KEY:
+        return []
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return []
+    allowed, reason = api_budget_check("ODDS_API")
+    if not allowed:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": reason})
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"odds_api_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 90:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.caption(f"📦 Odds API props: cached ({age_mins:.0f}m old)")
+                return cached
+    events_url = f"{ODDS_API_BASE}/sports/{sport_key}/events?apiKey={ODDS_API_KEY}&dateFormat=iso"
+    try:
+        events_resp = _http.get(events_url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API")
+        if events_resp.status_code != 200:
+            return []
+        events = events_resp.json()
+        if not events:
+            return []
+        today_str = date.today().strftime("%Y-%m-%d")
+        today_events = [e for e in events if e.get("commence_time","").startswith(today_str)]
+        if not today_events:
+            tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+            today_events = [e for e in events if e.get("commence_time","").startswith(tomorrow_str)]
+        if not today_events:
+            return []
+        markets = ODDS_API_PROP_MARKETS.get(sport, [])
+        if not markets:
+            return []
+        markets_str = ",".join(markets)
+        all_props = []
+        seen = set()
+        for event in today_events[:5]:
+            event_id = event.get("id", "")
+            if not event_id:
+                continue
+            props_url = f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets={markets_str}&oddsFormat=american&bookmakers={ODDS_API_BOOKS_PROPS}"
+            try:
+                props_resp = _http.get(props_url, headers=HEADERS, timeout=15)
+                api_budget_increment("ODDS_API")
+                if props_resp.status_code != 200:
+                    continue
+                event_data = props_resp.json()
+                for bookmaker in event_data.get("bookmakers", []):
+                    book_key = bookmaker.get("key","")
+                    book_title = bookmaker.get("title", book_key)
+                    for market in bookmaker.get("markets", []):
+                        market_key = market.get("key", "")
+                        stat_name = ODDS_API_STAT_MAP.get(market_key, market_key.replace("_", " ").title())
+                        for outcome in market.get("outcomes", []):
+                            player = outcome.get("description", "")
+                            side = outcome.get("name", "").upper()
+                            line = outcome.get("point")
+                            if not player or line is None:
+                                continue
+                            if side not in ("OVER", "UNDER"):
+                                continue
+                            if side != "OVER":
+                                continue
+                            key = (sport, player, stat_name, float(line))
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            all_props.append({
+                                "Player": player,
+                                "Prop": stat_name,
+                                "Line": float(line),
+                                "Side": "OVER",
+                                "Sport": sport,
+                                "source": f"OddsAPI_{book_title}",
+                                "OddsType": "standard",
+                                "OverOdds": outcome.get("price", -110),
+                                "UnderOdds": None,
+                            })
+                time.sleep(0.2)
+            except (requests.RequestException, KeyError, ValueError) as e:
+                st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": str(e)[:100]})
+                continue
+        if all_props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_props, f)
+            st.caption(f"✅ Odds API: {len(all_props)} props from Bovada/MyBookie/DK/FD/Novig")
+        return all_props
+    except (requests.RequestException, KeyError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_odds_api_props", "error": str(e)[:100]})
+        return []
+
+
+def fetch_parlayplay_props(sport):
+    allowed, reason = api_budget_check("PARLAYPLAY")
+    if not allowed:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"parlayplay_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.caption(f"📦 ParlayPlay: cached ({age_mins:.0f}m old)")
+                return cached
+    url = "https://parlayplay.io/api/v1/crossgame/offering/"
+    pp_session = st.secrets.get("PARLAYPLAY_SESSION", "")
+    pp_cookie_full = st.secrets.get("PARLAYPLAY_COOKIES", "")
+    if pp_cookie_full:
+        pp_cookie = pp_cookie_full
+    elif pp_session:
+        pp_cookie = f"sessionid={pp_session}"
+    else:
+        pp_cookie = ""
+    pp_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://parlayplay.io",
+        "Referer": "https://parlayplay.io/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "x-csrftoken": "1",
+        "x-parlay-request": "1",
+        "x-parlayplay-native-platform": "web",
+        "x-parlayplay-platform": "web",
+        "x-requested-with": "XMLHttpRequest",
+        "Cookie": pp_cookie,
+    }
+    league_slug_map = {"NBA": ["nba"], "MLB": ["mlb"], "NHL": ["nhl"], "NFL": ["nfl"], "WNBA": ["wnba"]}
+    valid_slugs = league_slug_map.get(sport, [])
+    if not valid_slugs:
+        return []
+    stat_map = {
+        "Points": "Points", "Rebounds": "Rebounds", "Assists": "Assists",
+        "Pts + Reb + Ast": "Pts+Reb+Ast", "Pts + Reb": "Pts+Reb+Ast", "Pts + Ast": "Pts+Reb+Ast",
+        "Steals": "Steals", "Blocks": "Blocked Shots", "Three Pointers Made": "3-PT Made",
+        "Threes": "3-PT Made", "Turnovers": "Turnovers", "Hits": "Hits",
+        "Homeruns": "Home Runs", "Home Runs": "Home Runs", "RBIs": "RBIs",
+        "Runs": "Runs", "Singles": "Singles", "Doubles": "Doubles", "Total Bases": "Total Bases",
+        "Hits + Runs + RBIs": "Hits+Runs+RBIs", "Walks": "Walks", "Strikeouts": "Strikeouts",
+        "Pitcher Strikeouts": "Strikeouts", "Goals": "Goals", "Shots on Goal": "Shots On Goal",
+        "Shots On Goal": "Shots On Goal", "Passing Yards": "Passing Yards",
+        "Rushing Yards": "Rushing Yards", "Receiving Yards": "Receiving Yards",
+        "Touchdowns": "Touchdowns", "Receptions": "Receptions",
+    }
+    try:
+        # Use curl_cffi to bypass TLS fingerprinting / bot protection
+        try:
+            from curl_cffi import requests as cf_requests
+            resp = cf_requests.get(url, headers=pp_headers, impersonate="chrome120", timeout=20)
+        except (requests.RequestException, KeyError, ValueError):
+            resp = _http.get(url, headers=pp_headers, timeout=20)
+        api_budget_increment("PARLAYPLAY")
+        if resp.status_code == 403:
+            st.caption("⚠️ ParlayPlay: 403 — blocked by bot protection")
+            if os.path.exists(cache_path):
+                try: os.remove(cache_path)
+                except (OSError, IOError): pass
+            return []
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        players_data = data.get("players", [])
+        if not players_data:
+            return []
+        props = []
+        seen = set()
+        alt_lines_store = {}
+        for player_entry in players_data:
+            player_obj = player_entry.get("player", {})
+            player_name = player_obj.get("fullName", "")
+            if not player_name:
+                continue
+            match_obj = player_entry.get("match", {})
+            league_obj = match_obj.get("league", {})
+            league_slug = league_obj.get("slug", "").lower()
+            if league_slug not in valid_slugs:
+                continue
+            team_obj = player_obj.get("team", {})
+            team_abbr = team_obj.get("teamAbbreviation", "")
+            home_team = match_obj.get("homeTeam", {}).get("teamAbbreviation", "")
+            away_team = match_obj.get("awayTeam", {}).get("teamAbbreviation", "")
+            for stat in player_entry.get("stats", []):
+                challenge_name = stat.get("challengeName", "")
+                stat_name = stat_map.get(challenge_name, challenge_name)
+                alt_lines_obj = stat.get("altLines", {})
+                line_values = alt_lines_obj.get("values", [])
+                if not line_values:
+                    continue
+                main_line = next((lv for lv in line_values if lv.get("isMainLine")), line_values[0] if line_values else None)
+                if not main_line:
+                    continue
+                line_val = main_line.get("selectionPoints")
+                if line_val is None:
+                    continue
+                multiplier = stat.get("defaultMultiplier", 1.77)
+                live_val = stat.get("liveStatValue", 0)
+                alt_count = stat.get("altLineCount", 0)
+                alt_key = f"{player_name}_{stat_name}"
+                if len(line_values) > 1:
+                    alt_lines_store[alt_key] = [{"line": lv.get("selectionPoints"), "odds": lv.get("decimalPriceOver"), "isMain": lv.get("isMainLine", False), "source": "ParlayPlay"} for lv in line_values if lv.get("selectionPoints") is not None]
+                key = (player_name, stat_name, float(line_val))
+                if key in seen:
+                    continue
+                seen.add(key)
+                props.append({
+                    "Player": player_name,
+                    "Prop": stat_name,
+                    "Line": float(line_val),
+                    "Side": "OVER",
+                    "Sport": sport,
+                    "source": "ParlayPlay",
+                    "OddsType": "standard",
+                    "PPMultiplier": multiplier,
+                    "LiveStat": live_val,
+                    "AltLineCount": alt_count,
+                    "TeamAbbr": team_abbr,
+                    "HomeTeam": home_team,
+                    "AwayTeam": away_team,
+                })
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+            alt_count = sum(1 for p in props if p.get("AltLineCount", 0) > 1)
+            st.caption(f"✅ ParlayPlay: {len(props)} props | {alt_count} with alt lines | All sports")
+        return props
+    except (KeyError, TypeError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_parlayplay_props", "error": str(e)[:100]})
+        return []
+
+
+def fetch_bdl_props(sport):
+    if sport != "NBA":
+        return []
+    if not BDL_API_KEY:
+        return []
+    allowed, reason = api_budget_check("BDL")
+    if not allowed:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_bdl_props", "error": reason})
+        return []
+    daily_used = get_api_counter(API_BUDGETS["BDL"]["counter_path"]).get("count", 0)
+    cache_path = os.path.join(CACHE_DIR, "bdl_props_nba.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                st.caption(f"📦 BDL Props: using cached data ({age_mins:.0f}m old)")
+                return cached
+    today_str = date.today().strftime("%Y-%m-%d")
+    games_url = f"https://api.balldontlie.io/v1/games?dates[]={today_str}&per_page=30"
+    bdl_headers = {"Authorization": BDL_API_KEY}
+    try:
+        games_resp = _http.get(games_url, headers=bdl_headers, timeout=10)
+        api_budget_increment("BDL")
+        if games_resp.status_code != 200:
+            return []
+        game_ids = [g["id"] for g in games_resp.json().get("data", [])]
+        if not game_ids:
+            return []
+        all_props = []
+        seen = set()
+        stat_map = {
+            "points": "Points", "rebounds": "Rebounds", "assists": "Assists",
+            "pts_reb_ast": "Pts+Reb+Ast", "steals": "Steals", "blocks": "Blocked Shots",
+            "three_pointers_made": "3-PT Made", "turnovers": "Turnovers",
+        }
+        for game_id in game_ids[:5]:
+            props_url = f"https://api.balldontlie.io/v1/player_props?game_id={game_id}"
+            try:
+                props_resp = _http.get(props_url, headers=bdl_headers, timeout=10)
+                api_budget_increment("BDL")
+                if props_resp.status_code != 200:
+                    continue
+                for prop in props_resp.json().get("data", []):
+                    if prop.get("market", {}).get("type") != "over_under":
+                        continue
+                    player = prop.get("player", {})
+                    player_name = f"{player.get('first_name','')} {player.get('last_name','')}".strip()
+                    prop_type = prop.get("prop_type", "")
+                    line = prop.get("line_value")
+                    if not player_name or not line:
+                        continue
+                    if not prop_type:
+                        continue
+                    stat_name = stat_map.get(prop_type, prop_type.replace("_", " ").title())
+                    try:
+                        line_val = float(line)
+                    except (ValueError, TypeError):
+                        continue
+                    key = (player_name, stat_name, line_val)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    all_props.append({
+                        "Player": player_name,
+                        "Prop": stat_name,
+                        "Line": line_val,
+                        "Side": "OVER",
+                        "Sport": "NBA",
+                        "source": "BDL_DraftKings",
+                        "OddsType": "standard"
+                    })
+                time.sleep(0.3)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        if all_props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_props, f)
+            monthly_limit = API_BUDGETS["BDL"].get("monthly_limit", 200)
+            st.caption(f"✅ BDL Props: {len(all_props)} props fetched — BDL monthly: {daily_used + 1}/{monthly_limit} calls")
+        return all_props
+    except (requests.RequestException, KeyError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_bdl_props", "error": str(e)[:100]})
+        return []
+
+@st.cache_data(ttl=600)
+
+
+def fetch_pinnacle_lines(sport):
+    """
+    Fetch Pinnacle lines via OddsPAPI (already in our stack).
+    Cache in session state — only 1 API call per board load per sport.
+    Respects free tier: 100 calls/day, 1000/month.
+    """
+    cache_key = f"pinnacle_{sport}"
+    if st.session_state.get(cache_key):
+        return st.session_state[cache_key]
+
+    # Check disk cache first — 60 min TTL for Pinnacle lines
+    cache_path = os.path.join(CACHE_DIR, f"pinnacle_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    if not ODDSPAPI_KEY:
+        return {}
+
+    allowed, reason = api_budget_check("ODDSPAPI")
+    if not allowed:
+        return {}
+
+    sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
+    sport_id = sport_id_map.get(sport)
+    if not sport_id:
+        return {}
+
+    pinnacle_data = {"props": {}, "games": {}}
+
+    try:
+        # Get tournaments
+        t_resp = _http.get(
+            f"https://api.oddspapi.io/v4/tournaments?sportId={sport_id}&apiKey={ODDSPAPI_KEY}",
+            timeout=10
+        )
+        if t_resp.status_code != 200:
+            return {}
+
+        tournaments = t_resp.json()
+        top_ids = [str(t["tournamentId"]) for t in tournaments
+                   if t.get("upcomingFixtures", 0) > 0][:3]
+        if not top_ids:
+            top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
+        if not top_ids:
+            return {}
+
+        tournament_ids = ",".join(top_ids)
+
+        # Fetch Pinnacle ONLY — saves API credits vs fetching all books
+        resp = _http.get(
+            f"https://api.oddspapi.io/v4/odds-by-tournaments"
+            f"?bookmaker=pinnacle&tournamentIds={tournament_ids}"
+            f"&apiKey={ODDSPAPI_KEY}&oddsFormat=american",
+            headers=HEADERS,
+            timeout=15
+        )
+        api_budget_increment("ODDSPAPI")
+
+        if resp.status_code != 200:
+            return {}
+
+        data = resp.json()
+
+        for event in data.get("events", []):
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            for bookmaker in event.get("bookmakers", []):
+                if bookmaker.get("key", "").lower() != "pinnacle":
+                    continue
+                for market in bookmaker.get("markets", []):
+                    mkey = market.get("key", "")
+                    outcomes = market.get("outcomes", [])
+
+                    # Player props
+                    if "player" in mkey.lower():
+                        over_out = next((o for o in outcomes if o.get("name","").upper() == "OVER"), None)
+                        under_out = next((o for o in outcomes if o.get("name","").upper() == "UNDER"), None)
+                        if over_out and under_out:
+                            over_imp = devig_odds(over_out.get("price"))
+                            under_imp = devig_odds(under_out.get("price"))
+                            if over_imp and under_imp:
+                                total = over_imp + under_imp
+                                over_nv = round(over_imp / total, 4)
+                                under_nv = round(under_imp / total, 4)
+                                player = over_out.get("description", "")
+                                line = over_out.get("point")
+                                stat = mkey.replace("player_","").replace("_"," ").title()
+                                if player and line is not None:
+                                    pkey = (normalize_name(player), stat.lower(), float(line))
+                                    pinnacle_data["props"][pkey] = {
+                                        "over_prob": over_nv,
+                                        "under_prob": under_nv,
+                                        "over_odds": over_out.get("price"),
+                                        "under_odds": under_out.get("price"),
+                                        "player": player, "stat": stat, "line": float(line)
+                                    }
+
+                    # Game lines
+                    elif mkey in ("h2h", "spreads", "totals"):
+                        if len(outcomes) >= 2:
+                            imp_a = devig_odds(outcomes[0].get("price"))
+                            imp_b = devig_odds(outcomes[1].get("price"))
+                            if imp_a and imp_b:
+                                total = imp_a + imp_b
+                                prob_a = round(imp_a / total, 4)
+                                game_key = (normalize_name(home), normalize_name(away), mkey)
+                                pinnacle_data["games"][game_key] = {
+                                    "prob_home": prob_a,
+                                    "prob_away": round(imp_b / total, 4),
+                                    "line_home": outcomes[0].get("point"),
+                                    "line_away": outcomes[1].get("point"),
+                                    "odds_home": outcomes[0].get("price"),
+                                    "odds_away": outcomes[1].get("price"),
+                                }
+
+        # Cache to disk
+        with open(cache_path, "wb") as f:
+            pickle.dump(pinnacle_data, f)
+        n_props = len(pinnacle_data["props"])
+        n_games = len(pinnacle_data["games"])
+        return pinnacle_data
+
+    except (KeyError, TypeError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_pinnacle_lines",
+            "error": str(e)[:100]
+        })
+        return {}
+
+
+def fetch_mlb_player_game_logs(player_name, last_n=15):
+    """Fetch MLB player recent game logs via MLB Stats API."""
+    try:
+        cache_key = f"mlb_logs_{normalize_name(player_name)}"
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+        # Search for player ID
+        search_url = f"https://statsapi.mlb.com/api/v1/people/search?names={player_name.replace(' ','+')}&sportId=1"
+        r = _http.get(search_url, timeout=8)
+        if r.status_code != 200: return []
+        people = r.json().get("people", [])
+        if not people: return []
+        player_id = people[0]["id"]
+        # Get recent game logs
+        stats_url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+                     f"?stats=gameLog&season=2026&sportId=1&group=hitting")
+        r2 = _http.get(stats_url, timeout=8)
+        if r2.status_code != 200: return []
+        splits = r2.json().get("stats", [{}])[0].get("splits", [])[-last_n:]
+        logs = []
+        for s in splits:
+            stat = s.get("stat", {})
+            game = s.get("game", {})
+            team = s.get("team", {})
+            opponent = s.get("opponent", {})
+            logs.append({
+                "date":     s.get("date",""),
+                "home":     s.get("isHome", True),
+                "opponent": opponent.get("abbreviation",""),
+                "H":        stat.get("hits", 0),
+                "HR":       stat.get("homeRuns", 0),
+                "RBI":      stat.get("rbi", 0),
+                "R":        stat.get("runs", 0),
+                "BB":       stat.get("baseOnBalls", 0),
+                "K":        stat.get("strikeOuts", 0),
+                "AB":       stat.get("atBats", 0),
+            })
+        return logs
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
+def fetch_nhl_player_game_logs(player_name, last_n=15):
+    """Fetch NHL player recent game logs via NHL API."""
+    try:
+        cache_key = f"nhl_logs_{normalize_name(player_name)}"
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+        # Search player
+        search_url = f"https://search.d3.nhle.com/api/v1/search?q={player_name.replace(' ','+')}&type=player&active=true"
+        r = _http.get(search_url, timeout=8)
+        if r.status_code != 200: return []
+        results = r.json()
+        if not results: return []
+        player_id = results[0].get("playerId") or results[0].get("id")
+        if not player_id: return []
+        # Get game log
+        log_url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
+        r2 = _http.get(log_url, timeout=8)
+        if r2.status_code != 200: return []
+        game_log = r2.json().get("gameLog", [])[-last_n:]
+        logs = []
+        for g in game_log:
+            logs.append({
+                "date":      g.get("gameDate",""),
+                "home":      g.get("homeRoadFlag","H") == "H",
+                "opponent":  g.get("opponentAbbrev",""),
+                "PTS":       g.get("points", 0),
+                "G":         g.get("goals", 0),
+                "A":         g.get("assists", 0),
+                "SOG":       g.get("shots", 0),
+                "TOI":       g.get("toi","0:00"),
+            })
+        return logs
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
+@st.cache_data(ttl=1800)
+
+
+def fetch_wnba_player_game_logs(player_name, last_n=15):
+    """Fetch WNBA player recent game logs via WNBA Stats API."""
+    try:
+        cache_key = f"wnba_logs_{normalize_name(player_name)}"
+        if cache_key in st.session_state:
+            return st.session_state[cache_key]
+        url = ("https://stats.wnba.com/stats/playergamelogs"
+               "?DateFrom=&DateTo=&GameSegment=&LastNGames=0&LeagueID=10"
+               "&Location=&MeasureType=Base&Month=0&OpponentTeamID=0"
+               "&Outcome=&PORound=0&PerMode=PerGame&Period=0&PlayerID=0"
+               f"&Season=2025&SeasonSegment=&SeasonType=Regular+Season"
+               "&ShotClockRange=&VsConference=&VsDivision=")
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.wnba.com/",
+            "Origin": "https://www.wnba.com",
+        }
+        r = _http.get(url, headers=headers, timeout=10)
+        if r.status_code != 200: return []
+        result_sets = r.json().get("resultSets", [])
+        if not result_sets: return []
+        headers_list = result_sets[0]["headers"]
+        rows = result_sets[0]["rowSet"]
+        # Filter by player name
+        name_idx = headers_list.index("PLAYER_NAME") if "PLAYER_NAME" in headers_list else -1
+        if name_idx < 0: return []
+        player_rows = [row for row in rows
+                       if normalize_name(str(row[name_idx])) == normalize_name(player_name)][-last_n:]
+        logs = []
+        idx = {h: i for i, h in enumerate(headers_list)}
+        for row in player_rows:
+            logs.append({
+                "date":      str(row[idx.get("GAME_DATE",0)])[:10],
+                "home":      "vs" in str(row[idx.get("MATCHUP",0)]),
+                "opponent":  str(row[idx.get("MATCHUP",0)]).split()[-1] if "MATCHUP" in idx else "",
+                "PTS":       row[idx.get("PTS",0)] or 0,
+                "REB":       row[idx.get("REB",0)] or 0,
+                "AST":       row[idx.get("AST",0)] or 0,
+                "MIN":       row[idx.get("MIN",0)] or 0,
+            })
+        return logs
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
+
+
+
+# ----- TAB 6: PLAYER LOOKUP -----
