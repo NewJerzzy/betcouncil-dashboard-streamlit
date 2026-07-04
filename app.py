@@ -18673,16 +18673,30 @@ with tabs[4]:
         }}
 
         // ── 14. Bovada game lines (every 20 min) ─────────────────────────
-        var bvSportMap = {{'MLB':'/baseball/mlb','NBA':'/basketball/nba','NFL':'/football/nfl','NHL':'/hockey/nhl','UFC':'/fighting/ufc'}};
+        // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
+        // header on bovada.lv responses). Gist will remain empty from this hook.
+        // The data IS accessible server-side (Python fetcher uses Kambi API as
+        // fallback). For browser harvest, add a Tampermonkey passive hook that
+        // intercepts XHR/fetch calls WHILE BROWSING www.bovada.lv — same pattern
+        // as the Caesars/FanDuel passive hooks already in this script.
+        var bvSportMap = {{'MLB':'/baseball/mlb','NBA':'/basketball/nba',
+                           'NFL':'/football/nfl','NHL':'/hockey/nhl',
+                           'UFC':'/fighting/ufc','WNBA':'/basketball/wnba'}};
         var bvPath = bvSportMap[sport];
         if (bvPath) {{
             throttled('bovada_' + sport, 1200000, function() {{
                 fetch('https://www.bovada.lv/services/sports/event/v2/events/A/description' + bvPath + '?lang=en', {{
-                    headers:{{'Accept':'application/json','Referer':'https://www.bovada.lv/'}}
-                }}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_bovada_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    headers: {{
+                        'Accept':  'application/json',
+                        'Referer': 'https://www.bovada.lv/'
+                    }}
+                }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
+                    pushGist('betcouncil_bovada_' + sport + '.json', {{
+                        sport: sport, captured_at: new Date().toISOString(),
+                        data: data, source: 'betcouncil_auto_harvest'
+                    }});
                     console.log('[BetCouncil] ✅ Bovada ' + sport + ' harvested');
-                }}).catch(function(e){{console.log('[BetCouncil] Bovada error:',e.message);}});
+                }}).catch(function(e) {{ console.log('[BetCouncil] Bovada (CORS expected):', e.message); }});
             }});
         }}
 
@@ -18711,17 +18725,65 @@ with tabs[4]:
         }}
 
         // ── 17. MyBookie game lines (every 25 min) ───────────────────────
-        var mbSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','UFC':'mma'}};
-        var mbSport=mbSportMap[sport];
-        if(mbSport){{
-            throttled('mybookie_'+sport,1500000,function(){{
-                fetch('https://mybookie.ag/api/v1/sports/'+mbSport+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://mybookie.ag/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_mybookie_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] MyBookie error:',e.message);}});
+        // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
+        // header). MyBookie also has no public JSON API — their sportsbook is an
+        // SPA; all data endpoints return HTML when called cross-origin. The
+        // previous URL (/api/v1/sports/{sport}/lines) returned HTML, not JSON.
+        // To harvest MyBookie data, add a Tampermonkey passive hook that fires
+        // while browsing mybookie.ag and intercepts their internal XHR calls
+        // (use DevTools → Network → XHR while on the sportsbook page to find
+        // the actual API path their frontend calls).
+        var mbSportMap = {{'MLB':'baseball','NBA':'basketball',
+                           'NFL':'football','NHL':'hockey','UFC':'mma'}};
+        var mbSport = mbSportMap[sport];
+        if (mbSport) {{
+            throttled('mybookie_' + sport, 1500000, function() {{
+                // Best-effort attempt — will CORS-fail from Streamlit domain.
+                // The actual internal API path must be discovered from DevTools.
+                fetch('https://mybookie.ag/sportsbook/api/events?sport=' + mbSport, {{
+                    headers: {{
+                        'Accept':  'application/json',
+                        'Referer': 'https://mybookie.ag/'
+                    }}
+                }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
+                    pushGist('betcouncil_mybookie_' + sport + '.json', {{
+                        sport: sport, captured_at: new Date().toISOString(),
+                        data: data, source: 'betcouncil_auto_harvest'
+                    }});
+                    console.log('[BetCouncil] ✅ MyBookie ' + sport + ' harvested');
+                }}).catch(function(e) {{ console.log('[BetCouncil] MyBookie (CORS/no-API expected):', e.message); }});
             }});
         }}
 
         // ── 18. ParlaySavant +EV props (every 20 min) ────────────────────
-        throttled('parlaysavant_'+sport,1200000,function(){{
-            fetch('https://parlaysavant.com/api/props?sport='+sport.toLowerCase()+'&type=positive_ev&limit=100',{{headers:{{'Accept':'application/json','Referer':'https://parlaysavant.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_parlaysavant_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] ParlaySavant error:',e.message);}});
+        // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
+        // header). ParlaySavant is a Next.js SPA — their internal API routes
+        // (probed: /api/props, /api/ev-plays, /api/player-props, /api/ev,
+        // /api/best-bets, /api/positive-ev, /api/trpc/props.getEV) all return
+        // HTML when called cross-origin. No public JSON API is accessible.
+        //
+        // Preferred path: the Python server-side fetcher fetch_parlaysavant_ev()
+        // already runs on every board load via the dispatch table and populates
+        // 'parlaysavant_ev_h' in session_state. Use that instead.
+        //
+        // To harvest ParlaySavant from the browser, add a Tampermonkey passive
+        // hook that fires while browsing parlaysavant.com and intercepts the
+        // actual internal fetch calls (check DevTools → Network while on the
+        // +EV tab to find the real API route their app calls).
+        throttled('parlaysavant_' + sport, 1200000, function() {{
+            // Best-effort attempt — will CORS-fail. Real route needs DevTools.
+            fetch('https://parlaysavant.com/api/ev-plays?sport=' + sport.toLowerCase(), {{
+                headers: {{
+                    'Accept':  'application/json',
+                    'Referer': 'https://parlaysavant.com/'
+                }}
+            }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
+                pushGist('betcouncil_parlaysavant_' + sport + '.json', {{
+                    sport: sport, captured_at: new Date().toISOString(),
+                    data: data, source: 'betcouncil_auto_harvest'
+                }});
+                console.log('[BetCouncil] ✅ ParlaySavant ' + sport + ' harvested');
+            }}).catch(function(e) {{ console.log('[BetCouncil] ParlaySavant (CORS expected; use Python fetcher):', e.message); }});
         }});
 
         // ── 19. Bet365 game lines (every 25 min) ─────────────────────────
