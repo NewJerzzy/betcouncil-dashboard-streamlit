@@ -11238,23 +11238,50 @@ def load_sport_data(sport):
                 if _sp != sport:
                     continue
 
+                # NOTE: betcouncil_bet365_games.json Gist is currently populated
+                # by a harvester URL that uses cid=97 (match result only →
+                # Home/Away/Tie). Over/Under and Spread fields will be None until
+                # the Tampermonkey passive hook is used to capture totals/spread
+                # markets (different cid values per sport). Parser is ready for
+                # those fields when the harvester provides them.
                 _home_ml = _away_ml = None
+                _spread = _total = _over_odds = _under_odds = None
                 for _sel in _g.get("selections", []):
                     _label = (_sel.get("label") or "").lower()
-                    _frac = _sel.get("odds_fractional_live") or _sel.get("odds_fractional_static")
+                    _frac  = (_sel.get("odds_fractional_live")
+                              or _sel.get("odds_fractional_static"))
                     _american = _american_from_fractional(_frac)
+                    # HA / HD / handicap fields carry the line value
+                    _ha = (_sel.get("HA") or _sel.get("HD")
+                           or _sel.get("hc") or _sel.get("handicap"))
                     if _label == "home":
                         _home_ml = _american
                     elif _label == "away":
                         _away_ml = _american
+                    elif "over" in _label:
+                        _over_odds = _american
+                        if _ha is not None:
+                            try: _total = float(_ha)
+                            except (ValueError, TypeError): pass
+                    elif "under" in _label:
+                        _under_odds = _american
+                        if _ha is not None and _total is None:
+                            try: _total = float(_ha)
+                            except (ValueError, TypeError): pass
+                    elif _ha is not None and _label not in ("home","away","tie","draw"):
+                        # Spread selection — HA is the handicap line
+                        try: _spread = float(_ha)
+                        except (ValueError, TypeError): pass
 
                 _out.append({
-                    "Home":    _home,
-                    "Away":    _away,
-                    "HomeML":  _home_ml,
-                    "AwayML":  _away_ml,
-                    "Spread":  None,
-                    "Total":   None,
+                    "Home":       _home,
+                    "Away":       _away,
+                    "HomeML":     _home_ml,
+                    "AwayML":     _away_ml,
+                    "Spread":     _spread,
+                    "Total":      _total,
+                    "OverOdds":   _over_odds,
+                    "UnderOdds":  _under_odds,
                 })
             return _out
         except Exception:
@@ -18701,8 +18728,31 @@ with tabs[4]:
         var b365Map={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'ice-hockey','UFC':'mma','SOCCER':'soccer'}};
         var b365Sport=b365Map[sport];
         if(b365Sport){{
+            // NOTE: Bet365 blocks cross-origin requests (CORS) from the Streamlit
+            // domain, so this fetch will fail with ERR_FAILED in browser DevTools.
+            // The correct approach is a Tampermonkey passive hook that intercepts
+            // XHR/fetch calls WHILE BROWSING bet365.com — similar to the Caesars
+            // and FanDuel passive harvesters already in this script.
+            //
+            // The previous URL used cid=97&ctid=97 (hardcoded match-result market,
+            // returns only Home/Away/Tie — no spread or total). The sport-specific
+            // cid values for spreads/totals vary per sport and must be discovered
+            // from DevTools while browsing Bet365.
+            //
+            // Attempting the sport-aware REST endpoint as a best-effort fallback
+            // (may be CORS-blocked, but at least uses the correct sport path):
+            var b365CidMap={{'MLB':14,  // baseball game lines
+                             'NBA':7,   // basketball game lines
+                             'NHL':17,  // hockey game lines
+                             'NFL':12,  // football game lines
+                             'SOCCER':1}};
+            var b365Cid=b365CidMap[sport]||97;
             throttled('bet365_'+sport,1500000,function(){{
-                fetch('https://www.bet365.com/SportsBook.API/web?lid=1&zid=0&pd=&cid=97&ctid=97',{{headers:{{'Accept':'application/json','Referer':'https://www.bet365.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bet365_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Bet365 error:',e.message);}});
+                fetch('https://www.bet365.com/SportsBook.API/web?lid=1&zid=0&pd='+encodeURIComponent('W#SS'+b365Cid+';')+'&cid='+b365Cid+'&ctid='+b365Cid,{{
+                    headers:{{'Accept':'application/json','Referer':'https://www.bet365.com/','Origin':'https://www.bet365.com'}}
+                }}).then(function(r){{if(!r.ok)throw new Error('b365 '+r.status);return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_bet365_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] Bet365 error (CORS expected):',e.message);}});
             }});
         }}
 
