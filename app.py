@@ -10499,6 +10499,16 @@ def load_sport_data(sport):
             return []
     def _pf_bovada_props():    return fetch_bovada_props(sport)
     def _pf_mybookie():
+        # Primary: Action Network public scoreboard API (book_id=8).
+        # No auth required — confirmed 200 public endpoint.
+        # Falls back to Tampermonkey Gist harvester when AN has no MyBookie lines.
+        try:
+            _an = fetch_action_network_lines(sport)
+            if _an:
+                return _an
+        except Exception:
+            pass
+        # Fallback: Tampermonkey Gist harvester.
         # BUG FIX (2026-07): fetch_mybookie_from_gist() has existed and had a
         # working Tampermonkey harvester feeding it real data all night, but
         # was never actually called anywhere in the board pipeline -- the

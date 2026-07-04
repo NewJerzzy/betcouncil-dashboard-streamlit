@@ -16004,3 +16004,118 @@ def fetch_wnba_player_game_logs(player_name, last_n=15):
 
 
 # ----- TAB 6: PLAYER LOOKUP -----
+
+
+# ── Action Network game lines ─────────────────────────────────────────────
+
+# Book IDs from live browser session capture (2026-07-04).
+# 8=MyBookie  15=Caesars  30=BetMGM  4727=FanDuel  4795=DraftKings
+# 79=PointsBet  2988=WynnBET  69=BetRivers  68=Barstool  75=Bet365  123=Unibet  71=BetAmerica
+_AN_BOOK_IDS = "8,15,30,4727,4795,79,2988,69,68,75,123,71"
+
+_AN_SPORT_SLUGS = {
+    "mlb":        "mlb",   "baseball":    "mlb",
+    "nba":        "nba",   "basketball":  "nba",
+    "nfl":        "nfl",   "football":    "nfl",
+    "nhl":        "nhl",   "hockey":      "nhl",
+    "wnba":       "wnba",
+    "ncaab":      "ncaab", "ncaaf":       "ncaaf",
+    "ufc":        "ufc",   "mma":         "ufc",
+    "soccer":     "soccer","mls":         "soccer",
+}
+
+
+def fetch_action_network_lines(sport: str) -> list:
+    """
+    Pull full-game lines from Action Network's public scoreboard API.
+    No authentication required — confirmed 200 public endpoint.
+
+    sport:   case-insensitive sport slug (mlb/nba/nfl/nhl/wnba/ncaab/ncaaf/ufc/soccer).
+    Returns: list of dicts per game that has a MyBookie (book_id=8) line:
+               {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+                Total, OverOdds, UnderOdds, book, book_id}
+    Returns [] if no MyBookie lines are available, so callers can fall back
+    to the Gist harvester.
+    Cached 10 minutes (odds update frequently; shorter TTL than roster caches).
+    """
+    slug = _AN_SPORT_SLUGS.get(sport.lower().strip(), sport.lower().strip())
+    today = datetime.now().strftime("%Y%m%d")
+
+    cache_key  = f"an_lines_{slug}_{today}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_m = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_m < 10:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    url = (
+        f"https://api.actionnetwork.com/web/v1/scoreboard/{slug}"
+        f"?bookIds={_AN_BOOK_IDS}&date={today}&periods=event"
+    )
+    _an_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+    try:
+        resp = _http.get(url, headers=_an_headers, timeout=15)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception:
+        return []
+
+    games  = data.get("games", [])
+    result = []
+
+    for g in games:
+        teams = g.get("teams", [])
+        if len(teams) < 2:
+            continue
+
+        # Resolve home/away by matching team IDs
+        away_id   = g.get("away_team_id")
+        home_id   = g.get("home_team_id")
+        team_by_id = {t["id"]: t for t in teams}
+        away_team  = team_by_id.get(away_id, teams[0])
+        home_team  = team_by_id.get(home_id, teams[1] if len(teams) > 1 else teams[0])
+
+        away_name = away_team.get("full_name") or away_team.get("display_name", "")
+        home_name = home_team.get("full_name") or home_team.get("display_name", "")
+
+        # Find MyBookie full-game odds entry (book_id=8, type="game")
+        mybookie_odds = next(
+            (o for o in g.get("odds", [])
+             if o.get("book_id") == 8 and o.get("type") == "game"),
+            None
+        )
+        if not mybookie_odds:
+            continue
+
+        result.append({
+            "Home":       home_name,
+            "Away":       away_name,
+            "HomeML":     mybookie_odds.get("ml_home"),
+            "AwayML":     mybookie_odds.get("ml_away"),
+            "Spread":     mybookie_odds.get("spread_away"),
+            "SpreadOdds": mybookie_odds.get("spread_away_line"),
+            "Total":      mybookie_odds.get("total"),
+            "OverOdds":   mybookie_odds.get("over"),
+            "UnderOdds":  mybookie_odds.get("under"),
+            "book":       "MyBookie",
+            "book_id":    8,
+        })
+
+    if result:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+
+    return result
