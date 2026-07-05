@@ -11720,9 +11720,14 @@ def fetch_thescore_game_lines(sport: str) -> list:
     theScore Bet game lines.
 
     PRIMARY: fetch_thescore_from_gist — browser harvester captures the
-    CompetitionDrawerContent GraphQL response and pushes to Gist.
+    CompetitionPageSectionLinesTabNode GraphQL response and pushes to Gist.
     SECONDARY: none — Kambi (offering_id='thescore') returned HTTP 410 Gone
     after theScore's Dec 2025 rebrand from ESPN Bet.
+
+    Harvester config:
+      operationName : CompetitionPageSectionLinesTabNode
+      sha256Hash    : 1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6
+      Gist file     : betcouncil_thescore_games.json
     """
     props, _src = fetch_thescore_from_gist(sport)
     return props
