@@ -30,6 +30,11 @@ try:
 except ImportError:
     spread_crossing_value = None
     total_crossing_value = None
+
+try:
+    from soccer_draw_bias import detect_draw_value
+except ImportError:
+    detect_draw_value = None
 from movement_classifier import classify_event_movement
 from bet_decision_layer import recommend_timing, signal_type_multiplier
 
