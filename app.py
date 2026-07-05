@@ -1530,7 +1530,7 @@ def run_comprehensive_elo_update():
             continue
         try:
             _elo_sb = _http.get(
-                f"https://site.web.api.espn.com/apis/site/v2/sports/{_elo_es}/{_elo_el}/scoreboard",
+                f"https://site.api.espn.com/apis/site/v2/sports/{_elo_es}/{_elo_el}/scoreboard",
                 headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
             if _elo_sb.status_code != 200:
                 continue
@@ -16735,7 +16735,7 @@ with tabs[3]:
                     # Get today's scoreboard
                     try:
                         sb = _http.get(
-                            f"https://site.web.api.espn.com/apis/site/v2/sports/{espn_sport}/scoreboard",
+                            f"https://site.api.espn.com/apis/site/v2/sports/{espn_sport}/scoreboard",
                             headers=espn_headers, timeout=10
                         )
                         if sb.status_code != 200:
@@ -16935,6 +16935,7 @@ with tabs[3]:
             # Also resolve game line locks
             game_locks = [l for l in st.session_state.get("locks", []).copy() if l.get("bet_type") == "game"]
             _scoreboard_fetch_failures = []
+            _espn_debug_log = []
             if game_locks and resolved == 0:
                 # Try ESPN scoreboard for final scores.
                 # Query each distinct lock date explicitly (ESPN defaults to
@@ -16971,13 +16972,18 @@ with tabs[3]:
                         try:
                             params = {"dates": date_str} if date_str else {}
                             sb = _http.get(
-                                f"https://site.web.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
+                                f"https://site.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
                                 headers={"User-Agent":"Mozilla/5.0"}, params=params, timeout=8
                             )
                             if sb.status_code != 200:
                                 _scoreboard_fetch_failures.append(f"{sport_key} {date_str or 'today'}: HTTP {sb.status_code}")
                                 continue
-                            for event in sb.json().get("events",[]):
+                            _all_events = sb.json().get("events",[])
+                            _espn_debug_log.append(
+                                f"{sport_key} {date_str or 'today'}: {len(_all_events)} events, "
+                                f"{sum(1 for e in _all_events if e.get('status',{}).get('type',{}).get('completed'))} completed"
+                            )
+                            for event in _all_events:
                                 if not event.get("status",{}).get("type",{}).get("completed"): continue
                                 comps = event.get("competitions",[{}])[0]
                                 teams = comps.get("competitors",[])
@@ -16991,6 +16997,7 @@ with tabs[3]:
                                 away_score = float(away.get("score",0) or 0)
                                 total = home_score + away_score
                                 home_norm, away_norm = _norm_team(home_name), _norm_team(away_name)
+                                _espn_debug_log.append(f"  completed: {away_name} ({away_abbr}) @ {home_name} ({home_abbr}) — {away_score}-{home_score}")
                                 for lock in sport_locks:
                                     if lock not in st.session_state.locks:
                                         continue  # already resolved in an earlier date pass
@@ -17037,6 +17044,11 @@ with tabs[3]:
                         with st.expander(f"⚠️ {len(_scoreboard_fetch_failures)} ESPN scoreboard request(s) failed"):
                             for f in _scoreboard_fetch_failures:
                                 st.caption(f)
+                    if _espn_debug_log:
+                        with st.expander("🔍 ESPN scoreboard debug (what was actually checked)"):
+                            for d in _espn_debug_log:
+                                st.caption(d)
+                            st.caption("Your locked matchups: " + ", ".join(l.get("player","") for l in game_locks))
                 else:
                     st.info("No completed games found yet. Try after games finish.")
             else:
