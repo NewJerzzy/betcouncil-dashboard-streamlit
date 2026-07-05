@@ -15168,7 +15168,7 @@ def fetch_bet365_from_gist(sport: str) -> tuple:
     fix (there is no total number anywhere in the payload to parse).
     """
     data = _read_gist_file("betcouncil_bet365_games.json", cache_minutes=5)
-    if data and isinstance(data.get("data"), list) and data["data"]:
+    if data and _is_fresh(data, max_age_minutes=28) and isinstance(data.get("data"), list) and data["data"]:
         results = []
         for game in data["data"]:
             home, away = game.get("home_team"), game.get("away_team")
