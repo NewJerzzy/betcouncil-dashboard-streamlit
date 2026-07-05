@@ -11717,16 +11717,33 @@ def load_sport_data(sport):
         try:
             from consensus_engine import get_cross_book_signals as _cbe_fn
             from hitrate_logger import log_props_to_hitrate as _hl_fn
-            from fetchers import fetch_prizepicks_from_gist as _pp_fn, fetch_underdog_from_gist as _ud_fn
+            from fetchers import (
+                fetch_prizepicks_from_gist as _ld_pp,
+                fetch_underdog_from_gist   as _ld_ud,
+                fetch_fanduel_props_from_gist   as _ld_fd,
+                fetch_betmgm_props_from_gist    as _ld_mgm,
+                fetch_draftkings_props_from_gist as _ld_dk,
+                fetch_bovada_from_gist  as _ld_bov,
+                fetch_novig_from_gist   as _ld_nv,
+                fetch_betr_from_gist    as _ld_betr,
+            )
             _ld_book_data = {}
-            try:
-                _pp_props, _ = _pp_fn(sport)
-                if _pp_props: _ld_book_data["prizepicks"] = _pp_props
-            except Exception: pass
-            try:
-                _ud_props, _ = _ud_fn(sport)
-                if _ud_props: _ld_book_data["underdog"] = _ud_props
-            except Exception: pass
+            # All fetchers return (list, source_label) — unwrap uniformly.
+            # Bovada/Novig/Betr are no-ops while their Gist files are empty;
+            # they activate automatically when the browser harvester pushes data.
+            for _ld_bk, _ld_f in (
+                ("prizepicks", _ld_pp),  ("underdog",    _ld_ud),
+                ("fanduel",    _ld_fd),  ("betmgm",      _ld_mgm),
+                ("draftkings", _ld_dk),  ("bovada",      _ld_bov),
+                ("novig",      _ld_nv),  ("betr",        _ld_betr),
+            ):
+                try:
+                    _ld_res   = _ld_f(sport)
+                    _ld_props = _ld_res[0] if isinstance(_ld_res, tuple) else _ld_res
+                    if _ld_props:
+                        _ld_book_data[_ld_bk] = _ld_props
+                except Exception:
+                    pass
             if _ld_book_data:
                 st.session_state["line_deviation_lookup"] = _cbe_fn(sport, _ld_book_data)
                 _hl_fn(_ld_book_data, sport)

@@ -14833,32 +14833,209 @@ def _parse_underdog_harvested(raw, sport: str) -> list:
         print(f"[WARN] _parse_underdog_harvested: {e}")
     return results
 
+
+def _parse_bovada_props_harvested(raw, sport: str) -> list:
+    """
+    Parse Bovada coupon API response (betcouncil_bovada_{sport}.json) for player props.
+    
+    Expected raw shape (same as fetch_bovada_game_lines API):
+      [{events: [{competitors: [...], displayGroups: [{markets: [
+          {description: str, outcomes: [{description: str, price: {american, handicap}}]}
+      ]}]}]}]
+    
+    Player-specific markets are identified by having a single competitor or by a
+    " - " delimiter in the market description (e.g. "Josh Allen - Passing Yards").
+    """
+    results = []
+    try:
+        groups = raw if isinstance(raw, list) else raw.get("data", raw.get("groups", []))
+        if not isinstance(groups, list):
+            groups = [groups]
+        for group in groups:
+            for event in (group.get("events", []) if isinstance(group, dict) else []):
+                competitors = event.get("competitors", [])
+                # Single-competitor event = individual player market (rare but valid)
+                solo_player = competitors[0].get("name", "") if len(competitors) == 1 else ""
+                for dg in event.get("displayGroups", []):
+                    for market in dg.get("markets", []):
+                        market_desc = market.get("description", "")
+                        # Extract player name from "Player Name - Stat Type" format
+                        if " - " in market_desc:
+                            parts     = market_desc.split(" - ", 1)
+                            player    = parts[0].strip()
+                            prop_name = parts[1].strip()
+                        elif solo_player:
+                            player    = solo_player
+                            prop_name = market_desc
+                        else:
+                            continue
+                        over_odds = under_odds = None
+                        line = None
+                        for oc in market.get("outcomes", []):
+                            label    = oc.get("description", "")
+                            price    = oc.get("price", {}) if isinstance(oc.get("price"), dict) else {}
+                            american = price.get("american", "")
+                            handicap = price.get("handicap", oc.get("attr", ""))
+                            if handicap is not None and line is None:
+                                try:
+                                    line = float(str(handicap).replace("+", ""))
+                                except (ValueError, TypeError):
+                                    pass
+                            lbl = label.lower()
+                            if "over" in lbl:
+                                over_odds = american
+                            elif "under" in lbl:
+                                under_odds = american
+                        if not player or line is None:
+                            continue
+                        results.append({
+                            "Player":    player,
+                            "Prop":      prop_name,
+                            "Line":      line,
+                            "OverOdds":  over_odds  or "N/A",
+                            "UnderOdds": under_odds or "N/A",
+                            "Book":      "Bovada",
+                            "Sport":     sport,
+                            "source":    "bovada_browser_harvest",
+                        })
+    except Exception as e:
+        print(f"[WARN] _parse_bovada_props_harvested: {e}")
+    return results
+
+
+def _parse_novig_props_harvested(raw, sport: str) -> list:
+    """
+    Parse OddsAPI-format Novig player props from betcouncil_novig_{sport}.json.
+    
+    Expected raw shape (OddsAPI /odds endpoint with markets=player_*):
+      [{bookmakers: [{markets: [{key: "player_pass_yards",
+          outcomes: [{name: "Josh Allen", description: "Over", price: -115, point: 249.5}]
+      }]}]}]
+    """
+    results = []
+    try:
+        games = raw if isinstance(raw, list) else raw.get("data", [])
+        for game in (games if isinstance(games, list) else []):
+            for bm in game.get("bookmakers", []):
+                for mkt in bm.get("markets", []):
+                    stat_key = mkt.get("key", "")
+                    by_player: dict = {}
+                    for oc in mkt.get("outcomes", []):
+                        pname = oc.get("name", "")
+                        if not pname:
+                            continue
+                        side = (oc.get("description") or "").lower()
+                        by_player.setdefault(pname, {})
+                        by_player[pname]["line"] = oc.get("point")
+                        if "over" in side:
+                            by_player[pname]["over_odds"] = oc.get("price")
+                        elif "under" in side:
+                            by_player[pname]["under_odds"] = oc.get("price")
+                    for pname, pdata in by_player.items():
+                        if pdata.get("line") is None:
+                            continue
+                        results.append({
+                            "Player":    pname,
+                            "Prop":      stat_key,
+                            "Line":      pdata["line"],
+                            "OverOdds":  pdata.get("over_odds", "N/A"),
+                            "UnderOdds": pdata.get("under_odds", "N/A"),
+                            "Book":      "Novig",
+                            "Sport":     sport,
+                            "source":    "novig_browser_harvest",
+                        })
+    except Exception as e:
+        print(f"[WARN] _parse_novig_props_harvested: {e}")
+    return results
+
+
+def _parse_betr_props_harvested(raw, sport: str) -> list:
+    """
+    Parse Betr harvested data from betcouncil_betr_{sport}.json.
+    
+    Handles two formats:
+      (a) Pre-parsed BetCouncil list: [{Player, Prop, Line, ...}]
+          (harvester may push already-parsed props from fetch_betr_direct)
+      (b) Raw Betr GraphQL: {data: {getUpcomingEventsV2: [{teams: [{players: [
+              {firstName, lastName, projections: [{label, value, currentValue, marketStatus}]}
+          ]}]}]}}
+    """
+    results = []
+    try:
+        # Format (a): already-parsed BetCouncil list
+        items = raw if isinstance(raw, list) else raw.get("props", [])
+        if isinstance(items, list) and items and isinstance(items[0], dict) and "Player" in items[0]:
+            for p in items:
+                if not (p.get("Player") and p.get("Prop") and p.get("Line") is not None):
+                    continue
+                results.append({
+                    "Player":    p["Player"],
+                    "Prop":      p.get("Prop", ""),
+                    "Line":      p["Line"],
+                    "OverOdds":  p.get("OverOdds", "N/A"),
+                    "UnderOdds": p.get("UnderOdds", "N/A"),
+                    "Book":      "Betr",
+                    "Sport":     sport,
+                    "source":    "betr_browser_harvest",
+                })
+            return results
+        # Format (b): raw Betr GraphQL response
+        events = (
+            (raw.get("data") or {}).get("getUpcomingEventsV2") or
+            raw.get("getUpcomingEventsV2") or []
+        )
+        for event in (events if isinstance(events, list) else []):
+            all_teams = event.get("teams") or [{"players": event.get("players", [])}]
+            for team in all_teams:
+                for player in (team.get("players") or []):
+                    fname = player.get("firstName", "")
+                    lname = player.get("lastName", "")
+                    pname = f"{fname} {lname}".strip()
+                    for proj in (player.get("projections") or []):
+                        if proj.get("marketStatus") not in (None, "OPENED"):
+                            continue
+                        line = proj.get("currentValue") or proj.get("value")
+                        stat = proj.get("label") or proj.get("name", "")
+                        if not pname or not stat or line is None:
+                            continue
+                        results.append({
+                            "Player":    pname,
+                            "Prop":      stat,
+                            "Line":      line,
+                            "OverOdds":  "N/A",
+                            "UnderOdds": "N/A",
+                            "Book":      "Betr",
+                            "Sport":     sport,
+                            "source":    "betr_browser_harvest",
+                        })
+    except Exception as e:
+        print(f"[WARN] _parse_betr_props_harvested: {e}")
+    return results
+
+
 def fetch_bovada_from_gist(sport: str) -> tuple:
-    """PRIMARY: Bovada lines from browser harvester. SECONDARY: scraper."""
+    """PRIMARY: Bovada props from browser harvester (parsed). SECONDARY: returns empty
+    — game-line scraper fallback does not carry player props."""
     data = _read_gist_file(f"betcouncil_bovada_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=22):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    try:
-        from fetchers import fetch_bovada_game_lines as _f
-        s = _f(sport)
-        if s: return s, "scraper_fallback"
-    except Exception: pass
-    return {}, "unavailable"
+        raw = data.get("data", {})
+        if raw:
+            props = _parse_bovada_props_harvested(raw, sport)
+            if props:
+                return props, "browser_harvester"
+    return [], "unavailable"
 
 def fetch_novig_from_gist(sport: str) -> tuple:
-    """PRIMARY: Novig props from browser harvester. SECONDARY: scraper."""
+    """PRIMARY: Novig props from browser harvester (parsed, OddsAPI format).
+    SECONDARY: returns empty — fetch_novig_lines gives game lines, not player props."""
     data = _read_gist_file(f"betcouncil_novig_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=22):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    # fetch_novig_props did not exist — wire to fetch_novig_lines (SBR-based, no auth)
-    try:
-        from fetchers import fetch_novig_lines as _fn
-        s = _fn(sport)
-        if s: return s, "scraper_fallback"
-    except Exception: pass
-    return {}, "unavailable"
+        raw = data.get("data", {})
+        if raw:
+            props = _parse_novig_props_harvested(raw, sport)
+            if props:
+                return props, "browser_harvester"
+    return [], "unavailable"
 
 def fetch_polymarket_from_gist(sport: str) -> tuple:
     """Polymarket prediction markets from browser harvester."""
@@ -14932,15 +15109,16 @@ def fetch_pregame_from_gist(sport: str) -> tuple:
     return {}, "unavailable"
 
 def fetch_betr_from_gist(sport: str) -> tuple:
+    """PRIMARY: Betr props from browser harvester (parsed). SECONDARY: returns empty
+    — fetch_betr_direct is a live GraphQL call handled separately in the prop pipeline."""
     data = _read_gist_file(f"betcouncil_betr_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=22):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    try:
-        from fetchers import fetch_betr_direct as _f; s=_f(sport)
-        if s: return s, "scraper_fallback"
-    except Exception: pass
-    return {}, "unavailable"
+        raw = data.get("data", {})
+        if raw:
+            props = _parse_betr_props_harvested(raw, sport)
+            if props:
+                return props, "browser_harvester"
+    return [], "unavailable"
 
 def fetch_fantasylabs_from_gist(sport: str) -> tuple:
     data = _read_gist_file(f"betcouncil_fantasylabs_{sport}.json", cache_minutes=5)
