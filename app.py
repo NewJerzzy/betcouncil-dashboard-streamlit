@@ -13965,6 +13965,26 @@ if "persistence_loaded" not in st.session_state:
     ]
     if len(_clean_history) < _before_repair:
         save_to_gist("history", _clean_history)  # persist the repair immediately
+
+    # Defensive normalization: some older game-lock entries can have a "line"
+    # value that isn't a clean number (e.g. a team-prefixed spread string like
+    # "CIN -1.5" from a resolver bug that's since been fixed). Any code
+    # downstream that does float(entry["line"]) will crash the whole app on
+    # one bad entry, so coerce every entry's line to a real float once here,
+    # extracting the numeric portion if needed, rather than relying on every
+    # call site to guard itself.
+    def _coerce_line(v):
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            m = re.search(r"-?\d+\.?\d*", str(v or ""))
+            try:
+                return float(m.group()) if m else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+    for _h in _clean_history:
+        _h["line"] = _coerce_line(_h.get("line", 0))
+
     st.session_state.history = _clean_history
     # If Gist had more clean data than local, resync local to match
     if len(_clean_history) > len(_local_history):
@@ -15407,7 +15427,10 @@ with tabs[0]:
                 prop_stats = {}
                 for h in recent_picks:
                     _pl = h.get('player','')
-                    _li = float(h.get('line',0) or 0)
+                    try:
+                        _li = float(h.get('line',0) or 0)
+                    except (ValueError, TypeError):
+                        _li = 0.0
                     if not _pl or _pl == "Unknown Player" or _li > 100:
                         continue
                     key = f"{_pl} {h.get('side','')} {_li} {h.get('prop','')}"
