@@ -25,6 +25,7 @@ from team_canon import canon_game_key
 from book_quality import counterparty_quality, weight_signal_by_counterparty
 from bayesian_line_updater import bayesian_posterior
 from movement_classifier import classify_event_movement
+from bet_decision_layer import recommend_timing, signal_type_multiplier
 
 
 def _tier(score: float) -> str:
@@ -151,6 +152,21 @@ def build_unified_sharp_board(sport: str) -> list:
             "tier": _tier(ev["total_score"]),
         }
         entry["movement_cause"] = classify_event_movement(entry)
+
+        signal_types = []
+        if ev["clv_signals"]:
+            signal_types.append("CLV")
+        if ev["steam_signals"]:
+            signal_types.append("STEAM")
+        if ev["rlm_signals"]:
+            signal_types.append("RLM")
+        entry["timing"] = recommend_timing(
+            has_steam=bool(ev["steam_signals"]),
+            has_rlm=bool(ev["rlm_signals"]),
+            has_arb=False,  # arb is scored separately by arbitrage_detector.py
+        )
+        entry["kelly_multiplier"] = signal_type_multiplier(signal_types)
+
         board.append(entry)
 
     board.sort(key=lambda x: x["total_score"], reverse=True)
