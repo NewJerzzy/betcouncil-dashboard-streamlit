@@ -10847,30 +10847,44 @@ def fetch_betonline_offering(sport: str) -> list:
             if r.status != 200: return []
             data = json.loads(r.read())
         results = []
-        def extract(obj):
-            if isinstance(obj, list):
-                for i in obj: yield from extract(i)
-            elif isinstance(obj, dict):
-                if "participants" in obj or "moneyLine" in obj: yield obj
-                else:
-                    for v in obj.values():
-                        if isinstance(v, (list,dict)): yield from extract(v)
-        for event in extract(data):
-            parts = event.get("participants", [])
-            if len(parts) < 2: continue
-            away = parts[0].get("name",""); home = parts[1].get("name","")
-            if not home or not away: continue
+        # Real confirmed schema (verified against live response, MLB 2026-07-05):
+        # GameOffering.GamesDescription[].Game.{AwayTeam,HomeTeam,
+        #   AwayLine.{SpreadLine:{Point,Line}, MoneyLine:{Line}},
+        #   HomeLine.{SpreadLine:{Point,Line}, MoneyLine:{Line}},
+        #   TotalLine.TotalLine.{Point, Over:{Line}, Under:{Line}}}
+        games_desc = (data.get("GameOffering", {}) or {}).get("GamesDescription", []) or []
+        for gd in games_desc:
+            g = gd.get("Game", {})
+            away, home = g.get("AwayTeam"), g.get("HomeTeam")
+            if not away or not home:
+                continue
             game = f"{away} @ {home}"
-            ml = event.get("moneyLine",{})
-            if ml.get("awayOdds"): results.append({"game":game,"home":home,"away":away,"market":"Moneyline","selection":away,"odds":ml["awayOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
-            if ml.get("homeOdds"): results.append({"game":game,"home":home,"away":away,"market":"Moneyline","selection":home,"odds":ml["homeOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
-            sp = event.get("spread", event.get("runLine",{}))
-            if sp.get("awayOdds"): results.append({"game":game,"home":home,"away":away,"market":"Spread","selection":f"{away} {sp.get('awayHandicap','')}","odds":sp["awayOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
-            if sp.get("homeOdds"): results.append({"game":game,"home":home,"away":away,"market":"Spread","selection":f"{home} {sp.get('homeHandicap','')}","odds":sp["homeOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
-            tot = event.get("total", event.get("overUnder",{}))
-            tl = tot.get("totalLine", tot.get("line",""))
-            if tot.get("overOdds"):  results.append({"game":game,"home":home,"away":away,"market":"Total","selection":f"Over {tl}","odds":tot["overOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
-            if tot.get("underOdds"): results.append({"game":game,"home":home,"away":away,"market":"Total","selection":f"Under {tl}","odds":tot["underOdds"],"book":"BetOnline","sport":sport,"source":"betonline"})
+            away_line = g.get("AwayLine", {})
+            home_line = g.get("HomeLine", {})
+
+            away_ml = away_line.get("MoneyLine", {}).get("Line")
+            home_ml = home_line.get("MoneyLine", {}).get("Line")
+            if away_ml:
+                results.append({"game": game, "home": home, "away": away, "market": "Moneyline", "selection": away, "odds": away_ml, "book": "BetOnline", "sport": sport, "source": "betonline"})
+            if home_ml:
+                results.append({"game": game, "home": home, "away": away, "market": "Moneyline", "selection": home, "odds": home_ml, "book": "BetOnline", "sport": sport, "source": "betonline"})
+
+            away_spread = away_line.get("SpreadLine", {})
+            home_spread = home_line.get("SpreadLine", {})
+            if away_spread.get("Line"):
+                results.append({"game": game, "home": home, "away": away, "market": "Spread", "selection": f"{away} {away_spread.get('Point','')}", "odds": away_spread["Line"], "book": "BetOnline", "sport": sport, "source": "betonline"})
+            if home_spread.get("Line"):
+                results.append({"game": game, "home": home, "away": away, "market": "Spread", "selection": f"{home} {home_spread.get('Point','')}", "odds": home_spread["Line"], "book": "BetOnline", "sport": sport, "source": "betonline"})
+
+            total_line = (g.get("TotalLine", {}) or {}).get("TotalLine", {}) or {}
+            total_point = total_line.get("Point")
+            over_odds = total_line.get("Over", {}).get("Line")
+            under_odds = total_line.get("Under", {}).get("Line")
+            if total_point and over_odds:
+                results.append({"game": game, "home": home, "away": away, "market": "Total", "selection": f"Over {total_point}", "odds": over_odds, "book": "BetOnline", "sport": sport, "source": "betonline"})
+            if total_point and under_odds:
+                results.append({"game": game, "home": home, "away": away, "market": "Total", "selection": f"Under {total_point}", "odds": under_odds, "book": "BetOnline", "sport": sport, "source": "betonline"})
+
         if results: _safe_save_pkl(cache_path, results)
         return results
     except Exception as e:
