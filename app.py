@@ -16207,6 +16207,36 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    # ── Unified Sharp Score board (Scanbet CLV/steam + Action Network RLM) ──
+    try:
+        from unified_sharp_score import build_unified_sharp_board as _build_usb
+        _usb = _build_usb(_sport2)
+    except Exception as _usb_err:
+        _usb = []
+        print(f"[WARN] unified_sharp_score (Game Lines tab): {_usb_err}")
+
+    if _usb:
+        _usb_tier_colors = {"STRONG": "#e04040", "MODERATE": "#e8a020", "WEAK": "#6a7a8a"}
+        with st.expander(f"🎯 Unified Sharp Signals — {len(_usb)} games flagged", expanded=False):
+            for _u in _usb[:10]:
+                _tclr = _usb_tier_colors.get(_u["tier"], "#6a7a8a")
+                _lines = []
+                for _c in _u["clv_signals"][:3]:
+                    _lines.append(f"📡 CLV {_c['drop_pct']:+.1f}% | {_c['selection']} ({_c['n_snapshots']} snaps)")
+                for _s in _u["steam_signals"][:2]:
+                    _lines.append(f"🌊 STEAM | {_s['selection']} moving fast ({_s['n_snapshots']} snaps)")
+                for _r in _u["rlm_signals"][:2]:
+                    _lines.append(f"🔴 RLM | {_r['public_pct']}% public {_r['public_side']}, sharp $ on {_r['sharp_side']}")
+                _body = "<br>".join(_lines) if _lines else "No signal breakdown available"
+                _dir_line = f"<br>→ Consensus: sharp money on <b>{_u['consensus_direction']}</b>" if _u.get("consensus_direction") else ""
+                st.markdown(
+                    f'<div style="border-left:4px solid {_tclr};background:#0a0e14;border-radius:4px;'
+                    f'padding:0.6rem 0.9rem;margin-bottom:0.5rem;">'
+                    f'<b>{_u["game_label"]}</b> — Score: {_u["total_score"]:.1f} ({_u["tier"]})<br>'
+                    f'{_body}{_dir_line}</div>',
+                    unsafe_allow_html=True,
+                )
+
     # Slip grouping controls
     _slip_ctrl1, _slip_ctrl2, _slip_ctrl3 = st.columns([2,2,3])
     with _slip_ctrl1:
@@ -20749,7 +20779,7 @@ with tabs[9]:
     # Unified sharp score board — combines Scanbet CLV/steam + Action Network RLM
     try:
         from unified_sharp_score import build_unified_sharp_board as _build_usb
-        _usb_sport = st.session_state.get("current_sport", "MLB")
+        _usb_sport = st.session_state.get("active_sport", "MLB")
         st.session_state["unified_sharp_board"] = _build_usb(_usb_sport)
     except Exception as _usb_err:
         st.session_state["unified_sharp_board"] = []
