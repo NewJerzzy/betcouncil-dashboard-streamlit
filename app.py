@@ -16352,6 +16352,37 @@ with tabs[2]:
                         unsafe_allow_html=True,
                     )
 
+        try:
+            from nba_pace_mismatch import score_pace_mismatch, load_pace_data
+            _pace_data = load_pace_data()
+            _pace_signals = []
+            if _pace_data:
+                for _g in (_games or [])[:15]:
+                    _home_t, _away_t = _g.get("home"), _g.get("away")
+                    if not _home_t or not _away_t:
+                        continue
+                    _favored = "HOME" if _g.get("home_favorite") else ("AWAY" if _g.get("away_favorite") else None)
+                    _pm = score_pace_mismatch(_home_t, _away_t, favored_side=_favored, pace_data=_pace_data)
+                    if _pm.get("is_mismatch"):
+                        _pm["home_team"] = _home_t
+                        _pace_signals.append({"matchup": f"{_away_t} @ {_home_t}", **_pm})
+        except Exception as _pace_err:
+            _pace_signals = []
+            print(f"[WARN] nba_pace_mismatch: {_pace_err}")
+
+        if _pace_signals:
+            with st.expander(f"⚡ Pace Mismatches — {len(_pace_signals)} flagged", expanded=False):
+                for _p in _pace_signals[:15]:
+                    _lean_str = f" → <b>{_p['total_lean']}</b>" if _p.get("total_lean") else ""
+                    _fast_pace = _p["home_pace"] if _p["fast_team"] == _p.get("home_team") else _p["away_pace"]
+                    st.markdown(
+                        f'<div style="border-left:4px solid #22c55e;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_p["matchup"]}</b> — {_p["fast_team"]} ({_fast_pace}) '
+                        f'vs {_p["slow_team"]}{_lean_str}</div>',
+                        unsafe_allow_html=True,
+                    )
+
     # ── Originator-Follower Lag + Information Asymmetry ──────────────────
     # Both record a timestamped snapshot every board load (building real
     # history automatically) and only surface once enough history exists.
