@@ -8234,7 +8234,7 @@ def generate_gem_summary():
     today = date.today().strftime("%A, %B %d, %Y")
     scan_time = st.session_state.get("last_scan_time", "—")
     lines = []
-    lines.append("=== BETCOUNCIL v4.6 DAILY BRIEF ===")
+    lines.append("=== BETCOUNCIL v5.9 DAILY BRIEF ===")
     lines.append(f"Sport: {sport}")
     lines.append(f"Date: {today}")
     lines.append(f"Scanned: {scan_time}")
@@ -8300,7 +8300,13 @@ def generate_gem_summary():
             injury = f" ⚠️ {p['Injury']}" if p.get("Injury") else ""
             std_note = f" σ={p['StdDev']:.1f}" if p.get("StdDev") else ""
             fairness = f" [{p['FairnessGrade']}]" if p.get("FairnessGrade") not in (None, "GOOD", "UNKNOWN") else ""
-            consensus = f" Pin:{p['ConsensusProb']}" if p.get("ConsensusProb","—") != "—" else ""
+            # Real Pinnacle no-vig prob (props: always empty by design — arcadia
+            # guest API has no props endpoint; game-line Pinnacle lives elsewhere).
+            pin_prob = p.get("PinnacleProb", "—")
+            pin_note = f" Pin:{pin_prob}" if pin_prob and pin_prob != "—" else ""
+            # Multi-book consensus (NOT Pinnacle) — label distinctly so GEM
+            # never treats plain book consensus as a Pinnacle no-vig confirmation.
+            consensus = f" Consensus:{p['ConsensusProb']}" if p.get("ConsensusProb","—") != "—" else ""
             # Signal count
             sig_count = p.get("SignalCount", p.get("signal_count", None))
             sig_note = f" [{sig_count}/7 signals]" if sig_count is not None else ""
@@ -8338,7 +8344,7 @@ def generate_gem_summary():
             lines.append(
                 f"{p['Tier']}: {p['Player']} {p['Side']} {p['Line']} {p['Prop']}{book_note} | "
                 f"Avg:{p['Avg']:.1f}{std_note} | Edge:{p['EdgePct']} | Prob:{p['Prob']:.1%}"
-                f"{consensus}{sig_note}{opp_note}{rest_note}{fairness}{injury}{log_note}"
+                f"{pin_note}{consensus}{sig_note}{opp_note}{rest_note}{fairness}{injury}{log_note}"
                 f"{sharp_note}{reg_note}{cpoe_note}"
             )
         lines.append("")
