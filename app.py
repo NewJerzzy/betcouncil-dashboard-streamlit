@@ -16282,6 +16282,34 @@ with tabs[2]:
                         unsafe_allow_html=True,
                     )
 
+    if _sport2.upper() == "TENNIS":
+        try:
+            from tennis_uts_scraper import fetch_player_surface_performance
+            _tennis_rows = []
+            _players_checked = set()
+            for _g in (_games or [])[:10]:  # cap: sequential + rate-limited requests
+                for _player in (_g.get("home"), _g.get("away")):
+                    if not _player or _player in _players_checked:
+                        continue
+                    _players_checked.add(_player)
+                    _perf = fetch_player_surface_performance(_player)
+                    if _perf:
+                        _tennis_rows.append({"player": _player, "surfaces": _perf})
+        except Exception as _ten_err:
+            _tennis_rows = []
+            print(f"[WARN] tennis_uts_scraper: {_ten_err}")
+
+        if _tennis_rows:
+            with st.expander(f"🎾 Surface Breakdown — {len(_tennis_rows)} players (real UTS data)", expanded=False):
+                for _t in _tennis_rows:
+                    _parts = [f"{s}: {d['win_pct']}% ({d['wins']}-{d['losses']})" for s, d in _t["surfaces"].items()]
+                    st.markdown(
+                        f'<div style="border-left:4px solid #a855f7;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_t["player"]}</b> — {" | ".join(_parts)}</div>',
+                        unsafe_allow_html=True,
+                    )
+
     if _sport2.upper() == "UFC":
         try:
             from unified_sharp_score import build_ufc_board
