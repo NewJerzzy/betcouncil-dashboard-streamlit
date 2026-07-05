@@ -12,3 +12,4 @@ Pillow
 # rebuild: power-devig-kelly-brier
 cloudscraper
 sportsdataverse
+rapidfuzz

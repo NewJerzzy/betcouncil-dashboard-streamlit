@@ -11713,6 +11713,25 @@ def load_sport_data(sport):
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props
         st.session_state["ev_signal_lookup"] = _ev_signal_lookup
+        # ── Phase 2: cross-book LINE_DEVIATION signals + Phase 3: hit-rate logging
+        try:
+            from consensus_engine import get_cross_book_signals as _cbe_fn
+            from hitrate_logger import log_props_to_hitrate as _hl_fn
+            from fetchers import fetch_prizepicks_from_gist as _pp_fn, fetch_underdog_from_gist as _ud_fn
+            _ld_book_data = {}
+            try:
+                _pp_props, _ = _pp_fn(sport)
+                if _pp_props: _ld_book_data["prizepicks"] = _pp_props
+            except Exception: pass
+            try:
+                _ud_props, _ = _ud_fn(sport)
+                if _ud_props: _ld_book_data["underdog"] = _ud_props
+            except Exception: pass
+            if _ld_book_data:
+                st.session_state["line_deviation_lookup"] = _cbe_fn(sport, _ld_book_data)
+                _hl_fn(_ld_book_data, sport)
+        except Exception:
+            st.session_state.setdefault("line_deviation_lookup", {})
         st.session_state["ev_api_updated"]  = ev_api_raw.get("updated", {})
         # Feed every book's line into alt sources for BetterLineNote detection
         for _evp in _ev_board_props:
@@ -12549,6 +12568,25 @@ def load_sport_data(sport):
         elif fairness_grade == "CAUTION":
             over_edge = over_edge * 0.90
             under_edge = under_edge * 0.90
+        # ── LINE_DEVIATION: cross-book consensus overlay ────────────────────
+        _ld_lookup = st.session_state.get("line_deviation_lookup", {})
+        try:
+            from prop_normalizer import normalize_player_name as _np_fn, normalize_stat_name as _ns_fn
+            _ld_key = (_np_fn(player), _ns_fn(stat_raw, sport))
+        except Exception:
+            _ld_key = (normalize_name(player), stat_raw)
+        _ld_sig = _ld_lookup.get(_ld_key, {})
+        if _ld_sig and _ld_sig.get("consensus_prob") is not None:
+            _ld_prob = float(_ld_sig["consensus_prob"])
+            _ld_dev  = float(_ld_sig.get("deviation_pct", 0))
+            if _ld_dev >= LINE_DEVIATION_THRESHOLD_PCT:
+                # Conservative 25 % blend — prop-consensus is thinner than
+                # Pinnacle / Circa, so we weight it well below the sharp anchors.
+                _ld_w     = 0.25
+                over_prob  = round(_ld_w * _ld_prob      + (1 - _ld_w) * over_prob,  4)
+                under_prob = round(1.0 - over_prob, 4)
+                over_edge  = calculate_edge(over_prob,  "OVER",  sport, odds=p.get("OverOdds"))
+                under_edge = calculate_edge(under_prob, "UNDER", sport, odds=p.get("UnderOdds"))
         # ── OVER-only prop guard ───────────────────────────────────────────
         # These are binary event markets — books only offer OVER (will it
         # happen or not). No sportsbook offers an UNDER market for these.

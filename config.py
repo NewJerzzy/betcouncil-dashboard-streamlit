@@ -10,6 +10,15 @@ import os
 
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "7e52e1c2c2054847c7c4663a157386c5")
+
+# ── Cross-Book Prop Consensus (Phase 2) ──────────────────────────────────────
+LINE_DEVIATION_THRESHOLD_PCT  = 5.0   # min % deviation from consensus to fire signal
+PROP_CROSS_BOOK_MIN_BOOKS     = 2     # min books with numeric odds to compute consensus
+PROP_FUZZY_MATCH_THRESHOLD    = 90    # rapidfuzz score threshold for player name merging
+
+# ── Hit-Rate Logger (Phase 3) ─────────────────────────────────────────────────
+PROP_HITRATE_LOG_FILE         = "betcouncil_prop_hitrate_log.json"
+PROP_HITRATE_RETENTION_DAYS   = 60    # days before log entries are pruned
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
 ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
 ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
