@@ -16895,6 +16895,12 @@ with tabs[3]:
                     return normalize_name(s or "")
 
                 for sport_key, (es, el) in espn_sm.items():
+                    # Only bother querying this sport's scoreboard if we actually
+                    # have a lock for it. This also prevents cross-sport false
+                    # matches (e.g. an MLB "ATL" hitting an NBA Atlanta abbreviation).
+                    sport_locks = [l for l in game_locks if (l.get("sport","") or "").upper() == sport_key]
+                    if not sport_locks:
+                        continue
                     for date_str in dates_to_check:
                         try:
                             params = {"dates": date_str} if date_str else {}
@@ -16917,7 +16923,7 @@ with tabs[3]:
                                 away_score = float(away.get("score",0) or 0)
                                 total = home_score + away_score
                                 home_norm, away_norm = _norm_team(home_name), _norm_team(away_name)
-                                for lock in game_locks:
+                                for lock in sport_locks:
                                     if lock not in st.session_state.locks:
                                         continue  # already resolved in an earlier date pass
                                     matchup = lock.get("player","")
