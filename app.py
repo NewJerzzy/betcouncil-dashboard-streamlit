@@ -16207,6 +16207,27 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    # ── Arbitrage Detector (real cross-book, guaranteed-profit signals) ──
+    try:
+        from arbitrage_detector import find_arbitrage
+        _arbs = find_arbitrage(_sport2)
+    except Exception as _arb_err:
+        _arbs = []
+        print(f"[WARN] arbitrage_detector: {_arb_err}")
+
+    if _arbs:
+        with st.expander(f"💰 Arbitrage Opportunities — {len(_arbs)} found", expanded=False):
+            for _a in _arbs[:10]:
+                st.markdown(
+                    f'<div style="border-left:4px solid #22c55e;background:#0a0e14;border-radius:4px;'
+                    f'padding:0.6rem 0.9rem;margin-bottom:0.5rem;">'
+                    f'<b>{_a["game"]}</b> — {_a["market"]} | Profit: {_a["profit_pct"]:.2f}%<br>'
+                    f'{_a["side_a"]["side"]} {_a["side_a"]["odds"]} @ {_a["side_a"]["book"]} '
+                    f'&nbsp;|&nbsp; {_a["side_b"]["side"]} {_a["side_b"]["odds"]} @ {_a["side_b"]["book"]}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
     # ── Unified Sharp Score board (Scanbet CLV/steam + Action Network RLM) ──
     try:
         from unified_sharp_score import build_unified_sharp_board as _build_usb
