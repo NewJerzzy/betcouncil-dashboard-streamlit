@@ -3650,6 +3650,11 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
         if (side == "OVER" and pitcher_quality_adj <= -0.03) or (side == "UNDER" and pitcher_quality_adj >= 0.03):
             unmodeled_flags.append(f"faced {opposing_pitcher}, a genuinely tough pitching matchup (adjustment {pitcher_quality_adj:+.3f}) — the opposing pitcher specifically worked against this pick, not just the batter's form")
 
+    goalie_quality_adj = sa.get("goalie_quality_adj")
+    if goalie_quality_adj is not None and goalie_quality_adj:
+        if (side == "OVER" and goalie_quality_adj <= -0.03) or (side == "UNDER" and goalie_quality_adj >= 0.03):
+            unmodeled_flags.append(f"faced a strong opposing goalie (adjustment {goalie_quality_adj:+.3f}) — elite goaltending specifically worked against this pick")
+
     if unmodeled_flags:
         unmodeled_note = "; ".join(unmodeled_flags)
         reasons.append(f"Contributing factor(s) beyond the base pick: {unmodeled_note}")

@@ -9595,6 +9595,7 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             )
             # oppRank in NHL context = goalie/defensive quality (1=best, 30=worst)
             _opp_rank_nhl = _ev_sig_nhl.get("opp_rank") if _ev_sig_nhl else None
+            _goalie_adj = 0.0
             if _opp_rank_nhl is not None:
                 try:
                     # Rank 1-5 = elite goalie → reduce scoring avg
@@ -9604,8 +9605,13 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
                     _adj_avg    = max(player_avg * 0.80, min(player_avg * 1.20, _adj_avg))
                 except (ValueError, TypeError):
                     _adj_avg = player_avg
+                    _goalie_adj = 0.0
             else:
                 _adj_avg = player_avg
+            # Expose as its own discrete signal (was previously only folded
+            # into _adj_avg with no way to explain it separately later) —
+            # matches the same pattern MLB's pitcher_adj already used.
+            signals["goalie"] = round(_goalie_adj, 4)
             # Negative Binomial for overdispersed counting stats — SOG runs
             # hotter-variance than a normal/Poisson assumption captures.
             if stat_key == "SOG" and std_dev is not None and std_dev > 0 and (std_dev ** 2) > _adj_avg:
@@ -13082,7 +13088,11 @@ def load_sport_data(sport):
                           # MLB opposing starter quality — already computed above
                           # (era_diff / blended xFIP-FIP-ERA), just wasn't persisted.
                           "pitcher_quality_adj": round(pitcher_adj, 4) if sport == "MLB" and pitcher_adj else 0,
-                          "opposing_pitcher": pitcher_name if sport == "MLB" else ""}
+                          "opposing_pitcher": pitcher_name if sport == "MLB" else "",
+                          # NHL opposing goalie quality — same pattern as MLB pitcher,
+                          # now exposed as signals["goalie"] inside compute_multi_signal_edge
+                          # instead of only being folded silently into the averages.
+                          "goalie_quality_adj": round(best_signals.get("goalie", 0), 4) if sport == "NHL" else 0}
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
