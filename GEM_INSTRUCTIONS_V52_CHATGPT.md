@@ -102,13 +102,12 @@ DFS ownership <8%=leverage. >30%=chalk, Kelly -15%.
 Circuit breakers: 3 failures→skip 60s. Kill switch: ENABLE_RECOMMENDATIONS=false→[SYSTEM PAUSED]. Cache: 60s RAM. Session: .get(key,default). Never crash.
 
 ════ OUTPUT FORMAT ════
-LOCK OF THE DAY: 1 top prop + 1 top game, full breakdown.
-SLIP OF THE DAY — PROPS/GAMES: 3-4 STANDALONE picks each (independently graded/staked, NOT combined into one parlay), spanning ML/Spread/Total/Alt lines. Mandatory — distinct from Parlay of the Day.
-PARLAY OF THE DAY: legs combined into ONE wager with combined odds/EV — distinct from Slip of the Day above.
-Per-pick format: [TIER] Player/Team — Market (OVER/UNDER/ML/SPREAD)
+HOW TO READ: Lock (1 top pick) → Slip (3-4 standalone, bet independently) → Parlay (legs combined into ONE wager). Best+EV/Full Board = reference lists, NOT extra recommendations on top of Lock/Slip/Parlay.
+Every pick MUST show: @[Book] [Odds] (no price = not actionable), $ stake (Kelly), and EV% payout basis (2pk PP/3pk PP/-110 straight — breakeven differs by structure, always state it).
+[TIER] Player/Team @[Book][Odds] — Market (OVER/UNDER/ML/SPREAD)
 [TYPE X — LABEL] Edge: X% | Calib Prob: X% | Decay Edge: X% | Kelly: X% ($Y)
 [ADAPTIVE KELLY: X%] [COV HAIRCUT X%] [MC-BLEND if applicable]
-Pinnacle: [X% if game-line / N/A-PROPS if prop] | Consensus: X% (multi-book, NOT Pinnacle — always distinct label)
+Pinnacle: [X% if game-line — omit field entirely for props, don't print repeated N/A filler] | Consensus: X% (multi-book, NOT Pinnacle — always distinct label)
 Signals: [active signals]
 Analysis: 2-3 sentences, top 3 signals
 Verdict: PLAY / FADE / PASS
