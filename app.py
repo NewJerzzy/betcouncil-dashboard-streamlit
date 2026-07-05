@@ -16207,6 +16207,27 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    # ── TeamRankings Situational Signals (KillerSports replacement, unlimited) ──
+    try:
+        from teamrankings_situational import fetch_situational_signals
+        _tr_signals = fetch_situational_signals(_sport2)
+    except Exception as _tr_err:
+        _tr_signals = []
+        print(f"[WARN] teamrankings_situational: {_tr_err}")
+
+    if _tr_signals:
+        with st.expander(f"📐 Situational Trends — {len(_tr_signals)} significant (90%+ confidence)", expanded=False):
+            for _t in _tr_signals[:15]:
+                st.markdown(
+                    f'<div style="border-left:4px solid #378add;background:#0a0e14;border-radius:4px;'
+                    f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                    f'<b>{_t["team"]}</b> — {_t["record"]} ({_t["win_rate"]*100:.1f}%) in '
+                    f'{_t["trend_type"].replace("_"," ")} / {_t["filter"].replace("_"," ")} '
+                    f'| z={_t["z_score"]} ({_t["confidence"]}) → <b>{_t["signal"]}</b>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
     # ── Arbitrage Detector (real cross-book, guaranteed-profit signals) ──
     try:
         from arbitrage_detector import find_arbitrage
