@@ -38,6 +38,13 @@ _MAX_DIFF_ADJUSTMENT = 2.5  # 4+ days rest advantage caps out here
 _RUST_THRESHOLD_DAYS = 4
 _RUST_PENALTY = -0.5
 
+# A rested team (2+ days off) facing a B2B opponent has its biggest edge
+# in the FIRST HALF specifically — energy/legs advantage is sharpest
+# early and fades by the 4th quarter as both teams tire. Full-game
+# point_adjustment above already captures the whole-game effect; this is
+# an additive first-half-only bonus on top of it.
+_RESTED_VS_B2B_FIRST_HALF_BONUS = 1.5
+
 
 def _parse_date(d):
     if isinstance(d, datetime):
@@ -97,6 +104,13 @@ def classify_rest_asymmetry(home_games: list, away_games: list, game_date=None) 
         "away_rest_days": away_rest,
         "differential": diff,
         "point_adjustment": round(adjustment, 2),
+        "first_half_bonus": (
+            _RESTED_VS_B2B_FIRST_HALF_BONUS
+            if favored_side and (
+                (favored_side == "HOME" and away_rest == 0) or
+                (favored_side == "AWAY" and home_rest == 0)
+            ) else 0.0
+        ),
         "favored_side": favored_side,
         "note": (
             f"{favored_side} rested {abs(diff)} day(s) more{rust_note}"

@@ -81,6 +81,61 @@ def optimal_window(sport: str) -> dict:
     return dict(_OPTIMAL_WINDOWS.get(sport.upper(), {}))
 
 
+# Second, distinct timing concept: the OPENER window. When a book first
+# posts a line, limits are lowest and the line is least informed (fewest
+# sharp bets have hit it yet) — this is the opposite trade-off from
+# optimal_window() above (confirmed info, firmer line, closer to game
+# time). Both are real, legitimate, complementary strategies: bet the
+# opener for soft/mispriced lines before the market corrects, or bet the
+# confirmed-info window for maximum certainty. Which one fits depends on
+# whether you want line value or information certainty.
+_OPENER_WINDOWS = {
+    "NFL": {
+        "window_label": "Sunday night / Monday morning (lines open for next week)",
+        "reason": "Books post next week's opening lines with their lowest "
+                   "limits and least sharp action Sunday night/Monday — "
+                   "widest edges if you have an early read, but small "
+                   "limits and highest risk of being wrong before news breaks.",
+    },
+    "NBA": {
+        "window_label": "Lines open morning of game day, before shootaround news",
+        "reason": "Morning lines are posted before shootaround availability "
+                   "reports — soft if you already suspect a load-management "
+                   "scratch or B2B rest day.",
+    },
+    "MLB": {
+        "window_label": "Lines open ~10am ET, before lineups post",
+        "reason": "Morning MLB lines are priced off probable pitcher only — "
+                   "soft if you have an early read on bullpen usage or "
+                   "weather that the market hasn't priced in yet.",
+    },
+    "NHL": {
+        "window_label": "Lines open morning of game day, before morning skate",
+        "reason": "Early lines don't yet reflect goalie confirmation.",
+    },
+    "SOCCER": {
+        "window_label": "Lines open days before kickoff",
+        "reason": "Early lines are set off squad news/injury reports days out, "
+                   "before matchday team news.",
+    },
+    "UFC": {
+        "window_label": "Lines open at fight announcement, before fight week",
+        "reason": "Earliest lines are set well before weigh-ins/fight-week "
+                   "news (camp reports, weight-cut issues) is public.",
+    },
+    "TENNIS": {
+        "window_label": "Lines open at draw release",
+        "reason": "Set before day-of conditions/injury news, and can be "
+                   "soft on surface-transition or fatigue spots.",
+    },
+}
+
+
+def opener_window(sport: str) -> dict:
+    """Return the opener-window info (soft-line strategy) for a sport, or {} if unknown."""
+    return dict(_OPENER_WINDOWS.get(sport.upper(), {}))
+
+
 def in_optimal_window(sport: str, minutes_to_game: float) -> bool:
     """
     True if minutes_to_game falls within the sport's optimal information-

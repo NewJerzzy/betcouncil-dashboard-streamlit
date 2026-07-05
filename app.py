@@ -16209,14 +16209,17 @@ with tabs[2]:
 
     # ── Sport-Specific Optimal Timing Window ─────────────────────────────
     try:
-        from sport_timing_windows import optimal_window
+        from sport_timing_windows import optimal_window, opener_window
         _tw = optimal_window(_sport2)
+        _ow = opener_window(_sport2)
     except Exception as _tw_err:
-        _tw = {}
+        _tw, _ow = {}, {}
         print(f"[WARN] sport_timing_windows: {_tw_err}")
 
     if _tw:
         st.info(f"⏰ **Optimal check-back window for {_sport2}:** {_tw['window_label']} — {_tw['reason']}")
+    if _ow:
+        st.caption(f"📖 **Opener strategy (soft line, lower limits):** {_ow['window_label']} — {_ow['reason']}")
 
     if _sport2.upper() == "MLB":
         try:
@@ -16344,10 +16347,11 @@ with tabs[2]:
         if _rest_signals:
             with st.expander(f"😴 Rest Asymmetry — {len(_rest_signals)} matchups flagged", expanded=False):
                 for _r in _rest_signals[:15]:
+                    _fh_str = f" | +{_r['first_half_bonus']:.1f} pts 1H bonus" if _r.get("first_half_bonus") else ""
                     st.markdown(
                         f'<div style="border-left:4px solid #378add;background:#0a0e14;border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
-                        f'<b>{_r["matchup"]}</b> — {_r["note"]} (adj: {_r["point_adjustment"]:+.1f} pts, '
+                        f'<b>{_r["matchup"]}</b> — {_r["note"]} (adj: {_r["point_adjustment"]:+.1f} pts{_fh_str}, '
                         f'home rest {_r["home_rest_days"]}d / away rest {_r["away_rest_days"]}d)</div>',
                         unsafe_allow_html=True,
                     )
