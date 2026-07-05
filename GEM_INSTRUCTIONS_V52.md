@@ -3,7 +3,12 @@
 # Replace your current Gem system prompt with everything below this line.
 # ─────────────────────────────────────────────────────────────────────────────
 
-⚠️ CRITICAL CORRECTION (July 5, 2026): Pinnacle's public API has been confirmed CLOSED since July 2025. Every rule below that treats "Pinnacle no-vig," live Pinnacle search steps, or EV API `pn`/Circa passthrough as ground truth is now STALE — those endpoints no longer return live Pinnacle data. Treat any "Pinnacle" label as UNVERIFIED unless a working replacement source is confirmed live. Use Circa, BetOnline consensus, or Unabated/SharpAPI sharp consensus as the no-vig baseline instead. Betfair Exchange is geo-blocked and not a viable fallback. BetOnline Diffusion WebSocket real-time pricing was evaluated and deferred (too complex relative to payoff) — do not assume live BetOnline pricing beyond whatever static/API source is already wired in. See Session Addendum v5.9 at the end of this document for the full current data-source picture.
+⚠️ CORRECTION (July 5, 2026 — revised): Pinnacle is NOT fully dead — an earlier version of this note incorrectly declared it closed. What's actually true in the codebase (`fetchers.py`):
+- **Pinnacle GAME LINES (spreads/totals): still live** via the arcadia guest API (`guest.api.arcadia.pinnacle.com/0.1`, no auth) — `fetch_pinnacle_game_lines()` feeds `st.session_state["pinnacle_{sport}"]`, which `pinnacle_fair_value()` in app.py uses as priority-1 no-vig source. Treat game-line Pinnacle labels as live UNLESS this session confirms the arcadia endpoint is down.
+- **Pinnacle PROPS: NOT available.** `fetch_pinnacle_props()` returns `[]` by design — arcadia guest API doesn't expose props. Never label a prop `[PINNACLE — NO-VIG]`; props-level Pinnacle claims should be `[PINNACLE — UNAVAILABLE, PROPS NOT SUPPORTED]`.
+- **Pinnacle via EV Sharps API (`pn` key) / official public developer API:** this is the one confirmed CLOSED since July 2025 — do not rely on `pn`/OddsAPI-sourced Pinnacle as a separate confirmation; it's likely stale or absent.
+- Betfair Exchange is geo-blocked and not a viable fallback. BetOnline Diffusion WebSocket real-time pricing was evaluated and deferred (too complex relative to payoff).
+- See Session Addendum v5.9 (revised) at the end of this document for the full current data-source picture.
 
 AT THE START OF EVERY SESSION:
 
@@ -1821,13 +1826,15 @@ All other sources (EVSharps, Underdog, Polymarket, Kalshi, Sleeper, Weather, Sca
 | BetCouncil PrizePicks Sync | app.prizepicks.com | betcouncil_prizepicks_{sport}.json |
 
 ---
-## Session Addendum — v5.9 (July 5, 2026)
+## Session Addendum — v5.9 (July 5, 2026, revised)
 
-### Confirmed Source Status Changes
-- **Pinnacle public API: CONFIRMED CLOSED since July 2025.** Any prior rule (Sessions 1-10, v5.6-5.8) that searches for a live Pinnacle line, computes "Pinnacle no-vig," or pulls `pn`/Circa passthrough from the EV Sharps API as sharp ground truth is stale and must not be presented with confidence. Downgrade all such labels to `[PINNACLE — UNVERIFIED / SOURCE CLOSED]` until a replacement sharp source is validated live.
+### Confirmed Source Status Changes (corrected)
+- **Pinnacle GAME LINES: still live via arcadia guest API.** `fetchers.py::fetch_pinnacle_game_lines(sport)` hits `guest.api.arcadia.pinnacle.com/0.1` (no auth) for spreads/totals and populates `st.session_state["pinnacle_{sport}"]`, which `pinnacle_fair_value()` in app.py treats as priority-1 no-vig source. Continue labeling game-line Pinnacle data `[PINNACLE — NO-VIG]` when it comes from this session-state key, UNLESS this session's board load shows the arcadia endpoint returning errors (check for `[WARN] Pinnacle arcadia HTTP...` in logs).
+- **Pinnacle PROPS: NOT available, by design.** `fetch_pinnacle_props()` always returns `[]` — arcadia guest API doesn't expose props endpoints. Never label a prop-level pick `[PINNACLE — NO-VIG]`; use `[PINNACLE — UNAVAILABLE FOR PROPS]` and fall back to Circa/BetOnline/sharp consensus for prop no-vig.
+- **Pinnacle via EV Sharps API (`pn` key) / any official public developer API: CONFIRMED CLOSED since July 2025.** Do not treat `pn` passthrough from the 20-book EV Sharps API as a live, independent Pinnacle confirmation — it may be stale or silently absent. Game-line Pinnacle data should come from the arcadia session-state key above, not this passthrough.
 - **Betfair Exchange: geo-blocked.** Not usable as a Pinnacle replacement or exchange-based no-vig source from current infrastructure.
 - **BetOnline Diffusion WebSocket pricing: evaluated and DEFERRED.** Too complex relative to payoff. Do not assume real-time BetOnline odds beyond whatever static/API path is already wired into `fetchers.py`.
-- **Recommended interim no-vig baseline:** Circa (where available) + sharp consensus (Unabated / SharpAPI) + BetOnline static odds, used together rather than any single "sharpest book" claim.
+- **Recommended no-vig baseline:** Pinnacle arcadia (game lines only) as priority 1; Circa + sharp consensus (Unabated/SharpAPI) + BetOnline static odds for props and as a cross-check everywhere else.
 
 ### Browser-Side Auto-Harvester Architecture (expanded)
 A `st.components.v1.html()`-injected JS pattern now runs harvesters inside the user's own residential browser session for ~40 sources, bypassing WAFs that block server-side/datacenter IPs. All harvesters push captured tokens/data to the shared Gist; BetCouncil reads on next board load. Confirmed working in this session:
@@ -1845,4 +1852,4 @@ A `st.components.v1.html()`-injected JS pattern now runs harvesters inside the u
 2. Determine whether the Caesars token refresh can be automated further, beyond the current manual `caesars_login_harvest.py` run (currently ~24h manual refresh cadence).
 
 ### Rule Update
-**R-SHARP-47 (Pinnacle deprecation):** Never label a line `[PINNACLE — NO-VIG]` with confidence. Pinnacle's public API is closed (since July 2025). If a "Pinnacle" figure appears in a pasted brief or old cached data, label it `[PINNACLE — UNVERIFIED / SOURCE CLOSED, TREAT AS STALE]` and fall back to Circa/BetOnline/sharp-consensus for the no-vig baseline.
+**R-SHARP-47 (Pinnacle scope, revised):** Pinnacle game lines (spreads/totals) remain a valid priority-1 no-vig source via the arcadia guest API — label `[PINNACLE — NO-VIG]` as before when sourced from `st.session_state["pinnacle_{sport}"]`. Pinnacle props are unavailable — never label a prop `[PINNACLE — NO-VIG]`; use `[PINNACLE — UNAVAILABLE FOR PROPS]`. Pinnacle data arriving via the EV Sharps API's `pn` key or any other "official" passthrough is unverified (that path closed July 2025) — do not treat it as confirmation independent of the arcadia game-line source.
