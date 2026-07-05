@@ -3644,6 +3644,12 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
     if days_rest_actual is not None and days_rest_actual >= 4:
         unmodeled_flags.append(f"the player had {days_rest_actual} days of rest — occasionally shows up as rust rather than a benefit, worth a second look if this repeats")
 
+    pitcher_quality_adj = sa.get("pitcher_quality_adj")
+    opposing_pitcher = sa.get("opposing_pitcher", "")
+    if pitcher_quality_adj is not None and opposing_pitcher:
+        if (side == "OVER" and pitcher_quality_adj <= -0.03) or (side == "UNDER" and pitcher_quality_adj >= 0.03):
+            unmodeled_flags.append(f"faced {opposing_pitcher}, a genuinely tough pitching matchup (adjustment {pitcher_quality_adj:+.3f}) — the opposing pitcher specifically worked against this pick, not just the batter's form")
+
     if unmodeled_flags:
         unmodeled_note = "; ".join(unmodeled_flags)
         reasons.append(f"Contributing factor(s) beyond the base pick: {unmodeled_note}")

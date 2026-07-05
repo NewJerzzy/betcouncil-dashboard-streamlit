@@ -13078,7 +13078,11 @@ def load_sport_data(sport):
                           "defense_strength": round(best_signals.get("defense", 0), 3),
                           "weather_severity": round(weather_adj, 3) if weather_adj else 0,
                           "blowout_severity": round(blowout_adj, 3) if blowout_adj else 0,
-                          "days_rest_actual": days_rest}
+                          "days_rest_actual": days_rest,
+                          # MLB opposing starter quality — already computed above
+                          # (era_diff / blended xFIP-FIP-ERA), just wasn't persisted.
+                          "pitcher_quality_adj": round(pitcher_adj, 4) if sport == "MLB" and pitcher_adj else 0,
+                          "opposing_pitcher": pitcher_name if sport == "MLB" else ""}
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
