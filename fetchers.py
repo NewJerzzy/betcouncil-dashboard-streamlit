@@ -14233,6 +14233,37 @@ def fetch_scanbet_drops_from_gist() -> list:
                         except Exception:
                             continue
 
+                    # ── Point-value tracking (spread/total NUMBER, not just juice) ──
+                    # Needed for key-number crossing analysis (nfl_key_numbers.py).
+                    # The juice-based "Total"/"Moneyline" entries above track price
+                    # movement; this tracks the actual line value movement.
+                    try:
+                        open_spread = opener[SCANBET_ODDS_IDX["spread"]]
+                        curr_spread = current[SCANBET_ODDS_IDX["spread"]]
+                        if open_spread and curr_spread and open_spread != curr_spread:
+                            results.append({
+                                "game": game, "home": home, "away": away,
+                                "sport": sport_code, "league": league,
+                                "market": "SpreadValue", "selection": "line",
+                                "opener_value": open_spread, "current_value": curr_spread,
+                                "n_snapshots": n_snaps, "source": "scanbet_graphql",
+                            })
+                    except Exception:
+                        pass
+                    try:
+                        open_total = opener[SCANBET_ODDS_IDX["total"]]
+                        curr_total = current[SCANBET_ODDS_IDX["total"]]
+                        if open_total and curr_total and open_total != curr_total:
+                            results.append({
+                                "game": game, "home": home, "away": away,
+                                "sport": sport_code, "league": league,
+                                "market": "TotalValue", "selection": "line",
+                                "opener_value": open_total, "current_value": curr_total,
+                                "n_snapshots": n_snaps, "source": "scanbet_graphql",
+                            })
+                    except Exception:
+                        pass
+
         # Sort by absolute drop magnitude
         results.sort(key=lambda x: abs(x["drop_pct"]), reverse=True)
 

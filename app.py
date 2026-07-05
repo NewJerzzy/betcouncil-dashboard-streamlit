@@ -16298,6 +16298,9 @@ with tabs[2]:
                 _tclr = _usb_tier_colors.get(_u["tier"], "#6a7a8a")
                 _lines = []
                 for _c in _u["clv_signals"][:3]:
+                    if _c.get("type") == "KEY_NUMBER":
+                        _lines.append(f"🎯 KEY NUMBER | {_c['market']} {_c['opener_value']}→{_c['current_value']} | {_c['note']}")
+                        continue
                     _bayes_str = f" | Bayes: {_c['bayesian_posterior']*100:.1f}%" if _c.get("bayesian_posterior") is not None else ""
                     _lines.append(f"📡 CLV {_c['drop_pct']:+.1f}% | {_c['selection']} ({_c['n_snapshots']} snaps){_bayes_str}")
                 for _s in _u["steam_signals"][:2]:

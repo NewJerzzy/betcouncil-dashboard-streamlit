@@ -65,6 +65,7 @@ TEAMRANKINGS_FILTERS = [
     "is_away_dog",
     "is_after_loss",
     "one_day_off",
+    "is_division",  # verified live: teamrankings.com/nfl/trend/ats_trends/is_division
 ]
 
 _SPORT_SLUG = {"NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl"}

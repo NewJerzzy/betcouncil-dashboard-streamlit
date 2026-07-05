@@ -24,6 +24,12 @@ from fetchers import fetch_scanbet_drops_from_gist, fetch_public_betting
 from team_canon import canon_game_key
 from book_quality import counterparty_quality, weight_signal_by_counterparty
 from bayesian_line_updater import bayesian_posterior
+
+try:
+    from nfl_key_numbers import spread_crossing_value, total_crossing_value
+except ImportError:
+    spread_crossing_value = None
+    total_crossing_value = None
 from movement_classifier import classify_event_movement
 from bet_decision_layer import recommend_timing, signal_type_multiplier
 
@@ -96,6 +102,45 @@ def build_unified_sharp_board(sport: str) -> list:
             steam_entry["type"] = "STEAM"
             ev["steam_signals"].append(steam_entry)
             ev["total_score"] += min(sig_score, 3)  # steam adds a bonus, capped
+
+    # ── NFL key-number-weighted spread/total line moves (verified frequencies) ──
+    if sport.upper() == "NFL" and spread_crossing_value is not None:
+        for row in scanbet_rows:
+            if row.get("sport", "").upper() != "NFL":
+                continue
+            if row.get("market") not in ("SpreadValue", "TotalValue"):
+                continue
+            gk = canon_game_key(row["away"], row["home"], sport)
+            ev = events[gk]
+            if not ev["game_label"]:
+                ev["game_label"] = row["game"]
+
+            try:
+                ov, cv = float(row["opener_value"]), float(row["current_value"])
+            except (TypeError, ValueError, KeyError):
+                continue
+
+            if row["market"] == "SpreadValue":
+                kn = spread_crossing_value(ov, cv)
+            else:
+                kn = total_crossing_value(ov, cv)
+
+            if not kn["key_numbers_crossed"]:
+                continue  # only surface moves that actually cross a key number
+
+            kn_score = min(kn["adjusted_move"] * 2, 10)
+            entry = {
+                "type": "KEY_NUMBER",
+                "market": row["market"],
+                "opener_value": ov,
+                "current_value": cv,
+                "key_numbers_crossed": kn["key_numbers_crossed"],
+                "note": kn["note"],
+                "score": round(kn_score, 2),
+            }
+            ev["clv_signals"].append(entry)
+            ev["total_score"] += kn_score
+
 
     # ── Action Network: RLM + sharp/public divergence (already correct) ──
     try:
