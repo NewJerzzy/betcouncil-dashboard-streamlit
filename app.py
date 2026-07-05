@@ -16207,6 +16207,36 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    if _sport2.upper() == "MLB":
+        try:
+            from mlb_starter_bullpen_split import team_starter_bullpen_split_by_name
+            _sb_signals = []
+            _sb_teams_checked = set()
+            for _g in (_games or [])[:15]:
+                for _team in (_g.get("home"), _g.get("away")):
+                    if not _team or _team in _sb_teams_checked:
+                        continue
+                    _sb_teams_checked.add(_team)
+                    _split = team_starter_bullpen_split_by_name(_team)
+                    if _split and _split.get("signal") != "NEUTRAL":
+                        _sb_signals.append(_split)
+        except Exception as _sb_err:
+            _sb_signals = []
+            print(f"[WARN] mlb_starter_bullpen_split: {_sb_err}")
+
+        if _sb_signals:
+            with st.expander(f"⚾ Starter vs Bullpen — {len(_sb_signals)} teams flagged", expanded=False):
+                _sb_colors = {"FADE_FULL_GAME": "#e04040", "BET_FULL_GAME": "#22c55e", "SLIGHT_LEAN": "#e8a020"}
+                for _s in _sb_signals[:15]:
+                    _clr = _sb_colors.get(_s["signal"], "#6a7a8a")
+                    st.markdown(
+                        f'<div style="border-left:4px solid {_clr};background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_s["team"]}</b> — Starter ERA {_s["starter_era"]} / Bullpen ERA {_s["bullpen_era"]} '
+                        f'(gap {_s["gap"]:+.2f}) — {_s["note"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+
     # ── Soccer Draw-Bias + NBA B2B Subtype (real data sources) ──────────
     if _sport2.upper() == "SOCCER":
         try:
