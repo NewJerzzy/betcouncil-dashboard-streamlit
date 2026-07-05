@@ -3542,7 +3542,7 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
     Generate a post-mortem analysis for a losing bet.
     Explains WHY it lost based on model signals, variance, and patterns.
     Returns: {verdict, reasons, clv_note, variance_note, signals_note,
-              pattern_note, recommendation, confidence}
+              pattern_note, recommendation, confidence, plain_english_summary}
     """
     from math import sqrt
 
@@ -3558,6 +3558,13 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
     clv     = record.get("clv_capture", {})
     outcome = record.get("outcome", "LOSS")
     notes   = record.get("notes", "")
+    matchup = record.get("matchup", "")
+
+    # Best-effort opponent extraction from "Player @ Team" / "Team A @ Team B"
+    opponent = ""
+    if matchup and "@" in matchup:
+        parts = [p.strip() for p in matchup.split("@")]
+        opponent = next((p for p in parts if player and player.lower() not in p.lower()), parts[-1] if parts else "")
 
     reasons      = []
     verdict      = ""
@@ -3614,19 +3621,41 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
         reasons.extend(signal_flags)
 
     # ── Pattern Analysis (vs historical losses) ──────────────────────────
+    # UPGRADED: was a flat "5+ similar bets, win_rate<45%" threshold with no
+    # rigor — couldn't tell a real recurring trend from small-sample noise.
+    # Now uses a z-score significance test (same technique used elsewhere in
+    # this repo, e.g. teamrankings_situational.py's _z_score) against the
+    # bet's OWN implied probability as the fair baseline, and reports sample
+    # size honestly rather than pretending 5 bets proves anything.
     pattern_note = ""
+    pattern_significant = False
+    similar_wr = None
+    similar_n = 0
     if all_history:
         similar = [h for h in all_history
                    if h.get("sport") == sport
                    and h.get("prop","").lower() == str(prop).lower()
                    and h.get("outcome") in ("WIN","LOSS")]
-        if len(similar) >= 5:
-            similar_wr = sum(1 for h in similar if h.get("outcome") == "WIN") / len(similar)
-            if similar_wr < 0.45:
-                pattern_note = f"⚠️ {player} {prop} hitting only {similar_wr:.0%} in your history ({len(similar)} bets) — consider reducing exposure"
-                reasons.append(f"Historical underperformance on {prop} for this player")
+        similar_n = len(similar)
+        if similar_n >= 5:
+            similar_wr = sum(1 for h in similar if h.get("outcome") == "WIN") / similar_n
+            expected = prob if prob > 0 else 0.5
+            z = (similar_wr - expected) / sqrt(max(expected * (1 - expected), 0.01) / similar_n)
+
+            if similar_n < 15:
+                pattern_note = (
+                    f"📎 {player} {prop} is {similar_wr:.0%} ({similar_n} bets) in your history — "
+                    f"too small a sample yet to call this a real trend. Keep tracking."
+                )
+                reasons.append(f"Early pattern signal on {prop} — not yet statistically significant ({similar_n} bets)")
+            elif z < -1.64:
+                pattern_significant = True
+                pattern_note = f"⚠️ {player} {prop} hitting only {similar_wr:.0%} in your history ({similar_n} bets) — statistically real underperformance, not just bad luck. Consider reducing exposure"
+                reasons.append(f"Statistically significant historical underperformance on {prop} for this player")
             elif similar_wr >= 0.60:
-                pattern_note = f"✅ Despite this loss, {player} {prop} hits {similar_wr:.0%} in your history — stay the course"
+                pattern_note = f"✅ Despite this loss, {player} {prop} hits {similar_wr:.0%} in your history ({similar_n} bets) — stay the course"
+            else:
+                pattern_note = f"📊 {player} {prop} sits at {similar_wr:.0%} ({similar_n} bets) — within normal range, no red flag"
 
     # ── Tier Assessment ──────────────────────────────────────────────────
     tier_note = ""
@@ -3640,7 +3669,10 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
             confidence = "MEDIUM"
 
     # ── Final Verdict ────────────────────────────────────────────────────
-    if clv_vs_novig and clv_vs_novig > 0.015:
+    if pattern_significant:
+        verdict = "REAL PATTERN — statistically significant underperformance"
+        confidence = "HIGH"
+    elif clv_vs_novig and clv_vs_novig > 0.015:
         verdict = "GOOD PROCESS — variance loss"
         confidence = "HIGH"
     elif edge > 0.05 and prob > 0.58:
@@ -3657,14 +3689,59 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
         confidence = "LOW"
 
     # ── Recommendation ────────────────────────────────────────────────────
-    if "GOOD PROCESS" in verdict:
+    if "REAL PATTERN" in verdict:
+        recommendation = f"Reduce exposure on {prop} props for this player — this isn't bad luck, the data shows a real recurring gap."
+    elif "GOOD PROCESS" in verdict:
         recommendation = "Continue betting this type. Beating CLV is the long-term edge — losses at 60% probability plays are expected 40% of the time."
     elif "LEAN" in tier:
         recommendation = "Consider skipping LEAN tier plays or reducing size further. Focus bankroll on ELITE/SOVEREIGN."
-    elif pattern_note and "underperformance" in pattern_note.lower():
-        recommendation = f"Reduce exposure on {prop} props for this player until pattern reverses."
     else:
         recommendation = "No action needed — maintain strategy and log more bets to improve calibration."
+
+    # ── Plain-English Summary (for non-technical users) ──────────────────
+    # One or two sentences, written the way you'd explain it to a friend —
+    # no jargon, no percentages unless they're the whole point, names the
+    # player/team and opponent when available.
+    subject = player if player else (matchup.split("@")[0].strip() if matchup else sport or "This pick")
+    line_desc = f"{side.lower()} {line} {prop}".strip() if prop else "this bet"
+
+    if pattern_significant:
+        plain_english_summary = (
+            f"{subject} has now missed the {line_desc} mark often enough that it's not just bad luck — "
+            f"this looks like a real, repeating pattern"
+            + (f" against {opponent}" if opponent else "")
+            + f", worth being more cautious about going forward."
+        )
+    elif clv_note.startswith("✅"):
+        plain_english_summary = (
+            f"{subject} lost this one, but the odds actually moved in our favor after we bet — "
+            f"that means the pick itself was sound, this was just an unlucky result."
+        )
+    elif sa.get("back_to_back"):
+        plain_english_summary = (
+            f"{subject} was playing on the second night of a back-to-back, which we already account for as a risk — "
+            f"this time that fatigue risk actually showed up in the result."
+        )
+    elif sa.get("blowout_risk"):
+        plain_english_summary = (
+            f"The game got out of hand and turned into a blowout, which cuts into a player's normal workload — "
+            f"exactly the kind of game-flow risk that can sink an otherwise reasonable pick."
+        )
+    elif similar_wr is not None and similar_n < 15:
+        plain_english_summary = (
+            f"{subject} came up short on {line_desc}, but we don't have enough history with this exact bet yet "
+            f"to know if it's a fluke or the start of a trend — worth watching, not worth panicking over."
+        )
+    elif prob < 0.53:
+        plain_english_summary = (
+            f"This was a close-to-even-money bet to begin with, not a strong edge — "
+            f"losing it isn't a red flag, it's just what happens with thin-margin picks sometimes."
+        )
+    else:
+        plain_english_summary = (
+            f"{subject} missed on {line_desc} this time. Nothing in the surrounding data points to a "
+            f"specific cause — this looks like ordinary bad luck rather than something we got wrong."
+        )
 
     return {
         "verdict":        verdict,
@@ -3676,6 +3753,7 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
         "tier_note":      tier_note,
         "reasons":        reasons,
         "recommendation": recommendation,
+        "plain_english_summary": plain_english_summary,
         "player":         player,
         "prop":           prop,
         "line":           line,

@@ -17964,6 +17964,7 @@ with tabs[4]:
 
             # Verdict header
             _pm_colors = {
+                "REAL PATTERN":      "#e04040",
                 "GOOD PROCESS":      "#22c55e",
                 "LIKELY VARIANCE":   "#0ea5a0",
                 "MARGINAL BET":      "#f59e0b",
@@ -17979,6 +17980,7 @@ with tabs[4]:
                 f'<span style="font-size:18px;font-weight:700;color:{_pm_color}">⚖️ {_pm["verdict"]}</span>'
                 f'<span style="font-size:12px;color:{_conf_color};background:{_conf_color}22;padding:3px 10px;border-radius:10px">Confidence: {_pm["confidence"]}</span>'
                 f'</div>'
+                f'<div style="font-size:15px;color:#e2e8f0;line-height:1.5;margin-bottom:10px;">{_pm.get("plain_english_summary","")}</div>'
                 f'<div style="color:#8899aa;font-size:12px">{_sel_bet.get("player","")} {_sel_bet.get("prop","")} {_sel_bet.get("line","")} {_sel_bet.get("side","")} | {_sel_bet.get("sport","")} | {_sel_bet.get("tier","")} | Edge: {_sel_bet.get("edge",0):.1%} | Prob: {_sel_bet.get("prob",0):.0%}</div>'
                 f'</div>',
                 unsafe_allow_html=True
@@ -18108,6 +18110,7 @@ with tabs[4]:
         for pattern in _lp:
             st.markdown(f"- {pattern}")
         st.caption("These patterns auto-update every time you load the board. Weight optimizer will incorporate them at 50 bets.")
+
     # ── NFL Prop ROI by Position ──────────────────────────────
     if st.session_state.get("last_sport") == "NFL" or any(h.get("sport") == "NFL" for h in st.session_state.get("history", [])):
         st.markdown("---")
