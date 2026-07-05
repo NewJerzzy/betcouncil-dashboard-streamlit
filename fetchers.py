@@ -15239,6 +15239,90 @@ def _thescore_odds_to_american(fmt):
     return fmt
 
 
+def _parse_thescore_golf_outrights(raw_resp: dict, market_label: str, sport: str = "Golf") -> list:
+    """
+    Parser for theScore Bet golf outright/field markets (Tournament Winner,
+    Top 10 Finish, etc.) — CONFIRMED against real captured data (John Deere
+    Classic, 2026-07-05).
+
+    Golf uses a fundamentally different query and shape than team sports:
+      operationName : CompetitionDrawerContent (same query as prop drawers
+                       like home-runs/player-awards — NOT
+                       CompetitionPageSectionLinesTabNode)
+      Real shape: data.competitionDrawer.drawerChildren[].marketplaceShelfChildren[]
+                  each has .market: {"name", "type": "LIST", "selections": [
+                      {"name": {"cleanName": <player>}, "odds": {"formattedOdds"},
+                       "participant": {"fullName", "resourceUri": "/golf/players/{id}"}}
+                  ]}
+      No home/away, no spread/total — just one market with the whole field.
+
+    competitionSlug and groupId are PER-TOURNAMENT (change weekly), unlike
+    team sports' stable season-long sectionId — the harvester config for golf
+    needs the current week's tournament slug/groupId, not a fixed ID.
+
+    Returns list of {Player, Market, Odds, Book, Sport, source} — different
+    shape than _parse_thescore_game_lines since there's no matchup structure.
+    """
+    results = []
+    try:
+        if isinstance(raw_resp, dict) and "data" in raw_resp:
+            drawer = (raw_resp["data"] or {}).get("competitionDrawer") or {}
+        elif isinstance(raw_resp, dict) and "competitionDrawer" in raw_resp:
+            drawer = raw_resp["competitionDrawer"] or {}
+        else:
+            drawer = raw_resp if isinstance(raw_resp, dict) else {}
+
+        if not drawer:
+            return []
+
+        for child in drawer.get("drawerChildren") or []:
+            for shelf_item in child.get("marketplaceShelfChildren") or []:
+                mkt = shelf_item.get("market") or {}
+                mkt_name = mkt.get("name", market_label)
+                for sel in mkt.get("selections") or []:
+                    participant = sel.get("participant") or {}
+                    player = participant.get("fullName") or (sel.get("name") or {}).get("cleanName")
+                    odds_val = _thescore_odds_to_american((sel.get("odds") or {}).get("formattedOdds"))
+                    if not player:
+                        continue
+                    results.append({
+                        "Player": player,
+                        "Market": mkt_name,
+                        "Odds": odds_val,
+                        "Book": "theScore Bet",
+                        "Sport": sport,
+                        "source": "thescore_gist_harvester",
+                    })
+    except Exception as e:
+        print(f"[WARN] _parse_thescore_golf_outrights: {e}")
+    return results
+
+
+def fetch_thescore_golf_from_gist() -> list:
+    """
+    PRIMARY source for theScore Bet golf outright markets (Tournament Winner,
+    Top 10 Finish, etc.). Separate from fetch_thescore_from_gist() since golf
+    uses a different query, different response shape, and a different
+    (per-tournament, not per-sport) Gist file.
+
+    Reads betcouncil_thescore_golf.json — harvester should push
+    {"captured_at": ..., "tournament": <slug>, "markets": {
+        "tournament_winner": <raw CompetitionDrawerContent response>,
+        "top_10_finish": <raw response>, ...
+    }}
+    """
+    data = _read_gist_file("betcouncil_thescore_golf.json", cache_minutes=15)
+    if not data or not _is_fresh(data, max_age_minutes=60):
+        return []
+
+    results = []
+    markets = data.get("markets", {})
+    for market_key, raw_resp in markets.items():
+        label = market_key.replace("_", " ").title()
+        results.extend(_parse_thescore_golf_outrights(raw_resp, label))
+    return results
+
+
 def _parse_thescore_game_lines(raw_resp: dict, sport: str) -> list:
     """
     Parse theScore Bet game-line data into BetCouncil format.
