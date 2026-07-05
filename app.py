@@ -6011,6 +6011,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             "caesars_game_lines":    st.session_state.get("caesars_game_lines", []),
             "sportsline_game_lines": st.session_state.get("sportsline_game_lines", []),
             "sbr_game_lines":        st.session_state.get("sbr_game_lines", []),
+            "thescore_game_lines":   st.session_state.get("thescore_game_lines", []),
         })
     except Exception:
         _gl_consensus = {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
@@ -10473,6 +10474,7 @@ def load_sport_data(sport):
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_sportsline_lines(): return fetch_sportsline_game_lines(sport)
     def _pf_sbr_lines():        return fetch_sbr_game_lines(sport)
+    def _pf_thescore_lines():   return fetch_thescore_game_lines(sport)
     def _pf_fanduel_lines():
         _an = fetch_fanduel_lines(sport)
         if _an: return _an
@@ -10705,7 +10707,7 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
-        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines,
+        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
         _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
@@ -10721,7 +10723,7 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
-     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw,
+     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
      signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
@@ -10808,6 +10810,7 @@ def load_sport_data(sport):
     st.session_state["bookmaker_game_lines"]  = bookmaker_lines_raw or []
     st.session_state["sportsline_game_lines"] = sportsline_lines_raw or []
     st.session_state["sbr_game_lines"]        = sbr_lines_raw or []
+    st.session_state["thescore_game_lines"]   = thescore_lines_raw or []
     st.session_state["fanduel_props_sa"]    = fd_props_sa_raw     or []
     # Override with browser harvester if fresher
     try:
@@ -20601,6 +20604,15 @@ with tabs[8]:
             if "Total" in _bmg.get("market","") or "total" in _bmg.get("market","").lower():
                 _ls_add([{"Player": _bmg.get("game",""), "Prop": "Total",
                           "Line": _bmg.get("odds",""), "source": "BetMGM"}], "BetMGM")
+        for _ts in (st.session_state.get("thescore_game_lines", []) or []):
+            _ts_market = _ts.get("market", _ts.get("Prop", ""))
+            _ts_game   = _ts.get("game",   _ts.get("Matchup", ""))
+            if "Total" in _ts_market or "total" in _ts_market.lower():
+                _ls_add([{"Player": _ts_game, "Prop": "Total",
+                          "Line": _ts.get("Total", _ts.get("odds", "")),
+                          "source": "theScore Bet"}], "theScore Bet")
+            elif any(k in _ts_market.lower() for k in ("moneyline","money line","spread","run line")):
+                _ls_add([{**_ts, "source": "theScore Bet"}], "theScore Bet")
         _ls_add(st.session_state.get("dk_pick6_props", []), "DK Pick6")
         _pa_all = st.session_state.get("parlayapi_props_cache", [])
         _ls_add([p for p in _pa_all if p.get("source","").lower() in ("parlayplay","parlay play")], "ParlayPlay")
