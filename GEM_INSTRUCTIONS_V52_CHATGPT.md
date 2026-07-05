@@ -105,6 +105,7 @@ Circuit breakers: 3 failures→skip 60s. Kill switch: ENABLE_RECOMMENDATIONS=fal
 [TIER] Player/Team — Market (OVER/UNDER/ML/SPREAD)
 [TYPE X — LABEL] Edge: X% | Calib Prob: X% | Decay Edge: X% | Kelly: X% ($Y)
 [ADAPTIVE KELLY: X%] [COV HAIRCUT X%] [MC-BLEND if applicable]
+Pinnacle: [X% if game-line / N/A-PROPS if prop] | Consensus: X% (multi-book, NOT Pinnacle — always distinct label)
 Signals: [active signals]
 Analysis: 2-3 sentences, top 3 signals
 Verdict: PLAY / FADE / PASS
