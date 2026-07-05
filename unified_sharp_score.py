@@ -35,6 +35,11 @@ try:
     from soccer_draw_bias import detect_draw_value
 except ImportError:
     detect_draw_value = None
+
+try:
+    from fangraphs_scrapers import team_starter_bullpen_gap
+except ImportError:
+    team_starter_bullpen_gap = None
 from movement_classifier import classify_event_movement
 from bet_decision_layer import recommend_timing, signal_type_multiplier
 
@@ -220,4 +225,14 @@ def build_unified_sharp_board(sport: str) -> list:
         board.append(entry)
 
     board.sort(key=lambda x: x["total_score"], reverse=True)
+
+    # ── MLB starter/bullpen enrichment (FanGraphs source, per user request) ──
+    if sport.upper() == "MLB" and team_starter_bullpen_gap is not None:
+        for entry in board:
+            label = entry.get("game_label", "")
+            for team_abbr in [t.strip() for t in label.replace("@", " ").split()]:
+                gap_data = team_starter_bullpen_gap(team_abbr)
+                if gap_data and gap_data.get("signal") != "NEUTRAL":
+                    entry.setdefault("starter_bullpen_signals", []).append(gap_data)
+
     return board
