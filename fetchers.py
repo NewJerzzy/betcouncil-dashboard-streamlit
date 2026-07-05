@@ -15131,12 +15131,82 @@ def fetch_parlaysavant_from_gist(sport: str) -> tuple:
     return {}, "unavailable"
 
 
+def _frac_to_american(frac_str) -> int:
+    """Convert bet365's fractional odds string (e.g. '20/23') to American odds."""
+    try:
+        num, den = str(frac_str).split("/")
+        decimal = 1 + (float(num) / float(den))
+    except (ValueError, ZeroDivisionError):
+        return None
+    if decimal >= 2.0:
+        return round((decimal - 1) * 100)
+    return round(-100 / (decimal - 1))
+
+
 def fetch_bet365_from_gist(sport: str) -> tuple:
-    """PRIMARY: Bet365 lines from browser harvester. SECONDARY: server scraper."""
-    data = _read_gist_file(f"betcouncil_bet365_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
+    """
+    PRIMARY: Bet365 lines from browser harvester. SECONDARY: server scraper.
+
+    Real confirmed filename (verified against live Gist content, 2026-07-05):
+    'betcouncil_bet365_games.json' — NOT 'betcouncil_bet365_{sport}.json' as
+    previously assumed. The harvester writes ALL sports to one combined file
+    with no per-sport key or per-game sport tag, so this function returns
+    parsed results for every game in the file; callers should filter by
+    team-name match against the sport board they're viewing (matches the
+    existing merge-by-name pattern already used elsewhere in Line Shop).
+
+    Real confirmed schema: {"captured_at":..., "game_count":..., "data": [
+      {"matchup", "home_team", "away_team", "kickoff", "selections": [
+        {"label": <team name or "+X.Y"/"-X.Y" or "unknown">,
+         "odds_fractional_static": "20/23", "handicap": null}, ...]}]}
+
+    KNOWN LIMITATION: the two "unknown"-labeled selections per game are
+    Over/Under, but the harvester does not currently capture the actual
+    total line number (label is literally "unknown", handicap is null) —
+    only moneyline and spread are recoverable from this data as-is. This
+    needs a harvester JS fix to capture the real total value, not a parser
+    fix (there is no total number anywhere in the payload to parse).
+    """
+    data = _read_gist_file("betcouncil_bet365_games.json", cache_minutes=5)
+    if data and isinstance(data.get("data"), list) and data["data"]:
+        results = []
+        for game in data["data"]:
+            home, away = game.get("home_team"), game.get("away_team")
+            matchup = game.get("matchup") or f"{away} @ {home}"
+            selections = game.get("selections", [])
+            if len(selections) < 4:
+                continue
+
+            # First two selections are always [home ML, away ML] per confirmed schema
+            home_ml_odds = _frac_to_american(selections[0].get("odds_fractional_static"))
+            away_ml_odds = _frac_to_american(selections[1].get("odds_fractional_static"))
+            if home_ml_odds is not None:
+                results.append({"game": matchup, "home": home, "away": away, "market": "Moneyline", "selection": home, "odds": home_ml_odds, "book": "Bet365", "sport": sport, "source": "bet365_harvester"})
+            if away_ml_odds is not None:
+                results.append({"game": matchup, "home": home, "away": away, "market": "Moneyline", "selection": away, "odds": away_ml_odds, "book": "Bet365", "sport": sport, "source": "bet365_harvester"})
+
+            # Spread pair (selections[2], selections[3]): favorite always gets
+            # the minus number (standard convention) — determined by which
+            # team has the more-favored (higher implied prob / less positive)
+            # moneyline, NOT by fixed position, since the +/- order flips
+            # between games in the real captured data.
+            spread_a, spread_b = selections[2], selections[3]
+            label_a, label_b = spread_a.get("label", ""), spread_b.get("label", "")
+            odds_a = _frac_to_american(spread_a.get("odds_fractional_static"))
+            odds_b = _frac_to_american(spread_b.get("odds_fractional_static"))
+            if home_ml_odds is not None and away_ml_odds is not None and odds_a is not None and odds_b is not None:
+                home_is_favorite = home_ml_odds < away_ml_odds  # more negative = bigger favorite
+                minus_label = label_a if label_a.startswith("-") else label_b
+                plus_label = label_b if label_a.startswith("-") else label_a
+                minus_odds = odds_a if label_a.startswith("-") else odds_b
+                plus_odds = odds_b if label_a.startswith("-") else odds_a
+                fav_team, dog_team = (home, away) if home_is_favorite else (away, home)
+                results.append({"game": matchup, "home": home, "away": away, "market": "Spread", "selection": f"{fav_team} {minus_label}", "odds": minus_odds, "book": "Bet365", "sport": sport, "source": "bet365_harvester"})
+                results.append({"game": matchup, "home": home, "away": away, "market": "Spread", "selection": f"{dog_team} {plus_label}", "odds": plus_odds, "book": "Bet365", "sport": sport, "source": "bet365_harvester"})
+
+        if results:
+            return results, "browser_harvester"
+
     try:
         from fetchers import fetch_bet365_game_lines as _f
         s = _f(sport)
