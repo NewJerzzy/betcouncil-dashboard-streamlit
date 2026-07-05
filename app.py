@@ -16248,6 +16248,37 @@ with tabs[2]:
                         unsafe_allow_html=True,
                     )
 
+        try:
+            from monthly_park_factors import compute_monthly_park_factors
+            import datetime as _dt
+            _pf_month = _dt.date.today().month
+            _pf_data = compute_monthly_park_factors()
+            _pf_rows = []
+            for _g in (_games or [])[:15]:
+                _home_t = _g.get("home")
+                if not _home_t:
+                    continue
+                for _venue, _months in _pf_data.items():
+                    if _home_t.lower() in _venue.lower() or _venue.lower() in _home_t.lower():
+                        _factor = _months.get(_pf_month)
+                        if _factor is not None:
+                            _pf_rows.append({"team": _home_t, "venue": _venue, "factor": _factor})
+                        break
+        except Exception as _pf_err:
+            _pf_rows = []
+            print(f"[WARN] monthly_park_factors: {_pf_err}")
+
+        if _pf_rows:
+            with st.expander(f"🏟️ Monthly Park Factors — computed from real {_dt.date.today().year} game data", expanded=False):
+                for _p in _pf_rows:
+                    _lean = "hitter-friendly" if _p["factor"] > 1.03 else "pitcher-friendly" if _p["factor"] < 0.97 else "neutral"
+                    st.markdown(
+                        f'<div style="border-left:4px solid #a855f7;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_p["venue"]}</b> ({_p["team"]}) — factor {_p["factor"]} this month, {_lean}</div>',
+                        unsafe_allow_html=True,
+                    )
+
     # ── Soccer Draw-Bias + NBA B2B Subtype (real data sources) ──────────
     if _sport2.upper() == "SOCCER":
         try:
