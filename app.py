@@ -16548,6 +16548,20 @@ with tabs[2]:
                     unsafe_allow_html=True,
                 )
 
+    # ── Module Status Panel — single summary of everything above ────────
+    try:
+        from diagnostics_panel import render_diagnostics
+        _diag_candidates = [
+            "_usb", "_arbs", "_tr_signals", "_b2b_signals", "_rest_signals",
+            "_pace_signals", "_sb_signals", "_pf_rows", "_draw_signals",
+            "_ufc_data", "_tennis_rows",
+        ]
+        _local_scope = locals()
+        _diag_vars = {name: _local_scope[name] for name in _diag_candidates if name in _local_scope}
+        render_diagnostics(_sport2, _diag_vars)
+    except Exception as _diag_err:
+        print(f"[WARN] diagnostics_panel: {_diag_err}")
+
     # Slip grouping controls
     _slip_ctrl1, _slip_ctrl2, _slip_ctrl3 = st.columns([2,2,3])
     with _slip_ctrl1:
