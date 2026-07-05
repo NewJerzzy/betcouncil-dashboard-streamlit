@@ -16688,9 +16688,18 @@ with tabs[3]:
             }
 
             with st.spinner("Fetching ESPN box scores..."):
-                # Group locks by sport
+                # Group locks by sport — player-prop locks only. Game-type locks
+                # (spread/total/ML) have their own dedicated matchup-based
+                # resolver further below and must never enter this loop: their
+                # "line" field isn't guaranteed to be a plain float (e.g. some
+                # spread/alt-line sources store team-prefixed strings), and a
+                # single bad conversion here previously aborted resolution for
+                # every other lock sharing that sport, mislabeling them all
+                # with the same generic error.
                 sport_locks = {}
                 for lock in st.session_state.locks:
+                    if lock.get("bet_type") == "game":
+                        continue
                     s = lock.get("sport","NBA")
                     sport_locks.setdefault(s, []).append(lock)
 
@@ -16773,58 +16782,63 @@ with tabs[3]:
                             except (ValueError, TypeError):
                                 continue
 
-                        # Now resolve locks
+                        # Now resolve locks. Each lock is handled independently
+                        # so a bad value on one (e.g. an unparsable line) only
+                        # skips that lock, never the rest of the batch.
                         for lock in locks:
-                            player = lock.get("player","")
-                            prop = lock.get("prop","").lower()
-                            line = float(lock.get("line",0) or 0)
-                            side = lock.get("side","OVER")
-                            p_norm = normalize_name(player)
+                            try:
+                                player = lock.get("player","")
+                                prop = lock.get("prop","").lower()
+                                line = float(lock.get("line",0) or 0)
+                                side = lock.get("side","OVER")
+                                p_norm = normalize_name(player)
 
-                            if p_norm not in player_stats:
-                                skipped.append(f"{player} (not found in box score)")
-                                continue
-
-                            # Find stat key
-                            stat_key = None
-                            for k, v in prop_stat_map.items():
-                                if k in prop:
-                                    stat_key = v
-                                    break
-
-                            pstats = player_stats[p_norm]
-
-                            if stat_key == "PRA":
-                                actual = pstats.get("PTS",0) + pstats.get("REB",0) + pstats.get("AST",0)
-                            elif stat_key and stat_key in pstats:
-                                actual = pstats[stat_key]
-                            else:
-                                # Try fuzzy match
-                                actual = None
-                                for k, v in pstats.items():
-                                    if stat_key and stat_key[:2] in k:
-                                        actual = v
-                                        break
-                                if actual is None:
-                                    skipped.append(f"{player} (stat '{prop}' not found)")
+                                if p_norm not in player_stats:
+                                    skipped.append(f"{player} (not found in box score)")
                                     continue
 
-                            outcome = "WIN" if (side=="OVER" and actual > line) or (side=="UNDER" and actual < line) else "LOSS"
-                            icon = "✅" if outcome == "WIN" else "❌"
-                            st.markdown(f"{icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
+                                # Find stat key
+                                stat_key = None
+                                for k, v in prop_stat_map.items():
+                                    if k in prop:
+                                        stat_key = v
+                                        break
 
-                            log_manual_bet(
-                                player, lock.get("prop",""), line, side, sport, outcome,
-                                float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
-                                lock.get("timestamp","")[:10],
-                                tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
-                            )
-                            if lock in st.session_state.locks:
-                                st.session_state.locks.remove(lock)
-                            resolved += 1
+                                pstats = player_stats[p_norm]
+
+                                if stat_key == "PRA":
+                                    actual = pstats.get("PTS",0) + pstats.get("REB",0) + pstats.get("AST",0)
+                                elif stat_key and stat_key in pstats:
+                                    actual = pstats[stat_key]
+                                else:
+                                    # Try fuzzy match
+                                    actual = None
+                                    for k, v in pstats.items():
+                                        if stat_key and stat_key[:2] in k:
+                                            actual = v
+                                            break
+                                    if actual is None:
+                                        skipped.append(f"{player} (stat '{prop}' not found)")
+                                        continue
+
+                                outcome = "WIN" if (side=="OVER" and actual > line) or (side=="UNDER" and actual < line) else "LOSS"
+                                icon = "✅" if outcome == "WIN" else "❌"
+                                st.markdown(f"{icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
+
+                                log_manual_bet(
+                                    player, lock.get("prop",""), line, side, sport, outcome,
+                                    float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
+                                    lock.get("timestamp","")[:10],
+                                    tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                                )
+                                if lock in st.session_state.locks:
+                                    st.session_state.locks.remove(lock)
+                                resolved += 1
+                            except (ValueError, TypeError, ZeroDivisionError) as e:
+                                skipped.append(f"{lock.get('player','')} (error: {str(e)[:40]})")
 
                     except (ValueError, TypeError, ZeroDivisionError) as e:
-                        skipped.extend([f"{l.get('player','')} (error: {str(e)[:40]})" for l in locks])
+                        skipped.extend([f"{l.get('player','')} (scoreboard/box-score error: {str(e)[:40]})" for l in locks])
 
             if resolved > 0:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
