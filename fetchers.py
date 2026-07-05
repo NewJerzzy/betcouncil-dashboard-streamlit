@@ -15355,6 +15355,11 @@ def fetch_thescore_from_gist(sport: str) -> tuple:
     "MarketplaceShelf" entry, NOT [0] which is the Featured Parlays carousel)
     contains marketplaceShelfChildren — one GridMarketCard per real game.
 
+    UPDATED — harvester now pushes multiple sports in one file, keyed by
+    sport: {"captured_at": ..., "data": {"MLB": {...}, "NFL": {...}, ...}}.
+    This function selects the sub-payload for the requested sport before
+    handing it to the parser (which still expects a single GraphQL envelope).
+
     WHY Gist-only (not direct API):
       Direct server calls return HTTP 403 UNAUTHORIZED — the query is
       geo/session-gated. A real browser session in a licensed US state is
@@ -15364,10 +15369,13 @@ def fetch_thescore_from_gist(sport: str) -> tuple:
     """
     data = _read_gist_file("betcouncil_thescore_games.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=28):
-        results = _parse_thescore_game_lines(data, sport)
-        if results:
-            print(f"[theScore Bet] {len(results)} game-line records from Gist harvester")
-            return results, "gist_harvester"
+        by_sport = data.get("data", {})
+        sport_payload = by_sport.get(sport.upper()) if isinstance(by_sport, dict) else None
+        if sport_payload:
+            results = _parse_thescore_game_lines(sport_payload, sport)
+            if results:
+                print(f"[theScore Bet] {len(results)} game-line records from Gist harvester")
+                return results, "gist_harvester"
     return [], "unavailable"
 
 
