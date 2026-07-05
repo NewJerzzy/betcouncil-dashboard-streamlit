@@ -3620,6 +3620,34 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
         signals_note = " | ".join(signal_flags)
         reasons.extend(signal_flags)
 
+    # ── Unmodeled/Under-weighted Factor Check ─────────────────────────────
+    # Uses raw numeric context (defense_strength, weather_severity,
+    # blowout_severity, days_rest_actual) that's now preserved at bet-log
+    # time — NOT reconstructed after the fact, since real-time conditions
+    # from a past game usually can't be re-fetched later. Older bets logged
+    # before this field existed simply won't have these keys — handled
+    # gracefully (no crash, just no extra detail for those).
+    unmodeled_note = ""
+    unmodeled_flags = []
+    defense_strength = sa.get("defense_strength")
+    weather_severity = sa.get("weather_severity")
+    blowout_severity = sa.get("blowout_severity")
+    days_rest_actual = sa.get("days_rest_actual")
+
+    if defense_strength is not None and defense_strength <= -0.4:
+        unmodeled_flags.append(f"faced a notably tough defensive matchup (signal {defense_strength:+.2f}) — the opposing defense specifically worked against this pick")
+    if weather_severity:
+        direction = "worked against" if (side == "OVER" and weather_severity < 0) or (side == "UNDER" and weather_severity > 0) else "was in play but not clearly against"
+        unmodeled_flags.append(f"weather conditions {direction} the total ({weather_severity:+.2f} adjustment)")
+    if blowout_severity and blowout_severity <= -0.3:
+        unmodeled_flags.append(f"the game had real blowout risk baked in ({blowout_severity:+.2f}) — garbage time likely cut into usage")
+    if days_rest_actual is not None and days_rest_actual >= 4:
+        unmodeled_flags.append(f"the player had {days_rest_actual} days of rest — occasionally shows up as rust rather than a benefit, worth a second look if this repeats")
+
+    if unmodeled_flags:
+        unmodeled_note = "; ".join(unmodeled_flags)
+        reasons.append(f"Contributing factor(s) beyond the base pick: {unmodeled_note}")
+
     # ── Pattern Analysis (vs historical losses) ──────────────────────────
     # UPGRADED: was a flat "5+ similar bets, win_rate<45%" threshold with no
     # rigor — couldn't tell a real recurring trend from small-sample noise.
@@ -3711,6 +3739,11 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
             f"this looks like a real, repeating pattern"
             + (f" against {opponent}" if opponent else "")
             + f", worth being more cautious about going forward."
+        )
+    elif unmodeled_flags:
+        plain_english_summary = (
+            f"{subject} missed on {line_desc} — looking closer, {unmodeled_flags[0]}. "
+            f"That's a real contributing factor, not just an unlucky bounce."
         )
     elif clv_note.startswith("✅"):
         plain_english_summary = (

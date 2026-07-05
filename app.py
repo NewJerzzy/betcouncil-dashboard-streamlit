@@ -13071,7 +13071,14 @@ def load_sport_data(sport):
         wager_3pick = kelly_unit_prizepicks(best_prob, st.session_state.get("bankroll", DEFAULT_BANKROLL), 3)
         season_stat = PLAYER_AVERAGES.get(sport, {}).get(player, {}).get(stat_norm, avg)
         recency_flag, trend = get_recency_context(player, stat_norm, season_stat, avg, sport)
-        signals_active = {"base_positive": best_signals.get("base", 0) > 0, "defense_positive": best_signals.get("defense", 0) > 0, "location_home": is_home, "back_to_back": days_rest == 0, "sharp_flag": bool(sharp_flag), "weather_active": weather_adj != 0, "blowout_risk": blowout_adj < 0, "usage_boost": usage_boost > 0, "h2h_positive": h2h_adj > 0, "h2h_negative": h2h_adj < 0}
+        signals_active = {"base_positive": best_signals.get("base", 0) > 0, "defense_positive": best_signals.get("defense", 0) > 0, "location_home": is_home, "back_to_back": days_rest == 0, "sharp_flag": bool(sharp_flag), "weather_active": weather_adj != 0, "blowout_risk": blowout_adj < 0, "usage_boost": usage_boost > 0, "h2h_positive": h2h_adj > 0, "h2h_negative": h2h_adj < 0,
+                          # Raw numeric context, preserved so post-mortem can explain
+                          # MAGNITUDE and DIRECTION, not just "a factor was active" —
+                          # these were already computed above, just weren't being kept.
+                          "defense_strength": round(best_signals.get("defense", 0), 3),
+                          "weather_severity": round(weather_adj, 3) if weather_adj else 0,
+                          "blowout_severity": round(blowout_adj, 3) if blowout_adj else 0,
+                          "days_rest_actual": days_rest}
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
