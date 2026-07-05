@@ -11716,8 +11716,16 @@ def fetch_fanatics_game_lines(sport: str) -> list:
 
 
 def fetch_thescore_game_lines(sport: str) -> list:
-    """theScore Bet game lines via Kambi (offering_id='thescore'). Cached 60 min."""
-    return _fetch_kambi_game_lines("thescore", sport, "theScore")
+    """
+    theScore Bet game lines.
+
+    PRIMARY: fetch_thescore_from_gist — browser harvester captures the
+    CompetitionDrawerContent GraphQL response and pushes to Gist.
+    SECONDARY: none — Kambi (offering_id='thescore') returned HTTP 410 Gone
+    after theScore's Dec 2025 rebrand from ESPN Bet.
+    """
+    props, _src = fetch_thescore_from_gist(sport)
+    return props
 
 def fetch_sharpapi_lines(sport: str) -> list:
     """
@@ -15214,6 +15222,178 @@ def fetch_bet365_from_gist(sport: str) -> tuple:
     except Exception: pass
     return {}, "unavailable"
 
+
+
+
+def _parse_thescore_game_lines(raw_resp: dict, sport: str) -> list:
+    """
+    Parse theScore Bet CompetitionDrawerContent GraphQL response into BetCouncil
+    game-line format.
+
+    Confirmed infrastructure (live DevTools, 2026-07-05):
+      operationName : CompetitionDrawerContent
+      sha256Hash    : dfd9f184218929ba9b8dac32c106c5635fa195203d6c1e2dd5b4aee62da81c74
+      groupId       : 844647ef-2145-47e4-a568-d4c27c82f752  (game-lines drawer)
+      Gist target   : betcouncil_thescore_games.json
+
+    Odds: formattedOdds carries pre-formatted American odds ("+315") — use directly,
+    no fractional conversion needed (unlike Bet365).
+
+    Handles two harvester push shapes:
+      (a) Full GQL envelope: {"data": {"competitionDrawer": {...}}}
+      (b) Unwrapped:         {"competitionDrawer": {...}} or bare drawer dict
+
+    Output matches BetCouncil game-lines shape:
+      {Matchup, Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+       Total, OverOdds, UnderOdds, Book, Sport, source}
+    """
+    results = []
+    try:
+        # Unwrap envelope
+        if isinstance(raw_resp, dict) and "data" in raw_resp:
+            drawer = (raw_resp["data"] or {}).get("competitionDrawer") or {}
+        elif isinstance(raw_resp, dict) and "competitionDrawer" in raw_resp:
+            drawer = raw_resp["competitionDrawer"] or {}
+        else:
+            drawer = raw_resp if isinstance(raw_resp, dict) else {}
+
+        if not drawer:
+            return []
+
+        # Walk sections → events (or top-level events)
+        sections = drawer.get("sections") or drawer.get("groups") or [drawer]
+        for section in (sections if isinstance(sections, list) else []):
+            events = section.get("events") or section.get("fixtures") or []
+            for ev in (events if isinstance(events, list) else []):
+                # Extract team names
+                home_obj = ev.get("homeTeam") or ev.get("home") or {}
+                away_obj = ev.get("awayTeam") or ev.get("away") or {}
+                home = (home_obj.get("name") or home_obj.get("shortName", "")
+                        if isinstance(home_obj, dict) else str(home_obj))
+                away = (away_obj.get("name") or away_obj.get("shortName", "")
+                        if isinstance(away_obj, dict) else str(away_obj))
+                # Fallback: parse event name string
+                if not home or not away:
+                    ev_name = ev.get("name") or ev.get("title", "")
+                    for sep in (" @ ", " vs ", " v ", " - "):
+                        if sep in ev_name:
+                            parts = ev_name.split(sep, 1)
+                            away, home = parts[0].strip(), parts[1].strip()
+                            break
+                if not home or not away:
+                    continue
+
+                matchup    = f"{away} @ {home}"
+                home_ml    = away_ml = "N/A"
+                spread     = spread_odds = "N/A"
+                total      = over_odds  = under_odds = "N/A"
+
+                for mkt in (ev.get("markets") or ev.get("betOffers") or []):
+                    if not isinstance(mkt, dict):
+                        continue
+                    mkt_type_obj = mkt.get("marketType") or {}
+                    mkt_type = (
+                        (mkt_type_obj.get("name") or mkt_type_obj.get("key", "")
+                         if isinstance(mkt_type_obj, dict) else str(mkt_type_obj))
+                        or mkt.get("name") or mkt.get("title", "")
+                    ).lower()
+
+                    for sel in (mkt.get("selections") or mkt.get("outcomes") or []):
+                        if not isinstance(sel, dict):
+                            continue
+                        odds_obj  = sel.get("odds") or sel.get("price") or {}
+                        fmt_odds  = (odds_obj.get("formattedOdds")
+                                     if isinstance(odds_obj, dict) else str(odds_obj))
+                        if not fmt_odds:
+                            continue
+                        outcome_obj = sel.get("outcome") or {}
+                        outcome = (
+                            (outcome_obj.get("name", "") if isinstance(outcome_obj, dict)
+                             else str(outcome_obj))
+                            or sel.get("label") or sel.get("name", "")
+                        ).lower()
+                        handicap = (
+                            sel.get("handicap") or sel.get("line") or
+                            (odds_obj.get("handicap") if isinstance(odds_obj, dict) else None)
+                        )
+
+                        # Moneyline
+                        if any(k in mkt_type for k in ("moneyline", "money line", "1x2", "to win")):
+                            if "home" in outcome or home.lower() in outcome:
+                                home_ml = fmt_odds
+                            elif "away" in outcome or away.lower() in outcome:
+                                away_ml = fmt_odds
+
+                        # Spread / Run line / Puck line
+                        elif any(k in mkt_type for k in ("spread", "run line", "handicap", "puck line", "goal line")):
+                            if handicap is not None:
+                                try:
+                                    h = float(str(handicap).replace("+", ""))
+                                    team = home if "home" in outcome else away
+                                    spread = f"{team} {h:+.1f}"
+                                    spread_odds = fmt_odds
+                                except (ValueError, TypeError):
+                                    pass
+
+                        # Total
+                        elif any(k in mkt_type for k in ("total", "over/under", "o/u")):
+                            if "over" in outcome:
+                                over_odds = fmt_odds
+                                if handicap is not None:
+                                    total = handicap
+                            elif "under" in outcome:
+                                under_odds = fmt_odds
+                                if total == "N/A" and handicap is not None:
+                                    total = handicap
+
+                results.append({
+                    "Matchup":    matchup,
+                    "Home":       home,
+                    "Away":       away,
+                    "HomeML":     home_ml,
+                    "AwayML":     away_ml,
+                    "Spread":     spread,
+                    "SpreadOdds": spread_odds,
+                    "Total":      total,
+                    "OverOdds":   over_odds,
+                    "UnderOdds":  under_odds,
+                    "Book":       "theScore Bet",
+                    "Sport":      sport,
+                    "source":     "thescore_gist_harvester",
+                })
+    except Exception as e:
+        print(f"[WARN] _parse_thescore_game_lines: {e}")
+    return results
+
+
+def fetch_thescore_from_gist(sport: str) -> tuple:
+    """
+    PRIMARY source for theScore Bet game lines.
+
+    Browser harvester config (add once to your extension):
+      operationName    : CompetitionDrawerContent
+      sha256Hash       : dfd9f184218929ba9b8dac32c106c5635fa195203d6c1e2dd5b4aee62da81c74
+      groupId          : 844647ef-2145-47e4-a568-d4c27c82f752
+      sectionSlug      : <game-lines slug — capture from DevTools by clicking the
+                          "Moneyline" / "Run Line" tab on thescore.bet/baseball/mlb>
+      organizationSlug : united-states
+      competitionSlug  : mlb  (swap per sport; NBA="nba", NFL="football")
+      Gist file        : betcouncil_thescore_games.json
+
+    WHY Gist-only (not direct API):
+      Direct server calls to the CompetitionDrawerContent endpoint return HTTP 403
+      UNAUTHORIZED — the query is geo/session-gated. A real browser session in a
+      licensed US state is required; the harvester provides that.
+
+    Returns (list, source_label) — same tuple convention as other _from_gist fetchers.
+    """
+    data = _read_gist_file("betcouncil_thescore_games.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        results = _parse_thescore_game_lines(data, sport)
+        if results:
+            print(f"[theScore Bet] {len(results)} game-line records from Gist harvester")
+            return results, "gist_harvester"
+    return [], "unavailable"
 
 
 def fetch_pregame_from_gist(sport: str) -> tuple:
