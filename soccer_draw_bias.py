@@ -27,6 +27,37 @@ LEAGUE_DRAW_RATES = {
 }
 _DEFAULT_DRAW_RATE = 0.25
 
+# fetch_h2h_game_lines() in fetchers.py returns Soccer league labels "EPL"/
+# "MLS" (only those two leagues are in its _h2h_slug_map), not the "eng.1"
+# style keys used by _SOCCER_LEAGUE_BASELINES. Map between them here.
+_LEAGUE_LABEL_TO_KEY = {"EPL": "eng.1", "MLS": "usa.1"}
+
+
+def parse_h2h_draw_odds(game_row: dict) -> dict:
+    """
+    Adapter for fetch_h2h_game_lines() output (fetchers.py). That function
+    encodes draw odds as a string in the 'Spread' field, e.g. "Draw +240",
+    or "N/A" if unavailable — verified against its actual source (line
+    ~6820 of fetchers.py: `spread = f"Draw {draw_odds}"`).
+
+    Returns detect_draw_value() output, or {} if no draw odds present.
+    """
+    spread_str = str(game_row.get("Spread", ""))
+    league_label = game_row.get("League", "")
+    league_key = _LEAGUE_LABEL_TO_KEY.get(league_label)
+
+    if not spread_str.startswith("Draw ") or league_key is None:
+        return {}
+
+    odds_str = spread_str.replace("Draw ", "").strip()
+    try:
+        draw_odds = int(odds_str.replace("+", ""))
+    except ValueError:
+        return {}
+
+    return detect_draw_value(draw_odds, league_key)
+
+
 
 def detect_draw_value(draw_odds_american, league_key: str, vig_estimate: float = 0.06) -> dict:
     """

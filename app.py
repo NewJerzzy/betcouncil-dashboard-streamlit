@@ -16207,6 +16207,59 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    # ── Soccer Draw-Bias + NBA B2B Subtype (real data sources) ──────────
+    if _sport2.upper() == "SOCCER":
+        try:
+            from fetchers import fetch_h2h_game_lines
+            from soccer_draw_bias import parse_h2h_draw_odds
+            _h2h_games, _, _, _ = fetch_h2h_game_lines("Soccer")
+            _draw_signals = []
+            for _g in _h2h_games:
+                _dv = parse_h2h_draw_odds(_g)
+                if _dv and _dv.get("undervalued"):
+                    _draw_signals.append({"matchup": _g.get("Matchup"), **_dv})
+        except Exception as _db_err:
+            _draw_signals = []
+            print(f"[WARN] soccer_draw_bias: {_db_err}")
+
+        if _draw_signals:
+            with st.expander(f"⚽ Draw Value — {len(_draw_signals)} undervalued draws", expanded=False):
+                for _d in _draw_signals[:10]:
+                    st.markdown(
+                        f'<div style="border-left:4px solid #a855f7;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_d["matchup"]}</b> — {_d["note"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+    if _sport2.upper() == "NBA":
+        try:
+            from nba_b2b_classifier import classify_b2b, fetch_team_recent_games
+            _b2b_signals = []
+            _teams_checked = set()
+            for _g in (_games or [])[:15]:  # cap: avoid excessive ESPN calls per rerun
+                for _team in (_g.get("home"), _g.get("away")):
+                    if not _team or _team in _teams_checked:
+                        continue
+                    _teams_checked.add(_team)
+                    _recent = fetch_team_recent_games(_team, "NBA")
+                    _cls = classify_b2b(_recent)
+                    if _cls:
+                        _b2b_signals.append({"team": _team, **_cls})
+        except Exception as _b2b_err:
+            _b2b_signals = []
+            print(f"[WARN] nba_b2b_classifier: {_b2b_err}")
+
+        if _b2b_signals:
+            with st.expander(f"🏀 B2B Subtypes — {len(_b2b_signals)} teams flagged", expanded=False):
+                for _b in _b2b_signals[:15]:
+                    st.markdown(
+                        f'<div style="border-left:4px solid #e8a020;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_b["team"]}</b> — {_b["note"]} (adj: {_b["point_adjustment"]:+.1f} pts)</div>',
+                        unsafe_allow_html=True,
+                    )
+
     # ── Originator-Follower Lag + Information Asymmetry ──────────────────
     # Both record a timestamped snapshot every board load (building real
     # history automatically) and only surface once enough history exists.

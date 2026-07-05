@@ -93,3 +93,45 @@ def classify_b2b(team_games: list) -> dict:
         "point_adjustment": _B2B_ADJUSTMENTS[subtype],
         "note": subtype.replace("_", "→").title() + " back-to-back",
     }
+
+
+def fetch_team_recent_games(team_name: str, sport: str = "NBA", days_back: int = 6) -> list:
+    """
+    Scan the last `days_back` days of ESPN scoreboards for games involving
+    `team_name`, returning [{date, is_home}] chronological. Uses the same
+    site.api.espn.com scoreboard endpoint/schema already confirmed working
+    elsewhere in fetchers.py (fetch_h2h_game_lines) — no new endpoint.
+    """
+    import requests
+    from datetime import date as _date, timedelta as _td
+
+    sport_path = {"NBA": "basketball/nba", "WNBA": "basketball/wnba"}.get(sport.upper())
+    if not sport_path:
+        return []
+
+    games = []
+    today = _date.today()
+    for delta in range(days_back, -1, -1):
+        day = today - _td(days=delta)
+        date_str = day.strftime("%Y%m%d")
+        try:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={date_str}"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            for event in data.get("events", []):
+                for comp in event.get("competitions", []):
+                    for c in comp.get("competitors", []):
+                        name = c.get("team", {}).get("displayName", "")
+                        if team_name.lower() in name.lower() or name.lower() in team_name.lower():
+                            games.append({
+                                "date": day.strftime("%Y-%m-%d"),
+                                "is_home": c.get("homeAway") == "home",
+                            })
+        except Exception:
+            continue
+
+    games.sort(key=lambda g: g["date"])
+    return games
+
