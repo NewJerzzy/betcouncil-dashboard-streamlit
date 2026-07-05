@@ -17079,6 +17079,10 @@ with tabs[3]:
                             st.caption("Your locked matchups: " + ", ".join(l.get("player","") for l in game_locks))
                 else:
                     st.info("No completed games found yet. Try after games finish.")
+                # Even if no game locks resolved this pass, prop locks earlier in
+                # the same click may have — refresh so Active Locks isn't stale.
+                if resolved > 0:
+                    st.rerun()
             else:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
