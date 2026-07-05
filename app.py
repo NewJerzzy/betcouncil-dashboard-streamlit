@@ -20746,6 +20746,15 @@ with tabs[9]:
                    else "⚪ Run Scanbet bookmarklet to populate"),
         "Action": "None"})
 
+    # Unified sharp score board — combines Scanbet CLV/steam + Action Network RLM
+    try:
+        from unified_sharp_score import build_unified_sharp_board as _build_usb
+        _usb_sport = st.session_state.get("current_sport", "MLB")
+        st.session_state["unified_sharp_board"] = _build_usb(_usb_sport)
+    except Exception as _usb_err:
+        st.session_state["unified_sharp_board"] = []
+        print(f"[WARN] unified_sharp_score: {_usb_err}")
+
     # SharpAPI line movement + EV
     _sa_dr = st.session_state.get("sharpapi_line_drops", [])
     _sa_ev = st.session_state.get("sharpapi_ev_opps", [])
