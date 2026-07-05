@@ -24,6 +24,7 @@ from fetchers import fetch_scanbet_drops_from_gist, fetch_public_betting
 from team_canon import canon_game_key
 from book_quality import counterparty_quality, weight_signal_by_counterparty
 from bayesian_line_updater import bayesian_posterior
+from movement_classifier import classify_event_movement
 
 
 def _tier(score: float) -> str:
@@ -139,7 +140,7 @@ def build_unified_sharp_board(sport: str) -> list:
         consensus_direction = None
         if ev["direction_votes"]:
             consensus_direction = max(ev["direction_votes"].items(), key=lambda kv: kv[1])[0]
-        board.append({
+        entry = {
             "game_key": gk,
             "game_label": ev["game_label"],
             "total_score": round(ev["total_score"], 2),
@@ -148,7 +149,9 @@ def build_unified_sharp_board(sport: str) -> list:
             "rlm_signals": ev["rlm_signals"],
             "consensus_direction": consensus_direction,
             "tier": _tier(ev["total_score"]),
-        })
+        }
+        entry["movement_cause"] = classify_event_movement(entry)
+        board.append(entry)
 
     board.sort(key=lambda x: x["total_score"], reverse=True)
     return board

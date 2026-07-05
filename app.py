@@ -16306,11 +16306,13 @@ with tabs[2]:
                     _lines.append(f"🔴 RLM | {_r['public_pct']}% public {_r['public_side']}, sharp $ on {_r['sharp_side']}")
                 _body = "<br>".join(_lines) if _lines else "No signal breakdown available"
                 _dir_line = f"<br>→ Consensus: sharp money on <b>{_u['consensus_direction']}</b>" if _u.get("consensus_direction") else ""
+                _cause = _u.get("movement_cause", {})
+                _cause_line = f"<br>🔎 Cause: <b>{_cause.get('cause','UNCLEAR')}</b> ({_cause.get('confidence',0)*100:.0f}% conf)" if _cause else ""
                 st.markdown(
                     f'<div style="border-left:4px solid {_tclr};background:#0a0e14;border-radius:4px;'
                     f'padding:0.6rem 0.9rem;margin-bottom:0.5rem;">'
                     f'<b>{_u["game_label"]}</b> — Score: {_u["total_score"]:.1f} ({_u["tier"]})<br>'
-                    f'{_body}{_dir_line}</div>',
+                    f'{_body}{_dir_line}{_cause_line}</div>',
                     unsafe_allow_html=True,
                 )
 
