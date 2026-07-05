@@ -7239,7 +7239,7 @@ def fetch_oddswrap_props(sport):
     try:
         client = OddsClient(books=["draftkings", "bovada", "betrivers"])
         seen = set()
-        for book in ["draftkings", "bovada"]:
+        for book in ["draftkings", "bovada", "betrivers"]:
             try:
                 cats = client.get_prop_categories(sport_key, book=book)
                 for cat in cats[:10]:
