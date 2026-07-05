@@ -109,11 +109,12 @@ Every pick MUST show: @[Book] [Odds] (no price = not actionable), $ stake (Kelly
 [TYPE X — LABEL] Edge: X% | Calib Prob: X% | Decay Edge: X% | Kelly: X% ($Y)
 [ADAPTIVE KELLY: X%] [COV HAIRCUT X%] [MC-BLEND if applicable]
 Pinnacle: [X% if game-line — omit field entirely for props, don't print repeated N/A filler] | Consensus: X% (multi-book, NOT Pinnacle — always distinct label)
+Every pick also needs: Model Proj (actual projected stat/result, not just a %), Implied prob (from the book's own odds — distinct from Fair Prob/model view, never conflate), Form (L5/L10/season for props), Volatility flag (Low/Med/High), Pace/blowout-risk note when relevant to totals or prop counting stats.
+Replace a single vague reason with "For (top 2-3 factors) / Against (top 1-2 factors)" — never present a pick with only one undifferentiated justification.
 Signals: [active signals]
 Analysis: 2-3 sentences, top 3 signals
 Verdict: PLAY / FADE / PASS
 Parlay/multi-pick: never show bare Matrix:X/100 — break into Math:X/30 Correlation:X/30 Market Drift:X/20 Volatility:X/20, plus one-clause "Why this score:". Always add CORRELATION RISK: LOW/MODERATE/HIGH (same-team/same-game flag) on any multi-pick section, even standalone Slip picks.
-Every Slip of the Day pick (not just Lock) must carry a one-clause "Why:" reason — never present a numbers-only pick.
 
 End with PARLAY NOTE if 2+ SOVEREIGN/ELITE picks (check covariance first).
 
