@@ -22,6 +22,8 @@ from collections import defaultdict
 
 from fetchers import fetch_scanbet_drops_from_gist, fetch_public_betting
 from team_canon import canon_game_key
+from book_quality import counterparty_quality, weight_signal_by_counterparty
+from bayesian_line_updater import bayesian_posterior
 
 
 def _tier(score: float) -> str:
@@ -60,8 +62,15 @@ def build_unified_sharp_board(sport: str) -> list:
         ev["game_label"] = row["game"]
 
         drop_pct = row.get("drop_pct", 0.0)
-        sig_score = min(abs(drop_pct) * 100, 10)
+        raw_score = min(abs(drop_pct) * 100, 10)
+        # Scanbet tracks Pinnacle's own line — weight the signal by
+        # Pinnacle's counterparty quality (high-trust source).
+        sig_score = weight_signal_by_counterparty(raw_score, "pinnacle")
         direction = row.get("selection", "")
+
+        bayes = {}
+        if row.get("opener_prob") is not None and row.get("current_prob") is not None:
+            bayes = bayesian_posterior(row["opener_prob"], row["current_prob"], "pinnacle")
 
         clv_entry = {
             "type": "CLV",
@@ -72,6 +81,8 @@ def build_unified_sharp_board(sport: str) -> list:
             "drop_pct": round(drop_pct * 100, 2),
             "n_snapshots": row.get("n_snapshots"),
             "score": round(sig_score, 2),
+            "bayesian_posterior": bayes.get("posterior"),
+            "bayesian_shift": bayes.get("shift"),
         }
         ev["clv_signals"].append(clv_entry)
         ev["total_score"] += sig_score
@@ -101,7 +112,11 @@ def build_unified_sharp_board(sport: str) -> list:
 
         for rlm in data.get("rlm_signals", []):
             strength = rlm.get("strength", 1)
-            sig_score = min(strength * 2.5, 10)
+            raw_score = min(strength * 2.5, 10)
+            # RLM comes from Action Network's aggregated public-book money%,
+            # a mixed retail/sharp pool rather than a single sharp book —
+            # weight at a fixed mid-tier quality rather than assuming full trust.
+            sig_score = weight_signal_by_counterparty(raw_score, "espn")
             entry = {
                 "type": "RLM",
                 "market": rlm.get("type"),
