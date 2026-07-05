@@ -13945,6 +13945,26 @@ if "persistence_loaded" not in st.session_state:
         and normalize_name(h.get("player","")) not in _GARBAGE_NAMES
         and not str(h.get("player","")).startswith("@")
     ]
+    # One-time auto-repair: a resolver bug (fixed) briefly cross-matched MLB
+    # game locks against NBA scoreboards when both teams shared a 3-letter
+    # abbreviation (e.g. Atlanta "ATL" for both Braves and Hawks). Any surviving
+    # entries have the tell-tale fingerprint of bet_type="game" logged with
+    # sport="NBA" but a matchup string using non-NBA team codes (e.g. "NYM @ ATL",
+    # "PIT @ WSH" — no NBA team is "NYM", "PIT", or "WSH"). Strip these
+    # automatically; this is safe because legitimate NBA game locks always use
+    # real NBA team names/abbreviations that won't hit this exact bad set.
+    _KNOWN_BAD_GAME_SIGNATURES = {("NYM @ ATL", "2026-07-04"), ("PIT @ WSH", "2026-07-04")}
+    _before_repair = len(_clean_history)
+    _clean_history = [
+        h for h in _clean_history
+        if not (
+            h.get("bet_type") == "game"
+            and (h.get("sport","") or "").upper() == "NBA"
+            and (str(h.get("player","")), str(h.get("timestamp", h.get("date","")))[:10]) in _KNOWN_BAD_GAME_SIGNATURES
+        )
+    ]
+    if len(_clean_history) < _before_repair:
+        save_to_gist("history", _clean_history)  # persist the repair immediately
     st.session_state.history = _clean_history
     # If Gist had more clean data than local, resync local to match
     if len(_clean_history) > len(_local_history):
