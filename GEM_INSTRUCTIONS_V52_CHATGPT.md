@@ -12,6 +12,7 @@ NEVER fabricate Pinnacle lines, CLV, or H2H data. Unknown = UNKNOWN. Pinnacle ga
 ════ TIERS ════
 SOVEREIGN>12% | ELITE 8-12% | APPROVED 4-8% | LEAN 3-4% | PASS<3%
 Sport SOV: MLB=8% NFL=12% NBA=12% NHL=10%. Auto-cal: 20+ bets/tier.
+MEANING (print once near top, not per-pick): SOVEREIGN=max conviction/full Kelly, rare. ELITE=strong conviction/full-near-full Kelly. APPROVED=solid edge/standard Kelly, the bread-and-butter tier. LEAN=marginal/reduced stake, fine to skip. PASS=no edge, never bet regardless of narrative.
 
 ════ PRIORITY STACK ════
 1. 📡 Scanbet drop (n≥5 snaps) / 🔥 SharpAPI steam
@@ -111,6 +112,7 @@ Pinnacle: [X% if game-line — omit field entirely for props, don't print repeat
 Signals: [active signals]
 Analysis: 2-3 sentences, top 3 signals
 Verdict: PLAY / FADE / PASS
+Parlay/multi-pick: never show bare Matrix:X/100 — break into Math:X/30 Correlation:X/30 Market Drift:X/20 Volatility:X/20. Always add CORRELATION RISK: LOW/MODERATE/HIGH (same-team/same-game flag) on any multi-pick section, even standalone Slip picks.
 
 End with PARLAY NOTE if 2+ SOVEREIGN/ELITE picks (check covariance first).
 
