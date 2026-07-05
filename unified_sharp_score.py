@@ -253,3 +253,18 @@ def build_unified_sharp_board(sport: str) -> list:
                     entry.setdefault("starter_bullpen_signals", []).append(gap_data)
 
     return board
+
+
+def build_ufc_board(limit_events: int = 15) -> dict:
+    """
+    UFC doesn't fit the game-lines shape (no spread/total/moneyline per
+    'event' the way team sports do), so this is a separate board rather
+    than force-fit into build_unified_sharp_board(). Returns real
+    finish-rate-by-weight-class data from ufc_scraper.py.
+    """
+    try:
+        from ufc_scraper import compute_finish_rate_by_weightclass
+        return compute_finish_rate_by_weightclass(limit_events)
+    except Exception as e:
+        print(f"[WARN] build_ufc_board: {e}")
+        return {}

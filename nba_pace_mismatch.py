@@ -23,21 +23,39 @@ score_pace_mismatch(home_team, away_team, favored_side=None, pace_data=None) -> 
 """
 from market_microstructure import _read_gist_file
 
+try:
+    from nba_pace_scraper import fetch_team_pace as _fetch_pace_api
+except ImportError:
+    _fetch_pace_api = None
+
 _GIST_FILENAME = "betcouncil_nba_pace.json"
 
 
 def load_pace_data() -> dict:
     """
-    Read the browser-harvested pace table from Gist. Returns
-    {team_name: pace_value}, or {} if the harvester hasn't run yet
-    (cold start — same as any other browser harvester before first run).
+    Read the browser-harvested pace table from Gist first (fresher,
+    zero-latency, already how this repo's other harvesters work). If that
+    hasn't run yet or returns nothing, fall back to the direct
+    stats.nba.com API (nba_pace_scraper.py) so this never silently
+    returns {} when a working data path exists. Consolidates what were
+    two separate, non-communicating pace sources into one.
     """
     data = _read_gist_file(_GIST_FILENAME)
-    if isinstance(data, dict):
+    if isinstance(data, dict) and data:
         return data
-    if isinstance(data, list):
-        # tolerate a list-of-rows shape too: [{"team": ..., "pace": ...}, ...]
-        return {row.get("team"): row.get("pace") for row in data if row.get("team")}
+    if isinstance(data, list) and data:
+        parsed = {row.get("team"): row.get("pace") for row in data if row.get("team")}
+        if parsed:
+            return parsed
+
+    if _fetch_pace_api is not None:
+        try:
+            api_data = _fetch_pace_api()
+            if api_data:
+                return api_data
+        except Exception as e:
+            print(f"[WARN] load_pace_data fallback to nba_pace_scraper failed: {e}")
+
     return {}
 
 

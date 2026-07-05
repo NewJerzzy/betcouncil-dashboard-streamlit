@@ -16282,6 +16282,25 @@ with tabs[2]:
                         unsafe_allow_html=True,
                     )
 
+    if _sport2.upper() == "UFC":
+        try:
+            from unified_sharp_score import build_ufc_board
+            _ufc_data = build_ufc_board()
+        except Exception as _ufc_err:
+            _ufc_data = {}
+            print(f"[WARN] build_ufc_board: {_ufc_err}")
+
+        if _ufc_data:
+            with st.expander(f"🥊 Finish Rates by Weight Class — {len(_ufc_data)} classes (real data)", expanded=False):
+                for _wc, _stats in sorted(_ufc_data.items(), key=lambda kv: kv[1]["finish_pct"], reverse=True):
+                    st.markdown(
+                        f'<div style="border-left:4px solid #e04040;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_wc}</b> — {_stats["finish_pct"]}% finish ({_stats["ko_pct"]}% KO, {_stats["sub_pct"]}% sub) '
+                        f'| {_stats["decision_pct"]}% decision (n={_stats["n_fights"]})</div>',
+                        unsafe_allow_html=True,
+                    )
+
     # ── Soccer Draw-Bias + NBA B2B Subtype (real data sources) ──────────
     if _sport2.upper() == "SOCCER":
         try:
