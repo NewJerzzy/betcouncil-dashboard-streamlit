@@ -16878,50 +16878,89 @@ with tabs[3]:
             # Also resolve game line locks
             game_locks = [l for l in st.session_state.get("locks", []).copy() if l.get("bet_type") == "game"]
             if game_locks and resolved == 0:
-                # Try ESPN scoreboard for final scores
-                for sport_key in ["NBA","MLB","NFL","NHL"]:
-                    espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl")}
-                    if sport_key not in espn_sm: continue
-                    es, el = espn_sm[sport_key]
-                    try:
-                        sb = _http.get(f"https://site.web.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard", headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-                        if sb.status_code != 200: continue
-                        for event in sb.json().get("events",[]):
-                            if not event.get("status",{}).get("type",{}).get("completed"): continue
-                            comps = event.get("competitions",[{}])[0]
-                            teams = comps.get("competitors",[])
-                            if len(teams) < 2: continue
-                            home = teams[0]; away = teams[1]
-                            home_name = home.get("team",{}).get("displayName","")
-                            away_name = away.get("team",{}).get("displayName","")
-                            home_score = float(home.get("score",0) or 0)
-                            away_score = float(away.get("score",0) or 0)
-                            total = home_score + away_score
-                            for lock in game_locks:
-                                matchup = lock.get("player","")
-                                if home_name not in matchup and away_name not in matchup: continue
-                                pick = lock.get("side","")
-                                line = float(lock.get("line",0) or 0)
-                                prop_type = lock.get("prop","").upper()
-                                outcome = None
-                                if "SPREAD" in prop_type:
-                                    pick_team_score = home_score if pick in home_name else away_score
-                                    opp_score = away_score if pick in home_name else home_score
-                                    outcome = "WIN" if (pick_team_score - opp_score + line) > 0 else "LOSS"
-                                elif "TOTAL" in prop_type:
-                                    outcome = "WIN" if (pick=="OVER" and total>line) or (pick=="UNDER" and total<line) else "LOSS"
-                                elif "ML" in prop_type:
-                                    win_team = home_name if home_score > away_score else away_name
-                                    outcome = "WIN" if pick in win_team else "LOSS"
-                                if outcome:
-                                    log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10])
-                                    if lock in st.session_state.locks: st.session_state.locks.remove(lock)
-                                    resolved += 1
-                                    st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
-                    except (ValueError, TypeError, ZeroDivisionError): continue
+                # Try ESPN scoreboard for final scores.
+                # Query each distinct lock date explicitly (ESPN defaults to
+                # "today" in its own clock if no `dates` param is passed, which
+                # misses anything locked on a prior day) plus today's board as
+                # a fallback for late-breaking completions.
+                espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl")}
+                lock_dates = set()
+                for lock in game_locks:
+                    ts = (lock.get("timestamp","") or "")[:10]
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", ts):
+                        lock_dates.add(ts.replace("-",""))
+                dates_to_check = sorted(lock_dates) + [None]  # None = ESPN default (today)
+
+                def _norm_team(s):
+                    return normalize_name(s or "")
+
+                for sport_key, (es, el) in espn_sm.items():
+                    for date_str in dates_to_check:
+                        try:
+                            params = {"dates": date_str} if date_str else {}
+                            sb = _http.get(
+                                f"https://site.web.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
+                                headers={"User-Agent":"Mozilla/5.0"}, params=params, timeout=8
+                            )
+                            if sb.status_code != 200: continue
+                            for event in sb.json().get("events",[]):
+                                if not event.get("status",{}).get("type",{}).get("completed"): continue
+                                comps = event.get("competitions",[{}])[0]
+                                teams = comps.get("competitors",[])
+                                if len(teams) < 2: continue
+                                home = teams[0]; away = teams[1]
+                                home_name = home.get("team",{}).get("displayName","")
+                                away_name = away.get("team",{}).get("displayName","")
+                                home_abbr = home.get("team",{}).get("abbreviation","")
+                                away_abbr = away.get("team",{}).get("abbreviation","")
+                                home_score = float(home.get("score",0) or 0)
+                                away_score = float(away.get("score",0) or 0)
+                                total = home_score + away_score
+                                home_norm, away_norm = _norm_team(home_name), _norm_team(away_name)
+                                for lock in game_locks:
+                                    if lock not in st.session_state.locks:
+                                        continue  # already resolved in an earlier date pass
+                                    matchup = lock.get("player","")
+                                    matchup_norm = _norm_team(matchup)
+                                    home_hit = home_norm and home_norm in matchup_norm
+                                    away_hit = away_norm and away_norm in matchup_norm
+                                    if not home_hit and not away_hit:
+                                        # fall back to abbreviation / last-word (mascot) match
+                                        home_hit = bool(home_abbr) and home_abbr.lower() in matchup.lower()
+                                        away_hit = bool(away_abbr) and away_abbr.lower() in matchup.lower()
+                                    if not home_hit and not away_hit:
+                                        home_mascot = home_norm.split(" ")[-1] if home_norm else ""
+                                        away_mascot = away_norm.split(" ")[-1] if away_norm else ""
+                                        home_hit = bool(home_mascot) and home_mascot in matchup_norm
+                                        away_hit = bool(away_mascot) and away_mascot in matchup_norm
+                                    if not home_hit and not away_hit:
+                                        continue
+                                    pick = lock.get("side","")
+                                    line = float(lock.get("line",0) or 0)
+                                    prop_type = lock.get("prop","").upper()
+                                    pick_is_home = _norm_team(pick) and _norm_team(pick) in home_norm
+                                    outcome = None
+                                    if "SPREAD" in prop_type:
+                                        pick_team_score = home_score if pick_is_home else away_score
+                                        opp_score = away_score if pick_is_home else home_score
+                                        outcome = "WIN" if (pick_team_score - opp_score + line) > 0 else "LOSS"
+                                    elif "TOTAL" in prop_type:
+                                        outcome = "WIN" if (pick=="OVER" and total>line) or (pick=="UNDER" and total<line) else "LOSS"
+                                    elif "ML" in prop_type:
+                                        win_is_home = home_score > away_score
+                                        outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
+                                    if outcome:
+                                        log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10])
+                                        if lock in st.session_state.locks: st.session_state.locks.remove(lock)
+                                        resolved += 1
+                                        st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
+                        except (ValueError, TypeError, ZeroDivisionError): continue
 
             if resolved == 0:
-                st.info("No completed games found yet. Try after games finish.")
+                if game_locks:
+                    st.info("No completed games found yet for your locked matchups. Try after games finish, or double-check the lock's date if it's been a while.")
+                else:
+                    st.info("No completed games found yet. Try after games finish.")
 
             if skipped:
                 with st.expander(f"⚠️ {len(skipped)} picks need manual resolution"):
