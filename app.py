@@ -16946,17 +16946,26 @@ with tabs[3]:
                 # night game under the following UTC calendar day, so a single
                 # exact-date query can miss a real, finished game.
                 espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl")}
-                lock_dates = set()
+                exact_dates = set()
+                padding_dates = set()
                 for lock in game_locks:
                     ts = (lock.get("timestamp","") or "")[:10]
                     if re.match(r"^\d{4}-\d{2}-\d{2}$", ts):
                         try:
                             d = datetime.strptime(ts, "%Y-%m-%d")
-                            for delta in (-1, 0, 1):
-                                lock_dates.add((d + timedelta(days=delta)).strftime("%Y%m%d"))
+                            exact_dates.add(d.strftime("%Y%m%d"))
+                            for delta in (-1, 1):
+                                padding_dates.add((d + timedelta(days=delta)).strftime("%Y%m%d"))
                         except ValueError:
-                            lock_dates.add(ts.replace("-",""))
-                dates_to_check = sorted(lock_dates) + [None]  # None = ESPN default (today)
+                            exact_dates.add(ts.replace("-",""))
+                padding_dates -= exact_dates
+                # Priority order matters: check each lock's own exact date first,
+                # then ESPN's "today" default, then the +/-1 day padding only as a
+                # last resort. Otherwise, for a back-to-back series where the same
+                # two teams play on consecutive days (e.g. a 3-game series), an
+                # adjacent day's game could be matched before the correct day's
+                # game — silently resolving a lock against the wrong game's score.
+                dates_to_check = sorted(exact_dates) + [None] + sorted(padding_dates)
 
                 def _norm_team(s):
                     return normalize_name(s or "")
@@ -16997,7 +17006,13 @@ with tabs[3]:
                                 away_score = float(away.get("score",0) or 0)
                                 total = home_score + away_score
                                 home_norm, away_norm = _norm_team(home_name), _norm_team(away_name)
-                                _espn_debug_log.append(f"  completed: {away_name} ({away_abbr}) @ {home_name} ({home_abbr}) — {away_score}-{home_score}")
+                                _relevant_abbrs = {(l.get("player","") or "").upper() for l in sport_locks}
+                                _is_relevant = any(
+                                    (home_abbr and home_abbr.upper() in ab) or (away_abbr and away_abbr.upper() in ab)
+                                    for ab in _relevant_abbrs
+                                )
+                                if _is_relevant:
+                                    _espn_debug_log.append(f"  completed: {away_name} ({away_abbr}) @ {home_name} ({home_abbr}) — {away_score}-{home_score}  [date query: {date_str or 'today'}]")
                                 for lock in sport_locks:
                                     if lock not in st.session_state.locks:
                                         continue  # already resolved in an earlier date pass
