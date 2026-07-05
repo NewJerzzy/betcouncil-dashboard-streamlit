@@ -16911,18 +16911,27 @@ with tabs[3]:
 
             # Also resolve game line locks
             game_locks = [l for l in st.session_state.get("locks", []).copy() if l.get("bet_type") == "game"]
+            _scoreboard_fetch_failures = []
             if game_locks and resolved == 0:
                 # Try ESPN scoreboard for final scores.
                 # Query each distinct lock date explicitly (ESPN defaults to
                 # "today" in its own clock if no `dates` param is passed, which
                 # misses anything locked on a prior day) plus today's board as
-                # a fallback for late-breaking completions.
+                # a fallback for late-breaking completions. Also check the day
+                # before/after each lock date: ESPN sometimes buckets a late
+                # night game under the following UTC calendar day, so a single
+                # exact-date query can miss a real, finished game.
                 espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl")}
                 lock_dates = set()
                 for lock in game_locks:
                     ts = (lock.get("timestamp","") or "")[:10]
                     if re.match(r"^\d{4}-\d{2}-\d{2}$", ts):
-                        lock_dates.add(ts.replace("-",""))
+                        try:
+                            d = datetime.strptime(ts, "%Y-%m-%d")
+                            for delta in (-1, 0, 1):
+                                lock_dates.add((d + timedelta(days=delta)).strftime("%Y%m%d"))
+                        except ValueError:
+                            lock_dates.add(ts.replace("-",""))
                 dates_to_check = sorted(lock_dates) + [None]  # None = ESPN default (today)
 
                 def _norm_team(s):
@@ -16942,7 +16951,9 @@ with tabs[3]:
                                 f"https://site.web.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
                                 headers={"User-Agent":"Mozilla/5.0"}, params=params, timeout=8
                             )
-                            if sb.status_code != 200: continue
+                            if sb.status_code != 200:
+                                _scoreboard_fetch_failures.append(f"{sport_key} {date_str or 'today'}: HTTP {sb.status_code}")
+                                continue
                             for event in sb.json().get("events",[]):
                                 if not event.get("status",{}).get("type",{}).get("completed"): continue
                                 comps = event.get("competitions",[{}])[0]
@@ -16999,6 +17010,10 @@ with tabs[3]:
             if resolved == 0:
                 if game_locks:
                     st.info("No completed games found yet for your locked matchups. Try after games finish, or double-check the lock's date if it's been a while.")
+                    if _scoreboard_fetch_failures:
+                        with st.expander(f"⚠️ {len(_scoreboard_fetch_failures)} ESPN scoreboard request(s) failed"):
+                            for f in _scoreboard_fetch_failures:
+                                st.caption(f)
                 else:
                     st.info("No completed games found yet. Try after games finish.")
             else:
