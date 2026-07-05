@@ -17001,6 +17001,11 @@ with tabs[3]:
                     st.info("No completed games found yet for your locked matchups. Try after games finish, or double-check the lock's date if it's been a while.")
                 else:
                     st.info("No completed games found yet. Try after games finish.")
+            else:
+                save_json_data(LOCKS_PATH, st.session_state.locks)
+                save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                st.success(f"✅ Auto-resolved {resolved} picks via ESPN scoreboard")
+                st.rerun()
 
             if skipped:
                 with st.expander(f"⚠️ {len(skipped)} picks need manual resolution"):
