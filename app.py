@@ -16207,6 +16207,40 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    # ── Originator-Follower Lag + Information Asymmetry ──────────────────
+    # Both record a timestamped snapshot every board load (building real
+    # history automatically) and only surface once enough history exists.
+    try:
+        from market_microstructure import (
+            record_odds_snapshot, compute_originator_scores,
+            record_public_betting_snapshot, detect_info_asymmetry,
+        )
+        record_odds_snapshot(_sport2)
+        record_public_betting_snapshot(_sport2)
+        _orig_scores = compute_originator_scores(_sport2)
+        _asym_signals = detect_info_asymmetry(_sport2)
+    except Exception as _mm_err:
+        _orig_scores, _asym_signals = {}, []
+        print(f"[WARN] market_microstructure: {_mm_err}")
+
+    if _orig_scores:
+        with st.expander(f"⏱️ Originator-Follower Scores — {len(_orig_scores)} books tracked", expanded=False):
+            for _book, _score in sorted(_orig_scores.items(), key=lambda kv: kv[1], reverse=True):
+                st.markdown(f"**{_book}**: {_score*100:.0f}% of moves led")
+
+    if _asym_signals:
+        with st.expander(f"⚡ Information Asymmetry — {len(_asym_signals)} volume spikes flagged", expanded=False):
+            for _a in _asym_signals[:10]:
+                st.markdown(
+                    f'<div style="border-left:4px solid #e8a020;background:#0a0e14;border-radius:4px;'
+                    f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                    f'<b>{_a["game"]}</b> — {_a["side"]}: money% jumped {_a["money_delta_pts"]:+.1f}pts '
+                    f'(tickets only {_a["tickets_delta_pts"]:+.1f}pts) over {_a["minutes_between_snapshots"]}min '
+                    f'→ now {_a["current_money_pct"]}% money / {_a["current_tickets_pct"]}% tickets'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
     # ── TeamRankings Situational Signals (KillerSports replacement, unlimited) ──
     try:
         from teamrankings_situational import fetch_situational_signals
