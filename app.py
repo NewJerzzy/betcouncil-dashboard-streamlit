@@ -16866,8 +16866,7 @@ with tabs[3]:
             if resolved > 0:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
-                st.success(f"✅ Auto-resolved {resolved} picks via ESPN box scores")
-                st.rerun()
+                st.success(f"✅ Auto-resolved {resolved} prop pick(s) via ESPN box scores")
 
             # BDL fallback for any NBA picks ESPN missed
             if skipped and BDL_API_KEY:
@@ -16936,7 +16935,8 @@ with tabs[3]:
             game_locks = [l for l in st.session_state.get("locks", []).copy() if l.get("bet_type") == "game"]
             _scoreboard_fetch_failures = []
             _espn_debug_log = []
-            if game_locks and resolved == 0:
+            game_resolved = 0
+            if game_locks:
                 # Try ESPN scoreboard for final scores.
                 # Query each distinct lock date explicitly (ESPN defaults to
                 # "today" in its own clock if no `dates` param is passed, which
@@ -16993,7 +16993,19 @@ with tabs[3]:
                                 f"{sum(1 for e in _all_events if e.get('status',{}).get('type',{}).get('completed'))} completed"
                             )
                             for event in _all_events:
-                                if not event.get("status",{}).get("type",{}).get("completed"): continue
+                                _ev_type = event.get("status",{}).get("type",{})
+                                if not _ev_type.get("completed"):
+                                    # Surface relevant in-progress games in debug log
+                                    # so "no games found" is diagnosable as a timing issue.
+                                    _nc_comps = event.get("competitions",[{}])[0]
+                                    _nc_teams = _nc_comps.get("competitors",[])
+                                    if len(_nc_teams) >= 2:
+                                        _nc_h = _nc_teams[0].get("team",{}).get("abbreviation","")
+                                        _nc_a = _nc_teams[1].get("team",{}).get("abbreviation","")
+                                        _rel_abbrs = {(l.get("player","") or "").upper() for l in sport_locks}
+                                        if any((_nc_h and _nc_h.upper() in ab) or (_nc_a and _nc_a.upper() in ab) for ab in _rel_abbrs):
+                                            _espn_debug_log.append(f"  ⏳ relevant but not final: {_nc_a} @ {_nc_h} — {_ev_type.get('name','?')}")
+                                    continue
                                 comps = event.get("competitions",[{}])[0]
                                 teams = comps.get("competitors",[])
                                 if len(teams) < 2: continue
@@ -17049,10 +17061,11 @@ with tabs[3]:
                                         log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10])
                                         if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                         resolved += 1
+                                        game_resolved += 1
                                         st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
                         except (ValueError, TypeError, ZeroDivisionError): continue
 
-            if resolved == 0:
+            if game_resolved == 0:
                 if game_locks:
                     st.info("No completed games found yet for your locked matchups. Try after games finish, or double-check the lock's date if it's been a while.")
                     if _scoreboard_fetch_failures:
@@ -17069,7 +17082,7 @@ with tabs[3]:
             else:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
-                st.success(f"✅ Auto-resolved {resolved} picks via ESPN scoreboard")
+                st.success(f"✅ Auto-resolved {game_resolved} game pick(s) via ESPN scoreboard")
                 st.rerun()
 
             if skipped:
