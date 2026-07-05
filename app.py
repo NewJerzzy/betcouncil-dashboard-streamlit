@@ -16207,6 +16207,17 @@ with tabs[2]:
             "Game lines fall back to SBR/BetOnline. Update `ODDS_API_KEY` in Secrets."
         )
 
+    # ── Sport-Specific Optimal Timing Window ─────────────────────────────
+    try:
+        from sport_timing_windows import optimal_window
+        _tw = optimal_window(_sport2)
+    except Exception as _tw_err:
+        _tw = {}
+        print(f"[WARN] sport_timing_windows: {_tw_err}")
+
+    if _tw:
+        st.info(f"⏰ **Optimal check-back window for {_sport2}:** {_tw['window_label']} — {_tw['reason']}")
+
     if _sport2.upper() == "MLB":
         try:
             from mlb_starter_bullpen_split import team_starter_bullpen_split_by_name
@@ -16265,20 +16276,29 @@ with tabs[2]:
     if _sport2.upper() == "NBA":
         try:
             from nba_b2b_classifier import classify_b2b, fetch_team_recent_games
+            from nba_rest_asymmetry import classify_rest_asymmetry
             _b2b_signals = []
+            _rest_signals = []
             _teams_checked = set()
+            _team_games_cache = {}
             for _g in (_games or [])[:15]:  # cap: avoid excessive ESPN calls per rerun
-                for _team in (_g.get("home"), _g.get("away")):
+                _home_t, _away_t = _g.get("home"), _g.get("away")
+                for _team in (_home_t, _away_t):
                     if not _team or _team in _teams_checked:
                         continue
                     _teams_checked.add(_team)
                     _recent = fetch_team_recent_games(_team, "NBA")
+                    _team_games_cache[_team] = _recent
                     _cls = classify_b2b(_recent)
                     if _cls:
                         _b2b_signals.append({"team": _team, **_cls})
+                if _home_t and _away_t and _home_t in _team_games_cache and _away_t in _team_games_cache:
+                    _ra = classify_rest_asymmetry(_team_games_cache[_home_t], _team_games_cache[_away_t])
+                    if _ra and _ra.get("favored_side"):
+                        _rest_signals.append({"matchup": f"{_away_t} @ {_home_t}", **_ra})
         except Exception as _b2b_err:
-            _b2b_signals = []
-            print(f"[WARN] nba_b2b_classifier: {_b2b_err}")
+            _b2b_signals, _rest_signals = [], []
+            print(f"[WARN] nba_b2b_classifier/rest_asymmetry: {_b2b_err}")
 
         if _b2b_signals:
             with st.expander(f"🏀 B2B Subtypes — {len(_b2b_signals)} teams flagged", expanded=False):
@@ -16287,6 +16307,17 @@ with tabs[2]:
                         f'<div style="border-left:4px solid #e8a020;background:#0a0e14;border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_b["team"]}</b> — {_b["note"]} (adj: {_b["point_adjustment"]:+.1f} pts)</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        if _rest_signals:
+            with st.expander(f"😴 Rest Asymmetry — {len(_rest_signals)} matchups flagged", expanded=False):
+                for _r in _rest_signals[:15]:
+                    st.markdown(
+                        f'<div style="border-left:4px solid #378add;background:#0a0e14;border-radius:4px;'
+                        f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
+                        f'<b>{_r["matchup"]}</b> — {_r["note"]} (adj: {_r["point_adjustment"]:+.1f} pts, '
+                        f'home rest {_r["home_rest_days"]}d / away rest {_r["away_rest_days"]}d)</div>',
                         unsafe_allow_html=True,
                     )
 
