@@ -3866,7 +3866,7 @@ def fetch_alternate_lines(sport, matchup):
             return _safe_load_pkl(cache_path)
     alternates = {"spreads": [], "totals": [], "source": "OddsWrap"}
     try:
-        client = OddsClient(books=["draftkings", "bovada"])
+        client = OddsClient(books=["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"])
         games = client.get_all(sport_key)
         for game in games:
             game_name = f"{game.away_team} @ {game.home_team}"
@@ -7237,9 +7237,9 @@ def fetch_oddswrap_props(sport):
             return _safe_load_pkl(cache_path)
     all_props = []
     try:
-        client = OddsClient(books=["draftkings", "bovada", "betrivers"])
+        client = OddsClient(books=["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"])
         seen = set()
-        for book in ["draftkings", "bovada", "betrivers"]:
+        for book in ["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"]:
             try:
                 cats = client.get_prop_categories(sport_key, book=book)
                 for cat in cats[:10]:
