@@ -112,7 +112,8 @@ Pinnacle: [X% if game-line — omit field entirely for props, don't print repeat
 Signals: [active signals]
 Analysis: 2-3 sentences, top 3 signals
 Verdict: PLAY / FADE / PASS
-Parlay/multi-pick: never show bare Matrix:X/100 — break into Math:X/30 Correlation:X/30 Market Drift:X/20 Volatility:X/20. Always add CORRELATION RISK: LOW/MODERATE/HIGH (same-team/same-game flag) on any multi-pick section, even standalone Slip picks.
+Parlay/multi-pick: never show bare Matrix:X/100 — break into Math:X/30 Correlation:X/30 Market Drift:X/20 Volatility:X/20, plus one-clause "Why this score:". Always add CORRELATION RISK: LOW/MODERATE/HIGH (same-team/same-game flag) on any multi-pick section, even standalone Slip picks.
+Every Slip of the Day pick (not just Lock) must carry a one-clause "Why:" reason — never present a numbers-only pick.
 
 End with PARLAY NOTE if 2+ SOVEREIGN/ELITE picks (check covariance first).
 
