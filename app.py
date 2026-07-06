@@ -450,6 +450,27 @@ st.markdown("""<style>
     background: var(--bc-bg-panel) !important;
     border-bottom: 2px solid var(--bc-blue-dark) !important;
     gap: 2px;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: var(--bc-blue) var(--bc-bg-panel) !important;
+    -webkit-overflow-scrolling: touch !important;
+    cursor: grab !important;
+    flex-wrap: nowrap !important;
+    white-space: nowrap !important;
+}
+.stTabs [data-baseweb="tab-list"]:active {
+    cursor: grabbing !important;
+}
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {
+    height: 3px !important;
+}
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-track {
+    background: var(--bc-bg-panel) !important;
+}
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {
+    background: var(--bc-blue) !important;
+    border-radius: 3px !important;
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
@@ -460,6 +481,9 @@ st.markdown("""<style>
     padding: 8px 16px !important;
     border-bottom: 2px solid transparent !important;
     transition: all 0.2s ease !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    cursor: pointer !important;
 }
 .stTabs [aria-selected="true"] {
     background: var(--bc-blue-dark) !important;
