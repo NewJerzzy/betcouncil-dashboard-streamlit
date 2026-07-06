@@ -14891,7 +14891,8 @@ with st.sidebar:
         help="Hide props for players not in the stats database. Unchecking may show props with less accurate projections."
     )
     st.markdown("---")
-    sport_sel = st.selectbox("Sport", SPORTS, index=SPORTS.index(st.session_state.get("last_sport", SPORTS[0])) if st.session_state.get("last_sport") in SPORTS else 0)
+    st.markdown('<div style="font-size:10px;color:var(--bc-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Select Sport</div>', unsafe_allow_html=True)
+    sport_sel = st.selectbox("", SPORTS, index=SPORTS.index(st.session_state.get("last_sport", SPORTS[0])) if st.session_state.get("last_sport") in SPORTS else 0)
     if st.button("Load Board", width="stretch"):
         try:
             for f in os.listdir(CACHE_DIR):
@@ -15344,7 +15345,7 @@ with tabs[0]:
         # ── MATCHUPS ────────────────────────────────────────
         games_list = st.session_state.games or []
         if games_list:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Today's Matchups</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Today's Matchups</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
             games_html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:0.5rem;">'
             for g in games_list[:6]:
                 matchup = g.get("Matchup", g.get("matchup",""))
@@ -15382,7 +15383,7 @@ with tabs[0]:
                         "source": "ESPN Practice"
                     })
         if injury_props or rw_inj_serious:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Injury Alerts</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Injury Alerts</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
             inj_html = '<div style="background:#e0404011;border:1px solid #e0404033;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">'
             seen_inj = set()
             # Board-level injuries (affect today's props)
@@ -15413,7 +15414,7 @@ with tabs[0]:
         sharp_alerts_s = st.session_state.get("sharp_alerts", [])
         steam_moves_s = st.session_state.get("steam_moves", [])
         all_sharp = sharp_alerts_s + steam_moves_s
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.5rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e8a020;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">⚡ Sharp Money</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.5rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:#e8a020;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">⚡ Sharp Money</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         if all_sharp:
             _sharp_html = []
             for _sa in all_sharp[:4]:
@@ -15432,9 +15433,9 @@ with tabs[0]:
         _top_plays = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
         if _top_plays:
             st.markdown("""<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0.8rem;">
-                <div style="flex:1;height:1px;background:#1e2d3d;"></div>
+                <div style="flex:1;height:1px;background:var(--bc-bg2);"></div>
                 <span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🎯 Best Bet Queue</span>
-                <div style="flex:1;height:1px;background:#1e2d3d;"></div></div>""", unsafe_allow_html=True)
+                <div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>""", unsafe_allow_html=True)
             for _qi, _qp in enumerate(_top_plays):
                 _qe = _qp.get("Edge",0)
                 _qc = "#22c55e" if _qp.get("Tier")=="SOVEREIGN" else "#378add"
@@ -15571,7 +15572,7 @@ with tabs[0]:
         # ═══════════════════════════════════════════════════
         # ── LOCK OF THE DAY — GAME ─────────────────────────
         if game_analysis:
-            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Game</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+            st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Lock of the Day — Game</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
             best_game = max(game_analysis, key=lambda x: x.get("best_edge",0))
             bb = best_game.get("best_bet",{})
             if bb:
@@ -15899,7 +15900,7 @@ with tabs[0]:
         st.markdown("---")
 
         # ── PARLAY OF THE DAY — GAMES ──────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Games</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         top_games = sorted([g for g in game_analysis if g.get("best_bet") and g.get("best_edge",0)>=0.02], key=lambda x: x.get("best_edge",0), reverse=True)[:3]
         # Compute prop-to-prop correlation for parlay picks
         _top_for_corr = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:5]
@@ -15958,7 +15959,7 @@ with tabs[0]:
                 st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
 
         # ── GAMES TO AVOID (always visible) ────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:#e04040;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Games to Avoid</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         avoid_games = [g for g in game_analysis if g.get("best_edge",0) < -0.05][:3]
         if avoid_games:
             _ag_html = []
@@ -15972,7 +15973,7 @@ with tabs[0]:
             st.markdown('<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.6rem 0.9rem;color:var(--bc-dim);font-size:1.05rem;">✅ No strong game fades today — all detected edges are positive.</div>', unsafe_allow_html=True)
 
         # ── CONFIDENCE MATRIX ──────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Slip Confidence Matrix</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Slip Confidence Matrix</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         if parlay_props:
             avg_edge = sum(p.get("Edge",0) for p in parlay_props)/len(parlay_props) if parlay_props else 0
             math_score = min(30, int(avg_edge * 200))
@@ -15998,7 +15999,7 @@ with tabs[0]:
             """, unsafe_allow_html=True)
 
         # ── BEST +EV PROPS ─────────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best +EV Props (2-pick, need 57.7%)</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best +EV Props (2-pick, need 57.7%)</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         plus_ev = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True) if p.get("Edge",0) > 0][:6]
         avoid = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < -0.05][:3]
         ev_html = ""
@@ -16022,7 +16023,7 @@ with tabs[0]:
         )
 
 
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Daily Risk Status</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Daily Risk Status</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         same_team_count = 0
         players = [p.get("Player","") for p in parlay_props]
         for i in range(len(players)):
@@ -16035,7 +16036,7 @@ with tabs[0]:
         st.markdown(f'<div style="background:{risk_color}11;border:1px solid {risk_color}33;border-radius:8px;padding:1rem;margin-bottom:0.5rem;"><div style="color:{risk_color};font-weight:700;font-size:1.0rem;margin-bottom:0.4rem;">⚠ {risk_label}</div><p style="color:#b8c6d6;font-size:1.0rem;margin:0;">{risk_note}</p></div>', unsafe_allow_html=True)
 
         # ── MASTER DAILY SLIP ──────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Daily Slip</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Daily Slip</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         slip_picks = parlay_props if parlay_props else sorted(board, key=lambda x: x.get("Edge",0), reverse=True)[:3]
         if slip_picks:
             unit = active_unit()
@@ -16049,7 +16050,7 @@ with tabs[0]:
             st.markdown(slip_html, unsafe_allow_html=True)
 
         # ── ALT LINE UPGRADES ──────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Alt Line Upgrades</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Alt Line Upgrades</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         alt_upgrades = st.session_state.get("alt_line_upgrades", [])
         if alt_upgrades:
             _au_html = []
@@ -16068,7 +16069,7 @@ with tabs[0]:
             st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;">✅ All lines optimal — no upgrades today.</div>', unsafe_allow_html=True)
 
         # ── ARBITRAGE OPPORTUNITIES ────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Arbitrage Opportunities</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Arbitrage Opportunities</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         arb_opps = st.session_state.get("arb_opportunities", [])
         if arb_opps:
             _arb_html = []
@@ -16088,7 +16089,7 @@ with tabs[0]:
             st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;">No arbitrage opportunities found today.</div>', unsafe_allow_html=True)
 
         # ── BEST OF ALL SPORTS ─────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         all_sports_best = [p for p in st.session_state.get("all_sports_best", [])
                            if p.get("Player","") not in ("","Unknown Player")
                            and float(p.get("Line",0) or 0) < 100
@@ -16103,7 +16104,7 @@ with tabs[0]:
             st.markdown('<div style="color:var(--bc-muted);font-size:1.05rem;padding:0.3rem 0;">Load boards across sports to see the best plays of the day.</div>', unsafe_allow_html=True)
 
         # ── TRENDING PICKS ─────────────────────────────────
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Trending Picks (Last 7 Days)</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Trending Picks (Last 7 Days)</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         all_history = st.session_state.get("history", [])
         if all_history:
             cutoff = datetime.now() - timedelta(days=7)
@@ -16532,7 +16533,7 @@ with tabs[1]:
                 f'12px 160px 55px 54px 90px 50px 58px 52px 58px 80px 45px 45px 45px 47px 65px;'
                 f'gap:3px;padding:3px 8px;background:{_bg};'
                 f'border-bottom:1px solid rgba(26,58,92,0.5);font-size:12px;align-items:center;'
-                f'min-height:22px;">'
+                f'min-height:22px;cursor:default;transition:background 0.15s;">'
                 f'<span style="width:3px;height:20px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
                 f'<span style="font-weight:600;color:var(--bc-text);">{_r["_player"][:22]}</span>'
                 f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
@@ -17619,7 +17620,7 @@ with tabs[3]:
             _slip_label = "" if n == 1 else f"{n}-Pick Slip"
             _slip_label_html = f'<span style="color:var(--bc-text);font-weight:700;font-size:1rem;">{_slip_label}</span> ' if _slip_label else ""
             st.markdown(
-                f'<div style="background:var(--bc-bg);border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
+                f'<div style="background:var(--bc-bg);border:1px solid {"#e8a02033" if _is_game_slip else "var(--bc-bg2)"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
                 f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
                 f'<div>{_slip_label_html}' +
                 f'<span style="color:var(--bc-blue);font-size:1.0rem;margin-left:8px;">{sport}</span> ' +
@@ -19841,7 +19842,7 @@ with tabs[4]:
     else:
         _dc = "#22c55e" if not _drift["alert"] else "#e04040"
         st.markdown(
-            f'<div style="background:var(--bc-bg);border:1px solid {"#e04040" if _drift["alert"] else "#1e2d3d"};border-radius:8px;padding:0.8rem;">'
+            f'<div style="background:var(--bc-bg);border:1px solid {"#e04040" if _drift["alert"] else "var(--bc-bg2)"};border-radius:8px;padding:0.8rem;">'
             f'<div style="color:{_dc};font-size:1.1rem;font-weight:700;">{_drift["status"]}</div>'
             f'<div style="display:flex;gap:2rem;margin-top:0.5rem;">'
             f'<span style="color:var(--bc-muted);">All-time ROI/bet: <b>{_drift["all_time_roi"]:+.3f}u</b></span>'
