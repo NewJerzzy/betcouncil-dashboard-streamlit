@@ -661,3 +661,119 @@ def parse_mybookie_slip_text(text: str) -> list:
         import warnings
         warnings.warn(f"[slip_parser] parse_mybookie_slip_text failed: {type(_e).__name__}: {_e}", stacklevel=2)
     return bets
+
+
+def parse_draftkings_slip_text(text: str) -> list:
+    """Parse DraftKings pasted slip text. Handles props, game lines, SGP."""
+    import re
+    bets = []
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    bet_type = "single"
+    for i, line in enumerate(lines):
+        if re.search(r"same.game parlay|sgp|parlay", line, re.I):
+            bet_type = "parlay"
+        prop_m = re.match(r"^(.+?)\s*[-\u2013]\s*(Over|Under)\s*([\d.]+)\s+(.+)$", line, re.I)
+        if prop_m:
+            player, direction = prop_m.group(1).strip(), prop_m.group(2).capitalize()
+            line_val, stat = prop_m.group(3), prop_m.group(4).strip()
+            odds = stake = result = None
+            for j in range(i+1, min(i+5, len(lines))):
+                om = re.search(r"([+-]\d{3,4})", lines[j])
+                if om and not odds: odds = int(om.group(1))
+                sm = re.search(r"\$([0-9,.]+)\s+to win", lines[j], re.I)
+                if sm and not stake: stake = float(sm.group(1).replace(",",""))
+                if re.search(r"won|loss|settled|push|void", lines[j], re.I):
+                    result = ("Win" if re.search(r"\bwon\b", lines[j], re.I)
+                              else "Loss" if re.search(r"\blost?\b", lines[j], re.I)
+                              else "Push" if "push" in lines[j].lower() else "Pending")
+            bets.append({"Player":player,"Direction":direction,"Line":float(line_val),
+                         "Stat":stat,"Odds":odds,"Stake":stake,"Result":result or "Pending",
+                         "Book":"DraftKings","BetType":bet_type,"RawLine":line})
+        game_m = re.match(r"^(.+?)\s+(?:vs\.?|@)\s+(.+?)\s*[-\u2013]\s*(.+)$", line, re.I)
+        if game_m and not prop_m:
+            away, home, market = game_m.group(1).strip(), game_m.group(2).strip(), game_m.group(3).strip()
+            odds = stake = result = None
+            for j in range(i+1, min(i+5, len(lines))):
+                om = re.search(r"([+-]\d{3,4})", lines[j])
+                if om and not odds: odds = int(om.group(1))
+                sm = re.search(r"\$([0-9,.]+)\s+to win", lines[j], re.I)
+                if sm and not stake: stake = float(sm.group(1).replace(",",""))
+                if re.search(r"won|loss|settled|push", lines[j], re.I):
+                    result = "Win" if re.search(r"\bwon\b", lines[j], re.I) else "Loss"
+            bets.append({"Player":f"{away} @ {home}","Direction":"Game Line","Line":market,
+                         "Stat":"Game","Odds":odds,"Stake":stake,"Result":result or "Pending",
+                         "Book":"DraftKings","BetType":bet_type,"RawLine":line})
+    return bets
+
+
+def parse_fanduel_slip_text(text: str) -> list:
+    """Parse FanDuel pasted slip text. Handles props and game lines."""
+    import re
+    bets = []
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    for i, line in enumerate(lines):
+        stat_m = re.match(r"^(.+?):\s*(Over|Under|More|Less)\s*([\d.]+)$", line, re.I)
+        if stat_m:
+            stat = stat_m.group(1).strip()
+            direction = "Over" if stat_m.group(2).lower() in ("over","more") else "Under"
+            line_val = stat_m.group(3)
+            player = lines[i-1] if i > 0 and not re.search(
+                r"odds|stake|status|winnings|parlay|single", lines[i-1], re.I) else ""
+            odds = stake = result = None
+            for j in range(i+1, min(i+6, len(lines))):
+                if re.search(r"odds", lines[j], re.I):
+                    om = re.search(r"([+-]\d{3,4})", lines[j])
+                    if om: odds = int(om.group(1))
+                if re.search(r"stake", lines[j], re.I):
+                    sm = re.search(r"\$?([\d,.]+)", lines[j])
+                    if sm: stake = float(sm.group(1).replace(",",""))
+                if re.search(r"status|result", lines[j], re.I):
+                    result = ("Win" if re.search(r"won|win", lines[j], re.I)
+                              else "Loss" if re.search(r"lost?|loss", lines[j], re.I)
+                              else "Push" if "push" in lines[j].lower() else "Pending")
+            bets.append({"Player":player,"Direction":direction,"Line":float(line_val),
+                         "Stat":stat,"Odds":odds,"Stake":stake,"Result":result or "Pending",
+                         "Book":"FanDuel","BetType":"single","RawLine":line})
+            continue
+        game_m = re.match(r"^(.+?)\s+([+-][\d.]+)\s*\(([+-]\d+)\)$", line)
+        if game_m:
+            bets.append({"Player":game_m.group(1).strip(),
+                         "Direction":"Spread" if float(game_m.group(2))!=0 else "ML",
+                         "Line":float(game_m.group(2)),"Stat":"Game",
+                         "Odds":int(game_m.group(3)),"Stake":None,
+                         "Result":"Pending","Book":"FanDuel","BetType":"single","RawLine":line})
+    return bets
+
+
+def auto_detect_book(text: str) -> str:
+    """Detect sportsbook from slip text patterns."""
+    t = text.lower()
+    if "draftkings" in t: return "DraftKings"
+    if "fanduel" in t:    return "FanDuel"
+    if "bovada" in t:     return "Bovada"
+    if "mybookie" in t:   return "MyBookie"
+    if "prizepicks" in t: return "PrizePicks"
+    if "betmgm" in t:     return "BetMGM"
+    if "caesars" in t:    return "Caesars"
+    if "betonline" in t:  return "BetOnline"
+    if "bet105" in t:     return "Bet105"
+    if "underdog" in t:   return "Underdog"
+    return "Unknown"
+
+
+def parse_slip_auto(text: str) -> list:
+    """Auto-detect book and route to correct parser."""
+    book = auto_detect_book(text)
+    if book == "DraftKings": return parse_draftkings_slip_text(text)
+    if book == "FanDuel":    return parse_fanduel_slip_text(text)
+    if book == "Bovada":     return parse_bovada_slip_text(text)
+    if book == "MyBookie":   return parse_mybookie_slip_text(text)
+    results = []
+    for fn in [parse_draftkings_slip_text, parse_fanduel_slip_text,
+               parse_bovada_slip_text, parse_mybookie_slip_text]:
+        try:
+            r = fn(text)
+            if len(r) > len(results): results = r
+        except Exception: pass
+    return results
+
