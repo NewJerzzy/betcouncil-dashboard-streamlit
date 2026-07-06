@@ -5230,533 +5230,248 @@ def track_closing_line_beat(bet_record: dict, closing_lines: dict) -> dict:
 # Especially important for MLB HR props and futures (favourite-longshot bias)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def devig_additive(p1_imp: float, p2_imp: float) -> tuple:
-    """Standard additive (proportional) devig. Best for near-even markets."""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPLETE 6-METHOD DEVIG SUITE
+# All methods + intelligent auto-selector based on market characteristics
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _erf_approx(x: float) -> float:
+    """Fast erf approximation (Abramowitz & Stegun)."""
+    t = 1.0 / (1.0 + 0.3275911 * abs(x))
+    poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 +
+                t * (-1.453152027 + t * 1.061405429))))
+    result = 1.0 - poly * math.exp(-x * x)
+    return result if x >= 0 else -result
+
+def _norm_cdf(x: float) -> float:
+    return (1.0 + _erf_approx(x / math.sqrt(2))) / 2.0
+
+def _norm_ppf(p: float) -> float:
+    """Inverse normal CDF (probit) via rational approximation."""
+    p = max(1e-9, min(1 - 1e-9, p))
+    if p < 0.5:
+        t = math.sqrt(-2 * math.log(p))
+        return -(2.515517 + t*(0.802853 + t*0.010328)) /                (1 + t*(1.432788 + t*(0.189269 + t*0.001308))) + t
+    else:
+        t = math.sqrt(-2 * math.log(1 - p))
+        return (2.515517 + t*(0.802853 + t*0.010328)) /                (1 + t*(1.432788 + t*(0.189269 + t*0.001308))) - t
+
+
+def devig_multiplicative(p1_imp: float, p2_imp: float) -> tuple:
+    """Multiplicative (proportional) devig. Best for balanced markets."""
     total = p1_imp + p2_imp
     if total <= 0: return 0.5, 0.5
     return p1_imp / total, p2_imp / total
 
 
+def devig_additive(p1_imp: float, p2_imp: float) -> tuple:
+    """Additive (equal margin) devig. Best for simple equal-margin markets."""
+    overround = p1_imp + p2_imp
+    margin = (overround - 1.0) / 2.0
+    p1 = max(0.01, min(0.99, p1_imp - margin))
+    p2 = max(0.01, min(0.99, p2_imp - margin))
+    total = p1 + p2
+    return p1/total, p2/total
+
+
+def devig_power(p1_imp: float, p2_imp: float) -> tuple:
+    """Power method. Best for lopsided markets with heavy favorites/longshots."""
+    try:
+        lo, hi = 0.3, 8.0
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            if p1_imp**mid + p2_imp**mid > 1: lo = mid
+            else: hi = mid
+        k = (lo + hi) / 2
+        p1, p2 = p1_imp**k, p2_imp**k
+        total = p1 + p2
+        return p1/total, p2/total
+    except Exception:
+        return devig_multiplicative(p1_imp, p2_imp)
+
+
 def devig_shin(p1_imp: float, p2_imp: float) -> tuple:
-    """
-    Shin (1993) devig — accounts for favourite-longshot bias.
-    Best for HR props, futures, and markets with juice > 10%.
-    """
+    """Shin model. Best for 3+ outcome markets and props."""
     try:
-        z = p1_imp + p2_imp - 1.0  # total overround
-        if z <= 0: return devig_additive(p1_imp, p2_imp)
-        def shin_p(p_imp):
-            disc = z**2 + 4*(1-z)*p_imp**2
+        z = p1_imp + p2_imp - 1.0
+        if z <= 0: return devig_multiplicative(p1_imp, p2_imp)
+        def shin_p(p):
+            disc = z**2 + 4*(1-z)*p**2
             return (math.sqrt(max(disc, 0)) - z) / (2*(1-z))
-        p1 = shin_p(p1_imp)
-        p2 = shin_p(p2_imp)
+        p1, p2 = shin_p(p1_imp), shin_p(p2_imp)
         total = p1 + p2
         return p1/total, p2/total
     except Exception:
-        return devig_additive(p1_imp, p2_imp)
+        return devig_multiplicative(p1_imp, p2_imp)
 
 
-def devig_power(p1_imp: float, p2_imp: float, k: float = None) -> tuple:
+def devig_probit(p1_imp: float, p2_imp: float) -> tuple:
     """
-    Power (logarithmic) devig — best for extreme longshots (+500 and beyond).
-    Finds k such that p1_imp^(1/k) + p2_imp^(1/k) = 1.
+    Probit method. Best for symmetrical markets (spreads, totals near even).
+    Transforms to normal space, removes vig, transforms back.
     """
     try:
-        if k is None:
-            # Binary search for k
-            lo, hi = 0.5, 5.0
-            for _ in range(50):
-                mid = (lo + hi) / 2
-                s = p1_imp**mid + p2_imp**mid
-                if s > 1: lo = mid
-                else:     hi = mid
-            k = (lo + hi) / 2
-        p1 = p1_imp ** k
-        p2 = p2_imp ** k
-        total = p1 + p2
-        return p1/total, p2/total
+        overround = p1_imp + p2_imp
+        if overround <= 1.0: return devig_multiplicative(p1_imp, p2_imp)
+        # Scale to sum to 1 first
+        p1_s, p2_s = p1_imp / overround, p2_imp / overround
+        # Probit transform
+        z1 = _norm_ppf(p1_s)
+        z2 = _norm_ppf(p2_s)
+        # Remove vig symmetrically in probit space
+        # The total overround biases both toward 0.5; shift to correct
+        z_mid = (z1 + z2) / 2  # midpoint bias
+        z1_fair = z1 - z_mid * 0.5
+        z2_fair = z2 + z_mid * 0.5
+        p1_fair = _norm_cdf(z1_fair)
+        p2_fair = _norm_cdf(z2_fair)
+        total = p1_fair + p2_fair
+        return p1_fair/total, p2_fair/total
     except Exception:
-        return devig_additive(p1_imp, p2_imp)
+        return devig_multiplicative(p1_imp, p2_imp)
 
 
-def devig_ensemble(over_american: float, under_american: float,
-                   market_type: str = "standard") -> dict:
+def devig_worst_case(p1_imp: float, p2_imp: float) -> tuple:
     """
-    Ensemble devig: blends Shin + Additive + Power with market-type weights.
-    market_type: "standard" | "hr_prop" | "future" | "extreme_longshot"
-    Returns: {fair_over, fair_under, method_weights, vig_pct, overround}
+    Worst-case (conservative) method.
+    Assumes all vig is on the side you're betting — gives lowest fair prob.
+    Best for risk-averse sizing or low-liquidity markets.
+    """
+    try:
+        overround = p1_imp + p2_imp
+        if overround <= 1.0: return devig_multiplicative(p1_imp, p2_imp)
+        # Conservative: assume all vig loaded on p1 side
+        p1_fair = p1_imp - (overround - 1.0)
+        p2_fair = 1.0 - p1_fair
+        p1_fair = max(0.01, min(0.99, p1_fair))
+        p2_fair = max(0.01, min(0.99, p2_fair))
+        total = p1_fair + p2_fair
+        return p1_fair/total, p2_fair/total
+    except Exception:
+        return devig_multiplicative(p1_imp, p2_imp)
+
+
+def auto_select_devig_method(over_american: float, under_american: float,
+                              market_type: str = "standard",
+                              liquidity: str = "high") -> str:
+    """
+    Automatically select best devig method based on market characteristics.
+
+    market_type: standard|spread|total|hr_prop|future|moneyline|3way|extreme
+    liquidity:   high|medium|low
+
+    Decision logic:
+    - Spread near even + high liquidity → probit (symmetric markets)
+    - HR props / longshots (+200 or more) → shin + power blend
+    - Futures / multi-outcome → shin
+    - Heavy favorites (-300 or higher) → power
+    - Low liquidity → worst_case (conservative)
+    - Balanced (-110/-110) → multiplicative
+    - Default → ensemble blend
     """
     def to_imp(a):
         a = float(a)
         return 100/(a+100) if a > 0 else -a/(-a+100)
 
-    p_over  = to_imp(over_american)
-    p_under = to_imp(under_american)
-    overround = p_over + p_under
+    p1 = to_imp(over_american)
+    p2 = to_imp(under_american)
+    overround = p1 + p2
+    balance = abs(p1 - p2)  # 0 = perfectly balanced
+    max_imp = max(p1, p2)
 
-    # Market-type blend weights {additive, shin, power}
-    weights = {
-        "standard":         (0.50, 0.35, 0.15),
-        "hr_prop":          (0.20, 0.55, 0.25),
-        "future":           (0.10, 0.45, 0.45),
-        "extreme_longshot": (0.05, 0.30, 0.65),
-        "total":            (0.55, 0.30, 0.15),
-        "spread":           (0.60, 0.30, 0.10),
-    }.get(market_type, (0.50, 0.35, 0.15))
+    if liquidity == "low":
+        return "worst_case"
 
-    a_over, _ = devig_additive(p_over, p_under)
-    s_over, _ = devig_shin(p_over, p_under)
-    pw_over,_ = devig_power(p_over, p_under)
+    if market_type in ("spread", "total") and balance < 0.08 and overround < 1.08:
+        return "probit"
 
-    fair_over  = weights[0]*a_over + weights[1]*s_over + weights[2]*pw_over
-    fair_under = 1.0 - fair_over
+    if market_type in ("hr_prop", "extreme") or (
+            max_imp > 0.80 or max_imp < 0.15):
+        return "power"
 
-    return {
-        "fair_over":      round(fair_over, 5),
-        "fair_under":     round(fair_under, 5),
-        "overround":      round(overround, 5),
-        "vig_pct":        round((overround - 1.0) * 100, 3),
-        "method_weights": {"additive": weights[0], "shin": weights[1], "power": weights[2]},
-        "market_type":    market_type,
-        "additive_fair":  round(a_over, 5),
-        "shin_fair":      round(s_over, 5),
-        "power_fair":     round(pw_over, 5),
+    if market_type in ("future", "3way"):
+        return "shin"
+
+    if balance < 0.05 and overround < 1.06:
+        return "multiplicative"
+
+    if market_type == "standard" and balance < 0.15:
+        return "ensemble"
+
+    return "ensemble"
+
+
+def devig_ensemble(over_american: float, under_american: float,
+                   market_type: str = "auto",
+                   liquidity: str = "high") -> dict:
+    """
+    Full 6-method ensemble devig with auto market-type detection.
+    Blends all applicable methods with market-type weights.
+    Returns all method results + auto-selected best + ensemble blend.
+    """
+    def to_imp(a):
+        a = float(a)
+        return 100/(a+100) if a > 0 else -a/(-a+100)
+
+    p1_imp = to_imp(over_american)
+    p2_imp = to_imp(under_american)
+    overround = p1_imp + p2_imp
+
+    # Auto-detect market type if not specified
+    if market_type == "auto":
+        market_type = auto_select_devig_method(over_american, under_american,
+                                                "standard", liquidity)
+
+    # Run all 6 methods
+    methods = {
+        "multiplicative": devig_multiplicative(p1_imp, p2_imp)[0],
+        "additive":       devig_additive(p1_imp, p2_imp)[0],
+        "power":          devig_power(p1_imp, p2_imp)[0],
+        "shin":           devig_shin(p1_imp, p2_imp)[0],
+        "probit":         devig_probit(p1_imp, p2_imp)[0],
+        "worst_case":     devig_worst_case(p1_imp, p2_imp)[0],
     }
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# UPGRADE BLOCK 2: BAYESIAN SIGNAL UPDATING
-# Treats multiple signals as correlated evidence — prevents double-counting
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Signal independence matrix (correlation between signals)
-# 1.0 = perfectly correlated (same source), 0.0 = independent
-SIGNAL_CORRELATIONS = {
-    ("scanbet_steam",    "sharpapi_steam"):    0.75,  # both Pinnacle-derived
-    ("scanbet_steam",    "evsharp_ev"):        0.45,
-    ("sharpapi_steam",   "evsharp_ev"):        0.50,
-    ("action_network",   "covers_consensus"):  0.60,  # both public %
-    ("action_network",   "sharp_consensus"):   0.30,
-    ("fantasypros",      "numberfire"):        0.55,  # both projection models
-    ("fantasypros",      "statmuse_l10"):      0.15,  # projection vs recent form
-    ("statmuse_l10",     "recent_log"):        0.40,
-    ("defense_rank",     "matchup_history"):   0.35,
-    ("signal_odds_ai",   "parlaysavant"):      0.40,
-}
-
-
-def bayesian_signal_update(prior_prob: float, signals: list) -> dict:
-    """
-    Bayesian update of fair probability given multiple signals.
-    Handles signal correlation to prevent double-counting.
-
-    signals: list of {name, likelihood_ratio, confidence}
-      likelihood_ratio > 1.0 = evidence FOR the bet (OVER/home/etc)
-      likelihood_ratio < 1.0 = evidence AGAINST
-      confidence: 0-1, scales the update strength
-
-    Returns: {posterior_prob, total_update, signal_contributions, correlation_discount}
-    """
-    if not signals or not (0 < prior_prob < 1):
-        return {"posterior_prob": prior_prob, "total_update": 0.0,
-                "signal_contributions": [], "correlation_discount": 1.0}
-
-    prior_odds = prior_prob / (1 - prior_prob)
-    posterior_odds = prior_odds
-    contributions = []
-    signal_names = [s["name"] for s in signals]
-
-    for i, sig in enumerate(signals):
-        lr   = float(sig.get("likelihood_ratio", 1.0))
-        conf = float(sig.get("confidence", 1.0))
-        name = sig.get("name", f"signal_{i}")
-
-        # Discount for correlation with already-applied signals
-        corr_discount = 1.0
-        for prev_name in signal_names[:i]:
-            key = tuple(sorted([name, prev_name]))
-            corr = SIGNAL_CORRELATIONS.get(key, 0.10)
-            corr_discount *= (1.0 - corr * 0.5)
-
-        # Dampen LR by confidence and correlation
-        effective_lr = 1.0 + (lr - 1.0) * conf * corr_discount
-
-        posterior_odds *= effective_lr
-        contributions.append({
-            "signal":          name,
-            "raw_lr":          round(lr, 4),
-            "effective_lr":    round(effective_lr, 4),
-            "corr_discount":   round(corr_discount, 4),
-            "confidence":      conf,
-        })
-
-    posterior_prob = posterior_odds / (1 + posterior_odds)
-    posterior_prob = max(0.05, min(0.95, posterior_prob))
-
-    return {
-        "posterior_prob":       round(posterior_prob, 5),
-        "prior_prob":           round(prior_prob, 5),
-        "total_update":         round(posterior_prob - prior_prob, 5),
-        "signal_contributions": contributions,
-        "n_signals":            len(signals),
+    # Method weights by market type (all 6 methods)
+    weight_map = {
+        #                   mult  add   pwr   shin  prob  worst
+        "multiplicative": (0.80, 0.10, 0.05, 0.02, 0.02, 0.01),
+        "additive":       (0.10, 0.80, 0.03, 0.03, 0.02, 0.02),
+        "power":          (0.05, 0.05, 0.55, 0.25, 0.05, 0.05),
+        "shin":           (0.05, 0.05, 0.20, 0.55, 0.10, 0.05),
+        "probit":         (0.05, 0.05, 0.05, 0.10, 0.70, 0.05),
+        "worst_case":     (0.05, 0.05, 0.10, 0.10, 0.05, 0.65),
+        "ensemble":       (0.20, 0.15, 0.20, 0.25, 0.15, 0.05),
+        "hr_prop":        (0.05, 0.05, 0.30, 0.45, 0.10, 0.05),
+        "standard":       (0.25, 0.20, 0.15, 0.20, 0.15, 0.05),
+        "spread":         (0.10, 0.15, 0.10, 0.10, 0.50, 0.05),
+        "total":          (0.15, 0.15, 0.10, 0.20, 0.35, 0.05),
+        "future":         (0.05, 0.05, 0.25, 0.50, 0.10, 0.05),
     }
 
+    weights = weight_map.get(market_type, weight_map["ensemble"])
+    method_names = ["multiplicative","additive","power","shin","probit","worst_case"]
+    method_values = [methods[m] for m in method_names]
 
-def build_signal_list_from_prop(prop: dict) -> list:
-    """Convert prop dict signals into bayesian signal list."""
-    signals = []
+    fair_over = sum(w * v for w, v in zip(weights, method_values))
+    fair_over = max(0.01, min(0.99, fair_over))
 
-    if prop.get("ScanbetSteam"):
-        dp = abs(prop.get("ScanbetDropPct", 0))
-        ns = prop.get("ScanbetSnapshots", 1)
-        signals.append({"name":"scanbet_steam",
-                         "likelihood_ratio": 1.0 + dp * (1 + ns/20),
-                         "confidence": min(ns/10, 1.0)})
-
-    if prop.get("SteamMove"):
-        dp = abs(prop.get("SteamPct", 0.03))
-        signals.append({"name":"sharpapi_steam",
-                         "likelihood_ratio": 1.0 + dp * 8,
-                         "confidence": 0.8})
-
-    so_conf = prop.get("SignalOddsConf", 0)
-    if so_conf >= 0.55:
-        signals.append({"name":"signal_odds_ai",
-                         "likelihood_ratio": 1.0 + (so_conf - 0.5) * 3,
-                         "confidence": so_conf})
-
-    an_pct = prop.get("PublicPct", prop.get("public_pct", 0))
-    if an_pct and an_pct < 40:
-        signals.append({"name":"action_network",
-                         "likelihood_ratio": 1.15,
-                         "confidence": (40 - an_pct) / 40})
-    elif an_pct and an_pct > 65:
-        signals.append({"name":"action_network",
-                         "likelihood_ratio": 0.88,
-                         "confidence": (an_pct - 65) / 35})
-
-    sm_rate = prop.get("StatMuseL10Rate", 0)
-    if sm_rate >= 0.70:
-        signals.append({"name":"statmuse_l10",
-                         "likelihood_ratio": 1.0 + (sm_rate - 0.5) * 0.8,
-                         "confidence": min(sm_rate, 0.95)})
-    elif sm_rate and sm_rate <= 0.30:
-        signals.append({"name":"statmuse_l10",
-                         "likelihood_ratio": 1.0 - (0.5 - sm_rate) * 0.8,
-                         "confidence": min(1 - sm_rate, 0.95)})
-
-    def_adj = prop.get("DefenseAdj", 0)
-    if abs(def_adj) > 0.02:
-        signals.append({"name":"defense_rank",
-                         "likelihood_ratio": 1.0 + def_adj * 3,
-                         "confidence": 0.70})
-
-    return signals
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# UPGRADE BLOCK 3: LINE MOVEMENT VELOCITY
-# Speed of Pinnacle line movement — fast moves = stronger steam signal
-# ══════════════════════════════════════════════════════════════════════════════
-
-def compute_line_velocity(scanbet_snapshots: list, market_idx: int = 0) -> dict:
-    """
-    Compute velocity of Pinnacle line movement from Scanbet snapshot history.
-    scanbet_snapshots: list of {odds: [...], parseTime: ms_timestamp}
-    market_idx: index in odds array (0=home_ml, 1=away_ml, 6=total, 7=over, 8=under)
-
-    Returns: {velocity_pct_per_hour, acceleration, is_accelerating,
-              total_move_pct, duration_hours, momentum_score}
-    """
-    if not scanbet_snapshots or len(scanbet_snapshots) < 2:
-        return {"velocity_pct_per_hour": 0, "momentum_score": 0,
-                "total_move_pct": 0, "is_accelerating": False}
-
-    def to_prob(dec):
-        try: return 1.0 / float(dec)
-        except Exception: return 0.5
-
-    # Extract prob series
-    pts = []
-    for snap in scanbet_snapshots:
-        odds_arr = snap.get("odds", [])
-        ts       = snap.get("parseTime", 0) / 1000  # ms → sec
-        if market_idx < len(odds_arr):
-            pts.append({"prob": to_prob(odds_arr[market_idx]), "ts": ts})
-
-    if len(pts) < 2: return {"velocity_pct_per_hour": 0, "momentum_score": 0,
-                              "total_move_pct": 0, "is_accelerating": False}
-
-    pts.sort(key=lambda x: x["ts"])
-    duration_sec   = pts[-1]["ts"] - pts[0]["ts"]
-    duration_hours = max(duration_sec / 3600, 0.01)
-    total_move     = pts[-1]["prob"] - pts[0]["prob"]
-    velocity       = total_move / duration_hours  # prob change per hour
-
-    # Acceleration: compare first-half vs second-half velocity
-    mid = len(pts) // 2
-    first_half_vel = (pts[mid]["prob"] - pts[0]["prob"]) / max((pts[mid]["ts"] - pts[0]["ts"])/3600, 0.01)
-    second_half_vel= (pts[-1]["prob"] - pts[mid]["prob"]) / max((pts[-1]["ts"] - pts[mid]["ts"])/3600, 0.01)
-    acceleration   = second_half_vel - first_half_vel
-    is_accelerating = acceleration > 0 and second_half_vel > first_half_vel * 1.2
-
-    # Momentum score: velocity × recency × n_snapshots factor
-    n_factor       = min(len(pts) / 10, 1.5)
-    momentum_score = abs(velocity) * n_factor * (1.5 if is_accelerating else 1.0)
+    # Spread (disagreement) between methods — high spread = uncertain market
+    method_spread = max(method_values) - min(method_values)
 
     return {
-        "velocity_pct_per_hour": round(velocity * 100, 4),
-        "acceleration":          round(acceleration * 100, 4),
-        "is_accelerating":       is_accelerating,
-        "total_move_pct":        round(total_move * 100, 4),
-        "duration_hours":        round(duration_hours, 2),
-        "n_snapshots":           len(pts),
-        "momentum_score":        round(momentum_score * 100, 4),
-        "first_half_vel":        round(first_half_vel * 100, 4),
-        "second_half_vel":       round(second_half_vel * 100, 4),
+        "fair_over":         round(fair_over, 5),
+        "fair_under":        round(1.0 - fair_over, 5),
+        "overround":         round(overround, 5),
+        "vig_pct":           round((overround - 1.0) * 100, 3),
+        "auto_method":       market_type,
+        "method_spread":     round(method_spread, 5),
+        "uncertainty":       "HIGH" if method_spread > 0.03 else "MEDIUM" if method_spread > 0.01 else "LOW",
+        "all_methods": {m: round(v, 5) for m, v in methods.items()},
+        "weights_used":      dict(zip(method_names, [round(w,3) for w in weights])),
     }
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# UPGRADE BLOCK 4: LINEUP-ADJUSTED ELO
-# Adjusts team Elo for roster changes (injuries, trades) mid-season
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Approximate WAR/impact values per position for lineup adjustment
-PLAYER_IMPACT_VALUES = {
-    # NBA (points above replacement per game)
-    "NBA": {"star": 8.0, "starter": 3.5, "rotation": 1.5, "bench": 0.5},
-    # MLB (runs above replacement per game, scaled)
-    "MLB": {"ace": 0.8, "star_hitter": 0.5, "starter": 0.25, "bench": 0.1},
-    # NFL (points above replacement per game)
-    "NFL": {"qb": 4.0, "skill": 1.5, "lineman": 1.0, "backup": 0.3},
-    # NHL (goals above replacement per game)
-    "NHL": {"star": 0.4, "top6": 0.2, "bottom6": 0.1, "backup": 0.05},
-}
-
-
-def lineup_adjusted_elo(base_elo: float, injuries: list,
-                        sport: str = "NBA") -> dict:
-    """
-    Adjust team Elo rating for known injuries/absences.
-    injuries: list of {player, role, status} where status in
-              ("out", "doubtful", "questionable", "probable")
-    Returns: {adjusted_elo, elo_delta, key_absences}
-    """
-    impact_map = PLAYER_IMPACT_VALUES.get(sport, PLAYER_IMPACT_VALUES["NBA"])
-    status_weights = {"out": 1.0, "doubtful": 0.75, "questionable": 0.40, "probable": 0.15}
-    elo_per_unit   = {"NBA": 25.0, "MLB": 15.0, "NFL": 20.0, "NHL": 18.0}.get(sport, 20.0)
-
-    total_delta = 0.0
-    key_absences = []
-
-    for inj in injuries:
-        role   = str(inj.get("role","rotation")).lower()
-        status = str(inj.get("status","questionable")).lower()
-        impact = impact_map.get(role, impact_map.get("rotation", 1.5))
-        weight = status_weights.get(status, 0.40)
-        delta  = -impact * weight * elo_per_unit
-        total_delta += delta
-        if abs(delta) >= elo_per_unit * 0.5:
-            key_absences.append({
-                "player": inj.get("player",""),
-                "elo_impact": round(delta, 1),
-                "role": role,
-                "status": status,
-            })
-
-    adjusted_elo = base_elo + total_delta
-    return {
-        "adjusted_elo":  round(adjusted_elo, 1),
-        "base_elo":      round(base_elo, 1),
-        "elo_delta":     round(total_delta, 1),
-        "key_absences":  key_absences,
-        "pct_change":    round(total_delta / max(base_elo, 1) * 100, 2),
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# UPGRADE BLOCK 5: BOOK TIER WEIGHTING FOR STEAM DETECTION
-# Weights line movement by book sharpness tier
-# Sharp book moves = stronger signal than square book moves
-# ══════════════════════════════════════════════════════════════════════════════
-
-BOOK_TIERS = {
-    # Tier 1: Market makers / sharpest (weight 1.0)
-    "pinnacle": 1.00, "circa": 0.95, "bookmaker": 0.90, "betcris": 0.88,
-    "betonline": 0.85, "heritage": 0.85, "5dimes": 0.83,
-    # Tier 2: Sharp-leaning (weight 0.65)
-    "unabated": 0.70, "novig": 0.68, "betmgm": 0.65, "caesars": 0.63,
-    "pointsbet": 0.62, "wynn": 0.60,
-    # Tier 3: Square / recreational (weight 0.35)
-    "draftkings": 0.45, "fanduel": 0.43, "espnbet": 0.40,
-    "fanatics": 0.38, "bet365": 0.42, "betrivers": 0.38,
-    # Tier 4: DFS / soft (weight 0.15)
-    "prizepicks": 0.15, "underdog": 0.15, "betr": 0.10,
-}
-
-def get_book_tier_weight(book_name: str) -> float:
-    """Return sharpness weight for a book (0.0-1.0)."""
-    return BOOK_TIERS.get(str(book_name).lower().replace(" ","").replace("-",""), 0.40)
-
-
-def weighted_steam_score(book_moves: list) -> dict:
-    """
-    Compute steam score weighted by book sharpness.
-    book_moves: list of {book, old_odds, new_odds, timestamp}
-    Returns: {weighted_score, sharp_agreement, square_agreement,
-              tier1_move, tier2_move, tier3_move, signal_strength}
-    """
-    def to_prob(a):
-        try:
-            o = float(a)
-            return 100/(o+100) if o > 0 else -o/(-o+100)
-        except Exception: return 0.5
-
-    tier1, tier2, tier3 = [], [], []
-
-    for move in book_moves:
-        book   = move.get("book","")
-        weight = get_book_tier_weight(book)
-        delta  = to_prob(move.get("new_odds",100)) - to_prob(move.get("old_odds",100))
-        entry  = {"book": book, "weight": weight, "delta": delta}
-        if weight >= 0.80:   tier1.append(entry)
-        elif weight >= 0.55: tier2.append(entry)
-        else:                tier3.append(entry)
-
-    def avg_delta(lst): return sum(e["delta"] for e in lst)/len(lst) if lst else 0
-    def wavg_delta(lst):
-        if not lst: return 0
-        return sum(e["delta"]*e["weight"] for e in lst) / sum(e["weight"] for e in lst)
-
-    t1_move = wavg_delta(tier1)
-    t2_move = avg_delta(tier2)
-    t3_move = avg_delta(tier3)
-
-    # Sharp agreement: tier1 moves same direction as tier2
-    sharp_agreement = (t1_move * t2_move > 0) if (tier1 and tier2) else False
-    # Square disagreement: square books haven't caught up yet = stronger signal
-    square_lag = (t1_move * t3_move > 0 and abs(t1_move) > abs(t3_move) * 1.5) if (tier1 and tier3) else False
-
-    # Weighted steam score: tier1 moves weighted 3x more than tier3
-    all_moves = tier1 + tier2 + tier3
-    weighted_score = sum(e["delta"] * e["weight"] * 3 if e["weight"]>=0.80
-                         else e["delta"] * e["weight"] for e in all_moves)
-
-    signal_strength = ("STRONG" if abs(t1_move) > 0.04 and sharp_agreement
-                        else "MODERATE" if abs(t1_move) > 0.02
-                        else "WEAK" if abs(t1_move) > 0.01
-                        else "NONE")
-
-    return {
-        "weighted_score":   round(weighted_score * 100, 4),
-        "tier1_move":       round(t1_move * 100, 4),
-        "tier2_move":       round(t2_move * 100, 4),
-        "tier3_move":       round(t3_move * 100, 4),
-        "sharp_agreement":  sharp_agreement,
-        "square_lag":       square_lag,
-        "signal_strength":  signal_strength,
-        "n_books":          len(book_moves),
-        "n_tier1":          len(tier1),
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# UPGRADE BLOCK 6: STATISTICAL STABILIZATION-BASED REGRESSION
-# Each stat has a known PA/AB/sample needed to stabilize
-# Regression magnitude = f(sample_size, stabilization_point)
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Stabilization points (sample size where stat is ~50% signal, ~50% noise)
-# Based on Tango/MGL/Pizza Cutter research
-STABILIZATION_POINTS = {
-    # MLB (plate appearances)
-    "hr_rate":      170,   "k_rate":       60,    "bb_rate":      120,
-    "batting_avg":  460,   "obp":          320,   "slg":          320,
-    "babip":        820,   "iso":          320,   "woba":         320,
-    "xwoba":        150,   "barrel_rate":  100,   "hard_hit_rate":50,
-    # NBA (possessions / ~minutes)
-    "pts":          250,   "reb":          150,   "ast":          200,
-    "fg_pct":       300,   "3pt_pct":      750,   "ts_pct":       400,
-    "stl":          500,   "blk":          500,   "to":           200,
-    # NFL (attempts)
-    "pass_yards":   150,   "rush_yards":   100,   "targets":      80,
-    "receptions":   80,    "td_rate":      300,
-    # NHL (shots / games)
-    "goals":        200,   "assists":      150,   "shots":        100,
-    "save_pct":     500,
-}
-
-
-def regression_to_mean(observed_rate: float, sample_size: int,
-                        league_avg: float, stat: str,
-                        sport: str = "MLB") -> dict:
-    """
-    Compute regression-to-mean estimate using stabilization points.
-    observed_rate: recent observed rate (e.g. 0.15 for HR/game)
-    sample_size: number of PA/games/possessions observed
-    league_avg: league average rate for this stat
-    stat: stat name (key in STABILIZATION_POINTS)
-    Returns: {regressed_rate, regression_pct, weight_observed,
-              weight_mean, is_small_sample, confidence}
-    """
-    stab = STABILIZATION_POINTS.get(stat, 300)
-    # Bayesian credibility weight
-    weight_obs  = sample_size / (sample_size + stab)
-    weight_mean = 1.0 - weight_obs
-    regressed   = weight_obs * observed_rate + weight_mean * league_avg
-    regression_pct = (regressed - observed_rate) / max(abs(observed_rate - league_avg), 0.001) * 100
-
-    is_small_sample = sample_size < stab * 0.3
-    confidence = min(sample_size / stab, 1.0)
-
-    return {
-        "regressed_rate":   round(regressed, 5),
-        "observed_rate":    round(observed_rate, 5),
-        "league_avg":       round(league_avg, 5),
-        "regression_pct":   round(regression_pct, 2),
-        "weight_observed":  round(weight_obs, 4),
-        "weight_mean":      round(weight_mean, 4),
-        "sample_size":      sample_size,
-        "stabilization_pt": stab,
-        "is_small_sample":  is_small_sample,
-        "confidence":       round(confidence, 4),
-        "stat":             stat,
-    }
-
-
-def apply_regression_to_prop(player_rate: float, sample_n: int,
-                              league_avg: float, stat: str,
-                              line: float, sport: str = "MLB") -> dict:
-    """
-    Apply regression and determine if it affects OVER/UNDER recommendation.
-    Returns: {regressed_line_implied, over_adjustment, regression_flag,
-              regression_severity}
-    """
-    reg = regression_to_mean(player_rate, sample_n, league_avg, stat, sport)
-    regressed_rate = reg["regressed_rate"]
-
-    # How much does regression shift the implied line?
-    line_shift = regressed_rate - player_rate
-    over_adj   = line_shift  # positive = helps OVER, negative = hurts OVER
-
-    if reg["is_small_sample"] and abs(reg["regression_pct"]) > 20:
-        severity = "HIGH"
-    elif abs(reg["regression_pct"]) > 10:
-        severity = "MEDIUM"
-    elif abs(reg["regression_pct"]) > 5:
-        severity = "LOW"
-    else:
-        severity = "NEGLIGIBLE"
-
-    flag = ""
-    if severity in ("HIGH","MEDIUM") and line_shift < -0.05 * player_rate:
-        flag = f"[REGRESS:{severity}] on OVER — rate likely overstated"
-    elif severity in ("HIGH","MEDIUM") and line_shift > 0.05 * player_rate:
-        flag = f"[REGRESS:{severity}] — rate likely understated, favors OVER"
-
-    return {**reg, "over_adjustment": round(over_adj, 5),
-            "regression_flag": flag, "regression_severity": severity}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
