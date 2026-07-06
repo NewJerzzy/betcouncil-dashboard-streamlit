@@ -8234,7 +8234,7 @@ def generate_gem_summary():
     today = date.today().strftime("%A, %B %d, %Y")
     scan_time = st.session_state.get("last_scan_time", "—")
     lines = []
-    lines.append("=== BETCOUNCIL v5.9 DAILY BRIEF ===")
+    lines.append("=== BETCOUNCIL v5.1 DAILY BRIEF ===")
     lines.append(f"Sport: {sport}")
     lines.append(f"Date: {today}")
     lines.append(f"Scanned: {scan_time}")
@@ -8293,6 +8293,27 @@ def generate_gem_summary():
     lines.append(f"=== RECOMMENDED ACTION: {action} ===")
     lines.append(f"Elite: {len(sovereign_elite)} | Approved: {len(approved)} | Total: {len(board)}")
     lines.append("")
+    # Harvester status
+    try:
+        from fetchers import get_harvester_status as _ghs
+        _hs = _ghs()
+        _h_active = sum(1 for v in _hs.values() if v.get("active"))
+        lines.append(f"=== HARVESTER STATUS ({_h_active}/{len(_hs)} LIVE) ===")
+        for _hn,_hv in _hs.items():
+            _age = f"{_hv['age_minutes']}min" if _hv.get("age_minutes") else "no data"
+            _icon = "🟢" if _hv.get("active") else ("🟡" if _hv.get("age_minutes") else "⚪")
+            lines.append(f"{_icon} {_hn}: {_age}")
+        lines.append("")
+    except Exception:
+        pass
+    # Scanbet drops
+    _sbd = st.session_state.get("scanbet_drops",[])
+    _sbd_steam = [d for d in _sbd if d.get("is_steam") and abs(d.get("drop_pct",0))>0.03]
+    if _sbd_steam:
+        lines.append(f"=== SCANBET DROPS ({len(_sbd_steam)} steam moves) ===")
+        for d in sorted(_sbd_steam,key=lambda x:abs(x.get("drop_pct",0)),reverse=True)[:5]:
+            lines.append(f"📡 {d['game']} | {d['market']} {d['selection']}: {d['drop_pct']:+.1%} ({d['n_snapshots']}snaps)")
+        lines.append("")
     if board:
         lines.append("=== TOP PROPS (MODE A READY) ===")
         top = [p for p in board if p["Tier"] in ("SOVEREIGN","ELITE","APPROVED")][:15]
@@ -8335,6 +8356,16 @@ def generate_gem_summary():
                 sharp_note += f" ⚡{rlm_str[:30]}"
             elif prop_sharp:
                 sharp_note += " 📌SHARP"
+            if p.get("ScanbetSteam"):
+                sharp_note += f" 📡Pinnacle:{p.get('ScanbetDropPct',0):+.1%}({p.get('ScanbetSnapshots',0)}snaps)"
+            if p.get("SteamMove"):
+                sharp_note += f" 🔥Steam:{p.get('SteamPct',0):+.1%}"
+            if p.get("SignalOddsConf"):
+                sharp_note += f" 🤖SO:{p.get('SignalOddsConf',0):.0%}EV:{p.get('SignalOddsEV',0):.2f}"
+            if p.get("FPNote"): sharp_note += f" 📋{p['FPNote'][:20]}"
+            if p.get("StatMuseNote"): sharp_note += f" 📊{p['StatMuseNote'][:15]}"
+            if p.get("DefenseNote"): sharp_note += f" 🎯{p['DefenseNote'][:20]}"
+            if p.get("IsLive"): sharp_note += " 🔴LIVE"
             # Regression risk
             reg_risk = p.get("regression_risk", p.get("HotStreakRisk", ""))
             reg_note = f" [REGRESS:{reg_risk}]" if reg_risk and reg_risk != "NONE" else ""
