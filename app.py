@@ -43,7 +43,7 @@ except ImportError:
 # --- Module imports ---
 from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     calibrate_tier_thresholds, compute_clv_with_tier, adjusted_edge, analyze_loss_postmortem,
-     correlated_parlay_kelly,
+    correlated_parlay_kelly,
     normalize_stat_type, hot_streak_regression_risk,
     no_vig_prob_shin, no_vig_prob_log, no_vig_prob_probit, no_vig_prob_power,
     devig_best, compute_clv, compute_clv_novig,
@@ -64,10 +64,10 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_game_line_consensus, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
-    rest_adjusted_std_dev, score_rlm, devig_ensemble, pace_adjust_mlb_prop,
-    record_line, detect_steam_move, get_opener_gap, detect_market_maker_divergence,
-    compute_line_velocity, classify_book_role)
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    score_rlm, devig_ensemble,
+    record_line, detect_steam_move,
+    )
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import TIER_COLORS
 from app_fixes import fetch_vsin_intelligence

@@ -5716,3 +5716,42 @@ def apply_all_upgrades(prop: dict, scanbet_raw: dict = None,
 
     return prop
 
+
+
+# ── Compatibility stubs (functions moved/renamed) ────────────────────────────
+def build_game_line_consensus(lines, sport="NBA"):
+    """Stub — logic integrated into main scoring pipeline."""
+    return {}
+
+def rest_adjusted_std_dev(base_std, rest_days=1):
+    """Adjust std dev for rest days."""
+    factor = {0:1.15, 1:1.05, 2:1.0, 3:0.97, 4:0.95}.get(int(rest_days), 1.0)
+    return float(base_std) * factor
+
+def pace_adjust_mlb_prop(base_line, park_factor=1.0, weather_factor=1.0):
+    """Adjust MLB prop line for park and weather factors."""
+    return float(base_line) * park_factor * weather_factor
+
+def get_opener_gap(current_odds, opening_odds):
+    """Compute probability gap between opening and current Pinnacle line."""
+    def to_p(a):
+        a=float(a); return 100/(a+100) if a>0 else -a/(-a+100)
+    return round(to_p(current_odds) - to_p(opening_odds), 5)
+
+def detect_market_maker_divergence(sharp_odds, square_odds, threshold=0.03):
+    """Detect when sharp books diverge from square books."""
+    gap = get_opener_gap(square_odds, sharp_odds)
+    return {"divergence": abs(gap), "direction": "sharp" if gap > 0 else "square",
+            "significant": abs(gap) >= threshold}
+
+def classify_book_role(book_name):
+    """Classify book as sharp/market-maker/square/dfs."""
+    b = str(book_name).lower().replace(" ","").replace("-","")
+    if b in ("pinnacle","circa","bookmaker","betcris","betonline","heritage"):
+        return "sharp"
+    if b in ("draftkings","fanduel","espnbet","fanatics","betrivers"):
+        return "square"
+    if b in ("prizepicks","underdog","betr","novig"):
+        return "dfs"
+    return "market"
+
