@@ -344,18 +344,25 @@ st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️
 # --- Centralized CSS Variables ---
 st.markdown("""<style>
 :root {
-    --bc-green: #22c55e;
-    --bc-red: #e04040;
-    --bc-gold: #e8a020;
-    --bc-gold-bright: #f5c518;
-    --bc-bg: #0a0e14;
-    --bc-bg2: #1e2d3d;
-    --bc-text: #e8f0f8;
-    --bc-muted: #8a9ab0;
-    --bc-dim: #6a7a8a;
-    --bc-blue: #378add;
-    --bc-bg-card: #0d1520;
-    --bc-navy: #060c14;
+    /* bet105-inspired palette */
+    --bc-blue:       #1e90ff;   /* electric blue — primary accent */
+    --bc-blue-bright:#4db8ff;   /* bright blue for hover/active */
+    --bc-blue-dark:  #0a5fa8;   /* dark blue for sidebar/nav */
+    --bc-blue-glow:  rgba(30,144,255,0.25);
+    --bc-green:      #22c55e;
+    --bc-red:        #e04040;
+    --bc-gold:       #e8a020;
+    --bc-gold-bright:#f5c518;
+    --bc-bg:         #000000;   /* pure black — like bet105 */
+    --bc-bg2:        #0a1628;   /* deep navy card bg */
+    --bc-bg-card:    #0d1b2e;   /* card background */
+    --bc-bg-section: #0a1628;   /* section header bg */
+    --bc-bg-panel:   #071020;   /* sidebar/panel bg */
+    --bc-navy:       #000000;
+    --bc-text:       #ffffff;   /* pure white text */
+    --bc-muted:      #8ab4d4;   /* blue-tinted muted */
+    --bc-dim:        #4a6a8a;
+    --bc-border:     #1a3a5c;   /* blue-tinted border */
 }
 
 /* ── SOVEREIGN GLOW ANIMATION ──────────────────────────── */
@@ -396,6 +403,156 @@ st.markdown("""<style>
 .odds-pos { color: #22c55e; }
 .odds-neg { color: #e8f0f8; }
 .odds-ev  { color: #00d4aa; }
+
+/* ── BET105-STYLE SECTION HEADERS ─────────────────────── */
+.bc-section-header {
+    background: linear-gradient(90deg, var(--bc-blue-dark), var(--bc-bg2));
+    border-left: 4px solid var(--bc-blue);
+    border-radius: 6px 6px 0 0;
+    padding: 10px 16px;
+    color: var(--bc-text);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 0;
+}
+.bc-section-count {
+    background: var(--bc-blue);
+    color: #fff;
+    border-radius: 50%;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    float: right;
+}
+
+/* ── BET105-STYLE CARDS ────────────────────────────────── */
+.bc-card {
+    background: var(--bc-bg-card);
+    border: 1px solid var(--bc-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.bc-card:hover {
+    border-color: var(--bc-blue);
+    box-shadow: 0 0 12px var(--bc-blue-glow);
+}
+.bc-card-blue {
+    border-left: 4px solid var(--bc-blue) !important;
+    background: linear-gradient(135deg, var(--bc-bg-card), #0a1e38);
+}
+
+/* ── BET105-STYLE NAV TABS ─────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: var(--bc-bg-panel) !important;
+    border-bottom: 2px solid var(--bc-blue-dark) !important;
+    gap: 2px;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--bc-muted) !important;
+    border-radius: 6px 6px 0 0 !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    padding: 8px 16px !important;
+    border-bottom: 2px solid transparent !important;
+    transition: all 0.2s ease !important;
+}
+.stTabs [aria-selected="true"] {
+    background: var(--bc-blue-dark) !important;
+    color: var(--bc-blue-bright) !important;
+    border-bottom: 2px solid var(--bc-blue) !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--bc-blue-bright) !important;
+    background: rgba(30,144,255,0.1) !important;
+}
+
+/* ── BET105-STYLE BUTTONS ──────────────────────────────── */
+.stButton > button {
+    background: linear-gradient(135deg, var(--bc-blue-dark), var(--bc-blue)) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.3px !important;
+    transition: all 0.2s ease !important;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, var(--bc-blue), var(--bc-blue-bright)) !important;
+    box-shadow: 0 0 16px var(--bc-blue-glow) !important;
+    transform: translateY(-1px) !important;
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #0a5fa8, var(--bc-blue)) !important;
+}
+
+/* ── BET105-STYLE METRICS ──────────────────────────────── */
+[data-testid="metric-container"] {
+    background: var(--bc-bg-card) !important;
+    border: 1px solid var(--bc-border) !important;
+    border-radius: 8px !important;
+    padding: 12px !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+    color: var(--bc-muted) !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: var(--bc-blue-bright) !important;
+    font-weight: 700 !important;
+}
+
+/* ── GLOBAL BG + SIDEBAR ───────────────────────────────── */
+.stApp, [data-testid="stAppViewContainer"] {
+    background: var(--bc-bg) !important;
+}
+[data-testid="stSidebar"] {
+    background: var(--bc-bg-panel) !important;
+    border-right: 1px solid var(--bc-blue-dark) !important;
+}
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] p {
+    color: var(--bc-muted) !important;
+}
+
+/* ── LIVE BADGE ────────────────────────────────────────── */
+.bc-live-badge {
+    background: #e04040;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    animation: live-pulse 1.5s ease-in-out infinite;
+}
+@keyframes live-pulse {
+    0%,100% { opacity: 1; }
+    50%      { opacity: 0.6; }
+}
+
+/* ── DATAFRAMES ────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--bc-border) !important;
+    border-radius: 8px !important;
+}
+.dvn-scroller { background: var(--bc-bg-card) !important; }
+
+/* ── EXPANDERS ─────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid var(--bc-border) !important;
+    border-radius: 8px !important;
+    background: var(--bc-bg-card) !important;
+}
+[data-testid="stExpander"]:hover {
+    border-color: var(--bc-blue) !important;
+}
 
 /* ── STICKY BOARD SUMMARY BAR ──────────────────────────── */
 .bc-summary-bar {
