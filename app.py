@@ -339,7 +339,7 @@ def _ss_set(key, value, expected_type=None):
 
 
 
-st.set_page_config(page_title="BetCouncil v4.6 – Complete", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="BetCouncil v5.2", page_icon="⚡", layout="wide")
 
 # --- Centralized CSS Variables ---
 st.markdown("""<style>
@@ -704,8 +704,338 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 }
 .stTabs [data-baseweb="tab-highlight"] { background: transparent !important; }
 .stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+/* ── PROP CARDS — bet105 style ─────────────────────────────────────────────── */
+.prop-card {
+    background: var(--bc-bg-card);
+    border: 1px solid var(--bc-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+.prop-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 4px; height: 100%;
+    background: var(--bc-border);
+    border-radius: 10px 0 0 10px;
+}
+.prop-card:hover {
+    border-color: var(--bc-blue);
+    box-shadow: 0 4px 20px rgba(30,144,255,0.15);
+    transform: translateY(-1px);
+}
+.prop-card.sovereign::before { background: #f5c518; }
+.prop-card.elite::before     { background: var(--bc-blue); }
+.prop-card.approved::before  { background: #22c55e; }
+.prop-card.lean::before      { background: #ff8c00; }
+
+.prop-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.prop-player {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--bc-text);
+    letter-spacing: 0.2px;
+}
+.prop-team {
+    font-size: 11px;
+    color: var(--bc-muted);
+    margin-top: 1px;
+}
+.prop-line {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--bc-blue-bright);
+    font-family: 'JetBrains Mono', monospace;
+}
+.prop-stat {
+    font-size: 11px;
+    color: var(--bc-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.prop-odds-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+.odds-pill {
+    background: rgba(30,144,255,0.12);
+    border: 1px solid rgba(30,144,255,0.25);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--bc-blue-bright);
+    font-family: monospace;
+}
+.odds-pill.over  { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.3); color: #22c55e; }
+.odds-pill.under { background: rgba(224,64,64,0.12); border-color: rgba(224,64,64,0.3); color: #e04040; }
+.edge-pill {
+    background: rgba(245,197,24,0.12);
+    border: 1px solid rgba(245,197,24,0.25);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #f5c518;
+}
+.tier-badge {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.tier-sovereign { background: rgba(245,197,24,0.2); color: #f5c518; border: 1px solid #f5c518; }
+.tier-elite     { background: rgba(30,144,255,0.2); color: #4db8ff; border: 1px solid #1e90ff; }
+.tier-approved  { background: rgba(34,197,94,0.2);  color: #22c55e; border: 1px solid #22c55e; }
+.tier-lean      { background: rgba(255,140,0,0.2);  color: #ff8c00; border: 1px solid #ff8c00; }
+.tier-pass      { background: rgba(224,64,64,0.15); color: #e04040; border: 1px solid #e04040; }
+
+.signal-row {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--bc-muted);
+    line-height: 1.6;
+}
+.signal-tag {
+    display: inline-block;
+    background: rgba(30,144,255,0.08);
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin: 1px;
+    font-size: 10px;
+    color: var(--bc-blue-bright);
+}
+
+/* ── GAME LINE CARDS ────────────────────────────────────────────────────────── */
+.game-card {
+    background: var(--bc-bg-card);
+    border: 1px solid var(--bc-border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+}
+.game-matchup {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--bc-text);
+    margin-bottom: 8px;
+}
+.game-odds-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    text-align: center;
+}
+.game-odds-cell {
+    background: rgba(10,22,40,0.8);
+    border-radius: 6px;
+    padding: 6px 4px;
+}
+.game-odds-label {
+    font-size: 9px;
+    color: var(--bc-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+.game-odds-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--bc-text);
+    font-family: monospace;
+}
+.game-odds-value.pos { color: #22c55e; }
+.game-odds-value.neg { color: #e8f0f8; }
+
+/* ── SUMMARY COMMAND CENTER CARDS ───────────────────────────────────────────── */
+.command-card {
+    background: linear-gradient(135deg, var(--bc-bg-card), var(--bc-bg2));
+    border: 1px solid var(--bc-border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+.command-card:hover {
+    border-color: var(--bc-blue);
+    box-shadow: 0 0 20px var(--bc-blue-glow);
+}
+.command-value {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--bc-blue-bright);
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1;
+    margin-bottom: 4px;
+}
+.command-label {
+    font-size: 10px;
+    color: var(--bc-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+/* ── SIDEBAR NAV ITEMS ──────────────────────────────────────────────────────── */
+.nav-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    color: var(--bc-muted);
+    font-weight: 500;
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+.nav-item:hover {
+    background: rgba(30,144,255,0.1);
+    color: var(--bc-blue-bright);
+}
+.nav-item.active {
+    background: rgba(30,144,255,0.15);
+    color: var(--bc-blue-bright);
+    border-left: 3px solid var(--bc-blue);
+}
+.nav-count {
+    margin-left: auto;
+    background: var(--bc-blue-dark);
+    color: var(--bc-blue-bright);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* ── STATUS INDICATORS ──────────────────────────────────────────────────────── */
+.status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+.status-live    { background: #22c55e; box-shadow: 0 0 6px #22c55e; animation: live-pulse 1.5s infinite; }
+.status-stale   { background: #e8a020; }
+.status-offline { background: #e04040; }
+
+/* ── LOCK QUALITY GAUGE ─────────────────────────────────────────────────────── */
+.lq-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bc-border);
+    overflow: hidden;
+    margin-top: 4px;
+}
+.lq-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--bc-blue), var(--bc-blue-bright));
+    transition: width 0.5s ease;
+}
+.lq-fill.high   { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.lq-fill.medium { background: linear-gradient(90deg, var(--bc-blue), #4db8ff); }
+.lq-fill.low    { background: linear-gradient(90deg, #ff8c00, #ffa500); }
+
+/* ── INPUT FIELDS ───────────────────────────────────────────────────────────── */
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+    background: var(--bc-bg-card) !important;
+    border: 1px solid var(--bc-border) !important;
+    border-radius: 6px !important;
+    color: var(--bc-text) !important;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: var(--bc-blue) !important;
+    box-shadow: 0 0 0 2px var(--bc-blue-glow) !important;
+}
+.stSelectbox select, [data-baseweb="select"] {
+    background: var(--bc-bg-card) !important;
+    border-color: var(--bc-border) !important;
+    color: var(--bc-text) !important;
+}
+
+/* ── SCROLLBAR GLOBAL ───────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bc-bg-panel); }
+::-webkit-scrollbar-thumb { background: var(--bc-blue-dark); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bc-blue); }
+
+/* ── DIVIDERS ───────────────────────────────────────────────────────────────── */
+hr { border-color: var(--bc-border) !important; opacity: 0.5; }
+
+/* ── TOOLTIPS ───────────────────────────────────────────────────────────────── */
+[data-testid="stTooltipIcon"] { color: var(--bc-muted) !important; }
+
+/* ── PROGRESS BARS ──────────────────────────────────────────────────────────── */
+.stProgress > div > div {
+    background: linear-gradient(90deg, var(--bc-blue-dark), var(--bc-blue)) !important;
+}
+
+/* ── ALERTS / INFO BOXES ────────────────────────────────────────────────────── */
+.stAlert {
+    background: var(--bc-bg-card) !important;
+    border: 1px solid var(--bc-border) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stAlertContainer"][data-baseweb="notification"] {
+    background: rgba(30,144,255,0.08) !important;
+    border-left: 3px solid var(--bc-blue) !important;
+}
+
+/* ── HEADER BAR ─────────────────────────────────────────────────────────────── */
+.bc-header {
+    display: flex;
+    align-items: center;
+    padding: 12px 0 16px 0;
+    border-bottom: 1px solid var(--bc-border);
+    margin-bottom: 16px;
+}
+.bc-logo {
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--bc-text);
+    letter-spacing: -0.5px;
+}
+.bc-logo span { color: var(--bc-blue); }
+.bc-tagline {
+    font-size: 11px;
+    color: var(--bc-muted);
+    margin-left: 12px;
+    border-left: 1px solid var(--bc-border);
+    padding-left: 12px;
+}
+.bc-version {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--bc-dim);
+    font-family: monospace;
+}
+
 </style>
 """, unsafe_allow_html=True)
+
+# ── BetCouncil Header Bar ──────────────────────────────────────────────────
+st.markdown("""
+<div class="bc-header">
+  <div class="bc-logo">bet<span>Council</span></div>
+  <div class="bc-tagline">Sharp Analytics Engine · v5.2</div>
+  <div class="bc-version">⚡ All sources live</div>
+</div>
+""", unsafe_allow_html=True)
+
 
 # =========================
 # CONSTANTS
