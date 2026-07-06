@@ -12976,6 +12976,27 @@ def load_sport_data(sport):
                 _logger.debug("Silent except at line 12388")
                 pass
 
+        # ── Quantitative upgrades (ensemble devig + Bayesian + velocity) ───────
+        try:
+            from bc_utils import apply_all_upgrades as _aau
+            _scanbet_raw = None
+            _sbd_all = st.session_state.get("scanbet_drops",[])
+            if _sbd_all and (home_team or away_team):
+                _scanbet_raw = next((d.get("raw",{}) for d in _sbd_all
+                    if normalize_name(home_team or "") in normalize_name(d.get("home",""))
+                    or normalize_name(away_team or "") in normalize_name(d.get("away",""))
+                ), None)
+            _inj = [{"player":i,"role":"starter","status":"out"}
+                    for i in prop.get("InjuryContext","").split(",") if i.strip()] if prop.get("InjuryContext") else []
+            prop = _aau(prop, scanbet_raw=_scanbet_raw,
+                        injuries=_inj if _inj else None, sport=sport)
+            # Update final_edge from Bayesian fair prob
+            if prop.get("BayesianProb"):
+                _mkt_prob = american_to_prob(float(prop.get("Odds", prop.get("odds", -110)) or -110))
+                final_edge = prop["BayesianProb"] - _mkt_prob
+        except Exception:
+            pass
+
         # ── Signal Odds / BetsLib AI prediction overlay ────────────────────
         if home_team or away_team:
             try:

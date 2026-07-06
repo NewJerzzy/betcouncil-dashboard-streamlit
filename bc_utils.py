@@ -5223,577 +5223,646 @@ def track_closing_line_beat(bet_record: dict, closing_lines: dict) -> dict:
     return bet_record
 
 
-def compute_line_velocity(book: str, game_key: str, market: str,
-                          window_hours: float = 24.0) -> dict:
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UPGRADE BLOCK 1: ENSEMBLE DEVIG
+# Blends Shin + Additive + Power methods for more accurate fair probability
+# Especially important for MLB HR props and futures (favourite-longshot bias)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def devig_additive(p1_imp: float, p2_imp: float) -> tuple:
+    """Standard additive (proportional) devig. Best for near-even markets."""
+    total = p1_imp + p2_imp
+    if total <= 0: return 0.5, 0.5
+    return p1_imp / total, p2_imp / total
+
+
+def devig_shin(p1_imp: float, p2_imp: float) -> tuple:
     """
-    Measure how fast the line is moving (velocity = points per hour).
-    High velocity = sharp action accelerating = stronger signal.
-
-    Returns:
-        {velocity_per_hour, direction, total_move, is_accelerating}
-    """
-    key = (book.lower(), game_key, market.lower())
-    history = _LINE_HISTORY.get(key, [])
-
-    if len(history) < 2:
-        return {"velocity_per_hour": 0.0, "direction": None,
-                "total_move": 0.0, "is_accelerating": False}
-
-    now    = _time.time()
-    cutoff = now - window_hours * 3600
-    recent = [h for h in history if h["ts"] >= cutoff]
-
-    if len(recent) < 2:
-        return {"velocity_per_hour": 0.0, "direction": None,
-                "total_move": 0.0, "is_accelerating": False}
-
-    total_move = recent[-1]["line"] - recent[0]["line"]
-    hours      = (recent[-1]["ts"] - recent[0]["ts"]) / 3600
-    velocity   = abs(total_move) / max(0.01, hours)
-
-    # Check acceleration: is recent half moving faster than early half?
-    mid = len(recent) // 2
-    early_vel = abs(recent[mid]["line"] - recent[0]["line"]) / max(0.01, (recent[mid]["ts"] - recent[0]["ts"]) / 3600)
-    late_vel  = abs(recent[-1]["line"] - recent[mid]["line"]) / max(0.01, (recent[-1]["ts"] - recent[mid]["ts"]) / 3600)
-    is_accelerating = late_vel > early_vel * 1.5
-
-    return {
-        "velocity_per_hour": round(velocity, 3),
-        "direction":         "UP" if total_move > 0 else "DOWN" if total_move < 0 else "FLAT",
-        "total_move":        round(total_move, 2),
-        "is_accelerating":   is_accelerating,
-        "early_velocity":    round(early_vel, 3),
-        "late_velocity":     round(late_vel, 3),
-    }
-
-
-def get_opener_gap(book: str, game_key: str, market: str) -> dict:
-    """
-    Compare opening line vs current line.
-    Large gap from opener = sustained sharp action, not just noise.
-    """
-    key = (book.lower(), game_key, market.lower())
-    history = _LINE_HISTORY.get(key, [])
-
-    if not history:
-        return {"opener": None, "current": None, "gap": 0.0, "direction": None}
-
-    opener  = history[0]["line"]
-    current = history[-1]["line"]
-    gap     = current - opener
-
-    return {
-        "opener":    opener,
-        "current":   current,
-        "gap":       round(gap, 2),
-        "direction": "UP" if gap > 0 else "DOWN" if gap < 0 else "FLAT",
-        "sharp_signal": abs(gap) >= 1.0,  # ≥1 point from opener = sustained sharp
-    }
-
-
-# ── Rest-adjusted std_dev ─────────────────────────────────────────────────────
-
-# Rest variance multipliers per sport (validated vs historical game logs)
-_REST_VARIANCE = {
-    "MLB": {0: 1.18, 1: 1.08, 2: 1.03, 3: 1.0, 4: 1.0},   # 0=B2B rare, 3+=normal
-    "NFL": {0: 1.0,  1: 1.0,  7: 1.0},                      # NFL always 7 days
-    "default": {0: 1.20, 1: 1.10, 2: 1.05, 3: 1.0},
-}
-
-def rest_adjusted_std_dev(base_std_dev: float, days_rest: int, sport: str) -> float:
-    """
-    Adjust std_dev upward for short rest situations.
-    B2B/short rest → higher variance → wider distribution → smaller edge.
-
-    Args:
-        base_std_dev: EWMA std_dev from game logs
-        days_rest:    Days since last game (0=B2B, 1=1 day rest, etc.)
-        sport:        Sport string
-
-    Returns:
-        Adjusted std_dev (higher = more uncertain)
-    """
-    sport_map = _REST_VARIANCE.get(sport.upper(), _REST_VARIANCE["default"])
-    # Find closest rest bucket
-    buckets = sorted(sport_map.keys())
-    mult    = 1.0
-    for b in buckets:
-        if days_rest <= b:
-            mult = sport_map[b]
-            break
-    else:
-        mult = sport_map[buckets[-1]]
-
-    return round(base_std_dev * mult, 4)
-
-
-# ── Ensemble devig ────────────────────────────────────────────────────────────
-
-def devig_ensemble(over_american: float, under_american: float,
-                   market_type: str = "standard",
-                   prop_key: str = "",
-                   liquidity: str = "medium") -> dict:
-    """
-    Ensemble devig — blends Probit + Shin weighted by market liquidity.
-    Sharp books use blended methods for more accurate fair prices.
-
-    Liquidity tiers:
-        high:   both Pinnacle + Circa active → weight Shin 60%, Probit 40%
-        medium: one sharp book active → 50/50 blend
-        low:    public books only → weight Probit 70%, Shin 30%
-
-    Returns:
-        {fair_prob, method_used, probit_prob, shin_prob, blend_weights}
+    Shin (1993) devig — accounts for favourite-longshot bias.
+    Best for HR props, futures, and markets with juice > 10%.
     """
     try:
-        probit_p = no_vig_prob_probit(over_american, under_american)
-        shin_p   = no_vig_prob_shin(over_american, under_american)
-
-        weights = {
-            "high":   {"shin": 0.60, "probit": 0.40},
-            "medium": {"shin": 0.50, "probit": 0.50},
-            "low":    {"shin": 0.30, "probit": 0.70},
-        }.get(liquidity, {"shin": 0.50, "probit": 0.50})
-
-        # For longshots, weight toward Shin regardless of liquidity
-        try:
-            o_val = float(over_american)
-            if o_val >= 200:
-                weights = {"shin": 0.80, "probit": 0.20}
-            elif o_val >= 150:
-                weights = {"shin": 0.65, "probit": 0.35}
-        except Exception:
-            pass
-
-        blended = round(
-            probit_p * weights["probit"] + shin_p * weights["shin"], 4
-        )
-
-        return {
-            "fair_prob":     blended,
-            "probit_prob":   round(probit_p, 4),
-            "shin_prob":     round(shin_p, 4),
-            "blend_weights": weights,
-            "liquidity":     liquidity,
-            "method":        "ensemble",
-        }
+        z = p1_imp + p2_imp - 1.0  # total overround
+        if z <= 0: return devig_additive(p1_imp, p2_imp)
+        def shin_p(p_imp):
+            disc = z**2 + 4*(1-z)*p_imp**2
+            return (math.sqrt(max(disc, 0)) - z) / (2*(1-z))
+        p1 = shin_p(p1_imp)
+        p2 = shin_p(p2_imp)
+        total = p1 + p2
+        return p1/total, p2/total
     except Exception:
-        return {
-            "fair_prob":   no_vig_prob(over_american, under_american),
-            "method":      "additive_fallback",
-            "probit_prob": 0.5, "shin_prob": 0.5,
-            "blend_weights": {}, "liquidity": liquidity,
-        }
+        return devig_additive(p1_imp, p2_imp)
 
 
-# ── Market maker detection ────────────────────────────────────────────────────
-
-# Books known to be price setters (set the market) vs price takers (follow)
-# Validated against line movement research (Kaunitz et al. 2017, Pinnacle whitepaper)
-_PRICE_SETTER_BOOKS  = {"pinnacle", "betonlineag", "circa_sports", "bookmaker"}
-_PRICE_TAKER_BOOKS   = {"draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
-                         "wynnbet", "barstool", "unibet"}
-
-def classify_book_role(book: str) -> dict:
+def devig_power(p1_imp: float, p2_imp: float, k: float = None) -> tuple:
     """
-    Classify whether a book is a price setter or price taker for a given market.
-
-    Price setters: Sharp books that move first — their lines lead the market.
-    Price takers:  Square books that follow sharp books — their lines lag.
-
-    Signal implication:
-        Price setter moving = sharp action (stronger signal)
-        Price taker moving  = public/recreational action (weaker signal)
-
-    Returns:
-        {role, signal_weight, is_sharp, description}
+    Power (logarithmic) devig — best for extreme longshots (+500 and beyond).
+    Finds k such that p1_imp^(1/k) + p2_imp^(1/k) = 1.
     """
-    b = book.lower().replace(" ", "").replace(".", "").replace("-", "")
-
-    if b in _PRICE_SETTER_BOOKS or any(s in b for s in ["pinnacle","betonline","circa"]):
-        return {
-            "role":          "PRICE_SETTER",
-            "signal_weight": 1.0,
-            "is_sharp":      True,
-            "description":   "Sharp book — line movements are leading indicators",
-        }
-    elif b in _PRICE_TAKER_BOOKS or any(s in b for s in ["draftkings","fanduel","mgm","caesars"]):
-        return {
-            "role":          "PRICE_TAKER",
-            "signal_weight": 0.4,
-            "is_sharp":      False,
-            "description":   "Square book — line movements lag sharp action by 2-6 hours",
-        }
-    else:
-        return {
-            "role":          "UNKNOWN",
-            "signal_weight": 0.6,
-            "is_sharp":      False,
-            "description":   "Unknown book role — treat as moderately sharp",
-        }
+    try:
+        if k is None:
+            # Binary search for k
+            lo, hi = 0.5, 5.0
+            for _ in range(50):
+                mid = (lo + hi) / 2
+                s = p1_imp**mid + p2_imp**mid
+                if s > 1: lo = mid
+                else:     hi = mid
+            k = (lo + hi) / 2
+        p1 = p1_imp ** k
+        p2 = p2_imp ** k
+        total = p1 + p2
+        return p1/total, p2/total
+    except Exception:
+        return devig_additive(p1_imp, p2_imp)
 
 
-def _gl_normalize_long_format(raw_lines: list, book_name: str) -> list:
+def devig_ensemble(over_american: float, under_american: float,
+                   market_type: str = "standard") -> dict:
     """
-    Normalize the long-format game-line scrapers (Bovada, BetMGM — one row
-    per market/selection) into the same clean per-game shape used by
-    Pinnacle/BetRivers: {Matchup, Home, Away, HomeML, AwayML, Spread, Total}.
+    Ensemble devig: blends Shin + Additive + Power with market-type weights.
+    market_type: "standard" | "hr_prop" | "future" | "extreme_longshot"
+    Returns: {fair_over, fair_under, method_weights, vig_pct, overround}
     """
-    by_game = {}
-    for row in raw_lines or []:
-        home = row.get("home", "")
-        away = row.get("away", "")
-        if not home or not away:
-            continue
-        key = (away, home)
-        g = by_game.setdefault(key, {
-            "Matchup": row.get("game", f"{away} @ {home}"),
-            "Home": home, "Away": away,
-            "HomeML": None, "AwayML": None, "Spread": None, "Total": None,
-            "Book": book_name,
+    def to_imp(a):
+        a = float(a)
+        return 100/(a+100) if a > 0 else -a/(-a+100)
+
+    p_over  = to_imp(over_american)
+    p_under = to_imp(under_american)
+    overround = p_over + p_under
+
+    # Market-type blend weights {additive, shin, power}
+    weights = {
+        "standard":         (0.50, 0.35, 0.15),
+        "hr_prop":          (0.20, 0.55, 0.25),
+        "future":           (0.10, 0.45, 0.45),
+        "extreme_longshot": (0.05, 0.30, 0.65),
+        "total":            (0.55, 0.30, 0.15),
+        "spread":           (0.60, 0.30, 0.10),
+    }.get(market_type, (0.50, 0.35, 0.15))
+
+    a_over, _ = devig_additive(p_over, p_under)
+    s_over, _ = devig_shin(p_over, p_under)
+    pw_over,_ = devig_power(p_over, p_under)
+
+    fair_over  = weights[0]*a_over + weights[1]*s_over + weights[2]*pw_over
+    fair_under = 1.0 - fair_over
+
+    return {
+        "fair_over":      round(fair_over, 5),
+        "fair_under":     round(fair_under, 5),
+        "overround":      round(overround, 5),
+        "vig_pct":        round((overround - 1.0) * 100, 3),
+        "method_weights": {"additive": weights[0], "shin": weights[1], "power": weights[2]},
+        "market_type":    market_type,
+        "additive_fair":  round(a_over, 5),
+        "shin_fair":      round(s_over, 5),
+        "power_fair":     round(pw_over, 5),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UPGRADE BLOCK 2: BAYESIAN SIGNAL UPDATING
+# Treats multiple signals as correlated evidence — prevents double-counting
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Signal independence matrix (correlation between signals)
+# 1.0 = perfectly correlated (same source), 0.0 = independent
+SIGNAL_CORRELATIONS = {
+    ("scanbet_steam",    "sharpapi_steam"):    0.75,  # both Pinnacle-derived
+    ("scanbet_steam",    "evsharp_ev"):        0.45,
+    ("sharpapi_steam",   "evsharp_ev"):        0.50,
+    ("action_network",   "covers_consensus"):  0.60,  # both public %
+    ("action_network",   "sharp_consensus"):   0.30,
+    ("fantasypros",      "numberfire"):        0.55,  # both projection models
+    ("fantasypros",      "statmuse_l10"):      0.15,  # projection vs recent form
+    ("statmuse_l10",     "recent_log"):        0.40,
+    ("defense_rank",     "matchup_history"):   0.35,
+    ("signal_odds_ai",   "parlaysavant"):      0.40,
+}
+
+
+def bayesian_signal_update(prior_prob: float, signals: list) -> dict:
+    """
+    Bayesian update of fair probability given multiple signals.
+    Handles signal correlation to prevent double-counting.
+
+    signals: list of {name, likelihood_ratio, confidence}
+      likelihood_ratio > 1.0 = evidence FOR the bet (OVER/home/etc)
+      likelihood_ratio < 1.0 = evidence AGAINST
+      confidence: 0-1, scales the update strength
+
+    Returns: {posterior_prob, total_update, signal_contributions, correlation_discount}
+    """
+    if not signals or not (0 < prior_prob < 1):
+        return {"posterior_prob": prior_prob, "total_update": 0.0,
+                "signal_contributions": [], "correlation_discount": 1.0}
+
+    prior_odds = prior_prob / (1 - prior_prob)
+    posterior_odds = prior_odds
+    contributions = []
+    signal_names = [s["name"] for s in signals]
+
+    for i, sig in enumerate(signals):
+        lr   = float(sig.get("likelihood_ratio", 1.0))
+        conf = float(sig.get("confidence", 1.0))
+        name = sig.get("name", f"signal_{i}")
+
+        # Discount for correlation with already-applied signals
+        corr_discount = 1.0
+        for prev_name in signal_names[:i]:
+            key = tuple(sorted([name, prev_name]))
+            corr = SIGNAL_CORRELATIONS.get(key, 0.10)
+            corr_discount *= (1.0 - corr * 0.5)
+
+        # Dampen LR by confidence and correlation
+        effective_lr = 1.0 + (lr - 1.0) * conf * corr_discount
+
+        posterior_odds *= effective_lr
+        contributions.append({
+            "signal":          name,
+            "raw_lr":          round(lr, 4),
+            "effective_lr":    round(effective_lr, 4),
+            "corr_discount":   round(corr_discount, 4),
+            "confidence":      conf,
         })
-        market = (row.get("market") or "").lower()
-        selection = (row.get("selection") or "").lower()
-        odds = row.get("odds")
-        if "moneyline" in market or market == "money line":
-            if home.lower() in selection or selection == home.lower():
-                g["HomeML"] = odds
-            elif away.lower() in selection or selection == away.lower():
-                g["AwayML"] = odds
-        elif "spread" in market or "run line" in market or "puck line" in market:
-            try:
-                num = re.search(r"([+-]?[\d.]+)", selection)
-                if num and (home.lower() in selection):
-                    g["Spread"] = float(num.group(1))
-            except Exception:
-                pass
-        elif "total" in market or "over/under" in market:
-            try:
-                num = re.search(r"([\d.]+)", selection)
-                if num:
-                    g["Total"] = float(num.group(1))
-            except Exception:
-                pass
-    return list(by_game.values())
 
-
-def build_game_line_consensus(matchup_home: str, matchup_away: str, all_book_lines: dict) -> dict:
-    """
-    Aggregate every scraped book's game line for one matchup into a single
-    consensus view — the game-line equivalent of trusting Pinnacle no-vig
-    for props, but with full multi-book visibility instead of comparing
-    against just one (usually ESPN-sourced) line.
-
-    Args:
-        matchup_home, matchup_away: team names/abbrevs for the game in question
-        all_book_lines: {book_key: list_of_game_dicts} — already-normalized
-            per-game shape ({Home, Away, HomeML, AwayML, Spread, Total}) for
-            clean books, OR raw long-format rows for Bovada/BetMGM (auto-
-            normalized internally).
-
-    Returns:
-        {
-          "spread": {"consensus": float, "pinnacle": float, "n_books": int,
-                     "books": {book: spread}, "divergence": {...}},
-          "total":  {... same shape ...},
-          "moneyline": {"home_consensus_prob": float, "away_consensus_prob": float,
-                        "pinnacle_home_prob": float, "n_books": int},
-          "agreement": "STRONG_AGREE" | "MODERATE_AGREE" | "DISAGREE" | "NO_DATA",
-          "agreement_note": str,
-        }
-    """
-    _LONG_FORMAT_BOOKS = {"bovada", "betmgm"}
-    _SPORTSLINE_BOOKS_MAP = {
-        "betmgm":     "sportsline_betmgm",
-        "caesars":    "sportsline_caesars",
-        "draftkings": "sportsline_draftkings",
-        "fanduel":    "sportsline_fanduel",
-        "bet365":     "sportsline_bet365",
-        "consensus":  "sportsline_consensus",
-    }
-
-    def _expand_sportsline(sl_games):
-        """
-        SportsLine returns one game entry with a nested Books dict
-        ({betmgm: {line, odds, open}, caesars: ...}).
-        Expand each book into a separate flat game entry so every book
-        contributes independently to the consensus spread count.
-        """
-        expanded = {}
-        for g in (sl_games or []):
-            home = g.get("Home", "")
-            away = g.get("Away", "")
-            for book_short, book_key in _SPORTSLINE_BOOKS_MAP.items():
-                home_bk = (g.get("Books") or {}).get(book_short)
-                if not home_bk:
-                    continue
-                expanded.setdefault(book_key, []).append({
-                    "Home":    home,
-                    "Away":    away,
-                    "Spread":  home_bk.get("line"),
-                    "SpreadOpen": home_bk.get("open"),
-                    "Total":   None,    # SportsLine spread page; totals on separate endpoint
-                    "HomeML":  None,
-                    "AwayML":  None,
-                })
-        return expanded
-
-    def _match_game(games_list):
-        for g in games_list or []:
-            gh = (g.get("Home") or g.get("home") or "")
-            ga = (g.get("Away") or g.get("away") or "")
-            if normalize_name(gh) == normalize_name(matchup_home) and \
-               normalize_name(ga) == normalize_name(matchup_away):
-                return g
-        return None
-
-    # Pre-process SportsLine data: expand per-book nested dicts into
-    # individual flat game entries so every book SportsLine tracks
-    # contributes independently to the consensus count.
-    _sl_raw = (all_book_lines or {}).get("sportsline_game_lines")
-    if _sl_raw:
-        _sl_expanded = _expand_sportsline(_sl_raw)
-        all_book_lines = {k: v for k, v in all_book_lines.items()
-                          if k != "sportsline_game_lines"}
-        all_book_lines.update(_sl_expanded)
-
-    spread_by_book, total_by_book = {}, {}
-    home_ml_by_book, away_ml_by_book = {}, {}
-
-    for book_key, lines in (all_book_lines or {}).items():
-        if not lines:
-            continue
-        games_list = lines
-        if book_key in _LONG_FORMAT_BOOKS:
-            games_list = _gl_normalize_long_format(lines, book_key)
-        g = _match_game(games_list)
-        if not g:
-            continue
-        spread_val = g.get("Spread")
-        total_val  = g.get("Total")
-        home_ml    = g.get("HomeML")
-        away_ml    = g.get("AwayML")
-        try:
-            if spread_val not in (None, "N/A", ""):
-                spread_by_book[book_key] = float(str(spread_val).replace("+", ""))
-        except (ValueError, TypeError):
-            pass
-        try:
-            if total_val not in (None, "N/A", ""):
-                total_by_book[book_key] = float(str(total_val).replace("+", ""))
-        except (ValueError, TypeError):
-            pass
-        try:
-            if home_ml not in (None, "N/A", ""):
-                home_ml_by_book[book_key] = float(str(home_ml).replace("+", ""))
-        except (ValueError, TypeError):
-            pass
-        try:
-            if away_ml not in (None, "N/A", ""):
-                away_ml_by_book[book_key] = float(str(away_ml).replace("+", ""))
-        except (ValueError, TypeError):
-            pass
-
-    def _median(vals):
-        if not vals:
-            return None
-        s = sorted(vals)
-        n = len(s)
-        mid = n // 2
-        return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
-
-    def _market_block(by_book, market_key):
-        vals = list(by_book.values())
-        consensus = _median(vals)
-        pinnacle = by_book.get("pinnacle_game_lines") or by_book.get("pinnacle")
-        lines_for_divergence = {
-            book: {market_key: val} for book, val in by_book.items()
-        }
-        divergence = detect_market_maker_divergence(lines_for_divergence) if len(by_book) >= 2 else {
-            "divergence_detected": False, "gap": 0.0, "signal_strength": "NONE"
-        }
-        return {
-            "consensus": round(consensus, 2) if consensus is not None else None,
-            "pinnacle": round(pinnacle, 2) if pinnacle is not None else None,
-            "n_books": len(by_book),
-            "books": {k: round(v, 2) for k, v in by_book.items()},
-            "divergence": divergence,
-        }
-
-    # Extract public betting percentages from SBR data specifically --
-    # no other scraper in the stack provides this signal. Positive divergence
-    # (sharp money on the side the public is fading) is a classic steam signal.
-    _public_pct_home = _public_pct_away = None
-    _sbr_raw = (all_book_lines or {}).get("sbr_game_lines")
-    if _sbr_raw:
-        _sbr_match = _match_game(_sbr_raw)
-        if _sbr_match:
-            _public_pct_home = _sbr_match.get("PublicPctHome")
-            _public_pct_away = _sbr_match.get("PublicPctAway")
-            # Also feed SBR's per-book MLs into the ML consensus
-            for _bk, _bml in (_sbr_match.get("Books") or {}).items():
-                _bk_key = f"sbr_{_bk}"
-                if _bml.get("home_ml") and _bk_key not in home_ml_by_book:
-                    try:
-                        home_ml_by_book[_bk_key] = float(_bml["home_ml"])
-                        away_ml_by_book[_bk_key] = float(_bml["away_ml"])
-                    except (TypeError, ValueError):
-                        pass
-
-    spread_block = _market_block(spread_by_book, "spread")
-    total_block  = _market_block(total_by_book, "total")
-
-    home_implied = away_implied = pinnacle_home_implied = None
-    if home_ml_by_book and away_ml_by_book:
-        h_probs, a_probs = [], []
-        for book in set(home_ml_by_book) & set(away_ml_by_book):
-            h_ml, a_ml = home_ml_by_book[book], away_ml_by_book[book]
-            try:
-                ens = devig_ensemble(h_ml, a_ml, market_type="ml")
-                h_probs.append(ens["fair_prob"])
-                a_probs.append(1 - ens["fair_prob"])
-                if book in ("pinnacle_game_lines", "pinnacle"):
-                    pinnacle_home_implied = round(ens["fair_prob"], 4)
-            except Exception:
-                continue
-        if h_probs:
-            home_implied = round(sum(h_probs) / len(h_probs), 4)
-            away_implied = round(sum(a_probs) / len(a_probs), 4)
-
-    ml_block = {
-        "home_consensus_prob": home_implied,
-        "away_consensus_prob": away_implied,
-        "pinnacle_home_prob": pinnacle_home_implied,
-        "n_books": len(set(home_ml_by_book) & set(away_ml_by_book)),
-    }
-
-    n_total_books = len(set(spread_by_book) | set(total_by_book) | set(home_ml_by_book))
-    if n_total_books == 0:
-        agreement, agreement_note = "NO_DATA", "No book data available for this matchup."
-    else:
-        strong_div = spread_block["divergence"].get("signal_strength") == "STRONG" or \
-                     total_block["divergence"].get("signal_strength") == "STRONG"
-        moderate_div = spread_block["divergence"].get("signal_strength") == "MODERATE" or \
-                       total_block["divergence"].get("signal_strength") == "MODERATE"
-        if strong_div:
-            agreement = "DISAGREE"
-            agreement_note = "Sharp books (Pinnacle/BetOnline) and square books diverge significantly — market hasn't settled yet."
-        elif moderate_div:
-            agreement = "MODERATE_AGREE"
-            agreement_note = "Some divergence between sharp and square books — moderate confidence."
-        else:
-            agreement = "STRONG_AGREE"
-            agreement_note = f"{n_total_books} books broadly agree on this line — high market confidence."
-
-    # Sharp-vs-public divergence: when sharp books price a team as favorite
-    # but the public is betting the other side heavily (>65%), it's a
-    # classic reverse-line-movement / sharp-fade signal.
-    _sharp_vs_public = None
-    if _public_pct_home is not None and home_implied is not None:
-        # Model/sharp-implied home win prob vs public betting %
-        _model_home_fav = home_implied > 0.50
-        _public_home_fav = _public_pct_home > 50
-        if _model_home_fav != _public_home_fav and (
-            _public_pct_home > 65 or _public_pct_away > 65
-        ):
-            _sharp_vs_public = "FADE_PUBLIC"  # sharp money disagrees with heavy public lean
-        elif _model_home_fav == _public_home_fav and (
-            _public_pct_home > 65 or _public_pct_away > 65
-        ):
-            _sharp_vs_public = "WITH_PUBLIC"  # sharp money agrees with heavy public lean
+    posterior_prob = posterior_odds / (1 + posterior_odds)
+    posterior_prob = max(0.05, min(0.95, posterior_prob))
 
     return {
-        "spread": spread_block,
-        "total": total_block,
-        "moneyline": ml_block,
-        "agreement": agreement,
-        "agreement_note": agreement_note,
-        "n_books_total": n_total_books,
-        "public_pct_home": _public_pct_home,
-        "public_pct_away": _public_pct_away,
-        "sharp_vs_public": _sharp_vs_public,
+        "posterior_prob":       round(posterior_prob, 5),
+        "prior_prob":           round(prior_prob, 5),
+        "total_update":         round(posterior_prob - prior_prob, 5),
+        "signal_contributions": contributions,
+        "n_signals":            len(signals),
     }
 
 
-def detect_market_maker_divergence(lines_by_book: dict) -> dict:
+def build_signal_list_from_prop(prop: dict) -> list:
+    """Convert prop dict signals into bayesian signal list."""
+    signals = []
+
+    if prop.get("ScanbetSteam"):
+        dp = abs(prop.get("ScanbetDropPct", 0))
+        ns = prop.get("ScanbetSnapshots", 1)
+        signals.append({"name":"scanbet_steam",
+                         "likelihood_ratio": 1.0 + dp * (1 + ns/20),
+                         "confidence": min(ns/10, 1.0)})
+
+    if prop.get("SteamMove"):
+        dp = abs(prop.get("SteamPct", 0.03))
+        signals.append({"name":"sharpapi_steam",
+                         "likelihood_ratio": 1.0 + dp * 8,
+                         "confidence": 0.8})
+
+    so_conf = prop.get("SignalOddsConf", 0)
+    if so_conf >= 0.55:
+        signals.append({"name":"signal_odds_ai",
+                         "likelihood_ratio": 1.0 + (so_conf - 0.5) * 3,
+                         "confidence": so_conf})
+
+    an_pct = prop.get("PublicPct", prop.get("public_pct", 0))
+    if an_pct and an_pct < 40:
+        signals.append({"name":"action_network",
+                         "likelihood_ratio": 1.15,
+                         "confidence": (40 - an_pct) / 40})
+    elif an_pct and an_pct > 65:
+        signals.append({"name":"action_network",
+                         "likelihood_ratio": 0.88,
+                         "confidence": (an_pct - 65) / 35})
+
+    sm_rate = prop.get("StatMuseL10Rate", 0)
+    if sm_rate >= 0.70:
+        signals.append({"name":"statmuse_l10",
+                         "likelihood_ratio": 1.0 + (sm_rate - 0.5) * 0.8,
+                         "confidence": min(sm_rate, 0.95)})
+    elif sm_rate and sm_rate <= 0.30:
+        signals.append({"name":"statmuse_l10",
+                         "likelihood_ratio": 1.0 - (0.5 - sm_rate) * 0.8,
+                         "confidence": min(1 - sm_rate, 0.95)})
+
+    def_adj = prop.get("DefenseAdj", 0)
+    if abs(def_adj) > 0.02:
+        signals.append({"name":"defense_rank",
+                         "likelihood_ratio": 1.0 + def_adj * 3,
+                         "confidence": 0.70})
+
+    return signals
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UPGRADE BLOCK 3: LINE MOVEMENT VELOCITY
+# Speed of Pinnacle line movement — fast moves = stronger steam signal
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_line_velocity(scanbet_snapshots: list, market_idx: int = 0) -> dict:
     """
-    Detect when price setters and price takers disagree on a line.
-    Divergence = sharp money hasn't been arbitraged yet = opportunity.
+    Compute velocity of Pinnacle line movement from Scanbet snapshot history.
+    scanbet_snapshots: list of {odds: [...], parseTime: ms_timestamp}
+    market_idx: index in odds array (0=home_ml, 1=away_ml, 6=total, 7=over, 8=under)
 
-    Args:
-        lines_by_book: {book_name: {"over_odds": float, "under_odds": float, "line": float}}
-
-    Returns:
-        {divergence_detected, setter_line, taker_line, gap, signal_strength}
+    Returns: {velocity_pct_per_hour, acceleration, is_accelerating,
+              total_move_pct, duration_hours, momentum_score}
     """
-    setter_lines = []
-    taker_lines  = []
+    if not scanbet_snapshots or len(scanbet_snapshots) < 2:
+        return {"velocity_pct_per_hour": 0, "momentum_score": 0,
+                "total_move_pct": 0, "is_accelerating": False}
 
-    for book, data in lines_by_book.items():
-        role = classify_book_role(book)
-        line = data.get("line") or data.get("total") or data.get("spread")
-        if line is None:
-            continue
-        if role["is_sharp"]:
-            setter_lines.append(float(line))
-        else:
-            taker_lines.append(float(line))
+    def to_prob(dec):
+        try: return 1.0 / float(dec)
+        except Exception: return 0.5
 
-    if not setter_lines or not taker_lines:
-        return {"divergence_detected": False, "setter_line": None,
-                "taker_line": None, "gap": 0.0, "signal_strength": "NONE"}
+    # Extract prob series
+    pts = []
+    for snap in scanbet_snapshots:
+        odds_arr = snap.get("odds", [])
+        ts       = snap.get("parseTime", 0) / 1000  # ms → sec
+        if market_idx < len(odds_arr):
+            pts.append({"prob": to_prob(odds_arr[market_idx]), "ts": ts})
 
-    setter_avg = sum(setter_lines) / len(setter_lines)
-    taker_avg  = sum(taker_lines)  / len(taker_lines)
-    gap        = abs(setter_avg - taker_avg)
+    if len(pts) < 2: return {"velocity_pct_per_hour": 0, "momentum_score": 0,
+                              "total_move_pct": 0, "is_accelerating": False}
 
-    if gap >= 1.0:
-        strength = "STRONG"    # ≥1 point divergence = clear opportunity
-    elif gap >= 0.5:
-        strength = "MODERATE"
-    elif gap >= 0.25:
-        strength = "WEAK"
-    else:
-        strength = "NONE"
+    pts.sort(key=lambda x: x["ts"])
+    duration_sec   = pts[-1]["ts"] - pts[0]["ts"]
+    duration_hours = max(duration_sec / 3600, 0.01)
+    total_move     = pts[-1]["prob"] - pts[0]["prob"]
+    velocity       = total_move / duration_hours  # prob change per hour
+
+    # Acceleration: compare first-half vs second-half velocity
+    mid = len(pts) // 2
+    first_half_vel = (pts[mid]["prob"] - pts[0]["prob"]) / max((pts[mid]["ts"] - pts[0]["ts"])/3600, 0.01)
+    second_half_vel= (pts[-1]["prob"] - pts[mid]["prob"]) / max((pts[-1]["ts"] - pts[mid]["ts"])/3600, 0.01)
+    acceleration   = second_half_vel - first_half_vel
+    is_accelerating = acceleration > 0 and second_half_vel > first_half_vel * 1.2
+
+    # Momentum score: velocity × recency × n_snapshots factor
+    n_factor       = min(len(pts) / 10, 1.5)
+    momentum_score = abs(velocity) * n_factor * (1.5 if is_accelerating else 1.0)
 
     return {
-        "divergence_detected": gap >= 0.25,
-        "setter_line":   round(setter_avg, 2),
-        "taker_line":    round(taker_avg, 2),
-        "gap":           round(gap, 2),
-        "signal_strength": strength,
-        "setter_books":  len(setter_lines),
-        "taker_books":   len(taker_lines),
-        "bet_toward":    "SETTER" if setter_avg < taker_avg else "UNDER_SETTER",
+        "velocity_pct_per_hour": round(velocity * 100, 4),
+        "acceleration":          round(acceleration * 100, 4),
+        "is_accelerating":       is_accelerating,
+        "total_move_pct":        round(total_move * 100, 4),
+        "duration_hours":        round(duration_hours, 2),
+        "n_snapshots":           len(pts),
+        "momentum_score":        round(momentum_score * 100, 4),
+        "first_half_vel":        round(first_half_vel * 100, 4),
+        "second_half_vel":       round(second_half_vel * 100, 4),
     }
 
 
-# ── MLB pace-adjusted props (counting stats only) ────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# UPGRADE BLOCK 4: LINEUP-ADJUSTED ELO
+# Adjusts team Elo for roster changes (injuries, trades) mid-season
+# ══════════════════════════════════════════════════════════════════════════════
 
-def pace_adjust_mlb_prop(player_avg: float, prop_type: str,
-                          team_pace_factor: float = 1.0) -> float:
+# Approximate WAR/impact values per position for lineup adjustment
+PLAYER_IMPACT_VALUES = {
+    # NBA (points above replacement per game)
+    "NBA": {"star": 8.0, "starter": 3.5, "rotation": 1.5, "bench": 0.5},
+    # MLB (runs above replacement per game, scaled)
+    "MLB": {"ace": 0.8, "star_hitter": 0.5, "starter": 0.25, "bench": 0.1},
+    # NFL (points above replacement per game)
+    "NFL": {"qb": 4.0, "skill": 1.5, "lineman": 1.0, "backup": 0.3},
+    # NHL (goals above replacement per game)
+    "NHL": {"star": 0.4, "top6": 0.2, "bottom6": 0.1, "backup": 0.05},
+}
+
+
+def lineup_adjusted_elo(base_elo: float, injuries: list,
+                        sport: str = "NBA") -> dict:
     """
-    Apply pace adjustment only to counting stat props (hits, runs, RBI).
-    Do NOT apply to rate stats (BA, OBP, ERA, WHIP).
-
-    Args:
-        player_avg:       Raw EWMA average
-        prop_type:        Normalized prop type string
-        team_pace_factor: Team's pace vs league avg (1.0 = neutral)
-
-    Returns:
-        Pace-adjusted average (only modified for counting stats)
+    Adjust team Elo rating for known injuries/absences.
+    injuries: list of {player, role, status} where status in
+              ("out", "doubtful", "questionable", "probable")
+    Returns: {adjusted_elo, elo_delta, key_absences}
     """
-    COUNTING_STATS = {
-        "hits", "h", "runs", "r", "rbi", "tb", "total_bases",
-        "singles", "doubles", "triples", "walks", "bb",
-        "strikeouts", "so", "k",  # pitcher Ks ARE pace-dependent
+    impact_map = PLAYER_IMPACT_VALUES.get(sport, PLAYER_IMPACT_VALUES["NBA"])
+    status_weights = {"out": 1.0, "doubtful": 0.75, "questionable": 0.40, "probable": 0.15}
+    elo_per_unit   = {"NBA": 25.0, "MLB": 15.0, "NFL": 20.0, "NHL": 18.0}.get(sport, 20.0)
+
+    total_delta = 0.0
+    key_absences = []
+
+    for inj in injuries:
+        role   = str(inj.get("role","rotation")).lower()
+        status = str(inj.get("status","questionable")).lower()
+        impact = impact_map.get(role, impact_map.get("rotation", 1.5))
+        weight = status_weights.get(status, 0.40)
+        delta  = -impact * weight * elo_per_unit
+        total_delta += delta
+        if abs(delta) >= elo_per_unit * 0.5:
+            key_absences.append({
+                "player": inj.get("player",""),
+                "elo_impact": round(delta, 1),
+                "role": role,
+                "status": status,
+            })
+
+    adjusted_elo = base_elo + total_delta
+    return {
+        "adjusted_elo":  round(adjusted_elo, 1),
+        "base_elo":      round(base_elo, 1),
+        "elo_delta":     round(total_delta, 1),
+        "key_absences":  key_absences,
+        "pct_change":    round(total_delta / max(base_elo, 1) * 100, 2),
     }
-    prop_clean = prop_type.lower().strip().replace(" ", "_").replace("+", "")
 
-    if prop_clean in COUNTING_STATS:
-        return round(player_avg * team_pace_factor, 3)
 
-    # Rate stats — no pace adjustment
-    return player_avg
+# ══════════════════════════════════════════════════════════════════════════════
+# UPGRADE BLOCK 5: BOOK TIER WEIGHTING FOR STEAM DETECTION
+# Weights line movement by book sharpness tier
+# Sharp book moves = stronger signal than square book moves
+# ══════════════════════════════════════════════════════════════════════════════
+
+BOOK_TIERS = {
+    # Tier 1: Market makers / sharpest (weight 1.0)
+    "pinnacle": 1.00, "circa": 0.95, "bookmaker": 0.90, "betcris": 0.88,
+    "betonline": 0.85, "heritage": 0.85, "5dimes": 0.83,
+    # Tier 2: Sharp-leaning (weight 0.65)
+    "unabated": 0.70, "novig": 0.68, "betmgm": 0.65, "caesars": 0.63,
+    "pointsbet": 0.62, "wynn": 0.60,
+    # Tier 3: Square / recreational (weight 0.35)
+    "draftkings": 0.45, "fanduel": 0.43, "espnbet": 0.40,
+    "fanatics": 0.38, "bet365": 0.42, "betrivers": 0.38,
+    # Tier 4: DFS / soft (weight 0.15)
+    "prizepicks": 0.15, "underdog": 0.15, "betr": 0.10,
+}
+
+def get_book_tier_weight(book_name: str) -> float:
+    """Return sharpness weight for a book (0.0-1.0)."""
+    return BOOK_TIERS.get(str(book_name).lower().replace(" ","").replace("-",""), 0.40)
+
+
+def weighted_steam_score(book_moves: list) -> dict:
+    """
+    Compute steam score weighted by book sharpness.
+    book_moves: list of {book, old_odds, new_odds, timestamp}
+    Returns: {weighted_score, sharp_agreement, square_agreement,
+              tier1_move, tier2_move, tier3_move, signal_strength}
+    """
+    def to_prob(a):
+        try:
+            o = float(a)
+            return 100/(o+100) if o > 0 else -o/(-o+100)
+        except Exception: return 0.5
+
+    tier1, tier2, tier3 = [], [], []
+
+    for move in book_moves:
+        book   = move.get("book","")
+        weight = get_book_tier_weight(book)
+        delta  = to_prob(move.get("new_odds",100)) - to_prob(move.get("old_odds",100))
+        entry  = {"book": book, "weight": weight, "delta": delta}
+        if weight >= 0.80:   tier1.append(entry)
+        elif weight >= 0.55: tier2.append(entry)
+        else:                tier3.append(entry)
+
+    def avg_delta(lst): return sum(e["delta"] for e in lst)/len(lst) if lst else 0
+    def wavg_delta(lst):
+        if not lst: return 0
+        return sum(e["delta"]*e["weight"] for e in lst) / sum(e["weight"] for e in lst)
+
+    t1_move = wavg_delta(tier1)
+    t2_move = avg_delta(tier2)
+    t3_move = avg_delta(tier3)
+
+    # Sharp agreement: tier1 moves same direction as tier2
+    sharp_agreement = (t1_move * t2_move > 0) if (tier1 and tier2) else False
+    # Square disagreement: square books haven't caught up yet = stronger signal
+    square_lag = (t1_move * t3_move > 0 and abs(t1_move) > abs(t3_move) * 1.5) if (tier1 and tier3) else False
+
+    # Weighted steam score: tier1 moves weighted 3x more than tier3
+    all_moves = tier1 + tier2 + tier3
+    weighted_score = sum(e["delta"] * e["weight"] * 3 if e["weight"]>=0.80
+                         else e["delta"] * e["weight"] for e in all_moves)
+
+    signal_strength = ("STRONG" if abs(t1_move) > 0.04 and sharp_agreement
+                        else "MODERATE" if abs(t1_move) > 0.02
+                        else "WEAK" if abs(t1_move) > 0.01
+                        else "NONE")
+
+    return {
+        "weighted_score":   round(weighted_score * 100, 4),
+        "tier1_move":       round(t1_move * 100, 4),
+        "tier2_move":       round(t2_move * 100, 4),
+        "tier3_move":       round(t3_move * 100, 4),
+        "sharp_agreement":  sharp_agreement,
+        "square_lag":       square_lag,
+        "signal_strength":  signal_strength,
+        "n_books":          len(book_moves),
+        "n_tier1":          len(tier1),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UPGRADE BLOCK 6: STATISTICAL STABILIZATION-BASED REGRESSION
+# Each stat has a known PA/AB/sample needed to stabilize
+# Regression magnitude = f(sample_size, stabilization_point)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Stabilization points (sample size where stat is ~50% signal, ~50% noise)
+# Based on Tango/MGL/Pizza Cutter research
+STABILIZATION_POINTS = {
+    # MLB (plate appearances)
+    "hr_rate":      170,   "k_rate":       60,    "bb_rate":      120,
+    "batting_avg":  460,   "obp":          320,   "slg":          320,
+    "babip":        820,   "iso":          320,   "woba":         320,
+    "xwoba":        150,   "barrel_rate":  100,   "hard_hit_rate":50,
+    # NBA (possessions / ~minutes)
+    "pts":          250,   "reb":          150,   "ast":          200,
+    "fg_pct":       300,   "3pt_pct":      750,   "ts_pct":       400,
+    "stl":          500,   "blk":          500,   "to":           200,
+    # NFL (attempts)
+    "pass_yards":   150,   "rush_yards":   100,   "targets":      80,
+    "receptions":   80,    "td_rate":      300,
+    # NHL (shots / games)
+    "goals":        200,   "assists":      150,   "shots":        100,
+    "save_pct":     500,
+}
+
+
+def regression_to_mean(observed_rate: float, sample_size: int,
+                        league_avg: float, stat: str,
+                        sport: str = "MLB") -> dict:
+    """
+    Compute regression-to-mean estimate using stabilization points.
+    observed_rate: recent observed rate (e.g. 0.15 for HR/game)
+    sample_size: number of PA/games/possessions observed
+    league_avg: league average rate for this stat
+    stat: stat name (key in STABILIZATION_POINTS)
+    Returns: {regressed_rate, regression_pct, weight_observed,
+              weight_mean, is_small_sample, confidence}
+    """
+    stab = STABILIZATION_POINTS.get(stat, 300)
+    # Bayesian credibility weight
+    weight_obs  = sample_size / (sample_size + stab)
+    weight_mean = 1.0 - weight_obs
+    regressed   = weight_obs * observed_rate + weight_mean * league_avg
+    regression_pct = (regressed - observed_rate) / max(abs(observed_rate - league_avg), 0.001) * 100
+
+    is_small_sample = sample_size < stab * 0.3
+    confidence = min(sample_size / stab, 1.0)
+
+    return {
+        "regressed_rate":   round(regressed, 5),
+        "observed_rate":    round(observed_rate, 5),
+        "league_avg":       round(league_avg, 5),
+        "regression_pct":   round(regression_pct, 2),
+        "weight_observed":  round(weight_obs, 4),
+        "weight_mean":      round(weight_mean, 4),
+        "sample_size":      sample_size,
+        "stabilization_pt": stab,
+        "is_small_sample":  is_small_sample,
+        "confidence":       round(confidence, 4),
+        "stat":             stat,
+    }
+
+
+def apply_regression_to_prop(player_rate: float, sample_n: int,
+                              league_avg: float, stat: str,
+                              line: float, sport: str = "MLB") -> dict:
+    """
+    Apply regression and determine if it affects OVER/UNDER recommendation.
+    Returns: {regressed_line_implied, over_adjustment, regression_flag,
+              regression_severity}
+    """
+    reg = regression_to_mean(player_rate, sample_n, league_avg, stat, sport)
+    regressed_rate = reg["regressed_rate"]
+
+    # How much does regression shift the implied line?
+    line_shift = regressed_rate - player_rate
+    over_adj   = line_shift  # positive = helps OVER, negative = hurts OVER
+
+    if reg["is_small_sample"] and abs(reg["regression_pct"]) > 20:
+        severity = "HIGH"
+    elif abs(reg["regression_pct"]) > 10:
+        severity = "MEDIUM"
+    elif abs(reg["regression_pct"]) > 5:
+        severity = "LOW"
+    else:
+        severity = "NEGLIGIBLE"
+
+    flag = ""
+    if severity in ("HIGH","MEDIUM") and line_shift < -0.05 * player_rate:
+        flag = f"[REGRESS:{severity}] on OVER — rate likely overstated"
+    elif severity in ("HIGH","MEDIUM") and line_shift > 0.05 * player_rate:
+        flag = f"[REGRESS:{severity}] — rate likely understated, favors OVER"
+
+    return {**reg, "over_adjustment": round(over_adj, 5),
+            "regression_flag": flag, "regression_severity": severity}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTEGRATION: apply_all_upgrades()
+# Runs all 6 upgrades on a prop dict and returns enriched version
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_all_upgrades(prop: dict, scanbet_raw: dict = None,
+                       book_moves: list = None,
+                       injuries: list = None,
+                       sport: str = "NBA") -> dict:
+    """
+    Apply all 6 quantitative upgrades to a prop.
+    Returns prop with new fields: EnsembleFair, BayesianProb, VelocityScore,
+    AdjustedElo, BookTierSteam, RegressionFlag
+    """
+    # 1. Ensemble devig
+    over_odds  = prop.get("OverOdds",  prop.get("over_odds",  -110))
+    under_odds = prop.get("UnderOdds", prop.get("under_odds", -110))
+    stat       = prop.get("Stat", prop.get("Prop","")).lower()
+    mkt_type   = ("hr_prop" if "hr" in stat or "home run" in stat
+                  else "total" if "total" in stat
+                  else "spread" if "spread" in stat or "run line" in stat
+                  else "standard")
+    try:
+        ens = devig_ensemble(over_odds, under_odds, mkt_type)
+        prop["EnsembleFair"]  = ens["fair_over"]
+        prop["EnsembleVigor"] = ens["vig_pct"]
+        prop["DevigoMethod"]  = mkt_type
+    except Exception:
+        pass
+
+    # 2. Bayesian updating
+    try:
+        prior = prop.get("EnsembleFair", prop.get("FairProb",
+                prop.get("fair_prob", 0.52)))
+        signals = build_signal_list_from_prop(prop)
+        if signals:
+            bayes = bayesian_signal_update(float(prior), signals)
+            prop["BayesianProb"]     = bayes["posterior_prob"]
+            prop["BayesianUpdate"]   = bayes["total_update"]
+            prop["BayesianSignals"]  = len(signals)
+            # Use Bayesian prob as final fair prob
+            prop["FairProb"] = bayes["posterior_prob"]
+    except Exception:
+        pass
+
+    # 3. Line velocity from Scanbet snapshots
+    try:
+        if scanbet_raw:
+            snaps = scanbet_raw.get("eventOdds", [])
+            if snaps:
+                vel = compute_line_velocity(snaps, market_idx=7)  # over juice
+                prop["LineVelocity"]     = vel["velocity_pct_per_hour"]
+                prop["LineAcceleration"] = vel["acceleration"]
+                prop["IsAccelerating"]   = vel["is_accelerating"]
+                prop["MomentumScore"]    = vel["momentum_score"]
+                if vel["momentum_score"] > 3.0:
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚡Velocity:{vel['velocity_pct_per_hour']:+.2f}%/hr"
+    except Exception:
+        pass
+
+    # 4. Book tier steam weighting
+    try:
+        if book_moves:
+            steam = weighted_steam_score(book_moves)
+            prop["BookTierSteam"]    = steam["weighted_score"]
+            prop["SteamStrength"]    = steam["signal_strength"]
+            prop["SharpAgreement"]   = steam["sharp_agreement"]
+            if steam["signal_strength"] in ("STRONG","MODERATE"):
+                prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📊{steam['signal_strength']}({steam['n_tier1']}T1books)"
+    except Exception:
+        pass
+
+    # 5. Lineup-adjusted Elo
+    try:
+        if injuries:
+            base_elo = prop.get("TeamElo", prop.get("HomeElo", 1500))
+            elo_adj  = lineup_adjusted_elo(float(base_elo), injuries, sport)
+            prop["AdjustedElo"] = elo_adj["adjusted_elo"]
+            prop["EloImpact"]   = elo_adj["elo_delta"]
+            if abs(elo_adj["elo_delta"]) > 30:
+                prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📉Elo:{elo_adj['elo_delta']:+.0f}"
+    except Exception:
+        pass
+
+    # 6. Regression to mean
+    try:
+        player_rate = prop.get("PlayerRate", prop.get("RecentAvg",
+                      prop.get("recent_avg", 0)))
+        sample_n    = prop.get("SampleSize", prop.get("sample_n",
+                      prop.get("GamesPlayed", 20)))
+        league_avg  = prop.get("LeagueAvg", prop.get("league_avg", player_rate))
+        stat_key    = prop.get("StatKey", prop.get("Stat","pts").lower().replace(" ","_"))
+        line        = float(prop.get("Line", prop.get("line", 0)) or 0)
+
+        if player_rate and sample_n and league_avg and stat_key in STABILIZATION_POINTS:
+            reg = apply_regression_to_prop(float(player_rate), int(sample_n),
+                                            float(league_avg), stat_key, line, sport)
+            prop["RegressedRate"]    = reg["regressed_rate"]
+            prop["RegressionSev"]    = reg["regression_severity"]
+            prop["RegressionFlag"]   = reg["regression_flag"]
+            if reg["regression_flag"]:
+                prop["SignalNotes"] = prop.get("SignalNotes","") + f" {reg['regression_flag']}"
+    except Exception:
+        pass
+
+    return prop
 
