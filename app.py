@@ -15433,7 +15433,16 @@ with tabs[0]:
         # SECTION 2 — TOP PLAYS QUEUE
         # ═══════════════════════════════════════════════════
         # ── BEST BET QUEUE ─────────────────────────────────
-        _top_plays = [p for p in board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
+        # Deduplicate by player — only show each player once
+        _seen_players_bbq = set()
+        _top_plays = []
+        for _bbq_p in sorted(board, key=lambda x: (["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"].index(x.get("Tier","PASS")) if x.get("Tier","PASS") in ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS"] else 99, -float(x.get("Edge",0) or 0))):
+            if _bbq_p.get("Tier") not in ("SOVEREIGN","ELITE"): continue
+            _bbq_key = normalize_name(_bbq_p.get("Player",""))
+            if _bbq_key not in _seen_players_bbq:
+                _seen_players_bbq.add(_bbq_key)
+                _top_plays.append(_bbq_p)
+            if len(_top_plays) >= 6: break
         if _top_plays:
             st.markdown("""<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0.8rem;">
                 <div style="flex:1;height:1px;background:var(--bc-bg2);"></div>
@@ -15541,7 +15550,18 @@ with tabs[0]:
                     <span style="color:#e04040;font-size:1.0rem;">Risk: {_risk_note}</span>
                 </div>
             </div>"""
-            components.html(_lock_html, height=220, scrolling=False)
+            # Use st.markdown — components.html iframes don't inherit CSS vars
+            _lock_html_fixed = (_lock_html
+                .replace("var(--bc-bg)", "#000000")
+                .replace("var(--bc-bg-card)", "#0d1b2e")
+                .replace("var(--bc-border)", "#1a3a5c")
+                .replace("var(--bc-text)", "#ffffff")
+                .replace("var(--bc-muted)", "#8ab4d4")
+                .replace("var(--bc-dim)", "#4a6a8a")
+                .replace("var(--bc-blue)", "#1e90ff")
+                .replace("var(--bc-blue-bright)", "#4db8ff")
+            )
+            st.markdown(_lock_html_fixed, unsafe_allow_html=True)
             # ── Why This Is A Play — Signal Contribution Table ──
             _sig_table = render_signal_contribution_table(lock_prop)
             if _sig_table:
@@ -21905,7 +21925,7 @@ with tabs[9]:
     _grey   = sum(1 for s in _src_statuses if "⚪" in s["Status"])
 
     st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
-    st.dataframe(pd.DataFrame(_src_statuses), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses]), use_container_width=True, hide_index=True)
 
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
