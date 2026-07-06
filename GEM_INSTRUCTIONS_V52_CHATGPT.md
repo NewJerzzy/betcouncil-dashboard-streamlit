@@ -171,3 +171,24 @@ T7: BaseballPress/Weather/Rotowire/DFS ownership (context)
 - sportsdataverse (`sdv_source.py`): new T7-context source, 20 cached wrapper functions for NFL/NBA/MLB/NHL/WNBA stats — historical/season context only, not a live odds source.
 - Open priorities: verify FanDuel passive-harvester fix in production; explore further automating Caesars token refresh.
 
+
+
+════ NEW SIGNALS v5.2 ════
+R-26 SGP Correlation Lookup: pts+pra=0.85, qb+wr1=0.65, qb+rb=-0.18, hr+rbi=0.72
+  Kelly = Satchell-Thorp with actual pair corr. Never fixed 0.45. Label:[SGP KELLY]
+R-27 Position Defense: NBA_POS_DEF pts allowed by PG/SG/SF/PF/C per team
+  ELITE_MATCHUP(≥20% weak)→OVER lean. ELITE_DEFENSE(≥18% tough)→Kelly-25%
+R-28 6-Method Devig Auto-select: probit=spreads/totals, worst_case=low liquidity
+  method_spread HIGH = uncertainty → Kelly-15%. Label:[DEVIG method:X vig:Y%]
+R-29 Book Tier Steam: T1(Pinnacle/Circa)=1.0 T2(BetMGM)=0.65 T3(DK/FD)=0.45
+  Square lag(T1 moves,T3 lags)=strongest signal. Never call DK/FD moves steam.
+R-30 Lineup-Adjusted Elo: star out=-150-200 Elo. Use AdjustedElo for edges.
+  Label:[ELO ADJ base:X adj:Y delta:Z]
+R-31 EVBets: 94 books, Pinnacle+Betfair consensus. EV≥5%=+6% boost.
+  EVBets+Scanbet agree = highest conviction combo. Label:[EVBETS EV:+X%]
+
+Priority Stack v5.2 (13 levels):
+1.📡Scanbet drop(n≥5) 2.🔥SharpAPI steam 3.💰EVBets≥5%
+4.Sharp consensus 5.🤖Signal Odds 75%+ 6.Book tier steam
+7.Strong RLM+Pregame 8.StatMuse+NumberFire 9.FantasyPros gap
+10.Moderate RLM 11.🎯Pos defense+injury 12.Bayesian edge 13.Public%
