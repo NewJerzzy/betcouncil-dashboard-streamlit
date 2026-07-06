@@ -5719,12 +5719,13 @@ def apply_all_upgrades(prop: dict, scanbet_raw: dict = None,
 
 
 # ── Compatibility stubs (functions moved/renamed) ────────────────────────────
-def build_game_line_consensus(lines, sport="NBA"):
+def build_game_line_consensus(*args, **kwargs):
     """Stub — logic integrated into main scoring pipeline."""
     return {}
 
-def rest_adjusted_std_dev(base_std, rest_days=1):
-    """Adjust std dev for rest days."""
+def rest_adjusted_std_dev(base_std, *args, **kwargs):
+    """Adjust std dev for rest days. Accepts (base_std, days_rest, sport) or (base_std, days_rest)."""
+    rest_days = int(args[0]) if args else kwargs.get("rest_days", 1)
     factor = {0:1.15, 1:1.05, 2:1.0, 3:0.97, 4:0.95}.get(int(rest_days), 1.0)
     return float(base_std) * factor
 
@@ -5735,7 +5736,7 @@ def pace_adjust_mlb_prop(base_line, *args, park_factor=1.0, weather_factor=1.0, 
         return float(base_line)
     return float(base_line) * park_factor * weather_factor
 
-def get_opener_gap(current_odds, opening_odds):
+def get_opener_gap(current_odds, opening_odds=None, *args, **kwargs):
     """Compute probability gap between opening and current Pinnacle line."""
     def to_p(a):
         a=float(a); return 100/(a+100) if a>0 else -a/(-a+100)
