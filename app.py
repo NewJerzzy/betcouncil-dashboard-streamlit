@@ -15666,9 +15666,17 @@ with tabs[0]:
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-border);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Parlay of the Day — Props</span><div style="flex:1;height:1px;background:var(--bc-border);"></div></div>''', unsafe_allow_html=True)
         # Filter to current sport only, SOVEREIGN/ELITE tier
         _cur_sport = st.session_state.get("last_sport", "NBA")
-        parlay_props = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
-                        if p.get("Tier","") in ["SOVEREIGN","ELITE"]
-                        and p.get("Sport","") == _cur_sport][:4]
+        # Dedup parlay props by player
+        _seen_pp = set()
+        parlay_props = []
+        for _ppp in sorted(board, key=lambda x: x.get("Edge",0), reverse=True):
+            if _ppp.get("Tier","") not in ["SOVEREIGN","ELITE"]: continue
+            if _ppp.get("Sport","") != _cur_sport: continue
+            _ppk = normalize_name(_ppp.get("Player",""))
+            if _ppk not in _seen_pp:
+                _seen_pp.add(_ppk)
+                parlay_props.append(_ppp)
+            if len(parlay_props) >= 4: break
         n_parlay = st.session_state.get("parlay_size", 3)
         parlay_props = parlay_props[:n_parlay]
 
@@ -16069,7 +16077,16 @@ with tabs[0]:
 
         # ── MASTER DAILY SLIP ──────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Daily Slip</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
-        slip_picks = parlay_props if parlay_props else sorted(board, key=lambda x: x.get("Edge",0), reverse=True)[:3]
+        # Dedup slip_picks by player
+        _seen_sk = set()
+        _slip_src = parlay_props if parlay_props else sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
+        slip_picks = []
+        for _skp in _slip_src:
+            _skk = normalize_name(_skp.get("Player",""))
+            if _skk not in _seen_sk:
+                _seen_sk.add(_skk)
+                slip_picks.append(_skp)
+            if len(slip_picks) >= 8: break
         if slip_picks:
             unit = active_unit()
             payout = unit * PRIZEPICKS_MULTIPLIERS.get(len(slip_picks), 3)
