@@ -11079,6 +11079,8 @@ def load_sport_data(sport):
         ("fetch_betwhale_from_gist",           "betwhale_lines_h",       "betwhale_src"),
         ("fetch_ybets_from_gist",              "ybets_lines_h",          "ybets_src"),
         ("fetch_zamba_from_gist",              "zamba_lines_h",          "zamba_src"),
+        ("fetch_evbets_from_gist",             "evbets_ev_picks",        "evbets_src"),
+        ("fetch_evbets_props_from_gist",       "evbets_prop_picks",      "evbets_props_src"),
         ("fetch_sportsinsights_from_gist",     "sportsinsights_data",    "sportsinsights_src"),
         ("fetch_oddsshark_from_gist",          "oddsshark_data",         "oddsshark_src"),
         ("fetch_vegasinsider_from_gist",       "vegasinsider_data",      "vegasinsider_src"),
@@ -12996,6 +12998,28 @@ def load_sport_data(sport):
                 final_edge = prop["BayesianProb"] - _mkt_prob
         except Exception:
             pass
+
+        # ── EVBets +EV signal overlay ────────────────────────────────────────
+        if home_team or away_team:
+            try:
+                _evb = st.session_state.get("evbets_ev_picks",[]) + st.session_state.get("evbets_prop_picks",[])
+                _evb_hit = next((e for e in _evb
+                    if normalize_name(home_team or "") in normalize_name(e.get("event",""))
+                    or normalize_name(away_team or "") in normalize_name(e.get("event",""))
+                    or normalize_name(player or "") in normalize_name(e.get("event",""))
+                ), None)
+                if _evb_hit:
+                    _ev_pct = _evb_hit.get("ev_pct",0)
+                    _ev_book = _evb_hit.get("book","")
+                    prop["EVBetsEV"]    = _ev_pct
+                    prop["EVBetsBook"]  = _ev_book
+                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 💰EVBets:{_ev_pct:+.1f}%@{_ev_book}"
+                    if _ev_pct >= 5:
+                        final_edge = min(final_edge * 1.06, EDGE_CAP)
+                    elif _ev_pct >= 2:
+                        final_edge = min(final_edge * 1.03, EDGE_CAP)
+            except Exception:
+                pass
 
         # ── Signal Odds / BetsLib AI prediction overlay ────────────────────
         if home_team or away_team:
@@ -19248,6 +19272,33 @@ with tabs[4]:
             fetch('https://www.zamba.co/api/sports/'+sport.toLowerCase()+'/events',{{headers:{{'Accept':'application/json','Referer':'https://www.zamba.co/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_zamba_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Zamba error:',e.message);}});
         }});
 
+
+        // ── EVBets +EV feed (every 20 min) — free, 94 books, no login ──
+        var evbSportMap={{'MLB':'baseball-mlb','NBA':'basketball-nba','NFL':'american-football-nfl','NHL':'hockey-nhl','UFC':'mma-mixed-martial-arts','SOCCER':'soccer-epl','WNBA':'basketball-wnba'}};
+        var evbSport=evbSportMap[sport];
+        if(evbSport){{
+            throttled('evbets_'+sport,1200000,function(){{
+                // Value bets feed
+                fetch('https://evbets.app/value-bets/'+evbSport,{{headers:{{'Accept':'application/json','Referer':'https://evbets.app/'}}}}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_evbets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    console.log('[BetCouncil] ✅ EVBets +EV feed harvested for '+sport);
+                }}).catch(function(e){{
+                    // Fallback: try the API endpoint directly
+                    fetch('https://evbets.app/api/value-bets?sport='+evbSport+'&min_ev=2&limit=100',{{headers:{{'Accept':'application/json'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{
+                        pushGist('betcouncil_evbets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest_api'}});
+                    }}).catch(function(e2){{console.log('[BetCouncil] EVBets error:',e2.message);}});
+                }});
+            }});
+        }}
+
+        // ── EVBets prop bets feed (every 20 min) ─────────────────────────
+        if(evbSport){{
+            throttled('evbets_props_'+sport,1200000,function(){{
+                fetch('https://evbets.app/prop-bets/'+evbSport,{{headers:{{'Accept':'application/json','Referer':'https://evbets.app/prop-bets/'}}}}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_evbets_props_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] EVBets props error:',e.message);}});
+            }});
+        }}
     }})();
     </script>
     """

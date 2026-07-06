@@ -14719,6 +14719,8 @@ def get_harvester_status() -> dict:
         ("BetWhale lines",               "betcouncil_betwhale_MLB.json",       28),
         ("Ybets lines",                  "betcouncil_ybets_MLB.json",          28),
         ("Zamba lines",                  "betcouncil_zamba_MLB.json",          28),
+        ("EVBets +EV feed",              "betcouncil_evbets_MLB.json",         22),
+        ("EVBets props +EV",             "betcouncil_evbets_props_MLB.json",   22),
     ]
     from datetime import datetime, timezone
     status = {}
@@ -15743,6 +15745,71 @@ def fetch_zamba_from_gist(sport: str) -> tuple:
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
     return {}, "unavailable"
+
+
+
+def fetch_evbets_from_gist(sport: str) -> tuple:
+    """
+    EVBets +EV feed — free, 94 bookmakers, Pinnacle+Betfair sharp consensus.
+    Pre-computed EV%, Kelly sizing, no-vig fair prob. Updated every 30 min.
+    PRIMARY: browser harvester. SECONDARY: none (web-only source).
+    Returns (list of {event, outcome, market, ev_pct, best_odds, book, kelly}, source)
+    """
+    data = _read_gist_file(f"betcouncil_evbets_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data", {})
+        if raw:
+            picks = _parse_evbets_data(raw, sport)
+            if picks:
+                print(f"[EVBets] PRIMARY: {len(picks)} +EV picks for {sport}")
+                return picks, "browser_harvester"
+    return [], "unavailable"
+
+
+def fetch_evbets_props_from_gist(sport: str) -> tuple:
+    """EVBets prop bets +EV feed."""
+    data = _read_gist_file(f"betcouncil_evbets_props_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=22):
+        raw = data.get("data", {})
+        if raw:
+            picks = _parse_evbets_data(raw, sport)
+            if picks:
+                return picks, "browser_harvester"
+    return [], "unavailable"
+
+
+def _parse_evbets_data(raw, sport: str) -> list:
+    """Parse EVBets HTML/JSON response into BetCouncil pick format."""
+    results = []
+    try:
+        # Handle JSON API response
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = raw.get("picks", raw.get("value_bets", raw.get("data", [])))
+        else:
+            return []
+
+        for item in (items if isinstance(items, list) else []):
+            if not isinstance(item, dict): continue
+            ev = item.get("ev", item.get("ev_pct", item.get("expected_value", 0)))
+            if not ev: continue
+            results.append({
+                "event":    item.get("event", item.get("match", item.get("game", ""))),
+                "outcome":  item.get("outcome", item.get("selection", item.get("pick", ""))),
+                "market":   item.get("market", item.get("market_type", "h2h")),
+                "ev_pct":   float(str(ev).replace("%","").replace("+","") or 0),
+                "best_odds":item.get("best_odds", item.get("odds", item.get("price", 0))),
+                "book":     item.get("bookmaker", item.get("book", item.get("sportsbook", ""))),
+                "kelly":    item.get("kelly", item.get("kelly_stake", 0)),
+                "sport":    sport,
+                "source":   "evbets",
+            })
+        # Sort by EV descending
+        results.sort(key=lambda x: x.get("ev_pct", 0), reverse=True)
+    except Exception as e:
+        print(f"[WARN] _parse_evbets_data: {e}")
+    return results
 
 
 def fetch_propswap_listings(sport: str = "baseball") -> list:
