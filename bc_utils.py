@@ -5138,6 +5138,91 @@ def score_rlm(public_pct: float, line_move_direction: str,
 
 # ── Closing line velocity ─────────────────────────────────────────────────────
 
+
+def compute_clv_at_bet_time(bet_odds: float, closing_odds: float,
+                             bet_time: str = "", close_time: str = "") -> dict:
+    """
+    Compute CLV (Closing Line Value) matched to exact bet time.
+    bet_odds: American odds at time of bet
+    closing_odds: Pinnacle closing line (American)
+    bet_time: ISO timestamp of when bet was placed
+    close_time: ISO timestamp of game start / line close
+    Returns: {clv_pct, clv_grade, hours_before_close, beat_close}
+    """
+    def to_prob(odds):
+        try:
+            o = float(odds)
+            return 100/(o+100) if o > 0 else -o/(-o+100)
+        except Exception:
+            return 0.5
+
+    bet_prob   = to_prob(bet_odds)
+    close_prob = to_prob(closing_odds)
+    clv_pct    = bet_prob - close_prob  # positive = beat the close
+
+    hours_before = None
+    if bet_time and close_time:
+        try:
+            from datetime import datetime, timezone
+            bt = datetime.fromisoformat(bet_time.replace("Z","+00:00"))
+            ct = datetime.fromisoformat(close_time.replace("Z","+00:00"))
+            hours_before = round((ct - bt).total_seconds() / 3600, 1)
+        except Exception:
+            pass
+
+    # CLV grade
+    if clv_pct > 0.03:   grade = "STRONG ✅"
+    elif clv_pct > 0.01: grade = "GOOD ✅"
+    elif clv_pct > -0.01: grade = "NEUTRAL ➡️"
+    elif clv_pct > -0.03: grade = "POOR ⚠️"
+    else:                  grade = "BAD ❌"
+
+    return {
+        "clv_pct":          round(clv_pct, 4),
+        "clv_grade":        grade,
+        "bet_prob":         round(bet_prob, 4),
+        "close_prob":       round(close_prob, 4),
+        "beat_close":       clv_pct > 0,
+        "hours_before_close": hours_before,
+        "clv_at_bet_time":  True,  # flag for GEM brief
+    }
+
+
+def track_closing_line_beat(bet_record: dict, closing_lines: dict) -> dict:
+    """
+    Match a logged bet to its Pinnacle closing line and compute CLV.
+    bet_record: {Player, Prop, Line, Odds, Sport, BetTime, ...}
+    closing_lines: Gist-stored closing lines {game_key: {close_odds, close_time}}
+    Returns bet_record with CLV fields added.
+    """
+    player    = bet_record.get("Player","")
+    prop      = bet_record.get("Prop","")
+    bet_odds  = bet_record.get("Odds", bet_record.get("odds", 0))
+    bet_time  = bet_record.get("BetTime", bet_record.get("bet_time",""))
+    sport     = bet_record.get("Sport","")
+
+    # Find matching closing line
+    close_match = None
+    for key, cl_data in closing_lines.items():
+        if (normalize_name(player) in normalize_name(key) or
+            normalize_name(key) in normalize_name(player)):
+            close_match = cl_data
+            break
+
+    if close_match and bet_odds:
+        close_odds = close_match.get("close_odds", close_match.get("odds", 0))
+        close_time = close_match.get("close_time", close_match.get("game_time",""))
+        clv_data   = compute_clv_at_bet_time(bet_odds, close_odds, bet_time, close_time)
+        bet_record.update(clv_data)
+        bet_record["closing_odds"] = close_odds
+    else:
+        bet_record["clv_pct"]   = None
+        bet_record["clv_grade"] = "NO CLOSE ⚪"
+        bet_record["beat_close"] = None
+
+    return bet_record
+
+
 def compute_line_velocity(book: str, game_key: str, market: str,
                           window_hours: float = 24.0) -> dict:
     """
