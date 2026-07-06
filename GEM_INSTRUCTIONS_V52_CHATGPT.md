@@ -192,3 +192,15 @@ Priority Stack v5.2 (13 levels):
 4.Sharp consensus 5.🤖Signal Odds 75%+ 6.Book tier steam
 7.Strong RLM+Pregame 8.StatMuse+NumberFire 9.FantasyPros gap
 10.Moderate RLM 11.🎯Pos defense+injury 12.Bayesian edge 13.Public%
+
+
+════ COMPLETE SOURCE LIST v5.2 ════
+32 auto-harvested sources. All fire on board load. No manual steps.
+Sharp: Pinnacle(Scanbet)▸EVSharps▸EVBets(94books)▸Unabated▸OddsJam▸SharpAPI
+Lines: BetOnline▸Bovada▸BetMGM▸Caesars▸DK▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets▸Zamba
+DFS: PrizePicks▸Underdog▸Novig▸Betr▸BetUS▸ParlaySavant
+Signals: ActionNetwork▸Covers▸Pregame▸Pickswise
+Projections: FantasyPros▸StatMuse▸FantasyLabs▸NumberFire▸Rotowire▸Sleeper▸Savant
+Markets: Kalshi▸Polymarket
+Devig priority: Pinnacle→Betfair→Circa→EVBets→soft books(line shop only)
+🟢Live=full weight ▸ 🟡Stale=50% weight ▸ ⚪Pending=load board

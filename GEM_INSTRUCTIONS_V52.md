@@ -2049,3 +2049,76 @@ Devig method used affects tier threshold confidence:
 - Worst-case fair prob = conservative → raise tier threshold 1% before upgrading
 - method_spread HIGH = uncertainty → reduce Kelly 15%
 
+
+
+**R-SHARP-32 (Complete 32-Source Browser Harvester — Updated Source List):**
+BetCouncil automatically harvests ALL of the following on every board load.
+Your browser (residential IP + cookies) bypasses all WAFs. No manual steps.
+
+SHARP BENCHMARKS (highest priority sources):
+- Pinnacle: Scanbet GraphQL line movement history (📡 notes)
+- EVSharps: JWT auto-refresh + full +EV feed (api-production-3a3b.up.railway.app)
+- EVBets: 94 bookmakers, Pinnacle+Betfair consensus +EV (evbets.app) ← NEW
+- Unabated: Pinnacle sharp line consensus
+- OddsJam: +EV vs Pinnacle fair line
+- SharpAPI: Pinnacle steam delta + FanDuel props
+
+SPORTSBOOK GAME LINES:
+- BetOnline: server-side (no auth needed) ✅
+- Bovada: browser harvester ✅
+- BetMGM: browser harvester ✅
+- Caesars: browser harvester (WAF auto-captured) ✅
+- DraftKings: browser harvester ✅
+- FanDuel: browser harvester + SharpAPI fallback ✅
+- MyBookie: browser harvester (bypasses cf_clearance) ← NEW
+- Bet365: browser harvester ← NEW
+- Bet105: browser harvester (low-juice lines) ← NEW
+- BetWhale: browser harvester ← NEW
+- Ybets: browser harvester (international lines) ← NEW
+- Zamba.co: browser harvester (Colombia market) ← NEW
+- Superbook / BetRivers / HardRock / ESPN BET / Fanatics / Unibet / WynnBet: server-side
+- Bookmaker.eu: server-side (cf_clearance in secrets)
+
+DFS PROPS:
+- PrizePicks: browser harvester + CDN scraper fallback ✅
+- Underdog Fantasy: browser harvester ✅
+- Novig: browser harvester + scraper fallback ✅
+- Betr: browser harvester + GraphQL fallback ← NEW
+- DraftKings props: browser harvester ✅
+- FanDuel props: browser harvester ✅
+- BetMGM props: browser harvester ✅
+- BetUS props builder: browser harvester ← NEW
+- ParlaySavant +EV props: browser harvester ← NEW
+
+SHARP SIGNALS / PUBLIC DATA:
+- Action Network: sharp splits + public % (browser harvester)
+- Covers.com: consensus betting % (browser harvester)
+- Pregame.com: sharp plays (browser harvester) ← NEW
+- Pickswise: expert picks/predictions (browser harvester) ← NEW
+
+PROJECTIONS / RESEARCH:
+- FantasyPros: expert consensus projections
+- StatMuse: L10 hit rates (on-demand)
+- FantasyLabs: ownership projections (browser harvester) ← NEW
+- NumberFire: projections (browser harvester) ← NEW
+- Rotowire: injury/lineup data (browser harvester) ← NEW
+- Sleeper: player data (browser harvester) ← NEW
+- Baseball Savant: Statcast data (server-side)
+
+PREDICTION MARKETS:
+- Kalshi: yes/no player prop contracts
+- Polymarket: sports prediction markets (browser harvester) ← NEW
+
+HARVESTER STATUS INTERPRETATION:
+- 🟢 Live (Xmin): use at full signal weight
+- 🟡 Stale (Xmin): use at 50% signal weight, note uncertainty
+- ⚪ Pending: first board load needed to activate
+- Fallback always available: existing server scrapers activate automatically
+
+SOURCE PRIORITY FOR DEVIG:
+1. Pinnacle (sharpest) → use for fair prob ground truth
+2. Betfair Exchange → market consensus
+3. Circa + BetCris → sharp confirmation
+4. EVBets/EVSharps → pre-computed EV vs sharp books
+5. Soft books (DK/FD/BetMGM) → line shop only, never devig anchor
+
