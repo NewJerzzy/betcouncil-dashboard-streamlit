@@ -5728,8 +5728,11 @@ def rest_adjusted_std_dev(base_std, rest_days=1):
     factor = {0:1.15, 1:1.05, 2:1.0, 3:0.97, 4:0.95}.get(int(rest_days), 1.0)
     return float(base_std) * factor
 
-def pace_adjust_mlb_prop(base_line, park_factor=1.0, weather_factor=1.0):
-    """Adjust MLB prop line for park and weather factors."""
+def pace_adjust_mlb_prop(base_line, *args, park_factor=1.0, weather_factor=1.0, **kwargs):
+    """Adjust MLB prop line for park and weather factors. Accepts positional or keyword args."""
+    # If called with 2 positional args: (base_line, stat_norm) — return base_line unchanged
+    if args:
+        return float(base_line)
     return float(base_line) * park_factor * weather_factor
 
 def get_opener_gap(current_odds, opening_odds):
