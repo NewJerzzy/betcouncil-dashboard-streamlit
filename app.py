@@ -16023,7 +16023,16 @@ with tabs[0]:
 
         # ── BEST +EV PROPS ─────────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best +EV Props (2-pick, need 57.7%)</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
-        plus_ev = [p for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True) if p.get("Edge",0) > 0][:6]
+        # Dedup Best EV by player
+        _seen_ev2 = set()
+        plus_ev = []
+        for _p2 in sorted(board, key=lambda x: x.get("Edge",0), reverse=True):
+            if _p2.get("Edge",0) <= 0: continue
+            _pk2 = normalize_name(_p2.get("Player",""))
+            if _pk2 not in _seen_ev2:
+                _seen_ev2.add(_pk2)
+                plus_ev.append(_p2)
+            if len(plus_ev) >= 6: break
         avoid = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < -0.05][:3]
         ev_html = ""
         for bp in plus_ev:
