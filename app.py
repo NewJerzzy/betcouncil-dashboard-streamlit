@@ -649,13 +649,13 @@ h3 { font-size: 17px; font-weight: 600; color: #d0d8e0; }
 .stButton > button { background-color: #0ea5a0; color: #ffffff; border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; }
 .stButton > button:hover { background-color: #0d9488; transform: translateY(-1px); }
 .command-bar { background: linear-gradient(135deg, rgba(14,165,160,0.08), #0d1520); border: 1px solid rgba(14,165,160,0.3); border-top: 3px solid #0ea5a0; border-radius: 0 0 12px 12px; padding: 18px 22px; margin-bottom: 16px; }
-.metric-box { background: #0d1520; border: 1px solid #1a2a3a; border-radius: 8px; padding: 10px 14px; text-align: center; }
-.metric-label { font-size: 11px; color: #6a7a8a; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.metric-box { background: var(--bc-bg-card); border: 1px solid var(--bc-border); border-radius: 10px; padding: 10px 14px; text-align: center; }
+.metric-label { font-size: 11px; color: var(--bc-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
 .metric-value { font-size: 20px; font-weight: 700; }
-.gold-text { color: #e8a020; }
+.gold-text { color: var(--bc-gold); }
 .teal-text { color: #0ea5a0; }
 .red-text { color: #e04040; }
-.muted-text { color: #6a7a8a; }
+.muted-text { color: var(--bc-muted); }
 .injury-badge { background-color: #e04040; color: white; font-size: 10px; padding: 2px 6px; border-radius: 12px; margin-left: 6px; }
 .sem-green { color: #0ea5a0; font-weight: 600; }
 .sem-yellow { color: #e8a020; font-weight: 600; }
@@ -1427,7 +1427,7 @@ def render_signal_chart(prop, sport="NBA"):
     }.get(regime_label, "")
 
     html = f"""
-<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:10px;padding:16px;margin:6px 0;">
+<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:10px;padding:16px;margin:6px 0;">
 
   <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1a2a3a;">
     <div style="font-size:16px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Why this pick is rated the way it is</div>
@@ -9107,7 +9107,7 @@ def track_bet_dialog(prop):
 
     st.markdown(
         f'{tier_badge(tier)} &nbsp; '
-        f'<span style="font-size:16px;font-weight:700;color:#e8f0f8;">'
+        f'<span style="font-size:16px;font-weight:700;color:var(--bc-text);">'
         f'{player} {side} {line} {prop_name}</span>'
         f'<br><span style="color:#22c55e;font-size:13px;">Edge {edge:.1%} · '
         f'Fair Prob {prob:.1%}</span>',
@@ -14787,7 +14787,7 @@ with st.sidebar:
     # ── Brand ─────────────────────────────────────────────────────────
     st.markdown(
         '<div style="padding:16px 0 12px;border-bottom:1px solid #1a2a3a;margin-bottom:14px;">'
-        '<div style="font-size:22px;font-weight:800;color:#e8f0f8;letter-spacing:1px;font-family:monospace;">BetCouncil</div>'
+        '<div style="font-size:22px;font-weight:800;color:var(--bc-text);letter-spacing:1px;font-family:monospace;">BetCouncil</div>'
         '<div style="font-size:11px;color:#4a8a8a;letter-spacing:2px;margin-top:2px;">v4.7 · LIVE ENGINE</div>'
         '</div>', unsafe_allow_html=True
     )
@@ -14812,9 +14812,9 @@ with st.sidebar:
     _chg_color = "#22c55e" if _daily_chg >= 0 else "#e04040"
     _chg_str   = f"{_daily_chg:+.1%} today"
     # Bankroll tile
-    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">💰 BANKROLL</div>'
-        f'<div style="font-size:26px;font-weight:800;color:#e8f0f8;">${_bankroll_now:,.2f}</div>'
+        f'<div style="font-size:26px;font-weight:800;color:var(--bc-text);">${_bankroll_now:,.2f}</div>'
         f'<div style="font-size:12px;color:{_chg_color};margin-top:2px;">{_chg_str}</div>'
         f'</div>', unsafe_allow_html=True)
     # Calibration tile (was mislabeled "INTEGRITY" — this is actually a Brier-
@@ -14832,33 +14832,33 @@ with st.sidebar:
     _regime_data  = detect_season_regime("MLB")
     _regime_label = _regime_data.get("label", "REGULAR FLOOR")
     _edge_thresh  = _regime_data.get("edge_floor", 0.045)
-    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">↗ CALIBRATION</div>'
         f'</div>'
-        + (f'<div style="font-size:16px;font-weight:700;color:#6a7a8a;margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
+        + (f'<div style="font-size:16px;font-weight:700;color:var(--bc-dim);margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
            if _thin_sample else
            f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n})</span></div>')
         + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
         f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
     # SEM tile
-    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
         f'<div style="font-size:13px;font-weight:700;color:#22c55e;letter-spacing:1px;">● {_regime_label.upper()}</div>'
         f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">({_edge_thresh:.1%} edge threshold)</div>'
         f'</div>', unsafe_allow_html=True)
     # Unit + Session tile
     _unit_val = active_unit()
-    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">⊚ UNIT SIZE</div>'
-        f'<div style="font-size:24px;font-weight:800;color:#e8f0f8;">${_unit_val:.2f}</div>'
+        f'<div style="font-size:24px;font-weight:800;color:var(--bc-text);">${_unit_val:.2f}</div>'
         f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">{KELLY_FRACTION:.2f} Kelly Fraction</div>'
         f'</div>', unsafe_allow_html=True)
-    st.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:12px 14px;margin-bottom:14px;">'
+    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:14px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div><div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">⏱ SESSION</div>'
-        f'<div style="font-size:22px;font-weight:700;color:#e8f0f8;font-family:monospace;">{get_session_time()}</div></div>'
+        f'<div style="font-size:22px;font-weight:700;color:var(--bc-text);font-family:monospace;">{get_session_time()}</div></div>'
         f'<div style="text-align:right;">'
         f'<div style="font-size:11px;color:{_risk_color};font-weight:700;">{_risk_status}</div>'
         f'<div style="font-size:10px;color:#4a6a8a;">Locks: {_n_locks}/{_max_locks}</div>'
@@ -15076,9 +15076,9 @@ with st.sidebar:
         _color = "green" if _net >= 0 else "red"
         _hit_color = "#22c55e" if _hit_rate >= 0.577 else "#e04040"
         st.markdown(f"""
-<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px 12px;margin:8px 0;">
+<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px 12px;margin:8px 0;">
   <div style="font-size:14px;color:var(--color-text-tertiary);margin-bottom:4px;">YOUR RECORD</div>
-  <div style="font-size:20px;font-weight:700;color:#e8f0f8;">{_wins}W — {_losses}L</div>
+  <div style="font-size:20px;font-weight:700;color:var(--bc-text);">{_wins}W — {_losses}L</div>
   <div style="font-size:16px;color:{_hit_color};font-weight:600;">{_hit_rate:.1%} hit rate {'✅' if _hit_rate >= 0.577 else '⚠️'}</div>
   <div style="font-size:16px;color:{_color};font-weight:700;">Net: ${_net:.2f}</div>
   <div style="font-size:16px;color:var(--color-text-tertiary);margin-top:4px;">Need 57.7%+ for +EV on 2-picks</div>
@@ -15169,7 +15169,7 @@ if _qs_count:
     st.markdown(
         f'''<div style="position:fixed;bottom:18px;right:18px;z-index:200;width:220px;
              background:linear-gradient(160deg,#0d1520f2,#060c14f2);backdrop-filter:blur(10px);
-             border:1px solid rgba(232,160,32,0.35);border-radius:10px;
+             border:1px solid rgba(30,144,255,0.40);border-radius:10px;
              box-shadow:0 6px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(232,160,32,0.08);
              padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -15260,20 +15260,20 @@ with tabs[0]:
         sum(c.get("clv",0) for c in _clv_top[-20:]) / max(len(_clv_top[-20:]),1), 2
     ) if _clv_top else 0.0
 
-    _m1, _m2, _m3, _m4, _m5, _m6 = st.columns(6)
-    _m1.metric("Props Found",    _total_props)
-    _m2.metric("SOVEREIGN",      _sov_all,
-               delta=f"+{_elite_all} Elite" if _elite_all else None)
-    _m3.metric("Avg Edge",       f"+{_avg_edge}%",
-               delta="above breakeven" if _avg_edge > 2 else None)
-    _m4.metric("Win Rate (L20)", f"{_win_rate_top}%",
-               delta="above BE" if _win_rate_top >= 52.4 else "below BE",
-               delta_color="normal" if _win_rate_top >= 52.4 else "inverse")
-    _m5.metric("CLV (L20)",      f"{_clv_avg_top:+.2f}",
-               delta="positive" if _clv_avg_top > 0 else "negative",
-               delta_color="normal" if _clv_avg_top > 0 else "inverse")
-    _m6.metric("Bankroll Mult",  _bi_top.get("label","1.00x"),
-               delta=_bi_top.get("reason","")[:25] if _bi_top else None)
+    _wr_c = "#22c55e" if _win_rate_top>=52.4 else "#e04040"
+    _wr_b = "34,197,94" if _win_rate_top>=52.4 else "224,64,64"
+    _cl_c = "#22c55e" if _clv_avg_top>0 else "#e04040"
+    _cl_b = "34,197,94" if _clv_avg_top>0 else "224,64,64"
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px;">
+        <div class="command-card"><div class="command-value">{_total_props}</div><div class="command-label">Props Loaded</div></div>
+        <div class="command-card" style="border-color:rgba(245,197,24,0.35)"><div class="command-value" style="color:#f5c518">{_sov_all}</div><div class="command-label">Sovereign</div></div>
+        <div class="command-card" style="border-color:rgba(30,144,255,0.35)"><div class="command-value" style="color:#4db8ff">+{_avg_edge}%</div><div class="command-label">Avg Edge</div></div>
+        <div class="command-card" style="border-color:rgba({_wr_b},0.35)"><div class="command-value" style="color:{_wr_c}">{_win_rate_top}%</div><div class="command-label">Win Rate L20</div></div>
+        <div class="command-card" style="border-color:rgba({_cl_b},0.35)"><div class="command-value" style="color:{_cl_c}">{_clv_avg_top:+.2f}</div><div class="command-label">CLV Avg L20</div></div>
+        <div class="command-card" style="border-color:rgba(245,197,24,0.35)"><div class="command-value" style="color:#f5c518">{_bi_top.get("label","1.00x")}</div><div class="command-label">Bankroll Mult</div></div>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -15322,20 +15322,20 @@ with tabs[0]:
                     <div style="color:#0ea5a0;font-size:1.6rem;font-weight:700;">{elite_count}</div>
                 </div>
                 <div style="flex:1;background:var(--color-background-secondary);border-radius:6px;padding:0.7rem;text-align:center;border:0.5px solid var(--color-border-tertiary);">
-                    <div style="color:#378add;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">✓ APP</div>
-                    <div style="color:#378add;font-size:1.6rem;font-weight:700;">{approved_count}</div>
+                    <div style="color:var(--bc-blue);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">✓ APP</div>
+                    <div style="color:var(--bc-blue);font-size:1.6rem;font-weight:700;">{approved_count}</div>
                 </div>
-                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #4a5a6a44;">
+                <div style="flex:1;background:var(--bc-bg);border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #4a5a6a44;">
                     <div style="color:var(--color-text-tertiary);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">📊 LEAN</div>
                     <div style="color:var(--color-text-tertiary);font-size:1.6rem;font-weight:700;">{lean_count}</div>
                 </div>
-                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
-                    <div style="color:#8a9ab0;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Total at Risk</div>
-                    <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{round(sum(safe_float(p.get("Kelly",0)) for p in board if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")), 1)}u</div>
+                <div style="flex:1;background:var(--bc-bg);border-radius:6px;padding:0.7rem;text-align:center;border:1px solid var(--bc-border);">
+                    <div style="color:var(--bc-muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Total at Risk</div>
+                    <div style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{round(sum(safe_float(p.get("Kelly",0)) for p in board if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")), 1)}u</div>
                 </div>
-                <div style="flex:1;background:#0a0e14;border-radius:6px;padding:0.7rem;text-align:center;border:1px solid #1e2d3d;">
-                    <div style="color:#8a9ab0;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Game Edges</div>
-                    <div style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{game_edge_count}</div>
+                <div style="flex:1;background:var(--bc-bg);border-radius:6px;padding:0.7rem;text-align:center;border:1px solid var(--bc-border);">
+                    <div style="color:var(--bc-muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Game Edges</div>
+                    <div style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{game_edge_count}</div>
                 </div>
             </div>
         </div>
@@ -15351,10 +15351,10 @@ with tabs[0]:
                 total = g.get("Total", g.get("total",""))
                 date_str = g.get("Date","")
                 games_html += f"""
-                <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;">
-                    <div style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{matchup}</div>
+                <div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.7rem;">
+                    <div style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{matchup}</div>
                     <div style="display:flex;justify-content:space-between;margin-top:0.3rem;">
-                        <span style="color:#8a9ab0;font-size:1.0rem;">{date_str}</span>
+                        <span style="color:var(--bc-muted);font-size:1.0rem;">{date_str}</span>
                         <span style="color:#b8c6d6;font-size:1.0rem;">O/U {total}</span>
                     </div>
                 </div>"""
@@ -15403,7 +15403,7 @@ with tabs[0]:
                     inj_html += (f'<div style="margin-bottom:0.4rem;">'
                                  f'<span style="color:{_sc};font-weight:700;">{pname}</span> '
                                  f'<span style="color:{_sc};font-size:0.85rem;">[{rw["status"]}]</span> '
-                                 f'<span style="color:#8a9ab0;font-size:0.9rem;">— {rw.get("note","")[:100]}</span> '
+                                 f'<span style="color:var(--bc-muted);font-size:0.9rem;">— {rw.get("note","")[:100]}</span> '
                                  f'<span style="color:#4a6a8a;font-size:0.8rem;">[RotoWire]</span>'
                                  f'</div>')
             inj_html += '</div>'
@@ -15418,7 +15418,7 @@ with tabs[0]:
             _sharp_html = []
             for _sa in all_sharp[:4]:
                 _sa_c = {"line_move":"#e8a020","steam":"#e04040","public_vs_sharp":"#378add"}.get(_sa.get("type",""),"#6a7a8a")
-                _sharp_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.05rem;color:#e8f0f8;">{_sa.get("message","")}</div>')
+                _sharp_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.05rem;color:var(--bc-text);">{_sa.get("message","")}</div>')
             st.markdown("".join(_sharp_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
@@ -15454,14 +15454,14 @@ with tabs[0]:
                             for l, v, c in _q_risks
                         ))
                 st.markdown(
-                    f'<div style="background:#0a0e14;border:1px solid #1e2d3d;'
+                    f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);'
                     f'border-left:3px solid {_qc};border-radius:6px;'
                     f'padding:0.5rem 0.8rem 0.4rem;margin-bottom:0.4rem;">'
                     f'<div style="display:flex;align-items:center;gap:0.8rem;">'
                     f'<span style="color:{_qc};font-weight:700;font-size:1.1rem;min-width:22px;">#{_qi+1}</span>'
-                    f'<span style="color:#e8f0f8;font-weight:600;flex:1;">{_qp.get("Player","")} '
+                    f'<span style="color:var(--bc-text);font-weight:600;flex:1;">{_qp.get("Player","")} '
                     f'{_qp.get("Side","OVER")} {_qp.get("Line","")}</span>'
-                    f'<span style="color:#8a9ab0;font-size:0.9rem;">{_qp.get("Prop","")}</span>'
+                    f'<span style="color:var(--bc-muted);font-size:0.9rem;">{_qp.get("Prop","")}</span>'
                     f'<span style="color:{_qc};font-weight:700;">Edge {_qe:.1%}</span>'
                     f'<span style="color:#7f77dd;">{_qpin}</span>'
                     f'</div>'
@@ -15507,27 +15507,27 @@ with tabs[0]:
             _risk_note = lock_prop.get("PinnacleNote","monitor lineup")[:50]
             _player_line = f'{lock_prop.get("Player","")} &mdash; {lock_prop.get("Side","")} {lock_prop.get("Line","")} {lock_prop.get("Prop","")}'
             _lock_html = f"""
-            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #22c55e;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+            <div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-top:3px solid #22c55e;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem;">
                     <span style="background:{tier_color}22;color:{tier_color};padding:0.2rem 0.7rem;border-radius:20px;font-size:1.15rem;font-weight:700;">{tier}</span>
                     {_pinn_badge}
                 </div>
-                <div style="font-size:1.3rem;font-weight:700;color:#e8f0f8;margin-bottom:0.8rem;">{_player_line}</div>
+                <div style="font-size:1.3rem;font-weight:700;color:var(--bc-text);margin-bottom:0.8rem;">{_player_line}</div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem;margin-bottom:0.8rem;">
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Season Avg</div>
-                        <div style="color:#e8f0f8;font-weight:700;">{_avg_display}</div>
+                    <div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:var(--bc-muted);font-size:1.0rem;text-transform:uppercase;">Season Avg</div>
+                        <div style="color:var(--bc-text);font-weight:700;">{_avg_display}</div>
                     </div>
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Hit Prob</div>
+                    <div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:var(--bc-muted);font-size:1.0rem;text-transform:uppercase;">Hit Prob</div>
                         <div style="color:#22c55e;font-weight:700;">{_prob_display}</div>
                     </div>
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">Pinnacle</div>
+                    <div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:var(--bc-muted);font-size:1.0rem;text-transform:uppercase;">Pinnacle</div>
                         <div style="color:#7f77dd;font-weight:700;">{_pinn_display}</div>
                     </div>
-                    <div style="background:#0d1520;border-radius:5px;padding:0.5rem;text-align:center;">
-                        <div style="color:#8a9ab0;font-size:1.0rem;text-transform:uppercase;">2-Pick EV</div>
+                    <div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem;text-align:center;">
+                        <div style="color:var(--bc-muted);font-size:1.0rem;text-transform:uppercase;">2-Pick EV</div>
                         <div style="color:#22c55e;font-weight:700;">{_ev2_display}</div>
                     </div>
                 </div>
@@ -15576,14 +15576,14 @@ with tabs[0]:
             bb = best_game.get("best_bet",{})
             if bb:
                 st.markdown(f"""
-                <div style="background:#0a0e14;border:1px solid #1e2d3d;border-top:3px solid #378add;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
-                    <div style="font-size:1.0rem;color:#378add;text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
-                    <div style="font-size:1.2rem;font-weight:700;color:#e8f0f8;margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
+                <div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-top:3px solid #378add;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                    <div style="font-size:1.0rem;color:var(--bc-blue);text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
+                    <div style="font-size:1.2rem;font-weight:700;color:var(--bc-text);margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
                     <div style="display:flex;gap:1.5rem;margin-bottom:0.5rem;">
-                        <span style="color:#378add;font-weight:700;">Edge: {abs(bb.get("edge",0)):.1%}</span>
+                        <span style="color:var(--bc-blue);font-weight:700;">Edge: {abs(bb.get("edge",0)):.1%}</span>
                         <span style="color:#7f77dd;font-size:1.0rem;">{bb.get("note","")[:80]}</span>
                     </div>
-                    <div style="display:flex;gap:0.8rem;font-size:1.0rem;color:#8a9ab0;">
+                    <div style="display:flex;gap:0.8rem;font-size:1.0rem;color:var(--bc-muted);">
                         <span>Spread: {best_game.get("games",{}).get("Spread","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
                         <span>Total: {best_game.get("games",{}).get("Total","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
                     </div>
@@ -15702,16 +15702,16 @@ with tabs[0]:
                 legs_html = ""
                 for p in parlay_props:
                     dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
-                    legs_html += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:#e8f0f8;font-size:1.0rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
+                    legs_html += f'<div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:var(--bc-text);font-size:1.0rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
                 st.markdown(f"""
-                <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+                <div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-                        <span style="color:#e8f0f8;font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
+                        <span style="color:var(--bc-text);font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
                         <span style="color:#22c55e;font-weight:700;font-size:1rem;">{ev:+.1%} EV ▶ PLAY</span>
                     </div>
                     <div style="display:flex;gap:1.5rem;font-size:1.0rem;margin-bottom:0.7rem;">
-                        <span style="color:#b8c6d6;">Combined: <span style="color:#e8f0f8;">{combined:.1%}</span></span>
-                        <span style="color:#8a9ab0;">Breakeven: {be:.1%}</span>
+                        <span style="color:#b8c6d6;">Combined: <span style="color:var(--bc-text);">{combined:.1%}</span></span>
+                        <span style="color:var(--bc-muted);">Breakeven: {be:.1%}</span>
                     </div>
                     {legs_html}
                 </div>
@@ -15721,7 +15721,7 @@ with tabs[0]:
                 _single_plays = [p for p in parlay_props if p.get("Edge",0) >= 0.08]
                 _single_html = ""
                 for _sp in _single_plays[:3]:
-                    _single_html += f'<div style="color:#e8f0f8;font-size:0.9rem;padding:0.2rem 0;">· {_sp.get("Player","")} {_sp.get("Side","")} {_sp.get("Line","")} {_sp.get("Prop","")} <span style="color:#22c55e;">({_sp.get("Edge",0):+.1%} edge)</span></div>'
+                    _single_html += f'<div style="color:var(--bc-text);font-size:0.9rem;padding:0.2rem 0;">· {_sp.get("Player","")} {_sp.get("Side","")} {_sp.get("Line","")} {_sp.get("Prop","")} <span style="color:#22c55e;">({_sp.get("Edge",0):+.1%} edge)</span></div>'
                 st.markdown(f"""
                 <div style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-left:3px solid #e8a020;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">
                     <div style="color:#e8a020;font-weight:600;margin-bottom:0.4rem;">⚠️ Singles Only — Skip the Parlay Today</div>
@@ -15730,8 +15730,8 @@ with tabs[0]:
                         combined probability to <strong>{combined:.1%}</strong> — below the
                         <strong>{be:.1%}</strong> breakeven needed for a {len(parlay_props)}-pick parlay.<br><br>
                         <strong style="color:var(--color-text-primary);">Recommended as singles:</strong>
-                        {_single_html if _single_html else "<div style='color:#8a9ab0;'>Take the top edge plays individually.</div>"}
-                        <br><div style="color:#6a7a8a;font-size:0.85rem;margin-top:0.3rem;">
+                        {_single_html if _single_html else "<div style='color:var(--bc-muted);'>Take the top edge plays individually.</div>"}
+                        <br><div style="color:var(--bc-dim);font-size:0.85rem;margin-top:0.3rem;">
                         Note: The Best +EV Props section below shows the same plays ranked by individual edge — those are your singles targets.
                         </div>
                     </div>
@@ -15752,10 +15752,10 @@ with tabs[0]:
                 _ap_line = ap.get("Line", 0) or 0
                 _ap_edge = ap.get("EdgePct","—")
                 _ap_reason = ap.get("PinnacleNote","") or f"Model projects avg {_ap_avg:.1f} vs line {_ap_line} — line is too high"
-                _fade_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">FADE {_ap_edge}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ap_reason[:90]}</div></div>')
+                _fade_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{ap.get("Player","")} — {ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">FADE {_ap_edge}</span></div><div style="font-size:1.0rem;color:var(--bc-muted);margin-top:3px;">{_ap_reason[:90]}</div></div>')
             st.markdown("".join(_fade_html), unsafe_allow_html=True)
         else:
-            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:var(--color-text-tertiary);font-size:1.05rem;">✅ No strong fades today — all props show positive or neutral edge.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.6rem 0.9rem;color:var(--color-text-tertiary);font-size:1.05rem;">✅ No strong fades today — all props show positive or neutral edge.</div>', unsafe_allow_html=True)
 
 
         # ═══════════════════════════════════════════════════
@@ -15776,13 +15776,13 @@ with tabs[0]:
                 _tier_counts[_t] = _tier_counts.get(_t, 0) + 1
             _tier_html = "".join([
                 f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
-                f'<span style="color:#8a9ab0;">{t}</span>'
+                f'<span style="color:var(--bc-muted);">{t}</span>'
                 f'<span style="color:{"#22c55e" if t in ("SOVEREIGN","ELITE") else "#e8f0f8"};font-weight:{"700" if t in ("SOVEREIGN","ELITE") else "400"};">{c}</span>'
                 f'</div>'
                 for t, c in _tier_counts.items() if c > 0
             ])
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">📊 Edge Distribution</div>'
                 f'{_tier_html}</div>',
                 unsafe_allow_html=True
@@ -15798,14 +15798,14 @@ with tabs[0]:
                     _sport_exp[_s] = _sport_exp.get(_s, 0) + 1
             _exp_html = "".join([
                 f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
-                f'<span style="color:#8a9ab0;">{s}</span>'
-                f'<span style="color:#e8f0f8;">{round(c/_total_locked*100)}%</span>'
+                f'<span style="color:var(--bc-muted);">{s}</span>'
+                f'<span style="color:var(--bc-text);">{round(c/_total_locked*100)}%</span>'
                 f'</div>'
                 for s, c in sorted(_sport_exp.items(), key=lambda x: -x[1])[:5]
             ])
             _exp_fallback = '<div style="color:var(--color-text-tertiary);font-size:11px;">Load board first</div>'
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">🎯 Sport Exposure</div>'
                 f'{_exp_html or _exp_fallback}</div>',
                 unsafe_allow_html=True
@@ -15826,14 +15826,14 @@ with tabs[0]:
                 _book_label = f"vs {_n_books} sharp book{'s' if _n_books > 1 else ''}"
                 _clv_html = (
                     f'<div style="font-size:20px;font-weight:700;color:{_clv_color};">{_clv.get("avg_clv", 0):+.2f}</div>'
-                    f'<div style="font-size:10px;color:#8a9ab0;">Avg CLV</div>'
+                    f'<div style="font-size:10px;color:var(--bc-muted);">Avg CLV</div>'
                     f'<div style="font-size:11px;color:{_sharp_color};margin-top:3px;">{_book_label}: {_sharp_edge:+.1%}</div>'
                     f'<div style="font-size:10px;color:var(--color-text-tertiary);">{_clv.get("total_tracked", _clv.get("n_resolved", 0))} bets tracked</div>'
                 )
             else:
                 _clv_html = '<div style="font-size:11px;color:var(--color-text-tertiary);">CLV activates<br>after 5 bets</div>'
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">📈 CLV Tracker</div>'
                 f'{_clv_html}</div>',
                 unsafe_allow_html=True
@@ -15859,14 +15859,14 @@ with tabs[0]:
                         _c = "#22c55e" if _lift > 0.02 else ("#e04040" if _lift < -0.02 else "#8a9ab0")
                         _sig_html += (
                             f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
-                            f'<span style="color:#8a9ab0;">{_lbl}</span>'
+                            f'<span style="color:var(--bc-muted);">{_lbl}</span>'
                             f'<span style="color:{_c};">{_lift:+.1%}</span>'
                             f'</div>'
                         )
             else:
                 _sig_html = f'<div style="font-size:11px;color:var(--color-text-tertiary);">Signal health<br>activates at 10 bets</div>'
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">⚡ Signal Health</div>'
                 f'{_sig_html}</div>',
                 unsafe_allow_html=True
@@ -15884,14 +15884,14 @@ with tabs[0]:
                         _tier_perf_html += (
                             f'<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">'
                             f'<span style="color:{_color};">{_tier[:3]}</span>'
-                            f'<span style="color:#e8f0f8;">{_twr:.0%}</span>'
+                            f'<span style="color:var(--bc-text);">{_twr:.0%}</span>'
                             f'<span style="color:var(--color-text-tertiary);">n={len(_tr)}</span>'
                             f'</div>'
                         )
             else:
                 _tier_perf_html = '<div style="font-size:11px;color:var(--color-text-tertiary);">Tier performance<br>activates at 10 bets</div>'
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:0.8rem;">'
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--color-text-tertiary);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">🏆 Tier Performance</div>'
                 f'{_tier_perf_html}</div>',
                 unsafe_allow_html=True
@@ -15935,17 +15935,17 @@ with tabs[0]:
             g_legs = ""
             for g in top_games:
                 bb = g.get("best_bet",{})
-                g_legs += f'<div style="background:#0d1520;border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;"><span style="color:#378add;font-size:1.0rem;">{bb.get("type","")}</span> <span style="color:#e8f0f8;font-size:1.0rem;">{g.get("matchup","")} — {bb.get("pick","")}</span> <span style="color:var(--color-text-tertiary);font-size:1.0rem;">({bb.get("edge_pct","")})</span></div>'
+                g_legs += f'<div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;"><span style="color:var(--bc-blue);font-size:1.0rem;">{bb.get("type","")}</span> <span style="color:var(--bc-text);font-size:1.0rem;">{g.get("matchup","")} — {bb.get("pick","")}</span> <span style="color:var(--color-text-tertiary);font-size:1.0rem;">({bb.get("edge_pct","")})</span></div>'
             _gk_warn_html = ""
             if _gk.get("warnings"):
                 _gk_warn_html = "".join(f'<div style="font-size:0.85rem;color:#e8a020;margin-top:0.3rem;">{w}</div>' for w in _gk["warnings"][:2])
             st.markdown(f"""
-            <div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
+            <div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-                    <span style="color:#e8f0f8;font-weight:700;">{len(top_games)}-Game Parlay</span>
+                    <span style="color:var(--bc-text);font-weight:700;">{len(top_games)}-Game Parlay</span>
                     <span style="color:{g_ev_color};font-weight:700;">{g_ev:+.1%} edge</span>
                 </div>
-                <div style="font-size:1.0rem;color:#8a9ab0;margin-bottom:0.7rem;">Combined (correlation-adj): <span style="color:#e8f0f8;">{g_combined:.1%}</span> · Suggested wager: <span style="color:#22c55e;">${_gk.get("wager",0):.2f}</span> ({_gk.get("kelly_pct",0):.1%} bankroll)</div>
+                <div style="font-size:1.0rem;color:var(--bc-muted);margin-bottom:0.7rem;">Combined (correlation-adj): <span style="color:var(--bc-text);">{g_combined:.1%}</span> · Suggested wager: <span style="color:#22c55e;">${_gk.get("wager",0):.2f}</span> ({_gk.get("kelly_pct",0):.1%} bankroll)</div>
                 {g_legs}
                 {_gk_warn_html}
             </div>
@@ -15953,7 +15953,7 @@ with tabs[0]:
         else:
             _game_analysis_count = len(game_analysis) if game_analysis else 0
             if _game_analysis_count > 0:
-                st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem 1rem;color:var(--color-text-tertiary);font-size:1.05rem;">⚠️ No game edges meet the 2% minimum today. All detected lines appear fairly priced.</div>', unsafe_allow_html=True)
+                st.markdown('<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.7rem 1rem;color:var(--color-text-tertiary);font-size:1.05rem;">⚠️ No game edges meet the 2% minimum today. All detected lines appear fairly priced.</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;padding:0.5rem;">Load the board to see game parlays.</div>', unsafe_allow_html=True)
 
@@ -15966,10 +15966,10 @@ with tabs[0]:
                 bb = ag.get("best_bet",{})
                 _ag_reason = bb.get("note","") or "Model finds negative value — public is overloading this side"
                 _ag_edge = ag.get("best_edge",0)
-                _ag_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">AVOID {_ag_edge:+.1%}</span></div><div style="font-size:1.0rem;color:#8a9ab0;margin-top:3px;">{_ag_reason[:90]}</div></div>')
+                _ag_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;"><div style="display:flex;align-items:center;justify-content:space-between;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{ag.get("matchup","")} — {bb.get("pick","FADE")}</span><span style="color:#e04040;font-weight:600;font-size:1.0rem;">AVOID {_ag_edge:+.1%}</span></div><div style="font-size:1.0rem;color:var(--bc-muted);margin-top:3px;">{_ag_reason[:90]}</div></div>')
             st.markdown("".join(_ag_html), unsafe_allow_html=True)
         else:
-            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.6rem 0.9rem;color:var(--color-text-tertiary);font-size:1.05rem;">✅ No strong game fades today — all detected edges are positive.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.6rem 0.9rem;color:var(--color-text-tertiary);font-size:1.05rem;">✅ No strong game fades today — all detected edges are positive.</div>', unsafe_allow_html=True)
 
         # ── CONFIDENCE MATRIX ──────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Slip Confidence Matrix</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -15985,14 +15985,14 @@ with tabs[0]:
             _mc = "#22c55e" if market_score >= 17 else "#e8a020"
             _vc = "#22c55e" if vol_score >= 17 else "#e8a020"
             st.markdown(f"""
-            <div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.5rem;margin-bottom:1rem;text-align:center;">
+            <div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:8px;padding:1.5rem;margin-bottom:1rem;text-align:center;">
                 <div style="font-size:2.8rem;font-weight:800;color:{score_color};">{total_score}<span style="font-size:1rem;color:#b8c6d6;">/100</span></div>
-                <div style="color:#8a9ab0;font-size:1.0rem;margin-bottom:1rem;">MASTER SLIP CONFIDENCE</div>
+                <div style="color:var(--bc-muted);font-size:1.0rem;margin-bottom:1rem;">MASTER SLIP CONFIDENCE</div>
                 <div style="display:flex;flex-direction:column;gap:0.5rem;text-align:left;">
-                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Math Matrix <span style="color:var(--color-text-tertiary);">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{math_score}/30</span></div>
-                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Correlation <span style="color:var(--color-text-tertiary);">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{corr_score}/30</span></div>
-                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Market Drift <span style="color:var(--color-text-tertiary);">(20%)</span></span><span style="color:{_mc};font-weight:700;">{market_score}/20</span></div>
-                    <div style="display:flex;justify-content:space-between;background:#0d1520;border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Volatility Risk <span style="color:var(--color-text-tertiary);">(20%)</span></span><span style="color:{_vc};font-weight:700;">{vol_score}/20</span></div>
+                    <div style="display:flex;justify-content:space-between;background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Math Matrix <span style="color:var(--color-text-tertiary);">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{math_score}/30</span></div>
+                    <div style="display:flex;justify-content:space-between;background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Correlation <span style="color:var(--color-text-tertiary);">(30%)</span></span><span style="color:#22c55e;font-weight:700;">{corr_score}/30</span></div>
+                    <div style="display:flex;justify-content:space-between;background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Market Drift <span style="color:var(--color-text-tertiary);">(20%)</span></span><span style="color:{_mc};font-weight:700;">{market_score}/20</span></div>
+                    <div style="display:flex;justify-content:space-between;background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Volatility Risk <span style="color:var(--color-text-tertiary);">(20%)</span></span><span style="color:{_vc};font-weight:700;">{vol_score}/20</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -16003,9 +16003,9 @@ with tabs[0]:
         avoid = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < -0.05][:3]
         ev_html = ""
         for bp in plus_ev:
-            ev_html += f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{bp.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span><span style="color:#7f77dd;font-size:1.0rem;">{bp.get("Tier","")}</span><span style="color:#22c55e;font-weight:700;font-size:1.0rem;margin-left:auto;">{bp.get("EdgePct","—")} · EV {bp.get("EV_2pick","—")}</span></div>'
+            ev_html += f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{bp.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span><span style="color:#7f77dd;font-size:1.0rem;">{bp.get("Tier","")}</span><span style="color:#22c55e;font-weight:700;font-size:1.0rem;margin-left:auto;">{bp.get("EdgePct","—")} · EV {bp.get("EV_2pick","—")}</span></div>'
         for ap in avoid:
-            ev_html += f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{ap.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:700;font-size:1.0rem;">⚠ AVOID</span><span style="color:#e04040;font-size:1.0rem;margin-left:auto;">{ap.get("EdgePct","—")}</span></div>'
+            ev_html += f'<div style="background:var(--color-background-secondary);border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{ap.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:700;font-size:1.0rem;">⚠ AVOID</span><span style="color:#e04040;font-size:1.0rem;margin-left:auto;">{ap.get("EdgePct","—")}</span></div>'
         if ev_html:
             st.markdown(ev_html, unsafe_allow_html=True)
         else:
@@ -16013,9 +16013,9 @@ with tabs[0]:
 
         # Full Prop Board moved to Tab 1 (Full Board tab)
         st.markdown(
-            '<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.8rem 1rem;text-align:center;">' +
+            '<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.8rem 1rem;text-align:center;">' +
             '<span style="color:var(--color-text-tertiary);font-size:1.05rem;">Full prop board is in the </span>' +
-            '<span style="color:#378add;font-weight:600;font-size:1.05rem;">📊 Full Board</span>' +
+            '<span style="color:var(--bc-blue);font-weight:600;font-size:1.05rem;">📊 Full Board</span>' +
             '<span style="color:var(--color-text-tertiary);font-size:1.05rem;"> tab → Click a 🔒 to lock picks</span>' +
             '</div>',
             unsafe_allow_html=True
@@ -16040,11 +16040,11 @@ with tabs[0]:
         if slip_picks:
             unit = active_unit()
             payout = unit * PRIZEPICKS_MULTIPLIERS.get(len(slip_picks), 3)
-            slip_html = '<div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">'
-            slip_html += f'<div style="color:#8a9ab0;font-size:1.0rem;margin-bottom:0.7rem;">Props (PrizePicks) — {len(slip_picks)}-pick Flex · ${unit:.0f} entry to pay ${payout:.0f}</div>'
+            slip_html = '<div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">'
+            slip_html += f'<div style="color:var(--bc-muted);font-size:1.0rem;margin-bottom:0.7rem;">Props (PrizePicks) — {len(slip_picks)}-pick Flex · ${unit:.0f} entry to pay ${payout:.0f}</div>'
             for i, sp in enumerate(slip_picks):
-                slip_html += f'<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid #1e2d3d;"><span style="color:#22c55e;font-weight:700;min-width:16px;">{i+1}.</span><span style="color:#e8f0f8;font-size:1.0rem;">{sp.get("Player","")} {sp.get("Side","")} {sp.get("Line","")} {sp.get("Prop","")}</span><span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:auto;">{sp.get("Tier","")}</span></div>'
-            slip_html += '<div style="display:flex;justify-content:space-between;margin-top:0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Entry: <span style="color:#e8f0f8;">${:.0f}</span></span><span style="color:#22c55e;font-weight:700;">Payout: ${:.0f}</span></div>'.format(unit, payout)
+                slip_html += f'<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid #1e2d3d;"><span style="color:#22c55e;font-weight:700;min-width:16px;">{i+1}.</span><span style="color:var(--bc-text);font-size:1.0rem;">{sp.get("Player","")} {sp.get("Side","")} {sp.get("Line","")} {sp.get("Prop","")}</span><span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:auto;">{sp.get("Tier","")}</span></div>'
+            slip_html += '<div style="display:flex;justify-content:space-between;margin-top:0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Entry: <span style="color:var(--bc-text);">${:.0f}</span></span><span style="color:#22c55e;font-weight:700;">Payout: ${:.0f}</span></div>'.format(unit, payout)
             slip_html += '</div>'
             st.markdown(slip_html, unsafe_allow_html=True)
 
@@ -16054,15 +16054,15 @@ with tabs[0]:
         if alt_upgrades:
             _au_html = []
             for au in alt_upgrades[:5]:
-                _au_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{au.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:1.0rem;">Alt EV: {au.get("AltEV","—")}</span></div>')
+                _au_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{au.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:1.0rem;">Alt EV: {au.get("AltEV","—")}</span></div>')
             st.markdown("".join(_au_html), unsafe_allow_html=True)
         else:
-            st.markdown('<div style="color:#8a9ab0;font-size:1.05rem;padding:0.3rem 0;">Load board to check for alt line upgrades.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="color:var(--bc-muted);font-size:1.05rem;padding:0.3rem 0;">Load board to check for alt line upgrades.</div>', unsafe_allow_html=True)
         _alt_ups = st.session_state.get("alt_line_upgrades", [])
         if _alt_ups:
             _au2_html = []
             for _au in _alt_ups[:5]:
-                _au2_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_au.get("player","")}</span><span style="color:#22c55e;">⚡ {_au.get("edge_gain","")}</span></div><div style="font-size:1.0rem;color:#8a9ab0;">{_au.get("current_line","")} → {_au.get("better_line","")} on {_au.get("source","")}</div></div>')
+                _au2_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:var(--bc-text);font-weight:600;">{_au.get("player","")}</span><span style="color:#22c55e;">⚡ {_au.get("edge_gain","")}</span></div><div style="font-size:1.0rem;color:var(--bc-muted);">{_au.get("current_line","")} → {_au.get("better_line","")} on {_au.get("source","")}</div></div>')
             st.markdown("".join(_au2_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;">✅ All lines optimal — no upgrades today.</div>', unsafe_allow_html=True)
@@ -16073,16 +16073,16 @@ with tabs[0]:
         if arb_opps:
             _arb_html = []
             for arb in arb_opps[:5]:
-                _arb_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{arb.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:1.0rem;">ROI: {arb.get("ROI","—")}</span></div>')
+                _arb_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{arb.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:1.0rem;">ROI: {arb.get("ROI","—")}</span></div>')
             st.markdown("".join(_arb_html), unsafe_allow_html=True)
         else:
-            st.markdown('<div style="color:#8a9ab0;font-size:1.05rem;padding:0.3rem 0;">Load board to scan for arbitrage opportunities.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="color:var(--bc-muted);font-size:1.05rem;padding:0.3rem 0;">Load board to scan for arbitrage opportunities.</div>', unsafe_allow_html=True)
         _arb_opps = st.session_state.get("arb_opportunities", [])
         if _arb_opps:
             _arb2_html = []
             for _arb in _arb_opps[:5]:
                 _profit = float(_arb.get("Arb Pct", 0) or 0)
-                _arb2_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:#e8f0f8;font-weight:600;">{_arb.get("Player","")}</span><span style="color:#22c55e;font-weight:700;">+{_profit:.1f}%</span></div><div style="font-size:1.0rem;color:#8a9ab0;">{_arb.get("Book1","")} {_arb.get("Line1","")} vs {_arb.get("Book2","")} {_arb.get("Line2","")}</div></div>')
+                _arb2_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:var(--bc-text);font-weight:600;">{_arb.get("Player","")}</span><span style="color:#22c55e;font-weight:700;">+{_profit:.1f}%</span></div><div style="font-size:1.0rem;color:var(--bc-muted);">{_arb.get("Book1","")} {_arb.get("Line1","")} vs {_arb.get("Book2","")} {_arb.get("Line2","")}</div></div>')
             st.markdown("".join(_arb2_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.0rem;">No arbitrage opportunities found today.</div>', unsafe_allow_html=True)
@@ -16097,10 +16097,10 @@ with tabs[0]:
             _asb_html = []
             for ap in all_sports_best[:5]:
                 tier_c = TIER_COLORS.get(ap.get("Tier",""), "#6a7a8a")
-                _asb_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:{tier_c};font-size:1.15rem;font-weight:700;">{ap.get("Sport","")}</span> <span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;margin-left:0.5rem;">{ap.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span> <span style="color:{tier_c};font-size:1.0rem;margin-left:0.5rem;">{ap.get("EdgePct","—")}</span></div>')
+                _asb_html.append(f'<div style="background:var(--color-background-secondary);border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:{tier_c};font-size:1.15rem;font-weight:700;">{ap.get("Sport","")}</span> <span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;margin-left:0.5rem;">{ap.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span> <span style="color:{tier_c};font-size:1.0rem;margin-left:0.5rem;">{ap.get("EdgePct","—")}</span></div>')
             st.markdown("".join(_asb_html), unsafe_allow_html=True)
         else:
-            st.markdown('<div style="color:#8a9ab0;font-size:1.05rem;padding:0.3rem 0;">Load boards across sports to see the best plays of the day.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="color:var(--bc-muted);font-size:1.05rem;padding:0.3rem 0;">Load boards across sports to see the best plays of the day.</div>', unsafe_allow_html=True)
 
         # ── TRENDING PICKS ─────────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:#1e2d3d;"></div><span style="color:var(--color-text-tertiary);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Trending Picks (Last 7 Days)</span><div style="flex:1;height:1px;background:#1e2d3d;"></div></div>''', unsafe_allow_html=True)
@@ -16132,7 +16132,7 @@ with tabs[0]:
                     hit_rate = t["wins"] / t["count"] if t["count"] > 0 else 0
                     hit_color = "#22c55e" if hit_rate >= 0.6 else "#e8a020" if hit_rate >= 0.4 else "#e04040"
                     tier_c = TIER_COLORS.get(t["tier"], "#6a7a8a")
-                    trend_html += f'<div style="background:var(--color-background-secondary);border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;justify-content:space-between;"><div><span style="color:#e8f0f8;font-weight:600;font-size:1.0rem;">{t["player"]}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{t["side"]} {t["line"]} {t["prop"]}</span></div><div style="text-align:right;"><span style="color:{hit_color};font-weight:600;font-size:1.0rem;">{hit_rate:.0%} ({t["wins"]}/{t["count"]})</span> <span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:6px;">{t["count"]}x locked</span></div></div>'
+                    trend_html += f'<div style="background:var(--color-background-secondary);border-left:3px solid {tier_c};border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;justify-content:space-between;"><div><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{t["player"]}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{t["side"]} {t["line"]} {t["prop"]}</span></div><div style="text-align:right;"><span style="color:{hit_color};font-weight:600;font-size:1.0rem;">{hit_rate:.0%} ({t["wins"]}/{t["count"]})</span> <span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:6px;">{t["count"]}x locked</span></div></div>'
                 st.markdown(trend_html, unsafe_allow_html=True)
             else:
                 st.markdown('<div style="color:var(--color-text-tertiary);font-size:1.05rem;">No picks in the last 7 days. Start locking picks to see trends.</div>', unsafe_allow_html=True)
@@ -16156,10 +16156,10 @@ with tabs[0]:
             color = "#e04040" if is_steam else ("#e8a020" if is_rlm else "#22c55e")
             label = "STEAM MOVE" if is_steam else ("REVERSE LINE" if is_rlm else "SHARP MOVE")
             st.markdown(
-                f'<div style="background:#0d1520;border:1px solid {color}44;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;">'
+                f'<div style="background:var(--bc-bg-card);border:1px solid {color}44;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;">'
                 f'<div style="color:{color};font-weight:700;font-size:0.85rem;text-transform:uppercase;margin-bottom:0.25rem;">⚡ {label} [EV API]</div>'
                 f'<div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{title}</div>'
-                + (f'<div style="color:#8a9ab0;font-size:0.85rem;margin-top:0.2rem;">{detail}</div>' if detail else '')
+                + (f'<div style="color:var(--bc-muted);font-size:0.85rem;margin-top:0.2rem;">{detail}</div>' if detail else '')
                 + '</div>',
                 unsafe_allow_html=True
             )
@@ -16168,12 +16168,12 @@ with tabs[0]:
         # Sharp prop alerts from board SharpFlag
         for p in sorted(board, key=lambda x: x.get("Edge",0), reverse=True)[:20]:
             if p.get("SharpFlag") and displayed < 5:
-                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#22c55e;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Line Update</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{p.get("Player","")} {p.get("Prop","")} — {p.get("SharpFlag","")}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#22c55e;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Line Update</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{p.get("Player","")} {p.get("Prop","")} — {p.get("SharpFlag","")}</div></div>', unsafe_allow_html=True)
                 displayed += 1
         # Steam moves
         for sm in steam_moves[:3]:
             if displayed < 7:
-                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e04040;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Steam Move</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{sm.get("matchup","")} {sm.get("market","")} {sm.get("signal","")}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e04040;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Steam Move</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{sm.get("matchup","")} {sm.get("market","")} {sm.get("signal","")}</div></div>', unsafe_allow_html=True)
                 displayed += 1
         # Game sharp flags
         for matchup, flag in list(game_sharp_flags.items())[:3]:
@@ -16181,12 +16181,12 @@ with tabs[0]:
                 label = "Line Move" if flag.get("sharp") else "Public vs Sharp"
                 color = "#e8a020" if flag.get("sharp") else "#378add"
                 direction = flag.get("direction","")
-                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:{color};font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">{label}</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{matchup} — {direction}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:{color};font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">{label}</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{matchup} — {direction}</div></div>', unsafe_allow_html=True)
                 displayed += 1
         # Injury alerts in sidebar
         for ip in injury_props[:3]:
             if displayed < 10:
-                st.markdown(f'<div style="background:#0d1520;border:1px solid #1e2d3d;border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e8a020;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Injury Alert</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{ip.get("Player","")} — {ip.get("Injury","Questionable")}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:6px;padding:0.7rem;margin-bottom:0.5rem;"><div style="color:#e8a020;font-weight:700;font-size:1.0rem;text-transform:uppercase;margin-bottom:0.25rem;">Injury Alert</div><div style="color:#b8c6d6;font-size:1.0rem;line-height:1.4;">{ip.get("Player","")} — {ip.get("Injury","Questionable")}</div></div>', unsafe_allow_html=True)
                 displayed += 1
         if displayed == 0:
             _jwt_configured = bool(_get_ev_jwt())
@@ -16733,7 +16733,7 @@ with tabs[1]:
                 _pp_col  = "#22c55e" if _pp_bq>=75 else "#e8a020" if _pp_bq>=55 else "#6a7a8a"
                 st.markdown(
                     f'<div style="display:flex;justify-content:space-between;padding:5px 8px;'
-                    f'background:#0a0e14;border-radius:4px;margin-bottom:3px;">'
+                    f'background:var(--bc-bg);border-radius:4px;margin-bottom:3px;">'
                     f'<span style="color:var(--color-text-primary);font-weight:600;">{_i}. {_pp.get("Player","")} '
                     f'— {_pp.get("Prop","")} {_pp.get("Side","")} {_pp.get("Line","")}</span>'
                     f'<span style="color:{_pp_col};font-weight:700;">{_pp_grade} | '
@@ -16875,7 +16875,7 @@ with tabs[2]:
                 for _s in _sb_signals[:15]:
                     _clr = _sb_colors.get(_s["signal"], "#6a7a8a")
                     st.markdown(
-                        f'<div style="border-left:4px solid {_clr};background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid {_clr};background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_s["team"]}</b> — Starter ERA {_s["starter_era"]} / Bullpen ERA {_s["bullpen_era"]} '
                         f'(gap {_s["gap"]:+.2f}) — {_s["note"]}</div>',
@@ -16907,7 +16907,7 @@ with tabs[2]:
                 for _p in _pf_rows:
                     _lean = "hitter-friendly" if _p["factor"] > 1.03 else "pitcher-friendly" if _p["factor"] < 0.97 else "neutral"
                     st.markdown(
-                        f'<div style="border-left:4px solid #a855f7;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #a855f7;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_p["venue"]}</b> ({_p["team"]}) — factor {_p["factor"]} this month, {_lean}</div>',
                         unsafe_allow_html=True,
@@ -16935,7 +16935,7 @@ with tabs[2]:
                 for _t in _tennis_rows:
                     _parts = [f"{s}: {d['win_pct']}% ({d['wins']}-{d['losses']})" for s, d in _t["surfaces"].items()]
                     st.markdown(
-                        f'<div style="border-left:4px solid #a855f7;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #a855f7;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_t["player"]}</b> — {" | ".join(_parts)}</div>',
                         unsafe_allow_html=True,
@@ -16953,7 +16953,7 @@ with tabs[2]:
             with st.expander(f"🥊 Finish Rates by Weight Class — {len(_ufc_data)} classes (real data)", expanded=False):
                 for _wc, _stats in sorted(_ufc_data.items(), key=lambda kv: kv[1]["finish_pct"], reverse=True):
                     st.markdown(
-                        f'<div style="border-left:4px solid #e04040;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #e04040;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_wc}</b> — {_stats["finish_pct"]}% finish ({_stats["ko_pct"]}% KO, {_stats["sub_pct"]}% sub) '
                         f'| {_stats["decision_pct"]}% decision (n={_stats["n_fights"]})</div>',
@@ -16979,7 +16979,7 @@ with tabs[2]:
             with st.expander(f"⚽ Draw Value — {len(_draw_signals)} undervalued draws", expanded=False):
                 for _d in _draw_signals[:10]:
                     st.markdown(
-                        f'<div style="border-left:4px solid #a855f7;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #a855f7;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_d["matchup"]}</b> — {_d["note"]}</div>',
                         unsafe_allow_html=True,
@@ -17016,7 +17016,7 @@ with tabs[2]:
             with st.expander(f"🏀 B2B Subtypes — {len(_b2b_signals)} teams flagged", expanded=False):
                 for _b in _b2b_signals[:15]:
                     st.markdown(
-                        f'<div style="border-left:4px solid #e8a020;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #e8a020;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_b["team"]}</b> — {_b["note"]} (adj: {_b["point_adjustment"]:+.1f} pts)</div>',
                         unsafe_allow_html=True,
@@ -17027,7 +17027,7 @@ with tabs[2]:
                 for _r in _rest_signals[:15]:
                     _fh_str = f" | +{_r['first_half_bonus']:.1f} pts 1H bonus" if _r.get("first_half_bonus") else ""
                     st.markdown(
-                        f'<div style="border-left:4px solid #378add;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #378add;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_r["matchup"]}</b> — {_r["note"]} (adj: {_r["point_adjustment"]:+.1f} pts{_fh_str}, '
                         f'home rest {_r["home_rest_days"]}d / away rest {_r["away_rest_days"]}d)</div>',
@@ -17058,7 +17058,7 @@ with tabs[2]:
                     _lean_str = f" → <b>{_p['total_lean']}</b>" if _p.get("total_lean") else ""
                     _fast_pace = _p["home_pace"] if _p["fast_team"] == _p.get("home_team") else _p["away_pace"]
                     st.markdown(
-                        f'<div style="border-left:4px solid #22c55e;background:#0a0e14;border-radius:4px;'
+                        f'<div style="border-left:4px solid #22c55e;background:var(--bc-bg);border-radius:4px;'
                         f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                         f'<b>{_p["matchup"]}</b> — {_p["fast_team"]} ({_fast_pace}) '
                         f'vs {_p["slow_team"]}{_lean_str}</div>',
@@ -17090,7 +17090,7 @@ with tabs[2]:
         with st.expander(f"⚡ Information Asymmetry — {len(_asym_signals)} volume spikes flagged", expanded=False):
             for _a in _asym_signals[:10]:
                 st.markdown(
-                    f'<div style="border-left:4px solid #e8a020;background:#0a0e14;border-radius:4px;'
+                    f'<div style="border-left:4px solid #e8a020;background:var(--bc-bg);border-radius:4px;'
                     f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                     f'<b>{_a["game"]}</b> — {_a["side"]}: money% jumped {_a["money_delta_pts"]:+.1f}pts '
                     f'(tickets only {_a["tickets_delta_pts"]:+.1f}pts) over {_a["minutes_between_snapshots"]}min '
@@ -17111,7 +17111,7 @@ with tabs[2]:
         with st.expander(f"📐 Situational Trends — {len(_tr_signals)} significant (90%+ confidence)", expanded=False):
             for _t in _tr_signals[:15]:
                 st.markdown(
-                    f'<div style="border-left:4px solid #378add;background:#0a0e14;border-radius:4px;'
+                    f'<div style="border-left:4px solid #378add;background:var(--bc-bg);border-radius:4px;'
                     f'padding:0.5rem 0.9rem;margin-bottom:0.4rem;font-size:0.9rem;">'
                     f'<b>{_t["team"]}</b> — {_t["record"]} ({_t["win_rate"]*100:.1f}%) in '
                     f'{_t["trend_type"].replace("_"," ")} / {_t["filter"].replace("_"," ")} '
@@ -17132,7 +17132,7 @@ with tabs[2]:
         with st.expander(f"💰 Arbitrage Opportunities — {len(_arbs)} found", expanded=False):
             for _a in _arbs[:10]:
                 st.markdown(
-                    f'<div style="border-left:4px solid #22c55e;background:#0a0e14;border-radius:4px;'
+                    f'<div style="border-left:4px solid #22c55e;background:var(--bc-bg);border-radius:4px;'
                     f'padding:0.6rem 0.9rem;margin-bottom:0.5rem;">'
                     f'<b>{_a["game"]}</b> — {_a["market"]} | Profit: {_a["profit_pct"]:.2f}%<br>'
                     f'{_a["side_a"]["side"]} {_a["side_a"]["odds"]} @ {_a["side_a"]["book"]} '
@@ -17172,7 +17172,7 @@ with tabs[2]:
                 _timing = _u.get("timing", {})
                 _timing_line = f"<br>⏳ {_timing.get('action','')}: {_timing.get('reason','')} | Kelly ×{_u.get('kelly_multiplier',1.0)}" if _timing else ""
                 st.markdown(
-                    f'<div style="border-left:4px solid {_tclr};background:#0a0e14;border-radius:4px;'
+                    f'<div style="border-left:4px solid {_tclr};background:var(--bc-bg);border-radius:4px;'
                     f'padding:0.6rem 0.9rem;margin-bottom:0.5rem;">'
                     f'<b>{_u["game_label"]}</b> — Score: {_u["total_score"]:.1f} ({_u["tier"]})<br>'
                     f'{_body}{_dir_line}{_cause_line}{_timing_line}</div>',
@@ -17207,9 +17207,9 @@ with tabs[2]:
         _cur_slip = st.session_state.get("current_slip_id")
         if _cur_slip:
             _slip_locks_count = sum(1 for l in st.session_state.get("locks", []) if l.get("timestamp","") == _cur_slip)
-            st.markdown(f'<div style="background:#0a0e14;border:1px solid #22c55e44;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:#22c55e;">📎 Active slip: {_slip_locks_count} picks locked</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background:var(--bc-bg);border:1px solid #22c55e44;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:#22c55e;">📎 Active slip: {_slip_locks_count} picks locked</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:var(--color-text-tertiary);">No active slip — tap Start New Slip to group picks</div>', unsafe_allow_html=True)
+            st.markdown('<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.4rem 0.8rem;font-size:0.9rem;color:var(--color-text-tertiary);">No active slip — tap Start New Slip to group picks</div>', unsafe_allow_html=True)
 
     if _games:
         _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
@@ -17334,9 +17334,9 @@ with tabs[2]:
                 'title="Monte Carlo simulation blended into edge calculation">🎲 MC</span>'
             ) if _gl_mc_blend else ""
             st.markdown(
-                f'<div style="background:#0d1520;border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
-                f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:#378add;">{_gsport}</span>'
-                f'<span style="font-size:14px;font-weight:500;color:#e8f0f8;">{_matchup}</span>'
+                f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
+                f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
+                f'<span style="font-size:14px;font-weight:500;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:15px;color:var(--color-text-tertiary);">{_gtime}</span>'
                 + _gl_pub_html + _gl_mc_html + _gl_badge_html +
                 f'</div>',
@@ -17359,7 +17359,7 @@ with tabs[2]:
                     ) if _lm else ""
                     _gl_card_class = "gl-market-card has-edge" if _has_edge else "gl-market-card"
                     st.markdown(
-                        f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:14px 16px;background:#0a0e14;">'
+                        f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:14px 16px;background:var(--bc-bg);">'
                         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
                         f'<span style="font-size:15px;font-weight:700;letter-spacing:1.2px;color:#6a8aab;text-transform:uppercase;">{_pk["label"]}</span>'
                         f'<span style="font-size:13px;font-weight:700;padding:3px 8px;border-radius:4px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
@@ -17375,7 +17375,7 @@ with tabs[2]:
                         unsafe_allow_html=True
                     )
             if _injury:
-                st.markdown(f'<div style="padding:5px 14px;font-size:14px;color:var(--color-text-tertiary);border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;background:#0d1520;">ℹ️ {_injury}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="padding:5px 14px;font-size:14px;color:var(--color-text-tertiary);border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;background:var(--bc-bg-card);">ℹ️ {_injury}</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;height:4px;background:#08111a;"></div>', unsafe_allow_html=True)
 
@@ -17617,12 +17617,12 @@ with tabs[3]:
             # entirely for that case rather than trying to name it "correctly".
             # Multi-pick groupings keep the label since it's unambiguous there.
             _slip_label = "" if n == 1 else f"{n}-Pick Slip"
-            _slip_label_html = f'<span style="color:#e8f0f8;font-weight:700;font-size:1rem;">{_slip_label}</span> ' if _slip_label else ""
+            _slip_label_html = f'<span style="color:var(--bc-text);font-weight:700;font-size:1rem;">{_slip_label}</span> ' if _slip_label else ""
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
+                f'<div style="background:var(--bc-bg);border:1px solid {"#e8a02033" if _is_game_slip else "#1e2d3d"};border-radius:8px;padding:1rem;margin-bottom:1rem;">' +
                 f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">' +
                 f'<div>{_slip_label_html}' +
-                f'<span style="color:#378add;font-size:1.0rem;margin-left:8px;">{sport}</span> ' +
+                f'<span style="color:var(--bc-blue);font-size:1.0rem;margin-left:8px;">{sport}</span> ' +
                 f'<span style="color:var(--color-text-tertiary);font-size:1.0rem;margin-left:8px;">{ts}</span></div>' +
                 f'{_slip_wager_html}' +
                 f'</div>',
@@ -17636,8 +17636,8 @@ with tabs[3]:
             for lock in slip_locks:
                 tier_color = TIER_COLORS.get(lock.get("tier","LEAN"), "#7a8a9a")
                 _pick_cells.append(
-                    f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-left:3px solid {tier_color};background:#0d1520;border-radius:0 4px 4px 0;overflow:hidden;">' +
-                    f'<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#e8f0f8;font-weight:600;font-size:0.95rem;">{lock.get("player","")}</span> ' +
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-left:3px solid {tier_color};background:var(--bc-bg-card);border-radius:0 4px 4px 0;overflow:hidden;">' +
+                    f'<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:var(--bc-text);font-weight:600;font-size:0.95rem;">{lock.get("player","")}</span> ' +
                     f'<span style="color:{tier_color};font-size:0.9rem;">{lock.get("side","OVER")} {lock.get("line","")} {lock.get("prop","")}</span></div>' +
                     f'<span style="color:{tier_color};font-size:0.85rem;font-weight:600;white-space:nowrap;margin-left:6px;">{lock.get("tier","")} +{lock.get("edge",0)*100:.1f}%</span></div>'
                 )
@@ -18146,11 +18146,11 @@ with tabs[3]:
         net_color = "#22c55e" if net >= 0 else "#e04040"
         st.markdown(
             f'<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">' +
-            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Total Bets</div><div style="color:#e8f0f8;font-weight:700;font-size:1.3rem;">{total_bets}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.3rem;">{wins}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.3rem;">{losses}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Hit Rate</div><div style="color:#e8f0f8;font-weight:700;font-size:1.3rem;">{hit_rate:.1%}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.3rem;">${net:+.2f}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Total Bets</div><div style="color:var(--bc-text);font-weight:700;font-size:1.3rem;">{total_bets}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.3rem;">{wins}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.3rem;">{losses}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Hit Rate</div><div style="color:var(--bc-text);font-weight:700;font-size:1.3rem;">{hit_rate:.1%}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--color-text-tertiary);font-size:1.05rem;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.3rem;">${net:+.2f}</div></div>' +
             f'</div>',
             unsafe_allow_html=True
         )
@@ -18179,7 +18179,7 @@ with tabs[3]:
                     total = d["w"]+d["l"]
                     hr = d["w"]/total if total>0 else 0
                     nc = "#22c55e" if d["net"]>=0 else "#e04040"
-                    _tier_roi_html.append(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{t}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>')
+                    _tier_roi_html.append(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:var(--bc-text);">{t}</span><span style="color:var(--bc-muted);">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>')
             if _tier_roi_html:
                 st.markdown("".join(_tier_roi_html), unsafe_allow_html=True)
         with roi_col2:
@@ -18197,7 +18197,7 @@ with tabs[3]:
                 total = d["w"]+d["l"]
                 hr = d["w"]/total if total>0 else 0
                 nc = "#22c55e" if d["net"]>=0 else "#e04040"
-                _sport_roi_html.append(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:#e8f0f8;">{s}</span><span style="color:#8a9ab0;">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>')
+                _sport_roi_html.append(f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.9rem;"><span style="color:var(--bc-text);">{s}</span><span style="color:var(--bc-muted);">{d["w"]}W-{d["l"]}L ({hr:.0%})</span><span style="color:{nc};">${d["net"]:+.2f}</span></div>')
             if _sport_roi_html:
                 st.markdown("".join(_sport_roi_html), unsafe_allow_html=True)
 
@@ -18228,15 +18228,15 @@ with tabs[4]:
             _bc1,_bc2,_bc3,_bc4 = st.columns(4)
             _bs_val = _bs_life.get("brier_score",0)
             _bs_color = "#22c55e" if _bs_val < 0.22 else ("#ffd700" if _bs_val < 0.25 else "#e04040")
-            _bc1.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Brier Score (All)</div><div style="font-size:22px;font-weight:700;color:{_bs_color}">{_bs_val:.3f}</div><div style="font-size:12px;color:{_bs_color}">{_bs_life.get("grade","")}</div></div>', unsafe_allow_html=True)
+            _bc1.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Brier Score (All)</div><div style="font-size:22px;font-weight:700;color:{_bs_color}">{_bs_val:.3f}</div><div style="font-size:12px;color:{_bs_color}">{_bs_life.get("grade","")}</div></div>', unsafe_allow_html=True)
             _bs_l30 = (_brier.get("L30") or {}).get("brier_score")
-            _bc2.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Brier L30</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_bs_l30:.3f if _bs_l30 else "—"}</div><div style="font-size:12px;color:#6a7a8a">30 day window</div></div>', unsafe_allow_html=True)
+            _bc2.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Brier L30</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_bs_l30:.3f if _bs_l30 else "—"}</div><div style="font-size:12px;color:#6a7a8a">30 day window</div></div>', unsafe_allow_html=True)
             _ll = _bs_life.get("log_loss", 0)
-            _bc3.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">Log Loss</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_ll:.3f}</div><div style="font-size:12px;color:#6a7a8a">lower=better</div></div>', unsafe_allow_html=True)
+            _bc3.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Log Loss</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_ll:.3f}</div><div style="font-size:12px;color:#6a7a8a">lower=better</div></div>', unsafe_allow_html=True)
             _z = _zscore.get("z_score")
             _z_color = "#22c55e" if _z and abs(_z) <= 2.0 else "#e04040"
             _z_label = _zscore.get("direction", "insufficient data")
-            _bc4.markdown(f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">CLV Z-Score</div><div style="font-size:22px;font-weight:700;color:{_z_color}">{f"{_z:+.2f}" if _z else "—"}</div><div style="font-size:12px;color:{_z_color}">{_z_label}</div></div>', unsafe_allow_html=True)
+            _bc4.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">CLV Z-Score</div><div style="font-size:22px;font-weight:700;color:{_z_color}">{f"{_z:+.2f}" if _z else "—"}</div><div style="font-size:12px;color:{_z_color}">{_z_label}</div></div>', unsafe_allow_html=True)
             if _bs_life.get("alert"):
                 st.warning("⚠️ Brier Score > 0.25 — model underperforming random. Throttle user weight by 10% and audit feature extraction.")
             if _zscore.get("alert"):
@@ -18267,8 +18267,8 @@ with tabs[4]:
                     _sp_color = "#22c55e" if _adapted > _base else ("#e8a020" if _adapted > _base * 0.6 else "#e04040")
                     _mult_str = f"{'↑' if _adapted >= _base else '↓'}{_adapted/(_base or 1):.1f}x Kelly"
                     _sp_cols[_i].markdown(
-                        f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:8px;text-align:center;">'
-                        f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">{_sp}</div>'
+                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:8px;text-align:center;">'
+                        f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">{_sp}</div>'
                         f'<div style="font-size:16px;font-weight:700;color:{_sp_color}">BS {_sp_bs:.3f}</div>'
                         f'<div style="font-size:11px;color:{_sp_color}">{_mult_str}</div>'
                         f'<div style="font-size:9px;color:#6a7a8a">{_sp_grade} · n={_sd.get("n","?")}</div>'
@@ -18293,8 +18293,8 @@ with tabs[4]:
                     _sc        = "#22c55e" if _useful and _lift > 0.03 else ("#e04040" if not _useful else "#e8a020")
                     _icon      = "✅" if _factor > 1 else ("⚠️" if _factor < 1 else "➖")
                     _sig_cols[_si].markdown(
-                        f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:8px;text-align:center;">'
-                        f'<div style="font-size:9px;color:#6a7a8a;text-transform:uppercase">{_sig}</div>'
+                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:8px;text-align:center;">'
+                        f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">{_sig}</div>'
                         f'<div style="font-size:16px;font-weight:700;color:{_sc}">{_lift:+.3f}</div>'
                         f'<div style="font-size:11px;color:{_sc}">{_icon} {_factor:.2f}x wt</div>'
                         f'<div style="font-size:9px;color:#6a7a8a">n={_sp["n_high"]}</div>'
@@ -18329,7 +18329,7 @@ with tabs[4]:
                        "NEUTRAL":"#6a7a8a","NEGATIVE":"#e04040","INSUFFICIENT":"#6a7a8a"}.get(_clv_grade,"#6a7a8a")
         _cc1,_cc2,_cc3,_cc4 = st.columns(4)
         _cc1.markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
             f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Avg CLV (No-Vig)</div>'
             f'<div style="font-size:22px;font-weight:700;color:{_clv_color}">'
             f'{_clv_sum["avg_clv"]:+.2%}</div>'
@@ -18337,7 +18337,7 @@ with tabs[4]:
             unsafe_allow_html=True
         )
         _cc2.markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
             f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Beat Close Rate</div>'
             f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
             f'{_clv_sum["beat_rate"]:.1%}</div>'
@@ -18346,7 +18346,7 @@ with tabs[4]:
         )
         _be_needed = 50 - _clv_sum["n_resolved"]
         _cc3.markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
             f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">To Significance</div>'
             f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
             f'{"✅" if _be_needed <= 0 else str(max(0,_be_needed))+" more"}</div>'
@@ -18355,7 +18355,7 @@ with tabs[4]:
         )
         _full_conf = 1000 - _clv_sum["n_resolved"]
         _cc4.markdown(
-            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
             f'<div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase">Full Confidence</div>'
             f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
             f'{"✅" if _full_conf <= 0 else str(max(0,_full_conf))+" more"}</div>'
@@ -18419,17 +18419,17 @@ with tabs[4]:
                 _book_rows.append({"Book": _bk, "Bets": _n,
                                    "Avg CLV": f"{_avg:+.2%}", "Beat Rate": f"{_br:.0%}"})
             _bk_html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
-            _bk_html += '<tr style="color:#6a7a8a;text-transform:uppercase;font-size:10px;">'
+            _bk_html += '<tr style="color:var(--bc-dim);text-transform:uppercase;font-size:10px;">'
             for _hdr in ["Book","Bets","Avg CLV","Beat Rate"]:
                 _bk_html += f'<th style="padding:4px 8px;text-align:left;">{_hdr}</th>'
             _bk_html += "</tr>"
             for _row in _book_rows:
                 _rc = "#22c55e" if "+" in _row["Avg CLV"] else "#e04040"
                 _bk_html += f'<tr style="border-top:1px solid #1a2a3a;">'
-                _bk_html += f'<td style="padding:4px 8px;color:#e8f0f8;">{_row["Book"]}</td>'
-                _bk_html += f'<td style="padding:4px 8px;color:#8a9ab0;">{_row["Bets"]}</td>'
+                _bk_html += f'<td style="padding:4px 8px;color:var(--bc-text);">{_row["Book"]}</td>'
+                _bk_html += f'<td style="padding:4px 8px;color:var(--bc-muted);">{_row["Bets"]}</td>'
                 _bk_html += f'<td style="padding:4px 8px;color:{_rc};font-weight:700;">{_row["Avg CLV"]}</td>'
-                _bk_html += f'<td style="padding:4px 8px;color:#8a9ab0;">{_row["Beat Rate"]}</td>'
+                _bk_html += f'<td style="padding:4px 8px;color:var(--bc-muted);">{_row["Beat Rate"]}</td>'
                 _bk_html += "</tr>"
             _bk_html += "</table>"
             st.markdown(_bk_html, unsafe_allow_html=True)
@@ -18450,11 +18450,11 @@ with tabs[4]:
         net_color = "#22c55e" if total_net >= 0 else "#e04040"
         st.markdown(
             f'<div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">' +
-            f'<div style="background:#0a0e14;border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:1.05rem;text-transform:uppercase;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.3rem;">{wins}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:1.05rem;text-transform:uppercase;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.3rem;">{losses}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #e8a02033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:1.05rem;text-transform:uppercase;">Pending</div><div style="color:#e8a020;font-weight:700;font-size:1.3rem;">{pending}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:1.05rem;text-transform:uppercase;">Hit Rate</div><div style="color:#e8f0f8;font-weight:700;font-size:1.3rem;">{win_rate:.1%}</div></div>' +
-            f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:#8a9ab0;font-size:1.05rem;text-transform:uppercase;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.3rem;">${total_net:+.2f}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.3rem;">{wins}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.3rem;">{losses}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid #e8a02033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Pending</div><div style="color:#e8a020;font-weight:700;font-size:1.3rem;">{pending}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Hit Rate</div><div style="color:var(--bc-text);font-weight:700;font-size:1.3rem;">{win_rate:.1%}</div></div>' +
+            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.3rem;">${total_net:+.2f}</div></div>' +
             f'</div>',
             unsafe_allow_html=True
         )
@@ -18603,7 +18603,7 @@ with tabs[4]:
             _conf_color = {"HIGH":"#22c55e","MEDIUM":"#f59e0b","LOW":"#6a7a8a"}.get(_pm["confidence"],"#6a7a8a")
 
             st.markdown(
-                f'<div style="background:#0d1520;border:2px solid {_pm_color}44;border-radius:12px;padding:16px;margin:8px 0">'
+                f'<div style="background:var(--bc-bg-card);border:2px solid {_pm_color}44;border-radius:12px;padding:16px;margin:8px 0">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
                 f'<span style="font-size:18px;font-weight:700;color:{_pm_color}">⚖️ {_pm["verdict"]}</span>'
                 f'<span style="font-size:12px;color:{_conf_color};background:{_conf_color}22;padding:3px 10px;border-radius:10px">Confidence: {_pm["confidence"]}</span>'
@@ -18645,7 +18645,7 @@ with tabs[4]:
             st.markdown(
                 f'<div style="background:#0a1a0a;border:1px solid #22c55e44;border-radius:8px;padding:12px;margin-top:8px">'
                 f'<span style="color:#22c55e;font-weight:600">💡 Recommendation:</span>'
-                f'<span style="color:#e8f0f8;font-size:13px"> {_pm["recommendation"]}</span>'
+                f'<span style="color:var(--bc-text);font-size:13px"> {_pm["recommendation"]}</span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -18812,12 +18812,12 @@ with tabs[4]:
     _bi.setdefault("reasons_up", [])
     _bi.setdefault("reasons_down", [])
     st.markdown(
-        f'<div style="background:#0a0e14;border:1px solid {_bi["color"]}44;border-radius:8px;padding:0.8rem;">'
+        f'<div style="background:var(--bc-bg);border:1px solid {_bi["color"]}44;border-radius:8px;padding:0.8rem;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<span style="color:{_bi["color"]};font-size:1.1rem;font-weight:700;">{_bi["label"]}</span>'
-        f'<span style="color:#e8f0f8;font-size:1.4rem;font-weight:700;">{_bi["multiplier"]:.2f}x</span>'
+        f'<span style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{_bi["multiplier"]:.2f}x</span>'
         f'</div>'
-        f'<div style="color:#8a9ab0;font-size:0.85rem;margin-top:4px;">'
+        f'<div style="color:var(--bc-muted);font-size:0.85rem;margin-top:4px;">'
         f'Kelly advised: {_bi["kelly_advised"]:.1%} of bankroll per bet</div>'
         + (f'<div style="color:#22c55e;font-size:0.85rem;">✅ {" · ".join(_bi["reasons_up"])}</div>' if _bi["reasons_up"] else "")
         + (f'<div style="color:#e04040;font-size:0.85rem;">⚠️ {" · ".join(_bi["reasons_down"])}</div>' if _bi["reasons_down"] else "")
@@ -19660,11 +19660,11 @@ with tabs[4]:
         _radj_str = ", ".join(f"{k}:{v:+.2f}" for k,v in _radj.items()) if _radj else "none"
         _rdesc = _regime["description"][:55] + "..." if len(_regime["description"]) > 55 else _regime["description"]
         _rcols[_rsi % 3].markdown(
-            f'<div style="background:#0a0e14;border:1px solid {_rcolor}55;border-radius:8px;padding:10px;margin-bottom:8px;">'
+            f'<div style="background:var(--bc-bg);border:1px solid {_rcolor}55;border-radius:8px;padding:10px;margin-bottom:8px;">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-            f'<span style="color:#e8f0f8;font-weight:700;font-size:13px;">{_rsp}</span>'
+            f'<span style="color:var(--bc-text);font-weight:700;font-size:13px;">{_rsp}</span>'
             f'<span style="color:{_rcolor};font-size:11px;font-weight:600;background:{_rcolor}22;padding:2px 8px;border-radius:10px;">{_rphase}</span></div>'
-            f'<div style="color:#6a7a8a;font-size:11px;margin-top:4px;">{_rdesc}</div>'
+            f'<div style="color:var(--bc-dim);font-size:11px;margin-top:4px;">{_rdesc}</div>'
             f'<div style="color:#e8a020;font-size:10px;margin-top:3px;">adj: {_radj_str}</div>'
             f'</div>',
             unsafe_allow_html=True
@@ -19701,9 +19701,9 @@ with tabs[4]:
                                            ("LEAN",_ra.get("LEAN",0))]):
             _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#3b82f6","LEAN":"#f59e0b"}[_tier]
             _ra_cols[ci].markdown(
-                f'<div style="background:#0d1520;border:1px solid {_tc}44;border-radius:8px;padding:10px;text-align:center">'
+                f'<div style="background:var(--bc-bg-card);border:1px solid {_tc}44;border-radius:8px;padding:10px;text-align:center">'
                 f'<div style="color:{_tc};font-size:11px;font-weight:700">{_tier}</div>'
-                f'<div style="color:#e8f0f8;font-size:18px;font-weight:700">${_amt:.2f}</div>'
+                f'<div style="color:var(--bc-text);font-size:18px;font-weight:700">${_amt:.2f}</div>'
                 f'</div>', unsafe_allow_html=True)
         # Show sized picks
         _sized_df = [{"Player":p.get("Player",""),"Prop":p.get("Prop",""),"Tier":p.get("Tier",""),
@@ -19841,12 +19841,12 @@ with tabs[4]:
     else:
         _dc = "#22c55e" if not _drift["alert"] else "#e04040"
         st.markdown(
-            f'<div style="background:#0a0e14;border:1px solid {"#e04040" if _drift["alert"] else "#1e2d3d"};border-radius:8px;padding:0.8rem;">'
+            f'<div style="background:var(--bc-bg);border:1px solid {"#e04040" if _drift["alert"] else "#1e2d3d"};border-radius:8px;padding:0.8rem;">'
             f'<div style="color:{_dc};font-size:1.1rem;font-weight:700;">{_drift["status"]}</div>'
             f'<div style="display:flex;gap:2rem;margin-top:0.5rem;">'
-            f'<span style="color:#8a9ab0;">All-time ROI/bet: <b>{_drift["all_time_roi"]:+.3f}u</b></span>'
-            f'<span style="color:#8a9ab0;">Recent L{_drift["window"]} ROI/bet: <b style="color:{_dc};">{_drift["recent_roi"]:+.3f}u</b></span>'
-            f'<span style="color:#8a9ab0;">Drift: <b style="color:{_dc};">{_drift["drift"]:+.3f}u</b></span>'
+            f'<span style="color:var(--bc-muted);">All-time ROI/bet: <b>{_drift["all_time_roi"]:+.3f}u</b></span>'
+            f'<span style="color:var(--bc-muted);">Recent L{_drift["window"]} ROI/bet: <b style="color:{_dc};">{_drift["recent_roi"]:+.3f}u</b></span>'
+            f'<span style="color:var(--bc-muted);">Drift: <b style="color:{_dc};">{_drift["drift"]:+.3f}u</b></span>'
             f'</div></div>',
             unsafe_allow_html=True
         )
@@ -19896,9 +19896,9 @@ with tabs[4]:
     if _pm:
         _pm_color = "#22c55e" if _pm["net"] > 0 else "#e04040" if _pm["net"] < 0 else "#8a9ab0"
         st.markdown(
-            f'<div style="background:#0a0e14;border:1px solid {_pm_color}44;border-radius:8px;padding:0.8rem;">'
+            f'<div style="background:var(--bc-bg);border:1px solid {_pm_color}44;border-radius:8px;padding:0.8rem;">'
             f'<div style="color:{_pm_color};font-size:1.1rem;font-weight:700;">{_pm["verdict"]}</div>'
-            f'<div style="color:#8a9ab0;font-size:0.9rem;margin-top:4px;">Primary cause: {_pm["cause"]}</div>'
+            f'<div style="color:var(--bc-muted);font-size:0.9rem;margin-top:4px;">Primary cause: {_pm["cause"]}</div>'
             f'</div>',
             unsafe_allow_html=True
         )
@@ -20051,9 +20051,9 @@ with tabs[4]:
                     _err_color = "#22c55e" if abs(_err) < 0.03 else ("#ffd700" if abs(_err) < 0.07 else "#e04040")
                     _status = "✅ Calibrated" if abs(_err) < 0.03 else ("⚠️ Overconfident" if _err > 0 else "⚡ Underconfident")
                     _cal_cols[_col_idx].markdown(
-                        f'<div style="background:#0d1520;border:1px solid {_color}40;border-radius:10px;padding:12px;text-align:center">'
+                        f'<div style="background:var(--bc-bg-card);border:1px solid {_color}40;border-radius:10px;padding:12px;text-align:center">'
                         f'<div style="font-size:10px;color:{_color};font-weight:700;text-transform:uppercase;letter-spacing:1px">{_tier}</div>'
-                        f'<div style="font-size:11px;color:#6a7a8a;margin:4px 0">n={_n} bets</div>'
+                        f'<div style="font-size:11px;color:var(--bc-dim);margin:4px 0">n={_n} bets</div>'
                         f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
                         f'<span style="font-size:11px;color:#8899aa">Predicted</span>'
                         f'<span style="font-size:14px;font-weight:700;color:#e8f0f8">{_pp:.1%}</span></div>'
@@ -20482,7 +20482,7 @@ with tabs[5]:
             overall_color = "#e04040"
 
         st.markdown(
-            f'<div style="background:#0d1520;border:2px solid {overall_color};border-radius:10px;'
+            f'<div style="background:var(--bc-bg-card);border:2px solid {overall_color};border-radius:10px;'
             f'padding:16px 20px;margin-bottom:14px;">'
             f'<div style="font-size:18px;font-weight:700;color:{overall_color};margin-bottom:8px;">{overall}</div>'
             f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">'
@@ -20508,7 +20508,7 @@ with tabs[5]:
             tier_color = TIER_COLORS.get(r["tier"], "#7a8a9a")
             avg_display = f"{r['avg']:.1f}" if r["avg"] else "No data"
             st.markdown(
-                f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {r["rec_color"]};'
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-left:4px solid {r["rec_color"]};'
                 f'border-radius:8px;padding:12px 16px;margin-bottom:10px;">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-bottom:8px;">'
                 f'<div><span style="font-size:15px;font-weight:700;color:#e8f0f8">{r["player"]}</span>'
@@ -20866,7 +20866,7 @@ with tabs[6]:
             st.markdown(f"#### 📋 Last {pl_games} Games")
             if logs:
                 log_html = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:1.0rem;">'
-                log_html += '<tr style="background:#0d1520;color:var(--color-text-tertiary);">'
+                log_html += '<tr style="background:var(--bc-bg-card);color:var(--color-text-tertiary);">'
                 log_html += '<th style="padding:4px 8px;text-align:left;">Date</th><th style="padding:4px 8px;">Opp</th><th style="padding:4px 8px;">H/A</th>'
                 log_html += f'<th style="padding:4px 8px;">{pl_stat}</th>'
                 if pl_line > 0:
@@ -20888,8 +20888,8 @@ with tabs[6]:
                     opp = home_team if team == visitor_team else visitor_team
                     ha = "H" if team == home_team else "A"
                     log_html += f'<tr style="background:{row_bg};">'
-                    log_html += f'<td style="padding:3px 8px;color:#8a9ab0;">{date_str}</td>'
-                    log_html += f'<td style="padding:3px 8px;color:#8a9ab0;text-align:center;">{opp}</td>'
+                    log_html += f'<td style="padding:3px 8px;color:var(--bc-muted);">{date_str}</td>'
+                    log_html += f'<td style="padding:3px 8px;color:var(--bc-muted);text-align:center;">{opp}</td>'
                     log_html += f'<td style="padding:3px 8px;color:var(--color-text-tertiary);text-align:center;">{ha}</td>'
                     log_html += f'<td style="padding:3px 8px;color:{val_color};font-weight:600;text-align:center;">{v}</td>'
                     if pl_line > 0:
@@ -20913,7 +20913,7 @@ with tabs[6]:
             if vals:
                 # Visual bar chart using HTML
                 max_val = max(vals) if vals else 1
-                bars_html = '<div style="display:flex;gap:4px;align-items:flex-end;height:120px;padding:8px;background:#0d1520;border-radius:8px;">'
+                bars_html = '<div style="display:flex;gap:4px;align-items:flex-end;height:120px;padding:8px;background:var(--bc-bg-card);border-radius:8px;">'
                 for i, v in enumerate(vals):
                     height_pct = int((v / max_val) * 100) if max_val > 0 else 0
                     over = v > pl_line if pl_line > 0 else True
@@ -20966,10 +20966,10 @@ with tabs[6]:
                         tier_color = TIER_COLORS.get(bp.get("Tier",""), "#7a8a9a")
                         _pin_span = ('<span style="color:#22c55e;margin-left:12px">📌 Pinnacle confirms</span>' if bp.get("PinnacleConfirms") else "")
                         st.markdown(
-                            f'<div style="background:#0d1520;border:1px solid #1a2a3a;border-left:4px solid {tier_color};'
+                            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-left:4px solid {tier_color};'
                             f'border-radius:8px;padding:10px 14px;margin:4px 0;">'
                             f'<span style="background:{tier_color};color:#000;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;margin-right:8px">{bp.get("Tier","")}</span>'
-                            f'<span style="color:#e8f0f8;font-weight:600">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span>'
+                            f'<span style="color:var(--bc-text);font-weight:600">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span>'
                             f'<span style="color:#e8a020;margin-left:12px">Edge: {bp.get("EdgePct","")}</span>'
                             f'{_pin_span}'
                             f'</div>',
@@ -20998,9 +20998,9 @@ with tabs[7]:
                     f'<div style="display:flex;justify-content:space-between;align-items:center;'
                     f'padding:5px 10px;border-bottom:1px solid #1a2a3a;font-size:0.85rem;">'
                     f'<span style="color:#e6edf3;">{_rl.get("player","—")} {_rl.get("side","")} {_rl.get("line","")} '
-                    f'<span style="color:#6a7a8a;">{_rl.get("prop","")}</span></span>'
+                    f'<span style="color:var(--bc-dim);">{_rl.get("prop","")}</span></span>'
                     f'<span style="color:{_rl_color};font-weight:700;">{_rl.get("outcome","—")}</span>'
-                    f'<span style="color:#6a7a8a;font-size:0.75rem;">{_rl.get("source","")} · {_rl.get("timestamp","")}</span>'
+                    f'<span style="color:var(--bc-dim);font-size:0.75rem;">{_rl.get("source","")} · {_rl.get("timestamp","")}</span>'
                     f'</div>',
                     unsafe_allow_html=True
                 )
@@ -22538,7 +22538,7 @@ with tabs[9]:
             f'display:flex;align-items:center;justify-content:space-between;">'
             f'<div>'
             f'<span style="color:{_score_color};font-size:1.2rem;font-weight:700;">MODEL HEALTH</span>'
-            f'<span style="color:#8a9ab0;font-size:0.9rem;margin-left:1rem;">'
+            f'<span style="color:var(--bc-muted);font-size:0.9rem;margin-left:1rem;">'
             f'{len(_passes)} PASS · {len(_warns)} WARN · {len(_fails)} FAIL</span>'
             f'</div>'
             f'<div style="text-align:right;">'
@@ -22554,13 +22554,13 @@ with tabs[9]:
             _rc = "#22c55e" if r["status"]=="PASS" else "#e8a020" if r["status"]=="WARN" else "#e04040"
             _icon = "✅" if r["status"]=="PASS" else "⚠️" if r["status"]=="WARN" else "🚨"
             st.markdown(
-                f'<div style="background:#0a0e14;border:1px solid #1e2d3d;border-left:3px solid {_rc};'
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-left:3px solid {_rc};'
                 f'border-radius:6px;padding:0.5rem 0.8rem;margin-bottom:0.3rem;">'
                 f'<div style="display:flex;align-items:center;justify-content:space-between;">'
-                f'<span style="color:#e8f0f8;font-size:0.95rem;">{_icon} {r["name"]}</span>'
+                f'<span style="color:var(--bc-text);font-size:0.95rem;">{_icon} {r["name"]}</span>'
                 f'<span style="color:{_rc};font-size:0.85rem;font-weight:700;">{r["status"]}</span>'
                 f'</div>'
-                + (f'<div style="color:#8a9ab0;font-size:0.8rem;margin-top:2px;">{r["detail"]}</div>' if r["detail"] else "")
+                + (f'<div style="color:var(--bc-muted);font-size:0.8rem;margin-top:2px;">{r["detail"]}</div>' if r["detail"] else "")
                 + '</div>',
                 unsafe_allow_html=True
             )
@@ -23137,8 +23137,8 @@ with tabs[9]:
                     fix_action = src_fix.get("fix", "Check the source's website and verify your API key.")
                     icon = "🔴" if result_color == "red" else "🟡"
                     st.markdown(f"""
-<div style="background:#0d1520;border:1px solid {'#e04040' if result_color == 'red' else '#e8a020'};border-radius:8px;padding:12px 16px;margin-bottom:8px;">
-  <div style="font-size:18px;font-weight:700;color:#e8f0f8;margin-bottom:4px;">{icon} {name_err} — Code {result_code}</div>
+<div style="background:var(--bc-bg-card);border:1px solid {'#e04040' if result_color == 'red' else '#e8a020'};border-radius:8px;padding:12px 16px;margin-bottom:8px;">
+  <div style="font-size:18px;font-weight:700;color:var(--bc-text);margin-bottom:4px;">{icon} {name_err} — Code {result_code}</div>
   <div style="font-size:15px;color:#9aa8b8;margin-bottom:6px;">{explanation}</div>
   <div style="font-size:14px;color:#0ea5a0;">→ {fix_action}</div>
 </div>""", unsafe_allow_html=True)
@@ -23174,7 +23174,7 @@ with tabs[9]:
 <div style="padding:12px 16px; margin-bottom:10px; border-radius:8px; {css}">
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <div>
-      <span style="font-size:15px; font-weight:700; color:#e8f0f8;">{dot} {name}</span>
+      <span style="font-size:15px; font-weight:700; color:var(--bc-text);">{dot} {name}</span>
       <span style="font-size:15px; color:#8899aa; margin-left:10px;">{desc}</span>
     </div>
     <span style="font-size:15px; color:#aabbcc;">Code: {code if code else "—"}</span>
