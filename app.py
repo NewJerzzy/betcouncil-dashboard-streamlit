@@ -10892,6 +10892,12 @@ def load_sport_data(sport):
         ("fetch_fantasylabs_from_gist",        "fantasylabs_data_h",     "fantasylabs_src"),
         ("fetch_rotowire_from_gist",           "rotowire_injuries_h",    "rotowire_src"),
         ("fetch_numberfire_from_gist",         "numberfire_proj_h",      "numberfire_src"),
+        ("fetch_pickswise_from_gist",          "pickswise_picks_h",      "pickswise_src"),
+        ("fetch_betus_from_gist",              "betus_props_h",          "betus_src"),
+        ("fetch_bet105_from_gist",             "bet105_lines_h",         "bet105_src"),
+        ("fetch_betwhale_from_gist",           "betwhale_lines_h",       "betwhale_src"),
+        ("fetch_ybets_from_gist",              "ybets_lines_h",          "ybets_src"),
+        ("fetch_zamba_from_gist",              "zamba_lines_h",          "zamba_src"),
         ("fetch_sportsinsights_from_gist",     "sportsinsights_data",    "sportsinsights_src"),
         ("fetch_oddsshark_from_gist",          "oddsshark_data",         "oddsshark_src"),
         ("fetch_vegasinsider_from_gist",       "vegasinsider_data",      "vegasinsider_src"),
@@ -19002,6 +19008,43 @@ with tabs[4]:
 
             }});
         }}
+
+        // ── New: Pickswise expert picks (every 30 min) ───────────────────
+        throttled('pickswise_'+sport,1800000,function(){{
+            fetch('https://www.pickswise.com/api/picks?sport='+sport.toLowerCase()+'&type=expert&limit=50',{{headers:{{'Accept':'application/json','Referer':'https://www.pickswise.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pickswise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{
+                // Try alternate Pickswise endpoint
+                fetch('https://www.pickswise.com/api/v2/predictions?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{pushGist('betcouncil_pickswise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest'}});}}).catch(function(e2){{console.log('[BetCouncil] Pickswise error:',e2.message);}});
+            }});
+        }});
+
+        // ── New: BetUS props (every 25 min) ──────────────────────────────
+        var betUsSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','WNBA':'wnba'}};
+        var betUsSport=betUsSportMap[sport];
+        if(betUsSport){{
+            throttled('betus_'+sport,1500000,function(){{
+                fetch('https://www.betus.com.pa/sportsbook/props-builder/api/'+betUsSport+'/player-props',{{headers:{{'Accept':'application/json','Referer':'https://www.betus.com.pa/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betus_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BetUS error:',e.message);}});
+            }});
+        }}
+
+        // ── New: Bet105 game lines (every 25 min) ────────────────────────
+        throttled('bet105_'+sport,1500000,function(){{
+            fetch('https://app.bet105.ag/api/sports/lines?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://app.bet105.ag/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bet105_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Bet105 error:',e.message);}});
+        }});
+
+        // ── New: BetWhale lines (every 25 min) ───────────────────────────
+        throttled('betwhale_'+sport,1500000,function(){{
+            fetch('https://betwhale.ag/api/sports/'+sport.toLowerCase()+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://betwhale.ag/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betwhale_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BetWhale error:',e.message);}});
+        }});
+
+        // ── New: Ybets lines (every 25 min) ──────────────────────────────
+        throttled('ybets_'+sport,1500000,function(){{
+            fetch('https://ybets.net/api/sport/'+sport.toLowerCase()+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://ybets.net/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_ybets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Ybets error:',e.message);}});
+        }});
+
+        // ── New: Zamba.co lines (every 25 min) ───────────────────────────
+        throttled('zamba_'+sport,1500000,function(){{
+            fetch('https://www.zamba.co/api/sports/'+sport.toLowerCase()+'/events',{{headers:{{'Accept':'application/json','Referer':'https://www.zamba.co/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_zamba_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Zamba error:',e.message);}});
+        }});
 
     }})();
     </script>

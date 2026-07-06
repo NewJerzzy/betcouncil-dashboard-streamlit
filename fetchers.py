@@ -14713,6 +14713,12 @@ def get_harvester_status() -> dict:
         ("FantasyLabs ownership",        "betcouncil_fantasylabs_MLB.json",    32),
         ("Rotowire injuries",            "betcouncil_rotowire_MLB.json",       18),
         ("NumberFire projections",       "betcouncil_numberfire_MLB.json",     32),
+        ("Pickswise expert picks",       "betcouncil_pickswise_MLB.json",      32),
+        ("BetUS props",                  "betcouncil_betus_MLB.json",          28),
+        ("Bet105 lines",                 "betcouncil_bet105_MLB.json",         28),
+        ("BetWhale lines",               "betcouncil_betwhale_MLB.json",       28),
+        ("Ybets lines",                  "betcouncil_ybets_MLB.json",          28),
+        ("Zamba lines",                  "betcouncil_zamba_MLB.json",          28),
     ]
     from datetime import datetime, timezone
     status = {}
@@ -15686,6 +15692,56 @@ def fetch_kalshi2_from_gist(sport):
             return (_d2 if isinstance(_d2, dict) else {}), "python_direct"
     except Exception:
         pass
+    return {}, "unavailable"
+
+
+
+def fetch_pickswise_from_gist(sport: str) -> tuple:
+    """Pickswise expert picks — no login needed."""
+    data = _read_gist_file(f"betcouncil_pickswise_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=32):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_betus_from_gist(sport: str) -> tuple:
+    """BetUS props builder — no login needed."""
+    data = _read_gist_file(f"betcouncil_betus_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_bet105_from_gist(sport: str) -> tuple:
+    """Bet105 low-juice lines — no login needed."""
+    data = _read_gist_file(f"betcouncil_bet105_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_betwhale_from_gist(sport: str) -> tuple:
+    """BetWhale lines — no login needed."""
+    data = _read_gist_file(f"betcouncil_betwhale_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_ybets_from_gist(sport: str) -> tuple:
+    """Ybets lines — no login needed."""
+    data = _read_gist_file(f"betcouncil_ybets_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
+    return {}, "unavailable"
+
+def fetch_zamba_from_gist(sport: str) -> tuple:
+    """Zamba.co lines — no login needed."""
+    data = _read_gist_file(f"betcouncil_zamba_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=28):
+        raw = data.get("data",{})
+        if raw: return raw, "browser_harvester"
     return {}, "unavailable"
 
 
