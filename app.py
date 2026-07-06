@@ -14605,6 +14605,14 @@ with st.sidebar:
             _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
                       {"props": len(board), "sport": sport_sel})
             st.session_state.board_data = board
+            # Auto-populate closing line DB from board
+            try:
+                from bc_utils import auto_populate_closing_lines as _apcl
+                _cl = load_json_data(os.path.join(CACHE_DIR,"closing_lines.json"), {})
+                _cl = _apcl(sport, board, _cl)
+                save_json_data(os.path.join(CACHE_DIR,"closing_lines.json"), _cl)
+            except Exception:
+                pass
             st.session_state.games = games
             st.session_state["board_loaded"]       = True
         # Kill switch warning rendered after spinner in correct main-area context.

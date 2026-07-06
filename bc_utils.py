@@ -5474,6 +5474,141 @@ def devig_ensemble(over_american: float, under_american: float,
 
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ITEM 2: CORRELATED PARLAY LOOKUP TABLE
+# ══════════════════════════════════════════════════════════════════════════════
+
+SGP_CORRELATIONS = {
+    ("pts","reb"):0.28,("pts","ast"):0.42,("pts","pra"):0.85,
+    ("reb","ast"):0.15,("reb","pra"):0.78,("ast","pra"):0.72,
+    ("pts","3pm"):0.65,("pts","stl"):0.22,("pts","blk"):0.18,
+    ("pts","to"):0.35,("pra","3pm"):0.55,
+    ("team_pts","opp_pts"):-0.08,("game_total","team_pts"):0.72,
+    ("spread","pts"):0.55,
+    ("hits","rbi"):0.65,("hits","runs"):0.58,("hr","rbi"):0.72,
+    ("hr","runs"):0.68,("hr","hits"):0.55,
+    ("so_pitcher","runs_allowed"):-0.45,("so_pitcher","hits_allowed"):-0.52,
+    ("pass_yards","td"):0.68,("pass_yards","comp"):0.82,
+    ("rush_yards","td"):0.55,("rec_yards","rec"):0.78,
+    ("rec_yards","td"):0.52,("pass_yards","rush_yards"):-0.25,
+    ("qb_pts","wr1_pts"):0.65,("qb_pts","rb_pts"):-0.18,
+    ("goals","assists"):0.55,("goals","shots"):0.72,
+    ("assists","shots"):0.45,("saves","goals_against"):-0.68,
+}
+
+def get_parlay_correlation(stat1:str,stat2:str,same_game:bool=True,same_team:bool=True)->float:
+    s1=str(stat1).lower().replace(" ","_").replace("-","_")
+    s2=str(stat2).lower().replace(" ","_").replace("-","_")
+    key=tuple(sorted([s1,s2]))
+    corr=SGP_CORRELATIONS.get(key)
+    if corr is not None: return corr if same_team else corr*0.3
+    if not same_game: return 0.05
+    if not same_team: return 0.10
+    return 0.35
+
+def correlated_parlay_kelly(legs:list,bankroll:float=100.0,fraction:float=0.25)->dict:
+    if not legs or len(legs)<2: return {"kelly_pct":0,"kelly_stake":0,"ev_pct":-99}
+    import math
+    def to_dec(a):
+        a=float(a); return (a/100+1) if a>0 else (100/(-a)+1)
+    combined_prob=1.0
+    for leg in legs: combined_prob*=float(leg.get("fair_prob",0.55))
+    payout=1.0
+    for leg in legs: payout*=to_dec(leg.get("odds_american",-110))
+    n=len(legs); pair_corrs=[]; total_corr=0.0
+    for i in range(n):
+        for j in range(i+1,n):
+            li,lj=legs[i],legs[j]
+            sg=li.get("game","A")==lj.get("game","B")
+            st_=li.get("team","X")==lj.get("team","Y")
+            corr=get_parlay_correlation(li.get("stat","pts"),lj.get("stat","pts"),sg,st_)
+            pair_corrs.append({"leg1":i,"leg2":j,"corr":round(corr,3)})
+            total_corr+=corr
+    n_pairs=n*(n-1)/2; avg_corr=total_corr/n_pairs if n_pairs>0 else 0
+    corr_discount=max(0.1,min(1.0,1.0-avg_corr*(n-1)/(2*n)))
+    b=payout-1
+    if b<=0: return {"kelly_pct":0,"kelly_stake":0,"ev_pct":-99}
+    kelly_raw=(b*combined_prob-(1-combined_prob))/b
+    kelly_adj=min(max(0,kelly_raw*corr_discount*fraction),0.10)
+    ev_pct=(combined_prob-1.0/payout)*100
+    return {"kelly_pct":round(kelly_adj*100,3),"kelly_stake":round(bankroll*kelly_adj,2),
+            "corr_discount":round(corr_discount,4),"avg_correlation":round(avg_corr,4),
+            "combined_prob":round(combined_prob,5),"payout_mult":round(payout,3),
+            "ev_pct":round(ev_pct,3),"is_positive_ev":ev_pct>0,
+            "leg_correlations":pair_corrs,"n_legs":n}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ITEM 3: POSITION-SPECIFIC PROP DEFENSE
+# ══════════════════════════════════════════════════════════════════════════════
+
+NBA_POS_DEF = {
+    "BOS":{"PG":19.2,"SG":18.8,"SF":19.5,"PF":20.1,"C":21.3},
+    "OKC":{"PG":20.1,"SG":19.5,"SF":20.2,"PF":21.0,"C":22.1},
+    "MIN":{"PG":20.5,"SG":20.0,"SF":20.8,"PF":21.5,"C":22.8},
+    "CLE":{"PG":21.0,"SG":20.5,"SF":21.2,"PF":22.0,"C":23.1},
+    "NYK":{"PG":21.2,"SG":20.8,"SF":21.5,"PF":22.3,"C":23.4},
+    "IND":{"PG":22.5,"SG":22.0,"SF":22.8,"PF":23.5,"C":24.8},
+    "MIL":{"PG":22.8,"SG":22.3,"SF":23.0,"PF":23.8,"C":25.0},
+    "DEN":{"PG":23.0,"SG":22.5,"SF":23.2,"PF":24.0,"C":25.2},
+    "ATL":{"PG":25.5,"SG":25.0,"SF":25.8,"PF":26.5,"C":27.8},
+    "SAS":{"PG":25.8,"SG":25.3,"SF":26.0,"PF":26.8,"C":28.0},
+    "MEM":{"PG":26.0,"SG":25.5,"SF":26.2,"PF":27.0,"C":28.2},
+    "AVG":{"PG":22.1,"SG":21.8,"SF":21.2,"PF":22.0,"C":23.5},
+}
+NFL_POS_DEF = {
+    "SF": {"QB_rtg":85.0,"RB_yds":85,"WR1_yds":62,"WR2_yds":48,"TE_yds":55},
+    "BAL":{"QB_rtg":88.0,"RB_yds":88,"WR1_yds":65,"WR2_yds":50,"TE_yds":52},
+    "MIA":{"QB_rtg":95.0,"RB_yds":95,"WR1_yds":72,"WR2_yds":55,"TE_yds":62},
+    "KC": {"QB_rtg":92.0,"RB_yds":90,"WR1_yds":70,"WR2_yds":53,"TE_yds":60},
+    "AVG":{"QB_rtg":95.0,"RB_yds":105,"WR1_yds":75,"WR2_yds":58,"TE_yds":65},
+}
+
+def get_position_defense_adj(player_pos:str,opp_team:str,stat:str="pts",sport:str="NBA")->dict:
+    pos=str(player_pos).upper().strip(); opp=str(opp_team).upper().strip()
+    if sport=="NBA":
+        league_avg=NBA_POS_DEF["AVG"].get(pos,22.0)
+        team_def=NBA_POS_DEF.get(opp,NBA_POS_DEF["AVG"]).get(pos,league_avg)
+    elif sport=="NFL":
+        pk=("WR1_yds" if pos in("WR","WR1") else "WR2_yds" if pos=="WR2"
+            else "RB_yds" if pos=="RB" else "TE_yds" if pos=="TE"
+            else "QB_rtg" if pos=="QB" else "WR1_yds")
+        league_avg=NFL_POS_DEF["AVG"].get(pk,75); team_def=NFL_POS_DEF.get(opp,NFL_POS_DEF["AVG"]).get(pk,league_avg)
+    else: return {"league_avg":0,"team_allowed":0,"adj_factor":1.0,"matchup_grade":"UNKNOWN"}
+    adj=team_def/league_avg if league_avg else 1.0
+    grade=("ELITE_MATCHUP" if adj>=1.20 else "FAVORABLE" if adj>=1.08
+           else "NEUTRAL" if adj>=0.93 else "TOUGH" if adj>=0.82 else "ELITE_DEFENSE")
+    return {"league_avg":round(league_avg,2),"team_allowed":round(team_def,2),
+            "adj_factor":round(adj,4),"matchup_grade":grade,"opp_team":opp,"position":pos,"sport":sport}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ITEM 4: CLOSING LINE AUTO-POPULATE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def auto_populate_closing_lines(sport:str,props:list,closing_lines:dict)->dict:
+    from datetime import datetime,timezone
+    now=datetime.now(timezone.utc).isoformat(); added=0
+    for prop in props:
+        player=prop.get("Player",""); stat=prop.get("Stat",prop.get("Prop",""))
+        line=prop.get("Line","")
+        if not player or not stat: continue
+        pin_odds=prop.get("PinnacleOdds",prop.get("pinnacle_odds"))
+        fair_p=prop.get("EnsembleFair",prop.get("FairProb",prop.get("fair_prob",0)))
+        if not pin_odds and not fair_p: continue
+        key=f"{normalize_name(player)}_{normalize_name(stat)}_{line}_{sport}"
+        if key not in closing_lines:
+            closing_lines[key]={"player":player,"stat":stat,"line":line,"sport":sport,
+                                 "close_odds":pin_odds,"fair_prob":fair_p,
+                                 "close_time":now,"source":"auto_board_load"}
+            added+=1
+        elif pin_odds and not closing_lines[key].get("close_odds"):
+            closing_lines[key]["close_odds"]=pin_odds; closing_lines[key]["updated_at"]=now
+    if added>0: print(f"[ClosingLines] Added {added} entries for {sport}")
+    return closing_lines
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # INTEGRATION: apply_all_upgrades()
 # Runs all 6 upgrades on a prop dict and returns enriched version
