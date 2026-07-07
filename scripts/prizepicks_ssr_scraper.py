@@ -102,6 +102,7 @@ def split_by_league(payload: dict) -> dict:
 
 
 def push_league_files(by_league: dict) -> int:
+    import time
     github_token = os.environ["GITHUB_TOKEN"]
     files_payload = {}
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -116,18 +117,25 @@ def push_league_files(by_league: dict) -> int:
         }
         files_payload[filename] = {"content": json.dumps(wrapper)}
 
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={
-            "Authorization": f"Bearer {github_token}",
-            "Accept": "application/vnd.github+json",
-        },
-        json={"files": files_payload},
-        timeout=30,
-    )
-    if resp.status_code in (200, 201):
-        return len(files_payload)
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    for attempt in range(4):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"files": files_payload},
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            return len(files_payload)
+        if resp.status_code == 409 and attempt < 3:
+            wait = (attempt + 1) * 8
+            log(f"Gist 409 conflict (concurrent write) — retrying in {wait}s (attempt {attempt+1}/4)")
+            time.sleep(wait)
+            continue
+        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        return 0
     return 0
 
 
