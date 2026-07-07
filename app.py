@@ -15066,16 +15066,17 @@ with st.sidebar:
     # Show data source status
     _pp_status = st.session_state.get("pp_status", "unknown")
     _pp_source = st.session_state.get("pp_source","")
-    if _pp_source == "gist_scraper":
-        st.success("✅ PrizePicks loaded from local scraper (Gist)")
-        st.caption("Run betcouncil_auto_scraper.py daily to keep fresh.")
+    if _pp_source in ("gist_scraper", "browser_harvester"):
+        st.success("✅ PrizePicks loaded from browser harvester (Gist)")
+        st.caption("Auto-refreshed via GitHub Actions workflow every 15 min.")
+    elif _pp_source == "scraper_fallback":
+        st.success("✅ PrizePicks loaded via CDN scraper fallback")
+    elif _pp_source == "prizepicks_direct":
+        st.success("✅ PrizePicks loaded via direct live scrape")
+    elif _pp_source == "last_known_good":
+        st.warning("🟡 PrizePicks showing last-known-good cache (stale)")
     elif _pp_status == "ok":
-        _pp_src = st.session_state.get("pp_source","")
-        if _pp_src == "gist_scraper":
-            st.success("✅ PrizePicks loaded from local scraper (Gist)")
-            st.caption("Run betcouncil_auto_scraper.py daily to keep fresh.")
-        else:
-            st.success("✅ PrizePicks connected via ScrapeOps")
+        st.success(f"✅ PrizePicks connected via ScrapeOps")
     elif _pp_status == "fallback":
         st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
     elif _pp_status == "unavailable":
