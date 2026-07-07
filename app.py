@@ -15571,6 +15571,7 @@ with tabs[0]:
                 .replace("var(--bc-blue)", "#1e90ff")
                 .replace("var(--bc-blue-bright)", "#4db8ff")
             )
+            _lock_html_fixed = "\n".join(_ln.strip() for _ln in _lock_html_fixed.splitlines())
             st.markdown(_lock_html_fixed, unsafe_allow_html=True)
             # ── Why This Is A Play — Signal Contribution Table ──
             _sig_table = render_signal_contribution_table(lock_prop)
@@ -16506,10 +16507,10 @@ with tabs[1]:
 
         _header = (
             '<div style="display:grid;grid-template-columns:'
-            '12px 160px 55px 54px 90px 50px 58px 52px 58px 80px 45px 45px 45px 47px 65px;'
-            'gap:3px;padding:6px 8px;background:var(--bc-bg-card);border-radius:6px 6px 0 0;'
-            'font-size:10px;font-weight:700;color:var(--bc-dim);text-transform:uppercase;'
-            'letter-spacing:0.05em;position:sticky;top:0;z-index:10;">'
+            '12px 170px 58px 56px 95px 55px 60px 58px 62px 130px 48px 48px 48px 52px 72px;'
+            'gap:6px;padding:8px 10px;background:var(--bc-bg-card);border-radius:6px 6px 0 0;'
+            'font-size:12px;font-weight:700;color:var(--bc-dim);text-transform:uppercase;'
+            'letter-spacing:0.04em;position:sticky;top:0;z-index:10;white-space:nowrap;">'
             '<span></span>'
             '<span>Player</span>'
             '<span>Tier</span>'
@@ -16543,7 +16544,7 @@ with tabs[1]:
             _tier_str  = _r["_tier"][:3]
             _conf_color = "#22c55e" if _r.get("_conflict")=="ALIGNED" else "#e04040" if _r.get("_conflict")=="CONFLICTED" else "#e8a020"
             _rely_color = "#22c55e" if _r["_rel"] in ("4/4","3/4") else "var(--bc-dim)"
-            _gs = "15px" if _r["_grade"] in ("A+","A") else "13px"
+            _gs = "17px" if _r["_grade"] in ("A+","A") else "15px"
             # Edge type badge
             _et      = _r.get("_p", {}).get("EdgeType", "")
             _et_col  = _r.get("_p", {}).get("EdgeTypeColor", "#6a7a8a")
@@ -16565,18 +16566,18 @@ with tabs[1]:
                 ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "var(--bc-border)"),  # Better line
             ]
             _cons_bar = "".join([
-                f'<span style="display:inline-block;width:14px;height:14px;border-radius:50%;'
-                f'background:{col};font-size:7px;font-weight:700;color:#ffffff;'
-                f'text-align:center;line-height:14px;margin-right:1px;" title="{lbl}">{lbl[0]}</span>'
+                f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
+                f'background:{col};font-size:8px;font-weight:700;color:#ffffff;'
+                f'text-align:center;line-height:13px;margin-right:2px;" title="{lbl}">{lbl[0]}</span>'
                 for lbl, col in _cons_sources
             ])
             # Filled bar count for % display
             _filled = sum(1 for _, c in _cons_sources if c != "var(--bc-border)")
             _cons_pct = int(_filled / len(_cons_sources) * 100)
             _cons_cell = (
-                f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">'
+                f'<div style="display:flex;flex-direction:row;align-items:center;gap:5px;white-space:nowrap;">'
                 f'{_cons_bar}'
-                f'<span style="font-size:8px;color:#4a6a8a;">{_cons_pct}%</span>'
+                f'<span style="font-size:11px;color:#4a6a8a;">{_cons_pct}%</span>'
                 f'</div>'
             )
 
@@ -16589,33 +16590,33 @@ with tabs[1]:
 
             _row = (
                 f'<div class="{_tier_css}" style="display:grid;grid-template-columns:'
-                f'12px 160px 55px 54px 90px 50px 58px 52px 58px 80px 45px 45px 45px 47px 65px;'
-                f'gap:3px;padding:3px 8px;background:{_bg};'
-                f'border-bottom:1px solid rgba(26,58,92,0.5);font-size:12px;align-items:center;'
-                f'min-height:22px;cursor:default;transition:background 0.15s;">'
-                f'<span style="width:3px;height:20px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
+                f'12px 170px 58px 56px 95px 55px 60px 58px 62px 130px 48px 48px 48px 52px 72px;'
+                f'gap:6px;padding:6px 10px;background:{_bg};'
+                f'border-bottom:1px solid rgba(26,58,92,0.5);font-size:14px;align-items:center;'
+                f'min-height:32px;cursor:default;transition:background 0.15s;">'
+                f'<span style="width:3px;height:24px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
                 f'<span style="font-weight:600;color:var(--bc-text);">{_r["_player"][:22]}</span>'
-                f'<span style="background:{_tier_bg};color:{_tc};font-size:9px;font-weight:700;'
-                f'padding:2px 5px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
+                f'<span style="background:{_tier_bg};color:{_tc};font-size:11px;font-weight:700;'
+                f'padding:3px 6px;border-radius:3px;text-transform:uppercase;">{_tier_str}</span>'
                 f'{_et_html}'
-                f'<span style="text-align:center;color:var(--bc-muted);font-size:11px;">{_r["_prop"][:12]} {_r["_side"]}</span>'
-                f'<span class="odds-mono" style="text-align:center;">{_r["_line"]}</span>'
+                f'<span style="text-align:center;color:var(--bc-muted);font-size:13px;">{_r["_prop"][:12]} {_r["_side"]}</span>'
+                f'<span class="odds-mono" style="text-align:center;font-size:14px;">{_r["_line"]}</span>'
                 f'<span style="text-align:center;font-size:{_gs};font-weight:800;color:{_gc};">{_r["_grade"]}</span>'
-                f'<span class="odds-mono" style="text-align:center;color:{_gc};">{_e_str}</span>'
-                f'<span class="odds-mono" style="text-align:center;color:var(--bc-muted);">{_r["_model_prob"]}%</span>'
+                f'<span class="odds-mono" style="text-align:center;font-size:14px;color:{_gc};">{_e_str}</span>'
+                f'<span class="odds-mono" style="text-align:center;font-size:14px;color:var(--bc-muted);">{_r["_model_prob"]}%</span>'
                 f'{_cons_cell}'
-                f'<span style="text-align:center;color:var(--bc-muted);font-size:11px;">{_r["_l5"]}</span>'
-                f'<span style="text-align:center;color:var(--bc-muted);font-size:11px;">{_r["_l10"]}</span>'
-                f'<span style="text-align:center;color:var(--bc-muted);font-size:11px;">{_r["_szn"]}</span>'
+                f'<span style="text-align:center;color:var(--bc-muted);font-size:13px;">{_r["_l5"]}</span>'
+                f'<span style="text-align:center;color:var(--bc-muted);font-size:13px;">{_r["_l10"]}</span>'
+                f'<span style="text-align:center;color:var(--bc-muted);font-size:13px;">{_r["_szn"]}</span>'
                 + (
-                    f'<span style="text-align:center;font-size:11px;font-weight:700;color:#00d4aa;">'
+                    f'<span style="text-align:center;font-size:13px;font-weight:700;color:#00d4aa;">'
                     f'{float(_r["_ev_sharp"]):+.1%}</span>'
                     if _r.get("_ev_sharp") is not None else
-                    f'<span style="text-align:center;color:var(--bc-dim);font-size:11px;">—</span>'
+                    f'<span style="text-align:center;color:var(--bc-dim);font-size:13px;">—</span>'
                 ) +
-                f'<span style="text-align:center;">'
-                f'<span style="color:{_conf_color};font-size:10px;">●</span> '
-                f'<span style="color:{_rely_color};font-size:11px;">{_r["_rel"]}</span>'
+                f'<span style="text-align:center;white-space:nowrap;">'
+                f'<span style="color:{_conf_color};font-size:12px;">●</span> '
+                f'<span style="color:{_rely_color};font-size:13px;">{_r["_rel"]}</span>'
                 f'</span></div>'
             )
             _html_rows.append(_row)
