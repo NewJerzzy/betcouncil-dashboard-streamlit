@@ -14878,7 +14878,7 @@ def _parse_prizepicks_harvested(raw, sport: str) -> list:
             if isinstance(inc, dict) and inc.get("type") in ("new_player","player"):
                 pid  = inc.get("id","")
                 attr = inc.get("attributes",{})
-                players[pid] = {"name":attr.get("name",""),"team":attr.get("team",""),
+                players[pid] = {"name":attr.get("name","") or attr.get("display_name",""),"team":attr.get("team","") or attr.get("market",""),
                                 "position":attr.get("position","")}
         for item in items:
             if not isinstance(item, dict): continue
