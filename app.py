@@ -10674,27 +10674,35 @@ def store_opening_lines(game_analysis, sport):
 def get_line_movement_summary(matchup, sport, current_game):
     """
     Compare current line vs opening line for a game.
-    Returns movement string, e.g. "Total: 8.5 → 9.0 (+0.5)"
+    Returns dict: {"text": "Total: 8.5 → 9.0 (+0.5)", "direction": "up"|"down"|""}
     """
+    empty = {"text": "", "direction": ""}
     try:
         stored = load_json_data(OPENING_LINES_PATH, {})
         today_str = date.today().strftime("%Y-%m-%d")
         key = f"{today_str}_{matchup}_{sport}"
         opening = stored.get(key, {})
         if not opening:
-            return ""
+            return empty
         movements = []
+        direction = ""
         curr_total = safe_float(current_game.get("Total") or 0)
         open_total = safe_float(opening.get("open_total") or 0)
         curr_spr   = current_game.get("Spread","")
         open_spr   = opening.get("open_spread","")
         if curr_total and open_total and abs(curr_total - open_total) >= 0.5:
             movements.append(f"Total: {open_total} → {curr_total} ({curr_total-open_total:+.1f})")
+            direction = "up" if curr_total > open_total else "down"
         if curr_spr and open_spr and curr_spr != open_spr:
             movements.append(f"Spread: {open_spr} → {curr_spr}")
-        return " | ".join(movements)
+            if not direction:
+                try:
+                    direction = "up" if safe_float(curr_spr) > safe_float(open_spr) else "down"
+                except (ValueError, TypeError):
+                    direction = ""
+        return {"text": " | ".join(movements), "direction": direction}
     except (ValueError, TypeError, ZeroDivisionError):
-        return ""
+        return empty
 
 
 # ── Feature 6: Prediction Stability Audit ──────────────────────
@@ -17401,7 +17409,7 @@ with tabs[2]:
                     _is_pos = _pk["edge"] > 0
                     _edge_color = _pc_color if _is_pos else "#e04040"
                     _has_edge = abs(_pk["edge"]) >= 0.02
-                    _lm = _line_movement or {}
+                    _lm = _line_movement if isinstance(_line_movement, dict) else {}
                     _lm_dir = _lm.get("direction", "")
                     _lm_arrow = (
                         '<span class="line-up">↑</span>' if _lm_dir == "up" else
