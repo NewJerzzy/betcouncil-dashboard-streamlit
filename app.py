@@ -14844,9 +14844,11 @@ with st.sidebar:
     _regime_data  = detect_season_regime("MLB")
     _regime_label = _regime_data.get("label", "REGULAR FLOOR")
     _edge_thresh  = _regime_data.get("edge_floor", 0.045)
-    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
+    st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:2px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;">↗ CALIBRATION</div>'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
+        f'title="How well your predicted win probabilities have matched actual results over your last {_bs_n} settled bets. 100 = predictions landed exactly as often as predicted. 0 = no better than a coin flip. Below ~50 means the model has been overconfident or underconfident lately, not that anything is broken.">'
+        f'↗ CALIBRATION &#9432;</div>'
         f'</div>'
         + (f'<div style="font-size:16px;font-weight:700;color:var(--bc-dim);margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
            if _thin_sample else
@@ -14854,6 +14856,7 @@ with st.sidebar:
         + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
         f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
+    st.caption("How closely your predicted odds have matched real results (higher = better calibrated). See the History tab for the full breakdown.")
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
