@@ -2080,34 +2080,53 @@ SPORTSBOOK GAME LINES:
 - Bookmaker.eu: server-side (cf_clearance in secrets)
 
 DFS PROPS:
-- PrizePicks: browser harvester + CDN scraper fallback ✅
-- Underdog Fantasy: browser harvester ✅
-- Novig: browser harvester + scraper fallback ✅
-- Betr: browser harvester + GraphQL fallback ← NEW
+- PrizePicks: AUTOMATED via GitHub Actions (public partner API, every 15 min) — no Tampermonkey needed ← UPDATED
+- Underdog Fantasy: AUTOMATED via GitHub Actions (public API, every 15 min) — no Tampermonkey needed ← UPDATED
+- Pick6 (DraftKings): AUTOMATED via GitHub Actions (SSR-embedded page data, every 30 min) — no login/browser needed ← NEW
+- Novig: browser harvester + scraper fallback ✅ (confirmed CloudFront-blocked from scripted access, no public API found)
+- Betr: LIVE direct GraphQL call (public, no auth) — no Tampermonkey needed, called fresh every board load ← UPDATED
 - DraftKings props: browser harvester ✅
-- FanDuel props: browser harvester ✅
-- BetMGM props: browser harvester ✅
+- FanDuel props: browser harvester ✅ (confirmed blocked — DNS-dead API subdomains + 400 with no body from scripted access)
+- BetMGM props: browser harvester ✅ (confirmed CloudFront/WAF-blocked, no public API found)
 - BetUS props builder: browser harvester ← NEW
 - ParlaySavant +EV props: browser harvester ← NEW
 
 SHARP SIGNALS / PUBLIC DATA:
-- Action Network: sharp splits + public % (browser harvester)
-- Covers.com: consensus betting % (browser harvester)
+- Action Network: LIVE direct fetch (public API, no auth) — no Tampermonkey needed, called fresh every board load ← UPDATED
+- OddsShark: direct fetch fallback added (public API, no auth) — falls back to Tampermonkey only if direct fetch fails ← UPDATED
+- Covers.com: consensus betting % (browser harvester) — confirmed no accessible JSON API, client-side rendered only
 - Pregame.com: sharp plays (browser harvester) ← NEW
-- Pickswise: expert picks/predictions (browser harvester) ← NEW
+- Pickswise: expert picks/predictions (browser harvester) — confirmed client-side rendered, no accessible API
 
 PROJECTIONS / RESEARCH:
 - FantasyPros: expert consensus projections
 - StatMuse: L10 hit rates (on-demand)
-- FantasyLabs: ownership projections (browser harvester) ← NEW
-- NumberFire: projections (browser harvester) ← NEW
-- Rotowire: injury/lineup data (browser harvester) ← NEW
+- FantasyLabs: ownership projections (browser harvester) — confirmed WordPress site, no JSON API
+- NumberFire: projections (browser harvester) — confirmed FanDuel-owned, projections load client-side only
+- Rotowire: injury/lineup data (browser harvester) — bet.rotowire.com confirmed 401
 - Sleeper: player data (browser harvester) ← NEW
 - Baseball Savant: Statcast data (server-side)
 
 PREDICTION MARKETS:
-- Kalshi: yes/no player prop contracts
-- Polymarket: sports prediction markets (browser harvester) ← NEW
+- Kalshi: LIVE direct fetch (public API, no auth) — no Tampermonkey needed, called fresh every board load ← UPDATED
+- Polymarket: browser harvester ✅ (confirmed active=true filter only returns stale/settled markets, no live game lines found)
+- Smarkets: tested — API accessible without auth, but 0 markets returned pre-season; worth rechecking once MLB/NFL are in full swing
+
+ARCHITECTURE NOTE (confirmed via Replit testing, current session):
+A subset of sources no longer depend on ScrapeOps/Tampermonkey/scraper batch runs
+at all — they either (a) run automatically via scheduled GitHub Actions workflows
+that push to the same Gist the harvester uses, or (b) call a genuinely public,
+unauthenticated API live every time the board loads. These are, in priority order
+same as before, just with a faster/more reliable primary tier:
+  Pick6, PrizePicks, Underdog  → GitHub Actions (scheduled, Gist-backed)
+  Bovada (game lines), Betr, Action Network, Kalshi, OddsShark → live direct call
+Sites confirmed to have NO viable non-Tampermonkey path (real anti-bot WAF or no
+accessible data at all, not just unexplored): BetMGM, Caesars, Novig, DraftKings
+main sportsbook, FanDuel, MyBookie, Bet365, BetUS, Bet105, BetWhale, YBets,
+Covers, OddsJam, EVBets, SportsInsights, VegasInsider, Stokastic, RotoGrinders,
+FantasyLabs, Outlier, Rotowire, Numberfire, PropsCash, BettingPros, Unabated,
+Pickswise, Pickwise, ParlaySavant, Pregame, OddsPortal, ScoresAndOdds, PropSwap,
+Zamba, Polymarket (stale data only).
 
 HARVESTER STATUS INTERPRETATION:
 - 🟢 Live (Xmin): use at full signal weight

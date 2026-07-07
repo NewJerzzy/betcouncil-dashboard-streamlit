@@ -21709,20 +21709,20 @@ with tabs[9]:
     _pp_count = len([p for p in _pp_board if "prizepicks" in str(p.get("source","")).lower() or "pp" in str(p.get("book","")).lower()]) if _pp_board else 0
     _pp_count_str = f" ({_pp_count} props)" if _pp_count else ""
     if _pp_src == "gist_scraper":
-        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded via Gist{_pp_count_str}", "Action": "None"})
+        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded via GitHub Actions{_pp_count_str}", "Action": "None"})
     elif _pp_src == "prizepicks_direct":
         _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Connected via ScrapeOps{_pp_count_str}", "Action": "None"})
     elif _pp_st == "ok" and _pp_count:
         _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded{_pp_count_str}", "Action": "None"})
     elif _pp_st == "unavailable":
-        _src_statuses.append({"Source": "PrizePicks", "Status": "🔴 ScrapeOps exhausted + no Gist data", "Action": "Run betcouncil_auto_scraper.py"})
+        _src_statuses.append({"Source": "PrizePicks", "Status": "🔴 GitHub Actions + ScrapeOps both unavailable", "Action": "Run betcouncil_auto_scraper.py"})
     else:
         _src_statuses.append({"Source": "PrizePicks", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
     # Underdog
     _ud = st.session_state.get("ud_props_compare", [])
     if _ud:
-        _src_statuses.append({"Source": "Underdog", "Status": f"🟢 {len(_ud)} props", "Action": "None"})
+        _src_statuses.append({"Source": "Underdog", "Status": f"🟢 {len(_ud)} props (auto via GitHub Actions)", "Action": "None"})
     else:
         _src_statuses.append({"Source": "Underdog", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
@@ -21758,6 +21758,34 @@ with tabs[9]:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": f"🟢 {len(_bov)} lines", "Action": "None"})
     else:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Pick6 (SSR scrape via GitHub Actions, no login/browser needed)
+    _pk6 = st.session_state.get("pick6_props_h", [])
+    if _pk6:
+        _src_statuses.append({"Source": "Pick6", "Status": f"🟢 {len(_pk6)} props (auto via GitHub Actions)", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Pick6", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Betr (live public GraphQL, no auth needed)
+    _betr = st.session_state.get("betr_props_h", [])
+    if _betr:
+        _src_statuses.append({"Source": "Betr", "Status": f"🟢 {len(_betr)} props (live public API)", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Betr", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # Action Network (live public API, no auth needed)
+    _an = st.session_state.get("action_network_data", {})
+    if _an:
+        _src_statuses.append({"Source": "Action Network", "Status": "🟢 Loaded (live public API)", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Action Network", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+
+    # OddsShark (direct fetch fallback, no auth needed)
+    _osh = st.session_state.get("oddsshark_data", {})
+    if _osh:
+        _src_statuses.append({"Source": "OddsShark", "Status": "🟢 Loaded (auto, no Tampermonkey needed)", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "OddsShark", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
     # Pinnacle
     _betr_count = sum(len([p for p in st.session_state.get(f"oddspapi_props_{s}", []) if p.get("source") == "betr_direct"]) for s in ["NBA","MLB","NHL","WNBA","NFL"])
