@@ -11427,6 +11427,7 @@ def load_sport_data(sport):
         ("fetch_pickwise_from_gist",           "pickwise_data",          "pickwise_src"),
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
         ("fetch_kalshi2_from_gist",            "kalshi2_data",           "kalshi2_src"),
+        ("fetch_pick6_props_from_gist",        "pick6_props_h",          "pick6_src"),
     ]
     if sport == "MLB":
         try:

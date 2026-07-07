@@ -14430,6 +14430,64 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
     return [], "unavailable"
 
 
+def fetch_pick6_props_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -> tuple:
+    """
+    Reads DraftKings Pick6 player props from the Gist (pushed by the
+    Replit SSR-scrape script — no login/browser automation needed on
+    the scraping side; Pick6 embeds its full prop dataset directly in
+    the page's server-rendered HTML).
+    Returns (props_list, source_label)
+    """
+    data = _read_gist_file("pick6_props_live.json", cache_minutes=10)
+    if not data:
+        return [], "unavailable"
+
+    if not _is_fresh(data, max_age_minutes=max_age_minutes):
+        print(f"[Pick6] Gist data is stale (>{max_age_minutes}min old) — skipping")
+        return [], "stale"
+
+    raw_props = data.get("props", data) if isinstance(data, dict) else data
+    if not raw_props:
+        return [], "unavailable"
+
+    results = []
+    seen = set()
+    for p in raw_props:
+        player = p.get("player") or p.get("Player")
+        stat_name = p.get("stat_name") or p.get("Prop") or p.get("stat")
+        line = p.get("line") or p.get("Line") or p.get("targetValue")
+        multiplier = p.get("multiplier") or p.get("standingsMultiplier")
+
+        if not player or line is None:
+            continue
+        try:
+            line_val = float(line)
+        except (TypeError, ValueError):
+            continue
+
+        key = (player, stat_name, line_val, multiplier)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        results.append({
+            "Player": player,
+            "Prop": stat_name or "Unknown",
+            "Line": line_val,
+            "Multiplier": multiplier,
+            "Book": "Pick6",
+            "Sport": sport,
+            "source": "pick6_ssr_scrape",
+            "captured_at": p.get("captured_at", data.get("captured_at", "") if isinstance(data, dict) else ""),
+        })
+
+    if results:
+        print(f"[Pick6] {len(results)} props from SSR scrape (no login required)")
+        return results, "ssr_scrape"
+    return [], "unavailable"
+
+
+
 def _parse_fanduel_harvested(raw, sport: str) -> list:
     """Parse FanDuel browser-harvested data into BetCouncil prop format."""
     results = []
