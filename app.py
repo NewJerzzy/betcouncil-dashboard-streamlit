@@ -15041,22 +15041,21 @@ with st.sidebar:
             # Show which source the props came from
             sources = list(set(p.get("source","Unknown") for p in board if p.get("source")))
             source_str = " + ".join(sources) if sources else "Unknown"
-            # Update PrizePicks status based on actual source. IMPORTANT: the auto
-            # scraper (betcouncil_auto_scraper.py) tags its PrizePicks props with
-            # source="prizepicks_auto", which contains "prizepicks" and was
-            # previously satisfying this check WITHOUT setting pp_source to
-            # "gist_scraper" — causing the sidebar to wrongly display "Connected
-            # via ScrapeOps" even when ScrapeOps' free tier is exhausted and the
-            # data actually came from the Gist-backed auto scraper. Fixed by
-            # explicitly setting pp_source here too, matching the same value the
-            # display logic checks for at the gist_scraper branch below.
-            if any("prizepicks_auto" in s.lower() or "gist" in s.lower() for s in sources):
-                st.session_state["pp_status"] = "ok"
-                st.session_state["pp_source"] = "gist_scraper"
-            elif any("prizepicks" in s.lower() for s in sources):
-                st.session_state["pp_status"] = "ok"
-            elif sources:
-                st.session_state["pp_status"] = "fallback"
+            # Only fill in pp_status/pp_source if fetchers.py's
+            # scrape_prizepicks_with_gist_fallback() didn't already set them
+            # successfully this run. Previously this block re-derived status from
+            # the combined board's per-prop "source" tags using substring checks
+            # ("prizepicks_auto", "gist"), which don't match the current GH
+            # Actions scraper's tag ("github_actions_partner_api") — silently
+            # clobbering a correct "ok" status down to "fallback".
+            if st.session_state.get("pp_status") != "ok":
+                if any("prizepicks_auto" in s.lower() or "gist" in s.lower() or "github_actions" in s.lower() for s in sources):
+                    st.session_state["pp_status"] = "ok"
+                    st.session_state["pp_source"] = "gist_scraper"
+                elif any("prizepicks" in s.lower() for s in sources):
+                    st.session_state["pp_status"] = "ok"
+                elif sources:
+                    st.session_state["pp_status"] = "fallback"
             st.success(f"✅ {len(board)} props loaded from **{source_str}**")
             if n_def:
                 st.info(f"{n_def} unknown players skipped (using defaults)")
@@ -15076,7 +15075,7 @@ with st.sidebar:
     elif _pp_source == "last_known_good":
         st.warning("🟡 PrizePicks showing last-known-good cache (stale)")
     elif _pp_status == "ok":
-        st.success(f"✅ PrizePicks connected via ScrapeOps")
+        st.success("✅ PrizePicks connected")
     elif _pp_status == "fallback":
         st.info("ℹ️ Using fallback sources (Underdog/ParlayAPI) — PrizePicks unavailable")
     elif _pp_status == "unavailable":
@@ -21721,11 +21720,11 @@ with tabs[9]:
     if _pp_src == "gist_scraper":
         _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded via GitHub Actions{_pp_count_str}", "Action": "None"})
     elif _pp_src == "prizepicks_direct":
-        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Connected via ScrapeOps{_pp_count_str}", "Action": "None"})
+        _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Connected via direct scrape{_pp_count_str}", "Action": "None"})
     elif _pp_st == "ok" and _pp_count:
         _src_statuses.append({"Source": "PrizePicks", "Status": f"🟢 Loaded{_pp_count_str}", "Action": "None"})
     elif _pp_st == "unavailable":
-        _src_statuses.append({"Source": "PrizePicks", "Status": "🔴 GitHub Actions + ScrapeOps both unavailable", "Action": "Run betcouncil_auto_scraper.py"})
+        _src_statuses.append({"Source": "PrizePicks", "Status": "🔴 All sources unavailable (Gist + direct scrape)", "Action": "Check GitHub Actions workflow run"})
     else:
         _src_statuses.append({"Source": "PrizePicks", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
