@@ -15587,6 +15587,27 @@ def fetch_sportsinsights_from_gist(sport):
 def fetch_oddsshark_from_gist(sport):
     data=_read_gist_file(f"betcouncil_oddsshark_{sport}.json",5)
     if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
+    # Browser harvester unavailable — try direct Python fetch (public API, no auth)
+    try:
+        import requests as _req
+        from datetime import date as _date
+        _sport_map = {"MLB":"mlb","NFL":"nfl","NBA":"nba","NHL":"nhl",
+                      "NCAAFB":"ncaaf","NCAAMB":"ncaab"}
+        _slug = _sport_map.get(sport.upper())
+        if not _slug:
+            return {}, "unavailable"
+        _today = _date.today().strftime("%Y-%m-%d")
+        _r = _req.get(
+            f"https://www.oddsshark.com/api/scores/{_slug}/{_today}",
+            headers={"Accept": "application/json",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=14)
+        if _r.status_code == 200:
+            _d = _r.json()
+            if _d:
+                return (_d if isinstance(_d, dict) else {"games": _d}), "python_direct"
+    except Exception:
+        pass
     return {}, "unavailable"
 
 def fetch_vegasinsider_from_gist(sport):
