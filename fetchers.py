@@ -14880,6 +14880,7 @@ def _parse_prizepicks_harvested(raw, sport: str) -> list:
             pinfo     = players.get(pid, {})
             pname     = pinfo.get("name","") or desc
             if not pname or not stat_type or line is None: continue
+            odds_type = attr.get("odds_type", "standard")
             results.append({
                 "Player":    pname,
                 "Prop":      stat_type,
@@ -14890,6 +14891,13 @@ def _parse_prizepicks_harvested(raw, sport: str) -> list:
                 "Book":      "PrizePicks",
                 "Sport":     sport,
                 "source":    "prizepicks_browser_harvest",
+                # Real field from PrizePicks projections API — was previously
+                # discarded here even though the CDN scraper fallback path
+                # already captured it. standard/goblin/demon drives payout
+                # difficulty tiering; -110 above is a display placeholder,
+                # NOT PrizePicks' real pricing (PrizePicks doesn't post
+                # American-odds juice — payout structure IS the price).
+                "OddsType":  odds_type,
             })
     except Exception as e:
         print(f"[WARN] _parse_prizepicks_harvested: {e}")
