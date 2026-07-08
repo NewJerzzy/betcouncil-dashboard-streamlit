@@ -12845,7 +12845,7 @@ def load_sport_data(sport):
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
         player = p["Player"]
         line = p["Line"]
-        side = p["Side"]
+        side = p.get("Side", "OVER")
 
         # ── GAME TOTAL PROP ROUTING ──────────────────────────
         # If this is a game-total prop (e.g. WNBA O/U 169.5),
