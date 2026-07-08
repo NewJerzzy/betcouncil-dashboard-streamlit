@@ -21759,24 +21759,24 @@ with tabs[8]:
             _all_book_cols = [b for b in BOOK_ORDER if b != "ParlayPlay"]
             col_order = ["Player","Prop","Side","Tier"] + _all_book_cols + ["Best Book","Best Line","Edge Gain"]
             col_order = [c for c in col_order if c in rows_ls[0]]
-            st.dataframe(pd.DataFrame(rows_ls)[col_order], use_container_width=True, hide_index=True)
+            st.table(pd.DataFrame(rows_ls)[col_order].reset_index(drop=True))
             better_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Edge Gain"] >= 0.5]
             if better_ls:
                 st.markdown("### \U0001f525 Better Lines Available Elsewhere")
                 st.caption(f"{len(better_ls)} props where another platform has a more favorable line (≥0.5)")
                 bc = ["Player","Prop","Side","Tier","PrizePicks","Best Book","Best Line","Edge Gain"]
-                st.dataframe(pd.DataFrame(better_ls)[[c for c in bc if c in better_ls[0]]], use_container_width=True, hide_index=True)
+                st.table(pd.DataFrame(better_ls)[[c for c in bc if c in better_ls[0]]].reset_index(drop=True))
             else:
                 st.success("✅ PrizePicks has the best available line on all loaded props.")
         disc_ls = st.session_state.get("multibook_discrepancies", [])
         if disc_ls:
             st.markdown("### \U0001f4ca Cross-Book Discrepancies")
             st.caption("Large gaps between books signal sharp money or line errors")
-            st.dataframe(pd.DataFrame(disc_ls[:10]), use_container_width=True, hide_index=True)
+            st.table(pd.DataFrame(disc_ls[:10]).reset_index(drop=True))
         arb_ls = st.session_state.get("arb_opportunities", [])
         if arb_ls:
             st.markdown("### \u26a1 Arbitrage Opportunities")
-            st.dataframe(pd.DataFrame(arb_ls[:10]), use_container_width=True, hide_index=True)
+            st.table(pd.DataFrame(arb_ls[:10]).reset_index(drop=True))
 
         # ── StatsHub — Statcast + Hit Rates from EV API ──────────────────────
         st.markdown("---")
