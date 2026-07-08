@@ -12090,6 +12090,219 @@ def fetch_mlb_live_stats() -> dict:
     return result
 
 
+
+def fetch_wnba_live_stats() -> dict:
+    """
+    Live WNBA season stats from ESPN standings API.
+    Returns:
+      { "base_total": float, "league_avg_pf": float,
+        "team_ratings": {full_team_name: rating} on 95-120 scale }
+    Rating formula: 106 + (point_differential_per_game * 2.0), capped 95-120.
+    Center 106 matches the existing WNBA_POWER_RATINGS center in config.py.
+    Cached 6 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, "wnba_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached and isinstance(cached.get("team_ratings"), dict) and len(cached["team_ratings"]) >= 10:
+                return cached
+
+    url = "https://site.api.espn.com/apis/v2/sports/basketball/wnba/standings?season=2026"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=12)
+        if resp.status_code != 200:
+            print(f"[WARN] fetch_wnba_live_stats: HTTP {resp.status_code}")
+            return {}
+        data = resp.json()
+    except Exception as e:
+        print(f"[WARN] fetch_wnba_live_stats: {e}")
+        return {}
+
+    groups = data.get("children", data.get("groups", []))
+    all_entries = []
+    for g in groups:
+        all_entries += g.get("standings", {}).get("entries", [])
+
+    total_pf = 0.0
+    n = 0
+    team_ratings: dict = {}
+    for entry in all_entries:
+        name = entry.get("team", {}).get("displayName", "")
+        stats = {s["name"]: s.get("value", s.get("displayValue")) for s in entry.get("stats", [])}
+        try:
+            pf = float(stats.get("avgPointsFor") or 0)
+            pa = float(stats.get("avgPointsAgainst") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pf > 0 and name:
+            diff = pf - pa
+            total_pf += pf
+            n += 1
+            # Center at 106 to match existing WNBA_POWER_RATINGS scale in config.py
+            rating = round(max(95.0, min(120.0, 106.0 + diff * 2.0)), 1)
+            team_ratings[name] = rating
+
+    if len(team_ratings) < 10 or n == 0:
+        print(f"[WARN] fetch_wnba_live_stats: only got {len(team_ratings)} teams — discarding")
+        return {}
+
+    avg_pf = total_pf / n
+    result = {
+        "base_total": round(avg_pf * 2, 1),
+        "league_avg_pf": round(avg_pf, 2),
+        "team_ratings": team_ratings,
+    }
+    _safe_save_pkl(cache_path, result)
+    return result
+
+
+def fetch_nhl_live_stats() -> dict:
+    """
+    Live NHL season stats from api-web.nhle.com (official NHL public API).
+    Returns:
+      { "goals_for": {team_key: gf_per_game},
+        "goals_against": {team_key: ga_per_game} }
+    Each dict includes both the full team name and abbreviation as keys so
+    the existing NHL_TEAM_GOALS_FOR/AGAINST lookup logic works unchanged.
+    Cached 6 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nhl_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached and isinstance(cached.get("goals_for"), dict) and len(cached["goals_for"]) >= 20:
+                return cached
+
+    url = "https://api-web.nhle.com/v1/standings/now"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=12)
+        if resp.status_code != 200:
+            print(f"[WARN] fetch_nhl_live_stats: HTTP {resp.status_code}")
+            return {}
+        data = resp.json()
+    except Exception as e:
+        print(f"[WARN] fetch_nhl_live_stats: {e}")
+        return {}
+
+    goals_for: dict = {}
+    goals_against: dict = {}
+    for rec in data.get("standings", []):
+        full_name = rec.get("teamCommonName", {}).get("default", "")
+        abbr = rec.get("teamAbbrev", {}).get("default", "")
+        gp = rec.get("gamesPlayed", 0) or 0
+        gf = rec.get("goalFor", 0) or 0
+        ga = rec.get("goalAgainst", 0) or 0
+        if gp > 10 and full_name:
+            gf_pg = round(gf / gp, 3)
+            ga_pg = round(ga / gp, 3)
+            # Store under both full name and abbreviation for flexible lookup
+            for key in (full_name, abbr):
+                if key:
+                    goals_for[key] = gf_pg
+                    goals_against[key] = ga_pg
+
+    if len(goals_for) < 20:
+        print(f"[WARN] fetch_nhl_live_stats: only got {len(goals_for)//2} teams — discarding")
+        return {}
+
+    # Compute power ratings (88-115 scale) from goal differential per game.
+    # Center at 105 to match existing NHL_POWER_RATINGS midpoint in config.py.
+    # Formula: 105 + gd_pg * 5.0, where +1 GD/G ≈ +5 rating points.
+    avg_gf_pg = sum(v for k, v in goals_for.items() if len(k) <= 3) / max(1, sum(1 for k in goals_for if len(k) <= 3))
+    avg_ga_pg = sum(v for k, v in goals_against.items() if len(k) <= 3) / max(1, sum(1 for k in goals_against if len(k) <= 3))
+    team_ratings: dict = {}
+    for key in goals_for:
+        gf_pg = goals_for[key]
+        ga_pg = goals_against.get(key, avg_ga_pg)
+        gd_pg = gf_pg - ga_pg
+        rating = round(max(88.0, min(115.0, 105.0 + gd_pg * 5.0)), 1)
+        team_ratings[key] = rating
+
+    result = {
+        "goals_for": goals_for,
+        "goals_against": goals_against,
+        "team_ratings": team_ratings,
+        "base_total": round((avg_gf_pg + avg_ga_pg), 2),
+    }
+    _safe_save_pkl(cache_path, result)
+    return result
+
+
+def fetch_nba_live_stats() -> dict:
+    """
+    Live NBA season stats from ESPN standings API.
+    Returns:
+      { "base_total": float, "league_avg_pf": float,
+        "team_ratings": {full_team_name: rating} on 90-125 scale }
+    Rating formula: 105 + (point_differential_per_game * 1.0), capped 90-125.
+    Center 105 approximates the existing NBA_POWER_RATINGS midpoint in bc_utils.py.
+    Cached 6 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nba_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached and isinstance(cached.get("team_ratings"), dict) and len(cached["team_ratings"]) >= 25:
+                return cached
+
+    url = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?season=2026"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=12)
+        if resp.status_code != 200:
+            print(f"[WARN] fetch_nba_live_stats: HTTP {resp.status_code}")
+            return {}
+        data = resp.json()
+    except Exception as e:
+        print(f"[WARN] fetch_nba_live_stats: {e}")
+        return {}
+
+    groups = data.get("children", data.get("groups", []))
+    all_entries = []
+    for g in groups:
+        all_entries += g.get("standings", {}).get("entries", [])
+
+    total_pf = 0.0
+    total_g = 0
+    team_ratings: dict = {}
+    for entry in all_entries:
+        name = entry.get("team", {}).get("displayName", "")
+        stats = {s["name"]: s.get("value", s.get("displayValue")) for s in entry.get("stats", [])}
+        try:
+            pf_total = float(stats.get("pointsFor") or 0)
+            pa_total = float(stats.get("pointsAgainst") or 0)
+            wins = float(stats.get("wins") or 0)
+            losses = float(stats.get("losses") or 0)
+        except (TypeError, ValueError):
+            continue
+        gp = wins + losses
+        if gp > 0 and pf_total > 0 and name:
+            pf_pg = pf_total / gp
+            pa_pg = pa_total / gp
+            diff = pf_pg - pa_pg
+            total_pf += pf_total
+            total_g += gp
+            # Center at 105 to approximate existing NBA_POWER_RATINGS midpoint
+            rating = round(max(90.0, min(125.0, 105.0 + diff * 1.0)), 1)
+            team_ratings[name] = rating
+
+    if len(team_ratings) < 25 or total_g == 0:
+        print(f"[WARN] fetch_nba_live_stats: only got {len(team_ratings)} teams — discarding")
+        return {}
+
+    avg_pf_pg = total_pf / total_g
+    result = {
+        "base_total": round(avg_pf_pg * 2, 1),
+        "league_avg_pf": round(avg_pf_pg, 2),
+        "team_ratings": team_ratings,
+    }
+    _safe_save_pkl(cache_path, result)
+    return result
+
+
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
     Pinnacle game lines via arcadia guest API (no auth).

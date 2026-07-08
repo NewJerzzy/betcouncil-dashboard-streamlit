@@ -6922,7 +6922,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 h_power = power_ratings.get(home_full, power_ratings.get(home_team, 112.0))
                 a_power = power_ratings.get(away_full, power_ratings.get(away_team, 112.0))
                 avg_pace = (h_pace + a_pace) / 2
-                base_total = 227.0  # updated 2025-26 season baseline
+                try:
+                    from fetchers import fetch_nba_live_stats as _fetch_nba_base
+                    base_total = _fetch_nba_base().get("base_total", 227.0)
+                except Exception:
+                    base_total = 227.0
                 pace_adj = (avg_pace - 99.5) * 1.5
                 off_adj = ((h_power + a_power) / 2 - 112.0) * 0.8
                 fair_total = base_total + pace_adj + off_adj
@@ -6945,7 +6949,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 # WNBA totals — pace-adjusted, base ~165 per 2025 season
                 h_power = power_ratings.get(home_team, 106.0)
                 a_power = power_ratings.get(away_team, 106.0)
-                base_total = 165.0
+                try:
+                    from fetchers import fetch_wnba_live_stats as _fetch_wnba_base
+                    base_total = _fetch_wnba_base().get("base_total", 165.0)
+                except Exception:
+                    base_total = 165.0
                 off_adj = ((h_power + a_power) / 2 - 106.0) * 0.6
                 fair_total = base_total + off_adj
             elif sport == "MLB":
@@ -7068,10 +7076,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _logger.debug("Silent except at line 6188")
                     pass
             elif sport == "NHL":
-                h_gf = NHL_TEAM_GOALS_FOR.get(home_full, NHL_TEAM_GOALS_FOR.get(home_team, NHL_GOALS_DEFAULT))
-                h_ga = NHL_TEAM_GOALS_AGAINST.get(home_full, NHL_TEAM_GOALS_AGAINST.get(home_team, NHL_GOALS_DEFAULT))
-                a_gf = NHL_TEAM_GOALS_FOR.get(away_full, NHL_TEAM_GOALS_FOR.get(away_team, NHL_GOALS_DEFAULT))
-                a_ga = NHL_TEAM_GOALS_AGAINST.get(away_full, NHL_TEAM_GOALS_AGAINST.get(away_team, NHL_GOALS_DEFAULT))
+                _nhl_gf_dict = dict(NHL_TEAM_GOALS_FOR)
+                _nhl_ga_dict = dict(NHL_TEAM_GOALS_AGAINST)
+                try:
+                    from fetchers import fetch_nhl_live_stats as _fetch_nhl_goals
+                    _nhl_live_goals = _fetch_nhl_goals()
+                    if _nhl_live_goals.get("goals_for"):
+                        _nhl_gf_dict.update(_nhl_live_goals["goals_for"])
+                        _nhl_ga_dict.update(_nhl_live_goals["goals_against"])
+                except Exception:
+                    pass
+                h_gf = _nhl_gf_dict.get(home_full, _nhl_gf_dict.get(home_team, NHL_GOALS_DEFAULT))
+                h_ga = _nhl_ga_dict.get(home_full, _nhl_ga_dict.get(home_team, NHL_GOALS_DEFAULT))
+                a_gf = _nhl_gf_dict.get(away_full, _nhl_gf_dict.get(away_team, NHL_GOALS_DEFAULT))
+                a_ga = _nhl_ga_dict.get(away_full, _nhl_ga_dict.get(away_team, NHL_GOALS_DEFAULT))
                 home_expected = (h_gf + a_ga) / 2
                 away_expected = (a_gf + h_ga) / 2
                 _mu_home = max(0.5, home_expected)
@@ -7640,12 +7658,27 @@ def get_live_power_ratings(sport, fallback_ratings):
     scrape is empty or fails.
     Cached 6h to match the underlying fetcher's own cache window.
     """
+    source_label = "static_fallback"
     try:
         if sport == "MLB":
             from fetchers import fetch_mlb_live_stats as _fetch_mlb_live
             live = _fetch_mlb_live().get("team_ratings", {})
+            source_label = "mlb_statsapi_live"
+        elif sport == "WNBA":
+            from fetchers import fetch_wnba_live_stats as _fetch_wnba_live
+            live = _fetch_wnba_live().get("team_ratings", {})
+            source_label = "wnba_espn_live"
+        elif sport == "NHL":
+            from fetchers import fetch_nhl_live_stats as _fetch_nhl_live
+            live = _fetch_nhl_live().get("team_ratings", {})
+            source_label = "nhl_api_live"
+        elif sport == "NBA":
+            from fetchers import fetch_nba_live_stats as _fetch_nba_live
+            live = _fetch_nba_live().get("team_ratings", {})
+            source_label = "nba_espn_live"
         else:
             live = fetch_teamrankings_power_ratings(sport)
+            source_label = "teamrankings_live"
     except Exception:
         live = {}
     if not live:
@@ -7657,7 +7690,7 @@ def get_live_power_ratings(sport, fallback_ratings):
         matched = sum(1 for t in live if t in fallback_ratings)
         if matched / len(fallback_ratings) < 0.7:
             return fallback_ratings, "static_fallback_low_match"
-    return merged, "mlb_statsapi_live" if sport == "MLB" else "teamrankings_live"
+    return merged, source_label
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -7665,7 +7698,7 @@ def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     power_ratings = power_map.get(sport, {})
-    if sport in ("MLB", "WNBA") and power_ratings:
+    if sport in ("MLB", "WNBA", "NHL", "NBA") and power_ratings:
         power_ratings, _pr_source = get_live_power_ratings(sport, power_ratings)
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings, mlb_pitchers=mlb_pitchers)
