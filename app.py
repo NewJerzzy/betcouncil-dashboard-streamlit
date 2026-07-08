@@ -12590,7 +12590,7 @@ def load_sport_data(sport):
     # display-only. Only explicitly verified stat-name pairs are matched —
     # anything unmapped is left alone rather than fuzzy-matched, since a
     # wrong match here is worse than no match.
-    _UNABATED_BOOK_KEY = {"PrizePicks": "prizepicks", "Underdog": "underdog", "Pick6": "pick6"}
+    _UNABATED_BOOK_KEY = {"PrizePicks": "prizepicks", "Underdog": "underdog", "Pick6": "pick6", "DK Pick6": "pick6"}
     _UNABATED_STAT_MAP = {
         "Home Runs": "Home Runs", "Hits": "Hits", "Runs": "Runs", "RBIs": "RBIs",
         "Total Bases": "Total Bases", "Stolen Bases": "Stolen Bases",
@@ -16752,15 +16752,34 @@ with tabs[1]:
                 ("S",  "#22c55e" if _p_dict.get("EVSharpMove") else "var(--bc-border)"), # Sharp steam
                 ("G",  "#22c55e" if _r.get("_model_prob", 0) and safe_float(str(_r.get("_model_prob",0)).replace("%",""), 0) >= 60 else "var(--bc-border)"),  # Grade
                 ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "var(--bc-border)"),  # Better line
-                ("U",  "#e04040" if _p_dict.get("UnabatedFlag") and _p_dict.get("UnabatedDirection")=="market_higher"
-                       else "#22c55e" if _p_dict.get("UnabatedFlag") else "var(--bc-border)"),  # Unabated devig disagreement
             ]
+            # Unabated dot handled separately (not in the loop below) because
+            # it's tri-state (flagged / agreed / no data) where the other
+            # dots are boolean present/absent — "no data" needs to look
+            # visually different from "checked, no disagreement found",
+            # otherwise a gray dot reads as "confirmed" when it may just mean
+            # Unabated never matched this row (see _UNABATED_BOOK_KEY above).
+            _unab_fair = _p_dict.get("UnabatedFairProb")
+            if _unab_fair is None:
+                _unab_dot = ('<span style="display:inline-block;width:13px;height:13px;'
+                             'border-radius:50%;border:1.5px solid var(--bc-border);'
+                             'background:transparent;margin-right:2px;" '
+                             'title="U: no Unabated data for this row"></span>')
+            else:
+                _unab_col = ("#e04040" if _p_dict.get("UnabatedFlag") and _p_dict.get("UnabatedDirection")=="market_higher"
+                             else "#22c55e" if _p_dict.get("UnabatedFlag") else "var(--bc-border)")
+                _unab_title = "U: market thinks easier than GEM" if _unab_col == "#e04040" else \
+                              "U: GEM thinks easier than market" if _unab_col == "#22c55e" else \
+                              "U: checked, no disagreement"
+                _unab_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
+                             f'background:{_unab_col};font-size:8px;font-weight:700;color:#ffffff;'
+                             f'text-align:center;line-height:13px;margin-right:2px;" title="{_unab_title}">U</span>')
             _cons_bar = "".join([
                 f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
                 f'background:{col};font-size:8px;font-weight:700;color:#ffffff;'
                 f'text-align:center;line-height:13px;margin-right:2px;" title="{lbl}">{lbl[0]}</span>'
                 for lbl, col in _cons_sources
-            ])
+            ]) + _unab_dot
             # Filled bar count for % display
             _filled = sum(1 for _, c in _cons_sources if c != "var(--bc-border)")
             _cons_pct = int(_filled / len(_cons_sources) * 100)

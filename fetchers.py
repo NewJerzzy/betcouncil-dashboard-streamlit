@@ -5438,7 +5438,8 @@ def fetch_underdog_props(sport):
                 "Line": float(line_val),
                 "Side": "OVER",
                 "Sport": sport,
-                "source": "Underdog"
+                "source": "Underdog",
+                "Book": "Underdog",
             })
 
         if not props and lines_list:
@@ -5458,7 +5459,7 @@ def fetch_underdog_props(sport):
                             seen.add(key)
                             props.append({"Player": name, "Prop": stat_name,
                                         "Line": float(line_val), "Side": "OVER",
-                                        "Sport": sport, "source": "Underdog"})
+                                        "Sport": sport, "source": "Underdog", "Book": "Underdog"})
         if props:
             try:
                 with open(cache_path, "wb") as _f:
@@ -5616,6 +5617,7 @@ def scrape_prizepicks(sport):
             "Side":     p.get("Side")  or p.get("side",      "OVER"),
             "Sport":    p.get("Sport") or p.get("sport",     _sport),
             "source":   "PrizePicks",
+            "Book":     "PrizePicks",
             "OddsType": p.get("OddsType") or p.get("odds_type", "standard"),
         }
 
