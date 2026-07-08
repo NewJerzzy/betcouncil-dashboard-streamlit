@@ -5520,24 +5520,8 @@ def scrape_prizepicks(sport):
     #   Write order: local file  +  Gist (only when generating a new UUID)
     def _read_device_id_from_gist() -> str:
         """Fetch device_id from betcouncil_device_fingerprint.json in the Gist."""
-        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
-            return ""
-        try:
-            _gr = _http.get(
-                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-                headers={
-                    "Authorization": f"token {GITHUB_TOKEN}",
-                    "Accept": "application/vnd.github.v3+json",
-                },
-                timeout=8,
-            )
-            if _gr.status_code != 200:
-                return ""
-            _gf = _gr.json().get("files", {}).get("betcouncil_device_fingerprint.json", {})
-            _gc = _gf.get("content", "")
-            return json.loads(_gc).get("device_id", "") if _gc else ""
-        except Exception:
-            return ""
+        data = _read_gist_file("betcouncil_device_fingerprint.json", cache_minutes=5)
+        return data.get("device_id", "") if data else ""
 
     def _write_device_id_to_gist(did: str) -> None:
         """Persist device_id to Gist so it survives Streamlit redeploys."""
@@ -8596,22 +8580,9 @@ def _load_dk_pick6_tokens() -> dict:
         except Exception:
             pass
     # 2. Gist pick6_tokens.json
-    if GITHUB_TOKEN and GITHUB_GIST_ID:
-        try:
-            _gr = _http.get(
-                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-                headers={"Authorization": f"token {GITHUB_TOKEN}",
-                         "Accept": "application/vnd.github.v3+json"},
-                timeout=8,
-            )
-            if _gr.status_code == 200:
-                _gf = _gr.json().get("files", {}).get("pick6_tokens.json", {})
-                if _gf.get("content"):
-                    _d = json.loads(_gf["content"])
-                    if _d.get("bearer_jwt"):
-                        return _d
-        except Exception:
-            pass
+    _d = _read_gist_file("pick6_tokens.json", cache_minutes=5)
+    if _d.get("bearer_jwt"):
+        return _d
     # 3. Sportsbook token fallback (same auth domain)
     sb_cache = os.path.join(CACHE_DIR, "draftkings_session_token.txt")
     if os.path.exists(sb_cache):
@@ -8625,22 +8596,9 @@ def _load_dk_pick6_tokens() -> dict:
         except Exception:
             pass
     # 4. Gist draftkings_tokens.json
-    if GITHUB_TOKEN and GITHUB_GIST_ID:
-        try:
-            _gr = _http.get(
-                f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-                headers={"Authorization": f"token {GITHUB_TOKEN}",
-                         "Accept": "application/vnd.github.v3+json"},
-                timeout=8,
-            )
-            if _gr.status_code == 200:
-                _gf = _gr.json().get("files", {}).get("draftkings_tokens.json", {})
-                if _gf.get("content"):
-                    _d = json.loads(_gf["content"])
-                    if _d.get("bearer_jwt"):
-                        return _d
-        except Exception:
-            pass
+    _d = _read_gist_file("draftkings_tokens.json", cache_minutes=5)
+    if _d.get("bearer_jwt"):
+        return _d
     return {}
 
 
@@ -10905,12 +10863,13 @@ CAESARS_PROP_TABS = {
 }
 
 def _get_caesars_tokens():
+    """Bearer JWT + WAF token for Caesars, both from the same Gist file that
+    fetch_caesars_waf_from_gist() reads (waf only). Routed through the shared
+    _read_gist_file() rather than a separate raw fetch, so there's one code
+    path to this file instead of two that could drift out of sync."""
     try:
-        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            tokens = json.loads(json.loads(r.read()).get("files",{}).get("betcouncil_caesars_tokens.json",{}).get("content","{}"))
-            return tokens.get("bearer_jwt",""), tokens.get("waf_token","")
+        tokens = _read_gist_file("betcouncil_caesars_tokens.json", cache_minutes=5)
+        return tokens.get("bearer_jwt",""), tokens.get("waf_token","")
     except Exception as e:
         print(f"[WARN] _get_caesars_tokens: {e}"); return "",""
 
@@ -13456,12 +13415,7 @@ def save_closing_line(player, prop, line, sport, over_odds=None, under_odds=None
     """Auto-save closing line to Gist. Called from enrichment loop."""
     try:
         key = f"{normalize_name(player)}_{prop.lower().replace(' ','_')}_{date.today().isoformat()}"
-        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            gist = json.loads(r.read())
-        f  = gist.get("files",{}).get("betcouncil_closing_lines.json",{})
-        db = json.loads(f.get("content","{}")) if f else {}
+        db = _read_gist_file("betcouncil_closing_lines.json", cache_minutes=0)
         db[key] = {"player":player,"prop":prop,"line":line,"sport":sport,
                    "over_odds":over_odds,"under_odds":under_odds,"source":source,
                    "timestamp":datetime.now().isoformat()}
@@ -13481,29 +13435,15 @@ def load_closing_line(player, prop, date_str=None):
     try:
         if date_str is None: date_str = date.today().isoformat()
         key = f"{normalize_name(player)}_{prop.lower().replace(' ','_')}_{date_str}"
-        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            gist = json.loads(r.read())
-        f = gist.get("files",{}).get("betcouncil_closing_lines.json",{})
-        return json.loads(f.get("content","{}")).get(key,{}) if f else {}
+        db = _read_gist_file("betcouncil_closing_lines.json", cache_minutes=10)
+        return db.get(key, {})
     except Exception as e:
         print(f"[WARN] load_closing_line: {e}"); return {}
 
 def fetch_all_closing_lines():
     """Load full closing line DB from Gist. Cached 10 min."""
-    cp = os.path.join(CACHE_DIR, "closing_lines_db.pkl")
-    if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 10:
-        c = _safe_load_pkl(cp)
-        if c: return c
     try:
-        req = urllib.request.Request(f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization":f"token {GITHUB_TOKEN}","Accept":"application/vnd.github.v3+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            gist = json.loads(r.read())
-        f  = gist.get("files",{}).get("betcouncil_closing_lines.json",{})
-        db = json.loads(f.get("content","{}")) if f else {}
-        _safe_save_pkl(cp, db); return db
+        return _read_gist_file("betcouncil_closing_lines.json", cache_minutes=10)
     except Exception as e:
         print(f"[WARN] fetch_all_closing_lines: {e}"); return {}
 
@@ -14171,18 +14111,10 @@ def fetch_scanbet_drops_from_gist() -> list:
         c = _safe_load_pkl(cp)
         if c is not None: return c
 
+    raw = _read_gist_file("betcouncil_scanbet_drops.json", cache_minutes=5)
+    if not raw: return []
+
     try:
-        req = urllib.request.Request(
-            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={"Authorization":f"token {GITHUB_TOKEN}",
-                     "Accept":"application/vnd.github.v3+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            gist = json.loads(r.read())
-
-        f = gist.get("files",{}).get("betcouncil_scanbet_drops.json",{})
-        if not f: return []
-
-        raw = json.loads(f.get("content","{}"))
         # Handle both direct GraphQL response and wrapped format
         if isinstance(raw, dict) and "data" in raw:
             sports_data = raw["data"]["events"]["pageData"]["sports"]
