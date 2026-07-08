@@ -238,6 +238,83 @@ def build_prop_key(
     )
 
 
+def build_market_key(player: str, stat: str, sport: str = "", fixture_id: Optional[str] = None) -> str:
+    """
+    Cross-book market key WITHOUT the line value — deliberately looser than
+    build_prop_key(). Two books posting the SAME player/stat at DIFFERENT
+    lines must land on the same key here so middling opportunities (PP at
+    0.5, Underdog at 1.5) can be detected. build_prop_key() stays as-is for
+    exact same-line odds comparison; this is the companion key for
+    cross-line comparison.
+    Format: {sport}:{stat_canonical}:{player_canonical}:{fixture_id}
+    """
+    if fixture_id is None:
+        fixture_id = date.today().strftime("%Y%m%d")
+    return (
+        f"{sport.lower()}"
+        f":{normalize_stat_name(stat, sport)}"
+        f":{normalize_player_name(player)}"
+        f":{fixture_id}"
+    )
+
+
+def find_middling_opportunities(book_data: dict[str, list[dict]], sport: str = "") -> list[dict]:
+    """
+    Group props by player+stat (ignoring line), and flag any group where
+    two or more books post DIFFERENT lines for the same player/stat —
+    the definition of a middling opportunity.
+
+    Returns
+    -------
+    list[dict]: one entry per player/stat with 2+ distinct lines:
+        {market_key, player, stat, sport, lines: {book: {line, over_odds, under_odds}},
+         min_line, max_line, spread}
+    """
+    grouped: dict[str, dict] = {}
+
+    for book, props in book_data.items():
+        if not isinstance(props, list):
+            continue
+        for p in props:
+            player_raw = str(p.get("Player") or p.get("player") or "")
+            stat_raw   = str(p.get("Prop") or p.get("Stat") or p.get("stat") or "")
+            line_raw   = p.get("Line") or p.get("line")
+            sport_p    = sport or str(p.get("Sport") or p.get("sport") or "")
+            if not player_raw or not stat_raw or line_raw is None:
+                continue
+            try:
+                line_f = float(line_raw)
+            except (TypeError, ValueError):
+                continue
+
+            mkey = build_market_key(player_raw, stat_raw, sport_p)
+            if mkey not in grouped:
+                grouped[mkey] = {
+                    "market_key": mkey,
+                    "player": normalize_player_name(player_raw),
+                    "stat":   normalize_stat_name(stat_raw, sport_p),
+                    "sport":  (sport_p or sport).upper(),
+                    "lines":  {},
+                }
+            grouped[mkey]["lines"][book] = {
+                "line": line_f,
+                "over_odds":  p.get("OverOdds") or p.get("over_odds"),
+                "under_odds": p.get("UnderOdds") or p.get("under_odds"),
+            }
+
+    opportunities = []
+    for mkey, g in grouped.items():
+        distinct_lines = {v["line"] for v in g["lines"].values()}
+        if len(distinct_lines) >= 2:
+            g["min_line"] = min(distinct_lines)
+            g["max_line"] = max(distinct_lines)
+            g["spread"] = round(g["max_line"] - g["min_line"], 2)
+            opportunities.append(g)
+
+    opportunities.sort(key=lambda x: x["spread"], reverse=True)
+    return opportunities
+
+
 def match_props_across_books(
     book_data: dict[str, list[dict]],
     sport: str = "",
