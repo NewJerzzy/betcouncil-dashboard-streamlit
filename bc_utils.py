@@ -4115,6 +4115,17 @@ def correlated_parlay_kelly(legs: list, bankroll: float,
 
     warnings = []
 
+    # Hard cap at 4 legs. Nothing previously enforced this — a 6+ leg parlay
+    # could be constructed even though the correlation-discount formula
+    # (1.0 - avg_corr * (n-1) / (2n)) weakens at higher n, and variance at
+    # 15% fractional Kelly gets genuinely wild beyond ~4 legs. UI callers
+    # already default to building 2-leg parlays; this just makes that a
+    # real ceiling instead of an unenforced convention.
+    MAX_PARLAY_LEGS = 4
+    if len(legs) > MAX_PARLAY_LEGS:
+        warnings.append(f"Parlay capped at {MAX_PARLAY_LEGS} legs (had {len(legs)}) — using top {MAX_PARLAY_LEGS} by prob")
+        legs = sorted(legs, key=lambda l: float(l.get("prob", 0.5) or 0.5), reverse=True)[:MAX_PARLAY_LEGS]
+
     # ── Step 1: Extract leg probabilities and parlay odds ─────────────────
     leg_probs  = []
     leg_odds_f = []  # decimal odds per leg
@@ -5507,36 +5518,20 @@ def get_parlay_correlation(stat1:str,stat2:str,same_game:bool=True,same_team:boo
     if not same_team: return 0.10
     return 0.35
 
-def correlated_parlay_kelly(legs:list,bankroll:float=100.0,fraction:float=0.25)->dict:
-    if not legs or len(legs)<2: return {"kelly_pct":0,"kelly_stake":0,"ev_pct":-99}
-    import math
-    def to_dec(a):
-        a=float(a); return (a/100+1) if a>0 else (100/(-a)+1)
-    combined_prob=1.0
-    for leg in legs: combined_prob*=float(leg.get("fair_prob",0.55))
-    payout=1.0
-    for leg in legs: payout*=to_dec(leg.get("odds_american",-110))
-    n=len(legs); pair_corrs=[]; total_corr=0.0
-    for i in range(n):
-        for j in range(i+1,n):
-            li,lj=legs[i],legs[j]
-            sg=li.get("game","A")==lj.get("game","B")
-            st_=li.get("team","X")==lj.get("team","Y")
-            corr=get_parlay_correlation(li.get("stat","pts"),lj.get("stat","pts"),sg,st_)
-            pair_corrs.append({"leg1":i,"leg2":j,"corr":round(corr,3)})
-            total_corr+=corr
-    n_pairs=n*(n-1)/2; avg_corr=total_corr/n_pairs if n_pairs>0 else 0
-    corr_discount=max(0.1,min(1.0,1.0-avg_corr*(n-1)/(2*n)))
-    b=payout-1
-    if b<=0: return {"kelly_pct":0,"kelly_stake":0,"ev_pct":-99}
-    kelly_raw=(b*combined_prob-(1-combined_prob))/b
-    kelly_adj=min(max(0,kelly_raw*corr_discount*fraction),0.10)
-    ev_pct=(combined_prob-1.0/payout)*100
-    return {"kelly_pct":round(kelly_adj*100,3),"kelly_stake":round(bankroll*kelly_adj,2),
-            "corr_discount":round(corr_discount,4),"avg_correlation":round(avg_corr,4),
-            "combined_prob":round(combined_prob,5),"payout_mult":round(payout,3),
-            "ev_pct":round(ev_pct,3),"is_positive_ev":ev_pct>0,
-            "leg_correlations":pair_corrs,"n_legs":n}
+# REMOVED 2026-07-08: a duplicate correlated_parlay_kelly() used to be
+# defined here, silently shadowing the correct one at line ~4088 (Python
+# lets a later `def` of the same name win with no warning or error). It used
+# a different fraction default (0.25 vs 0.15), a different leg-prob key
+# ("fair_prob" vs "prob"), and returned different output keys entirely
+# (no "edge", no "joint_prob_correlated"). The one real caller (app.py
+# ~line 16303) was built for the FIRST function's interface, so every call
+# through this shadowing version silently fell back to a hardcoded 0.0 edge
+# and skipped the correlation discount entirely. Removed outright rather
+# than left here as dead code, since keeping a second same-name def around
+# is exactly how this bug happened in the first place.
+
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════

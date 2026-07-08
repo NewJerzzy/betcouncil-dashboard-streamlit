@@ -5448,7 +5448,7 @@ def get_session_time():
 def get_daily_change():
     if st.session_state.get("day_start_br", 0) == 0:
         return "0.0%"
-    change = (st.session_state.get("bankroll", 468.49) - st.session_state.get("day_start_br", 0)) / st.session_state.get("day_start_br", 0) * 100
+    change = (st.session_state.get("bankroll", DEFAULT_BANKROLL) - st.session_state.get("day_start_br", 0)) / st.session_state.get("day_start_br", 0) * 100
     return f"{'+' if change >= 0 else ''}{change:.1f}"
 
 def blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup):
@@ -9490,8 +9490,8 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     save_json_data(HISTORY_PATH, st.session_state.get("history", []))
     save_to_gist("history", st.session_state.get("history", []))
     st.session_state["bankroll"] = st.session_state.get("bankroll", DEFAULT_BANKROLL) + net
-    save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", 468.49))
-    save_to_gist("bankroll", st.session_state.get("bankroll", 468.49))
+    save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", DEFAULT_BANKROLL))
+    save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
     record_signal_performance(record, outcome)
     # ── Auto-record CLV from history bet ───────────────────────
     # Don't require Track This Bet — if we have a line and outcome,
@@ -14982,7 +14982,7 @@ if "persistence_loaded" not in st.session_state:
         save_json_data(HISTORY_PATH, _clean_history)
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
-    st.session_state["day_start_br"] = st.session_state.get("bankroll", 468.49)
+    st.session_state["day_start_br"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
     # Comprehensive Elo update, decoupled from locks/button gate (was: only
     # ran when "Check Results via ESPN" was clicked AND locks existed —
     # meaning Elo silently stalled on any day with zero active locks).
@@ -15109,7 +15109,7 @@ with st.sidebar:
     elif _ODDS_API_KEY_STATUS == "invalid":
         st.sidebar.error("🔴 ODDS_API_KEY invalid/expired")
     _today_str    = date.today().strftime("%Y-%m-%d")
-    _bankroll_now = float(st.session_state.get("bankroll", 468.49))
+    _bankroll_now = float(st.session_state.get("bankroll", DEFAULT_BANKROLL))
     _day_start    = float(st.session_state.get("day_start_br", _bankroll_now) or _bankroll_now)
     _daily_chg    = (_bankroll_now - _day_start) / _day_start if _day_start > 0 else 0
     _max_loss_pct = DAILY_RISK_CONTROLS.get("stop_loss_pct", 0.15)
@@ -15403,8 +15403,8 @@ with st.sidebar:
     if st.button("Reset Bankroll", width="stretch"):
         st.session_state.bankroll = DEFAULT_BANKROLL
         st.session_state["day_start_br"] = DEFAULT_BANKROLL
-        save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", 468.49))
-        save_to_gist("bankroll", st.session_state.get("bankroll", 468.49))
+        save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", DEFAULT_BANKROLL))
+        save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
         st.rerun()
 
 # =========================
@@ -15425,7 +15425,7 @@ st.markdown(f"""
     </div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
-    <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.get("bankroll", 468.49):.2f}</div><div style="font-size:15px;color:{dc_color};">{dc} today</div></div>
+    <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.get("bankroll", DEFAULT_BANKROLL):.2f}</div><div style="font-size:15px;color:{dc_color};">{dc} today</div></div>
     <div class="metric-box"><div class="metric-label">Unit</div><div class="metric-value teal-text">${active_unit():.2f}</div></div>
     <div class="metric-box"><div class="metric-label">Min Edge</div><div class="metric-value gold-text">{st.session_state.get("min_edge", MIN_EDGE_DEFAULT)*100:.0f}%</div></div>
     <div class="metric-box"><div class="metric-label">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
@@ -21672,7 +21672,7 @@ with tabs[7]:
                         continue
                 if submitted > 0:
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
-                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get("bankroll", 468.49):.2f}")
+                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get("bankroll", DEFAULT_BANKROLL):.2f}")
                     st.session_state["parsed_bets"] = []
                     st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
                     st.session_state["ocr_raw_text"] = ""
