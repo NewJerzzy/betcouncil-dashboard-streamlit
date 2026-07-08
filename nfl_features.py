@@ -456,7 +456,8 @@ def fetch_nfl_player_stats_weekly(season: int) -> list[dict]:
     Fetch pre-aggregated weekly player stats from nflverse.
     Faster than parsing full PBP — already aggregated per player per week.
 
-    Source: https://github.com/nflverse/nflverse-data/releases/tag/player_stats
+    Source: https://github.com/nflverse/nflverse-data/releases/tag/stats_player
+    Legacy: https://github.com/nflverse/nflverse-data/releases/tag/player_stats (2015-2024)
 
     Returns list of weekly stat dicts per player.
     """
@@ -475,15 +476,21 @@ def fetch_nfl_player_stats_weekly(season: int) -> list[dict]:
     except ImportError:
         return []
 
-    url = f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_{season}.csv"
+    # nflverse migrated from "player_stats" tag to "stats_player" tag (2025+).
+    # New filename: stats_player_week_{season}.csv; old tag still covers 2015-2024.
+    url = f"https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
     logger.info("Fetching NFL weekly player stats for %d...", season)
 
     try:
         r = _session.get(url, timeout=60)
         if r.status_code != 200:
-            # Fallback: try offense only
-            url2 = f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_offense_{season}.csv"
+            # Fallback 1: old player_stats tag (covers 2015-2024)
+            url2 = f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_{season}.csv"
             r = _session.get(url2, timeout=60)
+        if r.status_code != 200:
+            # Fallback 2: offense-only variant
+            url3 = f"https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_offense_{season}.csv"
+            r = _session.get(url3, timeout=60)
             if r.status_code != 200:
                 return []
 

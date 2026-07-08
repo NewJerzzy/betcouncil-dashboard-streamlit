@@ -1,6 +1,18 @@
 """
-nfl_savant.py
-=============
+nfl_savant.py  [DEPRECATED — DATA SOURCE DEAD]
+==============================================
+nflsavant.com migrated to a React/Vite SPA in early 2025.
+All CSV export endpoints (snap_counts.php, pbp_data.php) now return
+HTML instead of CSV. This module has no working data source.
+
+DO NOT IMPORT OR CALL FUNCTIONS FROM THIS FILE.
+
+Snap count data is available from nflverse instead:
+  https://github.com/nflverse/nflverse-data/releases/tag/snap_counts
+  fetch_nfl_snap_counts() in nfl_features.py — confirmed working July 2026
+
+Original nfl_savant.py docstring follows:
+---------------------------------------------
 nflsavant.com scraper for BetCouncil NFL model.
 
 Provides route data and snap counts not available in nflfastR.
