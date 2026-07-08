@@ -12312,7 +12312,10 @@ def load_sport_data(sport):
     # Home Runs (and previously Strikeouts, though that path doesn't actually
     # use _ev_be) is the one place a real devig already existed to swap in for.
     # The existing consensus_novig/sharp_implied fields are kept, not deleted,
-    # so a >5pt disagreement can be flagged rather than silently overridden.
+    # so a >=3pt disagreement can be flagged rather than silently overridden
+    # (3pt matches this codebase's existing DIVERGENT convention in
+    # get_sharp_consensus_for_prop's spread >= 0.03 check, rather than an
+    # arbitrary number).
     if sport == "MLB":
         _unabated_hr_probs: dict = {}
         for _l in st.session_state.get(f"unabated_props_{sport}", []):
@@ -12335,7 +12338,7 @@ def load_sport_data(sport):
             if _existing_be is not None:
                 try:
                     _diff = abs(_unabated_avg - float(_existing_be))
-                    if _diff >= 0.05:
+                    if _diff >= 0.03:
                         _entry["unabated_devig_discrepancy"] = round(_diff, 4)
                 except (TypeError, ValueError):
                     pass
