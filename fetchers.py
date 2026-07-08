@@ -14790,10 +14790,12 @@ def get_harvester_status() -> dict:
                     fresh    = age <= max_age
                 except Exception: pass
             src = data.get("source","unknown")
+            n_lines = len(data.get("lines", [])) if isinstance(data.get("lines"), list) else None
             status[name] = {
                 "active":      fresh,
                 "age_minutes": age,
                 "source":      src,
+                "count":       n_lines,
                 "warning":     ("" if fresh
                                 else f"🟡 Stale ({age}min) — reload BetCouncil to refresh"),
             }

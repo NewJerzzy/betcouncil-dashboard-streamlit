@@ -21946,9 +21946,11 @@ with tabs[9]:
         for _sname, _sv in _hs.items():
             _age_str = f"{_sv['age_minutes']}min" if _sv.get("age_minutes") else "no data"
             _src_str = _sv.get("source","?")
+            _cnt = _sv.get("count")
+            _cnt_str = f" | {_cnt} lines" if _cnt is not None else ""
             if _sv.get("active"):
                 _icon = "🟢"
-                _stat = f"Live ({_age_str} | {_src_str})"
+                _stat = f"Live ({_age_str} | {_src_str}{_cnt_str})"
             elif _sv.get("age_minutes") is None:
                 _icon = "⚪"
                 _stat = "Pending — load a board to activate"
