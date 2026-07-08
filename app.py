@@ -21707,6 +21707,8 @@ with tabs[8]:
                 _bk3 = "FanDuel"
             elif "betmgm" in _src2.lower():
                 _bk3 = "BetMGM"
+            elif "betrivers" in _src2.lower():
+                _bk3 = "BetRivers"
             if _bk3:
                 _ls_add([_op2], _bk3)
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
