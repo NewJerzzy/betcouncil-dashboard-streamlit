@@ -101,21 +101,38 @@ def train_nfl_model(
 
     logger.info("Training NFL model on seasons: %s", seasons)
 
-    # Import ML libraries
+    # Import core dependencies
     try:
         import numpy as np
         import pandas as pd
-        from xgboost import XGBClassifier
     except ImportError as e:
-        logger.error("Missing ML dependency: %s. Run: pip install xgboost pandas numpy", e)
+        logger.error("Missing numpy/pandas: %s", e)
         return _empty_model(seasons)
+
+    # Spread model backend: prefer XGBoost, fall back to LightGBM (3.6MB vs 435MB)
+    _use_xgb = False
+    try:
+        from xgboost import XGBClassifier as _SpreadClf
+        _use_xgb = True
+    except ImportError:
+        pass
+
+    if not _use_xgb:
+        try:
+            import lightgbm as _lgb_spread_mod
+            _SpreadClf = _lgb_spread_mod.LGBMClassifier
+            logger.info("XGBoost not installed — using LightGBM for spread model")
+        except ImportError:
+            logger.error("Neither xgboost nor lightgbm available — add lightgbm to requirements.txt")
+            return _empty_model(seasons)
 
     try:
         import lightgbm as lgb
         HAS_LGBM = True
     except ImportError:
-        HAS_LGBM = False
-        logger.warning("LightGBM not available — using XGBoost only")
+        HAS_LGBM = not _use_xgb  # if lgbm is the spread backend, it's definitely available
+        if _use_xgb:
+            logger.warning("LightGBM not available — using XGBoost only")
 
     # Collect training data
     from nfl_features import build_nfl_features
@@ -161,12 +178,19 @@ def train_nfl_model(
     xgb_preds  = np.zeros(len(X_val))
     for i in range(n_models):
         try:
-            clf = XGBClassifier(
-                n_estimators=100, max_depth=4, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8,
-                random_state=42 + i, verbosity=0,
-                eval_metric="logloss",
-            )
+            if _use_xgb:
+                clf = _SpreadClf(
+                    n_estimators=100, max_depth=4, learning_rate=0.05,
+                    subsample=0.8, colsample_bytree=0.8,
+                    random_state=42 + i, verbosity=0,
+                    eval_metric="logloss",
+                )
+            else:
+                clf = _SpreadClf(
+                    n_estimators=100, max_depth=4, learning_rate=0.05,
+                    subsample=0.8, colsample_bytree=0.8,
+                    random_state=42 + i, verbose=-1,
+                )
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 clf.fit(X_train, ys_train)
@@ -203,6 +227,7 @@ def train_nfl_model(
     model_dict = {
         "xgb_models":      xgb_models,
         "lgbm_model":      lgbm_model,
+        "spread_clf_type": "xgb" if _use_xgb else "lgb",
         "feature_cols":    avail_features,
         "seasons_trained": seasons,
         "n_training_games": len(df),
@@ -218,7 +243,7 @@ def train_nfl_model(
     try:
         with open(MODEL_CACHE, "wb") as f:
             pickle.dump(model_dict, f)
-        logger.info("NFL model saved — XGB acc=%.3f LGBM acc=%.3f", xgb_acc, lgbm_acc)
+        logger.info("NFL model saved — spread(%s) acc=%.3f LGBM(total) acc=%.3f", "XGB" if _use_xgb else "LGBM", xgb_acc, lgbm_acc)
     except Exception:
         pass
 
@@ -333,7 +358,7 @@ def predict_nfl_game(
         "total_side":      total_side,
         "recommendation":  recommendation,
         "features":        features,
-        "model_version":   f"v1.0 ({len(xgb_models)} XGB + {'LGBM' if lgbm_model else 'no LGBM'})",
+        "model_version":   f"v1.0 ({len(xgb_models)} {'XGB' if model.get('spread_clf_type','xgb')=='xgb' else 'LGBM'}" + f" + {'LGBM' if lgbm_model else 'no LGBM'})",
         "seasons_trained": model.get("seasons_trained", []),
         "validation":      model.get("validation", {}),
     }

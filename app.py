@@ -7179,6 +7179,49 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 except Exception:
                     _logger.debug("Silent except at line 6270")
                     pass
+                # ── NFL key number crossing analysis ──────────────────────────
+                _nfl_kn_spread = None
+                _nfl_kn_total  = None
+                try:
+                    from nfl_key_numbers import spread_crossing_value, total_crossing_value
+                    if total_str not in ("N/A", None, ""):
+                        _nfl_kn_total = total_crossing_value(fair_total, float(total_str))
+                    try:
+                        _mkt_sp_abs  = abs(float(market_spread))
+                        _fair_sp_abs = abs(float(market_spread) - float(power_diff))
+                        if _mkt_sp_abs > 0:
+                            _nfl_kn_spread = spread_crossing_value(_mkt_sp_abs, _fair_sp_abs)
+                    except (NameError, ValueError, TypeError):
+                        pass
+                except Exception:
+                    pass
+                # ── NFL model edge signal (LightGBM ensemble) ─────────────────
+                _nfl_ge = {}
+                try:
+                    from nfl_model import nfl_game_edge as _nfl_model_edge_fn
+                    _nfl_season = int(game.get("Season", game.get("season", 2025)))
+                    _nfl_week   = int(game.get("Week", game.get("week", 1)))
+                    _mkt_sp_val = None
+                    try:
+                        _mkt_sp_val = float(market_spread)
+                    except (NameError, ValueError, TypeError):
+                        pass
+                    _mkt_tot_val = None
+                    try:
+                        _mkt_tot_val = float(total_str) if total_str not in ("N/A", None, "") else None
+                    except (ValueError, TypeError):
+                        pass
+                    _nfl_ge = _nfl_model_edge_fn(
+                        home_team, away_team, _nfl_week, _nfl_season,
+                        market_spread=_mkt_sp_val, market_total=_mkt_tot_val,
+                    )
+                    # Additive nudge: blend 10% of model predicted total when signal is actionable
+                    if _nfl_ge.get("signal_strength") in ("PRIMARY", "SUPPORTING"):
+                        _pred_tot = _nfl_ge.get("predicted_total", 0.0)
+                        if 25.0 < _pred_tot < 75.0:  # sanity bounds for NFL totals
+                            fair_total = round(fair_total * 0.90 + _pred_tot * 0.10, 1)
+                except Exception:
+                    pass
             elif sport == "Soccer":
                 # ── Soccer fair_total: James matchup formula ──────────────
                 # ESPN team GF/GA per game. Falls back to league baseline.
@@ -7607,6 +7650,38 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     _total_rec  = next((r for r in recommendations if r.get("type") == "TOTAL"),  None)
     _ml_rec     = next((r for r in recommendations if r.get("type") in ("MONEYLINE","ML")), None)
     _alt_rec    = next((r for r in recommendations if r.get("type") == "ALT_SPREAD"), None)
+
+    # ── NFL key number + model signal enrichment ──────────────────────────────
+    if sport == "NFL":
+        try:
+            _kn_t = _nfl_kn_total
+        except NameError:
+            _kn_t = None
+        try:
+            _kn_s = _nfl_kn_spread
+        except NameError:
+            _kn_s = None
+        try:
+            _ge = _nfl_ge
+        except NameError:
+            _ge = {}
+        try:
+            for _r in recommendations:
+                if _r.get("type") == "TOTAL" and _kn_t:
+                    _r["key_number_note"]     = _kn_t.get("note", "")
+                    _r["key_number_weight"]   = _kn_t.get("weight", 1.0)
+                    _r["key_numbers_crossed"] = _kn_t.get("key_numbers_crossed", [])
+                elif _r.get("type") == "SPREAD" and _kn_s:
+                    _r["key_number_note"]     = _kn_s.get("note", "")
+                    _r["key_number_weight"]   = _kn_s.get("weight", 1.0)
+                    _r["key_numbers_crossed"] = _kn_s.get("key_numbers_crossed", [])
+            if _ge.get("signal_strength") not in (None, "IGNORE", ""):
+                for _r in recommendations:
+                    _r["nfl_model_signal"]     = _ge.get("signal_strength", "")
+                    _r["nfl_model_side"]       = _ge.get("model_side", "")
+                    _r["nfl_model_confidence"] = round(_ge.get("confidence", 0.0), 3)
+        except Exception:
+            pass
 
     return {
         "matchup": matchup, "Matchup": matchup,
