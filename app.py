@@ -17561,8 +17561,8 @@ with tabs[2]:
                         f'<span style="font-size:17px;font-weight:700;padding:4px 9px;border-radius:4px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
                         f'</div>'
                         f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">'
-                        f'<span class="odds-mono" style="font-size:46px;font-weight:700;color:#ffffff;">{_pk["pick"]}</span>'
-                        f'<span class="odds-mono" style="font-size:26px;color:#6a8aab;">{_pk["line"]}</span>'
+                        f'<span class="odds-mono" style="font-size:26px;font-weight:700;color:#ffffff;">{_pk["pick"]}</span>'
+                        f'<span class="odds-mono" style="font-size:17px;color:#6a8aab;">{_pk["line"]}</span>'
                         f'{_lm_arrow}'
                         f'</div>'
                         + (f'<div style="font-size:17px;color:#e8a020;margin-bottom:3px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
