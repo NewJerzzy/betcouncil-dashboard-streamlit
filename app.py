@@ -399,7 +399,7 @@ st.markdown("""<style>
 /* ── MONOSPACE ODDS ────────────────────────────────────── */
 .odds-mono {
     font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace !important;
-    font-size: 13px;
+    font-size: 13px !important;
     font-weight: 700 !important;
     letter-spacing: 0.5px;
 }
@@ -569,6 +569,7 @@ st.markdown("""<style>
     border: 1px solid var(--bc-border) !important;
     border-radius: 8px !important;
 }
+.dvn-scroller { background: var(--bc-bg-card) !important; }
 
 /* ── EXPANDERS ─────────────────────────────────────────── */
 [data-testid="stExpander"] {
@@ -3120,7 +3121,7 @@ def compute_sharp_public_divergence(matchup, public_betting=None):
     Replaces the basic sharp signal detection.
     """
     if public_betting is None:
-        public_betting = st.session_state.get("public_betting", {})
+        public_betting = st.session_state.get("public_betting_data", {})
     pb_data = None
     for key, val in public_betting.items():
         teams = val.get("teams", [])
@@ -4118,7 +4119,7 @@ def compute_market_agreement_score(prop, public_betting=None):
     # RLM signal
     matchup = prop.get("Matchup", prop.get("matchup",""))
     if matchup:
-        pb = st.session_state.get("public_betting",{})
+        pb = st.session_state.get("public_betting_data",{})
         rlm = compute_sharp_public_divergence(matchup, pb)
         if rlm.get("has_rlm"):
             strength = rlm.get("max_strength",0)
@@ -15572,6 +15573,32 @@ with tabs[0]:
         else:
             st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
 
+        # ── PUBLIC VS. SHARP MONEY (Action Network tickets%/money% divergence) ──
+        # Separate data source from the Sharp Money section above (that one is
+        # EVSharps/Pinnacle line-movement based). This one is Action Network's
+        # public betting splits — the actual "public is on X, big money is on Y,
+        # here's why" signal. The detection logic already existed in
+        # fetch_public_betting/compute_sharp_public_divergence with fully-built
+        # narrative strings; it was just never displayed anywhere because the
+        # reader functions looked up the wrong session_state key (fixed above).
+        _pbd = st.session_state.get("public_betting_data", {})
+        _pbd_narratives = []
+        for _pbg in _pbd.values():
+            _pbd_narratives.extend(_pbg.get("sharp_signals", []))
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.5rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:#378add;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">📊 Public vs. Sharp Money</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
+        if not _pbd:
+            st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;padding:0.2rem 0;">No public betting data loaded — load board to scan.</div>', unsafe_allow_html=True)
+        elif not _pbd_narratives:
+            st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;padding:0.2rem 0;">🟢 Quiet day — public and sharp money aligned across today\'s slate, no divergence detected.</div>', unsafe_allow_html=True)
+        else:
+            _n = len(_pbd_narratives)
+            _day_label = ("🔥 Heavy divergence day" if _n >= 6 else
+                          "⚡ Moderate divergence day" if _n >= 3 else
+                          "🟡 Light divergence day")
+            st.markdown(f'<div style="color:var(--bc-text);font-size:1.05rem;font-weight:600;margin-bottom:0.4rem;">{_day_label} — {_n} public/sharp split{"s" if _n != 1 else ""} across today\'s slate</div>', unsafe_allow_html=True)
+            _pbd_html = [f'<div style="background:var(--bc-bg-card);border-left:3px solid #378add;border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.0rem;color:var(--bc-text);white-space:pre-line;">{_note}</div>' for _note in _pbd_narratives[:6]]
+            st.markdown("".join(_pbd_html), unsafe_allow_html=True)
+
 
 
         # ═══════════════════════════════════════════════════
@@ -17531,9 +17558,9 @@ with tabs[2]:
             ) if _gl_mc_blend else ""
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
-                f'<span style="font-size:20px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
-                f'<span style="font-size:22px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
-                f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
+                f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
+                f'<span style="font-size:14px;font-weight:500;color:var(--bc-text);">{_matchup}</span>'
+                f'<span style="font-size:15px;color:var(--bc-dim);">{_gtime}</span>'
                 + _gl_pub_html + _gl_mc_html + _gl_badge_html +
                 f'</div>',
                 unsafe_allow_html=True
@@ -17557,16 +17584,16 @@ with tabs[2]:
                     st.markdown(
                         f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:16px 18px;background:var(--bc-bg);">'
                         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
-                        f'<span style="font-size:19px;font-weight:700;letter-spacing:1.2px;color:#6a8aab;text-transform:uppercase;">{_pk["label"]}</span>'
-                        f'<span style="font-size:17px;font-weight:700;padding:4px 9px;border-radius:4px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
+                        f'<span style="font-size:17px;font-weight:700;letter-spacing:1.2px;color:#6a8aab;text-transform:uppercase;">{_pk["label"]}</span>'
+                        f'<span style="font-size:15px;font-weight:700;padding:4px 9px;border-radius:4px;background:{_pc_color}22;color:{_pc_color};border:0.5px solid {_pc_color}44;">{_pk["tier"]}</span>'
                         f'</div>'
                         f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">'
-                        f'<span class="odds-mono" style="font-size:19px;font-weight:700;color:#ffffff;">{_pk["pick"]}</span>'
-                        f'<span class="odds-mono" style="font-size:14px;color:#6a8aab;">{_pk["line"]}</span>'
+                        f'<span class="odds-mono" style="font-size:27px;font-weight:700;color:#ffffff;">{_pk["pick"]}</span>'
+                        f'<span class="odds-mono" style="font-size:18px;color:#6a8aab;">{_pk["line"]}</span>'
                         f'{_lm_arrow}'
                         f'</div>'
-                        + (f'<div style="font-size:17px;color:#e8a020;margin-bottom:3px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
-                        + f'<span class="odds-mono" style="font-size:22px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
+                        + (f'<div style="font-size:15px;color:#e8a020;margin-bottom:3px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
+                        + f'<span class="odds-mono" style="font-size:19px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
@@ -21794,44 +21821,6 @@ with tabs[8]:
                             st.markdown(f"[🎰 Bet Hard Rock]({_link})")
 
 # ----- TAB 7: SYSTEM -----
-def _bc_df_html(df, height=None):
-    """Render a small dataframe as a themed HTML table. The glide-data-grid
-    canvas used by st.dataframe was rendering with invisible/blacked-out text
-    in the System tab, so status/diagnostic tables here use plain HTML instead
-    to guarantee visible text against the dark theme."""
-    try:
-        if not isinstance(df, pd.DataFrame):
-            df = pd.DataFrame(df)
-    except Exception:
-        st.write(df)
-        return
-    if df.empty:
-        st.caption("No data")
-        return
-    cols = list(df.columns)
-    thead = "".join(
-        f'<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;'
-        f'text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">{c}</th>'
-        for c in cols
-    )
-    rows_html = ""
-    for _, row in df.iterrows():
-        cells = "".join(
-            f'<td style="padding:7px 12px;border-bottom:1px solid #1a2a3a;color:#e8f0f8;'
-            f'font-size:14px;white-space:nowrap;">{row[c]}</td>'
-            for c in cols
-        )
-        rows_html += f"<tr>{cells}</tr>"
-    max_h = f"max-height:{height}px;overflow-y:auto;" if height else ""
-    st.markdown(
-        f'<div style="border:1px solid #1a2a3a;border-radius:8px;overflow-x:auto;{max_h}background:#0d1520;">'
-        f'<table style="width:100%;border-collapse:collapse;">'
-        f'<thead><tr style="background:#101c2c;">{thead}</tr></thead>'
-        f'<tbody>{rows_html}</tbody></table></div>',
-        unsafe_allow_html=True
-    )
-
-
 with tabs[9]:
     st.markdown("## ⚙️ System Info")
 
@@ -22165,26 +22154,7 @@ with tabs[9]:
     _grey   = sum(1 for s in _src_statuses if "⚪" in s["Status"])
 
     st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
-    _src_rows_html = "".join(
-        f'<tr>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #1a2a3a;color:#e8f0f8;font-size:15px;white-space:nowrap;">{r["Source"]}</td>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #1a2a3a;color:#e8f0f8;font-size:15px;">{r["Status"]}</td>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #1a2a3a;color:#9ab0c4;font-size:14px;">{r["Action"]}</td>'
-        f'</tr>'
-        for r in _src_statuses
-    )
-    st.markdown(
-        '<div style="border:1px solid #1a2a3a;border-radius:8px;overflow:hidden;background:#0d1520;">'
-        '<table style="width:100%;border-collapse:collapse;">'
-        '<thead><tr style="background:#101c2c;">'
-        '<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Source</th>'
-        '<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Status</th>'
-        '<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Action</th>'
-        '</tr></thead><tbody>'
-        + _src_rows_html +
-        '</tbody></table></div>',
-        unsafe_allow_html=True
-    )
+    st.dataframe(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses]), use_container_width=True, hide_index=True)
 
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
@@ -22205,7 +22175,7 @@ with tabs[9]:
         _hc_val = st.secrets.get(_hc_key, "")
         _hc_status = "🟢 Set" if _hc_val else "🔴 Missing"
         _hc_data.append({"Service": _hc_display, "Status": _hc_status, "Purpose": _hc_purpose, "Secret Key": _hc_key})
-    _bc_df_html(pd.DataFrame(_hc_data))
+    st.dataframe(pd.DataFrame(_hc_data), use_container_width=True, hide_index=True)
 
     st.markdown("### 🍪 Session & Cookie Status")
     _ck_data = [
@@ -22219,7 +22189,7 @@ with tabs[9]:
          "Status": "🔴 Exhausted" if st.session_state.get("scrapeops_exhausted") else "🟢 Available",
          "Refresh Interval": "Monthly reset"},
     ]
-    _bc_df_html(pd.DataFrame(_ck_data))
+    st.dataframe(pd.DataFrame(_ck_data), use_container_width=True, hide_index=True)
 
     # ── Performance Telemetry ─────────────────────────────
     _telem = st.session_state.get("bc_telemetry", {})
@@ -22229,7 +22199,7 @@ with tabs[9]:
         for _s, _d in sorted(_telem.items(), key=lambda x: -x[1].get("last",0)):
             _avg = round(_d["total"] / max(_d["runs"],1), 2)
             _rows.append({"Stage":_s,"Last":f'{_d["last"]:.2f}s',"Avg":f'{_avg:.2f}s',"Max":f'{_d["max"]:.2f}s',"Runs":_d["runs"],"Status":"🔴 SLOW" if _d["last"]>5 else "🟡 OK" if _d["last"]>2 else "🟢 FAST"})
-        _bc_df_html(pd.DataFrame(_rows))
+        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
         _slow=[r["Stage"] for r in _rows if "SLOW" in r["Status"]]
         if _slow: st.warning(f"🐌 Slow: {chr(44).join(_slow)}")
     else:
@@ -22287,7 +22257,7 @@ with tabs[9]:
                     "Public %": f"{_r.get('public_pct_vs_line',0):.0f}%",
                 })
             import pandas as pd
-            _bc_df_html(pd.DataFrame(_rlm_rows))
+            st.dataframe(pd.DataFrame(_rlm_rows), use_container_width=True, hide_index=True)
 
         # ATS Signals
         _ats = _vsin.get("ats_signals", {})
@@ -22318,7 +22288,7 @@ with tabs[9]:
                         "Bullpen": _t.get("bullpen_rating"),
                     })
                 import pandas as pd
-                _bc_df_html(pd.DataFrame(_pr_rows))
+                st.dataframe(pd.DataFrame(_pr_rows), use_container_width=True, hide_index=True)
 
         # Makinen Game Projections
         if _vsin.get("makinen"):
@@ -22336,7 +22306,7 @@ with tabs[9]:
                         "Starter Δ": f"{_g.get('away_starter_rtg','?')} vs {_g.get('home_starter_rtg','?')}",
                     })
                 import pandas as pd
-                _bc_df_html(pd.DataFrame(_mak_rows))
+                st.dataframe(pd.DataFrame(_mak_rows), use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
@@ -22941,7 +22911,7 @@ with tabs[9]:
             _golf_rows = [{"Pos": p["position"], "Player": p["name"],
                            "Total": p["total"], "Today": p["today"],
                            "Thru": p["thru"]} for p in _golf_lb_sys[:15]]
-            _bc_df_html(pd.DataFrame(_golf_rows))
+            st.dataframe(pd.DataFrame(_golf_rows), use_container_width=True, hide_index=True)
             if _golf_odds_sys:
                 st.markdown("**Tournament Win Odds:**")
                 _odds_rows = sorted(_golf_odds_sys.values(),
@@ -22949,7 +22919,7 @@ with tabs[9]:
                 _odds_df = [{"Player": o["name"],
                              "Odds": f"+{o['odds']}" if o["odds"]>0 else str(o["odds"]),
                              "Implied": f"{o['implied_prob']:.1%}"} for o in _odds_rows]
-                _bc_df_html(pd.DataFrame(_odds_df))
+                st.dataframe(pd.DataFrame(_odds_df), use_container_width=True, hide_index=True)
 
     # ── NHL Starting Goalies ────────────────────────────────
     _nhl_goalies_sys = st.session_state.get("nhl_starting_goalies", {})
@@ -22967,7 +22937,7 @@ with tabs[9]:
                 "Home/Away": "Home" if gdata.get("home") else "Away",
             })
         if _goalie_rows:
-            _bc_df_html(pd.DataFrame(_goalie_rows))
+            st.dataframe(pd.DataFrame(_goalie_rows), use_container_width=True, hide_index=True)
 
     # ── Depth Chart Status ──────────────────────────────────
     _depth_charts = st.session_state.get("espn_depth_charts", {})
@@ -22983,7 +22953,7 @@ with tabs[9]:
                 for pl in players[:3]:  # show top 3 per position
                     _dc_rows.append({"Position": pos, "Player": pl["name"], "Depth": pl["depth"]})
             if _dc_rows:
-                _bc_df_html(pd.DataFrame(_dc_rows))
+                st.dataframe(pd.DataFrame(_dc_rows), use_container_width=True, hide_index=True)
     # ── Market Intelligence Dashboard ──────────────────────
     st.markdown("---")
     st.markdown("### 🌐 Market Intelligence")
@@ -22999,16 +22969,16 @@ with tabs[9]:
         st.markdown("**Kalshi Top Markets:**")
         _kal_sorted = sorted(_kal, key=lambda x: -x.get("volume",0))
         _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in _kal_sorted[:5]]
-        _bc_df_html(pd.DataFrame(_kal_rows))
+        st.dataframe(pd.DataFrame(_kal_rows), use_container_width=True, hide_index=True)
     if _poly:
         st.markdown("**Polymarket Top Markets:**")
         _poly_sorted = sorted(_poly, key=lambda x: -x.get("volume",0))
         _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in _poly_sorted[:5]]
-        _bc_df_html(pd.DataFrame(_poly_rows))
+        st.dataframe(pd.DataFrame(_poly_rows), use_container_width=True, hide_index=True)
     if _cov:
         st.markdown("**Public Consensus (Covers):**")
         _cov_rows = [{"Matchup": c["matchup"][:40], "Public %": f"{c['public_pct']}%", "Side": c["side"], "Picks": c["picks"]} for c in _cov[:8]]
-        _bc_df_html(pd.DataFrame(_cov_rows))
+        st.dataframe(pd.DataFrame(_cov_rows), use_container_width=True, hide_index=True)
     elif not st.secrets.get("FIRECRAWL_KEY",""):
         st.info("Add FIRECRAWL_KEY to Streamlit secrets to enable Covers public betting consensus data.")
 
@@ -23053,7 +23023,7 @@ with tabs[9]:
                 _ft_rows.append({"Source": _src[:30], "Time (s)": f"{_t_val:.2f}", "Status": _status})
             if _ft_rows:
                 import pandas as _pd_sys
-                _bc_df_html(_pd_sys.DataFrame(_ft_rows))
+                st.dataframe(_pd_sys.DataFrame(_ft_rows), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
@@ -23085,7 +23055,7 @@ with tabs[9]:
         n_bets_s = sport_data_s.get("n_bets", 0)
         wr_s = sport_data_s.get("overall_win_rate", 0)
         weight_rows.append({"Sport": sp, "Status": status_s, "Base": f"{weights_s.get('base',0):.0%}", "Defense": f"{weights_s.get('defense',0):.0%}", "Location": f"{weights_s.get('location',0):.0%}", "Rest": f"{weights_s.get('rest',0):.0%}", "Pace": f"{weights_s.get('pace',0):.0%}", "Bets": n_bets_s, "Win Rate": f"{wr_s:.1%}" if wr_s > 0 else "\u2014", "Type": weight_type_s})
-    _bc_df_html(pd.DataFrame(weight_rows))
+    st.dataframe(pd.DataFrame(weight_rows), width="stretch", hide_index=True)
     if st.button("Force Recalculate Weights"):
         for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
             compute_optimized_weights(sp)
@@ -23096,7 +23066,7 @@ with tabs[9]:
     tier_stats_s = compute_tier_stats(st.session_state.get("history", []))
     if tier_stats_s:
         sem_df = pd.DataFrame([{"Tier": tier, "Bets": s["n"], "Hit Rate": f"{s['hit_rate']:.1%}", "Predicted": f"{s['avg_predicted']:.1%}", "SEM": f"\u00b1{s['sem']:.3f}" if s['sem'] else "\u2014"} for tier, s in tier_stats_s.items()])
-        _bc_df_html(sem_df)
+        st.dataframe(sem_df, width="stretch")
     else:
         st.info("No calibration data yet.")
     st.markdown("---")
@@ -23129,7 +23099,7 @@ with tabs[9]:
         _cols[0].metric("Total Sources", len(_timing_rows))
         _cols[1].metric("Slowest", f"{max(r['Time (s)'] for r in _timing_rows):.1f}s")
         _cols[2].metric("Wall Time (parallel)", f"{max(r['Time (s)'] for r in _timing_rows):.1f}s")
-        _bc_df_html(pd.DataFrame(_timing_rows))
+        st.dataframe(pd.DataFrame(_timing_rows), use_container_width=True, hide_index=True)
         if st.button("Clear Timing Data", key="clear_timings"):
             st.session_state["fetch_timings"] = {}
             st.rerun()
@@ -23158,7 +23128,7 @@ with tabs[9]:
     if _mem_rows:
         _total_kb = sum(r["Size (KB)"] for r in _mem_rows)
         st.metric("Total tracked memory", f"{_total_kb:.1f} KB")
-        _bc_df_html(pd.DataFrame(_mem_rows))
+        st.dataframe(pd.DataFrame(_mem_rows), use_container_width=True, hide_index=True)
     st.markdown("---")
     st.markdown("### 💾 Gist Write Status")
     _dirty = st.session_state.get("gist_dirty", {})
@@ -23174,7 +23144,7 @@ with tabs[9]:
     if _last_writes:
         _write_rows = [{"Type": k, "Last Write": time.strftime("%H:%M:%S", time.localtime(v))}
                        for k, v in _last_writes.items()]
-        _bc_df_html(pd.DataFrame(_write_rows))
+        st.dataframe(pd.DataFrame(_write_rows), use_container_width=True, hide_index=True)
     st.markdown("---")
     st.markdown("### 📡 API Control Panel")
     st.caption("Live status of every data source. Hit Refresh to ping all APIs.")
