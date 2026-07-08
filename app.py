@@ -7113,13 +7113,21 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
             elif sport == "NFL":
                 h_power = power_ratings.get(home_team, 104.0)
                 a_power = power_ratings.get(away_team, 104.0)
-                base_total = 44.5
+                try:
+                    from fetchers import fetch_nfl_live_stats as _fetch_nfl_base
+                    base_total = _fetch_nfl_base().get("base_total", 44.5)
+                except Exception:
+                    base_total = 44.5
                 power_adj = ((h_power + a_power) / 2 - 104.0) * 0.5
                 fair_total = base_total + power_adj
                 # ── James matchup formula (NFL pts scored/allowed) ─────────
                 try:
                     _nfl_scoring = fetch_nfl_team_scoring_stats()
-                    _NFL_LEAGUE_AVG_PTS = 23.0
+                    try:
+                        from fetchers import fetch_nfl_live_stats as _fetch_nfl_avg
+                        _NFL_LEAGUE_AVG_PTS = _fetch_nfl_avg().get("league_avg_pts", 23.0)
+                    except Exception:
+                        _NFL_LEAGUE_AVG_PTS = 23.0
                     _h_sc = _nfl_scoring.get(home_team, {})
                     _a_sc = _nfl_scoring.get(away_team, {})
                     if _h_sc and _a_sc:
@@ -7674,29 +7682,12 @@ def get_live_power_ratings(sport, fallback_ratings):
             source_label = "nhl_api_live"
         elif sport == "NBA":
             from fetchers import fetch_nba_live_stats as _fetch_nba_live
-            _nba_live_full = _fetch_nba_live().get("team_ratings", {})
-            # NBA_POWER_RATINGS (config.py/bc_utils.py) is keyed by 3-letter
-            # abbreviation ("BOS"), but fetch_nba_live_stats() returns ESPN's
-            # full display names ("Boston Celtics") — without this map, the
-            # match-rate sanity check below always saw 0% overlap and
-            # silently discarded the live fetch every time, defeating the
-            # whole point of this fix. Translate full name -> abbreviation
-            # before handing off to the shared merge/match logic.
-            _NBA_FULL_TO_ABBREV = {
-                "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
-                "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
-                "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
-                "Golden State Warriors": "GSW", "Houston Rockets": "HOU", "Indiana Pacers": "IND",
-                "LA Clippers": "LAC", "Los Angeles Clippers": "LAC", "Los Angeles Lakers": "LAL",
-                "Memphis Grizzlies": "MEM", "Miami Heat": "MIA", "Milwaukee Bucks": "MIL",
-                "Minnesota Timberwolves": "MIN", "New Orleans Pelicans": "NOP",
-                "New York Knicks": "NYK", "Oklahoma City Thunder": "OKC", "Orlando Magic": "ORL",
-                "Philadelphia 76ers": "PHI", "Phoenix Suns": "PHX", "Portland Trail Blazers": "POR",
-                "Sacramento Kings": "SAC", "San Antonio Spurs": "SAS", "Toronto Raptors": "TOR",
-                "Utah Jazz": "UTA", "Washington Wizards": "WAS",
-            }
-            live = {_NBA_FULL_TO_ABBREV.get(k, k): v for k, v in _nba_live_full.items()}
+            live = _fetch_nba_live().get("team_ratings", {})
             source_label = "nba_espn_live"
+        elif sport == "NFL":
+            from fetchers import fetch_nfl_live_stats as _fetch_nfl_live
+            live = _fetch_nfl_live().get("team_ratings", {})
+            source_label = "nfl_espn_live"
         else:
             live = fetch_teamrankings_power_ratings(sport)
             source_label = "teamrankings_live"
@@ -7719,7 +7710,7 @@ def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
     power_ratings = power_map.get(sport, {})
-    if sport in ("MLB", "WNBA", "NHL", "NBA") and power_ratings:
+    if sport in ("MLB", "WNBA", "NHL", "NBA", "NFL"):
         power_ratings, _pr_source = get_live_power_ratings(sport, power_ratings)
     for game in games:
         analysis = analyze_game_edge(game, sport, home_teams, away_teams, power_ratings, mlb_pitchers=mlb_pitchers)

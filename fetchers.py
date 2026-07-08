@@ -12303,6 +12303,118 @@ def fetch_nba_live_stats() -> dict:
     return result
 
 
+
+def fetch_nfl_live_stats() -> dict:
+    """
+    Live NFL season stats from ESPN standings API (most recent completed season).
+    Returns:
+      { "base_total": float,        # league avg PF/G * 2 (both teams)
+        "league_avg_pts": float,    # league avg PF/G per team
+        "team_ratings": {key: rating},     # on 88-120 scale, center 104
+        "scoring_stats": {key: {"pts_for_pg": x, "pts_against_pg": y}} }
+    Keys include both abbreviation (e.g. "BUF") and full name for flexible lookup.
+    Rating formula: 104 + diff_per_game * 1.5, capped 88-120.
+    Center 104 matches the existing NFL power_adj center in analyze_game_edge.
+    Cached 6 hours.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nfl_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached and isinstance(cached.get("team_ratings"), dict) and len(cached["team_ratings"]) >= 28:
+                return cached
+
+    # Try current season first, fall back to previous completed season
+    team_ratings: dict = {}
+    scoring_stats: dict = {}
+    total_pf = 0.0
+    total_g = 0
+    result_season = None
+
+    import datetime as _dt
+    current_year = _dt.date.today().year
+    # NFL season overlaps two calendar years; use previous year before Sep
+    if _dt.date.today().month < 9:
+        current_year -= 1
+
+    for season in (current_year, current_year - 1):
+        url = f"https://site.api.espn.com/apis/v2/sports/football/nfl/standings?season={season}"
+        try:
+            resp = _http.get(url, headers=HEADERS, timeout=12)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+        except Exception as e:
+            print(f"[WARN] fetch_nfl_live_stats season={season}: {e}")
+            continue
+
+        groups = data.get("children", data.get("groups", []))
+        all_entries = []
+        for g in groups:
+            for sg in g.get("children", [g]):
+                all_entries += sg.get("standings", {}).get("entries", [])
+
+        if len(all_entries) < 28:
+            continue
+
+        for entry in all_entries:
+            team = entry.get("team", {})
+            name = team.get("displayName", "")
+            abbr = team.get("abbreviation", "")
+            stats = {s["name"]: s.get("value") for s in entry.get("stats", [])}
+            try:
+                wins   = float(stats.get("wins") or 0)
+                losses = float(stats.get("losses") or 0)
+                ties   = float(stats.get("ties") or 0)
+                pf     = float(stats.get("pointsFor") or 0)
+                pa     = float(stats.get("pointsAgainst") or 0)
+            except (TypeError, ValueError):
+                continue
+            gp = wins + losses + ties
+            if gp > 0 and pf > 0:
+                pf_pg = pf / gp
+                pa_pg = pa / gp
+                diff   = pf_pg - pa_pg
+                total_pf += pf
+                total_g  += gp
+                rating = round(max(88.0, min(120.0, 104.0 + diff * 1.5)), 1)
+                scoring = {"pts_for_pg": round(pf_pg, 2), "pts_against_pg": round(pa_pg, 2)}
+                for key in (abbr, name):
+                    if key:
+                        team_ratings[key] = rating
+                        scoring_stats[key] = scoring
+
+        if len(team_ratings) >= 28:
+            result_season = season
+            break
+
+    if len(team_ratings) < 28 or total_g == 0:
+        print(f"[WARN] fetch_nfl_live_stats: only {len(team_ratings)//2} teams — discarding")
+        return {}
+
+    avg_pts_pg = total_pf / total_g
+    result = {
+        "base_total":     round(avg_pts_pg * 2, 1),
+        "league_avg_pts": round(avg_pts_pg, 2),
+        "team_ratings":   team_ratings,
+        "scoring_stats":  scoring_stats,
+        "season":         result_season,
+    }
+    _safe_save_pkl(cache_path, result)
+    return result
+
+
+def fetch_nfl_team_scoring_stats() -> dict:
+    """
+    Per-team NFL scoring stats (pts_for_pg, pts_against_pg) keyed by
+    abbreviation and full team name. Thin wrapper around fetch_nfl_live_stats.
+    Called by the James matchup formula in analyze_game_edge.
+    """
+    live = fetch_nfl_live_stats()
+    return live.get("scoring_stats", {})
+
+
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
     Pinnacle game lines via arcadia guest API (no auth).
