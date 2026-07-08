@@ -6687,6 +6687,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / 10.0
+                # NBA/WNBA spread compression: these sports share NFL's tier
+                # thresholds (SOVEREIGN 0.12/ELITE 0.08/APPROVED 0.04/LEAN 0.02)
+                # but NFL gets further downstream compression (divisional -15%,
+                # uncertainty -20%) that NBA/WNBA never did. Without this, a
+                # single 1-point NBA spread edge (routine given ±15pt spreads
+                # and high variance) produced 10% -> cleared ELITE tier, which
+                # is far too easy for a 1-point edge in this sport.
+                if sport in ("NBA", "WNBA"):
+                    spread_edge_pct = spread_edge / 15.0
                 # GAP FIX: Apply MLB park factor to run line / spread edge.
                 # Hitter-friendly parks compress run line edges for favorites
                 # (blowouts are less likely) and expand them for underdogs.
@@ -7090,8 +7099,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 h_ga = _nhl_ga_dict.get(home_full, _nhl_ga_dict.get(home_team, NHL_GOALS_DEFAULT))
                 a_gf = _nhl_gf_dict.get(away_full, _nhl_gf_dict.get(away_team, NHL_GOALS_DEFAULT))
                 a_ga = _nhl_ga_dict.get(away_full, _nhl_ga_dict.get(away_team, NHL_GOALS_DEFAULT))
-                home_expected = (h_gf + a_ga) / 2
-                away_expected = (a_gf + h_ga) / 2
+                # James matchup formula (matches MLB/NFL/Soccer): multiplicative,
+                # not simple average. Previously used (h_gf+a_ga)/2, which is
+                # more regression-to-mean than the rest of the model — e.g. a
+                # 4.5 GF/G team vs a 1.8 GA/G defense gave 3.15 expected goals
+                # via simple average vs 2.61 via James, understating how much
+                # a stingy defense actually suppresses a high-powered offense.
+                _nhl_abbr_gf = [v for k, v in _nhl_gf_dict.items() if len(k) <= 3]
+                _nhl_league_avg_gf = sum(_nhl_abbr_gf) / len(_nhl_abbr_gf) if _nhl_abbr_gf else 3.1
+                if _nhl_league_avg_gf > 0:
+                    home_expected = (h_gf * a_ga) / _nhl_league_avg_gf
+                    away_expected = (a_gf * h_ga) / _nhl_league_avg_gf
+                else:
+                    home_expected = (h_gf + a_ga) / 2
+                    away_expected = (a_gf + h_ga) / 2
                 _mu_home = max(0.5, home_expected)
                 _mu_away = max(0.5, away_expected)
                 fair_total = home_expected + away_expected
