@@ -12014,6 +12014,82 @@ def fetch_teamrankings_power_ratings(sport: str) -> dict:
     return ratings
 
 
+
+def fetch_mlb_live_stats() -> dict:
+    """
+    Live MLB season stats from statsapi.mlb.com standings.
+    Replaces the broken TeamRankings HTML scraper (JS-rendered, unscrapeable)
+    for MLB power ratings and provides a live base_total and league_avg_rs
+    for use in analyze_game_edge.
+
+    Returns:
+      {
+        "base_total": float,       # league avg RS/G * 2 (both teams combined)
+        "league_avg_rs": float,    # league avg RS/G per team
+        "team_ratings": {          # {full_team_name: rating} on 88-118 scale
+            "Los Angeles Dodgers": 112.3, ...
+        }
+      }
+    Cached 6 hours. Falls back to {} on any error (callers must handle).
+    Rating formula: 100 + (run_differential_per_game * 7), capped 88-118.
+    This matches the existing MLB_POWER_RATINGS scale in config.py.
+    """
+    cache_path = os.path.join(CACHE_DIR, "mlb_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached and isinstance(cached.get("team_ratings"), dict) and len(cached["team_ratings"]) >= 25:
+                return cached
+
+    url = (
+        "https://statsapi.mlb.com/api/v1/standings"
+        "?leagueId=103,104&season=2026&standingsTypes=regularSeason&hydrate=team"
+    )
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=12)
+        if resp.status_code != 200:
+            print(f"[WARN] fetch_mlb_live_stats: HTTP {resp.status_code}")
+            return {}
+        data = resp.json()
+    except Exception as e:
+        print(f"[WARN] fetch_mlb_live_stats: {e}")
+        return {}
+
+    total_rs = 0
+    total_g = 0
+    team_ratings: dict = {}
+
+    for record in data.get("records", []):
+        for tr in record.get("teamRecords", []):
+            name = tr.get("team", {}).get("name", "")
+            g = tr.get("gamesPlayed", 0)
+            rs = tr.get("runsScored", 0)
+            rd = tr.get("runDifferential", 0)
+            if g > 0 and name:
+                total_rs += rs
+                total_g += g
+                rd_pg = rd / g
+                # Map run differential/game to 88-118 rating scale matching
+                # the existing MLB_POWER_RATINGS in config.py (100 = average,
+                # +1 RD/G ≈ +7 rating points). Capped to prevent outliers.
+                rating = round(max(88.0, min(118.0, 100.0 + rd_pg * 7.0)), 1)
+                team_ratings[name] = rating
+
+    if len(team_ratings) < 25 or total_g == 0:
+        print(f"[WARN] fetch_mlb_live_stats: only got {len(team_ratings)} teams — discarding")
+        return {}
+
+    avg_rs_pg = total_rs / total_g
+    result = {
+        "base_total": round(avg_rs_pg * 2, 2),
+        "league_avg_rs": round(avg_rs_pg, 3),
+        "team_ratings": team_ratings,
+    }
+    _safe_save_pkl(cache_path, result)
+    return result
+
+
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
     Pinnacle game lines via arcadia guest API (no auth).
