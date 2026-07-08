@@ -21555,6 +21555,17 @@ with tabs[8]:
                 ls_sources.setdefault(k, {}).setdefault(prop, {})[source_name] = float(line)
 
         _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
+        # ── Unabated (data.unabated.com, 15-min cron, no auth/WAF dependency) ──
+        # Independent of the token-gated scrapers below — still fresh even
+        # when Caesars/Bovada/DK Pick6 tokens have expired since last capture.
+        _unab_ls_platform_label = {"prizepicks": "Unabated (PrizePicks)", "underdog": "Unabated (Underdog)", "pick6": "Unabated (Pick6)"}
+        for _ul in (st.session_state.get(f"unabated_props_{sport}", []) or []):
+            _ul_plat = str(_ul.get("platform", "")).lower()
+            _ul_label = _unab_ls_platform_label.get(_ul_plat)
+            if not _ul_label or _ul.get("line") is None:
+                continue
+            _ls_add([{"Player": _ul.get("player_name", ""), "Prop": _ul.get("stat_type", ""),
+                      "Line": _ul.get("line")}], _ul_label)
         # ── New book sources added today ────────────────────────────────────
         _ls_add(st.session_state.get("bovada_props", []), "Bovada")
         _ls_add(st.session_state.get("caesars_props", []), "Caesars")
@@ -21720,7 +21731,7 @@ with tabs[8]:
             _ev_all_props = st.session_state.get("ev_api_props", [])
 
 
-        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper","NoVig","Kalshi","Fliff"]
+        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","Unabated (PrizePicks)","Unabated (Underdog)","Unabated (Pick6)","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper","NoVig","Kalshi","Fliff"]
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
 
