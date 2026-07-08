@@ -10087,7 +10087,7 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             _ev_be_sig = st.session_state.get("ev_signal_lookup", {}).get(
                 (normalize_name(player_name), "Home Runs"), {}
             )
-            _ev_be = _ev_be_sig.get("sharp_implied") or _ev_be_sig.get("consensus_novig")
+            _ev_be = _ev_be_sig.get("unabated_novig") or _ev_be_sig.get("sharp_implied") or _ev_be_sig.get("consensus_novig")
         if _ev_be:
             try:
                 base_edge = prob - float(_ev_be)
@@ -11297,6 +11297,22 @@ def load_sport_data(sport):
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
      parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw) = _results
 
+    # ── Unabated player-props fair value — deliberately its own small batch,
+    # NOT added to the _parallel_fns tuple above. That tuple is already a
+    # 90-item positional list->tuple->unpack chain; adding more items there
+    # increases blast radius for zero benefit here. This has its own
+    # try/except and inherits fetch_unabated_props' per-file timeouts
+    # (10s/15s via _read_gist_file), so a slow or failed fetch can only ever
+    # produce an empty result for this one feature, never block board load.
+    try:
+        from fetchers import fetch_unabated_props as _fetch_unabated_props
+        _unabated_props_lines, _unabated_props_src = _fetch_unabated_props(sport)
+    except Exception as _uap_err:
+        _unabated_props_lines, _unabated_props_src = [], "unavailable"
+        print(f"[WARN] fetch_unabated_props({sport}): {_uap_err}")
+    st.session_state[f"unabated_props_{sport}"]     = _unabated_props_lines
+    st.session_state[f"unabated_props_src_{sport}"] = _unabated_props_src
+
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
         games, is_playoff, home_teams, away_teams = _game_lines_result
@@ -12287,6 +12303,43 @@ def load_sport_data(sport):
         if _league_note:
             st.caption(f"📈 League HR env: {_league_note}")
 
+    # ── Unabated fair value → MLB Home Run breakeven ──────────────────────────
+    # Unabated is used as the PRIMARY fair-value source for this breakeven (see
+    # the _ev_be line above: unabated_novig is checked before sharp_implied /
+    # consensus_novig), per the Home-Run-specific market this already fed.
+    # Everywhere else in the model, GEM computes its own probability from
+    # player stats/matchups and never consulted a market consensus at all —
+    # Home Runs (and previously Strikeouts, though that path doesn't actually
+    # use _ev_be) is the one place a real devig already existed to swap in for.
+    # The existing consensus_novig/sharp_implied fields are kept, not deleted,
+    # so a >5pt disagreement can be flagged rather than silently overridden.
+    if sport == "MLB":
+        _unabated_hr_probs: dict = {}
+        for _l in st.session_state.get(f"unabated_props_{sport}", []):
+            if _l.get("stat_type") != "Home Runs" or _l.get("price") is None:
+                continue
+            _pkey = normalize_name(_l.get("player_name",""))
+            if not _pkey:
+                continue
+            try:
+                _unabated_hr_probs.setdefault(_pkey, []).append(american_to_prob(_l["price"]))
+            except Exception:
+                pass
+        for _pkey, _probs in _unabated_hr_probs.items():
+            _sig_key = (_pkey, "Home Runs")
+            _entry = _ev_signal_lookup.setdefault(_sig_key, {})
+            _unabated_avg = sum(_probs) / len(_probs)
+            _entry["unabated_novig"]        = round(_unabated_avg, 4)
+            _entry["unabated_n_platforms"]  = len(_probs)
+            _existing_be = _entry.get("sharp_implied") or _entry.get("consensus_novig")
+            if _existing_be is not None:
+                try:
+                    _diff = abs(_unabated_avg - float(_existing_be))
+                    if _diff >= 0.05:
+                        _entry["unabated_devig_discrepancy"] = round(_diff, 4)
+                except (TypeError, ValueError):
+                    pass
+
     if _ev_board_props:
         st.session_state["ev_api_props"]    = _ev_board_props
         st.session_state["ev_signal_lookup"] = _ev_signal_lookup
@@ -12354,7 +12407,11 @@ def load_sport_data(sport):
         st.caption(f"📡 EV API: {len(_ev_board_props)} props | {len(_ev_signal_lookup)} players | {len({p.get('Book') for p in _ev_board_props})} books")
     else:
         st.session_state["ev_api_props"]     = []
-        st.session_state["ev_signal_lookup"] = {}
+        # Don't blindly wipe this to {} — the Unabated HR merge above can
+        # populate real entries here even when the EVSharps API itself has
+        # no data this cycle. Only ev_api_props/ev_book_lookup are genuinely
+        # EVSharps-specific and safe to clear unconditionally.
+        st.session_state["ev_signal_lookup"] = _ev_signal_lookup
         st.session_state["ev_book_lookup"]   = {}
 
     # ── Parlay Savant — additional MLB book source for line-shopping ───
@@ -12518,6 +12575,73 @@ def load_sport_data(sport):
                 props = cached_props
             else:
                 return [], games, 0, 0, {}, {}
+
+    # ── Unabated fair-value comparison — attached onto each source prop dict
+    # (p) here, then threaded through into `enriched` at append-time below
+    # (alongside best_prob, which is GEM's own model probability for that
+    # exact row). This is deliberately NOT wired into Edge/breakeven for
+    # non-HR stats — GEM's probability model doesn't consult market
+    # consensus at all for those, so this is a new comparison axis, not a
+    # source swap. Only Home Runs (see the ev_signal_lookup merge earlier
+    # in this function) actually feeds Edge; everywhere else this is
+    # display-only. Only explicitly verified stat-name pairs are matched —
+    # anything unmapped is left alone rather than fuzzy-matched, since a
+    # wrong match here is worse than no match.
+    _UNABATED_BOOK_KEY = {"PrizePicks": "prizepicks", "Underdog": "underdog", "Pick6": "pick6"}
+    _UNABATED_STAT_MAP = {
+        "Home Runs": "Home Runs", "Hits": "Hits", "Runs": "Runs", "RBIs": "RBIs",
+        "Total Bases": "Total Bases", "Stolen Bases": "Stolen Bases",
+        "Hitter Strikeouts": "Hitter Strikeouts", "Pitcher Strikeouts": "Pitcher Strikeouts",
+        "Hits+Runs+RBIs": "Hits + Runs + Rbis", "Pitching Outs": "Pitcher Outs",
+        "Singles": "Player Singles", "Doubles": "O/U Doubles",
+        "Walks": "Hitter Walks", "Walks Allowed": "Pitcher Walks",
+        "Earned Runs Allowed": "Pitcher Earned Runs", "Hits Allowed": "Pitcher Hits Allowed",
+    }
+    try:
+        _unab_lines = st.session_state.get(f"unabated_props_{sport}", [])
+        if _unab_lines and props:
+            _unab_idx: dict = {}
+            for _ul in _unab_lines:
+                _plat  = str(_ul.get("platform","")).lower()
+                _pname = normalize_name(_ul.get("player_name",""))
+                _stat  = _ul.get("stat_type","")
+                if not _plat or not _pname or not _stat or _ul.get("price") is None:
+                    continue
+                _unab_idx.setdefault((_plat, _pname, _stat), []).append(_ul)
+            for _p in props:
+                _plat_key = _UNABATED_BOOK_KEY.get(_p.get("Book",""))
+                if not _plat_key:
+                    continue
+                _prop_label = _p.get("Prop","")
+                _stat_candidates = []
+                if _prop_label in _UNABATED_STAT_MAP:
+                    _stat_candidates.append(_UNABATED_STAT_MAP[_prop_label])
+                elif _prop_label in ("Hitter Fantasy Score", "Pitcher Fantasy Score"):
+                    _stat_candidates.append("Player Fantasy Points")
+                if not _stat_candidates:
+                    continue
+                _row_pname = normalize_name(_p.get("Player",""))
+                _matches = None
+                for _sc in _stat_candidates:
+                    _matches = _unab_idx.get((_plat_key, _row_pname, _sc))
+                    if _matches:
+                        break
+                if not _matches:
+                    continue
+                try:
+                    _row_line = float(_p.get("Line", 0) or 0)
+                    _best = min(_matches, key=lambda m: abs(safe_float(m.get("line",0)) - _row_line))
+                except Exception:
+                    _best = _matches[0]
+                try:
+                    _unab_prob = round(american_to_prob(_best["price"]), 4)
+                except Exception:
+                    continue
+                _p["UnabatedLine"]     = _best.get("line")
+                _p["UnabatedPrice"]    = _best.get("price")
+                _p["UnabatedFairProb"] = _unab_prob
+    except Exception as _uab_cmp_err:
+        print(f"[WARN] unabated props comparison attach: {_uab_cmp_err}")
 
     # ── SECTION: DATA ACQUISITION COMPLETE ──────────────���──���───────────────────
     # All network I/O is done above via _fetch_parallel().
@@ -13737,6 +13861,13 @@ def load_sport_data(sport):
             "DFFAvgPotentials": p.get("DFFAvgPotentials", 0),
             "DFFGamesTotal":    p.get("DFFGamesTotal", 0),
             "DFFPropNote":      p.get("DFFPropNote",""),
+            "UnabatedLine":     p.get("UnabatedLine"),
+            "UnabatedPrice":    p.get("UnabatedPrice"),
+            "UnabatedFairProb": p.get("UnabatedFairProb"),
+            "UnabatedDiscrepancy": (
+                round(abs(best_prob - p["UnabatedFairProb"]), 4)
+                if p.get("UnabatedFairProb") is not None else None
+            ),
             "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
