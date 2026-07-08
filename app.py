@@ -21734,13 +21734,44 @@ with tabs[8]:
 
 
         # Pinnacle, Bet365, MyBookie, BetOnline, Sleeper removed from this list —
-        # each confirmed structurally blocked, not just data-sparse:
-        #   Pinnacle: fetch_pinnacle_props() is a stub, guest API doesn't expose props
-        #   Bet365:   harvester only captures moneyline/spread, no props/total-line capture
-        #   MyBookie: CF token binding, needs manual daily cookie refresh
-        #   BetOnline: real pricing behind Diffusion WebSocket, deferred (see session notes)
-        #   Sleeper:  mobile-only, no web API to scrape
-        # Re-add only once a real fetch path exists for one of these.
+        # investigated 2026-07-08, each confirmed structurally blocked (not
+        # just data-sparse). Re-add ONLY if one of these changes:
+        #   Pinnacle:  guest API returns HTTP 204 (no content) on the props
+        #              endpoint — route exists but props are gated behind an
+        #              authenticated account API the guest key can't reach.
+        #              Game-level markets (spreads/totals) work fine on guest.
+        #              Nothing to build without a real Pinnacle account.
+        #   Bet365:    harvester only captures moneyline/spread; the total-line
+        #              value and any props are simply not in the harvested
+        #              payload. This is a Tampermonkey JS fix, not a Python
+        #              fix — needs someone with a live Bet365 account + open
+        #              DevTools to audit the real network calls. Cannot be
+        #              done from a server-side coding environment.
+        #   MyBookie:  BOTH known paths dead, not just stale. Action Network
+        #              book_id=8 (the fallback) returns HTTP 400/404 on every
+        #              props route — it's not a working fallback at all. The
+        #              CF-clearance cookie path needs a real browser to solve
+        #              the Cloudflare challenge (residential proxy or full
+        #              browser automation), not a plain HTTP client.
+        #   BetOnline:  api-offering-ext.betonline.ag returns HTTP 401 on all
+        #              routes (auth-gated). Confirmed via page config that
+        #              player props route exclusively through the Diffusion
+        #              WebSocket (DIFFUSION_HOST) with no static JSON
+        #              pre-load to scrape instead. Game-level totals via
+        #              api-offering.betonline.ag are already wired above —
+        #              that's the ceiling without building the full
+        #              WebSocket client (previously assessed as too costly
+        #              relative to payoff; that assessment still stands).
+        #   Sleeper:   api.sleeper.app/graphql is PUBLIC (introspection works,
+        #              no token needed) — real fields exist: my_picks_init,
+        #              get_pickem_picks_for_league. But my_picks_init needs a
+        #              logged-in session ("my" = current user), and
+        #              get_pickem_picks_for_league needs leg_id (an internal
+        #              picks-league ID only visible inside the app, not
+        #              discoverable via the public API). The public
+        #              api.sleeper.app/v1 only has fantasy roster/stat data,
+        #              no prop lines anywhere. The public API is the fantasy
+        #              layer, not the picks layer — not buildable without auth.
         BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","Unabated (PrizePicks)","Unabated (Underdog)","Unabated (Pick6)","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Bovada","NoVig","Kalshi","Fliff"]
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
