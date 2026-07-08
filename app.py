@@ -21733,7 +21733,15 @@ with tabs[8]:
             _ev_all_props = st.session_state.get("ev_api_props", [])
 
 
-        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","Unabated (PrizePicks)","Unabated (Underdog)","Unabated (Pick6)","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Pinnacle","Bet365","Bovada","MyBookie","BetOnline","Sleeper","NoVig","Kalshi","Fliff"]
+        # Pinnacle, Bet365, MyBookie, BetOnline, Sleeper removed from this list —
+        # each confirmed structurally blocked, not just data-sparse:
+        #   Pinnacle: fetch_pinnacle_props() is a stub, guest API doesn't expose props
+        #   Bet365:   harvester only captures moneyline/spread, no props/total-line capture
+        #   MyBookie: CF token binding, needs manual daily cookie refresh
+        #   BetOnline: real pricing behind Diffusion WebSocket, deferred (see session notes)
+        #   Sleeper:  mobile-only, no web API to scrape
+        # Re-add only once a real fetch path exists for one of these.
+        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","Unabated (PrizePicks)","Unabated (Underdog)","Unabated (Pick6)","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Bovada","NoVig","Kalshi","Fliff"]
         all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
 
