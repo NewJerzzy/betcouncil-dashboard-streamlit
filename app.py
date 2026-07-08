@@ -13871,6 +13871,21 @@ def load_sport_data(sport):
                 round(abs(best_prob - p["UnabatedFairProb"]), 4)
                 if p.get("UnabatedFairProb") is not None else None
             ),
+            # Direction + flag on top of the discrepancy magnitude above —
+            # both derived from fields already on this row, no re-devig:
+            # model_higher = GEM thinks it's easier than the market does;
+            # market_higher = the market (via Unabated's real price) thinks
+            # it's easier than GEM does. 5pt threshold matches the starting
+            # point agreed for this flag (distinct from the 3pt DIVERGENT
+            # convention used elsewhere for sharp-consensus spread checks).
+            "UnabatedDirection": (
+                ("model_higher" if best_prob > p["UnabatedFairProb"] else "market_higher")
+                if p.get("UnabatedFairProb") is not None else None
+            ),
+            "UnabatedFlag": (
+                abs(best_prob - p["UnabatedFairProb"]) >= 0.05
+                if p.get("UnabatedFairProb") is not None else False
+            ),
             "EV_2pick": f"{ev_2pick:+.1%}", "EV_3pick": f"{ev_3pick:+.1%}",
             "Wager_2pick": wager_2pick, "Wager_3pick": wager_3pick, "PlusEV_2": ev_2pick > 0,
             "PlusEV_3": ev_3pick > 0, "OddsType": odds_type, "signals_active": signals_active,
@@ -16446,6 +16461,11 @@ with tabs[1]:
         with _fc5:
             _sort_col = st.selectbox("Sort by", ["BQ Score","Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
 
+        _unab_only = st.checkbox(
+            "⚡ Unabated disagreement only (≥5pt gap between GEM and Unabated's real devigged price)",
+            value=False, key="ev_unabated_flag_only",
+        )
+
         # ── Build rows ──────────────────────────────────────────
         _rows = []
         for _p in _board:
@@ -16458,6 +16478,8 @@ with tabs[1]:
             if _search and normalize_name(_search) not in normalize_name(_player):
                 continue
             if _prop_f and _p.get("Prop","") not in _prop_f:
+                continue
+            if _unab_only and not _p.get("UnabatedFlag"):
                 continue
 
             # L5 / L10 / Season hit rates
@@ -16603,6 +16625,10 @@ with tabs[1]:
                 "_kalshi":     _kalshi_prob,
                 "_poly":       _poly_prob,
                 "_mkt_signal": _mkt_signal,
+                "_unabated": (
+                    ("📈 MODEL+" if _p.get("UnabatedDirection") == "model_higher" else "📉 MKT+")
+                    if _p.get("UnabatedFlag") else ("✅ AGREE" if _p.get("UnabatedFairProb") is not None else "")
+                ),
                 "_pub_pct":    _pub_pct,
                 "_pinn":       str(_pinn) if _pinn else "—",
                 "_dk":         str(_dk)   if _dk   else "—",
@@ -16726,6 +16752,8 @@ with tabs[1]:
                 ("S",  "#22c55e" if _p_dict.get("EVSharpMove") else "var(--bc-border)"), # Sharp steam
                 ("G",  "#22c55e" if _r.get("_model_prob", 0) and safe_float(str(_r.get("_model_prob",0)).replace("%",""), 0) >= 60 else "var(--bc-border)"),  # Grade
                 ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "var(--bc-border)"),  # Better line
+                ("U",  "#e04040" if _p_dict.get("UnabatedFlag") and _p_dict.get("UnabatedDirection")=="market_higher"
+                       else "#22c55e" if _p_dict.get("UnabatedFlag") else "var(--bc-border)"),  # Unabated devig disagreement
             ]
             _cons_bar = "".join([
                 f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
@@ -17029,7 +17057,7 @@ with tabs[1]:
                     "Edge%": r["_edge_pct"], "Model%": r["_model_prob"],
                     "L5": r["_l5"], "L10": r["_l10"], "Season": r["_szn"],
                     "Pinnacle": r["_pinn"], "DK": r["_dk"], "FD": r["_fd"],
-                    "Signal": r["_mkt_signal"], "Reliability": r["_rel"],
+                    "Signal": r["_mkt_signal"], "Unabated": r["_unabated"], "Reliability": r["_rel"],
                 } for r in _rows]
                 _csv = _pd.DataFrame(_export).to_csv(index=False)
                 st.download_button("Download", _csv, "betcouncil_ev.csv", "text/csv", key="ev_dl")
