@@ -2066,10 +2066,6 @@ def fetch_fanduel_event_ids(sport):
 
     px_context = _get_fanduel_px_context()
     if not px_context:
-        st.warning(
-            "🔒 FanDuel PerimeterX token missing or expired — FanDuel props blocked. "
-            "Run the Playwright session harvester, or set FANDUEL_PX_CONTEXT in secrets."
-        )
         return []
     state = _get_fanduel_state()
 

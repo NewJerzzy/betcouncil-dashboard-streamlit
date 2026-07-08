@@ -399,7 +399,7 @@ st.markdown("""<style>
 /* ── MONOSPACE ODDS ────────────────────────────────────── */
 .odds-mono {
     font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace !important;
-    font-size: 13px !important;
+    font-size: 13px;
     font-weight: 700 !important;
     letter-spacing: 0.5px;
 }
@@ -569,7 +569,6 @@ st.markdown("""<style>
     border: 1px solid var(--bc-border) !important;
     border-radius: 8px !important;
 }
-.dvn-scroller { background: var(--bc-bg-card) !important; }
 
 /* ── EXPANDERS ─────────────────────────────────────────── */
 [data-testid="stExpander"] {
@@ -22128,7 +22127,26 @@ with tabs[9]:
     _grey   = sum(1 for s in _src_statuses if "⚪" in s["Status"])
 
     st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
-    st.dataframe(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses]), use_container_width=True, hide_index=True)
+    _src_rows_html = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #1a2a3a;color:#e8f0f8;font-size:15px;white-space:nowrap;">{r["Source"]}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #1a2a3a;color:#e8f0f8;font-size:15px;">{r["Status"]}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #1a2a3a;color:#9ab0c4;font-size:14px;">{r["Action"]}</td>'
+        f'</tr>'
+        for r in _src_statuses
+    )
+    st.markdown(
+        '<div style="border:1px solid #1a2a3a;border-radius:8px;overflow:hidden;background:#0d1520;">'
+        '<table style="width:100%;border-collapse:collapse;">'
+        '<thead><tr style="background:#101c2c;">'
+        '<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Source</th>'
+        '<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Status</th>'
+        '<th style="text-align:left;padding:8px 12px;color:#6a8aab;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Action</th>'
+        '</tr></thead><tbody>'
+        + _src_rows_html +
+        '</tbody></table></div>',
+        unsafe_allow_html=True
+    )
 
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
