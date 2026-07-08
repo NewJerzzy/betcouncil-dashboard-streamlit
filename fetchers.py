@@ -14341,7 +14341,20 @@ def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
             gist = json.loads(r.read())
         f = gist.get("files",{}).get(filename,{})
         if not f: return {}
-        data = json.loads(f.get("content","{}"))
+        content = f.get("content","")
+        # The combined gist endpoint truncates per-file content (returns "" and
+        # truncated:true) once the gist's total aggregate size gets large enough,
+        # regardless of how small this individual file is. Fall back to the
+        # file's own raw_url in that case. raw_url is fetched fresh right here,
+        # not stored/cached, since it's a point-in-time snapshot URL tied to a
+        # commit SHA and would go stale if reused across later pushes.
+        if (not content or f.get("truncated")) and f.get("raw_url"):
+            raw_req = urllib.request.Request(
+                f["raw_url"],
+                headers={"Authorization": f"token {GITHUB_TOKEN}"})
+            with urllib.request.urlopen(raw_req, timeout=15) as rr:
+                content = rr.read().decode("utf-8")
+        data = json.loads(content or "{}")
         _safe_save_pkl(cp, data)
         return data
     except Exception as e:
@@ -14708,6 +14721,48 @@ def fetch_unabated_from_gist(sport: str) -> tuple:
     return {}, "unavailable"
 
 
+def fetch_unabated_props(sport: str, platform: str = None) -> tuple:
+    """
+    Unabated player-props fair-value data (PrizePicks/Underdog/Pick6 lines,
+    sourced via Unabated's unabated_data_api), pushed per-platform per-sport
+    by the browser harvester as betcouncil_unabated_{platform}_{sport}.json.
+
+    This is NOT the same feature as fetch_unabated_from_gist above, which reads
+    game-level sharp lines (spreads/totals/moneylines) from a different
+    Unabated endpoint. Do not merge the two.
+
+    The scraper already filters out events that started more than 2 hours ago
+    before pushing, and skips writing a file entirely for a sport/platform
+    combo with zero surviving lines (e.g. off-season leagues). So an empty
+    result here can legitimately mean "nothing fresh" rather than a failure.
+
+    Args:
+        sport: league code, e.g. "MLB", "WNBA", "NFL", "NHL".
+        platform: "prizepicks" | "underdog" | "pick6", or None for all three
+                  merged together (each line tagged with its "platform").
+
+    Returns (lines: list[dict], source: str). source is "unabated_props" if
+    any fresh data was found, else "unavailable".
+    """
+    platforms = [platform] if platform else ["prizepicks", "underdog", "pick6"]
+    combined = []
+    for p in platforms:
+        fname = f"betcouncil_unabated_{p}_{sport}.json"
+        data = _read_gist_file(fname, cache_minutes=10)
+        if not data:
+            continue
+        if not _is_fresh(data, max_age_minutes=180):
+            continue
+        plat_label = data.get("platform", p.title())
+        for line in data.get("lines", []):
+            line = dict(line)
+            line["platform"] = plat_label
+            combined.append(line)
+    if combined:
+        return combined, "unabated_props"
+    return [], "unavailable"
+
+
 def fetch_oddsjam_from_gist(sport: str) -> tuple:
     """PRIMARY: OddsJam +EV from browser harvester. SECONDARY: none (new source)."""
     data = _read_gist_file(f"betcouncil_oddsjam_{sport}.json", cache_minutes=5)
@@ -14746,6 +14801,9 @@ def get_harvester_status() -> dict:
         ("Covers.com consensus",        "betcouncil_covers_MLB.json",         22),
         ("DraftKings props",            "betcouncil_dk_props_MLB.json",       22),
         ("Unabated sharp lines",        "betcouncil_unabated_MLB.json",       32),
+        ("Unabated props (PrizePicks)", "betcouncil_unabated_prizepicks_MLB.json", 180),
+        ("Unabated props (Underdog)",   "betcouncil_unabated_underdog_MLB.json",   180),
+        ("Unabated props (Pick6)",      "betcouncil_unabated_pick6_MLB.json",      180),
         ("OddsJam +EV",                 "betcouncil_oddsjam_MLB.json",        22),
         ("PrizePicks props",             "betcouncil_prizepicks_MLB.json",     22),
         ("MyBookie lines",               "betcouncil_mybookie_MLB.json",       28),
