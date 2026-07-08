@@ -7674,7 +7674,28 @@ def get_live_power_ratings(sport, fallback_ratings):
             source_label = "nhl_api_live"
         elif sport == "NBA":
             from fetchers import fetch_nba_live_stats as _fetch_nba_live
-            live = _fetch_nba_live().get("team_ratings", {})
+            _nba_live_full = _fetch_nba_live().get("team_ratings", {})
+            # NBA_POWER_RATINGS (config.py/bc_utils.py) is keyed by 3-letter
+            # abbreviation ("BOS"), but fetch_nba_live_stats() returns ESPN's
+            # full display names ("Boston Celtics") — without this map, the
+            # match-rate sanity check below always saw 0% overlap and
+            # silently discarded the live fetch every time, defeating the
+            # whole point of this fix. Translate full name -> abbreviation
+            # before handing off to the shared merge/match logic.
+            _NBA_FULL_TO_ABBREV = {
+                "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+                "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
+                "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
+                "Golden State Warriors": "GSW", "Houston Rockets": "HOU", "Indiana Pacers": "IND",
+                "LA Clippers": "LAC", "Los Angeles Clippers": "LAC", "Los Angeles Lakers": "LAL",
+                "Memphis Grizzlies": "MEM", "Miami Heat": "MIA", "Milwaukee Bucks": "MIL",
+                "Minnesota Timberwolves": "MIN", "New Orleans Pelicans": "NOP",
+                "New York Knicks": "NYK", "Oklahoma City Thunder": "OKC", "Orlando Magic": "ORL",
+                "Philadelphia 76ers": "PHI", "Phoenix Suns": "PHX", "Portland Trail Blazers": "POR",
+                "Sacramento Kings": "SAC", "San Antonio Spurs": "SAS", "Toronto Raptors": "TOR",
+                "Utah Jazz": "UTA", "Washington Wizards": "WAS",
+            }
+            live = {_NBA_FULL_TO_ABBREV.get(k, k): v for k, v in _nba_live_full.items()}
             source_label = "nba_espn_live"
         else:
             live = fetch_teamrankings_power_ratings(sport)
