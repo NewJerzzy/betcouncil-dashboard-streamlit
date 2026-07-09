@@ -10,7 +10,11 @@ lines from 8 Nevada/major books per game:
 Circa, Westgate, South Point, and Stations are Nevada sharp books not
 available in OddsAPI or Unabated — this is the unique value here.
 
-Pushes one Gist file per sport:  betcouncil_vsin_{SPORT}.json
+FALLBACK DETECTION: VSiN serves the MLB page for any unknown/off-season
+sport ID. We detect this by checking if team names contain MLB clubs —
+if so, the sport is skipped rather than pushing stale data.
+
+Pushes one Gist file per active sport:  betcouncil_vsin_{SPORT}.json
 """
 
 import json
@@ -23,11 +27,32 @@ from datetime import datetime, timezone
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
+# All sports to attempt, ordered by priority.
+# Active now: MLB, WNBA, UFC, Golf
+# Seasonal: NFL, NBA, NHL, CFL, NCAAF, NCAAB — auto-populate when live.
+# VSiN sport IDs are lowercase, matching their linetracker ?sportid= param.
 SPORTS = {
-    "MLB": "mlb",
-    "NFL": "nfl",
-    "NBA": "nba",
-    "NHL": "nhl",
+    "MLB":   "mlb",
+    "WNBA":  "wnba",
+    "UFC":   "ufc",
+    "Golf":  "golf",
+    "NFL":   "nfl",
+    "NBA":   "nba",
+    "NHL":   "nhl",
+    "CFL":   "cfl",
+    "NCAAF": "ncaaf",
+    "NCAAB": "ncaab",
+}
+
+# If VSiN doesn't recognise a sport ID it falls back to the MLB page.
+# Detect this by checking whether parsed teams contain MLB franchise names.
+MLB_TEAM_FRAGMENTS = {
+    "yankees", "red sox", "blue jays", "rays", "orioles",
+    "white sox", "guardians", "twins", "royals", "tigers",
+    "astros", "mariners", "rangers", "angels", "athletics",
+    "dodgers", "giants", "padres", "diamondbacks", "rockies",
+    "mets", "phillies", "braves", "marlins", "nationals",
+    "cubs", "cardinals", "brewers", "reds", "pirates",
 }
 
 BOOKS_A = ["Circa", "Boomers", "BetMGM", "Caesars"]
@@ -62,12 +87,29 @@ def clean_row(raw_tr: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
-def parse_book_odds(tokens: list, offset: int, has_ou: bool) -> dict:
+def is_mlb_fallback(games: list, sport: str) -> bool:
+    """Return True if VSiN is serving the MLB fallback for this sport."""
+    if sport == "MLB" or not games:
+        return False
+    # Sample team names from first few games
+    sample_names = []
+    for g in games[:5]:
+        sample_names.append(g.get("away_team", "").lower())
+        sample_names.append(g.get("home_team", "").lower())
+    hits = sum(
+        1 for name in sample_names
+        if any(frag in name for frag in MLB_TEAM_FRAGMENTS)
+    )
+    return hits >= 2
+
+
+def parse_book_odds(tokens: list, offset: int, has_ou: bool) -> dict | None:
     """
     Parse one book's block from a token list starting at offset.
-    Time/open rows: [spr, rl_price, ml, total]          → 4 tokens, no o/u
-    Team rows:      [spr, rl_price, ml, total, ou, vig]  → 6 tokens
-    Returns dict or None if tokens are missing/invalid.
+
+    Time/open rows:  [spr, rl_price, ml, total]           → 4 tokens
+    Competitor rows: [spr, rl_price, ml, total, side, vig] → 6 tokens
+    Dashes ("-") are kept as-is to signal that a book has no line posted.
     """
     try:
         count = 6 if has_ou else 4
@@ -75,13 +117,13 @@ def parse_book_odds(tokens: list, offset: int, has_ou: bool) -> dict:
             return None
         t = tokens[offset:offset + count]
         result = {
-            "run_line": t[0],
-            "rl_price": t[1],
-            "ml": t[2],
-            "total": t[3],
+            "spread":    t[0],
+            "spr_price": t[1],
+            "ml":        t[2],
+            "total":     t[3],
         }
         if has_ou:
-            result["total_side"] = t[4]   # "o" or "u"
+            result["total_side"]  = t[4]
             result["total_price"] = t[5]
         return result
     except Exception:
@@ -89,23 +131,30 @@ def parse_book_odds(tokens: list, offset: int, has_ou: bool) -> dict:
 
 
 def is_time_row(tokens: list) -> bool:
-    """Rows that start with a time string like '3:45' or '7:10'."""
+    """Rows that start with a game time like '3:45' or '7:10'."""
     return bool(tokens and re.match(r'^\d{1,2}:\d{2}$', tokens[0]))
 
 
 def is_book_header(text: str) -> bool:
-    return any(b in text for b in ['Circa', 'Westgate', 'BetMGM', 'Stations',
-                                    'South Point', 'Wynn', 'Boomers', 'Caesars'])
+    return any(b in text for b in [
+        'Circa', 'Westgate', 'BetMGM', 'Stations',
+        'South Point', 'Wynn', 'Boomers', 'Caesars',
+        'SPR', 'ML ', 'TOT',
+    ])
 
 
-def extract_team_name(tokens: list) -> tuple[str, int]:
+def is_date_header(text: str) -> bool:
+    return bool(re.match(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s', text))
+
+
+def extract_name(tokens: list) -> tuple[str, int]:
     """
-    Team names are 1-3 words before the first odds token.
-    Returns (team_name, offset_after_name).
+    Competitor name: 1–4 words before the first odds/dash token.
+    Returns (name, offset_of_first_odds_token).
     """
     name_parts = []
     for i, t in enumerate(tokens):
-        if re.match(r'^[+-]\d', t) or re.match(r'^\d+\.?\d*$', t):
+        if re.match(r'^[+-]\d', t) or re.match(r'^\d+\.?\d*$', t) or t == '-':
             return ' '.join(name_parts), i
         name_parts.append(t)
     return ' '.join(name_parts), len(tokens)
@@ -113,15 +162,18 @@ def extract_team_name(tokens: list) -> tuple[str, int]:
 
 def parse_html(html: str) -> list[dict]:
     """
-    Returns list of game dicts:
+    Returns list of game/matchup dicts:
     {
-      "time": "3:45 PM ET",
-      "away_team": "Toronto Blue Jays",
-      "home_team": "San Francisco Giants",
-      "open": { "run_line": "+1.5", "rl_price": "-220", "ml": "-105", "total": "7" },
+      "time":      "7:05 PM ET",
+      "away_team": "Golden State Valkyries",
+      "home_team": "Toronto Tempo",
+      "open": { "Circa": {"spread":"-7.5","spr_price":"-110","ml":"-300","total":"169.5"}, ... },
       "books": {
-        "Circa": { "away": {...6 fields}, "home": {...6 fields} },
-        ...
+        "Circa": {
+          "away": {"spread":"-8","spr_price":"-110","ml":"-330","total":"165.5",
+                   "total_side":"o","total_price":"-110"},
+          "home": {...}
+        }, ...
       }
     }
     """
@@ -129,13 +181,10 @@ def parse_html(html: str) -> list[dict]:
     rows = [clean_row(r) for r in rows_raw]
 
     games = []
-    current_game = None
-    # Track which team slot we're filling: 0=away pending, 1=home pending
-    pending_away = None   # tokens for away/time row
-    game_time = None
+    pending = None   # accumulates time → away → home
 
     for row in rows:
-        if not row or is_book_header(row):
+        if not row or is_book_header(row) or is_date_header(row):
             continue
 
         tokens = row.split()
@@ -143,24 +192,20 @@ def parse_html(html: str) -> list[dict]:
             continue
 
         if is_time_row(tokens):
-            # "3:45 PM ET ET OPEN [spr rl_price ml total] x8"
-            # Save time and open odds for next game
+            # Format: "7:05 PM ET ET OPEN [spr spr_price ml total] × 8 books"
             game_time = f"{tokens[0]} {tokens[1]} {tokens[2]}"
-            # Tokens after "ET OPEN" prefix (5 tokens): index 5 onward
             odds_start = 5 if len(tokens) > 5 and tokens[4] == 'OPEN' else 4
             open_tokens = tokens[odds_start:]
-            # Open row has 4 tokens per book (8 books = 32 tokens)
             open_odds = {}
             for i, book in enumerate(ALL_BOOKS):
                 o = parse_book_odds(open_tokens, i * 4, has_ou=False)
                 if o:
                     open_odds[book] = o
-            pending_away = {"time": game_time, "open": open_odds, "book_tokens": None}
+            pending = {"time": game_time, "open": open_odds}
 
-        elif pending_away is not None and 'away_team' not in pending_away:
-            # This is the away team row
-            team_name, offset = extract_team_name(tokens)
-            if not team_name:
+        elif pending is not None and "away_team" not in pending:
+            name, offset = extract_name(tokens)
+            if not name:
                 continue
             odds_tokens = tokens[offset:]
             book_odds = {}
@@ -168,33 +213,31 @@ def parse_html(html: str) -> list[dict]:
                 o = parse_book_odds(odds_tokens, i * 6, has_ou=True)
                 if o:
                     book_odds[book] = {"away": o}
-            pending_away['away_team'] = team_name
-            pending_away['book_tokens_away'] = book_odds
+            pending["away_team"] = name
+            pending["_away_books"] = book_odds
 
-        elif pending_away is not None and 'away_team' in pending_away:
-            # This is the home team row
-            team_name, offset = extract_team_name(tokens)
-            if not team_name:
+        elif pending is not None and "away_team" in pending:
+            name, offset = extract_name(tokens)
+            if not name:
                 continue
             odds_tokens = tokens[offset:]
-            books = pending_away.get('book_tokens_away', {})
+            books = pending.get("_away_books", {})
             for i, book in enumerate(ALL_BOOKS):
                 o = parse_book_odds(odds_tokens, i * 6, has_ou=True)
                 if o:
                     if book in books:
-                        books[book]['home'] = o
+                        books[book]["home"] = o
                     else:
                         books[book] = {"home": o}
 
-            game = {
-                "time": pending_away.get("time", ""),
-                "away_team": pending_away["away_team"],
-                "home_team": team_name,
-                "open": pending_away.get("open", {}),
-                "books": books,
-            }
-            games.append(game)
-            pending_away = None
+            games.append({
+                "time":      pending.get("time", ""),
+                "away_team": pending["away_team"],
+                "home_team": name,
+                "open":      pending.get("open", {}),
+                "books":     books,
+            })
+            pending = None
 
     return games
 
@@ -210,8 +253,8 @@ def push_to_gist(key: str, payload: dict) -> bool:
         method="PATCH",
         headers={
             "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
+            "Accept":        "application/vnd.github.v3+json",
+            "Content-Type":  "application/json",
         }
     )
     with urllib.request.urlopen(req, timeout=20) as r:
@@ -222,22 +265,28 @@ def run():
     fetched_any = False
     for sport, sport_id in SPORTS.items():
         try:
-            log(f"Fetching VSiN {sport} ...")
+            log(f"Fetching VSiN {sport} ({sport_id}) ...")
             html = fetch_html(sport_id)
             games = parse_html(html)
+
             if not games:
-                log(f"  {sport}: 0 games (off-season or parse error) — skipping")
+                log(f"  {sport}: 0 matchups parsed — off-season or layout change, skipping")
                 continue
-            log(f"  {sport}: {len(games)} games parsed")
+
+            if is_mlb_fallback(games, sport):
+                log(f"  {sport}: VSiN served MLB fallback page — off-season, skipping")
+                continue
+
+            log(f"  {sport}: {len(games)} matchups parsed")
             payload = {
-                "sport": sport,
+                "sport":   sport,
                 "updated": datetime.now(timezone.utc).isoformat(),
-                "books": ALL_BOOKS,
-                "games": games,
+                "books":   ALL_BOOKS,
+                "games":   games,
             }
             key = f"betcouncil_vsin_{sport}.json"
             if push_to_gist(key, payload):
-                log(f"  {sport}: pushed {key} OK")
+                log(f"  {sport}: pushed {key} ✓")
                 fetched_any = True
             else:
                 log(f"  {sport}: Gist push failed")
@@ -245,7 +294,7 @@ def run():
             log(f"  {sport}: ERROR — {e}")
 
     if not fetched_any:
-        log("No sports had data (all off-season or all failed)")
+        log("No sports had real data this run")
         sys.exit(0)
 
 
