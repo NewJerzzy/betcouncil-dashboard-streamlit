@@ -6914,7 +6914,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
                     tier = get_game_tier(abs(spread_edge_pct), sport)
-                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "mc_blend": True, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
+                    _pinn_sp_side = "HOME" if spread_edge > 0 else "AWAY"
+                    _pinn_sp_prob, _pinn_sp_conf, _pinn_sp_note = pinnacle_game_fair_value(home_team, away_team, "spread", sport, _pinn_sp_side)
+                    _pinn_sp = {"prob": _pinn_sp_prob, "confirms": _pinn_sp_conf, "note": _pinn_sp_note} if _pinn_sp_prob is not None else None
+                    recommendations.append({"type": "SPREAD", "pick": rec_text, "edge": spread_edge_pct, "mc_blend": True, "edge_pct": f"{spread_edge_pct:.1%}", "tier": tier, "power_diff": round(power_diff, 1), "market_spread": market_spread, "divergence": round(spread_edge, 1), "note": f"Power rating diff {power_diff:.1f} vs market spread {market_spread:.1f} — divergence {spread_edge:.1f} pts", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("spread", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public"), "pinnacle_sharp": _pinn_sp})
                     if abs(spread_edge_pct) > best_edge:
                         best_edge = abs(spread_edge_pct)
                         best_bet = recommendations[-1]
@@ -7434,7 +7437,9 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = get_game_tier(abs(total_edge_pct), sport)
-                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
+                    _pinn_tot_prob, _pinn_tot_conf, _pinn_tot_note = pinnacle_game_fair_value(home_team, away_team, "total", sport, side)
+                    _pinn_tot = {"prob": _pinn_tot_prob, "confirms": _pinn_tot_conf, "note": _pinn_tot_note} if _pinn_tot_prob is not None else None
+                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public"), "pinnacle_sharp": _pinn_tot})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
@@ -7548,7 +7553,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _ml_note = f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"
                     if _ml_consensus.get("n_books", 0) >= 2:
                         _ml_note += f" ({_ml_consensus['n_books']}-book consensus)"
-                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "mc_blend": True, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public")})
+                    _pinn_ml_side = "HOME" if h_ml_edge >= a_ml_edge else "AWAY"
+                    _pinn_ml_prob, _pinn_ml_conf, _pinn_ml_note = pinnacle_game_fair_value(home_team, away_team, "moneyline", sport, _pinn_ml_side)
+                    _pinn_ml = {"prob": _pinn_ml_prob, "confirms": _pinn_ml_conf, "note": _pinn_ml_note} if _pinn_ml_prob is not None else None
+                    recommendations.append({"type": "MONEYLINE", "pick": ml_pick, "edge": ml_edge, "mc_blend": True, "edge_pct": f"{ml_edge:.1%}", "ev": round(ev, 3), "tier": tier, "fair_prob": round(fair_prob, 3), "odds": _ml_picked_odds, "note": _ml_note, "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public"), "pinnacle_sharp": _pinn_ml})
                     if ml_edge > best_edge:
                         best_edge = ml_edge
                         best_bet = recommendations[-1]
@@ -10550,6 +10558,86 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
     else:
         note = f"📌 Pinnacle neutral: {prob:.1%} true prob"
 
+    return prob, confirms, note
+
+
+def pinnacle_game_fair_value(home_team, away_team, market, sport, model_side=None):
+    """
+    Compute no-vig fair probability from Pinnacle game-line data in session_state.
+    market: 'moneyline', 'spread', or 'total'
+    model_side: 'HOME'/'AWAY' for moneyline/spread, 'OVER'/'UNDER' for total
+    """
+    games = st.session_state.get("pinnacle_game_lines", [])
+    if not games:
+        return None, False, ""
+
+    def _norm(s):
+        return str(s or "").lower().replace(".", "").strip()
+
+    game = None
+    h_norm, a_norm = _norm(home_team), _norm(away_team)
+    for g in games:
+        if _norm(g.get("Home")) == h_norm and _norm(g.get("Away")) == a_norm:
+            game = g
+            break
+    if game is None:
+        for g in games:
+            gh, ga = _norm(g.get("Home")), _norm(g.get("Away"))
+            if (h_norm in gh or gh in h_norm) and (a_norm in ga or ga in a_norm):
+                game = g
+                break
+    if game is None:
+        return None, False, ""
+
+    from consensus_engine import american_to_implied_prob
+
+    prob = None
+    side_label = model_side or ""
+
+    if market == "moneyline":
+        home_ml, away_ml = game.get("HomeML"), game.get("AwayML")
+        home_p, away_p = american_to_implied_prob(home_ml), american_to_implied_prob(away_ml)
+        if home_p is None or away_p is None:
+            return None, False, ""
+        total = home_p + away_p
+        if total <= 0:
+            return None, False, ""
+        home_fair, away_fair = home_p / total, away_p / total
+        prob = home_fair if model_side == "HOME" else away_fair if model_side == "AWAY" else home_fair
+        side_label = model_side or "HOME"
+
+    elif market == "total":
+        over_odds, under_odds = game.get("TotalOver"), game.get("TotalUnder")
+        over_p, under_p = american_to_implied_prob(over_odds), american_to_implied_prob(under_odds)
+        if over_p is None or under_p is None:
+            return None, False, ""
+        total = over_p + under_p
+        if total <= 0:
+            return None, False, ""
+        over_fair, under_fair = over_p / total, under_p / total
+        prob = over_fair if model_side == "OVER" else under_fair if model_side == "UNDER" else over_fair
+        side_label = model_side or "OVER"
+
+    elif market == "spread":
+        # Away-side odds aren't stored in fetch_pinnacle_game_lines()'s dict —
+        # single-side implied prob vs 0.524 breakeven, directional signal only.
+        spread_odds = game.get("SpreadOdds")
+        prob = american_to_implied_prob(spread_odds)
+        if prob is None:
+            return None, False, ""
+        side_label = model_side or "HOME"
+
+    else:
+        return None, False, ""
+
+    confirms = prob > 0.52
+    fade = prob < 0.46
+    if confirms:
+        note = f"📌 Pinnacle confirms {side_label}: {prob:.1%} true prob"
+    elif fade:
+        note = f"⚠️ Pinnacle FADES {side_label}: {prob:.1%} — sharp money disagrees"
+    else:
+        note = f"📌 Pinnacle neutral on {side_label}: {prob:.1%}"
     return prob, confirms, note
 
 
@@ -17742,6 +17830,7 @@ with tabs[2]:
             _gl_pub_h = next((r.get("public_pct_home") for r in _g.get("recommendations", []) if r.get("public_pct_home") is not None), None)
             _gl_pub_a = next((r.get("public_pct_away") for r in _g.get("recommendations", []) if r.get("public_pct_away") is not None), None)
             _gl_svp   = next((r.get("sharp_vs_public") for r in _g.get("recommendations", []) if r.get("sharp_vs_public")), None)
+            _gl_pin   = next((r.get("pinnacle_sharp") for r in _g.get("recommendations", []) if r.get("pinnacle_sharp")), None)
             _gl_pub_html = ""
             if _gl_pub_h is not None:
                 _pub_color = "#e04040" if _gl_svp == "FADE_PUBLIC" else ("#e8a020" if _gl_svp == "WITH_PUBLIC" else "#4a7a9b")
@@ -17755,12 +17844,23 @@ with tabs[2]:
                 'background:#7c3aed22;color:#a78bfa;border:0.5px solid #7c3aed44;margin-left:6px;" '
                 'title="Monte Carlo simulation blended into edge calculation">🎲 MC</span>'
             ) if _gl_mc_blend else ""
+            _gl_pin_html = ""
+            if _gl_pin and _gl_pin.get("note"):
+                _pin_ok   = _gl_pin.get("confirms", False)
+                _pin_fade = not _pin_ok and _gl_pin.get("prob", 0.5) < 0.46
+                _pin_color = "#22c55e" if _pin_ok else ("#e04040" if _pin_fade else "#7f77dd")
+                _pin_icon  = "📌✓" if _pin_ok else ("📌✗" if _pin_fade else "📌~")
+                _gl_pin_html = (
+                    f'<span title="{_gl_pin.get("note","")}" style="font-size:11px;font-weight:600;'
+                    f'padding:2px 8px;border-radius:10px;background:{_pin_color}22;color:{_pin_color};'
+                    f'border:0.5px solid {_pin_color}44;margin-left:6px;">{_pin_icon} Pinnacle</span>'
+                )
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:18px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
                 f'<span style="font-size:14px;font-weight:500;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:15px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_badge_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_badge_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
