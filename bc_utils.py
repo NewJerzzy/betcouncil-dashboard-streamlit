@@ -4873,6 +4873,8 @@ def _merge_rolling(season_avgs, rolling, weight=0.7):
                 for k, v in stats.items() if k != "n_games"
             }
             season_avgs[player] = {**season_avgs[player], **merged}
+            if "n_games" in stats:
+                season_avgs[player]["n_games"] = stats["n_games"]
         else:
             season_avgs[player] = stats
 
