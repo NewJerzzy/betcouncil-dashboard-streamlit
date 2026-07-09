@@ -5186,6 +5186,101 @@ def compute_ufc_round_projection(fighter1_stats: dict, fighter2_stats: dict,
         "weightclass":   weightclass,
     }
 
+def fetch_epl_live_player_stats(comp_season_id=777, min_apps=5):
+    """Fetch live current-season EPL player stats from the Premier League's own
+    public Pulse Live API (footballapi.pulselive.com) -- no auth, no key, not
+    blocked from any tested IP (Replit or GitHub Actions runners).
+
+    Returns per-game GOALS/ASSISTS/SHOTS for every EPL player with >= min_apps
+    appearances this season. comp_season_id must be refreshed each EPL season
+    (call fetch_epl_current_season_id() or hardcode after checking
+    footballapi.pulselive.com/football/competitions/1/compseasons).
+    """
+    cache_path = os.path.join(CACHE_DIR, "epl_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    def _ranked(stat, page_size=100, max_pages=6):
+        content = []
+        for page in range(max_pages):
+            url = (f"https://footballapi.pulselive.com/football/stats/ranked/players/{stat}"
+                   f"?compSeasons={comp_season_id}&comps=1&page={page}"
+                   f"&pageSize={page_size}&sort=desc&type=player")
+            resp = _http.get(url, headers={"Origin": "https://www.premierleague.com"}, timeout=12)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            batch = data.get("stats", {}).get("content", [])
+            content.extend(batch)
+            total = data.get("stats", {}).get("pageInfo", {}).get("numEntries", 0)
+            if len(content) >= total:
+                break
+        return content
+
+    try:
+        goals_data = _ranked("goals")
+        assists_data = _ranked("goal_assist")
+        shots_data = _ranked("total_scoring_att")
+        apps_data = _ranked("appearances")
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_epl_live_player_stats",
+            "error": str(e)[:100]
+        })
+        return {}
+
+    def _team(owner):
+        ct = owner.get("currentTeam")
+        return ct["name"] if ct else "Unknown"
+
+    apps_map = {}
+    for e in apps_data:
+        pid = e["owner"]["id"]
+        apps_map[pid] = {"name": e["owner"]["name"]["display"], "apps": e["value"],
+                          "team": _team(e["owner"])}
+    goals_map = {e["owner"]["id"]: (e["value"], _team(e["owner"])) for e in goals_data}
+    assists_map = {e["owner"]["id"]: e["value"] for e in assists_data}
+    shots_map = {e["owner"]["id"]: e["value"] for e in shots_data}
+
+    live = {}
+    for pid, info in apps_map.items():
+        napps = info["apps"]
+        if napps < min_apps:
+            continue
+        g, g_team = goals_map.get(pid, (0, None))
+        a = assists_map.get(pid, 0)
+        s = shots_map.get(pid, 0)
+        if g == 0 and a == 0 and s == 0:
+            continue
+        goals_pg = round(g / napps, 3)
+        assists_pg = round(a / napps, 3)
+        shots_pg = round(s / napps, 3)
+        live[info["name"]] = {
+            "GOALS": goals_pg,
+            "ASSISTS": assists_pg,
+            "SHOTS": shots_pg,
+            "GOALS_std": round(goals_pg * 0.80, 3),
+            "ASSISTS_std": round(assists_pg * 0.75, 3),
+            "SHOTS_std": round(shots_pg * 0.45, 3),
+            "n_games": int(napps),
+            "team": info["team"] if info["team"] != "Unknown" else (g_team or "Unknown"),
+            "source": "live_epl_pulse"
+        }
+
+    if live:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(live, f)
+        except Exception:
+            pass
+    return live
+
+
 def fetch_soccer_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "soccer_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -5207,6 +5302,21 @@ def fetch_soccer_rolling_averages():
             "n_games": 10,
             "source": "hardcoded_with_std"
         }
+
+    # Overlay live current-season EPL stats where available -- real per-game
+    # rates beat the StatsBomb-tournament-derived static baseline whenever we
+    # have them.
+    try:
+        epl_live = fetch_epl_live_player_stats()
+        for player, stats in epl_live.items():
+            rolling[player] = stats
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_soccer_rolling_averages/epl_live_overlay",
+            "error": str(e)[:100]
+        })
+
     if rolling:
         with open(cache_path, "wb") as f:
             pickle.dump(rolling, f)
