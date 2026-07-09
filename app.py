@@ -13739,11 +13739,16 @@ def load_sport_data(sport):
         adj_edge, calibrated = adjusted_edge(
             best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history
         )
-        # TODO: _n_samp/_std_d/_avg_v computed above were intended as SEM
-        # inputs for adjusted_edge but the function doesn't accept them yet —
-        # dropped from the call to stop the TypeError. Wire in a real SEM-
-        # weighted calibration formula when this feature gets built out.
         final_edge = adj_edge if calibrated else best_edge
+        # NOTE 2026-07-09: _n_samp/_std_d/_avg_v above are dead inputs from an
+        # abandoned earlier attempt at this (GameLog/game_log is never
+        # actually populated anywhere in this codebase, so _n_samp is always
+        # 0). The REAL, working sample-size confidence weighting already
+        # exists a few lines below via avg_dict.get("n_games") +
+        # sample_size_confidence() - that one uses a properly populated
+        # field. Do not add a second confidence multiplier here; it would
+        # double-discount every edge and, worse, incorrectly apply a flat
+        # 20% reduction to everything since _n_samp is always 0.
         eff_score, eff_label = market_efficiency_score(line, ud_line_val, final_edge, sport)
         if (an_grade in ("A+", "A", "A-") and _get_cal_tier(final_edge, sport) in ("SOVEREIGN", "ELITE", "APPROVED")):
             final_edge = min(final_edge * 1.05, EDGE_CAP)
@@ -14988,7 +14993,13 @@ def load_sport_data(sport):
         _sample_size = prop.get("SampleSize", 0)
         _conf_mult = prop.get("ConfidenceMult", 1.0)
         if isinstance(_sample_size, (int,float)) and _sample_size >= 3:
-            if _conf_mult < 0.80 and _original_tier in ("SOVEREIGN","ELITE"):
+            # NOTE 2026-07-09: this threshold was previously < 0.80, which
+            # sample_size_confidence() can mathematically never return (0.80
+            # is its floor value, for n_games=0) - this check could never
+            # fire regardless of how thin the actual sample was. 0.92 catches
+            # genuinely small samples (n_games <= 4 per the function's curve)
+            # while leaving anything with reasonable game history alone.
+            if _conf_mult < 0.92 and _original_tier in ("SOVEREIGN","ELITE"):
                 _overrides.append(f"📉 Confidence multiplier {_conf_mult:.0%} — small sample or recent minute restriction detected. Stats may not reflect current role.")
                 if _original_tier == "SOVEREIGN":
                     prop["Tier"] = "ELITE"
