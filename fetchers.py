@@ -17531,3 +17531,92 @@ def fetch_caesars_lines(sport: str = "MLB") -> list:
     """
     return _fetch_an_book_lines(sport, 123, "Caesars")
 
+
+
+def fetch_vsin_from_gist(sport: str = "MLB", max_age_minutes: int = 45) -> tuple:
+    """
+    Reads VSiN Vegas line-tracker data from the Gist (pushed by
+    scripts/vsin_harvester.py — plain curl against data.vsin.com's
+    server-rendered linetracker, no auth, no browser).
+
+    Covers 8 books: Circa, Westgate, South Point, Stations, Wynn (Nevada
+    sharp books) + BetMGM, Caesars, Boomers (online). Circa/Westgate in
+    particular are considered among the sharpest lines in the US and
+    aren't available through OddsAPI or Unabated — this is a genuinely
+    independent sharp-reference source, not a duplicate of Pinnacle.
+
+    NOTE: this source's freshness field is "updated", not "captured_at"
+    like most other Gist-backed sources in this file — do not swap this
+    to the shared _is_fresh() helper without accounting for that, or every
+    call will silently report stale forever (this bit Unabated earlier).
+
+    Returns (games_list, source_label). games_list items:
+        {time, away_team, home_team, open: {spread,ml,total},
+         books: {book_name: {spread, ml, total, spread_odds, ...}}}
+    """
+    data = _read_gist_file(f"betcouncil_vsin_{sport.upper()}.json", cache_minutes=10)
+    if not data or not isinstance(data, dict):
+        return [], "unavailable"
+
+    updated_str = data.get("updated", "")
+    if not updated_str:
+        return [], "unavailable"
+    try:
+        from datetime import datetime, timezone
+        updated = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+        age_min = (datetime.now(timezone.utc) - updated).total_seconds() / 60
+        if age_min > max_age_minutes:
+            print(f"[VSiN] {sport} data is stale ({age_min:.0f}min old) — skipping")
+            return [], "stale"
+    except Exception:
+        return [], "unavailable"
+
+    games = data.get("games", [])
+    if not games:
+        return [], "unavailable"
+    return games, "vsin_live"
+
+
+def fetch_evsharps_dingers_from_gist(max_age_minutes: int = 45) -> tuple:
+    """
+    Reads EVSharps HR-prop data from the Gist (pushed by
+    scripts/evsharps_dingers_harvester.py — unauthenticated Railway API
+    behind evsharps.com/dingers).
+
+    Each entry carries EVSharps' own pre-computed fair value (their devig,
+    independent of ours) plus full batter/pitcher Statcast and multi-book
+    odds (b365, BetVictor, DK, FD, ESPN Bet, Hard Rock, ProphetX). The
+    fair_val field can be used the same way as Unabated's fair prob — a
+    second, independent validator specifically for HR props.
+
+    NOTE: same as fetch_vsin_from_gist above — freshness field here is
+    "updated", not "captured_at". Do not swap to the shared _is_fresh()
+    helper without handling that.
+
+    MLB-only currently (evsharps.com/dingers is a home-run-specific page).
+
+    Returns (entries_list, source_label). entries_list items include:
+        {player_name/name, game, line, book_odds, ev_pct, fair_val,
+         batter_percs, hit_rates, homer_logs, ...}
+    """
+    data = _read_gist_file("betcouncil_evsharps_dingers_MLB.json", cache_minutes=10)
+    if not data or not isinstance(data, dict):
+        return [], "unavailable"
+
+    updated_str = data.get("updated", "")
+    if not updated_str:
+        return [], "unavailable"
+    try:
+        from datetime import datetime, timezone
+        updated = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+        age_min = (datetime.now(timezone.utc) - updated).total_seconds() / 60
+        if age_min > max_age_minutes:
+            print(f"[EVSharps dingers] data is stale ({age_min:.0f}min old) — skipping")
+            return [], "stale"
+    except Exception:
+        return [], "unavailable"
+
+    entries = data.get("entries", [])
+    if not entries:
+        return [], "unavailable"
+    return entries, "evsharps_dingers_live"
