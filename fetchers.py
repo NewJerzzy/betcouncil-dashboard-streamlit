@@ -5212,6 +5212,59 @@ def fetch_soccer_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+def fetch_soccer_club_elo() -> dict:
+    """Fetch team ELO ratings from ClubElo (free CSV API, no auth).
+
+    Returns: dict of team_name -> elo_rating (float) for today's rankings.
+    Endpoint: http://api.clubelo.com/{YYYY-MM-DD}  →  CSV with Rank,Club,Country,Level,Elo
+    Cached 24h. Works from any IP — no datacenter block.
+
+    Usage (opponent quality adjustment):
+        elo = st.session_state.get("soccer_club_elo", {})
+        opp_elo = elo.get(opponent_team, 1500.0)  # 1500 = average
+        elo_adj = (opp_elo - 1500) / 1000          # ~0.0 for avg; +0.5 for elite
+    """
+    cache_path = os.path.join(CACHE_DIR, "soccer_club_elo.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    elo_map = {}
+    today = time.strftime("%Y-%m-%d")
+    url = f"http://api.clubelo.com/{today}"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return elo_map
+        lines = resp.text.strip().split("\n")
+        for line in lines[1:]:          # skip header
+            parts = line.strip().split(",")
+            if len(parts) >= 5:
+                club = parts[1].strip()
+                try:
+                    elo = float(parts[4])
+                except (ValueError, IndexError):
+                    continue
+                elo_map[club] = elo
+        if elo_map:
+            try:
+                with open(cache_path, "wb") as f:
+                    import pickle
+                    pickle.dump(elo_map, f)
+            except Exception:
+                pass
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_soccer_club_elo",
+            "error": str(e)[:100]
+        })
+    return elo_map
+
+
 def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
     """
     Fetch season averages for a specific player by name search.
