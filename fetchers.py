@@ -5281,6 +5281,94 @@ def fetch_epl_live_player_stats(comp_season_id=777, min_apps=5):
     return live
 
 
+
+def fetch_mls_live_player_stats(competition_id="MLS-COM-000001", season_id="MLS-SEA-0001KA", min_apps=5):
+    """Fetch live current-season MLS player stats from the league's own public
+    sportapi.mlssoccer.com API -- no auth, no key, discovered from a real
+    browser Network-tab capture of mlssoccer.com/stats/players/. Confirmed
+    against known players before use: Messi 12g/7a, Suarez 6g/1a this season.
+
+    Returns per-game GOALS/ASSISTS/SHOTS/XG for every MLS player with
+    >= min_apps matches played. season_id must be refreshed each MLS season
+    (capture a fresh request from mlssoccer.com/stats/players/ via DevTools
+    Network tab and read the season id out of the request URL).
+    """
+    cache_path = os.path.join(CACHE_DIR, "mls_live_stats.pkl")
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < 24:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
+    def _ranked(stat, page_size=100, max_pages=10):
+        content = []
+        for page in range(1, max_pages + 1):
+            url = (f"https://sportapi.mlssoccer.com/api/stats/players/competition/{competition_id}"
+                   f"/season/{season_id}/order/{stat}/desc?pageSize={page_size}&page={page}")
+            resp = _http.get(url, headers={
+                "Origin": "https://www.mlssoccer.com",
+                "Referer": "https://www.mlssoccer.com/"
+            }, timeout=12)
+            if resp.status_code != 200:
+                break
+            batch = resp.json()
+            if not batch:
+                break
+            content.extend(batch)
+            if len(batch) < page_size:
+                break
+        return content
+
+    try:
+        players = _ranked("matches_played")
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_mls_live_player_stats",
+            "error": str(e)[:100]
+        })
+        return {}
+
+    live = {}
+    for p in players:
+        napps = p.get("matches_played") or 0
+        if napps < min_apps:
+            continue
+        name = f"{p.get('player_first_name', '')} {p.get('player_last_name', '')}".strip()
+        if not name:
+            continue
+        g = p.get("goals", 0) or 0
+        a = p.get("assists", 0) or 0
+        s = p.get("shots_at_goal_sum", 0) or 0
+        xg = p.get("xG", 0) or 0
+        if g == 0 and a == 0 and s == 0:
+            continue
+        goals_pg = round(g / napps, 3)
+        assists_pg = round(a / napps, 3)
+        shots_pg = round(s / napps, 3)
+        xg_pg = round(xg / napps, 3)
+        live[name] = {
+            "GOALS": goals_pg,
+            "ASSISTS": assists_pg,
+            "SHOTS": shots_pg,
+            "XG": xg_pg,
+            "GOALS_std": round(goals_pg * 0.80, 3),
+            "ASSISTS_std": round(assists_pg * 0.75, 3),
+            "SHOTS_std": round(shots_pg * 0.45, 3),
+            "n_games": int(napps),
+            "team": p.get("team_three_letter_code", "Unknown"),
+            "source": "live_mls_sportapi"
+        }
+
+    if live:
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(live, f)
+        except Exception:
+            pass
+    return live
+
 def fetch_soccer_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "soccer_rolling_avgs.pkl")
     if os.path.exists(cache_path):
@@ -5314,6 +5402,19 @@ def fetch_soccer_rolling_averages():
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
             "source": "fetch_soccer_rolling_averages/epl_live_overlay",
+            "error": str(e)[:100]
+        })
+
+    # Overlay live current-season MLS stats where available -- same rationale
+    # as the EPL overlay above: real per-game rates beat the static baseline.
+    try:
+        mls_live = fetch_mls_live_player_stats()
+        for player, stats in mls_live.items():
+            rolling[player] = stats
+    except Exception as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_soccer_rolling_averages/mls_live_overlay",
             "error": str(e)[:100]
         })
 
