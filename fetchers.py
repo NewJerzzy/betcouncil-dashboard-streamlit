@@ -11221,18 +11221,22 @@ def fetch_covers_consensus(sport: str) -> dict:
 
     URL FIX (Jul 9 2026): the old covers.com/sport/{sport}/consensus page
     was retired — Covers moved consensus picks to a separate contests
-    subdomain entirely: contests.covers.com/consensus/topconsensus/{sport}/overall.
-    Confirmed live and server-rendered (plain HTML table, no client-side
-    JS wall) as of this date. Returns {matchup: {home_pct, away_pct}}.
-    Cached 30 min.
+    subdomain: contests.covers.com/consensus/topconsensus/{sport}/overall.
 
-    NOTE: this parser is built from a markdown-rendered fetch of the page,
-    not raw HTML source — the regex patterns below (team name via
-    "<name> Picks" alt text, percentage pairs like "35%   65%") are a
-    best-effort match to the visible structure and have NOT been verified
-    against the actual HTML tag/class names. If this returns empty in
-    production, that's the first thing to check with real browser
-    DevTools — see the team prompt for this.
+    PARSER FIX (Jul 9 2026, verified via direct HTTP fetch of the real page):
+    this is plain server-rendered HTML, NOT embedded JSON — there is no
+    window.__INITIAL_STATE__ blob on this page (confirmed: 0 matches).
+    Real per-row structure:
+      - Away team:  <span class="covers-CoversConsensus-table--teamBlock">
+      - Home team:  <span class="covers-CoversConsensus-table--teamBlock2">
+      - Consensus%: <span class="covers-CoversConsensus-consensusTable--low">
+                    and "...--high"> (low = less-picked side, high = more-
+                    picked side — these describe magnitude, not home/away,
+                    so they're paired with team names by DOM order, not by
+                    the low/high label itself)
+      - Odds:       plain text "-106<br />-117" in the next <td>
+      - Picks:      plain text "12<br />39"
+    Returns {matchup: {away_pct, home_pct}}. Cached 30 min.
     """
     cache_path = os.path.join(CACHE_DIR, f"covers_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -11248,32 +11252,39 @@ def fetch_covers_consensus(sport: str) -> dict:
         if not slug:
             return {}
         url = f"https://contests.covers.com/consensus/topconsensus/{slug}/overall"
-        # Try direct first — contests.covers.com may not share www.covers.com's
-        # datacenter-IP block. Fall back to ScraperAPI proxy if it 403/blocks.
         r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}, timeout=15)
         if r.status_code != 200 and SCRAPERAPI_KEY:
             proxy_url = f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={url}"
             r = _http.get(proxy_url, timeout=20)
         if r.status_code != 200:
             return {}
-        html = r.text
         results = {}
         try:
             from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, "html.parser")
+            soup = BeautifulSoup(r.text, "html.parser")
             for row in soup.find_all("tr"):
-                imgs = row.find_all("img", alt=True)
-                team_names = [img["alt"].replace(" Picks", "").strip() for img in imgs if img["alt"].endswith(" Picks")]
-                if len(team_names) != 2:
+                away_block = row.find("span", class_="covers-CoversConsensus-table--teamBlock")
+                home_block = row.find("span", class_="covers-CoversConsensus-table--teamBlock2")
+                if not away_block or not home_block:
                     continue
-                row_text = row.get_text(" ", strip=True)
-                pct_matches = re.findall(r"(\d{1,3})%", row_text)
-                if len(pct_matches) < 2:
+                away_team = away_block.get_text(strip=True)
+                home_team = home_block.get_text(strip=True)
+                if not away_team or not home_team:
                     continue
-                away_team, home_team = team_names[0], team_names[1]
+                pct_spans = row.find_all("span", class_=lambda c: c and (
+                    "covers-CoversConsensus-consensusTable--low" in c or
+                    "covers-CoversConsensus-consensusTable--high" in c
+                ))
+                pcts = []
+                for span in pct_spans:
+                    m = re.search(r"(\d{1,3})%", span.get_text(strip=True))
+                    if m:
+                        pcts.append(int(m.group(1)))
+                if len(pcts) != 2:
+                    continue
                 results[f"{away_team} @ {home_team}"] = {
-                    "away_pct": int(pct_matches[0]),
-                    "home_pct": int(pct_matches[1]),
+                    "away_pct": pcts[0],
+                    "home_pct": pcts[1],
                 }
         except ImportError:
             pass
