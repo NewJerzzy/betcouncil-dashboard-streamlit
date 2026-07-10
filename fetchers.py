@@ -17851,18 +17851,38 @@ def fetch_unabated_straight_from_gist(sport: str, source_id: int, book_label: st
 
     bet_type_id mapping (confirmed): 1=Moneyline, 2=Spread, 3=Total.
 
-    CAVEAT: Moneyline and Spread parsing below is confirmed against real
-    captured rows (team_id ties each side to a specific team, matched
-    against the "Away @ Home" order embedded in the "event" string). Total
-    parsing is NOT individually confirmed the same way — no real Total row
-    was captured to check how side_index/team_id distinguishes Over vs
-    Under, so this assumes side_index 0=Over, 1=Under (a common convention,
-    not a verified fact). If Total numbers look swapped or wrong, this
-    assumption is the first thing to check.
+    side_index mapping (Jul 10 2026, CORRECTED after real verification):
+    side_index 0 = AWAY, side_index 1 = HOME — confirmed via US rotation-
+    number convention (odd rotation = away, even = home) across every
+    tested NFL and MLB event. The original version of this function used
+    "first team_id encountered in the row list" to guess away/home, which
+    was WRONG — JSON row order isn't guaranteed to list away first, so it
+    mislabeled home/away for roughly 5 of 6 tested events. Do not revert
+    to first-seen ordering; use side_index directly.
+
+    Total (Over/Under) — NOT assignable from this data. Confirmed: for a
+    Total row pair, both sides report the SAME points value (it's the
+    total line itself), and side_index still means away/home here too —
+    NOT over/under. There is no field in the raw data that labels a price
+    as Over or Under; the two prices per event are just "the away side's
+    number" and "the home side's number" for the total market, and which
+    one corresponds to Over vs Under cannot be determined without cross-
+    referencing a source that does label it. Rather than guess (the
+    previous version wrongly assumed side_index 0=Over), OverOdds/
+    UnderOdds are left unset here — only the Total points value itself
+    is populated, since that part IS reliable (confirmed identical across
+    both sides in every event checked).
+
+    Also guards against a confirmed artifact: some events showed points=0.5
+    for MLB leaking into the Total field (was actually a Q1 team-assignment
+    bug feeding an unrelated Spread row's alt-line value into Total) — a
+    sanity floor of points > 3 on Total rows catches this class of error
+    even if a different root cause produces it again later.
 
     Returns list of:
         {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
-         Total, OverOdds, UnderOdds, Book, Sport, source}
+         Total, Book, Sport, source}
+        (OverOdds/UnderOdds intentionally omitted — see note above)
     """
     fname = f"betcouncil_unabated_straight_{sport.upper()}.json"
     data = _read_gist_file(fname, cache_minutes=10)
@@ -17872,7 +17892,6 @@ def fetch_unabated_straight_from_gist(sport: str, source_id: int, book_label: st
     if not rows:
         return []
 
-    # Filter to just this book, group by event_id
     by_event = {}
     for r in rows:
         if r.get("source_id") != source_id:
@@ -17891,48 +17910,33 @@ def fetch_unabated_straight_from_gist(sport: str, source_id: int, book_label: st
             continue
         away_str, home_str = [s.strip() for s in event_str.split(" @ ", 1)]
 
-        # Team-id -> which side (away/home) it belongs to, derived from the
-        # order teams first appear across ML/Spread rows for this event.
-        team_side = {}
-        for r in rows_for_event:
-            tid = r.get("team_id")
-            if tid is None or tid in team_side:
-                continue
-            if len(team_side) == 0:
-                team_side[tid] = "away"
-            elif len(team_side) == 1:
-                team_side[tid] = "home"
-
         entry = {
             "Home": home_str, "Away": away_str,
             "HomeML": None, "AwayML": None,
             "Spread": None, "SpreadOdds": None,
-            "Total": None, "OverOdds": None, "UnderOdds": None,
+            "Total": None,
             "Book": book_label, "Sport": sport, "source": f"Unabated_straight_{book_label}",
         }
         for r in rows_for_event:
             bt = r.get("bet_type_id")
-            tid = r.get("team_id")
+            si = r.get("side_index")
             price = r.get("price")
             points = r.get("points")
-            side = team_side.get(tid)
+            is_away = (si == 0)
+            is_home = (si == 1)
             if bt == 1:  # Moneyline
-                if side == "home":
+                if is_home:
                     entry["HomeML"] = price
-                elif side == "away":
+                elif is_away:
                     entry["AwayML"] = price
             elif bt == 2:  # Spread
-                if side == "home" and points is not None:
+                if is_home and points is not None:
                     entry["Spread"] = points
                     entry["SpreadOdds"] = price
-            elif bt == 3:  # Total — side_index convention UNVERIFIED, see caveat above
-                if r.get("side_index") == 0:
+            elif bt == 3:  # Total — points identical on both sides; sanity
+                           # floor guards against the confirmed 0.5 artifact
+                if points is not None and points > 3 and entry["Total"] is None:
                     entry["Total"] = points
-                    entry["OverOdds"] = price
-                elif r.get("side_index") == 1:
-                    if entry["Total"] is None:
-                        entry["Total"] = points
-                    entry["UnderOdds"] = price
         if entry["HomeML"] is not None or entry["AwayML"] is not None:
             out.append(entry)
     return out
