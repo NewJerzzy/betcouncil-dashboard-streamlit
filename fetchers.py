@@ -8258,6 +8258,82 @@ def fetch_nhl_starting_goalies():
     return result
 
 
+def fetch_sleeper_nfl_scoreboard(season=None, season_type="pre", week=1):
+    """
+    NFL uses a COMPLETELY DIFFERENT endpoint shape than MLB/WNBA/NBA/NHL —
+    confirmed live via direct capture (Jul 10 2026). Not a date-path
+    endpoint; it's query-param based and keyed by season/season_type/week
+    since NFL plays weekly, not daily:
+
+        GET https://api.sleeper.app/scores?key=params&sports[]=nfl
+            &season={season}&season_type={season_type}&week={week}
+
+    Confirmed no authentication required (same as the date-path endpoints).
+
+    IMPORTANT LIMITATION: this response has NO lineup/starters data
+    anywhere — confirmed via a live preseason capture. Fields are schedule/
+    score/quarter-by-quarter/venue/pickem_spread only (away_team, home_team,
+    per-quarter scores, stadium_details, channel, status). There is no
+    player-level roster or lineup array the way MLB has. If you need NFL
+    starting lineups or depth charts, this endpoint does not provide them —
+    use the existing fetch_nfl_full_player_database() / ESPN roster path
+    instead. This function is scores/schedule/spread only.
+
+    season_type values seen in capture: "pre" (preseason). Regular season
+    is presumably "reg" and playoffs "post" but that's NOT verified yet —
+    worth confirming once the season actually changes phase.
+
+    Returns {game_id: {status, away_team, home_team, away_score, home_score,
+                        week, season, start_time, venue, spread, fetched_at}}
+    Returns {} (never raises) on any failure.
+    """
+    if season is None:
+        season = datetime.now().year
+    cache_path = os.path.join(CACHE_DIR, f"sleeper_nfl_scoreboard_{season}_{season_type}_{week}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    url = (f"https://api.sleeper.app/scores"
+           f"?key=params&sports%5B%5D=nfl&season={season}"
+           f"&season_type={season_type}&week={week}")
+    try:
+        resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
+        resp.raise_for_status()
+        games = resp.json()
+    except Exception as e:
+        logging.warning(f"[Sleeper] NFL scoreboard fetch failed: {e}")
+        return {}
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    result = {}
+    for g in games or []:
+        game_id = g.get("game_id")
+        if not game_id:
+            continue
+        meta = g.get("metadata") or {}
+        away_score = sum(meta.get(f"away_score_quarter{n}", 0) or 0 for n in (1, 2, 3, 4)) + (meta.get("away_score_overtime", 0) or 0)
+        home_score = sum(meta.get(f"home_score_quarter{n}", 0) or 0 for n in (1, 2, 3, 4)) + (meta.get("home_score_overtime", 0) or 0)
+        result[game_id] = {
+            "status": meta.get("status", g.get("status", "")),
+            "away_team": meta.get("away_team", ""),
+            "home_team": meta.get("home_team", ""),
+            "away_score": away_score,
+            "home_score": home_score,
+            "week": g.get("week"),
+            "season": g.get("season"),
+            "start_time": meta.get("date_time", ""),
+            "venue": (meta.get("stadium_details") or {}).get("name", ""),
+            "spread": meta.get("pickem_spread", {}),
+            "fetched_at": fetched_at,
+        }
+    if result:
+        _safe_save_pkl(cache_path, result)
+    return result
+
+
 def fetch_mlb_confirmed_lineups_with_fallback():
     """
     Same contract as fetch_mlb_confirmed_lineups(), but fills in any team
