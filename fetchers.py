@@ -8084,17 +8084,21 @@ def fetch_mlb_confirmed_lineups():
 
 def fetch_sleeper_mlb_scoreboard(date_str=None):
     """
-    Real implementation (Jul 9 2026) — this was referenced since 2026-06-21
-    but never actually built until now; confirmed via live DevTools capture:
+    Pulls today's (or date_str's) real MLB games, scores, and starting
+    lineups from Sleeper's public consumer-app API — the same endpoint
+    sleeper.com/scores calls in-browser, NOT the documented api.sleeper.app/v1
+    fantasy-league API (which has no cross-league scoreboard endpoint at all).
 
       GET https://api.sleeper.app/scores/mlb/date/{YYYY-MM-DD}
-      Header: authorization: <JWT>   (tied to a logged-in Sleeper account)
 
-    Unlike Caesars' ~24h WAF token, this JWT's iat/exp are exactly 365 days
-    apart — effectively a one-time capture, not a daily refresh. Store it
-    in Streamlit secrets as SLEEPER_JWT (captured via the browser's own
-    DevTools → Network tab → Copy as cURL on this request while logged
-    into sleeper.com, then pull the `authorization` header value out).
+    CORRECTION (Jul 10 2026): an earlier version of this function required
+    a SLEEPER_JWT/authorization header, based on a DevTools capture that
+    included the logged-in browser's session header. That header is NOT
+    actually required — re-verified with a clean, header-free request
+    (no cookies, no authorization) and it returns 200 with full data.
+    The response also sets `access-control-allow-origin: *` and is served
+    from Cloudflare's public edge cache, both of which are inconsistent
+    with an auth-gated endpoint. So: no JWT, no secrets, no auth needed.
 
     Confirmed response shape: a list of game dicts. Starting lineups live
     directly in metadata.away_team.lineup / metadata.home_team.lineup —
@@ -8109,14 +8113,6 @@ def fetch_sleeper_mlb_scoreboard(date_str=None):
     — matching the exact contract fetch_mlb_confirmed_lineups_with_fallback()
     already expects.
     """
-    jwt = ""
-    try:
-        jwt = st.secrets.get("SLEEPER_JWT", "")
-    except Exception:
-        pass
-    if not jwt:
-        return {}
-
     if date_str is None:
         date_str = date.today().strftime("%Y-%m-%d")
 
@@ -8129,18 +8125,9 @@ def fetch_sleeper_mlb_scoreboard(date_str=None):
                 return cached
 
     url = f"https://api.sleeper.app/scores/mlb/date/{date_str}"
-    headers = {
-        "accept": "application/json",
-        "authorization": jwt,
-        "origin": "https://sleeper.com",
-        "referer": "https://sleeper.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
+    headers = {"accept": "application/json"}
     try:
         r = _http.get(url, headers=headers, timeout=12)
-        if r.status_code == 401:
-            print("[WARN] fetch_sleeper_mlb_scoreboard: 401 — SLEEPER_JWT expired or invalid, needs re-capture")
-            return {}
         if r.status_code != 200:
             return {}
         games = r.json()
@@ -8174,79 +8161,6 @@ def fetch_sleeper_mlb_scoreboard(date_str=None):
     return result
 
 
-def fetch_sleeper_mlb_scoreboard(target_date=None):
-    """
-    Pulls today's (or target_date's) real MLB games, scores, and starting
-    lineups from Sleeper's public consumer-app API — the same endpoint
-    sleeper.com/scores calls in-browser, NOT the documented api.sleeper.app/v1
-    fantasy-league API (which has no cross-league scoreboard endpoint at all).
-
-    Verified live via direct HTTP fetch (Jul 10 2026):
-        GET https://api.sleeper.app/scores/mlb/date/YYYY-MM-DD
-    Returns a JSON list of games. No authentication required — no API key,
-    JWT, or cookie needed; confirmed 200 OK from a plain unauthenticated
-    request. Each game's metadata.away_team / metadata.home_team include
-    `team` (3-letter abbr), `name`, `score`, `probable_pitcher_name`, and a
-    `lineup` list of {id, player_name, order, sequence} once posted.
-
-    Returns a dict keyed by game_id:
-        {
-          "<game_id>": {
-            "status": "complete" | "pregame" | "in_progress" | ...,
-            "away": {"team": "CHC", "name": "Cubs", "score": 2,
-                      "probable_pitcher": "David Peterson",
-                      "lineup": [{"name": "...", "batting_order": 1}, ...]},
-            "home": {...same shape...},
-            "fetched_at": "<iso8601>",
-          },
-          ...
-        }
-    Returns {} (never raises) on any network/parse failure so callers can
-    treat this purely as an optional fallback source.
-    """
-    if target_date is None:
-        target_date = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://api.sleeper.app/scores/mlb/date/{target_date}"
-    try:
-        resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
-        resp.raise_for_status()
-        games = resp.json()
-    except Exception as e:
-        logging.warning(f"[Sleeper] scoreboard fetch failed: {e}")
-        return {}
-
-    fetched_at = datetime.now(timezone.utc).isoformat()
-    result = {}
-    for g in games or []:
-        game_id = g.get("game_id")
-        if not game_id:
-            continue
-        meta = g.get("metadata") or {}
-
-        def _side(block):
-            block = block or {}
-            lineup = [
-                {"name": p.get("player_name", ""), "batting_order": p.get("order", 0)}
-                for p in (block.get("lineup") or [])
-                if p.get("player_name")
-            ]
-            return {
-                "team": block.get("team", ""),
-                "name": block.get("name", ""),
-                "score": block.get("score"),
-                "probable_pitcher": block.get("probable_pitcher_name", ""),
-                "lineup": lineup,
-            }
-
-        result[game_id] = {
-            "status": g.get("status", ""),
-            "away": _side(meta.get("away_team")),
-            "home": _side(meta.get("home_team")),
-            "fetched_at": fetched_at,
-        }
-    return result
-
-
 def fetch_mlb_confirmed_lineups_with_fallback():
     """
     Same contract as fetch_mlb_confirmed_lineups(), but fills in any team
@@ -8255,9 +8169,10 @@ def fetch_mlb_confirmed_lineups_with_fallback():
     scoreboard API as a second, independent source. statsapi stays primary
     since it's the longer-trusted source; Sleeper only fills gaps.
 
-    fetch_sleeper_mlb_scoreboard() (implemented Jul 10 2026, see its own
-    docstring above) is a public, unauthenticated endpoint — no secrets
-    or JWT needed, so this fallback runs unconditionally.
+    fetch_sleeper_mlb_scoreboard() (implemented Jul 9 2026, see its own
+    docstring) requires SLEEPER_JWT in Streamlit secrets — without it this
+    fallback silently no-ops, same as before, but statsapi-primary coverage
+    is unaffected either way.
     """
     lineups = fetch_mlb_confirmed_lineups()
     try:
