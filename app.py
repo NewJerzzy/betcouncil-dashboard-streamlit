@@ -8476,6 +8476,47 @@ def optimize_parlay_with_alt_lines(selected_props, n_picks, bankroll):
         "adjusted_probs": adjusted_probs,
     }
 
+def _resolve_oddspapi_bookmaker_slugs(wanted_names, cache_hours=168):
+    """Resolve human book names (e.g. 'mybookie', 'betfair exchange') to their
+    real OddsPapi slugs via /bookmakers, so we never hardcode a guessed slug
+    that silently returns zero data if it's wrong. Cached 7 days — bookmaker
+    slugs don't change often. Falls back to the guessed name itself if the
+    lookup fails, so a bad network call never blocks the whole fetch."""
+    cache_path = os.path.join(CACHE_DIR, "oddspapi_bookmaker_slugs.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < cache_hours:
+            try:
+                with open(cache_path, "rb") as f:
+                    all_slugs = pickle.load(f)
+            except Exception:
+                all_slugs = None
+        else:
+            all_slugs = None
+    else:
+        all_slugs = None
+    if all_slugs is None:
+        try:
+            r = _http.get("https://api.oddspapi.io/v4/bookmakers", params={"apiKey": ODDSPAPI_KEY}, timeout=10)
+            if r.status_code == 200:
+                all_slugs = [b.get("slug", "") for b in r.json() if b.get("slug")]
+                with open(cache_path, "wb") as f:
+                    pickle.dump(all_slugs, f)
+            else:
+                all_slugs = []
+        except Exception:
+            all_slugs = []
+    resolved = []
+    for name in wanted_names:
+        name_norm = name.lower().replace(" ", "").replace("-", "").replace("_", "")
+        match = next((s for s in all_slugs if s.lower().replace("-", "").replace("_", "") == name_norm), None)
+        if not match:
+            # loose contains-match fallback (e.g. "mybookie" vs "mybookieag")
+            match = next((s for s in all_slugs if name_norm in s.lower().replace("-", "").replace("_", "")), None)
+        resolved.append(match or name)
+    return resolved
+
+
 def fetch_oddspapi_props(sport):
     if not ODDSPAPI_KEY:
         return []
@@ -8514,8 +8555,85 @@ def fetch_oddspapi_props(sport):
         if not top_ids:
             return []
         tournament_ids = ",".join(top_ids)
-        url = (f"https://api.oddspapi.io/v4/odds-by-tournaments?bookmaker=draftkings,fanduel,betmgm,pinnacle,bet365&tournamentIds={tournament_ids}&apiKey={ODDSPAPI_KEY}&oddsFormat=american")
+        # Books that duplicate what's already free elsewhere (draftkings,
+        # fanduel, betmgm via Tampermonkey; pinnacle via arcadia; bet365 via
+        # WebSocket harvester) are dropped in favor of the books nothing else
+        # in the stack can get: caesars, circa, mybookie, and an exchange
+        # book for the us_ex role. Slugs for mybookie/the exchange book are
+        # resolved dynamically since they're not confirmed in OddsPapi's docs.
+        _resolved = _resolve_oddspapi_bookmaker_slugs(["caesars", "circa", "mybookie", "betfair exchange"])
+        _bookmaker_param = ",".join(_resolved)
+        url = (f"https://api.oddspapi.io/v4/odds-by-tournaments?bookmaker={_bookmaker_param}&tournamentIds={tournament_ids}&apiKey={ODDSPAPI_KEY}&oddsFormat=american")
         resp = _http.get(url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDSPAPI")
+        if resp.status_code == 429:
+            st.warning("⚠️ OddsPapi rate limit hit")
+            # Clear cache so next board load retries fresh
+            if os.path.exists(cache_path):
+                try: os.remove(cache_path)
+                except (OSError, IOError): pass
+            return []
+        if resp.status_code == 403:
+            st.warning("⚠️ OddsPapi monthly limit reached")
+            if os.path.exists(cache_path):
+                try: os.remove(cache_path)
+                except (OSError, IOError): pass
+            return []
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        props = []
+        seen = set()
+        for event in data.get("events", []):
+            for bookmaker in event.get("bookmakers", []):
+                book_name = bookmaker.get("key", "unknown")
+                for market in bookmaker.get("markets", []):
+                    market_key = market.get("key", "")
+                    # Accept player props — OddsPapi uses various keys:
+                    # NBA: player_points, player_rebounds, player_assists
+                    # MLB: pitcher_strikeouts, batter_home_runs, batter_hits
+                    # NHL: player_shots_on_goal, goalie_saves
+                    _prop_keywords = ("player_","pitcher_","batter_","goalie_","anytime_")
+                    if not any(market_key.lower().startswith(k) for k in _prop_keywords):
+                        if "player" not in market_key.lower():
+                            continue
+                    for outcome in market.get("outcomes", []):
+                        player = outcome.get("description", "")
+                        line = outcome.get("point")
+                        side = outcome.get("name", "")
+                        if not player:
+                            continue
+                        if line is None:
+                            continue
+                        if side.upper() not in ("OVER", "UNDER"):
+                            continue
+                        if side.upper() != "OVER":
+                            continue
+                        stat_clean = market_key
+                        for _pfx in ("player_","pitcher_","batter_","goalie_","anytime_"):
+                            stat_clean = stat_clean.replace(_pfx, "")
+                        stat_clean = stat_clean.replace("_", " ").title()
+                        key = (sport, player, stat_clean, float(line))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        props.append({
+                            "Player": player,
+                            "Prop": stat_clean,
+                            "Line": float(line),
+                            "Side": "OVER",
+                            "Sport": sport,
+                            "source": f"OddsPapi_{book_name}",
+                            "OddsType": "standard"
+                        })
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+            st.caption(f"✅ OddsPapi: {len(props)} props fetched ({daily_used + 1}/{ODDSPAPI_FREE_TIER_DAILY_LIMIT} calls today)")
+        return props
+    except (requests.RequestException, KeyError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": str(e)[:100]})
+        return []
         api_budget_increment("ODDSPAPI")
         if resp.status_code == 429:
             st.warning("⚠️ OddsPapi rate limit hit")
