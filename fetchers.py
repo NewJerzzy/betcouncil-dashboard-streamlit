@@ -7128,9 +7128,21 @@ def fetch_alt_lines(sport):
                f"&bookmakers=draftkings,fanduel,betmgm")
         resp = _http.get(url, headers=HEADERS, timeout=15)
         api_budget_increment("ODDS_API", amount=20)  # 10 x 1 market x 2 regions
+        if resp.status_code != 200:
+            print(f"[WARN] fetch_alt_lines({sport}): OddsAPI HTTP {resp.status_code}: {resp.text[:200]}")
+            return {}
         events = resp.json()
+        if not isinstance(events, list):
+            # OddsAPI returns a dict (e.g. {"message": "..."}) on errors like an
+            # invalid/exhausted key, bad params, or rate limiting instead of a
+            # list of events. Iterating that would raise AttributeError on the
+            # dict's string keys ('str' object has no attribute 'get').
+            print(f"[WARN] fetch_alt_lines({sport}): unexpected OddsAPI response (not a list): {events}")
+            return {}
         alt_data = {}
         for event in events:
+            if not isinstance(event, dict):
+                continue
             home = event.get("home_team","")
             away = event.get("away_team","")
             matchup = f"{away} @ {home}"
@@ -7157,7 +7169,8 @@ def fetch_alt_lines(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(alt_data, f)
         return alt_data
-    except (requests.RequestException, ValueError, KeyError):
+    except (requests.RequestException, ValueError, KeyError, AttributeError, TypeError) as e:
+        print(f"[WARN] fetch_alt_lines({sport}): {e}")
         return {}
 
 # ─────────────────────────────────────────────────────────────────────────────
