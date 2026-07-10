@@ -3057,19 +3057,19 @@ def compute_market_consensus(model_prob, player, prop, sport, game_analysis=None
 
     # Match Covers consensus — by team name not sport string
     covers_game = None
-    if covers_data:
+    if covers_data and isinstance(covers_data, dict):
         home_t = (game_analysis or {}).get("home","") if game_analysis else ""
         away_t = (game_analysis or {}).get("away","") if game_analysis else ""
-        for _cd in covers_data:
-            _cd_matchup = _cd.get("matchup","").lower()
+        for _cd_matchup, _cd_val in covers_data.items():
+            _cd_matchup_l = _cd_matchup.lower()
             # Match by actual team names, not sport code
             if home_t and away_t:
-                if (home_t.lower()[:4] in _cd_matchup or
-                    away_t.lower()[:4] in _cd_matchup):
-                    covers_game = _cd
+                if (home_t.lower()[:4] in _cd_matchup_l or
+                    away_t.lower()[:4] in _cd_matchup_l):
+                    covers_game = {"matchup": _cd_matchup, **_cd_val}
                     break
-            elif home_t and home_t.lower()[:4] in _cd_matchup:
-                covers_game = _cd
+            elif home_t and home_t.lower()[:4] in _cd_matchup_l:
+                covers_game = {"matchup": _cd_matchup, **_cd_val}
                 break
 
     if not market_entries:
@@ -3166,40 +3166,46 @@ def compute_public_fade_signal(matchup, sport, model_pick_side):
         return None
     
     matchup_lower = matchup.lower()
-    for item in covers_data:
-        item_matchup = item.get("matchup","").lower()
-        # Fuzzy match
-        if any(w in item_matchup for w in matchup_lower.split(" @ ")):
-            public_pct = item.get("public_pct", 50)
-            public_side = item.get("side","")
-            
-            if public_pct >= 75:
-                if public_side.lower() not in str(model_pick_side).lower():
-                    # Model agrees with MINORITY → contrarian signal
-                    return {
-                        "public_pct":  public_pct,
-                        "side":        public_side,
-                        "fade_signal": "CONTRARIAN",
-                        "note":        f"🎯 Fade: {public_pct}% public on {public_side}, model takes minority",
-                        "edge_adj":    0.02,  # +2% contrarian boost
-                    }
+    if isinstance(covers_data, dict):
+        for item_matchup, item_val in covers_data.items():
+            item_matchup_l = item_matchup.lower()
+            # Fuzzy match
+            if any(w in item_matchup_l for w in matchup_lower.split(" @ ")):
+                _away_name, _, _home_name = item_matchup.partition(" @ ")
+                away_pct = item_val.get("away_pct", 50)
+                home_pct = item_val.get("home_pct", 50)
+                if home_pct >= away_pct:
+                    public_pct, public_side = home_pct, _home_name
                 else:
-                    # Model with the public → fade warning
+                    public_pct, public_side = away_pct, _away_name
+            
+                if public_pct >= 75:
+                    if public_side.lower() not in str(model_pick_side).lower():
+                        # Model agrees with MINORITY → contrarian signal
+                        return {
+                            "public_pct":  public_pct,
+                            "side":        public_side,
+                            "fade_signal": "CONTRARIAN",
+                            "note":        f"🎯 Fade: {public_pct}% public on {public_side}, model takes minority",
+                            "edge_adj":    0.02,  # +2% contrarian boost
+                        }
+                    else:
+                        # Model with the public → fade warning
+                        return {
+                            "public_pct":  public_pct,
+                            "side":        public_side,
+                            "fade_signal": "WITH_PUBLIC",
+                            "note":        f"⚠️ {public_pct}% public on {public_side} — is this a trap?",
+                            "edge_adj":    -0.01,  # -1% public side penalty
+                        }
+                elif public_pct >= 60:
                     return {
                         "public_pct":  public_pct,
                         "side":        public_side,
-                        "fade_signal": "WITH_PUBLIC",
-                        "note":        f"⚠️ {public_pct}% public on {public_side} — is this a trap?",
-                        "edge_adj":    -0.01,  # -1% public side penalty
+                        "fade_signal": "MILD_PUBLIC",
+                        "note":        f"📊 {public_pct}% public on {public_side}",
+                        "edge_adj":    0.0,
                     }
-            elif public_pct >= 60:
-                return {
-                    "public_pct":  public_pct,
-                    "side":        public_side,
-                    "fade_signal": "MILD_PUBLIC",
-                    "note":        f"📊 {public_pct}% public on {public_side}",
-                    "edge_adj":    0.0,
-                }
     # ── ActionNetwork sharp-money splits ─────────────────────────────
     if an_data:
         _an_games = an_data if isinstance(an_data, list) else an_data.get("games", an_data.get("data", []))
@@ -17100,11 +17106,14 @@ with tabs[1]:
 
             # Public betting from Covers
             _pub_pct = ""
-            for _cd in _covers:
-                _cdm = _cd.get("matchup","").lower()
-                if any(t in _cdm for t in [_p.get("Team","").lower()[:4]] if t):
-                    _pub_pct = f"{_cd.get('public_pct','')}%"
-                    break
+            if isinstance(_covers, dict):
+                for _cdm, _cd_val in _covers.items():
+                    _cdm_l = _cdm.lower()
+                    if any(t in _cdm_l for t in [_p.get("Team","").lower()[:4]] if t):
+                        _away_pct = _cd_val.get("away_pct", 50)
+                        _home_pct = _cd_val.get("home_pct", 50)
+                        _pub_pct = f"{max(_away_pct, _home_pct)}%"
+                        break
 
             # Reliability from FantasyLabs
             _fl_data = st.session_state.get("fantasylabs_lineups",{})
@@ -18378,11 +18387,18 @@ with tabs[2]:
 
         # Match Covers data to this game
         _cov_game = None
-        for _cd in _cov_data:
-            _cd_matchup = _cd.get("matchup","").lower()
-            if any(t.lower() in _cd_matchup for t in [_g.get("home",""), _g.get("away","")] if t):
-                _cov_game = _cd
-                break
+        if isinstance(_cov_data, dict):
+            for _cd_matchup, _cd_val in _cov_data.items():
+                _cd_matchup_l = _cd_matchup.lower()
+                if any(t.lower() in _cd_matchup_l for t in [_g.get("home",""), _g.get("away","")] if t):
+                    _cd_away, _, _cd_home = _cd_matchup.partition(" @ ")
+                    _cd_away_pct = _cd_val.get("away_pct", 50)
+                    _cd_home_pct = _cd_val.get("home_pct", 50)
+                    if _cd_home_pct >= _cd_away_pct:
+                        _cov_game = {"matchup": _cd_matchup, "public_pct": _cd_home_pct, "side": _cd_home, **_cd_val}
+                    else:
+                        _cov_game = {"matchup": _cd_matchup, "public_pct": _cd_away_pct, "side": _cd_away, **_cd_val}
+                    break
 
         _has_pub = (_pub_data and any(
             _pub_data.get(k) for k in ["ml_pcts","spread_pcts","total_pcts"]
