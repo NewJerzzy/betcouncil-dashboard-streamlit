@@ -7121,50 +7121,73 @@ def fetch_alt_lines(sport):
         if age_mins < 90:
             return _safe_load_pkl(cache_path)
     try:
-        url = (f"{ODDS_API_BASE}/sports/{sport_key}/odds"
-               f"?apiKey={ODDS_API_KEY}&regions=us,us2"
-               f"&markets=alternate_spreads"
-               f"&oddsFormat=american"
-               f"&bookmakers=draftkings,fanduel,betmgm")
-        resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API", amount=20)  # 10 x 1 market x 2 regions
-        if resp.status_code != 200:
-            print(f"[WARN] fetch_alt_lines({sport}): OddsAPI HTTP {resp.status_code}: {resp.text[:200]}")
+        # alternate_spreads is an "additional market" — OddsAPI only serves
+        # these via the per-event endpoint, not the bulk /sports/{sport}/odds
+        # endpoint. Requesting it in bulk returns an error dict, not events.
+        events_url = f"{ODDS_API_BASE}/sports/{sport_key}/events?apiKey={ODDS_API_KEY}&dateFormat=iso"
+        events_resp = _http.get(events_url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API", amount=0)  # /events is a free metadata endpoint
+        if events_resp.status_code != 200:
+            print(f"[WARN] fetch_alt_lines({sport}): OddsAPI events HTTP {events_resp.status_code}: {events_resp.text[:200]}")
             return {}
-        events = resp.json()
+        events = events_resp.json()
         if not isinstance(events, list):
-            # OddsAPI returns a dict (e.g. {"message": "..."}) on errors like an
-            # invalid/exhausted key, bad params, or rate limiting instead of a
-            # list of events. Iterating that would raise AttributeError on the
-            # dict's string keys ('str' object has no attribute 'get').
-            print(f"[WARN] fetch_alt_lines({sport}): unexpected OddsAPI response (not a list): {events}")
+            print(f"[WARN] fetch_alt_lines({sport}): unexpected OddsAPI events response (not a list): {events}")
             return {}
+        today_str = date.today().strftime("%Y-%m-%d")
+        today_events = [e for e in events if isinstance(e, dict) and e.get("commence_time","").startswith(today_str)]
+        if not today_events:
+            tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+            today_events = [e for e in events if isinstance(e, dict) and e.get("commence_time","").startswith(tomorrow_str)]
+        if not today_events:
+            return {}
+
         alt_data = {}
-        for event in events:
-            if not isinstance(event, dict):
-                continue
+        for event in today_events[:10]:
+            event_id = event.get("id","")
             home = event.get("home_team","")
             away = event.get("away_team","")
+            if not event_id or not home or not away:
+                continue
             matchup = f"{away} @ {home}"
-            lines = []
-            for bm in event.get("bookmakers",[])[:2]:
-                for mkt in bm.get("markets",[]):
-                    if mkt.get("key") != "alternate_spreads":
+            odds_url = (f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds"
+                        f"?apiKey={ODDS_API_KEY}&regions=us,us2"
+                        f"&markets=alternate_spreads"
+                        f"&oddsFormat=american"
+                        f"&bookmakers=draftkings,fanduel,betmgm")
+            try:
+                resp = _http.get(odds_url, headers=HEADERS, timeout=15)
+                api_budget_increment("ODDS_API", amount=20)  # 10 x 1 market x 2 regions
+                if resp.status_code != 200:
+                    continue
+                event_data = resp.json()
+                if not isinstance(event_data, dict):
+                    continue
+                lines = []
+                for bm in event_data.get("bookmakers",[])[:2]:
+                    if not isinstance(bm, dict):
                         continue
-                    outcomes = mkt.get("outcomes",[])
-                    # Group by point spread
-                    for o in outcomes:
-                        lines.append({
-                            "team":  o.get("name",""),
-                            "point": o.get("point",0),
-                            "price": o.get("price",0),
-                            "book":  bm.get("key",""),
-                        })
-            if lines:
-                alt_data[matchup] = {
-                    "home": home, "away": away,
-                    "lines": lines,
-                }
+                    for mkt in bm.get("markets",[]):
+                        if not isinstance(mkt, dict) or mkt.get("key") != "alternate_spreads":
+                            continue
+                        for o in mkt.get("outcomes",[]):
+                            if not isinstance(o, dict):
+                                continue
+                            lines.append({
+                                "team":  o.get("name",""),
+                                "point": o.get("point",0),
+                                "price": o.get("price",0),
+                                "book":  bm.get("key",""),
+                            })
+                if lines:
+                    alt_data[matchup] = {
+                        "home": home, "away": away,
+                        "lines": lines,
+                    }
+            except (requests.RequestException, ValueError, KeyError, AttributeError, TypeError) as e:
+                print(f"[WARN] fetch_alt_lines({sport}) event {event_id}: {e}")
+                continue
+
         if alt_data:
             with open(cache_path, "wb") as f:
                 pickle.dump(alt_data, f)
