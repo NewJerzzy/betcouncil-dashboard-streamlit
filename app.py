@@ -11572,7 +11572,7 @@ def load_sport_data(sport):
                 return _an
         except Exception:
             pass
-        # Fallback: Tampermonkey Gist harvester.
+        # Fallback 2: Tampermonkey Gist harvester.
         # BUG FIX (2026-07): fetch_mybookie_from_gist() has existed and had a
         # working Tampermonkey harvester feeding it real data all night, but
         # was never actually called anywhere in the board pipeline -- the
@@ -11583,28 +11583,60 @@ def load_sport_data(sport):
         # _LONG_FORMAT_BOOKS auto-normalize set).
         try:
             raw, _src = fetch_mybookie_from_gist(sport)
-            if not raw:
-                return []
-            _out = []
-            for _g in raw:
-                _matchup = _g.get("Matchup", "") or ""
-                if " @ " in _matchup:
-                    _away, _home = [s.strip() for s in _matchup.split(" @ ", 1)]
-                elif " vs " in _matchup:
-                    _home, _away = [s.strip() for s in _matchup.split(" vs ", 1)]
-                else:
-                    _away, _home = _matchup, _matchup
-                _out.append({
-                    "Home":   _home,
-                    "Away":   _away,
-                    "HomeML": _g.get("Home ML"),
-                    "AwayML": _g.get("Away ML"),
-                    "Spread": _g.get("Spread"),
-                    "Total":  _g.get("Total"),
-                })
-            return _out
+            if raw:
+                _out = []
+                for _g in raw:
+                    _matchup = _g.get("Matchup", "") or ""
+                    if " @ " in _matchup:
+                        _away, _home = [s.strip() for s in _matchup.split(" @ ", 1)]
+                    elif " vs " in _matchup:
+                        _home, _away = [s.strip() for s in _matchup.split(" vs ", 1)]
+                    else:
+                        _away, _home = _matchup, _matchup
+                    _out.append({
+                        "Home":   _home,
+                        "Away":   _away,
+                        "HomeML": _g.get("Home ML"),
+                        "AwayML": _g.get("Away ML"),
+                        "Spread": _g.get("Spread"),
+                        "Total":  _g.get("Total"),
+                    })
+                if _out:
+                    return _out
         except Exception:
-            return []
+            pass
+        # Fallback 3 (Jul 10 2026): direct HTML scrape of mybookie.ag's public
+        # sportsbook pages. Added after confirming via a live side-by-side
+        # test that the OLD fallback here (Playwright/CDP) never actually
+        # worked on Streamlit Cloud at all -- 0 games returned every time,
+        # because Streamlit Cloud's environment doesn't have a real browser
+        # available for Playwright to launch (this is why it was already
+        # removed from fetch_mybookie_from_gist() -- see BUG FIX note there).
+        # This HTML scraper needs no browser at all, so it actually runs.
+        # Only wired for sports with a confirmed-live page (nfl, mlb) --
+        # see fetch_mybookie_lines_html()'s own docstring for which sports
+        # are verified vs. untested.
+        try:
+            _sport_map_html = {"NFL": "nfl", "MLB": "mlb"}
+            _html_sport = _sport_map_html.get(sport)
+            if _html_sport:
+                _html_games = fetch_mybookie_lines_html(_html_sport)
+                if _html_games:
+                    _out = []
+                    for _gid, _g in _html_games.items():
+                        _out.append({
+                            "Home":   _g.get("home_team", ""),
+                            "Away":   _g.get("away_team", ""),
+                            "HomeML": (_g.get("home_ml") or {}).get("price"),
+                            "AwayML": (_g.get("away_ml") or {}).get("price"),
+                            "Spread": (_g.get("home_spread") or {}).get("points"),
+                            "Total":  (_g.get("total") or {}).get("points"),
+                        })
+                    if _out:
+                        return _out
+        except Exception:
+            pass
+        return []
     def _pf_bet365():
         try:
             _raw = load_from_gist("bet365_games", None)
