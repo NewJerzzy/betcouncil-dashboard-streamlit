@@ -18300,9 +18300,13 @@ def fetch_mybookie_lines_html(sport="nfl"):
     FanDuel/Caesars, all of which block plain server-side requests).
 
     Verified URL pattern: https://www.mybookie.ag/sportsbook/{sport}/
-    sport examples confirmed live: "nfl", "mlb"
-    (nav also lists: "nba", "nhl", "ncaa-basketball", "ufc", "boxing",
-    "e-sports" — same page template, not individually verified yet)
+    sport examples confirmed live: "nfl", "mlb", "nba" (Jul 10 2026 — same
+    template: spread/moneyline/total data-* attributes, no bot wall)
+    "nhl", "wnba" share the identical nav/page-generation template as the
+    confirmed three (same site-wide structure) but haven't been individually
+    spot-checked the same way — should behave the same, flag it if not.
+    (nav also lists: "ncaa-basketball", "ufc", "boxing", "e-sports" — same
+    page template, not wired in or verified yet)
 
     Each game row contains up to 6 <button> elements (spread/moneyline/total
     x away/home side), each carrying:

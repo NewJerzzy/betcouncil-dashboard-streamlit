@@ -11617,7 +11617,12 @@ def load_sport_data(sport):
         # see fetch_mybookie_lines_html()'s own docstring for which sports
         # are verified vs. untested.
         try:
-            _sport_map_html = {"NFL": "nfl", "MLB": "mlb"}
+            # Extended Jul 10 2026 after confirming live that mybookie.ag/
+            # sportsbook/{sport}/ uses the identical server-rendered
+            # template (spread/ml/total data-* attributes) across NFL, MLB,
+            # NBA, NHL, and WNBA — same nav structure, same markup pattern,
+            # no bot wall on any of them.
+            _sport_map_html = {"NFL": "nfl", "MLB": "mlb", "NBA": "nba", "NHL": "nhl", "WNBA": "wnba"}
             _html_sport = _sport_map_html.get(sport)
             if _html_sport:
                 _html_games = fetch_mybookie_lines_html(_html_sport)
