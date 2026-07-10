@@ -8082,82 +8082,80 @@ def fetch_mlb_confirmed_lineups():
     except (requests.RequestException, ValueError, KeyError):
         return {}
 
-def fetch_sleeper_mlb_scoreboard(date_str=None):
+def fetch_sleeper_mlb_scoreboard(target_date=None):
     """
-    Pulls today's (or date_str's) real MLB games, scores, and starting
+    Pulls today's (or target_date's) real MLB games, scores, and starting
     lineups from Sleeper's public consumer-app API — the same endpoint
     sleeper.com/scores calls in-browser, NOT the documented api.sleeper.app/v1
     fantasy-league API (which has no cross-league scoreboard endpoint at all).
 
-      GET https://api.sleeper.app/scores/mlb/date/{YYYY-MM-DD}
+    Verified live via direct HTTP fetch (Jul 10 2026):
+        GET https://api.sleeper.app/scores/mlb/date/YYYY-MM-DD
+    Returns a JSON list of games. No authentication required — no API key,
+    JWT, or cookie needed; confirmed 200 OK from a plain unauthenticated
+    request. Each game's metadata.away_team / metadata.home_team include
+    `team` (3-letter abbr), `name`, `score`, `probable_pitcher_name`, and a
+    `lineup` list of {id, player_name, order, sequence} once posted.
 
-    CORRECTION (Jul 10 2026): an earlier version of this function required
-    a SLEEPER_JWT/authorization header, based on a DevTools capture that
-    included the logged-in browser's session header. That header is NOT
-    actually required — re-verified with a clean, header-free request
-    (no cookies, no authorization) and it returns 200 with full data.
-    The response also sets `access-control-allow-origin: *` and is served
-    from Cloudflare's public edge cache, both of which are inconsistent
-    with an auth-gated endpoint. So: no JWT, no secrets, no auth needed.
-
-    Confirmed response shape: a list of game dicts. Starting lineups live
-    directly in metadata.away_team.lineup / metadata.home_team.lineup —
-    entries with inning==0 are the starting lineup (order 0 = probable
-    pitcher, order 1-9 = batting order); entries with inning>0 are in-game
-    substitutions and are excluded here since this function is specifically
-    for CONFIRMED STARTING lineups, not full game logs.
-
-    Returns {game_id: {"away": {"team": abbr, "lineup": [...]},
-                        "home": {"team": abbr, "lineup": [...]},
-                        "fetched_at": iso_str}}
-    — matching the exact contract fetch_mlb_confirmed_lineups_with_fallback()
-    already expects.
+    Returns a dict keyed by game_id:
+        {
+          "<game_id>": {
+            "status": "complete" | "pregame" | "in_progress" | ...,
+            "away": {"team": "CHC", "name": "Cubs", "score": 2,
+                      "probable_pitcher": "David Peterson",
+                      "lineup": [{"name": "...", "batting_order": 1}, ...]},
+            "home": {...same shape...},
+            "fetched_at": "<iso8601>",
+          },
+          ...
+        }
+    Returns {} (never raises) on any network/parse failure so callers can
+    treat this purely as an optional fallback source.
     """
-    if date_str is None:
-        date_str = date.today().strftime("%Y-%m-%d")
-
-    cache_path = os.path.join(CACHE_DIR, f"sleeper_mlb_scoreboard_{date_str}.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 15:
-            cached = _safe_load_pkl(cache_path)
-            if cached is not None:
-                return cached
-
-    url = f"https://api.sleeper.app/scores/mlb/date/{date_str}"
-    headers = {"accept": "application/json"}
+    if target_date is None:
+        target_date = datetime.now().strftime("%Y-%m-%d")
+    url = f"https://api.sleeper.app/scores/mlb/date/{target_date}"
     try:
-        r = _http.get(url, headers=headers, timeout=12)
-        if r.status_code != 200:
-            return {}
-        games = r.json()
+        resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
+        resp.raise_for_status()
+        games = resp.json()
     except Exception as e:
-        print(f"[WARN] fetch_sleeper_mlb_scoreboard: {e}")
+        logging.warning(f"[Sleeper] scoreboard fetch failed: {e}")
         return {}
 
-    fetched_at = datetime.now().isoformat()
+    fetched_at = datetime.now(timezone.utc).isoformat()
     result = {}
-    for g in (games or []):
-        game_id = g.get("game_id", "")
+    for g in games or []:
+        game_id = g.get("game_id")
         if not game_id:
             continue
-        meta = g.get("metadata", {}) or {}
-        entry = {"fetched_at": fetched_at}
-        for side_key, meta_key in (("away", "away_team"), ("home", "home_team")):
-            team_block = meta.get(meta_key) or {}
-            abbr = team_block.get("team", "")
-            starters = [p for p in (team_block.get("lineup") or []) if p.get("inning") == 0]
+        meta = g.get("metadata") or {}
+
+        def _side(block):
+            block = block or {}
+            starters = [
+                p for p in (block.get("lineup") or [])
+                if p.get("player_name") and p.get("inning") == 0
+            ]
             starters.sort(key=lambda p: p.get("sequence", 0))
-            entry[side_key] = {
-                "team": abbr,
-                "lineup": [
-                    {"name": p.get("player_name", ""), "batting_order": p.get("order", 0)}
-                    for p in starters
-                ],
+            lineup = [
+                {"name": p.get("player_name", ""), "batting_order": p.get("order", 0)}
+                for p in starters
+            ]
+            return {
+                "team": block.get("team", ""),
+                "name": block.get("name", ""),
+                "score": block.get("score"),
+                "probable_pitcher": block.get("probable_pitcher_name", ""),
+                "lineup": lineup,
             }
-        result[game_id] = entry
-    if result:
-        _safe_save_pkl(cache_path, result)
+
+        result[game_id] = {
+            "status": g.get("status", ""),
+            "away": _side(meta.get("away_team")),
+            "home": _side(meta.get("home_team")),
+            "fetched_at": fetched_at,
+        }
     return result
 
 
@@ -8169,10 +8167,9 @@ def fetch_mlb_confirmed_lineups_with_fallback():
     scoreboard API as a second, independent source. statsapi stays primary
     since it's the longer-trusted source; Sleeper only fills gaps.
 
-    fetch_sleeper_mlb_scoreboard() (implemented Jul 9 2026, see its own
-    docstring) requires SLEEPER_JWT in Streamlit secrets — without it this
-    fallback silently no-ops, same as before, but statsapi-primary coverage
-    is unaffected either way.
+    fetch_sleeper_mlb_scoreboard() (implemented Jul 10 2026, see its own
+    docstring above) is a public, unauthenticated endpoint — no secrets
+    or JWT needed, so this fallback runs unconditionally.
     """
     lineups = fetch_mlb_confirmed_lineups()
     try:
