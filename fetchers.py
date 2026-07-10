@@ -3271,10 +3271,10 @@ def get_api_counter(counter_path):
     st.session_state[_ss_key] = counter
     return counter
 
-def increment_api_counter(counter_path):
+def increment_api_counter(counter_path, amount=1):
     counter = get_api_counter(counter_path)
-    counter["count"] += 1
-    counter["monthly_count"] = counter.get("monthly_count", 0) + 1
+    counter["count"] += amount
+    counter["monthly_count"] = counter.get("monthly_count", 0) + amount
     save_json_data(counter_path, counter)  # local fallback, kept for same-session reads
     data_type = os.path.basename(counter_path).replace(".json", "")
     save_to_gist(data_type, counter)  # the persistence that actually survives redeploys
@@ -3524,10 +3524,10 @@ def api_budget_check(budget_key):
             return False, f"{budget_key} monthly limit approached: {monthly_used}/{monthly_limit} — protecting free tier"
     return True, ""
 
-def api_budget_increment(budget_key):
+def api_budget_increment(budget_key, amount=1):
     budget = API_BUDGETS.get(budget_key)
     if budget:
-        increment_api_counter(budget["counter_path"])
+        increment_api_counter(budget["counter_path"], amount)
 
 @st.cache_data(ttl=3600)
 
@@ -7118,7 +7118,7 @@ def fetch_alt_lines(sport):
     cache_path = os.path.join(CACHE_DIR, f"alt_lines_{sport}.pkl")
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 30:
+        if age_mins < 90:
             return _safe_load_pkl(cache_path)
     try:
         url = (f"{ODDS_API_BASE}/sports/{sport_key}/odds"
@@ -7127,9 +7127,7 @@ def fetch_alt_lines(sport):
                f"&oddsFormat=american"
                f"&bookmakers=draftkings,fanduel,betmgm")
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API")
-        if resp.status_code != 200:
-            return {}
+        api_budget_increment("ODDS_API", amount=20)  # 10 x 1 market x 2 regions
         events = resp.json()
         alt_data = {}
         for event in events:
@@ -7399,12 +7397,12 @@ def fetch_odds_api_game_lines(sport):
     cache_path = os.path.join(CACHE_DIR, f"odds_api_games_{sport}.pkl")
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 20:
+        if age_mins < 60:
             return _safe_load_pkl(cache_path)
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API")
+        api_budget_increment("ODDS_API", amount=60)  # 10 x 3 markets x 2 regions
         if resp.status_code != 200:
             print(f"[ODDS_API] game lines HTTP {resp.status_code} for {sport} — "
                   f"{'ODDS_API_KEY invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
@@ -9879,6 +9877,12 @@ def fetch_novig_lines(sport):
         return []
 
     cache_path = os.path.join(CACHE_DIR, f"novig_lines_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 30:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
     url = (
         f"{ODDS_API_BASE}/sports/{sport_key}/odds"
         f"?apiKey={ODDS_API_KEY}"
@@ -9890,6 +9894,7 @@ def fetch_novig_lines(sport):
     line_dicts = []
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API", amount=30)  # 10 x 3 markets x 1 region — was never tracked before
         if resp.status_code == 401:
             st.warning(
                 "⚠️ NoVig (Odds API): invalid API key — "
@@ -11212,9 +11217,22 @@ def fetch_polymarket_markets(sport: str) -> list:
 
 def fetch_covers_consensus(sport: str) -> dict:
     """
-    Fetch Covers.com public consensus betting data via ScraperAPI proxy.
-    Returns {matchup: {home_pct, away_pct, over_pct, under_pct}}
+    Fetch Covers.com public consensus betting data.
+
+    URL FIX (Jul 9 2026): the old covers.com/sport/{sport}/consensus page
+    was retired — Covers moved consensus picks to a separate contests
+    subdomain entirely: contests.covers.com/consensus/topconsensus/{sport}/overall.
+    Confirmed live and server-rendered (plain HTML table, no client-side
+    JS wall) as of this date. Returns {matchup: {home_pct, away_pct}}.
     Cached 30 min.
+
+    NOTE: this parser is built from a markdown-rendered fetch of the page,
+    not raw HTML source — the regex patterns below (team name via
+    "<name> Picks" alt text, percentage pairs like "35%   65%") are a
+    best-effort match to the visible structure and have NOT been verified
+    against the actual HTML tag/class names. If this returns empty in
+    production, that's the first thing to check with real browser
+    DevTools — see the team prompt for this.
     """
     cache_path = os.path.join(CACHE_DIR, f"covers_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -11223,41 +11241,42 @@ def fetch_covers_consensus(sport: str) -> dict:
             if cached is not None: return cached
     try:
         sport_map = {
-            "MLB": "mlb", "NBA": "nba", "NFL": "nfl", "NHL": "nhl"
+            "MLB": "mlb", "NBA": "nba", "NFL": "nfl", "NHL": "nhl",
+            "WNBA": "wnba", "CFL": "cfl",
         }
         slug = sport_map.get(sport)
         if not slug:
             return {}
-        # Covers blocks datacenter IPs — use ScraperAPI proxy
-        proxy_url = (
-            f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}"
-            f"&url=https://www.covers.com/sport/{slug}/consensus"
-        )
-        r = _http.get(proxy_url, timeout=20)
+        url = f"https://contests.covers.com/consensus/topconsensus/{slug}/overall"
+        # Try direct first — contests.covers.com may not share www.covers.com's
+        # datacenter-IP block. Fall back to ScraperAPI proxy if it 403/blocks.
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}, timeout=15)
+        if r.status_code != 200 and SCRAPERAPI_KEY:
+            proxy_url = f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={url}"
+            r = _http.get(proxy_url, timeout=20)
         if r.status_code != 200:
             return {}
-        # Parse HTML for consensus percentages
-        import re as _re
         html = r.text
         results = {}
-        # Look for JSON data embedded in page
-        m = _re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});', html, _re.S)
-        if m:
-            try:
-                data = json.loads(m.group(1))
-                games = data.get("consensus", {}).get("games", [])
-                for game in games:
-                    home = game.get("homeTeam", {}).get("name", "")
-                    away = game.get("awayTeam", {}).get("name", "")
-                    if home and away:
-                        results[f"{away} @ {home}"] = {
-                            "home_pct":  game.get("homeConsensus"),
-                            "away_pct":  game.get("awayConsensus"),
-                            "over_pct":  game.get("overConsensus"),
-                            "under_pct": game.get("underConsensus"),
-                        }
-            except Exception:
-                pass
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            for row in soup.find_all("tr"):
+                imgs = row.find_all("img", alt=True)
+                team_names = [img["alt"].replace(" Picks", "").strip() for img in imgs if img["alt"].endswith(" Picks")]
+                if len(team_names) != 2:
+                    continue
+                row_text = row.get_text(" ", strip=True)
+                pct_matches = re.findall(r"(\d{1,3})%", row_text)
+                if len(pct_matches) < 2:
+                    continue
+                away_team, home_team = team_names[0], team_names[1]
+                results[f"{away_team} @ {home_team}"] = {
+                    "away_pct": int(pct_matches[0]),
+                    "home_pct": int(pct_matches[1]),
+                }
+        except ImportError:
+            pass
         if results:
             _safe_save_pkl(cache_path, results)
         return results
@@ -16288,7 +16307,69 @@ def fetch_rotowire_from_gist(sport: str) -> tuple:
     except Exception: pass
     return {}, "unavailable"
 
+def fetch_numberfire_direct(sport: str) -> dict:
+    """
+    Direct server-side NumberFire fetch — no browser tab required.
+
+    CONFIRMED live and public (Jul 9 2026), no auth/cookies needed:
+      NFL: https://www.numberfire.com/external/widgets/top-players[/<pos>]
+      NBA: https://www.numberfire.com/external/widgets/nba/fanduel-values/<pos>
+
+    NOT YET CONFIRMED for MLB/NHL/WNBA — numberfire.com/info/widgets?fs=true
+    lists the full widget catalog and should be checked for those sports'
+    equivalent paths before assuming they don't exist; returns {} for them
+    here rather than guessing a URL that might silently 404 or return the
+    wrong sport's data.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"numberfire_direct_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 60:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+    url_map = {
+        "NFL": "https://www.numberfire.com/external/widgets/top-players",
+        "NBA": "https://www.numberfire.com/external/widgets/nba/fanduel-values/sf",
+    }
+    url = url_map.get(sport)
+    if not url:
+        return {}
+    try:
+        r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}, timeout=12)
+        if r.status_code != 200:
+            return {}
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r.text, "html.parser")
+        table = soup.find("table")
+        if not table:
+            return {}
+        players = []
+        for row in table.find_all("tr"):
+            cells = row.find_all("td")
+            if not cells:
+                continue
+            link = row.find("a", href=True)
+            if not link:
+                continue
+            name_text = link.get_text(strip=True)
+            row_text = row.get_text(" ", strip=True)
+            players.append({"name": name_text, "raw_row": row_text})
+        result = {"players": players, "sport": sport}
+        if players:
+            _safe_save_pkl(cache_path, result)
+        return result
+    except Exception as e:
+        print(f"[WARN] fetch_numberfire_direct: {e}")
+        return {}
+
+
 def fetch_numberfire_from_gist(sport: str) -> tuple:
+    # Try the direct, no-tab-needed path first (Jul 9 2026 fix) — only
+    # falls through to the browser-harvester Gist for sports without a
+    # confirmed public widget URL yet, or if the direct fetch is empty.
+    direct = fetch_numberfire_direct(sport)
+    if direct and direct.get("players"):
+        return direct, "direct_widget"
     data = _read_gist_file(f"betcouncil_numberfire_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=32):
         raw = data.get("data",{})
@@ -16888,7 +16969,7 @@ def fetch_odds_api_props(sport):
     events_url = f"{ODDS_API_BASE}/sports/{sport_key}/events?apiKey={ODDS_API_KEY}&dateFormat=iso"
     try:
         events_resp = _http.get(events_url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API")
+        api_budget_increment("ODDS_API", amount=0)  # /events is a free metadata endpoint
         if events_resp.status_code != 200:
             return []
         events = events_resp.json()
@@ -16914,7 +16995,7 @@ def fetch_odds_api_props(sport):
             props_url = f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets={markets_str}&oddsFormat=american&bookmakers={ODDS_API_BOOKS_PROPS}"
             try:
                 props_resp = _http.get(props_url, headers=HEADERS, timeout=15)
-                api_budget_increment("ODDS_API")
+                api_budget_increment("ODDS_API", amount=10 * len(markets) * 2)  # 10 x N markets x 2 regions
                 if props_resp.status_code != 200:
                     continue
                 event_data = props_resp.json()

@@ -20024,14 +20024,19 @@ with tabs[4]:
         }}
 
         // ── 6. Covers.com consensus betting % (every 20 min) ─────────
-        var coversSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+        // URL FIX (Jul 9 2026): old www.covers.com/api/widget/matchups path
+        // is unconfirmed/likely dead along with the old /consensus page;
+        // contests.covers.com/consensus/topconsensus is the confirmed-live
+        // current page (server-rendered HTML, not JSON — parsed server-side
+        // by fetch_covers_consensus() in fetchers.py instead of here).
+        var coversSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','WNBA':'wnba','CFL':'cfl'}};
         var coversSport = coversSportMap[sport];
         if (coversSport) {{
             throttled('covers_' + sport, 1200000, function() {{
-                fetch('https://www.covers.com/api/widget/matchups?sport=' + coversSport, {{
-                    headers: {{'Accept':'application/json','Referer':'https://www.covers.com/'}}
-                }}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_covers_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                fetch('https://contests.covers.com/consensus/topconsensus/' + coversSport + '/overall', {{
+                    headers: {{'Accept':'text/html','Referer':'https://www.covers.com/'}}
+                }}).then(function(r){{return r.text();}}).then(function(html){{
+                    pushGist('betcouncil_covers_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),html:html,source:'betcouncil_auto_harvest'}});
                 }}).catch(function(e){{console.log('[BetCouncil] Covers error:',e.message);}});
             }});
         }}
