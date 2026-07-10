@@ -22896,33 +22896,6 @@ with tabs[9]:
     except Exception as _hh_err:
         st.caption(f"Harvester health check unavailable this load: {str(_hh_err)[:100]}")
 
-    # ── MyBookie source comparison (temporary, Jul 10 2026) ─────────────
-    # One-click diagnostic: runs both the existing Playwright MyBookie
-    # scraper and the new candidate HTML-based one for the same sport,
-    # logs a side-by-side comparison to the Gist. Nothing on the live
-    # board changes from clicking this — purely for review before
-    # deciding whether to swap fetch_mybookie_lines_html() in as primary.
-    st.markdown("### 🔍 MyBookie Source Comparison (temporary)")
-    st.caption("Click to compare the existing scraper against the new candidate source. Takes ~10-15s (launches a real browser for the existing scraper). Results are saved for review — nothing on the live board changes.")
-    _mb_sport_choice = st.selectbox("Sport to compare", ["NFL", "MLB"], key="mybookie_compare_sport")
-    if st.button("Run MyBookie comparison", key="run_mybookie_compare"):
-        with st.spinner(f"Running both MyBookie sources for {_mb_sport_choice}..."):
-            try:
-                from fetchers import compare_mybookie_sources
-                _mb_result = compare_mybookie_sources(_mb_sport_choice)
-                st.success(
-                    f"Done — Playwright found {_mb_result['playwright_count']} games, "
-                    f"new HTML source found {_mb_result['html_count']} games."
-                )
-                if _mb_result.get("playwright_error"):
-                    st.warning(f"Playwright source error: {_mb_result['playwright_error']}")
-                if _mb_result.get("html_error"):
-                    st.warning(f"HTML source error: {_mb_result['html_error']}")
-                with st.expander("Full comparison detail"):
-                    st.json(_mb_result)
-            except Exception as _mb_err:
-                st.error(f"Comparison failed: {str(_mb_err)[:200]}")
-
 
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
