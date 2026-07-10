@@ -2220,11 +2220,25 @@ def detect_season_regime(sport="NBA"):
             regime = "Late Season"
             desc   = "Late NFL regular season — rest signal critical"
             adj    = {"rest": 0.03}
-        elif (month == 1 and day >= 16) or (month == 2 and day <= 15):
-            regime = "Playoffs"
-            desc   = "NFL Playoffs — defense weight increases significantly"
-            adj    = {"defense": 0.06}
-        elif month in (3, 4, 5, 6, 7) or (month == 2 and day >= 16):
+        elif (month == 1 and day >= 16) or (month == 2 and day <= 20):
+            # Super Bowl date shifts by several days year to year, so treat
+            # Feb 10-20 as an uncertain boundary window and verify with a
+            # live ESPN schedule check rather than trusting the fixed Feb 15
+            # cutoff alone — mirrors the NBA/NHL Playoffs-vs-Off-season fix.
+            if month == 2 and day >= 10:
+                if _espn_has_games_in_window("NFL", days=7):
+                    regime = "Playoffs"
+                    desc   = "NFL Playoffs — defense weight increases significantly"
+                    adj    = {"defense": 0.06}
+                else:
+                    regime = "Off-season"
+                    desc   = "NFL season complete (Super Bowl played) — no games in next 7 days, signals suppressed"
+                    adj    = {"base": -0.06}
+            else:
+                regime = "Playoffs"
+                desc   = "NFL Playoffs — defense weight increases significantly"
+                adj    = {"defense": 0.06}
+        elif month in (3, 4, 5, 6, 7) or (month == 2 and day >= 21):
             regime = "Off-season"
             desc   = "NFL off-season — current-season signals are stale"
             adj    = {"base": -0.06}

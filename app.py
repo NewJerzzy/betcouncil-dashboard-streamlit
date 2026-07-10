@@ -22712,6 +22712,36 @@ with tabs[9]:
     st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
     st.dataframe(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses]), use_container_width=True, hide_index=True)
 
+    # ── Harvester Health Monitor ─────────────────────────────────────
+    # Checks actual Gist captured_at ages against each source's expected
+    # refresh interval (pulled from the harvester JS's own throttle values),
+    # so a silently-dead harvester (e.g. Covers 404ing since its site
+    # restructured) surfaces the same day instead of weeks later.
+    st.markdown("### 🌐 Harvester Health Monitor")
+    try:
+        from fetchers import check_harvester_health, get_harvester_alerts
+        _hh_sport = st.session_state.get("last_sport", "NBA")
+        _hh_results = check_harvester_health(_hh_sport)
+        _hh_alerts = get_harvester_alerts(_hh_sport)
+        if _hh_alerts:
+            _sharp_dead = [a["name"] for a in _hh_alerts if a["tier"] == "sharp"]
+            _other_dead = [a["name"] for a in _hh_alerts if a["tier"] != "sharp"]
+            if _sharp_dead:
+                st.error(f"🔴 Sharp-tier harvester(s) dead: {', '.join(_sharp_dead)} — check the browser tab / Gist push for these.")
+            if _other_dead:
+                st.warning(f"🟡 Harvester(s) newly dead: {', '.join(_other_dead)}")
+        else:
+            st.success("No harvester newly went dark since last check.")
+        _hh_green  = sum(1 for r in _hh_results if r["status"] == "🟢")
+        _hh_yellow = sum(1 for r in _hh_results if r["status"] == "🟡")
+        _hh_red    = sum(1 for r in _hh_results if r["status"] == "🔴")
+        _hh_grey   = sum(1 for r in _hh_results if r["status"] == "⚫")
+        st.caption(f"{_hh_green} fresh | {_hh_yellow} stale | {_hh_red} dead | {_hh_grey} never seen — out of {len(_hh_results)} tracked harvesters for {_hh_sport}")
+        with st.expander("Full harvester health detail"):
+            st.dataframe(pd.DataFrame(_hh_results), use_container_width=True, hide_index=True)
+    except Exception as _hh_err:
+        st.caption(f"Harvester health check unavailable this load: {str(_hh_err)[:100]}")
+
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
     _hc_data = []

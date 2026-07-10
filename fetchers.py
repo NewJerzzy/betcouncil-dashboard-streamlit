@@ -14970,6 +14970,148 @@ def _is_fresh(data: dict, max_age_minutes: int = 30) -> bool:
         return False
 
 
+def _gist_data_age_minutes(data: dict):
+    """Age in minutes of a harvested payload's captured_at, or None if missing/bad."""
+    ts = (data or {}).get("captured_at", "")
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+        captured = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - captured).total_seconds() / 60
+    except Exception:
+        return None
+
+
+# ── Harvester health registry ────────────────────────────────────────────
+# (gist_filename_template, expected_interval_minutes, tier) for every browser
+# harvester / scheduled source, pulled directly from the throttled(...) call
+# intervals in the injected JS and the GitHub Actions cron schedules. tier is
+# "sharp" (benchmark sources — alert loudly), "lines"/"props" (books —
+# alert), or "signal" (secondary context — informational only).
+HARVESTER_REGISTRY = {
+    "evsharps":        ("betcouncil_tokens.json",                    50, "sharp"),
+    "betmgm":          ("betcouncil_betmgm_{sport}.json",            25, "lines"),
+    "action_network":  ("betcouncil_actionnetwork_{sport}.json",     15, "signal"),
+    "covers":          ("betcouncil_covers_{sport}.json",            20, "signal"),
+    "dk_props":        ("betcouncil_dk_props_{sport}.json",          20, "props"),
+    "unabated":        ("betcouncil_unabated_{sport}.json",          30, "sharp"),
+    "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
+    "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
+    "evsharps_ev":     ("betcouncil_evsharps_ev_{sport}.json",       25, "sharp"),
+    "underdog":        ("betcouncil_underdog_{sport}.json",          20, "props"),
+    "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
+    "polymarket":      ("betcouncil_polymarket_{sport}.json",        30, "signal"),
+    "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
+    "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
+    "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
+    "pregame":         ("betcouncil_pregame_{sport}.json",           30, "signal"),
+    "betr":            ("betcouncil_betr_{sport}.json",              20, "props"),
+    "fantasylabs":     ("betcouncil_fantasylabs_{sport}.json",       30, "signal"),
+    "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
+    "sleeper":         ("betcouncil_sleeper_{sport}.json",           30, "signal"),
+    "numberfire":      ("betcouncil_numberfire_{sport}.json",        30, "signal"),
+    "sportsinsights":  ("betcouncil_sportsinsights_{sport}.json",    15, "signal"),
+    "oddsshark":       ("betcouncil_oddsshark_{sport}.json",         20, "signal"),
+    "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
+    "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
+    "bettingpros":     ("betcouncil_bettingpros_{sport}.json",       20, "signal"),
+    "stokastic":       ("betcouncil_stokastic_{sport}.json",         30, "signal"),
+    "rotogrinders":    ("betcouncil_rotogrinders_{sport}.json",      30, "signal"),
+    "oddsportal":      ("betcouncil_oddsportal_{sport}.json",        60, "signal"),
+    "outlier":         ("betcouncil_outlier_{sport}.json",           20, "signal"),
+    "smarkets":        ("betcouncil_smarkets_{sport}.json",          25, "signal"),
+    "pickwise":        ("betcouncil_pickwise_{sport}.json",          20, "signal"),
+    "scoresandodds":   ("betcouncil_scoresandodds_{sport}.json",     15, "signal"),
+    "kalshi":          ("betcouncil_kalshi_{sport}.json",            30, "signal"),
+    "pickswise":       ("betcouncil_pickswise_{sport}.json",         30, "signal"),
+    "betus":           ("betcouncil_betus_{sport}.json",             25, "props"),
+    "bet105":          ("betcouncil_bet105_{sport}.json",            25, "lines"),
+    "betwhale":        ("betcouncil_betwhale_{sport}.json",          25, "lines"),
+    "ybets":           ("betcouncil_ybets_{sport}.json",             25, "lines"),
+    "zamba":           ("betcouncil_zamba_{sport}.json",             25, "lines"),
+    "evbets":          ("betcouncil_evbets_{sport}.json",            20, "sharp"),
+    "evbets_props":    ("betcouncil_evbets_props_{sport}.json",      20, "sharp"),
+    # GitHub-Actions-backed sources (cron, not a live browser tab) — 2x their
+    # cron cadence as the freshness bar so a single missed run doesn't trip.
+    "prizepicks":      ("betcouncil_prizepicks_{sport}.json",        30, "props"),
+    "pick6":           ("betcouncil_pick6_props.json",               60, "props"),
+}
+
+
+def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal")) -> list:
+    """
+    Check every registered harvester source's Gist payload age against its
+    expected refresh interval. Returns a list of dicts:
+      {name, tier, status, age_minutes, expected_minutes}
+    status is 🟢 fresh (<=1x expected), 🟡 stale (1x-3x expected),
+    🔴 dead (>3x expected), or ⚫ never-seen (no captured_at data at all).
+    Does not raise — a source that can't be checked is reported ⚫, not skipped.
+    """
+    results = []
+    for name, (fname_tmpl, expected_min, tier) in HARVESTER_REGISTRY.items():
+        if tier not in tiers:
+            continue
+        fname = fname_tmpl.format(sport=sport) if "{sport}" in fname_tmpl else fname_tmpl
+        try:
+            data = _read_gist_file(fname, cache_minutes=5)
+        except Exception:
+            data = {}
+        age = _gist_data_age_minutes(data)
+        if age is None:
+            status = "⚫"
+        elif age <= expected_min:
+            status = "🟢"
+        elif age <= expected_min * 3:
+            status = "🟡"
+        else:
+            status = "🔴"
+        results.append({
+            "name": name, "tier": tier, "status": status,
+            "age_minutes": round(age, 1) if age is not None else None,
+            "expected_minutes": expected_min,
+        })
+    return results
+
+
+def get_harvester_alerts(sport: str, persist: bool = True) -> list:
+    """
+    Same-day dead-source alerting: compares this check's results against the
+    last persisted check (stored in the Gist as
+    betcouncil_harvester_health_prev_{sport}.json) and returns only sources
+    that just TRANSITIONED to 🔴 dead since the previous check — not every
+    source that's been dead for weeks, which would just be noise every load.
+    Sharp-tier sources are always included even on a repeat-dead check, since
+    those are high-priority enough to keep surfacing.
+    """
+    current = check_harvester_health(sport)
+    prev_fname = f"betcouncil_harvester_health_prev_{sport}.json"
+    try:
+        prev_data = _read_gist_file(prev_fname, cache_minutes=1)
+    except Exception:
+        prev_data = {}
+    prev_status = (prev_data or {}).get("status", {})
+
+    alerts = []
+    for r in current:
+        was = prev_status.get(r["name"])
+        if r["status"] == "🔴" and (was != "🔴" or r["tier"] == "sharp"):
+            alerts.append(r)
+
+    if persist:
+        try:
+            new_snapshot = {
+                "status": {r["name"]: r["status"] for r in current},
+                "captured_at": datetime.utcnow().isoformat() + "Z",
+                "sport": sport,
+            }
+            save_to_gist(f"harvester_health_prev_{sport}", new_snapshot)
+        except Exception:
+            pass
+
+    return alerts
+
+
 def fetch_evsharps_jwt_from_gist() -> str:
     """
     Get fresh EVSharps JWT from Gist (pushed by browser harvester).
