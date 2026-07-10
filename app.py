@@ -23743,9 +23743,18 @@ with tabs[9]:
         _poly_sorted = sorted(_poly, key=lambda x: -x.get("volume",0))
         _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in _poly_sorted[:5]]
         st.dataframe(pd.DataFrame(_poly_rows), use_container_width=True, hide_index=True)
-    if _cov:
+    if _cov and isinstance(_cov, dict):
         st.markdown("**Public Consensus (Covers):**")
-        _cov_rows = [{"Matchup": c["matchup"][:40], "Public %": f"{c['public_pct']}%", "Side": c["side"], "Picks": c["picks"]} for c in _cov[:8]]
+        _cov_rows = []
+        for _cm, _cv in list(_cov.items())[:8]:
+            _cm_away, _, _cm_home = _cm.partition(" @ ")
+            _cm_away_pct = _cv.get("away_pct", 50)
+            _cm_home_pct = _cv.get("home_pct", 50)
+            if _cm_home_pct >= _cm_away_pct:
+                _cm_pct, _cm_side = _cm_home_pct, _cm_home
+            else:
+                _cm_pct, _cm_side = _cm_away_pct, _cm_away
+            _cov_rows.append({"Matchup": _cm[:40], "Public %": f"{_cm_pct}%", "Side": _cm_side})
         st.dataframe(pd.DataFrame(_cov_rows), use_container_width=True, hide_index=True)
     elif not st.secrets.get("FIRECRAWL_KEY",""):
         st.info("Add FIRECRAWL_KEY to Streamlit secrets to enable Covers public betting consensus data.")
