@@ -18446,3 +18446,83 @@ def fetch_mybookie_lines_html(sport="nfl"):
         for gid, g in games.items()
         if g["away_team"] and g["home_team"]
     }
+
+
+def compare_mybookie_sources(sport="NFL"):
+    """
+    TEMPORARY DIAGNOSTIC (Jul 10 2026) — not a production fetch path.
+
+    Calls both existing MyBookie sources for the same sport and logs a
+    side-by-side comparison to the Gist, so results can be reviewed across
+    several runs before deciding whether fetch_mybookie_lines_html() should
+    replace the Playwright fetch_mybookie_lines() / Tampermonkey harvester
+    as primary. Does NOT change any live board behavior — purely logs for
+    human review. Not called automatically; triggered manually via a
+    button in the System tab.
+
+    Note: the two sources have different return shapes (Playwright returns
+    a list of {"Matchup","Home ML","Away ML","Spread","Total",...} dicts;
+    the HTML version returns a dict keyed by game_id with nested
+    spread/ml/total sub-dicts) — both are normalized here to a common
+    {matchup_string: {home_ml, away_ml, spread, total}} shape for
+    comparison. Matchup strings may not match character-for-character
+    between sources (team name formatting could differ) — the raw matchup
+    key lists from both sides are included in the output specifically so a
+    human can eyeball near-misses from naming differences vs actual
+    missing games, rather than trusting an exact-match diff count alone.
+    """
+    sport_map_html = {"NFL": "nfl", "MLB": "mlb", "NBA": "nba", "NHL": "nhl", "WNBA": "wnba"}
+    html_sport = sport_map_html.get(sport, sport.lower())
+
+    playwright_error = None
+    try:
+        playwright_games = fetch_mybookie_lines(sport) or []
+    except Exception as e:
+        playwright_games = []
+        playwright_error = str(e)[:200]
+
+    html_error = None
+    try:
+        html_games = fetch_mybookie_lines_html(html_sport) or {}
+    except Exception as e:
+        html_games = {}
+        html_error = str(e)[:200]
+
+    pw_by_matchup = {}
+    for g in playwright_games:
+        matchup = g.get("Matchup", "")
+        if matchup:
+            pw_by_matchup[matchup] = {
+                "home_ml": g.get("Home ML"),
+                "away_ml": g.get("Away ML"),
+                "spread": g.get("Spread"),
+                "total": g.get("Total"),
+            }
+
+    html_by_matchup = {}
+    for gid, g in (html_games or {}).items():
+        matchup = f"{g.get('away_team','')} @ {g.get('home_team','')}"
+        html_by_matchup[matchup] = {
+            "home_ml": (g.get("home_ml") or {}).get("price"),
+            "away_ml": (g.get("away_ml") or {}).get("price"),
+            "spread": (g.get("home_spread") or {}).get("points"),
+            "total": (g.get("total") or {}).get("points"),
+        }
+
+    comparison = {
+        "sport": sport,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "playwright_count": len(playwright_games),
+        "html_count": len(html_games),
+        "playwright_error": playwright_error,
+        "html_error": html_error,
+        "playwright_matchups": sorted(pw_by_matchup.keys()),
+        "html_matchups": sorted(html_by_matchup.keys()),
+        "playwright_data": pw_by_matchup,
+        "html_data": html_by_matchup,
+    }
+    try:
+        save_to_gist(f"mybookie_comparison_{sport}", comparison)
+    except Exception:
+        pass
+    return comparison
