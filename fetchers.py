@@ -15032,6 +15032,11 @@ HARVESTER_REGISTRY = {
     "zamba":           ("betcouncil_zamba_{sport}.json",             25, "lines"),
     "evbets":          ("betcouncil_evbets_{sport}.json",            20, "sharp"),
     "evbets_props":    ("betcouncil_evbets_props_{sport}.json",      20, "sharp"),
+    # Caesars WAF/bearer token — expires ~24h, no auto-refresh (passive
+    # capture only fires when a real logged-in tab makes an authenticated
+    # call). expected_minutes set to 12h so it goes 🟡 with lead time to
+    # manually re-run caesars_login_harvest.py before the hard expiry.
+    "caesars":         ("betcouncil_caesars_tokens.json",             720, "lines"),
     # GitHub-Actions-backed sources (cron, not a live browser tab) — 2x their
     # cron cadence as the freshness bar so a single missed run doesn't trip.
     "prizepicks":      ("betcouncil_prizepicks_{sport}.json",        30, "props"),
