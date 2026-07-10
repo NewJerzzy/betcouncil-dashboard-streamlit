@@ -11761,16 +11761,27 @@ def fetch_thescore_game_lines(sport: str) -> list:
     """
     theScore Bet game lines.
 
-    PRIMARY: fetch_thescore_from_gist — browser harvester captures the
-    CompetitionPageSectionLinesTabNode GraphQL response and pushes to Gist.
-    SECONDARY: none — Kambi (offering_id='thescore') returned HTTP 410 Gone
-    after theScore's Dec 2025 rebrand from ESPN Bet.
+    PRIMARY (Jul 10 2026): Unabated `straight` market data (source_id=36,
+    theScore US), via the free scheduled Unabated refresher — no browser
+    tab needs to stay open, unlike the Tampermonkey harvester below.
 
-    Harvester config:
+    FALLBACK: fetch_thescore_from_gist — browser harvester captures the
+    CompetitionPageSectionLinesTabNode GraphQL response and pushes to Gist.
+    Kept as a fallback since it's still a real, working, independently-
+    sourced feed (and Unabated could theoretically drop theScore coverage
+    without notice) — just no longer the primary since it requires you to
+    keep a browser tab open, which the Unabated path doesn't.
+    SECONDARY-SECONDARY: none — Kambi (offering_id='thescore') returned
+    HTTP 410 Gone after theScore's Dec 2025 rebrand from ESPN Bet.
+
+    Harvester config (fallback only):
       operationName : CompetitionPageSectionLinesTabNode
       sha256Hash    : 1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6
       Gist file     : betcouncil_thescore_games.json
     """
+    primary = fetch_unabated_straight_from_gist(sport, 36, "theScore Bet")
+    if primary:
+        return primary
     props, _src = fetch_thescore_from_gist(sport)
     return props
 
@@ -11904,7 +11915,25 @@ def fetch_sharpapi_props(sport: str) -> list:
         return []
 
 def fetch_bet365_game_lines(sport: str) -> list:
-    """Bet365 game lines via Kambi (offering_id='bet365'). Cached 60 min."""
+    """
+    Bet365 game lines.
+
+    PRIMARY (Jul 10 2026): Unabated `straight` market data (source_id=78),
+    via the free scheduled Unabated refresher — no browser, no Cloudflare
+    wall, no WebSocket needed (Bet365's own site is a confirmed dead end
+    for direct scraping — see the Bet365 investigation in memory).
+
+    FALLBACK: the old Kambi-based call. NOTE: this fallback is very likely
+    non-functional — Bet365 is not a known Kambi platform customer (unlike
+    BetRivers/Fanatics/ESPN Bet, which genuinely are), so offering_id=
+    "bet365" almost certainly doesn't correspond to a real Kambi tenant.
+    Kept as a no-cost fallback rather than removed outright, but don't
+    expect it to ever actually return data — the Unabated path above is
+    the real source now.
+    """
+    primary = fetch_unabated_straight_from_gist(sport, 78, "Bet365")
+    if primary:
+        return primary
     return _fetch_kambi_game_lines("bet365", sport, "Bet365")
 
 
@@ -17809,21 +17838,131 @@ def fetch_fanduel_lines(sport: str = "MLB") -> list:
     return result
 
 
+def fetch_unabated_straight_from_gist(sport: str, source_id: int, book_label: str) -> list:
+    """
+    Read Caesars/Bet365/theScore game lines from Unabated's `straight` market
+    data — pushed by scripts/src/unabated_refresher/refresh.py (a real
+    scheduled server-side script hitting data.unabated.com/market/{league}/
+    straight/odds, confirmed live Jul 10 2026, no auth). Same free/no-login
+    tier as the existing Unabated props integration.
+
+    source_id mapping (confirmed): 20=Caesars, 78=Bet365, 36=theScore US
+    (60=theScore CA, 118=theScore Fast — not used here).
+
+    bet_type_id mapping (confirmed): 1=Moneyline, 2=Spread, 3=Total.
+
+    CAVEAT: Moneyline and Spread parsing below is confirmed against real
+    captured rows (team_id ties each side to a specific team, matched
+    against the "Away @ Home" order embedded in the "event" string). Total
+    parsing is NOT individually confirmed the same way — no real Total row
+    was captured to check how side_index/team_id distinguishes Over vs
+    Under, so this assumes side_index 0=Over, 1=Under (a common convention,
+    not a verified fact). If Total numbers look swapped or wrong, this
+    assumption is the first thing to check.
+
+    Returns list of:
+        {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
+         Total, OverOdds, UnderOdds, Book, Sport, source}
+    """
+    fname = f"betcouncil_unabated_straight_{sport.upper()}.json"
+    data = _read_gist_file(fname, cache_minutes=10)
+    if not data:
+        return []
+    rows = data if isinstance(data, list) else data.get("lines", data.get("data", []))
+    if not rows:
+        return []
+
+    # Filter to just this book, group by event_id
+    by_event = {}
+    for r in rows:
+        if r.get("source_id") != source_id:
+            continue
+        eid = r.get("event_id")
+        if eid is None:
+            continue
+        by_event.setdefault(eid, {"event": r.get("event", ""), "rows": []})
+        by_event[eid]["rows"].append(r)
+
+    out = []
+    for eid, bundle in by_event.items():
+        event_str = bundle["event"]
+        rows_for_event = bundle["rows"]
+        if " @ " not in event_str:
+            continue
+        away_str, home_str = [s.strip() for s in event_str.split(" @ ", 1)]
+
+        # Team-id -> which side (away/home) it belongs to, derived from the
+        # order teams first appear across ML/Spread rows for this event.
+        team_side = {}
+        for r in rows_for_event:
+            tid = r.get("team_id")
+            if tid is None or tid in team_side:
+                continue
+            if len(team_side) == 0:
+                team_side[tid] = "away"
+            elif len(team_side) == 1:
+                team_side[tid] = "home"
+
+        entry = {
+            "Home": home_str, "Away": away_str,
+            "HomeML": None, "AwayML": None,
+            "Spread": None, "SpreadOdds": None,
+            "Total": None, "OverOdds": None, "UnderOdds": None,
+            "Book": book_label, "Sport": sport, "source": f"Unabated_straight_{book_label}",
+        }
+        for r in rows_for_event:
+            bt = r.get("bet_type_id")
+            tid = r.get("team_id")
+            price = r.get("price")
+            points = r.get("points")
+            side = team_side.get(tid)
+            if bt == 1:  # Moneyline
+                if side == "home":
+                    entry["HomeML"] = price
+                elif side == "away":
+                    entry["AwayML"] = price
+            elif bt == 2:  # Spread
+                if side == "home" and points is not None:
+                    entry["Spread"] = points
+                    entry["SpreadOdds"] = price
+            elif bt == 3:  # Total — side_index convention UNVERIFIED, see caveat above
+                if r.get("side_index") == 0:
+                    entry["Total"] = points
+                    entry["OverOdds"] = price
+                elif r.get("side_index") == 1:
+                    if entry["Total"] is None:
+                        entry["Total"] = points
+                    entry["UnderOdds"] = price
+        if entry["HomeML"] is not None or entry["AwayML"] is not None:
+            out.append(entry)
+    return out
+
+
 def fetch_caesars_lines(sport: str = "MLB") -> list:
     """
     Caesars Sportsbook game lines (ML, spread, total) — no browser required.
 
-    Source: Action Network (book_id=123, Caesars NJ).
+    PRIMARY: Action Network (book_id=123, Caesars NJ).
     Confirmed live: 14–15/15 MLB, 4/4 NBA, 16/16 NFL; no auth required.
     api.americanwagering.com (direct Caesars API) is CloudFront-403
-    from datacenter IPs — Action Network is the only viable server path.
+    from datacenter IPs — Action Network is the only viable server path
+    for the direct-from-Caesars feed.
+
+    FALLBACK (Jul 10 2026): Unabated `straight` market data (source_id=20).
+    Action Network already works well here, so this is a cross-check/
+    backup rather than a fix for something broken — but it's an
+    independent second reading of Caesars' actual lines, worth having
+    in case Action Network's Caesars coverage ever gaps for a sport/game.
 
     sport: "MLB" | "NBA" | "NFL" | "NHL" | "WNBA"
     Returns list of:
       {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
        Total, OverOdds, UnderOdds, book="Caesars", book_id=123}
     """
-    return _fetch_an_book_lines(sport, 123, "Caesars")
+    primary = _fetch_an_book_lines(sport, 123, "Caesars")
+    if primary:
+        return primary
+    return fetch_unabated_straight_from_gist(sport, 20, "Caesars")
 
 
 
