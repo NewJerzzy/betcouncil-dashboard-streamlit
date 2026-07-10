@@ -11563,16 +11563,53 @@ def load_sport_data(sport):
             return []
     def _pf_bovada_props():    return fetch_bovada_props(sport)
     def _pf_mybookie():
-        # Primary: Action Network public scoreboard API (book_id=8).
-        # No auth required — confirmed 200 public endpoint.
-        # Falls back to Tampermonkey Gist harvester when AN has no MyBookie lines.
+        # Primary (Jul 10 2026, reordered): direct HTML scrape of mybookie.ag's
+        # public sportsbook pages, for sports with a confirmed-matching
+        # template. This is the most direct source (straight from MyBookie
+        # itself, not a third-party relay), needs no browser tab open, and
+        # needs no manual step at all -- so it goes first now to minimize
+        # dependence on anything requiring you to do something by hand.
+        # Only covers NFL/MLB/NBA/NHL/WNBA -- these 5 share an identical
+        # 2-way (no Draw) team-vs-team spread/ml/total template, confirmed
+        # live. Soccer/UFC/Golf/Tennis are NOT covered here: Soccer has a
+        # 3-way moneyline with a Draw price this parser doesn't extract,
+        # UFC/Golf/Tennis aren't head-to-head team spread/ml/total markets
+        # at all -- extending this parser to them would silently produce
+        # incomplete/wrong data rather than fail loudly, so those sports
+        # fall through to Action Network/harvester below instead.
+        try:
+            _sport_map_html = {"NFL": "nfl", "MLB": "mlb", "NBA": "nba", "NHL": "nhl", "WNBA": "wnba"}
+            _html_sport = _sport_map_html.get(sport)
+            if _html_sport:
+                _html_games = fetch_mybookie_lines_html(_html_sport)
+                if _html_games:
+                    _out = []
+                    for _gid, _g in _html_games.items():
+                        _out.append({
+                            "Home":   _g.get("home_team", ""),
+                            "Away":   _g.get("away_team", ""),
+                            "HomeML": (_g.get("home_ml") or {}).get("price"),
+                            "AwayML": (_g.get("away_ml") or {}).get("price"),
+                            "Spread": (_g.get("home_spread") or {}).get("points"),
+                            "Total":  (_g.get("total") or {}).get("points"),
+                        })
+                    if _out:
+                        return _out
+        except Exception:
+            pass
+        # Fallback 2: Action Network public scoreboard API (book_id=8).
+        # No auth required — confirmed 200 public endpoint. Covers Soccer/
+        # UFC/Golf/Tennis (and anything else) that the HTML scraper above
+        # doesn't, plus acts as a safety net if mybookie.ag's page structure
+        # ever changes for the 5 sports it does cover.
         try:
             _an = fetch_action_network_lines(sport)
             if _an:
                 return _an
         except Exception:
             pass
-        # Fallback 2: Tampermonkey Gist harvester.
+        # Fallback 3 (last resort, requires a manual browser tab open on
+        # mybookie.ag): Tampermonkey Gist harvester.
         # BUG FIX (2026-07): fetch_mybookie_from_gist() has existed and had a
         # working Tampermonkey harvester feeding it real data all night, but
         # was never actually called anywhere in the board pipeline -- the
@@ -11603,42 +11640,6 @@ def load_sport_data(sport):
                     })
                 if _out:
                     return _out
-        except Exception:
-            pass
-        # Fallback 3 (Jul 10 2026): direct HTML scrape of mybookie.ag's public
-        # sportsbook pages. Added after confirming via a live side-by-side
-        # test that the OLD fallback here (Playwright/CDP) never actually
-        # worked on Streamlit Cloud at all -- 0 games returned every time,
-        # because Streamlit Cloud's environment doesn't have a real browser
-        # available for Playwright to launch (this is why it was already
-        # removed from fetch_mybookie_from_gist() -- see BUG FIX note there).
-        # This HTML scraper needs no browser at all, so it actually runs.
-        # Only wired for sports with a confirmed-live page (nfl, mlb) --
-        # see fetch_mybookie_lines_html()'s own docstring for which sports
-        # are verified vs. untested.
-        try:
-            # Extended Jul 10 2026 after confirming live that mybookie.ag/
-            # sportsbook/{sport}/ uses the identical server-rendered
-            # template (spread/ml/total data-* attributes) across NFL, MLB,
-            # NBA, NHL, and WNBA — same nav structure, same markup pattern,
-            # no bot wall on any of them.
-            _sport_map_html = {"NFL": "nfl", "MLB": "mlb", "NBA": "nba", "NHL": "nhl", "WNBA": "wnba"}
-            _html_sport = _sport_map_html.get(sport)
-            if _html_sport:
-                _html_games = fetch_mybookie_lines_html(_html_sport)
-                if _html_games:
-                    _out = []
-                    for _gid, _g in _html_games.items():
-                        _out.append({
-                            "Home":   _g.get("home_team", ""),
-                            "Away":   _g.get("away_team", ""),
-                            "HomeML": (_g.get("home_ml") or {}).get("price"),
-                            "AwayML": (_g.get("away_ml") or {}).get("price"),
-                            "Spread": (_g.get("home_spread") or {}).get("points"),
-                            "Total":  (_g.get("total") or {}).get("points"),
-                        })
-                    if _out:
-                        return _out
         except Exception:
             pass
         return []
