@@ -13736,10 +13736,20 @@ def load_sport_data(sport):
             except Exception:
                 _logger.debug("Silent except at line 12293")
                 pass
-        adj_edge, calibrated = adjusted_edge(
+        adj_edge, calibrated, _cal_meta = adjusted_edge(
             best_edge, sport, _get_cal_tier(best_edge, sport), stat_norm, history
         )
         final_edge = adj_edge if calibrated else best_edge
+        try:
+            _cal_debug_log = st.session_state.setdefault("calibration_debug_log", [])
+            _cal_debug_log.append({
+                "sport": sport, "stat": stat_norm, "tier": _get_cal_tier(best_edge, sport),
+                "calibrated": calibrated, **_cal_meta,
+            })
+            if len(_cal_debug_log) > 500:
+                del _cal_debug_log[:-500]
+        except Exception:
+            pass
         # NOTE 2026-07-09: _n_samp/_std_d/_avg_v above are dead inputs from an
         # abandoned earlier attempt at this (GameLog/game_log is never
         # actually populated anywhere in this codebase, so _n_samp is always

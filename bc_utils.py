@@ -2334,18 +2334,148 @@ def is_date_valid_for_today(date_str):
 
 
 
-def adjusted_edge(raw_edge, sport, tier, stat_norm, history):
-    relevant = [b for b in history if b.get("tier") == tier and b.get("sport") == sport]
-    n = len(relevant)
-    if n < 20:
-        return raw_edge, False
-    outcomes = [1 if b["outcome"] == "WIN" else 0 for b in relevant]
-    predicted = [b.get("prob", 0.5) for b in relevant]
-    hit_rate = sum(outcomes) / n
-    avg_predicted = sum(predicted) / n
-    calibration_error = hit_rate - avg_predicted
-    adjustment = calibration_error * min(1.0, n / 100)
-    return raw_edge + adjustment, True
+def _recency_weight(timestamp_str, half_life_days=45):
+    """Exponential recency decay — 1.0 today, halves every half_life_days.
+    Old bets still count, they just count less, so a bad stretch from
+    months ago can't hold a threshold hostage forever."""
+    if not timestamp_str:
+        return 1.0
+    try:
+        ts = datetime.strptime(str(timestamp_str)[:10], "%Y-%m-%d").date()
+        age_days = max(0, (date.today() - ts).days)
+        return 0.5 ** (age_days / half_life_days)
+    except (ValueError, TypeError):
+        return 1.0
+
+
+def _beta_binomial_hit_rate(weighted_wins, weighted_n, prior_prob, prior_strength=8.0):
+    """Shrink the observed (recency-weighted) hit rate toward the model's
+    own average predicted probability via a Beta-Binomial posterior.
+    prior_strength is the pseudo-count of the prior — higher = more
+    conservative shrinkage when the effective sample is thin."""
+    prior_prob = min(max(prior_prob, 0.01), 0.99)
+    alpha0 = prior_prob * prior_strength
+    beta0 = (1 - prior_prob) * prior_strength
+    post_alpha = alpha0 + weighted_wins
+    post_beta = beta0 + max(weighted_n - weighted_wins, 0)
+    return post_alpha / (post_alpha + post_beta)
+
+
+def _weighted_sem(hit_rate, effective_n):
+    """Standard error of the mean using an effective (recency-discounted)
+    sample size rather than raw bet count."""
+    if effective_n is None or effective_n <= 0:
+        return None
+    return sqrt(max(hit_rate * (1 - hit_rate), 1e-9) / effective_n)
+
+
+def _weighted_bucket_stats(records, half_life_days=45):
+    """Build recency-weighted hit_rate / avg_predicted / effective-n for a
+    list of bet records. Skips records with has_real_prob=False so
+    placeholder 0.5 probabilities never contaminate calibration_error."""
+    usable = [r for r in records if r.get("has_real_prob", True) is not False]
+    if not usable:
+        return None
+    weights = [_recency_weight(r.get("timestamp")) for r in usable]
+    eff_n = sum(weights)
+    if eff_n <= 0:
+        return None
+    weighted_wins = sum(w * (1 if r.get("outcome") == "WIN" else 0) for r, w in zip(usable, weights))
+    weighted_pred = sum(w * float(r.get("prob", 0.5) or 0.5) for r, w in zip(usable, weights)) / eff_n
+    return {
+        "n_raw": len(usable),
+        "eff_n": eff_n,
+        "weighted_wins": weighted_wins,
+        "hit_rate_raw": weighted_wins / eff_n,
+        "avg_predicted": weighted_pred,
+    }
+
+
+def _backtest_threshold_move(records, threshold_old, threshold_new, upper_cap=None):
+    """Lightweight backtest: using each record's OWN logged edge, check
+    whether it would have qualified for this tier under the old vs the new
+    threshold (capped below the next tier up so we don't double-count),
+    and compare realized net profit per qualifying bet under each. Returns
+    (roi_old, roi_new, n_old, n_new) — None values mean not enough data
+    to judge either side."""
+    def _qualifies(edge, thr):
+        if upper_cap is not None and edge >= upper_cap:
+            return False
+        return edge >= thr
+
+    net_old = net_new = 0.0
+    n_old = n_new = 0
+    for r in records:
+        edge = r.get("edge", 0) or 0
+        net = r.get("net")
+        if net is None:
+            wager = r.get("wager", 0) or 0
+            net = r.get("profit", 0) if r.get("outcome") == "WIN" else -abs(wager)
+        if _qualifies(edge, threshold_old):
+            net_old += net
+            n_old += 1
+        if _qualifies(edge, threshold_new):
+            net_new += net
+            n_new += 1
+    roi_old = (net_old / n_old) if n_old >= 5 else None
+    roi_new = (net_new / n_new) if n_new >= 5 else None
+    return roi_old, roi_new, n_old, n_new
+
+
+def adjusted_edge(raw_edge, sport, tier, stat_norm, history, half_life_days=45):
+    """
+    Calibration-adjusted edge — SEM-gated, recency-weighted, Bayesian-shrunk,
+    bucketed by sport+tier+stat-type when there's enough data for that.
+
+    Returns (adjusted_edge, was_calibrated, meta). meta always explains why
+    an adjustment did or didn't fire — never a silent pass-through.
+    """
+    stat_bucket_records = [
+        b for b in history
+        if b.get("tier") == tier and b.get("sport") == sport
+        and (b.get("prop") == stat_norm or b.get("stat_type") == stat_norm)
+    ]
+    sport_tier_records = [b for b in history if b.get("tier") == tier and b.get("sport") == sport]
+
+    stats = _weighted_bucket_stats(stat_bucket_records, half_life_days)
+    bucket_used = "stat_type"
+    if stats is None or stats["eff_n"] < 15:
+        stats = _weighted_bucket_stats(sport_tier_records, half_life_days)
+        bucket_used = "sport_tier"
+
+    if stats is None or stats["eff_n"] < 15:
+        eff_n = round(stats["eff_n"], 1) if stats else 0
+        return raw_edge, False, {
+            "reason": f"insufficient effective sample (eff_n={eff_n} < 15)",
+            "bucket": bucket_used,
+        }
+
+    hit_rate_shrunk = _beta_binomial_hit_rate(
+        stats["hit_rate_raw"] * stats["eff_n"], stats["eff_n"], stats["avg_predicted"]
+    )
+    sem = _weighted_sem(hit_rate_shrunk, stats["eff_n"])
+    calibration_error = hit_rate_shrunk - stats["avg_predicted"]
+
+    # Stricter significance gate for noisier lower tiers before acting on it.
+    z_gate = {"SOVEREIGN": 1.0, "ELITE": 1.0, "APPROVED": 1.3, "LEAN": 1.3}.get(tier, 1.0)
+
+    if sem is None or abs(calibration_error) < z_gate * sem:
+        gate_width = round(z_gate * sem, 4) if sem else None
+        return raw_edge, False, {
+            "reason": f"calibration_error {calibration_error:+.3f} within ±{gate_width} ({z_gate}xSEM) — treated as noise",
+            "bucket": bucket_used, "eff_n": round(stats["eff_n"], 1),
+        }
+
+    # Inverse-variance-style shrink on top of the significance gate — bigger
+    # effective sample means less residual discount on the acted-on signal.
+    shrink = stats["eff_n"] / (stats["eff_n"] + 20.0)
+    adjustment = calibration_error * shrink
+
+    return raw_edge + adjustment, True, {
+        "reason": f"calibration_error {calibration_error:+.3f} exceeds {z_gate}xSEM (±{round(z_gate*sem,4)}) — adjusted",
+        "bucket": bucket_used, "eff_n": round(stats["eff_n"], 1),
+        "sem": round(sem, 4), "hit_rate_shrunk": round(hit_rate_shrunk, 4),
+    }
 
 # normalize_name — moved to utils.py
 
@@ -4263,19 +4393,28 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
     """
     Auto-calibrate tier thresholds from observed bet outcomes.
 
-    Logic:
-    - For each tier (SOVEREIGN/ELITE/APPROVED/LEAN), compute observed hit rate
-    - Compare to expected hit rate implied by the model's predicted prob
-    - If model is overconfident (hit rate < predicted prob): tighten threshold (raise it)
-    - If model is underconfident (hit rate > predicted prob): loosen threshold (lower it)
-    - Requires minimum 15 bets per tier for adjustment, 30 for full confidence
+    v2 (July 9, 2026) — SEM actually drives the decision now, not just the log line:
+    - Recency-weighted (45-day half-life) hit rate instead of flat pooling
+    - has_real_prob=False records excluded (placeholder 0.5 probs no longer
+      contaminate calibration_error)
+    - Beta-Binomial shrinkage of hit_rate toward the model's own avg_predicted
+      before computing calibration_error (small samples pulled toward prior)
+    - SEM-based significance gate: only adjusts when calibration_error exceeds
+      a tier-specific multiple of SEM (tighter tiers get more benefit of the
+      doubt; SOVEREIGN/ELITE gate at 1.0xSEM, APPROVED/LEAN at 1.3xSEM since
+      they're noisier and cheaper to get wrong)
+    - Regime gate: skips calibration entirely for a sport currently in a
+      known-unstable/off-season regime rather than calibrating on stale data
+    - Lightweight backtest: before committing a move, checks whether it would
+      have actually improved realized ROI on the qualifying bets; if not,
+      applies half the adjustment instead of the full amount
+    - Requires minimum 15 (recency-weighted) effective bets per tier
     - Adjustment capped at ±25% of current threshold to prevent wild swings
-    - Returns adjusted thresholds dict for the sport
+    - Returns adjusted thresholds dict for the sport, with a decision-level
+      log explaining exactly why each tier did or didn't move
 
     Called automatically on each board load. Results stored in session_state.
     """
-    from math import sqrt
-
     # Base thresholds (fallback if insufficient data)
     BASE_THRESHOLDS = {
         "NBA":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
@@ -4290,83 +4429,121 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
     }
     base = BASE_THRESHOLDS.get(sport, BASE_THRESHOLDS["NBA"]).copy()
 
+    # Regime gate — don't calibrate on a sport that's in a known-unstable
+    # window (off-season/no-games); stale-regime data would corrupt the
+    # calibration_error input rather than reflect a real edge in current form.
+    try:
+        regime_info = detect_season_regime(sport)
+        if regime_info and regime_info.get("regime") == "Off-season":
+            base["_log"] = {"_all": f"Skipped — {sport} regime is Off-season ({regime_info.get('description','')})"}
+            base["_n_records"] = 0
+            base["_sport"] = sport
+            base["_calibrated"] = False
+            return base
+    except Exception:
+        pass  # if regime detection itself fails, fall through and calibrate normally
+
     # Combine signal_performance + history for this sport
     all_records = []
     for r in (signal_performance or []):
         if r.get("sport", "") == sport or not sport:
             all_records.append(r)
     for r in (history or []):
-        if r.get("sport", "") == sport and r.get("outcome") in ("WIN","LOSS"):
+        if r.get("sport", "") == sport and r.get("outcome") in ("WIN", "LOSS"):
             all_records.append({
-                "tier":    r.get("tier", ""),
-                "outcome": r.get("outcome", ""),
-                "win":     1 if r.get("outcome") == "WIN" else 0,
-                "prob":    r.get("prob", 0.5),
-                "edge":    r.get("edge", 0),
+                "tier": r.get("tier", ""), "outcome": r.get("outcome", ""),
+                "win": 1 if r.get("outcome") == "WIN" else 0,
+                "prob": r.get("prob", 0.5), "edge": r.get("edge", 0),
+                "timestamp": r.get("timestamp", ""), "net": r.get("net"),
+                "profit": r.get("profit", 0), "wager": r.get("wager", 0),
+                "has_real_prob": r.get("has_real_prob", True),
             })
 
     if not all_records:
+        base["_log"] = {"_all": "No records for this sport — using base thresholds"}
+        base["_n_records"] = 0
+        base["_sport"] = sport
+        base["_calibrated"] = False
         return base
 
-    # Per-tier stats
-    tier_stats = {}
+    # Per-tier bucketing
+    tier_records = {}
     for rec in all_records:
         tier = rec.get("tier", "")
-        if tier not in ("SOVEREIGN","ELITE","APPROVED","LEAN"):
+        if tier not in ("SOVEREIGN", "ELITE", "APPROVED", "LEAN"):
             continue
-        if tier not in tier_stats:
-            tier_stats[tier] = {"wins": 0, "total": 0, "prob_sum": 0.0}
-        ts = tier_stats[tier]
-        ts["total"] += 1
-        ts["wins"]  += int(rec.get("win", 0))
-        ts["prob_sum"] += float(rec.get("prob", 0.5) or 0.5)
+        tier_records.setdefault(tier, []).append(rec)
 
     adjusted = base.copy()
     adjustment_log = {}
+    tiers = ["SOVEREIGN", "ELITE", "APPROVED", "LEAN"]
+    z_gate_by_tier = {"SOVEREIGN": 1.0, "ELITE": 1.0, "APPROVED": 1.3, "LEAN": 1.3}
 
-    for tier, ts in tier_stats.items():
-        n = ts["total"]
-        if n < 15:
-            adjustment_log[tier] = f"n={n} < 15 min — no adjustment"
+    for tier, recs in tier_records.items():
+        stats = _weighted_bucket_stats(recs)
+        if stats is None or stats["eff_n"] < 15:
+            eff_n = round(stats["eff_n"], 1) if stats else 0
+            adjustment_log[tier] = f"eff_n={eff_n} < 15 min (recency-weighted) — no adjustment"
             continue
 
-        hit_rate     = ts["wins"] / n
-        avg_pred_prob = ts["prob_sum"] / n
-        sem          = sqrt(hit_rate * (1 - hit_rate) / n)
+        hit_rate_shrunk = _beta_binomial_hit_rate(
+            stats["hit_rate_raw"] * stats["eff_n"], stats["eff_n"], stats["avg_predicted"]
+        )
+        sem = _weighted_sem(hit_rate_shrunk, stats["eff_n"])
+        # Positive = overconfident (model predicted higher than it hit)
+        calibration_error = stats["avg_predicted"] - hit_rate_shrunk
 
-        # Calibration error: positive = overconfident, negative = underconfident
-        calibration_error = avg_pred_prob - hit_rate
-
-        # Confidence weight: more bets = more adjustment allowed
-        confidence = min(1.0, n / 30)  # full confidence at 30+ bets
-
-        # Adjustment direction:
-        # Overconfident (model predicts 65% but hitting 55%) → tighten (raise threshold)
-        # Underconfident (model predicts 55% but hitting 65%) → loosen (lower threshold)
+        z_gate = z_gate_by_tier.get(tier, 1.0)
         current = base[tier]
-        max_adj  = current * 0.25  # cap at 25% change
-        raw_adj  = calibration_error * confidence * 0.5  # scale factor
-        adj      = max(-max_adj, min(max_adj, raw_adj))
 
-        new_threshold = round(current + adj, 4)
+        if sem is None or abs(calibration_error) < z_gate * sem:
+            gate_width = round(z_gate * sem, 4) if sem else None
+            adjustment_log[tier] = (
+                f"n={stats['n_raw']} (eff_n={stats['eff_n']:.1f}), hit={hit_rate_shrunk:.1%}, "
+                f"pred={stats['avg_predicted']:.1%}, calib_err={calibration_error:+.3f} within "
+                f"±{gate_width} ({z_gate}xSEM) — treated as noise, no adjustment"
+            )
+            continue
+
+        max_adj = current * 0.25
+        # Inverse-variance-style shrink beyond the significance gate itself
+        shrink = stats["eff_n"] / (stats["eff_n"] + 20.0)
+        raw_adj = calibration_error * shrink * 0.5
+        adj = max(-max_adj, min(max_adj, raw_adj))
+        candidate_threshold = round(current + adj, 4)
+
+        # Lightweight backtest: does this move actually help realized ROI?
+        idx = tiers.index(tier)
+        upper_cap = base[tiers[idx - 1]] if idx > 0 else None
+        roi_old, roi_new, n_old, n_new = _backtest_threshold_move(recs, current, candidate_threshold, upper_cap)
+        backtest_note = "insufficient data to backtest"
+        if roi_old is not None and roi_new is not None:
+            if roi_new < roi_old:
+                adj = adj * 0.5
+                candidate_threshold = round(current + adj, 4)
+                backtest_note = f"full move underperformed backtest (roi_old={roi_old:+.2f}, roi_new={roi_new:+.2f}) — half-adjustment applied"
+            else:
+                backtest_note = f"validated (roi_old={roi_old:+.2f}, roi_new={roi_new:+.2f})"
+
+        new_threshold = candidate_threshold
         adjusted[tier] = new_threshold
-
         direction = "tightened" if adj > 0 else "loosened"
         adjustment_log[tier] = (
-            f"n={n}, hit={hit_rate:.1%}, pred={avg_pred_prob:.1%}, "
-            f"SEM=±{sem:.3f}, adj={adj:+.4f} ({direction}) → {new_threshold:.4f}"
+            f"n={stats['n_raw']} (eff_n={stats['eff_n']:.1f}), hit={hit_rate_shrunk:.1%}, "
+            f"pred={stats['avg_predicted']:.1%}, SEM=±{sem:.3f}, calib_err={calibration_error:+.3f} "
+            f"exceeds {z_gate}xSEM gate, adj={adj:+.4f} ({direction}) → {new_threshold:.4f} "
+            f"[backtest: {backtest_note}]"
         )
 
     # Enforce ordering: SOVEREIGN > ELITE > APPROVED > LEAN
-    tiers = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
     for i in range(1, len(tiers)):
-        if adjusted[tiers[i]] >= adjusted[tiers[i-1]]:
-            adjusted[tiers[i]] = round(adjusted[tiers[i-1]] * 0.6, 4)
+        if adjusted[tiers[i]] >= adjusted[tiers[i - 1]]:
+            adjusted[tiers[i]] = round(adjusted[tiers[i - 1]] * 0.6, 4)
 
-    adjusted["_log"]         = adjustment_log
-    adjusted["_n_records"]   = len(all_records)
-    adjusted["_sport"]       = sport
-    adjusted["_calibrated"]  = True
+    adjusted["_log"] = adjustment_log
+    adjusted["_n_records"] = len(all_records)
+    adjusted["_sport"] = sport
+    adjusted["_calibrated"] = True
 
     return adjusted
 
