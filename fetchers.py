@@ -18279,3 +18279,170 @@ def fetch_evsharps_dingers_from_gist(max_age_minutes: int = 45) -> tuple:
     if not entries:
         return [], "unavailable"
     return entries, "evsharps_dingers_live"
+
+
+def fetch_mybookie_lines_html(sport="nfl"):
+    """
+    NOTE ON NAMING: this is intentionally NOT named fetch_mybookie_lines().
+    That name is already taken by the existing Playwright/CDP-based headed-
+    browser scraper that intercepts XHR from engine.mybookie.ag/sports_api/*
+    (that specific API endpoint is Cloudflare-protected, unlike the plain
+    sportsbook page this function scrapes). This function is a distinct,
+    separate candidate source — it does NOT replace fetch_mybookie_lines()
+    or the Gist harvester wiring (fetch_mybookie_from_gist() / Tampermonkey
+    -> betcouncil_mybookie_{sport}.json) and is not called from anywhere
+    yet. Wiring/replacement is a separate decision for later.
+
+    Scrapes MyBookie's public sportsbook pages directly — confirmed via live
+    HTTP fetch (2026-07-10) that these pages are fully server-rendered HTML
+    with odds embedded as data-* attributes on <button> elements. No
+    Cloudflare challenge, no login, no JS execution needed (unlike Bet365/
+    FanDuel/Caesars, all of which block plain server-side requests).
+
+    Verified URL pattern: https://www.mybookie.ag/sportsbook/{sport}/
+    sport examples confirmed live: "nfl", "mlb"
+    (nav also lists: "nba", "nhl", "ncaa-basketball", "ufc", "boxing",
+    "e-sports" — same page template, not individually verified yet)
+
+    Each game row contains up to 6 <button> elements (spread/moneyline/total
+    x away/home side), each carrying:
+      data-gameid            -> unique game id (string of digits)
+      data-wager-type          -> "sp" (spread), "ml" (moneyline), "to" (total)
+      data-team                 -> team name for this side of the bet
+      data-team-vs               -> opposing team name
+      data-points                 -> line value: spread number (e.g. "-3.5"),
+                                     total number (e.g. "8"); "0"/"" for ml
+      data-odd / data-odds         -> American price, e.g. "-110", "+112"
+      data-gameDate / data-time     -> kickoff/start time (attribute name
+                                        varies by where it's rendered on page)
+      button id suffix "_visit_*"    -> away side  (also: Over, for totals)
+      button id suffix "_home_*"      -> home side (also: Under, for totals)
+
+    Returns a dict keyed by game_id:
+        {
+          "<gameid>": {
+            "away_team": "New England Patriots",
+            "home_team": "Seattle Seahawks",
+            "start_time": "2026-09-09 18:20:00",
+            "away_spread": {"points": -3.5, "price": -110},
+            "home_spread": {"points": 3.5, "price": -110},
+            "away_ml": {"price": 130},
+            "home_ml": {"price": -150},
+            "total": {"points": 8.0, "over_price": -117, "under_price": -103},
+          },
+          ...
+        }
+    Games missing a resolved away_team/home_team (rare partial rows) are
+    dropped. Returns {} (never raises) on any network/parse failure, so
+    callers can treat this as an optional source like the other harvesters.
+
+    NOTE: requires BeautifulSoup (`from bs4 import BeautifulSoup`) — reuse
+    the import already present in fetchers.py for the Covers consensus
+    parser rather than adding a second one.
+
+    KNOWN SITE BUG (confirmed live, 2026-07-10): MyBookie's own HTML has a
+    templating artifact on "ml" and "to" buttons — a second, differently-
+    cased `data-gameId="<id>}"` attribute (note the stray trailing "}")
+    duplicates the clean lowercase `data-gameid="<id>"` already present on
+    the same tag. HTML parsers case-fold attribute names, so the dirty
+    mixed-case value silently overwrites the clean one once parsed, which
+    would otherwise split each game's moneyline/total legs into a
+    second, bogus game_id and break the merge with its spread legs. We
+    strip trailing non-digit characters from data-gameid below specifically
+    to neutralize this.
+    """
+    import re
+    from bs4 import BeautifulSoup
+
+    url = f"https://www.mybookie.ag/sportsbook/{sport}/"
+    try:
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        logging.warning(f"[MyBookie] fetch failed ({sport}): {e}")
+        return {}
+
+    try:
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception as e:
+        logging.warning(f"[MyBookie] parse failed ({sport}): {e}")
+        return {}
+
+    def _to_num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    games = {}
+    for btn in soup.find_all("button", attrs={"data-gameid": True}):
+        raw_game_id = btn.get("data-gameid")
+        game_id = re.sub(r"\D+$", "", raw_game_id or "")
+        if not game_id:
+            continue
+
+        wager_type = btn.get("data-wager-type", "")
+        team = btn.get("data-team", "")
+        team_vs = btn.get("data-team-vs", "")
+        points = _to_num(btn.get("data-points"))
+        price = _to_num(btn.get("data-odd") or btn.get("data-odds"))
+        start_time = btn.get("data-gameDate") or btn.get("data-time") or ""
+        btn_id = btn.get("id", "")
+        is_away = "_visit_" in btn_id
+        is_home = "_home_" in btn_id
+
+        entry = games.setdefault(
+            game_id,
+            {
+                "away_team": None,
+                "home_team": None,
+                "start_time": "",
+                "away_spread": None,
+                "home_spread": None,
+                "away_ml": None,
+                "home_ml": None,
+                "total": None,
+            },
+        )
+        if start_time and not entry["start_time"]:
+            entry["start_time"] = start_time
+
+        if is_away:
+            entry["away_team"] = team or entry["away_team"]
+            entry["home_team"] = entry["home_team"] or team_vs
+        elif is_home:
+            entry["home_team"] = team or entry["home_team"]
+            entry["away_team"] = entry["away_team"] or team_vs
+
+        if wager_type == "sp":
+            entry["away_spread" if is_away else "home_spread"] = {
+                "points": points,
+                "price": price,
+            }
+        elif wager_type == "ml":
+            entry["away_ml" if is_away else "home_ml"] = {"price": price}
+        elif wager_type == "to":
+            total = entry["total"] or {"points": None}
+            if points is not None:
+                total["points"] = points
+            if is_away:
+                total["over_price"] = price
+            elif is_home:
+                total["under_price"] = price
+            entry["total"] = total
+
+    return {
+        gid: g
+        for gid, g in games.items()
+        if g["away_team"] and g["home_team"]
+    }
