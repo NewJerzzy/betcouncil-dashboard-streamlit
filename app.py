@@ -15229,7 +15229,6 @@ def load_sport_data(sport):
                 _logger.debug("Silent except at line 13492")
                 pass
     if sport == "NHL":
-        # TODO: fetch_nhl_starting_goalies not yet implemented in fetchers.py
         if "fetch_nhl_starting_goalies" in globals():
             try:
                 _nhl_goalies = fetch_nhl_starting_goalies()

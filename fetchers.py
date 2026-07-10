@@ -8082,6 +8082,103 @@ def fetch_mlb_confirmed_lineups():
     except (requests.RequestException, ValueError, KeyError):
         return {}
 
+def fetch_sleeper_scoreboard(sport: str, target_date=None):
+    """
+    Generic version of fetch_sleeper_mlb_scoreboard() (Jul 10 2026) — same
+    confirmed-public, no-auth endpoint, generalized to any sport Sleeper's
+    /scores page covers: mlb, nba, nfl, nhl, wnba, cbb.
+
+    GET https://api.sleeper.app/scores/{sport}/date/YYYY-MM-DD
+
+    IMPORTANT CAVEAT: only MLB's response shape has actually been verified
+    against a live capture (confirmed field names: team, name, score,
+    probable_pitcher_name, lineup entries with inning/order/sequence/
+    player_name). Non-MLB sports have NOT been individually verified — the
+    "inning" field is baseball terminology and almost certainly doesn't
+    apply the same way to NBA/NFL/NHL/WNBA lineups (no innings in those
+    sports). This function does NOT filter by inning==0 for non-MLB sports
+    for that reason — it returns the full raw lineup list as posted, which
+    may include bench players or a different starters/subs distinction
+    entirely depending on how Sleeper structures each sport. Treat non-MLB
+    output as provisional until spot-checked against a real game day for
+    that sport.
+
+    Returns a dict keyed by game_id:
+        {
+          "<game_id>": {
+            "status": "...",
+            "away": {"team": abbr, "name": ..., "score": ...,
+                      "lineup": [{"name": ..., "order": ...}, ...] (raw,
+                      unfiltered for non-MLB sports)},
+            "home": {...same shape...},
+            "fetched_at": iso8601,
+          }, ...
+        }
+    Returns {} (never raises) on any failure.
+    """
+    sport = sport.lower()
+    if target_date is None:
+        target_date = datetime.now().strftime("%Y-%m-%d")
+    cache_path = os.path.join(CACHE_DIR, f"sleeper_scoreboard_{sport}_{target_date}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 15:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    url = f"https://api.sleeper.app/scores/{sport}/date/{target_date}"
+    try:
+        resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
+        resp.raise_for_status()
+        games = resp.json()
+    except Exception as e:
+        logging.warning(f"[Sleeper] {sport} scoreboard fetch failed: {e}")
+        return {}
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    result = {}
+    for g in games or []:
+        game_id = g.get("game_id")
+        if not game_id:
+            continue
+        meta = g.get("metadata") or {}
+
+        def _side(block, is_mlb=(sport == "mlb")):
+            block = block or {}
+            raw_lineup = block.get("lineup") or []
+            if is_mlb:
+                starters = [p for p in raw_lineup if p.get("player_name") and p.get("inning") == 0]
+                starters.sort(key=lambda p: p.get("sequence", 0))
+                lineup = [
+                    {"name": p.get("player_name", ""), "batting_order": p.get("order", 0)}
+                    for p in starters
+                ]
+            else:
+                # Unverified for this sport — pass through as-is rather than
+                # guess at a starters/subs filter that may not apply.
+                lineup = [
+                    {"name": p.get("player_name", ""), "order": p.get("order", 0)}
+                    for p in raw_lineup if p.get("player_name")
+                ]
+            return {
+                "team": block.get("team", ""),
+                "name": block.get("name", ""),
+                "score": block.get("score"),
+                "probable_pitcher": block.get("probable_pitcher_name", "") if is_mlb else None,
+                "lineup": lineup,
+            }
+
+        result[game_id] = {
+            "status": g.get("status", ""),
+            "away": _side(meta.get("away_team")),
+            "home": _side(meta.get("home_team")),
+            "fetched_at": fetched_at,
+        }
+    if result:
+        _safe_save_pkl(cache_path, result)
+    return result
+
+
 def fetch_sleeper_mlb_scoreboard(target_date=None):
     """
     Pulls today's (or target_date's) real MLB games, scores, and starting
@@ -8096,6 +8193,10 @@ def fetch_sleeper_mlb_scoreboard(target_date=None):
     request. Each game's metadata.away_team / metadata.home_team include
     `team` (3-letter abbr), `name`, `score`, `probable_pitcher_name`, and a
     `lineup` list of {id, player_name, order, sequence} once posted.
+
+    Thin wrapper over fetch_sleeper_scoreboard("mlb", ...) — kept as its own
+    function since fetch_mlb_confirmed_lineups_with_fallback() already calls
+    it by this name.
 
     Returns a dict keyed by game_id:
         {
@@ -8112,50 +8213,48 @@ def fetch_sleeper_mlb_scoreboard(target_date=None):
     Returns {} (never raises) on any network/parse failure so callers can
     treat this purely as an optional fallback source.
     """
-    if target_date is None:
-        target_date = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://api.sleeper.app/scores/mlb/date/{target_date}"
+    return fetch_sleeper_scoreboard("mlb", target_date)
+
+
+def fetch_nhl_starting_goalies():
+    """
+    Fills a previously-empty stub (app.py has called this since before the
+    Sleeper work, guarded by an `in globals()` check that always no-op'd
+    since the function didn't exist).
+
+    Uses the same confirmed-public, no-auth Sleeper scoreboard endpoint as
+    MLB (fetch_sleeper_scoreboard("nhl", ...)). UNVERIFIED CAVEAT: NHL's
+    exact lineup field shape has not been individually confirmed against a
+    live NHL game day the way MLB was — this assumes the same "order 0 =
+    starter in the non-numbered roster slot" pattern MLB uses for its
+    probable pitcher (MLB's order=0 entry is always the starting pitcher,
+    with batters as order 1-9), and treats NHL's order=0 lineup entry the
+    same way for the starting goalie. If NHL's actual data doesn't follow
+    that pattern, this will silently return wrong or empty data rather than
+    erroring — spot-check against a live NHL game day before trusting it.
+
+    Returns {team_abbr: {"goalie": name, "confirmed": bool, "source": str}}
+    """
     try:
-        resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
-        resp.raise_for_status()
-        games = resp.json()
+        games = fetch_sleeper_scoreboard("nhl")
     except Exception as e:
-        logging.warning(f"[Sleeper] scoreboard fetch failed: {e}")
+        print(f"[WARN] fetch_nhl_starting_goalies: {e}")
         return {}
-
-    fetched_at = datetime.now(timezone.utc).isoformat()
     result = {}
-    for g in games or []:
-        game_id = g.get("game_id")
-        if not game_id:
-            continue
-        meta = g.get("metadata") or {}
-
-        def _side(block):
-            block = block or {}
-            starters = [
-                p for p in (block.get("lineup") or [])
-                if p.get("player_name") and p.get("inning") == 0
-            ]
-            starters.sort(key=lambda p: p.get("sequence", 0))
-            lineup = [
-                {"name": p.get("player_name", ""), "batting_order": p.get("order", 0)}
-                for p in starters
-            ]
-            return {
-                "team": block.get("team", ""),
-                "name": block.get("name", ""),
-                "score": block.get("score"),
-                "probable_pitcher": block.get("probable_pitcher_name", ""),
-                "lineup": lineup,
-            }
-
-        result[game_id] = {
-            "status": g.get("status", ""),
-            "away": _side(meta.get("away_team")),
-            "home": _side(meta.get("home_team")),
-            "fetched_at": fetched_at,
-        }
+    for g in (games or {}).values():
+        for side in ("away", "home"):
+            team_block = g.get(side, {}) or {}
+            abbr = team_block.get("team", "")
+            lineup = team_block.get("lineup", [])
+            if not abbr or not lineup:
+                continue
+            goalie_entry = next((p for p in lineup if p.get("order") == 0), None)
+            if goalie_entry and goalie_entry.get("name"):
+                result[abbr] = {
+                    "goalie": goalie_entry["name"],
+                    "confirmed": True,
+                    "source": "Sleeper (unverified field mapping)",
+                }
     return result
 
 
