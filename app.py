@@ -16249,6 +16249,11 @@ with tabs[0]:
                     + f'</div>',
                     unsafe_allow_html=True
                 )
+                with st.expander(f"Why this pick — {_qp.get('Player','')}", expanded=False):
+                    st.markdown(
+                        render_signal_chart(_qp, st.session_state.get("last_sport", SPORTS[0])),
+                        unsafe_allow_html=True
+                    )
 
 
         # ═══════════════════════════════════════════════════
@@ -22192,7 +22197,7 @@ with tabs[8]:
         # Independent of the token-gated scrapers below — still fresh even
         # when Caesars/Bovada/DK Pick6 tokens have expired since last capture.
         _unab_ls_platform_label = {"prizepicks": "Unabated (PrizePicks)", "underdog": "Unabated (Underdog)", "pick6": "Unabated (Pick6)"}
-        for _ul in (st.session_state.get(f"unabated_props_{sport}", []) or []):
+        for _ul in (st.session_state.get(f"unabated_props_{st.session_state.get('last_sport', 'NBA')}", []) or []):
             _ul_plat = str(_ul.get("platform", "")).lower()
             _ul_label = _unab_ls_platform_label.get(_ul_plat)
             if not _ul_label or _ul.get("line") is None:

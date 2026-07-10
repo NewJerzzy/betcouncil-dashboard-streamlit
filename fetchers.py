@@ -6213,6 +6213,20 @@ def scrape_prizepicks(sport):
     try:
         if os.path.exists(_lkg_path):
             _lkg_age_h = (time.time() - os.path.getmtime(_lkg_path)) / 3600
+            # A slate is only valid for the day it's posted — PrizePicks props
+            # for yesterday's games (e.g. a player who already played) will
+            # still look like a normal props list and can surface as a top
+            # edge / Lock of the Day if served past their game day. Refuse to
+            # serve anything older than one slate cycle instead of silently
+            # treating it as current data.
+            if _lkg_age_h > 6:
+                log_error_to_session(
+                    "scrape_prizepicks",
+                    f"Last-known-good cache is {_lkg_age_h:.1f}h old — too stale "
+                    "to serve (likely yesterday's slate). Treating as unavailable.",
+                    "error",
+                )
+                return []
             with open(_lkg_path, "rb") as _lf:
                 _lkg_data = pickle.load(_lf)
             if _lkg_data:
@@ -11836,22 +11850,35 @@ def scrape_prizepicks_with_gist_fallback(sport):
     try:
         if os.path.exists(lkg_path):
             _lkg_age_h = (time.time() - os.path.getmtime(lkg_path)) / 3600
-            with open(lkg_path, "rb") as _f:
-                _lkg = _pkl.load(_f)
-            if _lkg:
-                st.warning(
-                    f"⚠️ **PrizePicks live data unavailable** — showing last cached "
-                    f"props ({_lkg_age_h:.0f}h old). Data may be stale. Refresh to retry.",
-                    icon="🟡",
-                )
-                st.session_state["pp_source"] = "last_known_good"
-                st.session_state["pp_status"] = "stale"
+            # Refuse to serve a slate older than one cycle — an old cache can
+            # contain players whose games already happened, which would
+            # otherwise surface as a top-edge / Lock of the Day pick today.
+            if _lkg_age_h > 6:
+                st.session_state["pp_status"] = "unavailable"
+                st.session_state["pp_source"] = "none"
                 log_error_to_session(
                     "scrape_prizepicks_with_gist_fallback",
-                    f"Serving LKG cache ({_lkg_age_h:.1f}h old, {len(_lkg)} props)",
-                    "warning",
+                    f"LKG cache is {_lkg_age_h:.1f}h old — too stale to serve "
+                    "(likely yesterday's slate). Treating as unavailable.",
+                    "error",
                 )
-                return _lkg
+            else:
+                with open(lkg_path, "rb") as _f:
+                    _lkg = _pkl.load(_f)
+                if _lkg:
+                    st.warning(
+                        f"⚠️ **PrizePicks live data unavailable** — showing last cached "
+                        f"props ({_lkg_age_h:.0f}h old). Data may be stale. Refresh to retry.",
+                        icon="🟡",
+                    )
+                    st.session_state["pp_source"] = "last_known_good"
+                    st.session_state["pp_status"] = "stale"
+                    log_error_to_session(
+                        "scrape_prizepicks_with_gist_fallback",
+                        f"Serving LKG cache ({_lkg_age_h:.1f}h old, {len(_lkg)} props)",
+                        "warning",
+                    )
+                    return _lkg
     except (OSError, _pkl.UnpicklingError, EOFError):
         pass
 
