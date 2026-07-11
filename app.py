@@ -11234,9 +11234,10 @@ def get_line_movement_summary(matchup, sport, current_game):
 # ── Feature 6: Prediction Stability Audit ──────────────────────
 def store_board_snapshot(board, sport):
     """
-    Store a snapshot of the current board — every pick, not just what gets
+    Store a snapshot of the current board — up to 30 picks per sport
+    (best-bet tiers and highest edge prioritized), not just what gets
     locked in. Feeds next-day grading (grade_board_snapshots_for_date) so
-    the model can learn from the full recommendation set, not just the
+    the model can learn from a broad recommendation set, not just the
     small subset of bets a person actually places.
 
     Persisted to Gist (not just local disk) because Streamlit Cloud's
@@ -11258,6 +11259,16 @@ def store_board_snapshot(board, sport):
         # LATEST snapshot for a given date+sport rather than assuming a
         # single entry, so this doesn't conflict with that use case.
         snap_key = f"{today_key}_{sport}_{datetime.now().strftime('%H:%M')}"
+        # Cap at 30 picks/sport: current real grading coverage (ESPN_ATHLETE_IDS)
+        # is only ~15-20 players/sport, so 30 gives headroom without bloating
+        # the Gist or the grading job's runtime. Prioritize best-bet tiers
+        # first, then edge size, so a cap never drops the picks that matter
+        # most for calibration.
+        _tier_rank = {"SOVEREIGN": 0, "ELITE": 1, "APPROVED": 2, "LEAN": 3, "PASS": 4}
+        capped_board = sorted(
+            board,
+            key=lambda p: (_tier_rank.get(p.get("Tier", ""), 5), -abs(p.get("Edge", 0) or 0)),
+        )[:30]
         stored[snap_key] = {
             "sport": sport,
             "date": today_key,
@@ -11283,7 +11294,7 @@ def store_board_snapshot(board, sport):
                     },
                     "sharp_flag": p.get("SharpFlag", ""),
                 }
-                for p in board
+                for p in capped_board
             ],
         }
         # Keep 45 days of history — enough for weekly/monthly grading review
