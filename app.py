@@ -18701,6 +18701,32 @@ with tabs[2]:
                         _cov_game = {"matchup": _cd_matchup, "public_pct": _cd_away_pct, "side": _cd_away, **_cd_val}
                     break
 
+        # Match BettingPros expert/public consensus to this game. BettingPros
+        # is fetched every board load (bettingpros_data) and its parsing
+        # logic already existed inside compute_public_fade_signal — but that
+        # function was never called from anywhere, so this data has been
+        # sitting fetched-and-parsed-but-unused. Wiring it in here the same
+        # way Covers is wired in above.
+        _bp_data = st.session_state.get("bettingpros_data", {})
+        _bp_game = None
+        if _bp_data:
+            _bp_items = (_bp_data if isinstance(_bp_data, list)
+                         else _bp_data.get("items", _bp_data.get("picks", _bp_data.get("data", []))))
+            if isinstance(_bp_items, list):
+                _bp_matchup_l = f"{_away_nm} {_home_nm}".lower()
+                for _bi in _bp_items:
+                    if not isinstance(_bi, dict):
+                        continue
+                    _bpick = _bi.get("pick", _bi)
+                    _bslug = (_bpick.get("slug", "") or _bpick.get("matchup", "") or "").lower()
+                    if not _bslug or not any(t.lower() in _bslug for t in [_home_nm, _away_nm] if t):
+                        continue
+                    _bp_pct  = float(_bpick.get("consensus_pct") or _bpick.get("pct") or 0)
+                    _bp_side = _bpick.get("pick_type", "") or _bpick.get("side", "")
+                    if _bp_pct and _bp_side:
+                        _bp_game = {"public_pct": _bp_pct, "side": _bp_side}
+                        break
+
         # Match Kalshi/Polymarket markets to this game by team-name presence
         # in the market title/event text (same matching pattern as Covers).
         def _match_prediction_market(markets, home, away):
@@ -18727,7 +18753,7 @@ with tabs[2]:
 
         _has_pub = bool(
             (_pub_data and any(_pub_data.get(k) for k in ["ml_pcts", "spread_pcts", "total_pcts"]))
-            or _cov_game or _kal_game or _poly_game or _pin_sig or _vsin_sig or _has_steam
+            or _cov_game or _bp_game or _kal_game or _poly_game or _pin_sig or _vsin_sig or _has_steam
         )
 
         if _has_pub:
@@ -18783,6 +18809,8 @@ with tabs[2]:
                         _ml_sharp.append(("Action Network money", _an_sharp_side, f"{max(_hm,_am)}% of $ vs {max(_ht,_at)}% of bets"))
                 if _cov_game:
                     _ml_public.append(("Covers straight-up picks", _cov_game.get("side", ""), f"{_cov_game.get('public_pct',50)}% of contest players picked them to win"))
+                if _bp_game:
+                    _ml_public.append(("BettingPros consensus", _bp_game.get("side", ""), f"{_bp_game.get('public_pct',0):.0f}% consensus"))
                 if _pin_sig and _pin_sig.get("note"):
                     (_ml_sharp if _pin_sig.get("confirms") else _ml_public).append(
                         ("Pinnacle (sharp book)", "model's pick" if _pin_sig.get("confirms") else "opposite of model", _pin_sig["note"])
@@ -18872,6 +18900,9 @@ with tabs[2]:
                             )
                         elif _pct >= 60:
                             st.caption(f"📊 Mild public lean ({_pct}% picked {_fav} to win) — not extreme enough to fade.")
+
+                    if _bp_game:
+                        st.caption(f"🧮 BettingPros: {_bp_game.get('public_pct',0):.0f}% consensus on {_bp_game.get('side','')}")
 
                     # Additional sources beyond Action Network — shown
                     # whenever present, not just as a fallback for "No data".
