@@ -23013,6 +23013,24 @@ with tabs[9]:
 
 
     # ── API Health Check ─────────────────────────────────────
+    def _bc_status_table_html(rows, columns):
+        # Plain HTML table instead of st.dataframe — st.dataframe renders via
+        # a canvas-based grid (Glide Data Grid) that has been observed to
+        # fail to paint (empty box, structure intact) right after a
+        # redeploy/restart. These tables are small and static (no sort/
+        # scroll needed), so there's no reason to carry that fragility here.
+        head = "".join(f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--bc-border)">{c}</th>' for c in columns)
+        body = ""
+        for r in rows:
+            cells = "".join(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f">{r.get(c,"")}</td>' for c in columns)
+            body += f"<tr>{cells}</tr>"
+        return (
+            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+            f'border-radius:8px;overflow:hidden;margin-bottom:0.5rem;">'
+            f'<table style="width:100%;border-collapse:collapse;">'
+            f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+        )
+
     st.markdown("### 🔑 API Keys & Token Status")
     _hc_data = []
     _secrets_check = [
@@ -23031,7 +23049,7 @@ with tabs[9]:
         _hc_val = st.secrets.get(_hc_key, "")
         _hc_status = "🟢 Set" if _hc_val else "🔴 Missing"
         _hc_data.append({"Service": _hc_display, "Status": _hc_status, "Purpose": _hc_purpose, "Secret Key": _hc_key})
-    st.dataframe(pd.DataFrame(_hc_data), use_container_width=True, hide_index=True)
+    st.markdown(_bc_status_table_html(_hc_data, ["Service", "Status", "Purpose", "Secret Key"]), unsafe_allow_html=True)
 
     st.markdown("### 🍪 Session & Cookie Status")
     _ck_data = [
@@ -23045,7 +23063,7 @@ with tabs[9]:
          "Status": "🔴 Exhausted" if st.session_state.get("scrapeops_exhausted") else "🟢 Available",
          "Refresh Interval": "Monthly reset"},
     ]
-    st.dataframe(pd.DataFrame(_ck_data), use_container_width=True, hide_index=True)
+    st.markdown(_bc_status_table_html(_ck_data, ["Service", "Secret", "Status", "Refresh Interval"]), unsafe_allow_html=True)
 
     # ── Performance Telemetry ─────────────────────────────
     _telem = st.session_state.get("bc_telemetry", {})
