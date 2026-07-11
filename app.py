@@ -18661,9 +18661,15 @@ with tabs[2]:
         _pin_sig  = next((r.get("pinnacle_sharp") for r in _g.get("recommendations", []) if r.get("pinnacle_sharp")), None)
         _vsin_sig = next((r.get("vsin_sharp") for r in _g.get("recommendations", []) if r.get("vsin_sharp")), None)
 
+        _steam_sigs_check = _g.get("steam_signals", {})
+        _has_steam = any(
+            (isinstance(v, dict) and v.get("is_steam")) or (k.endswith("_opener_gap") and abs(v.get("gap", 0)) >= 0.5)
+            for k, v in _steam_sigs_check.items()
+        ) if isinstance(_steam_sigs_check, dict) else False
+
         _has_pub = bool(
             (_pub_data and any(_pub_data.get(k) for k in ["ml_pcts", "spread_pcts", "total_pcts"]))
-            or _cov_game or _kal_game or _poly_game or _pin_sig or _vsin_sig
+            or _cov_game or _kal_game or _poly_game or _pin_sig or _vsin_sig or _has_steam
         )
 
         if _has_pub:
@@ -18754,6 +18760,29 @@ with tabs[2]:
                         st.caption(f"🟣 Polymarket total: {_poly_game.get('implied_prob',0.5):.0%} implied")
                     if not _tot_pcts and not _cov_game and not _kal_game and not _poly_game:
                         st.caption("No data")
+
+                # ── Steam moves & RLM — this is the actual industry-standard
+                # "where's the money" signal: rapid line movement tracked
+                # directly at Pinnacle/BetOnline, not a tickets/money survey.
+                # A steam move means real sharp money forced the number to
+                # move, which is a stronger signal than any public-percent
+                # source above. Data already computed per-game earlier in
+                # this function (detect_steam_move via bc_utils) — just
+                # wasn't surfaced in this expander before.
+                _steam_sigs = _g.get("steam_signals", {})
+                _steam_hits = {k: v for k, v in _steam_sigs.items() if isinstance(v, dict) and v.get("is_steam")}
+                _opener_gaps = {k: v for k, v in _steam_sigs.items() if k.endswith("_opener_gap") and abs(v.get("gap", 0)) >= 0.5}
+                if _steam_hits or _opener_gaps:
+                    st.markdown("**⚡ Steam Moves (Pinnacle/BetOnline line tracking)**")
+                    for _sk, _sv in _steam_hits.items():
+                        _book_mkt = _sk.replace("_", " ").title()
+                        st.caption(
+                            f"🔥 {_book_mkt}: moved {_sv.get('magnitude',0)} pts {_sv.get('direction','')} "
+                            f"in {_sv.get('elapsed_seconds',0)}s (confidence {_sv.get('confidence',0):.0%})"
+                        )
+                    for _gk, _gv in _opener_gaps.items():
+                        _mkt_name = _gk.replace("_opener_gap", "").title()
+                        st.caption(f"📈 {_mkt_name} moved {_gv.get('gap',0):+.1f} pts from open — real sharp-driven movement, not a survey.")
     else:
         st.info("No games found. Load the board first.")
 
