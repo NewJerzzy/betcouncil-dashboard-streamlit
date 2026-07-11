@@ -1463,17 +1463,22 @@ def render_signal_chart(prop, sport="NBA"):
         line_move_color = "#6a7a8a"
 
     # EXPECTED_VS_ACTUAL — how this player has performed against THIS
-    # specific opponent, compared to today's line. NBA + MLB for now (MLB
-    # added since it's actually in season; NBA/NHL are not). Informational
-    # only — not blended into the edge/probability calculation.
+    # specific opponent, compared to today's line. Built for all 4 major
+    # sports so it's ready rather than forgotten when NBA/NHL come back
+    # in season (MLB is the only one live right now). NFL's fetcher is
+    # less battle-tested than the others (see its docstring) — worth a
+    # real check once football season starts. Informational only — not
+    # blended into the edge/probability calculation.
     eva_html = ""
     _eva_fetchers = {
         "NBA": fetch_nba_player_gamelog_vs_opponent,
         "MLB": fetch_mlb_player_gamelog_vs_opponent,
+        "NHL": fetch_nhl_player_gamelog_vs_opponent,
+        "NFL": fetch_nfl_player_gamelog_vs_opponent,
     }
     if sport in _eva_fetchers:
         try:
-            _eva_stat_key = _map_prop_to_stat_key(prop.get("Prop", ""))
+            _eva_stat_key = _map_prop_to_stat_key(prop.get("Prop", ""), sport)
             _eva_opponent = prop.get("Opponent", "")
             _eva_player = prop.get("Player", "")
             _eva_line = prop.get("Line", 0)

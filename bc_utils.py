@@ -5084,7 +5084,8 @@ def compute_expected_vs_actual(vs_opponent_games, stat_key, current_line):
     {n_games: 0, note: "..."} if there's not enough data. n_games < 2 is
     treated as too thin to be meaningful (single-game sample is noise).
     """
-    _valid_stat_keys = ("PTS", "REB", "AST", "PRA", "H", "HR", "RBI", "R", "SO", "ER")
+    _valid_stat_keys = ("PTS", "REB", "AST", "PRA", "H", "HR", "RBI", "R", "SO", "ER",
+                        "PASS_YDS", "RUSH_YDS", "REC_YDS", "TD", "ASSISTS", "GOALS", "SOG")
     if not vs_opponent_games or stat_key not in _valid_stat_keys:
         return {"n_games": 0, "avg_vs_opponent": None, "residual": None,
                 "note": "No games vs this opponent yet this season."}

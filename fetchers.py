@@ -4342,6 +4342,59 @@ def fetch_nhl_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+
+def fetch_nhl_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, sport: str = "NHL"):
+    """
+    NHL counterpart to fetch_nba_player_gamelog_vs_opponent — a player's
+    game log filtered to games against a specific opponent, this season.
+    Built alongside the MLB version even though NHL is currently
+    off-season, so it's ready rather than forgotten when the season
+    starts. Reuses the existing NHL_PLAYER_IDS map and the api-web.nhle.com
+    endpoint already proven working in fetch_nhl_rolling_averages.
+
+    Returns list of {date, PTS, GOALS, ASSISTS, SOG} dicts, one per game
+    vs that opponent. Empty list if player not found, no games vs that
+    opponent yet, or the request fails.
+    """
+    if sport != "NHL":
+        return []
+    player_id = NHL_PLAYER_IDS.get(player_name)
+    if not player_id:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"nhl_gamelog_vs_opp_{player_id}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path) or {}
+            if opponent_abbr in cached:
+                return cached[opponent_abbr]
+    url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
+    by_opponent = {}
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        games = data.get("gameLog", [])
+        for g in games:
+            opp = g.get("opponentAbbrev", "")
+            if not opp:
+                continue
+            entry = {
+                "date":    g.get("gameDate", ""),
+                "PTS":     g.get("points", 0),
+                "GOALS":   g.get("goals", 0),
+                "ASSISTS": g.get("assists", 0),
+                "SOG":     g.get("shots", 0),
+            }
+            by_opponent.setdefault(opp, []).append(entry)
+        if by_opponent:
+            _safe_save_pkl(cache_path, by_opponent)
+    except Exception as e:
+        print(f"[WARN] fetch_nhl_player_gamelog_vs_opponent: {e}")
+        return []
+    return by_opponent.get(opponent_abbr, [])
+
+
 def fetch_nba_team_defense():
     cache_path = os.path.join(CACHE_DIR, "nba_team_defense.pkl")
     if os.path.exists(cache_path):
@@ -5137,6 +5190,118 @@ def fetch_nfl_player_stats(player_name: str) -> dict:
     except Exception as e:
         print(f"[WARN] fetch_nfl_player_stats({player_name}): {e}")
         return {}
+
+
+def fetch_nfl_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, sport: str = "NFL"):
+    """
+    NFL counterpart to fetch_nba_player_gamelog_vs_opponent — a player's
+    game log filtered to games against a specific opponent, this season.
+    Built alongside MLB/NHL even though NFL is off-season, so it's ready
+    rather than forgotten when the season starts.
+
+    Unlike the NBA/MLB/NHL versions, this doesn't reuse an already-proven
+    per-game endpoint — it chases ESPN's search -> core API eventlog ->
+    event detail chain (same pattern as resolve_actual_stat_for_grading)
+    to pull each game's opponent team. This path is less battle-tested
+    than the others; flagging that honestly rather than promising it's
+    verified — worth a real check once the season starts and there's
+    live data to confirm against.
+
+    Returns list of {date, PASS_YDS, RUSH_YDS, REC_YDS, TD} dicts, one per
+    game vs that opponent. Empty list if player not found, no games vs
+    that opponent yet, or the request fails.
+    """
+    if sport != "NFL":
+        return []
+    try:
+        search_url = f"https://site.api.espn.com/apis/common/v3/search?query={urllib.parse.quote(player_name)}&limit=5&type=player&sport=football&league=nfl"
+        r = _http.get(search_url, timeout=10)
+        if r.status_code != 200:
+            return []
+        results = r.json().get("items", [])
+        athlete_id = None
+        for item in results:
+            if item.get("type") == "player":
+                athlete_id = item.get("id")
+                break
+        if not athlete_id:
+            return []
+    except Exception as e:
+        print(f"[WARN] fetch_nfl_player_gamelog_vs_opponent (search): {e}")
+        return []
+
+    # Need the player's OWN team abbreviation to correctly identify which
+    # competitor in each game is the opponent (vs. their own team).
+    own_team_stats = fetch_nfl_player_stats(player_name)
+    own_team_abbr = (own_team_stats or {}).get("team", "").upper()
+    if not own_team_abbr:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"nfl_gamelog_vs_opp_{athlete_id}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path) or {}
+            if opponent_abbr in cached:
+                return cached[opponent_abbr]
+
+    by_opponent = {}
+    try:
+        season = 2025 if date.today().month >= 3 else 2024
+        url = f"{ESPN_CORE_BASE}/sports/football/leagues/nfl/seasons/{season}/athletes/{athlete_id}/eventlog?limit=20"
+        resp = _http.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        for item in data.get("events", {}).get("items", [])[:20]:
+            event_ref = item.get("event", {}).get("$ref", "") or item.get("$ref", "")
+            stats_ref = item.get("statistics", {}).get("$ref", "")
+            if not event_ref or not stats_ref:
+                continue
+            try:
+                ev_resp = _http.get(event_ref, headers=HEADERS, timeout=10)
+                if ev_resp.status_code != 200:
+                    continue
+                ev_data = ev_resp.json()
+                game_date = ev_data.get("date", "")
+                opp_abbrev = ""
+                competitions = ev_data.get("competitions", [])
+                if competitions:
+                    for competitor in competitions[0].get("competitors", []):
+                        team_ref = competitor.get("team", {}).get("$ref", "")
+                        if not team_ref:
+                            continue
+                        team_resp = _http.get(team_ref, headers=HEADERS, timeout=8)
+                        if team_resp.status_code == 200:
+                            abbr = team_resp.json().get("abbreviation", "")
+                            if abbr and abbr.upper() != own_team_abbr:
+                                opp_abbrev = abbr
+                if not opp_abbrev:
+                    continue
+                stats_resp = _http.get(stats_ref, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+                if stats_resp.status_code != 200:
+                    continue
+                stats_data = stats_resp.json()
+                game_stat = {}
+                for split in stats_data.get("splits", {}).get("categories", []):
+                    for stat in split.get("stats", []):
+                        game_stat[stat.get("abbreviation", "").upper()] = stat.get("value", 0)
+                entry = {
+                    "date": game_date,
+                    "PASS_YDS": game_stat.get("PASSYDS", game_stat.get("YDS", 0)),
+                    "RUSH_YDS": game_stat.get("RUSHYDS", game_stat.get("RYDS", 0)),
+                    "REC_YDS":  game_stat.get("RECYDS", game_stat.get("RECYD", 0)),
+                    "TD":       game_stat.get("TD", 0),
+                }
+                by_opponent.setdefault(opp_abbrev, []).append(entry)
+                time.sleep(0.15)
+            except Exception:
+                continue
+        if by_opponent:
+            _safe_save_pkl(cache_path, by_opponent)
+    except Exception as e:
+        print(f"[WARN] fetch_nfl_player_gamelog_vs_opponent: {e}")
+        return []
+    return by_opponent.get(opponent_abbr, [])
 
 
 def fetch_wnba_player_stats(player_name):
@@ -8146,10 +8311,31 @@ _GRADING_PROP_STAT_MAP = [
 ]
 
 
-def _map_prop_to_stat_key(prop_type: str):
+def _map_prop_to_stat_key(prop_type: str, sport: str = None):
     p = (prop_type or "").lower()
+    # "Assists" means different things (and different field-key conventions
+    # already established elsewhere in this codebase) per sport: NBA uses
+    # "AST", but 5+ existing NHL functions already use "ASSISTS" — rather
+    # than force one to change, branch on sport for this one ambiguous case.
+    # Order matters: check SOG before GOALS, since "Shots on Goal" contains
+    # "goal" as a substring and would otherwise match GOALS first.
+    if sport == "NHL":
+        if "sog" in p or "shot" in p:
+            return "SOG"
+        if "assist" in p:
+            return "ASSISTS"
+        if "goal" in p:
+            return "GOALS"
     for keywords, stat_key in _GRADING_PROP_STAT_MAP:
-        if any(kw in p for kw in keywords):
+        # Multi-word tuples (e.g. "pass"+"yard") require ALL keywords
+        # present, not any single one — otherwise any prop containing just
+        # "yard" always matched whichever tuple appears first (PASS_YDS),
+        # regardless of whether it was actually a rushing or receiving
+        # prop. Single-keyword tuples still match on simple presence.
+        if len(keywords) > 1 and all(len(k.strip()) > 3 for k in keywords):
+            if all(kw in p for kw in keywords):
+                return stat_key
+        elif any(kw in p for kw in keywords):
             return stat_key
     return None
 
