@@ -6620,8 +6620,20 @@ def fetch_public_betting(sport):
             if len(team_abbrs) < 2:
                 continue
             odds_data = game.get("odds", {})
-            book_15 = odds_data.get("15", {})
-            event_data = book_15.get("event", {})
+            # Previously hardcoded to book "15" only -- if that one book
+            # didn't have odds for a given game (common; no single book
+            # covers every game), the whole game was silently dropped via
+            # `continue` below, even though 10 other requested books
+            # (ACTION_NETWORK_BOOK_IDS) might have had usable data. This is
+            # why only one game out of an entire slate was ever showing up.
+            # Now tries every requested book ID in order and uses the first
+            # one with actual event data.
+            event_data = {}
+            for _book_id in ACTION_NETWORK_BOOK_IDS.split(","):
+                _candidate = odds_data.get(_book_id.strip(), {}).get("event", {})
+                if _candidate:
+                    event_data = _candidate
+                    break
             if not event_data:
                 continue
             ml_data = event_data.get("moneyline", [])
