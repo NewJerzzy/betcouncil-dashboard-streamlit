@@ -15589,6 +15589,12 @@ with st.sidebar:
         st.sidebar.warning("⚠️ ODDS_API_KEY missing — fallback odds only")
     elif _ODDS_API_KEY_STATUS == "invalid":
         st.sidebar.error("🔴 ODDS_API_KEY invalid/expired")
+    # Bankroll input rendered here, BEFORE the tile below reads
+    # st.session_state["bankroll"] — previously this ran ~70 lines further
+    # down, after the tile already displayed, so the tile always showed the
+    # value from before the user's latest edit (one rerun stale) while this
+    # input showed the live number. Moving it up keeps both in sync.
+    st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.get("bankroll", 100.0)), step=10.0)
     _today_str    = date.today().strftime("%Y-%m-%d")
     _bankroll_now = float(st.session_state.get("bankroll", DEFAULT_BANKROLL))
     _day_start    = float(st.session_state.get("day_start_br", _bankroll_now) or _bankroll_now)
@@ -15664,7 +15670,6 @@ with st.sidebar:
         st.error("🔴 KILL SWITCH ACTIVE", icon="🛑")
     st.markdown('<div style="font-size:10px;color:#2a3a4a;margin-bottom:10px;">8 MODELS ACTIVE · 14 SOURCES</div>', unsafe_allow_html=True)
     st.markdown("---")
-    st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.get("bankroll", 100.0)), step=10.0)
     dc = get_daily_change()
     dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
     st.markdown(f'<div style="font-size:16px;color:{dc_color};margin-top:-12px;margin-bottom:8px;">{dc} today</div>', unsafe_allow_html=True)
