@@ -18464,8 +18464,8 @@ with tabs[2]:
                 )
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
-                f'<span style="font-size:16px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
-                f'<span style="font-size:15px;font-weight:600;color:var(--bc-text);">{_matchup}</span>'
+                f'<span style="font-size:19px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
+                f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
                 + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html +
                 f'</div>',
