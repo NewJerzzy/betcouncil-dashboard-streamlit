@@ -15626,6 +15626,7 @@ if "persistence_loaded" not in st.session_state:
         save_json_data(HISTORY_PATH, _clean_history)
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
+    st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
     st.session_state["day_start_br"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
     # Comprehensive Elo update, decoupled from locks/button gate (was: only
     # ran when "Check Results via ESPN" was clicked AND locks existed —
@@ -15758,6 +15759,15 @@ with st.sidebar:
     # value from before the user's latest edit (one rerun stale) while this
     # input showed the live number. Moving it up keeps both in sync.
     st.session_state.bankroll = st.number_input("Bankroll ($)", value=float(st.session_state.get("bankroll", 100.0)), step=10.0)
+    # Persist immediately on change — previously this widget only updated
+    # session_state in-memory; the only places that actually wrote to
+    # Gist/local storage were bet settlement and the Reset Bankroll button.
+    # A manual edit here (no bet settled since) was never saved, so any full
+    # page reload / new session reverted it to the last-settled value.
+    if st.session_state.bankroll != st.session_state.get("_bankroll_last_saved"):
+        save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+        save_to_gist("bankroll", st.session_state.bankroll)
+        st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
     _today_str    = date.today().strftime("%Y-%m-%d")
     _bankroll_now = float(st.session_state.get("bankroll", DEFAULT_BANKROLL))
     _day_start    = float(st.session_state.get("day_start_br", _bankroll_now) or _bankroll_now)

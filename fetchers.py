@@ -6592,7 +6592,7 @@ def fetch_public_betting(sport):
     cache_path = os.path.join(CACHE_DIR, f"public_betting_{sport}.pkl")
     if os.path.exists(cache_path):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 20:
+        if age_mins < 5:
             return _safe_load_pkl(cache_path)
     today = date.today().strftime("%Y%m%d")
     url = f"{ACTION_NETWORK_BASE}/{sport_slug}?bookIds={ACTION_NETWORK_BOOK_IDS}&date={today}&periods=event"
