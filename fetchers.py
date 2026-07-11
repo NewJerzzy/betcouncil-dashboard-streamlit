@@ -4232,6 +4232,77 @@ def fetch_mlb_full_roster_ids(force_refresh=False):
         pass
     return all_ids
 
+
+def fetch_mlb_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, sport: str = "MLB"):
+    """
+    MLB counterpart to fetch_nba_player_gamelog_vs_opponent — a player's
+    game log filtered to games against a specific opponent, this season.
+    Powers EXPECTED_VS_ACTUAL for MLB (built once NBA/NHL went off-season
+    and MLB was the sport actually in season). Reuses the existing
+    fetch_mlb_full_roster_ids (all 30 teams) rather than a new player-ID
+    lookup, and the same statsapi.mlb.com gameLog endpoint already proven
+    working in fetch_mlb_rolling_averages.
+
+    Returns list of {date, H, HR, RBI, R, SO, ER} dicts (hitter or pitcher
+    fields populated depending on role), one per game vs that opponent.
+    Empty list if player not found, no games vs that opponent yet, or the
+    request fails.
+    """
+    if sport != "MLB":
+        return []
+    all_ids = fetch_mlb_full_roster_ids()
+    player_id = all_ids.get(player_name)
+    if not player_id:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"mlb_gamelog_vs_opp_{player_id}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path) or {}
+            for opp_key, games in cached.items():
+                if opponent_abbr.lower() in opp_key.lower() or opp_key.lower() in opponent_abbr.lower():
+                    return games
+    by_opponent = {}
+    for group in ("hitting", "pitching"):
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season=2025&gameType=R"
+        try:
+            resp = _http.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            stats_list = data.get("stats", [])
+            if not stats_list:
+                continue
+            splits = stats_list[0].get("splits", [])
+            for g in splits:
+                opp = (g.get("opponent", {}) or {}).get("name", "") or (g.get("opponent", {}) or {}).get("abbreviation", "")
+                if not opp:
+                    continue
+                stat = g.get("stat", {})
+                entry = {
+                    "date": g.get("date", ""),
+                    "H":   stat.get("hits", 0),
+                    "HR":  stat.get("homeRuns", 0),
+                    "RBI": stat.get("rbi", 0),
+                    "R":   stat.get("runs", 0),
+                    "SO":  stat.get("strikeOuts", 0),
+                    "ER":  stat.get("earnedRuns", 0),
+                }
+                by_opponent.setdefault(opp, []).append(entry)
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"[WARN] fetch_mlb_player_gamelog_vs_opponent ({group}): {e}")
+            continue
+    if by_opponent:
+        _safe_save_pkl(cache_path, by_opponent)
+    # Opponent field from statsapi is a full/short name, not always an
+    # abbreviation — match by substring both ways rather than requiring
+    # an exact key match.
+    for opp_key, games in by_opponent.items():
+        if opponent_abbr.lower() in opp_key.lower() or opp_key.lower() in opponent_abbr.lower():
+            return games
+    return []
+
+
 def fetch_nhl_rolling_averages():
     import sys as _sys
     ewma_average = getattr(_sys.modules.get("app"), "ewma_average", None) or (lambda vals, decay=0.85, sport=None: round(sum(vals)/len(vals), 2) if vals else 0.0)
@@ -8051,10 +8122,10 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
         return None
 
 
-# Prop-type text → ESPN stat abbreviation. Permissive substring matching
-# since board prop-type strings come from various upstream sources and
-# aren't a single controlled vocabulary (e.g. "Points", "Pts", "PTS" should
-# all resolve the same way).
+# Prop-type text → stat abbreviation. Permissive substring matching since
+# board prop-type strings come from various upstream sources and aren't a
+# single controlled vocabulary. Covers NBA/NFL (original) and MLB (added
+# for the MLB EXPECTED_VS_ACTUAL build).
 _GRADING_PROP_STAT_MAP = [
     (("pts+reb+ast", "points+rebounds+assists", "pra"), "PRA"),
     (("point", "pts"), "PTS"),
@@ -8064,6 +8135,14 @@ _GRADING_PROP_STAT_MAP = [
     (("rush", "yard"), "RUSH_YDS"),
     (("rec", "yard"), "REC_YDS"),
     (("touchdown", "td"), "TD"),
+    # MLB
+    (("strikeout", "so", " k's", "pitcher strikeouts"), "SO"),
+    (("earned run", "era", " er"), "ER"),
+    (("home run", "hr"), "HR"),
+    (("rbi",), "RBI"),
+    (("total base",), "TB"),
+    (("run scored", "runs"), "R"),
+    (("hit",), "H"),
 ]
 
 

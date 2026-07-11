@@ -1463,19 +1463,22 @@ def render_signal_chart(prop, sport="NBA"):
         line_move_color = "#6a7a8a"
 
     # EXPECTED_VS_ACTUAL — how this player has performed against THIS
-    # specific opponent, compared to today's line. NBA only for now
-    # (needs stats.nba.com player-ID resolution + per-opponent game log,
-    # both currently NBA-specific). Informational only — not blended into
-    # the edge/probability calculation.
+    # specific opponent, compared to today's line. NBA + MLB for now (MLB
+    # added since it's actually in season; NBA/NHL are not). Informational
+    # only — not blended into the edge/probability calculation.
     eva_html = ""
-    if sport == "NBA":
+    _eva_fetchers = {
+        "NBA": fetch_nba_player_gamelog_vs_opponent,
+        "MLB": fetch_mlb_player_gamelog_vs_opponent,
+    }
+    if sport in _eva_fetchers:
         try:
             _eva_stat_key = _map_prop_to_stat_key(prop.get("Prop", ""))
             _eva_opponent = prop.get("Opponent", "")
             _eva_player = prop.get("Player", "")
             _eva_line = prop.get("Line", 0)
             if _eva_stat_key and _eva_opponent and _eva_player:
-                _eva_games = fetch_nba_player_gamelog_vs_opponent(_eva_player, _eva_opponent, sport)
+                _eva_games = _eva_fetchers[sport](_eva_player, _eva_opponent, sport)
                 _eva = compute_expected_vs_actual(_eva_games, _eva_stat_key, _eva_line)
                 if _eva.get("n_games", 0) >= 2:
                     _eva_color = "#22c55e" if (_eva.get("residual") or 0) > 0 else "#e04040"
