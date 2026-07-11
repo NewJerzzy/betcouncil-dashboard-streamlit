@@ -1429,26 +1429,72 @@ def render_signal_chart(prop, sport="NBA"):
         "NEUTRAL": "No strong directional bias detected",
     }.get(regime_label, "")
 
+    # ── Conviction Score (0-100) ─────────────────────────────────────────
+    # Single combined confidence number, blending signal coverage, average
+    # signal accuracy, and edge size relative to this sport's SOVEREIGN
+    # threshold.
+    coverage_score = (firing / total * 100) if total else 0
+    reliability_score = avg_reliability * 100
+    sport_key = str(sport).upper()
+    sovereign_edge = TIER_THRESHOLDS.get(sport_key, TIER_THRESHOLDS.get("NBA", {})).get("SOVEREIGN", 0.12)
+    edge_score = min(abs(edge) / sovereign_edge, 1.0) * 100 if sovereign_edge else 0
+    conviction_score = round(0.35 * coverage_score + 0.35 * reliability_score + 0.30 * edge_score)
+    conviction_score = max(0, min(100, conviction_score))
+
+    if conviction_score >= 80:
+        conv_color, conv_label = "#22c55e", "High conviction"
+    elif conviction_score >= 60:
+        conv_color, conv_label = "#e8a020", "Moderate conviction"
+    elif conviction_score >= 40:
+        conv_color, conv_label = "#e0a840", "Low conviction"
+    else:
+        conv_color, conv_label = "#6a7a8a", "Weak / no edge"
+
+    # Line move tile — reuses the existing SharpFlag text so it matches
+    # what's shown elsewhere on the pick.
+    sharp_flag_txt = str(prop.get("SharpFlag", "") or "").strip()
+    if sharp_flag_txt:
+        line_move_display = sharp_flag_txt
+        line_move_color = "#22c55e" if "↑" in sharp_flag_txt or line_moved else "#6a7a8a"
+    else:
+        line_move_display = "No line move"
+        line_move_color = "#6a7a8a"
+
     html = f"""
 <div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:10px;padding:16px;margin:6px 0;">
 
-  <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1a2a3a;">
-    <div style="font-size:16px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Why this pick is rated the way it is</div>
-    <div style="font-size:14px;font-weight:500;color:{delta_color}">{verdict}</div>
-    <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;">
-      <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
-        <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Signals firing</div>
-        <div style="font-size:18px;font-weight:500;color:#e8f0f8">{firing}<span style="font-size:15px;color:#6a7a8a"> / {total}</span></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1a2a3a;">
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:16px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Why this pick is rated the way it is</div>
+      <div style="font-size:14px;font-weight:500;color:{delta_color}">{verdict}</div>
+      <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;">
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Signals firing</div>
+          <div style="font-size:18px;font-weight:500;color:#e8f0f8">{firing}<span style="font-size:15px;color:#6a7a8a"> / {total}</span></div>
+        </div>
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Avg signal accuracy</div>
+          <div style="font-size:18px;font-weight:500;color:#e8a020">{avg_reliability:.0%}</div>
+        </div>
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Model edge</div>
+          <div style="font-size:18px;font-weight:500;color:{delta_color}">{edge:+.1%}</div>
+        </div>
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Line move</div>
+          <div style="font-size:14px;font-weight:500;color:{line_move_color}">{line_move_display}</div>
+        </div>
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Market regime</div>
+          <div style="font-size:18px;font-weight:700;color:{regime_color}">{regime_label}</div>
+          <div style="font-size:9px;color:#6a7a8a">{regime_plain}</div>
+        </div>
       </div>
-      <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
-        <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Avg signal accuracy</div>
-        <div style="font-size:18px;font-weight:500;color:#e8a020">{avg_reliability:.0%}</div>
-      </div>
-      <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
-        <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Market regime</div>
-        <div style="font-size:18px;font-weight:700;color:{regime_color}">{regime_label}</div>
-        <div style="font-size:9px;color:#6a7a8a">{regime_plain}</div>
-      </div>
+    </div>
+    <div style="flex-shrink:0;text-align:center;background:{conv_color}18;border:1px solid {conv_color}55;border-radius:10px;padding:10px 18px;min-width:84px;">
+      <div style="font-size:28px;font-weight:800;color:{conv_color};line-height:1;">{conviction_score}</div>
+      <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase;margin-top:4px;">Conviction</div>
+      <div style="font-size:9px;color:{conv_color};margin-top:2px;white-space:nowrap;">{conv_label}</div>
     </div>
   </div>
 
