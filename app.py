@@ -22353,13 +22353,21 @@ with tabs[6]:
             # if the sport isn't one LineStar covers today or the player
             # isn't found (e.g. not rostered / no salary today), rather than
             # showing an empty/broken section.
+            #
+            # Display-only, per 2026-07 scope decision: this data is not yet
+            # wired into edge/Kelly calculation. LOJ hit-rate and the other
+            # new fields need a backtest against BetCouncil's own outcome
+            # history before they're trusted to influence recommendation
+            # sizing, same standard as SEM/H2H Signal 7.
             _ls_sal_data, _ = fetch_linestar_salaries_from_gist(_pl_sport_used)
             _ls_row = get_linestar_player_salary_row(_ls_sal_data, pl_name_d) if _ls_sal_data else None
             _ls_props_data, _ = fetch_linestar_props_from_gist(_pl_sport_used)
             _ls_book_lines = get_linestar_prop_lines(_ls_props_data, pl_name_d) if _ls_props_data else {}
+            _ls_chart = get_linestar_player_chartdata(_ls_props_data, pl_name_d) if _ls_props_data else None
 
             if _ls_row or _ls_book_lines:
                 st.markdown("#### 🎯 LineStar Projection")
+                st.caption("Display only — not yet a model input. Cross-book snapshot, hourly.")
                 if _ls_row:
                     ls_cols = st.columns(5)
                     ls_cols[0].metric("Salary", f"${_ls_row['salary']:,}" if _ls_row.get("salary") else "—")
@@ -22368,12 +22376,29 @@ with tabs[6]:
                     ls_cols[3].metric("Floor", _ls_row.get("floor", "—"))
                     _conf = _ls_row.get("conf")
                     ls_cols[4].metric("Confidence", f"{_conf}%" if _conf is not None else "—")
-                    _splits = _ls_row.get("matchup_splits")
-                    if _splits:
-                        st.caption(
-                            f"Matchup splits ({_ls_row.get('matchup_section','')}): "
-                            + " · ".join(f"{k} {v}" for k, v in _splits.items() if v is not None)
-                        )
+
+                    _badge_bits = []
+                    if _ls_row.get("stars") is not None:
+                        _badge_bits.append(f"{'⭐' * int(_ls_row['stars'])} ({_ls_row['stars']}/5)")
+                    if _ls_row.get("ppg") is not None:
+                        _badge_bits.append(f"PPG: {_ls_row['ppg']}")
+                    if _ls_row.get("opp_rank") is not None:
+                        _badge_bits.append(f"Opp Rank: {_ls_row['opp_rank']}")
+                    if _ls_row.get("alert_score"):
+                        _badge_bits.append(f"⚠️ Alert Score: {_ls_row['alert_score']}")
+                    if _badge_bits:
+                        st.caption(" · ".join(_badge_bits))
+                    if _ls_row.get("notes"):
+                        st.caption(f"📋 {_ls_row['notes']}")
+
+                    _sections = _ls_row.get("matchup_sections")
+                    if _sections:
+                        for _sec_name, _splits in _sections.items():
+                            st.caption(
+                                f"**{_sec_name}**: "
+                                + " · ".join(f"{k} {v}" for k, v in _splits.items() if v is not None)
+                            )
+
                 if _ls_book_lines:
                     _ls_rows = []
                     for _book, _stats in _ls_book_lines.items():
@@ -22382,10 +22407,15 @@ with tabs[6]:
                                 "Book": _book, "Stat": _stat, "Line": _sv.get("line"),
                                 "Over": _sv.get("over_odds"), "Under": _sv.get("under_odds"),
                                 "LS Proj": _sv.get("ls_proj"),
+                                "Last 10 (O/U)": _sv.get("loj_badge") or "—",
                             })
                     if _ls_rows:
                         st.markdown("###### Cross-book lines (LineStar)")
                         st.markdown(_bc_df_html(pd.DataFrame(_ls_rows)), unsafe_allow_html=True)
+
+                if _ls_chart:
+                    st.caption(f"📈 Recent game log (LineStar): {_ls_chart}")
+
 
 
 with tabs[7]:

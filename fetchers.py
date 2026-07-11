@@ -17216,21 +17216,110 @@ def get_linestar_player_salary_row(salaries_data, player_name):
         "floor": row.get("Floor"), "conf": row.get("Conf"), "opp_rank": row.get("OppRank"),
         "position": row.get("POS"), "game_info": row.get("GI"),
         "home_team": row.get("HTEAM"), "away_team": row.get("OTEAM"), "notes": row.get("Notes"),
+        # Fields below (2026-07) are best-effort/unverified against a live payload --
+        # display-only, fail silently (None/empty) rather than guess wrong.
+        "alert_score": row.get("AlertScore"),
+        "stars": row.get("Stars"),
+        "ppg": row.get("PPG"),
+        "status_flags": {k: row.get(k) for k in ("STAT", "IS", "SIC") if row.get(k) is not None} or None,
     }
     pid = row.get("PID")
     if pid is not None:
         _labels = ["PA", "AVG", "SB", "HR", "RBI", "ISO", "wOBA", "wOBA+ISO",
                    "HR/PA", "HR+SB/PA", "wRC+", "FP/PA"]
+        # Collect every matchup section this player appears in (Last 7 / Last 30 /
+        # Season / vs-LHP / vs-RHP etc), not just the first match, so Player Lookup
+        # can show the full split picture rather than one arbitrary table.
+        sections = {}
         for md in (sc.get("MatchupData") or []):
             for pm in (md.get("PlayerMatchups") or []):
                 if pm.get("PlayerId") == pid:
                     vals = pm.get("Values") or []
-                    out["matchup_splits"] = dict(zip(_labels, vals))
-                    out["matchup_section"] = md.get("Title") or md.get("Name")
+                    label = md.get("Title") or md.get("Name") or "Splits"
+                    sections[label] = dict(zip(_labels, vals))
                     break
-            if "matchup_splits" in out:
-                break
+        if sections:
+            out["matchup_sections"] = sections
     return out
+
+
+# Team-level standings (GetSalariesV5 Records[]) -- best-effort/unverified field
+# names, display-only. Returns None rather than a guessed-wrong value.
+def get_linestar_team_record(salaries_data, team_abbrev):
+    if not isinstance(salaries_data, dict) or not team_abbrev:
+        return None
+    try:
+        sc = json.loads(salaries_data.get("SalaryContainerJson") or "{}")
+    except Exception:
+        return None
+    for rec in (sc.get("Records") or []):
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("Team") or rec.get("Abbreviation") or "").upper() == team_abbrev.upper():
+            return {
+                "wins": rec.get("W"), "losses": rec.get("L"),
+                "off_rank": rec.get("OffenseRankingOverall"),
+                "def_rank": rec.get("DefenseRankingOverall"),
+                "pts_for_pg": rec.get("TotalPointsScoredPerGame"),
+                "pts_against_pg": rec.get("TotalPointsAllowedPerGame"),
+            }
+    return None
+
+
+def _summarize_loj(loj):
+    """Turn a LineStar LOJ (Last Over/Under Journey) value into a readable
+    hit-rate badge, e.g. "7/10 Over". Handles a few plausible shapes
+    defensively since the exact format hasn't been independently confirmed:
+    a list of "O"/"U" strings, a list of 1/0 (over=1), or a list of dicts
+    with a Result-style key. Returns None (not a guess) if the shape doesn't
+    match anything recognized.
+    """
+    if not loj or not isinstance(loj, list):
+        return None
+    try:
+        vals = []
+        for item in loj:
+            if isinstance(item, str):
+                s = item.strip().upper()
+                if s in ("O", "OVER", "1"):
+                    vals.append(1)
+                elif s in ("U", "UNDER", "0"):
+                    vals.append(0)
+            elif isinstance(item, dict):
+                r = str(item.get("Result") or item.get("R") or "").strip().upper()
+                if r in ("O", "OVER"):
+                    vals.append(1)
+                elif r in ("U", "UNDER"):
+                    vals.append(0)
+            elif isinstance(item, (int, float)):
+                vals.append(1 if item else 0)
+        if not vals:
+            return None
+        hits = sum(vals)
+        return f"{hits}/{len(vals)} Over"
+    except Exception:
+        return None
+
+
+def get_linestar_player_chartdata(props_data, player_name):
+    """Best-effort pull of a player's rolling game-log (GetPropBets ChartData[]),
+    per Replit's 2026-07 field inventory -- exact shape not independently
+    confirmed here, so this is defensive: returns None rather than a guessed
+    layout if the expected keys aren't present.
+    """
+    if not isinstance(props_data, dict) or not player_name:
+        return None
+    players = {p["Id"]: p["Name"] for p in props_data.get("Players", []) if isinstance(p, dict)}
+    target = player_name.strip().lower()
+    pid = next((pid for pid, nm in players.items() if nm.lower() == target), None)
+    if pid is None:
+        pid = next((pid for pid, nm in players.items() if target in nm.lower()), None)
+    if pid is None:
+        return None
+    for cd in (props_data.get("ChartData") or []):
+        if isinstance(cd, dict) and cd.get("PlayerId") == pid:
+            return cd.get("Values") or cd.get("Games") or cd.get("Data")
+    return None
 
 
 def get_linestar_prop_lines(props_data, player_name):
@@ -17270,6 +17359,7 @@ def get_linestar_prop_lines(props_data, player_name):
             "over_odds":  pb.get("OverOdds"),
             "under_odds": pb.get("UnderOdds"),
             "ls_proj":    pb.get("LineStarStatProj"),
+            "loj_badge":  _summarize_loj(pb.get("LOJ")),
         }
     return result
 
