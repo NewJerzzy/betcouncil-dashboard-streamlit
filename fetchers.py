@@ -17071,66 +17071,115 @@ def fetch_weather_from_gist(sport):
     return {}, "unavailable"
 
 def fetch_linestar_props_from_gist(sport="MLB"):
-    """Cross-book prop odds snapshot from LineStar's public GetPropBets endpoint
-    (DK/FD/Yahoo/PrizePicks/Underdog/Caesars/BetMGM/PointsBet/SuperDraft),
-    harvested browser-side (see app.py MLB weather/props harvester block).
-    Added 2026-07. Field names below are per LineStar's reported schema
-    (BetTypes / PropBets / SportsBooks) -- not yet confirmed against a live
-    payload, since I couldn't reach linestarapp.com directly to verify. Treat
-    this as raw pass-through until the first real harvest lands in the Gist
-    and the shape is spot-checked.
+    """Cross-book prop odds snapshot from LineStar's public GetPropBets endpoint.
+    Covers DK/FD/Yahoo/PrizePicks/Underdog/Caesars/BetMGM/PointsBet/SuperDraft.
+    Schema confirmed 2026-07: data.PropBets[], data.BetTypes[], data.Players[],
+    data.SportsBooks[], data.Teams[], data.Games[] (with weather + Vegas lines).
+    Harvested browser-side via app.py throttled block; enriched with team abbrevs.
     """
     data = _read_gist_file(f"betcouncil_linestar_props_{sport}.json", 5)
     if data and _is_fresh(data, 65):
         return data.get("data", {}), "browser_harvester"
     return {}, "unavailable"
 
-def get_linestar_game_weather(weather_gist_data, team_abbrev):
-    """Best-effort matcher: pull one game's weather off LineStar's
-    GetFastUpdateV2 'Games' array for a given team abbreviation.
+def fetch_linestar_salaries_from_gist(sport="MLB"):
+    """LineStar GetSalariesV5: full DFS player projection table with Ceil/Floor/Conf
+    and MatchupData wOBA/ISO/wRC+/HR-PA splits over 150 games per player.
+    Harvested browser-side via app.py throttled block.
+    SalaryContainerJson.Salaries[] fields: Name, PID, PP (proj pts), PS (actual pts),
+    Ceil, Floor, Conf, HTEAM, OTEAM, GI (game info), OppRank, SAL (salary), POS, Notes.
+    MatchupData[].PlayerMatchups[]: SID, PlayerId, Values [PA,AVG,SB,HR,RBI,ISO,wOBA,
+    wOBA+ISO,HR/PA,HR+SB/PA,wRC+,FP/PA], Ranks.
+    """
+    data = _read_gist_file(f"betcouncil_linestar_salaries_{sport}.json", 5)
+    if data and _is_fresh(data, 65):
+        return data.get("data", {}), "browser_harvester"
+    return {}, "unavailable"
 
-    NOTE (2026-07): the exact key names LineStar uses inside each Games[]
-    entry (team abbrev field, wind/rain/dome field names) were reported
-    second-hand and I have not personally verified them against a live
-    payload -- linestarapp.com isn't reachable from this sandbox. This
-    function tries several plausible key-name variants defensively and
-    returns None rather than guessing if nothing matches, so a schema
-    mismatch fails silently (falls back to wttr.in/NWS in
-    fetch_weather_for_game) instead of feeding wrong data into the model.
-    Once real harvested JSON is available, this should be tightened to the
-    confirmed field names.
+def get_linestar_prop_lines(props_data, player_name):
+    """Extract per-book prop lines for a player from LineStar GetPropBets data.
+    Returns dict: {book_name: {stat_name: {line, over_odds, under_odds, ls_proj}}}
+    Schema confirmed 2026-07: Source=int maps to SportsBooks[].Source/Name;
+    StatId=int maps to BetTypes[].Id/StatName; PlayerId int maps to Players[].Id/Name.
+    """
+    if not isinstance(props_data, dict) or not player_name:
+        return {}
+    players  = {p["Id"]: p["Name"] for p in props_data.get("Players", []) if isinstance(p, dict)}
+    books    = {b["Source"]: b["Name"] for b in props_data.get("SportsBooks", []) if isinstance(b, dict)}
+    stats    = {bt["Id"]: bt["StatName"] for bt in props_data.get("BetTypes", []) if isinstance(bt, dict)}
+    target   = player_name.strip().lower()
+    pid      = next((pid for pid, nm in players.items() if nm.lower() == target), None)
+    if pid is None:
+        return {}
+    result = {}
+    for pb in props_data.get("PropBets", []):
+        if not isinstance(pb, dict) or pb.get("PlayerId") != pid:
+            continue
+        book_name = books.get(pb.get("Source"), f"Book{pb.get('Source')}")
+        stat_name = stats.get(pb.get("StatId"), f"Stat{pb.get('StatId')}")
+        if book_name not in result:
+            result[book_name] = {}
+        result[book_name][stat_name] = {
+            "line":       pb.get("OverUnderValue"),
+            "over_odds":  pb.get("OverOdds"),
+            "under_odds": pb.get("UnderOdds"),
+            "ls_proj":    pb.get("LineStarStatProj"),
+        }
+    return result
+
+_LS_WIND_DIR = {0:"N",1:"NE",2:"E",3:"SE",4:"S",5:"SW",6:"W",7:"NW"}
+
+def get_linestar_game_weather(weather_gist_data, team_abbrev):
+    """Pull one game's weather from the enriched LineStar weather Gist file.
+
+    Schema confirmed 2026-07 against live GetFastUpdateV2 + GetPropBets payloads:
+    - Games[]: Id, AwayTeamId, HomeTeamId, WindSpeed (float mph), WindDirection
+      (int 0-7 → N/NE/E/SE/S/SW/W/NW), RainAmount (float inches), PostponeChance,
+      Humidity (float %), Temp (float °F), IsDome (bool).
+    - AwayTeamAbrev / HomeTeamAbrev are None in the raw API; the app.py harvester
+      enriches games with _AwayAbbr / _HomeAbbr from the PropBets Teams array.
+    - TeamMap (optional) in the gist root: {TeamId: Abbrev} built by the harvester.
+    Matching priority: _AwayAbbr/_HomeAbbr (enriched) → TeamMap lookup by TeamId.
     """
     if not isinstance(weather_gist_data, dict):
         return None
-    games = weather_gist_data.get("Games") or weather_gist_data.get("games") or []
+    games    = weather_gist_data.get("Games") or []
+    team_map = weather_gist_data.get("TeamMap") or {}  # {str(TeamId): Abbrev}
     if not isinstance(games, list):
         return None
     team_abbrev = (team_abbrev or "").upper()
     for g in games:
         if not isinstance(g, dict):
             continue
-        home = str(g.get("HomeTeamAbrev") or g.get("HomeTeam") or g.get("Home") or "").upper()
-        away = str(g.get("AwayTeamAbrev") or g.get("AwayTeam") or g.get("Away") or "").upper()
+        home = str(g.get("_HomeAbbr") or g.get("HomeTeamAbrev") or "").upper()
+        away = str(g.get("_AwayAbbr") or g.get("AwayTeamAbrev") or "").upper()
+        if not home and not away:
+            home = team_map.get(str(g.get("HomeTeamId", "")), "")
+            away = team_map.get(str(g.get("AwayTeamId", "")), "")
         if team_abbrev not in (home, away):
             continue
         wind_speed = g.get("WindSpeed")
-        wind_dir   = g.get("WindDirection")
-        temp       = g.get("Temp") or g.get("Temperature")
+        wind_dir_i = g.get("WindDirection")
+        wind_dir   = _LS_WIND_DIR.get(int(wind_dir_i), "N") if wind_dir_i is not None else "N"
+        temp       = g.get("Temp")
         humidity   = g.get("Humidity")
         is_dome    = g.get("IsDome")
-        rain       = g.get("RainAmount") or g.get("RainChance")
+        rain       = g.get("RainAmount")
         if is_dome:
             return {"city": team_abbrev, "wind_speed_mph": 0, "wind_dir": "N",
-                    "temp_f": temp if temp is not None else 72, "humidity": humidity if humidity is not None else 50,
+                    "temp_f": int(temp) if temp is not None else 72,
+                    "humidity": int(humidity) if humidity is not None else 50,
                     "fetched_at": datetime.now().strftime("%H:%M"), "source": "LineStar(dome)"}
         if wind_speed is None and temp is None:
             return None
         return {"city": team_abbrev,
-                "wind_speed_mph": int(wind_speed) if wind_speed is not None else 0,
-                "wind_dir": wind_dir or "N",
-                "temp_f": int(temp) if temp is not None else 70,
-                "humidity": int(humidity) if humidity is not None else 50,
-                "rain_chance": rain,
+                "wind_speed_mph": round(float(wind_speed), 1) if wind_speed is not None else 0,
+                "wind_dir": wind_dir,
+                "temp_f": round(float(temp)) if temp is not None else 70,
+                "humidity": round(float(humidity)) if humidity is not None else 50,
+                "rain_in": round(float(rain), 3) if rain else 0,
+                "postpone_pct": g.get("PostponeChance", 0),
+                "vegas_total": g.get("VegasTotals"),
                 "fetched_at": datetime.now().strftime("%H:%M"),
                 "source": "LineStar"}
     return None

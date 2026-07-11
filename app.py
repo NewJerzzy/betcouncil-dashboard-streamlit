@@ -12246,6 +12246,7 @@ def load_sport_data(sport):
         ("fetch_kalshi2_from_gist",            "kalshi2_data",           "kalshi2_src"),
         ("fetch_pick6_props_from_gist",        "pick6_props_h",          "pick6_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
+        ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
     ]
     if sport == "MLB":
         try:
@@ -20998,21 +20999,44 @@ with tabs[4]:
             // which returns real per-game wind/rain/dome/humidity/temp for
             // every game on today's MLB slate, no login required.
             throttled('mlbweather_linestar',3600000,function(){{
-                fetch('https://www.linestarapp.com/Projections/Sport/MLB/Site/DraftKings/',{{headers:{{'Accept':'text/html'}}}})
+                // Fetch PeriodId from LineStar page, then fire GetFastUpdateV2 +
+                // GetPropBets + GetSalariesV5 in parallel. GetFastUpdateV2 has
+                // per-game weather (wind/rain/dome/temp) but AwayTeamAbrev/HomeTeamAbrev
+                // are null -- we enrich via PropBets Teams[].{{Id,Abbreviation}} cross-
+                // referenced by AwayTeamId/HomeTeamId. Confirmed schema 2026-07.
+                fetch('https://www.linestarapp.com/Projections/Sport/MLB/Site/DraftKings/',{{headers:{{'Accept':'text/html','X-Requested-With':'XMLHttpRequest'}}}})
                     .then(function(r){{return r.text();}})
                     .then(function(html){{
                         var m = html.match(/LineStar\\.PeriodId\\s*=\\s*(\\d+)/);
-                        if(!m){{ console.log('[BetCouncil] LineStar: could not find PeriodId in page'); return; }}
+                        if(!m){{ console.log('[BetCouncil] LineStar: could not find PeriodId'); return; }}
                         var periodId = m[1];
                         var base = 'https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/';
-                        fetch(base+'GetFastUpdateV2?Sport=3&Site=1&PeriodId='+periodId,{{headers:{{'Accept':'application/json'}}}})
+                        var hdr = {{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.linestarapp.com/Projections'}};
+                        // GetFastUpdateV2 (weather + live projections) and GetPropBets (cross-book lines + Teams array)
+                        Promise.all([
+                            fetch(base+'GetFastUpdateV2?Sport=3&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
+                            fetch(base+'GetPropBets?Sport=3&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
+                        ]).then(function(results){{
+                            var fu = results[0]; var pb = results[1];
+                            // Build TeamId -> Abbreviation map from PropBets Teams array
+                            var teamMap = {{}};
+                            (pb.Teams||[]).forEach(function(t){{ teamMap[t.Id] = t.Abbreviation; }});
+                            // Enrich FastUpdate games with team abbreviations
+                            var games = (fu.Games||[]).map(function(g){{
+                                return Object.assign({{}},g,{{
+                                    _AwayAbbr: teamMap[g.AwayTeamId]||null,
+                                    _HomeAbbr: teamMap[g.HomeTeamId]||null
+                                }});
+                            }});
+                            var enriched = Object.assign({{}},fu,{{Games:games,TeamMap:teamMap}});
+                            pushGist('betcouncil_weather_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:enriched,source:'linestar_auto_harvest'}});
+                            pushGist('betcouncil_linestar_props_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:pb,source:'linestar_auto_harvest'}});
+                        }}).catch(function(e){{console.log('[BetCouncil] LineStar weather/props error:',e.message);}});
+                        // GetSalariesV5: full player projection table with Ceil/Floor/Conf/wOBA/ISO/wRC+
+                        fetch(base+'GetSalariesV5?Sport=3&Site=1&PeriodId='+periodId,{{headers:hdr}})
                             .then(function(r){{return r.json();}})
-                            .then(function(data){{pushGist('betcouncil_weather_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
-                            .catch(function(e){{console.log('[BetCouncil] LineStar GetFastUpdateV2 error:',e.message);}});
-                        fetch(base+'GetPropBets?Sport=3&Site=1&PeriodId='+periodId,{{headers:{{'Accept':'application/json'}}}})
-                            .then(function(r){{return r.json();}})
-                            .then(function(data){{pushGist('betcouncil_linestar_props_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
-                            .catch(function(e){{console.log('[BetCouncil] LineStar GetPropBets error:',e.message);}});
+                            .then(function(data){{pushGist('betcouncil_linestar_salaries_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
+                            .catch(function(e){{console.log('[BetCouncil] LineStar GetSalariesV5 error:',e.message);}});
                     }})
                     .catch(function(e){{console.log('[BetCouncil] LineStar PeriodId fetch error:',e.message);}});
             }});
