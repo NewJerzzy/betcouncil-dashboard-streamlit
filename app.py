@@ -22859,24 +22859,29 @@ with tabs[8]:
                 )}
                 _ls_add([_norm_ap], _bk_a)
 
-        # Also add OddsPapi props (includes Bet365)
+        # Also add OddsPapi props.
+        # NOTE (fixed 2026-07-12): fetch_oddspapi_props() deliberately only
+        # requests caesars/circa/mybookie/betfair-exchange (see its docstring
+        # comment — draftkings/fanduel/betmgm/pinnacle/bet365 come from other
+        # sources instead, on purpose). This matching list previously still
+        # checked for bet365/pinnacle/draftkings/fanduel/betmgm/betrivers —
+        # none of which OddsPapi will ever return — while never checking for
+        # caesars/circa/mybookie, which it actually does fetch. Real,
+        # successfully-fetched Caesars/Circa data was being silently dropped
+        # here every load regardless of "OddsPapi=✅" showing fresh data.
         _oddspapi_ss = st.session_state.get(f"oddspapi_props_{_sport_ls}", [])
         for _op2 in (_oddspapi_ss or []):
             # OddsPapi stores bookmaker in "source" as "OddsPapi_{bookname}"
             _src2 = str(_op2.get("source","") or _op2.get("bookmaker","") or _op2.get("Book",""))
             _bk3 = ""
-            if "bet365" in _src2.lower():
-                _bk3 = "Bet365"
-            elif "pinnacle" in _src2.lower():
-                _bk3 = "Pinnacle"
-            elif "draftkings" in _src2.lower():
-                _bk3 = "DraftKings"
-            elif "fanduel" in _src2.lower():
-                _bk3 = "FanDuel"
-            elif "betmgm" in _src2.lower():
-                _bk3 = "BetMGM"
-            elif "betrivers" in _src2.lower():
-                _bk3 = "BetRivers"
+            if "caesars" in _src2.lower():
+                _bk3 = "Caesars"
+            elif "circa" in _src2.lower():
+                _bk3 = "Circa"
+            elif "mybookie" in _src2.lower():
+                _bk3 = "MyBookie"
+            elif "betfair" in _src2.lower() or "exchange" in _src2.lower():
+                _bk3 = "Betfair Exchange"
             if _bk3:
                 _ls_add([_op2], _bk3)
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
