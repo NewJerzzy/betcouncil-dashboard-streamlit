@@ -1,0 +1,34 @@
+name: Weekly Self-Audit
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pandas scipy curl_cffi
+      - name: Write placeholder secrets for headless import
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << 'EOF'
+          GITHUB_TOKEN = "${{ secrets.PICK6_GIST_TOKEN }}"
+          GITHUB_GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
+          ODDS_API_KEY = ""
+          ODDSPAPI_KEY = ""
+          PARLAY_API_KEY = ""
+          BALLSDONTLIE_API_KEY = ""
+          SCRAPEOPS_KEY = ""
+          EOF
+      - name: Run weekly audit
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/weekly_audit.py
