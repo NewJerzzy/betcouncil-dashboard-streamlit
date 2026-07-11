@@ -2,6 +2,7 @@ name: Weekly Self-Audit
 
 on:
   schedule:
+    # Every Monday 09:00 UTC
     - cron: "0 9 * * 1"
   workflow_dispatch: {}
 
@@ -9,13 +10,22 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo (full history for git blame)
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests pandas scipy curl_cffi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # config.py imports st.secrets at module load time; audit script only
+      # needs GITHUB_TOKEN — the rest are unused placeholders so
+      # `import fetchers` doesn't blow up in a headless runner.
       - name: Write placeholder secrets for headless import
         run: |
           mkdir -p .streamlit
@@ -28,6 +38,7 @@ jobs:
           BALLSDONTLIE_API_KEY = ""
           SCRAPEOPS_KEY = ""
           EOF
+
       - name: Run weekly audit
         env:
           GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
