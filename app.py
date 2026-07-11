@@ -18662,10 +18662,9 @@ with tabs[2]:
         _vsin_sig = next((r.get("vsin_sharp") for r in _g.get("recommendations", []) if r.get("vsin_sharp")), None)
 
         _steam_sigs_check = _g.get("steam_signals", {})
-        _has_steam = any(
-            (isinstance(v, dict) and v.get("is_steam")) or (k.endswith("_opener_gap") and abs(v.get("gap", 0)) >= 0.5)
-            for k, v in _steam_sigs_check.items()
-        ) if isinstance(_steam_sigs_check, dict) else False
+        _steam_hits = {k: v for k, v in _steam_sigs_check.items() if isinstance(v, dict) and v.get("is_steam")}
+        _opener_gaps = {k: v for k, v in _steam_sigs_check.items() if k.endswith("_opener_gap") and abs(v.get("gap", 0)) >= 0.5}
+        _has_steam = bool(_steam_hits or _opener_gaps)
 
         _has_pub = bool(
             (_pub_data and any(_pub_data.get(k) for k in ["ml_pcts", "spread_pcts", "total_pcts"]))
@@ -18674,6 +18673,62 @@ with tabs[2]:
 
         if _has_pub:
             with st.expander("📊 Public vs Money", expanded=False):
+                # ── Consensus / Contradiction summary — the actual question
+                # a bettor has: do these sources agree, and if not, which
+                # side is the public on vs which side is the smart money on.
+                _ml_pcts_top = _pub_data.get("ml_pcts", {}) if _pub_data else {}
+                _home_ml_top = _ml_pcts_top.get("home", {})
+                _away_ml_top = _ml_pcts_top.get("away", {})
+
+                _public_votes = []   # (source, side, note)
+                _sharp_votes  = []
+
+                if _home_ml_top or _away_ml_top:
+                    _ht, _hm = _home_ml_top.get("tickets", 0), _home_ml_top.get("money", 0)
+                    _at, _am = _away_ml_top.get("tickets", 0), _away_ml_top.get("money", 0)
+                    _an_pub_side = _home_nm if _ht > _at else _away_nm
+                    _an_sharp_side = _home_nm if _hm > _am else _away_nm
+                    _public_votes.append(("Action Network tickets", _an_pub_side, f"{max(_ht,_at)}% of bets"))
+                    if abs(_hm - _ht) >= 10 or abs(_am - _at) >= 10:
+                        _sharp_votes.append(("Action Network money", _an_sharp_side, f"{max(_hm,_am)}% of $ vs {max(_ht,_at)}% of bets"))
+                if _cov_game:
+                    _public_votes.append(("Covers public picks", _cov_game.get("side", ""), f"{_cov_game.get('public_pct',50)}% of contest players"))
+                if _pin_sig and _pin_sig.get("note"):
+                    (_sharp_votes if _pin_sig.get("confirms") else _public_votes).append(
+                        ("Pinnacle (sharp book)", "model's pick" if _pin_sig.get("confirms") else "opposite of model", _pin_sig["note"])
+                    )
+                if _vsin_sig and _vsin_sig.get("note"):
+                    (_sharp_votes if _vsin_sig.get("confirms") else _public_votes).append(
+                        ("VSIN Nevada", "model's pick" if _vsin_sig.get("confirms") else "opposite of model", _vsin_sig["note"])
+                    )
+                if _steam_hits:
+                    for _sk, _sv in _steam_hits.items():
+                        _sharp_votes.append(("Steam move", f"{_sv.get('direction','')} {_sk.split('_')[0]}", f"{_sv.get('magnitude',0)} pt move in {_sv.get('elapsed_seconds',0)}s"))
+
+                if _public_votes or _sharp_votes:
+                    _pub_sides = {v[1] for v in _public_votes}
+                    _sharp_sides = {v[1] for v in _sharp_votes}
+                    st.markdown("**🔎 What this means for a bettor:**")
+                    if _public_votes and _sharp_votes and _pub_sides and _sharp_sides and not (_pub_sides & _sharp_sides):
+                        st.markdown(f"🔥 **Contradiction — public and sharp money disagree.**")
+                        st.caption(
+                            f"Public money ({', '.join(v[0] for v in _public_votes)}) is on **{list(_pub_sides)[0]}**, "
+                            f"but sharp signals ({', '.join(v[0] for v in _sharp_votes)}) point to **{list(_sharp_sides)[0]}**. "
+                            f"Historically, fading the heavy public side in favor of where the sharp money/steam is moving "
+                            f"has been the higher-EV lean — but check the size of the split before treating this as automatic."
+                        )
+                    elif _sharp_votes and len(_sharp_sides) > 1:
+                        st.markdown("⚠️ **Sharp sources disagree with each other.**")
+                        st.caption("Not a clean signal — " + "; ".join(f"{v[0]} → {v[1]}" for v in _sharp_votes) + ". Treat this market as noisy rather than sharp-confirmed.")
+                    elif _public_votes and _sharp_votes:
+                        st.markdown(f"✅ **Public and sharp money agree on {list(_pub_sides)[0]}.**")
+                        st.caption("Both the betting crowd and the sharp signals point the same direction — a stronger, more confirmed signal than either alone.")
+                    elif _sharp_votes:
+                        st.markdown(f"📌 **Sharp-only signal on {list(_sharp_sides)[0]}** — no public data to compare against yet.")
+                    elif _public_votes:
+                        st.markdown(f"👥 **Public-only signal on {list(_pub_sides)[0]}** — no sharp confirmation yet, treat with caution.")
+                    st.markdown("---")
+
                 _pcol1, _pcol2, _pcol3 = st.columns(3)
 
                 # ML public vs money
@@ -18768,10 +18823,9 @@ with tabs[2]:
                 # move, which is a stronger signal than any public-percent
                 # source above. Data already computed per-game earlier in
                 # this function (detect_steam_move via bc_utils) — just
-                # wasn't surfaced in this expander before.
-                _steam_sigs = _g.get("steam_signals", {})
-                _steam_hits = {k: v for k, v in _steam_sigs.items() if isinstance(v, dict) and v.get("is_steam")}
-                _opener_gaps = {k: v for k, v in _steam_sigs.items() if k.endswith("_opener_gap") and abs(v.get("gap", 0)) >= 0.5}
+                # wasn't surfaced in this expander before. (_steam_hits /
+                # _opener_gaps computed earlier, reused here and in the
+                # consensus summary above.)
                 if _steam_hits or _opener_gaps:
                     st.markdown("**⚡ Steam Moves (Pinnacle/BetOnline line tracking)**")
                     for _sk, _sv in _steam_hits.items():
