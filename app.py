@@ -20924,7 +20924,21 @@ with tabs[4]:
         // PeriodId changes daily per sport -- fetched live from each sport page.
         // DK props via LineStar serve as automatic server-side fallback when browser harvester
         // hasn't run (Tampermonkey tab not open), eliminating the Tampermonkey dependency for
+        // LineStar: GetFastUpdateV2 (weather+Vegas lines) + GetPropBets (cross-book props incl
+        // DraftKings Source=1, server-side, no auth) + GetSalariesV5 (Ceil/Floor/Conf/wOBA/wRC+).
+        // Sport IDs confirmed 2026-07: NFL=1, NBA=2, MLB=3, NHL=6, WNBA=12.
+        // PeriodId changes daily per sport -- fetched live from each sport page.
+        // DK props via LineStar serve as automatic server-side fallback when browser harvester
+        // hasn't run (Tampermonkey tab not open), eliminating the Tampermonkey dependency for
         // DK prop lines. Weather pushed for all sports (dome flag useful for WNBA/NBA/NHL too).
+        //
+        // TeamMap coverage fix (2026-07): PropBets.Teams[] only contains teams with active props
+        // that day (~10 of 30 MLB teams). SalariesV5.SalaryContainerJson.Salaries[].HTID/HTEAM
+        // and OTID/OTEAM cover every team on the DFS slate. We merge both sources so weather
+        // matching works for all slate games, not just prop-heavy teams.
+        //
+        // WindDirection schema fix (2026-07): live payloads show value 8 (undocumented) in
+        // addition to the expected 0-7 range. Server-side code uses a safe .get() fallback.
         var lsSportMap = {{'MLB':{{'id':3,'path':'MLB'}},'WNBA':{{'id':12,'path':'WNBA'}},'NFL':{{'id':1,'path':'NFL'}},'NBA':{{'id':2,'path':'NBA'}},'NHL':{{'id':6,'path':'NHL'}}}};
         var lsCfg = lsSportMap[sport];
         if(lsCfg){{
@@ -20938,26 +20952,34 @@ with tabs[4]:
                         var periodId=m[1];
                         var base='https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/';
                         var hdr={{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.linestarapp.com/Projections'}};
-                        // GetFastUpdateV2 (weather + Vegas lines) and GetPropBets (cross-book props)
-                        // NOTE: AwayTeamAbrev/HomeTeamAbrev are null -- enrich via PropBets Teams[]
+                        // Fetch all three in parallel so we can cross-reference for TeamMap
+                        // before pushing any Gist file. All endpoints confirmed no-auth 2026-07.
                         Promise.all([
                             fetch(base+'GetFastUpdateV2?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
                             fetch(base+'GetPropBets?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
+                            fetch(base+'GetSalariesV5?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
                         ]).then(function(results){{
-                            var fu=results[0];var pb=results[1];
+                            var fu=results[0];var pb=results[1];var sv=results[2];
+                            // Build TeamMap from PropBets.Teams[] (teams with active props only)
+                            // PLUS SalariesV5 HTID/HTEAM + OTID/OTEAM (all DFS-slate teams).
+                            // Confirmed 2026-07: PropBets.Teams[] has 10/30 MLB teams;
+                            // SalariesV5 salaries cover 19/30 — union covers all slate games.
                             var teamMap={{}};
                             (pb.Teams||[]).forEach(function(t){{teamMap[t.Id]=t.Abbreviation;}});
+                            try{{
+                                var sc=JSON.parse(sv.SalaryContainerJson||'{{}}');
+                                (sc.Salaries||[]).forEach(function(s){{
+                                    if(s.HTID&&s.HTEAM) teamMap[s.HTID]=s.HTEAM;
+                                    if(s.OTID&&s.OTEAM) teamMap[s.OTID]=s.OTEAM;
+                                }});
+                            }}catch(e){{console.log('[BetCouncil] LineStar SalariesV5 teamMap parse error:',e.message);}}
                             var games=(fu.Games||[]).map(function(g){{
                                 return Object.assign({{}},g,{{_AwayAbbr:teamMap[g.AwayTeamId]||null,_HomeAbbr:teamMap[g.HomeTeamId]||null}});
                             }});
                             pushGist('betcouncil_weather_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:Object.assign({{}},fu,{{Games:games,TeamMap:teamMap}}),source:'linestar_auto_harvest'}});
                             pushGist('betcouncil_linestar_props_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:pb,source:'linestar_auto_harvest'}});
-                        }}).catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' weather/props error:',e.message);}});
-                        // GetSalariesV5: Ceil/Floor/Conf/wOBA/ISO/wRC+/HR-PA per player
-                        fetch(base+'GetSalariesV5?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}})
-                            .then(function(r){{return r.json();}})
-                            .then(function(data){{pushGist('betcouncil_linestar_salaries_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
-                            .catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' GetSalariesV5 error:',e.message);}});
+                            pushGist('betcouncil_linestar_salaries_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:sv,source:'linestar_auto_harvest'}});
+                        }}).catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' error:',e.message);}});
                     }})
                     .catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' PeriodId error:',e.message);}});
             }});

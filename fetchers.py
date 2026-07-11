@@ -17149,6 +17149,10 @@ def get_linestar_prop_lines(props_data, player_name):
     Returns dict: {book_name: {stat_name: {line, over_odds, under_odds, ls_proj}}}
     Schema confirmed 2026-07: Source=int maps to SportsBooks[].Source/Name;
     StatId=int maps to BetTypes[].Id/StatName; PlayerId int maps to Players[].Id/Name.
+
+    STATUS: Available helper, not yet called by app.py. Intended for the per-player
+    prop card UI to show cross-book odds from LineStar alongside the model's recommendation.
+    Bulk DK-only extraction is handled by _parse_linestar_as_dk_props() instead.
     """
     if not isinstance(props_data, dict) or not player_name:
         return {}
@@ -17175,18 +17179,24 @@ def get_linestar_prop_lines(props_data, player_name):
         }
     return result
 
-_LS_WIND_DIR = {0:"N",1:"NE",2:"E",3:"SE",4:"S",5:"SW",6:"W",7:"NW"}
+# WindDirection int→string. Confirmed range 0-7 from docs; value 8 observed in live
+# payloads (2026-07) with no documented meaning — treated as "Var" (variable/calm).
+# get() with fallback handles any future undocumented values without silent None.
+_LS_WIND_DIR = {0:"N",1:"NE",2:"E",3:"SE",4:"S",5:"SW",6:"W",7:"NW",8:"Var"}
 
 def get_linestar_game_weather(weather_gist_data, team_abbrev):
     """Pull one game's weather from the enriched LineStar weather Gist file.
 
     Schema confirmed 2026-07 against live GetFastUpdateV2 + GetPropBets payloads:
     - Games[]: Id, AwayTeamId, HomeTeamId, WindSpeed (float mph), WindDirection
-      (int 0-7 → N/NE/E/SE/S/SW/W/NW), RainAmount (float inches), PostponeChance,
+      (int 0-7 → N/NE/E/SE/S/SW/W/NW; value 8 observed in live data → "Var"),
+      RainAmount (float inches), PostponeChance,
       Humidity (float %), Temp (float °F), IsDome (bool).
     - AwayTeamAbrev / HomeTeamAbrev are None in the raw API; the app.py harvester
       enriches games with _AwayAbbr / _HomeAbbr from the PropBets Teams array.
-    - TeamMap (optional) in the gist root: {TeamId: Abbrev} built by the harvester.
+    - TeamMap in the gist root: {TeamId: Abbrev} built from PropBets.Teams[] PLUS
+      SalariesV5.SalaryContainerJson.Salaries[].HTID/HTEAM+OTID/OTEAM. Covers all
+      DFS-slate teams (PropBets.Teams[] alone only has teams with active props).
     Matching priority: _AwayAbbr/_HomeAbbr (enriched) → TeamMap lookup by TeamId.
     """
     if not isinstance(weather_gist_data, dict):
@@ -17208,7 +17218,7 @@ def get_linestar_game_weather(weather_gist_data, team_abbrev):
             continue
         wind_speed = g.get("WindSpeed")
         wind_dir_i = g.get("WindDirection")
-        wind_dir   = _LS_WIND_DIR.get(int(wind_dir_i), "N") if wind_dir_i is not None else "N"
+        wind_dir   = _LS_WIND_DIR.get(int(wind_dir_i), f"Dir{int(wind_dir_i)}") if wind_dir_i is not None else "N"
         temp       = g.get("Temp")
         humidity   = g.get("Humidity")
         is_dome    = g.get("IsDome")
