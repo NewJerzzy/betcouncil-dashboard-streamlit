@@ -18228,3 +18228,132 @@ def fetch_mybookie_lines_html(sport="nfl"):
         for gid, g in games.items()
         if g["away_team"] and g["home_team"]
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AUTO-INSTRUMENTATION — health tracking for every fetch_* function
+# ══════════════════════════════════════════════════════════════════════════
+# Wraps every fetch_* function defined in this module (retroactively, at
+# import time) so calls, errors, empty-results, and latency are tracked
+# automatically — with zero per-function wiring required. This exists
+# because a July 2026 audit found 243 fetch_* functions but only 45 under
+# active health monitoring (HARVESTER_REGISTRY, which only covers the
+# browser-injection Gist harvesters) — the other ~200 had no visibility at
+# all: no way to tell a silently-failing source from one that's simply
+# never called this session.
+#
+# This does NOT delete or judge any function — a function showing
+# NEVER_CALLED this session may simply be gated behind an off-season sport
+# check, a feature flag, or work in progress. It just makes that visible
+# instead of invisible, so the decision to wire in / remove / hold gets
+# made with real data instead of a guess.
+import time as _fh_time
+import threading as _fh_threading
+
+_FETCH_HEALTH = {}
+_FETCH_HEALTH_LOCK = _fh_threading.Lock()
+
+
+def _fh_wrap(_fh_name, _fh_fn):
+    def _fh_wrapped(*args, **kwargs):
+        _fh_t0 = _fh_time.time()
+        try:
+            _fh_result = _fh_fn(*args, **kwargs)
+            _fh_elapsed = _fh_time.time() - _fh_t0
+            with _FETCH_HEALTH_LOCK:
+                h = _FETCH_HEALTH.setdefault(_fh_name, {
+                    "calls": 0, "errors": 0, "empty": 0,
+                    "last_error": None, "last_called_ts": None,
+                    "last_success_ts": None, "total_latency": 0.0,
+                })
+                h["calls"] += 1
+                h["last_called_ts"] = _fh_t0
+                h["last_success_ts"] = _fh_time.time()
+                h["total_latency"] += _fh_elapsed
+                if _fh_result in (None, [], {}, ""):
+                    h["empty"] += 1
+            return _fh_result
+        except Exception as _fh_e:
+            with _FETCH_HEALTH_LOCK:
+                h = _FETCH_HEALTH.setdefault(_fh_name, {
+                    "calls": 0, "errors": 0, "empty": 0,
+                    "last_error": None, "last_called_ts": None,
+                    "last_success_ts": None, "total_latency": 0.0,
+                })
+                h["calls"] += 1
+                h["errors"] += 1
+                h["last_called_ts"] = _fh_t0
+                h["last_error"] = f"{type(_fh_e).__name__}: {str(_fh_e)[:200]}"
+            raise
+    _fh_wrapped.__name__ = _fh_name
+    _fh_wrapped.__doc__ = getattr(_fh_fn, "__doc__", None)
+    _fh_wrapped._fh_original = _fh_fn
+    return _fh_wrapped
+
+
+def _fh_instrument_all():
+    for _fh_gname in list(globals().keys()):
+        if not _fh_gname.startswith("fetch_"):
+            continue
+        _fh_obj = globals()[_fh_gname]
+        if not callable(_fh_obj):
+            continue
+        if getattr(_fh_obj, "_fh_original", None) is not None:
+            continue  # already wrapped
+        globals()[_fh_gname] = _fh_wrap(_fh_gname, _fh_obj)
+
+
+_fh_instrument_all()
+
+
+def get_fetch_health_report():
+    """
+    Snapshot of every fetch_* function's health for the current process.
+    Returns a list of dicts sorted by status severity (worst first):
+      status: "DEAD" (100% error rate, has been called), "ERRORING"
+      (some errors), "EMPTY_ONLY" (runs, never returns data), "OK",
+      or "NEVER_CALLED" (defined but not invoked this session — may be
+      gated behind an off-season check or simply not wired in yet, not
+      necessarily broken).
+    Resets on every process restart — this is live-session visibility,
+    not historical/persisted status (HARVESTER_REGISTRY covers the
+    persisted-across-restarts case for the Gist-backed sources).
+    """
+    with _FETCH_HEALTH_LOCK:
+        snapshot = {k: dict(v) for k, v in _FETCH_HEALTH.items()}
+
+    all_names = sorted(
+        n for n in globals()
+        if n.startswith("fetch_") and callable(globals()[n]) and not n.startswith("_fh_")
+    )
+
+    _sev = {"DEAD": 0, "ERRORING": 1, "EMPTY_ONLY": 2, "NEVER_CALLED": 3, "OK": 4}
+    report = []
+    for name in all_names:
+        h = snapshot.get(name)
+        if not h or h["calls"] == 0:
+            report.append({
+                "name": name, "status": "NEVER_CALLED", "calls": 0, "errors": 0,
+                "error_rate": None, "empty_rate": None, "last_error": None,
+                "avg_latency_s": None,
+            })
+            continue
+        err_rate = h["errors"] / h["calls"]
+        empty_rate = h["empty"] / h["calls"]
+        if err_rate == 1.0:
+            status = "DEAD"
+        elif err_rate >= 0.3:
+            status = "ERRORING"
+        elif empty_rate >= 0.8:
+            status = "EMPTY_ONLY"
+        else:
+            status = "OK"
+        report.append({
+            "name": name, "status": status, "calls": h["calls"], "errors": h["errors"],
+            "error_rate": round(err_rate, 3), "empty_rate": round(empty_rate, 3),
+            "last_error": h["last_error"],
+            "avg_latency_s": round(h["total_latency"] / h["calls"], 2),
+        })
+
+    report.sort(key=lambda r: _sev.get(r["status"], 9))
+    return report

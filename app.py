@@ -22977,6 +22977,40 @@ with tabs[9]:
     except Exception as _hh_err:
         st.caption(f"Harvester health check unavailable this load: {str(_hh_err)[:100]}")
 
+    # ── Fetch Function Health (all 240+ fetch_* functions, not just the
+    # 45 tracked in HARVESTER_REGISTRY) ─────────────────────────────────
+    # Auto-instrumented in fetchers.py — every fetch_* call is tracked with
+    # zero per-function wiring. Catches: silent failures (bare except
+    # swallowing an error with nothing surfacing it), sources that only
+    # ever return empty, and functions that are defined but never called
+    # this session (which may be off-season/feature-gated, not broken —
+    # shown for visibility, not as an automatic delete list).
+    st.markdown("### 🩺 Fetch Function Health (all sources)")
+    try:
+        from fetchers import get_fetch_health_report
+        _fh_report = get_fetch_health_report()
+        _fh_counts = {}
+        for _r in _fh_report:
+            _fh_counts[_r["status"]] = _fh_counts.get(_r["status"], 0) + 1
+        st.caption(
+            f"{_fh_counts.get('OK',0)} OK | "
+            f"{_fh_counts.get('DEAD',0)} dead (100% error rate) | "
+            f"{_fh_counts.get('ERRORING',0)} erroring | "
+            f"{_fh_counts.get('EMPTY_ONLY',0)} empty-only | "
+            f"{_fh_counts.get('NEVER_CALLED',0)} never called this session "
+            f"— out of {len(_fh_report)} total fetch functions"
+        )
+        _fh_dead_or_erroring = [r for r in _fh_report if r["status"] in ("DEAD", "ERRORING")]
+        if _fh_dead_or_erroring:
+            st.error(
+                "🔴 Actively failing this session: "
+                + ", ".join(f'{r["name"]} ({r["error_rate"]:.0%} errors)' for r in _fh_dead_or_erroring)
+            )
+        with st.expander(f"Full fetch health detail ({len(_fh_report)} functions)"):
+            st.dataframe(pd.DataFrame(_fh_report), use_container_width=True, hide_index=True)
+    except Exception as _fh_err:
+        st.caption(f"Fetch health check unavailable this load: {str(_fh_err)[:100]}")
+
 
     # ── API Health Check ─────────────────────────────────────
     st.markdown("### 🔑 API Keys & Token Status")
