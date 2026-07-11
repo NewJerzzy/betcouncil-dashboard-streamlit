@@ -22795,13 +22795,19 @@ with tabs[8]:
             _ls_add([_ow_normalized], _bk)
         _sport_ls = st.session_state.get("last_sport", "NBA")
 
-        # Debug — show what's actually in session for this sport
-        _has_oddsapi  = bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", []))
-        _has_oddspapi = bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", []))
-        _has_oddswrap = bool(st.session_state.get("oddswrap_props", []))
-        _has_auto    = bool(st.session_state.get(f"auto_scraped_props_{_sport_ls}", []))
-        _has_ev = bool(st.session_state.get("ev_api_props"))
-        st.caption(f"Data sources for {_sport_ls}: OddsAPI={'✅' if _has_oddsapi else '❌'} | OddsPapi={'✅' if _has_oddspapi else '❌'} | OddsWrap={'✅' if _has_oddswrap else '❌'} | AutoScraper={'✅' if _has_auto else '❌ (run script)'} | EV API={'✅' if _has_ev else '❌'}")
+        # Source-availability debug info moved to the System tab's Fetch
+        # Health panel — a bettor comparing lines doesn't need to see
+        # "OddsAPI=✅/❌" internals, and showing it here made an otherwise-
+        # normal night look broken. Booleans below are still needed for the
+        # System tab writeup — see that section for where they're read.
+        st.session_state["_ls_source_flags"] = {
+            "sport": _sport_ls,
+            "OddsAPI": bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", [])),
+            "OddsPapi": bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", [])),
+            "OddsWrap": bool(st.session_state.get("oddswrap_props", [])),
+            "AutoScraper": bool(st.session_state.get(f"auto_scraped_props_{_sport_ls}", [])),
+            "EV API": bool(st.session_state.get("ev_api_props")),
+        }
 
         # Try session_state first (faster, no disk read)
         _odds_props_ss = st.session_state.get(f"oddsapi_props_{_sport_ls}", [])
@@ -22945,8 +22951,9 @@ with tabs[8]:
         #              api.sleeper.app/v1 only has fantasy roster/stat data,
         #              no prop lines anywhere. The public API is the fantasy
         #              layer, not the picks layer — not buildable without auth.
-        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","Unabated (PrizePicks)","Unabated (Underdog)","Unabated (Pick6)","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Bovada","NoVig","Kalshi","Fliff"]
-        all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2})
+        BOOK_ORDER = ["PrizePicks","Underdog","DK Pick6","ParlayPlay","DraftKings","FanDuel","BetMGM","Caesars","BetRivers","Hard Rock","ESPN Bet","Circa","Bovada","NoVig","Kalshi","Fliff"]
+        all_books_ls = sorted({bk for pd_ in ls_sources.values() for pd2 in pd_.values() for bk in pd2
+                                if not bk.startswith("Unabated (")})
         all_books_ls = BOOK_ORDER + [b for b in all_books_ls if b not in BOOK_ORDER]
 
         rows_ls = []
@@ -22979,21 +22986,49 @@ with tabs[8]:
             rows_ls.append(row)
 
         if rows_ls:
-            # Show all books — populated AND empty — so user sees full picture
+            # Only show columns that actually have at least one price loaded
+            # this session — a column that's structurally always empty
+            # (missing credentials, source not wired for this sport, etc.)
+            # made the whole page look broken even on a normal night. Real
+            # gaps are now visible in the System tab's Fetch Health panel
+            # instead of as permanent "0 ❌" tiles here.
             active_sources = [b for b in BOOK_ORDER if b != "ParlayPlay"]
-            # Split into rows of 6 for display
-            for _chunk_start in range(0, len(active_sources), 6):
-                _chunk = active_sources[_chunk_start:_chunk_start+6]
-                src_cols = st.columns(len(_chunk))
-                for i, src in enumerate(_chunk):
-                    count = sum(1 for r in rows_ls if r.get(src) not in ("—", None, ""))
-                    _icon = "✅" if count > 0 else "❌"
-                    src_cols[i].metric(src, f"{count}", delta=_icon, delta_color="off")
-            st.markdown("---")
-            _all_book_cols = [b for b in BOOK_ORDER if b != "ParlayPlay"]
-            col_order = ["Player","Prop","Side","Tier"] + _all_book_cols + ["Best Book","Best Line","Edge Gain"]
-            col_order = [c for c in col_order if c in rows_ls[0]]
-            st.table(pd.DataFrame(rows_ls)[col_order].reset_index(drop=True))
+            _book_counts = {b: sum(1 for r in rows_ls if r.get(b) not in ("—", None, "")) for b in active_sources}
+            _visible_books = [b for b in active_sources if _book_counts[b] > 0]
+
+            def _line_shop_table_html(rows, book_cols):
+                head_cols = ["Player","Prop","Side"] + book_cols + ["Best Book","Best Line"]
+                head = "".join(
+                    f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;'
+                    f'text-transform:uppercase;border-bottom:1px solid var(--bc-border);white-space:nowrap;">{c}</th>'
+                    for c in head_cols
+                )
+                body = ""
+                for r in rows:
+                    cells = []
+                    for c in ["Player","Prop","Side"]:
+                        cells.append(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f;white-space:nowrap;">{r.get(c,"")}</td>')
+                    for c in book_cols:
+                        v = r.get(c, "—")
+                        is_best = (c == r.get("Best Book"))
+                        style = ("padding:6px 10px;font-size:13px;border-bottom:1px solid #16232f;text-align:center;"
+                                 + ("color:#22c55e;font-weight:700;background:#22c55e14;" if is_best else "color:var(--bc-dim);"))
+                        cells.append(f'<td style="{style}">{v}</td>')
+                    cells.append(f'<td style="padding:6px 10px;font-size:13px;color:#22c55e;font-weight:700;border-bottom:1px solid #16232f;white-space:nowrap;">{r.get("Best Book","")}</td>')
+                    cells.append(f'<td style="padding:6px 10px;font-size:13px;color:#22c55e;font-weight:700;border-bottom:1px solid #16232f;">{r.get("Best Line","")}</td>')
+                    body += f"<tr>{''.join(cells)}</tr>"
+                return (
+                    '<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+                    'border-radius:8px;overflow:auto;max-height:600px;margin-bottom:0.5rem;">'
+                    f'<table style="width:100%;border-collapse:collapse;"><thead><tr>{head}</tr></thead>'
+                    f'<tbody>{body}</tbody></table></div>'
+                )
+
+            st.markdown(_line_shop_table_html(rows_ls, _visible_books), unsafe_allow_html=True)
+            _hidden = [b for b in active_sources if b not in _visible_books]
+            if _hidden:
+                st.caption(f"Not showing {len(_hidden)} source(s) with no prices loaded tonight: {', '.join(_hidden)}. Check System → Fetch Health if a source you expect is missing.")
+
             better_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Edge Gain"] >= 0.5]
             if better_ls:
                 st.markdown("### \U0001f525 Better Lines Available Elsewhere")
@@ -23467,6 +23502,17 @@ with tabs[9]:
             st.markdown(_bc_df_html(pd.DataFrame(_hh_results)), unsafe_allow_html=True)
     except Exception as _hh_err:
         st.caption(f"Harvester health check unavailable this load: {str(_hh_err)[:100]}")
+
+    # ── Line Shop source availability (moved here 2026-07-12 — was a
+    # developer-facing debug caption on the Line Shop tab itself, which
+    # made a normal night look broken to a bettor just comparing prices) ──
+    _ls_flags = st.session_state.get("_ls_source_flags")
+    if _ls_flags:
+        st.markdown(f"### 🛒 Line Shop Data Sources ({_ls_flags['sport']})")
+        _ls_flag_items = [(k, v) for k, v in _ls_flags.items() if k != "sport"]
+        _ls_flag_cols = st.columns(len(_ls_flag_items))
+        for _i, (_k, _v) in enumerate(_ls_flag_items):
+            _ls_flag_cols[_i].metric(_k, "✅" if _v else "❌")
 
     # ── Fetch Function Health (all 240+ fetch_* functions, not just the
     # 45 tracked in HARVESTER_REGISTRY) ─────────────────────────────────
