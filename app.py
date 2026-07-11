@@ -11764,7 +11764,7 @@ def load_sport_data(sport):
             return fetch_covers_consensus(sport)
         except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
-    def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL"] else {}
+    def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else {}
     def _pf_an():           return fetch_action_network_props(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else []
     def _pf_referees():     return fetch_todays_referees(sport) if sport in ["NBA","MLB"] else {}
     def _pf_game_lines():
