@@ -11234,33 +11234,64 @@ def get_line_movement_summary(matchup, sport, current_game):
 # ── Feature 6: Prediction Stability Audit ──────────────────────
 def store_board_snapshot(board, sport):
     """
-    Store a snapshot of current board edges.
-    Used by prediction stability audit to detect unexplained edge drift.
+    Store a snapshot of the current board — every pick, not just what gets
+    locked in. Feeds next-day grading (grade_board_snapshots_for_date) so
+    the model can learn from the full recommendation set, not just the
+    small subset of bets a person actually places.
+
+    Persisted to Gist (not just local disk) because Streamlit Cloud's
+    filesystem resets on redeploy/restart — a local-only snapshot could
+    vanish before "the next day" grading ever runs. Pruned by date age
+    (45 days) rather than a fixed snapshot count, so a busy day with many
+    board loads doesn't push out data still needed for grading.
     """
     if not board:
         return
     try:
-        stored = load_json_data(BOARD_SNAP_PATH, {})
-        snap_key = f"{date.today().strftime('%Y-%m-%d')}_{sport}_{datetime.now().strftime('%H:%M')}"
+        today_key = date.today().strftime("%Y-%m-%d")
+        stored = load_from_gist("board_snapshots", None)
+        if stored is None:
+            stored = load_json_data(BOARD_SNAP_PATH, {})  # fallback to local cache
+        # Keep the HH:MM granularity in the key — check_prediction_stability
+        # relies on multiple same-day snapshots to detect intraday edge
+        # drift. Grading (grade_board_snapshots_for_date) selects the
+        # LATEST snapshot for a given date+sport rather than assuming a
+        # single entry, so this doesn't conflict with that use case.
+        snap_key = f"{today_key}_{sport}_{datetime.now().strftime('%H:%M')}"
         stored[snap_key] = {
             "sport": sport,
+            "date": today_key,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "props": [
                 {
-                    "player": p.get("Player",""),
-                    "prop":   p.get("Prop",""),
-                    "line":   p.get("Line",0),
-                    "edge":   p.get("Edge",0),
-                    "tier":   p.get("Tier",""),
+                    "player": p.get("Player", ""),
+                    "prop":   p.get("Prop", ""),
+                    "side":   p.get("Side", "OVER"),
+                    "line":   p.get("Line", 0),
+                    "edge":   p.get("Edge", 0),
+                    "prob":   p.get("Prob", 0.5),
+                    "tier":   p.get("Tier", ""),
+                    "best_bet": bool(p.get("Tier", "") in ("SOVEREIGN", "ELITE")),
+                    "signals": {
+                        "base":     p.get("SignalBase", 0),
+                        "defense":  p.get("SignalDefense", 0),
+                        "location": p.get("SignalLocation", 0),
+                        "rest":     p.get("SignalRest", 0),
+                        "pace":     p.get("SignalPace", 0),
+                        "usage":    p.get("SignalUsage", 0),
+                        "blowout":  p.get("SignalBlowout", 0),
+                    },
+                    "sharp_flag": p.get("SharpFlag", ""),
                 }
-                for p in board[:50]
-            ]
+                for p in board
+            ],
         }
-        # Keep last 10 snapshots only
-        if len(stored) > 10:
-            oldest = sorted(stored.keys())[0]
-            del stored[oldest]
-        save_json_data(BOARD_SNAP_PATH, stored)
+        # Keep 45 days of history — enough for weekly/monthly grading review
+        # without the Gist file growing unbounded.
+        cutoff = (date.today() - timedelta(days=45)).strftime("%Y-%m-%d")
+        stored = {k: v for k, v in stored.items() if v.get("date", "0000-00-00") >= cutoff}
+        save_json_data(BOARD_SNAP_PATH, stored)  # local cache for same-session reads
+        save_to_gist("board_snapshots", stored)
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
 
@@ -11303,6 +11334,112 @@ def check_prediction_stability(board, sport):
         return unstable
     except (requests.RequestException, ValueError, KeyError):
         return []
+
+
+def grade_board_snapshots_for_date(target_date: str):
+    """
+    Grade every pick on the board (not just locked-in bets) for a given
+    date, against actual results. Runs via the daily automated job
+    (scripts/daily_board_grading.py) but can also be called manually.
+
+    For each sport's most recent snapshot on target_date:
+      - resolves the actual stat via resolve_actual_stat_for_grading
+      - grades WIN/LOSS/PUSH/UNGRADABLE (unresolvable picks are marked
+        UNGRADABLE, never silently counted as a loss — coverage is
+        currently limited to NBA/NFL players in ESPN_ATHLETE_IDS, see
+        resolve_actual_stat_for_grading's docstring)
+      - attaches the "why": which signals fired and how strongly, so a
+        miss can be traced back to what the model was weighting
+
+    Results are saved to a SEPARATE Gist key (board_grading_history) from
+    the user's actual bet ledger (history) — this is model-accuracy
+    tracking, not bankroll/ROI tracking, and the two should never be
+    blurred together. A separate helper (get_calibration_source_records)
+    combines them ONLY for calibration purposes, clearly tagged by source.
+    """
+    from fetchers import resolve_actual_stat_for_grading
+
+    stored = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
+    day_snaps = {k: v for k, v in stored.items() if v.get("date") == target_date}
+    if not day_snaps:
+        return {"date": target_date, "graded": 0, "results": []}
+
+    # One snapshot per sport for the day — take the latest if several.
+    latest_by_sport = {}
+    for k, v in day_snaps.items():
+        sp = v.get("sport", "")
+        if sp not in latest_by_sport or v.get("timestamp", "") > latest_by_sport[sp].get("timestamp", ""):
+            latest_by_sport[sp] = v
+
+    graded_results = []
+    for sport, snap in latest_by_sport.items():
+        for p in snap.get("props", []):
+            player, prop_type = p.get("player", ""), p.get("prop", "")
+            line, side = p.get("line", 0), p.get("side", "OVER")
+            try:
+                actual = resolve_actual_stat_for_grading(player, sport, prop_type, target_date)
+            except Exception:
+                actual = None
+
+            if actual is None:
+                outcome = "UNGRADABLE"
+            elif actual == line:
+                outcome = "PUSH"
+            elif (actual > line and side == "OVER") or (actual < line and side == "UNDER"):
+                outcome = "WIN"
+            else:
+                outcome = "LOSS"
+
+            signals = p.get("signals", {})
+            firing = {k: v for k, v in signals.items() if abs(v or 0) > 0.001}
+            why = ", ".join(f"{k}:{v:+.2f}" for k, v in sorted(firing.items(), key=lambda kv: -abs(kv[1]))) or "no signals fired"
+
+            graded_results.append({
+                "date": target_date, "sport": sport, "player": player, "prop": prop_type,
+                "side": side, "line": line, "actual": actual, "outcome": outcome,
+                "edge": p.get("edge", 0), "prob": p.get("prob", 0.5), "tier": p.get("tier", ""),
+                "best_bet": p.get("best_bet", False), "why": why, "source": "board_grading",
+            })
+
+    # Persist — separate key from the bet ledger, appended to prior days.
+    grading_history = load_from_gist("board_grading_history", None) or {}
+    grading_history[target_date] = graded_results
+    cutoff = (date.today() - timedelta(days=90)).strftime("%Y-%m-%d")
+    grading_history = {k: v for k, v in grading_history.items() if k >= cutoff}
+    save_to_gist("board_grading_history", grading_history)
+
+    graded_n = sum(1 for r in graded_results if r["outcome"] != "UNGRADABLE")
+    wins = sum(1 for r in graded_results if r["outcome"] == "WIN")
+    return {
+        "date": target_date, "total_picks": len(graded_results), "graded": graded_n,
+        "ungradable": len(graded_results) - graded_n, "wins": wins,
+        "hit_rate": round(wins / graded_n, 3) if graded_n else None,
+        "results": graded_results,
+    }
+
+
+def get_calibration_source_records():
+    """
+    Combine real bet history + board-grading history for calibration
+    purposes ONLY — every returned record is tagged with 'source' so
+    downstream code can filter. Never use this for bankroll/ROI display;
+    those must read st.session_state['history'] directly, unmixed.
+    """
+    real_history = list(st.session_state.get("history", []))
+    for r in real_history:
+        r.setdefault("source", "bet_ledger")
+    grading_history = load_from_gist("board_grading_history", None) or {}
+    board_records = []
+    for day_results in grading_history.values():
+        for r in day_results:
+            if r.get("outcome") in ("WIN", "LOSS"):
+                board_records.append({
+                    "outcome": r["outcome"], "prob": r.get("prob", 0.5),
+                    "sport": r.get("sport", ""), "timestamp": r.get("date", ""),
+                    "edge": r.get("edge", 0), "tier": r.get("tier", ""),
+                    "source": "board_grading",
+                })
+    return real_history + board_records
 
 
 def load_sport_data(sport):

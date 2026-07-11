@@ -7951,6 +7951,123 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
     except (pickle.UnpicklingError, OSError, EOFError):
         return None
 
+
+# Prop-type text → ESPN stat abbreviation. Permissive substring matching
+# since board prop-type strings come from various upstream sources and
+# aren't a single controlled vocabulary (e.g. "Points", "Pts", "PTS" should
+# all resolve the same way).
+_GRADING_PROP_STAT_MAP = [
+    (("pts+reb+ast", "points+rebounds+assists", "pra"), "PRA"),
+    (("point", "pts"), "PTS"),
+    (("rebound", "reb"), "REB"),
+    (("assist", "ast"), "AST"),
+    (("pass", "yard"), "PASS_YDS"),
+    (("rush", "yard"), "RUSH_YDS"),
+    (("rec", "yard"), "REC_YDS"),
+    (("touchdown", "td"), "TD"),
+]
+
+
+def _map_prop_to_stat_key(prop_type: str):
+    p = (prop_type or "").lower()
+    for keywords, stat_key in _GRADING_PROP_STAT_MAP:
+        if any(kw in p for kw in keywords):
+            return stat_key
+    return None
+
+
+def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, game_date: str):
+    """
+    Resolve the actual stat value a player recorded on a specific date, for
+    grading a board pick after the fact.
+
+    Coverage note (be upfront about this, don't silently overclaim):
+    only works for players in the hardcoded ESPN_ATHLETE_IDS map (config.py
+    — currently ~15-20 well-known players per sport) and only NBA/NFL prop
+    types are mapped. Everything else returns None, and callers must treat
+    None as "ungradable this pick" rather than assuming a miss. Expanding
+    coverage means either growing ESPN_ATHLETE_IDS or switching to a
+    dynamic athlete-search lookup instead of the static dict — flagged as
+    a known follow-up, not solved here.
+
+    Returns: float stat value, or None if unresolvable (unknown player,
+    unsupported sport/prop, no game found on that date, or a fetch error).
+    """
+    if sport not in ("NBA", "NFL"):
+        return None
+    stat_key = _map_prop_to_stat_key(prop_type)
+    if not stat_key:
+        return None
+    athlete_id = ESPN_ATHLETE_IDS.get(sport, {}).get(player)
+    if not athlete_id:
+        return None
+    sport_path = ESPN_CORE_SPORT_MAP.get(sport, "")
+    if not sport_path:
+        return None
+
+    cache_path = os.path.join(CACHE_DIR, f"grading_stat_{sport}_{athlete_id}_{game_date}.pkl")
+    if os.path.exists(cache_path):
+        cached = _safe_load_pkl(cache_path)
+        if cached is not None:
+            return cached.get(stat_key)
+
+    season = 2025
+    url = f"{ESPN_CORE_BASE}/sports/{sport_path}/seasons/{season}/athletes/{athlete_id}/eventlog?limit=15"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    except Exception as e:
+        print(f"[WARN] resolve_actual_stat_for_grading: {e}")
+        return None
+
+    for item in data.get("events", {}).get("items", []):
+        event_ref = item.get("event", {}).get("$ref", "") or item.get("$ref", "")
+        item_date = item.get("date", "")
+        if not item_date and event_ref:
+            # Date not inline on the eventlog item — fetch the event itself.
+            try:
+                ev_resp = _http.get(event_ref, headers=HEADERS, timeout=10)
+                if ev_resp.status_code == 200:
+                    item_date = ev_resp.json().get("date", "")
+            except Exception:
+                pass
+        if not item_date or not item_date.startswith(game_date):
+            continue
+        stats_ref = item.get("statistics", {}).get("$ref", "")
+        if not stats_ref:
+            continue
+        try:
+            stats_resp = _http.get(stats_ref, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if stats_resp.status_code != 200:
+                continue
+            stats_data = stats_resp.json()
+            game_stat = {}
+            for split in stats_data.get("splits", {}).get("categories", []):
+                for stat in split.get("stats", []):
+                    game_stat[stat.get("abbreviation", "").upper()] = stat.get("value", 0)
+            if not game_stat:
+                continue
+            if sport == "NBA":
+                result = {
+                    "PTS": game_stat.get("PTS", 0), "REB": game_stat.get("REB", 0),
+                    "AST": game_stat.get("AST", 0),
+                }
+                result["PRA"] = result["PTS"] + result["REB"] + result["AST"]
+            else:  # NFL
+                result = {
+                    "PASS_YDS": game_stat.get("PASSYDS", game_stat.get("YDS", 0)),
+                    "RUSH_YDS": game_stat.get("RUSHYDS", game_stat.get("RYDS", 0)),
+                    "REC_YDS":  game_stat.get("RECYDS", game_stat.get("RECYD", 0)),
+                    "TD":       game_stat.get("TD", 0),
+                }
+            _safe_save_pkl(cache_path, result)
+            return result.get(stat_key)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return None
+
 def fetch_player_id_bdl(player_name):
     """Search BallsDontLie for player ID by name."""
     if not BDL_API_KEY:
