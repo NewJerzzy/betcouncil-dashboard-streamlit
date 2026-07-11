@@ -5054,6 +5054,58 @@ def compute_home_away_splits(game_logs, stat, line):
         "away_games": len(away_games),
     }
 
+
+def compute_expected_vs_actual(vs_opponent_games, stat_key, current_line):
+    """
+    EXPECTED_VS_ACTUAL signal — a player's historical performance against
+    THIS SPECIFIC opponent, compared to today's posted line. E.g. "SGA
+    averages -6 below his line vs LAL across 5 games."
+
+    Prioritized to build after seeing an external system's prediction
+    payload (2026-07-11) that flagged this as its highest-signal, most
+    "buildable for free" module — confirmed as a genuine gap in BetCouncil
+    at the time (nothing computed a per-opponent historical residual).
+
+    Deliberately informational-only for now, not blended into the core
+    weighted edge (compute_multi_signal_edge) — that function has 12+
+    tightly-tuned signals, and adding an untested new weight there risks
+    distorting every pick on the board. This surfaces on the "why this
+    pick" panel first; escalating it into the weighted formula is a
+    follow-up decision once it's been observed working, not day one.
+
+    Args:
+        vs_opponent_games: list of {date, PTS, REB, AST, PRA} dicts from
+            fetch_nba_player_gamelog_vs_opponent — games vs this opponent
+            only, this season.
+        stat_key: "PTS", "REB", "AST", or "PRA"
+        current_line: today's posted prop line
+
+    Returns dict: {avg_vs_opponent, residual, n_games, note} or
+    {n_games: 0, note: "..."} if there's not enough data. n_games < 2 is
+    treated as too thin to be meaningful (single-game sample is noise).
+    """
+    if not vs_opponent_games or stat_key not in ("PTS", "REB", "AST", "PRA"):
+        return {"n_games": 0, "avg_vs_opponent": None, "residual": None,
+                "note": "No games vs this opponent yet this season."}
+
+    values = [g.get(stat_key, 0) or 0 for g in vs_opponent_games]
+    n = len(values)
+    if n < 2:
+        return {"n_games": n, "avg_vs_opponent": round(values[0], 1) if values else None,
+                "residual": None, "note": f"Only {n} game vs this opponent — too thin to be meaningful."}
+
+    avg_vs_opp = sum(values) / n
+    residual = round(avg_vs_opp - current_line, 1)
+    direction = "above" if residual > 0 else "below" if residual < 0 else "at"
+    note = f"Averages {abs(residual):.1f} {direction} today's line vs this opponent across {n} games ({avg_vs_opp:.1f} avg vs {current_line} line)."
+
+    return {
+        "n_games": n,
+        "avg_vs_opponent": round(avg_vs_opp, 1),
+        "residual": residual,
+        "note": note,
+    }
+
 def _merge_rolling(season_avgs, rolling, weight=0.7):
     """Merge rolling averages into season_avgs in-place. weight=rolling share."""
     rnd = 2

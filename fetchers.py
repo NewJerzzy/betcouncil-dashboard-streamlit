@@ -3963,6 +3963,121 @@ def fetch_nba_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+
+def fetch_nba_all_player_ids():
+    """
+    Full active-roster name -> stats.nba.com PersonID lookup via
+    commonallplayers. Cached 24h. Avoids hardcoding a short list of star
+    players (the ESPN_ATHLETE_IDS map used elsewhere only covers ~15-20
+    players/sport) — this covers the full active league.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nba_all_player_ids.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 24:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/",
+        "Origin": "https://www.nba.com",
+    }
+    _yr = date.today().year
+    _season = f"{_yr-1}-{str(_yr)[2:]}" if date.today().month < 9 else f"{_yr}-{str(_yr+1)[2:]}"
+    url = f"https://stats.nba.com/stats/commonallplayers?LeagueID=00&Season={_season}&IsOnlyCurrentSeason=1"
+    try:
+        resp = _http.get(url, headers=nba_headers, timeout=12)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        result_set = data.get("resultSets", [{}])[0]
+        headers_ = result_set.get("headers", [])
+        rows = result_set.get("rowSet", [])
+        col = {h: i for i, h in enumerate(headers_)}
+        out = {}
+        for row in rows:
+            name = row[col.get("DISPLAY_FIRST_LAST", 0)]
+            pid = row[col.get("PERSON_ID", 0)]
+            if name and pid:
+                out[name] = pid
+        if out:
+            _safe_save_pkl(cache_path, out)
+        return out
+    except Exception as e:
+        print(f"[WARN] fetch_nba_all_player_ids: {e}")
+        return {}
+
+
+def fetch_nba_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, sport: str = "NBA"):
+    """
+    A player's game log filtered to games against a specific opponent, this
+    season. Powers EXPECTED_VS_ACTUAL: how has this player actually
+    performed against THIS opponent, compared to today's posted line.
+
+    Returns list of {date, PTS, REB, AST, PRA} dicts, one per game vs that
+    opponent. Empty list if player not found, no games vs that opponent
+    yet this season, or the request fails -- callers must treat empty as
+    "not enough data," never as "confirmed zero."
+    """
+    if sport != "NBA":
+        return []
+    player_ids = fetch_nba_all_player_ids()
+    person_id = player_ids.get(player_name)
+    if not person_id:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"nba_gamelog_vs_opp_{person_id}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path) or {}
+            if opponent_abbr in cached:
+                return cached[opponent_abbr]
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/",
+        "Origin": "https://www.nba.com",
+    }
+    _yr = date.today().year
+    _season = f"{_yr-1}-{str(_yr)[2:]}" if date.today().month < 9 else f"{_yr}-{str(_yr+1)[2:]}"
+    url = f"https://stats.nba.com/stats/playergamelog?PlayerID={person_id}&Season={_season}&SeasonType=Regular+Season"
+    try:
+        resp = _http.get(url, headers=nba_headers, timeout=12)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        result_set = data.get("resultSets", [{}])[0]
+        headers_ = result_set.get("headers", [])
+        rows = result_set.get("rowSet", [])
+        col = {h: i for i, h in enumerate(headers_)}
+        by_opponent = {}
+        for row in rows:
+            matchup = str(row[col.get("MATCHUP", 0)] or "")
+            # MATCHUP looks like "OKC vs. LAL" or "OKC @ LAL"
+            opp = matchup.replace("vs.", "@").split("@")[-1].strip() if "@" in matchup.replace("vs.", "@") else ""
+            if not opp:
+                continue
+            pts = row[col.get("PTS", 0)] or 0
+            reb = row[col.get("REB", 0)] or 0
+            ast = row[col.get("AST", 0)] or 0
+            entry = {
+                "date": row[col.get("GAME_DATE", 0)],
+                "PTS": pts, "REB": reb, "AST": ast, "PRA": pts + reb + ast,
+            }
+            by_opponent.setdefault(opp, []).append(entry)
+        _safe_save_pkl(cache_path, by_opponent)
+        return by_opponent.get(opponent_abbr, [])
+    except Exception as e:
+        print(f"[WARN] fetch_nba_player_gamelog_vs_opponent: {e}")
+        return []
+
+
 def fetch_wnba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "wnba_rolling_avgs.pkl")
     nba_headers = {

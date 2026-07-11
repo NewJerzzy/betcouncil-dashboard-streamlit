@@ -64,7 +64,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     score_rlm, devig_ensemble,
     record_line, detect_steam_move,
     pace_adjust_mlb_prop, rest_adjusted_std_dev,
@@ -111,6 +111,7 @@ from config import (
 import time as _time_mod
 from contextlib import contextmanager as _ctx
 from fetchers import *  # extracted fetch_/compute_ functions
+from fetchers import _map_prop_to_stat_key  # wildcard import excludes underscore-prefixed names
 from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
 
 def _bc_track(stage, duration, meta=None):
@@ -1461,6 +1462,31 @@ def render_signal_chart(prop, sport="NBA"):
         line_move_display = "No line move"
         line_move_color = "#6a7a8a"
 
+    # EXPECTED_VS_ACTUAL — how this player has performed against THIS
+    # specific opponent, compared to today's line. NBA only for now
+    # (needs stats.nba.com player-ID resolution + per-opponent game log,
+    # both currently NBA-specific). Informational only — not blended into
+    # the edge/probability calculation.
+    eva_html = ""
+    if sport == "NBA":
+        try:
+            _eva_stat_key = _map_prop_to_stat_key(prop.get("Prop", ""))
+            _eva_opponent = prop.get("Opponent", "")
+            _eva_player = prop.get("Player", "")
+            _eva_line = prop.get("Line", 0)
+            if _eva_stat_key and _eva_opponent and _eva_player:
+                _eva_games = fetch_nba_player_gamelog_vs_opponent(_eva_player, _eva_opponent, sport)
+                _eva = compute_expected_vs_actual(_eva_games, _eva_stat_key, _eva_line)
+                if _eva.get("n_games", 0) >= 2:
+                    _eva_color = "#22c55e" if (_eva.get("residual") or 0) > 0 else "#e04040"
+                    eva_html = f'''
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">vs {_eva_opponent} (n={_eva['n_games']})</div>
+          <div style="font-size:18px;font-weight:500;color:{_eva_color}">{_eva['residual']:+.1f}</div>
+        </div>'''
+        except Exception:
+            pass
+
     html = f"""
 <div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:10px;padding:16px;margin:6px 0;">
 
@@ -1489,7 +1515,7 @@ def render_signal_chart(prop, sport="NBA"):
           <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Market regime</div>
           <div style="font-size:18px;font-weight:700;color:{regime_color}">{regime_label}</div>
           <div style="font-size:9px;color:#6a7a8a">{regime_plain}</div>
-        </div>
+        </div>{eva_html}
       </div>
     </div>
     <div style="flex-shrink:0;text-align:center;background:{conv_color}18;border:1px solid {conv_color}55;border-radius:10px;padding:10px 18px;min-width:84px;">
