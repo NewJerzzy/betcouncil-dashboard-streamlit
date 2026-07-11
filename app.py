@@ -22873,6 +22873,15 @@ with tabs[8]:
             other_lines = {}
             prop_sources = ls_sources.get(norm_ls, {}).get(pn_ls, {})
             for bk in all_books_ls:
+                if bk == "PrizePicks":
+                    # PrizePicks is the board's own baseline line (pp_line_ls,
+                    # already set above) — NOT a comparison-book entry in
+                    # ls_sources. Overwriting it here was the bug: it stomped
+                    # the real price with "—" on every row since ls_sources
+                    # is essentially never populated under the "PrizePicks"
+                    # key, making the Line Shop always report 0 PrizePicks
+                    # props regardless of actual board data. (Fixed 2026-07-11.)
+                    continue
                 lv = prop_sources.get(bk)
                 row[bk] = lv if lv is not None else "—"
                 if lv is not None:

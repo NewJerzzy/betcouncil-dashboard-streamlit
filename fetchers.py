@@ -107,6 +107,15 @@ try:
         SCRAPERAPI_KEY,
         API_BUDGETS, GIST_API, SCRAPEDO_KEY,
         PADDYPOWER_BASE, PADDYPOWER_PATH, PADDYPOWER_SPORT_MAP, PADDYPOWER_HEADERS,
+        # ── Fixed 2026-07-11: were referenced in fetch functions below but
+        # never imported, causing guaranteed NameErrors (100% error rate on
+        # fetch_odds_api_props, fetch_betmgm_game_lines, fetch_sharpapi_lines,
+        # fetch_sharpapi_props, fetch_fanduel_props_sharpapi, and would have
+        # broken NFL prep via get_nfl_player_baseline / fetch_nfl_full_player_database) ──
+        ODDS_API_PROP_MARKETS, ODDS_API_STAT_MAP,
+        BETMGM_COOKIE, BETMGM_STATE, BETMGM_SPORT_MAP, BETMGM_WIDGET_MAP,
+        SHARPAPI_KEY,
+        NFL_POSITION_BASELINES, NFL_STAT_NORMALIZE_MAP, NFL_TEAM_ABBR_MAP,
     )
 except ImportError:
     CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
@@ -165,6 +174,11 @@ except ImportError:
         "NHL": "ice-hockey", "MLB": "baseball",
     }
     PADDYPOWER_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept-Language": "en-GB,en;q=0.9"}
+    ODDS_API_PROP_MARKETS = {}
+    ODDS_API_STAT_MAP = {}
+    NFL_POSITION_BASELINES = {}
+    NFL_STAT_NORMALIZE_MAP = {}
+    NFL_TEAM_ABBR_MAP = {}
     BOVADA_BASE = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
     BOVADA_PATH = os.path.join(os.path.dirname(__file__), ".cache", "bovada_lines.json")
     BOVADA_SPORT_MAP = {
