@@ -1,24 +1,27 @@
 """
 LineStar public API harvester — no auth, no login, no browser required.
 
-Fetches GetFastUpdateV2 (weather + Vegas lines), GetPropBets (cross-book props
-including DraftKings Source=1), and GetSalariesV5 (DFS projections with
-Ceil/Floor/Conf/wOBA/ISO/wRC+/HR-PA) for every active sport.
+Fetches GetFastUpdateV2, GetPropBets, and GetSalariesV5 for every active sport.
+
+DFS sites fetched:
+  Site=1 (DraftKings) -- always fetched; $50k cap, DK scoring
+  Site=2 (FanDuel)    -- fetched in parallel; $35k cap, FD scoring (~30% higher
+                        PP values), ~18 FD-exclusive players per MLB slate
+  Site=3 (Yahoo)      -- returns None/empty; Yahoo DFS is dead, skipped
 
 Sport IDs confirmed 2026-07: NFL=1, NBA=2, MLB=3, NHL=6, WNBA=12.
-PeriodId changes daily -- fetched live from each sport's Projections page.
+PeriodId fetched live per sport from the Projections page.
 
 TeamMap built from PropBets.Teams[] + SalariesV5 HTID/HTEAM+OTID/OTEAM.
-PropBets.Teams[] alone only covers teams with active props (~10/30 MLB);
-SalariesV5 fills in all DFS-slate teams (confirmed 19/30 MLB 2026-07-11).
+PropBets is site-agnostic -- fetched once (Site=1), covers all books.
 
-WindDirection: int 0-7 (N/NE/E/SE/S/SW/W/NW). Value 8 observed 2026-07-11
--- stored raw, mapped to "Var" in fetchers.py downstream.
-
-Gist files produced (3 per active sport):
-  betcouncil_weather_{SPORT}.json           -- per-game weather + Vegas lines
-  betcouncil_linestar_props_{SPORT}.json    -- raw GetPropBets (all books)
-  betcouncil_linestar_salaries_{SPORT}.json -- raw GetSalariesV5
+Gist files produced per active sport:
+  betcouncil_weather_{SPORT}.json              -- DK weather + Vegas lines
+  betcouncil_linestar_props_{SPORT}.json       -- GetPropBets (all books)
+  betcouncil_linestar_salaries_{SPORT}.json    -- DK GetSalariesV5
+  betcouncil_weather_FD_{SPORT}.json           -- FD weather (same Games + FD Items)
+  betcouncil_linestar_salaries_FD_{SPORT}.json -- FD GetSalariesV5
+  (FD files only emitted when FD has an active slate that day)
 
 Env vars required:
   GITHUB_TOKEN -- PAT with gist write scope (mapped from PICK6_GIST_TOKEN secret)
@@ -95,6 +98,14 @@ def get_period_id(sport_path):
         return None
 
 
+def sal_count(sv):
+    try:
+        sc = json.loads(sv.get("SalaryContainerJson") or "{}")
+        return len(sc.get("Salaries") or [])
+    except Exception:
+        return 0
+
+
 def build_team_map(pb, sv):
     team_map = {}
     for t in pb.get("Teams") or []:
@@ -113,6 +124,17 @@ def build_team_map(pb, sv):
     return team_map
 
 
+def enrich_games(fu, team_map):
+    games = [
+        {**g,
+         "_AwayAbbr": team_map.get(g.get("AwayTeamId")),
+         "_HomeAbbr": team_map.get(g.get("HomeTeamId"))}
+        for g in ((fu or {}).get("Games") or [])
+        if isinstance(g, dict)
+    ]
+    return {**(fu or {}), "Games": games, "TeamMap": team_map}
+
+
 def run_sport(sport, cfg, captured_at):
     log(f"\n-- {sport} (id={cfg['id']}) --")
     period_id = get_period_id(cfg["path"])
@@ -123,47 +145,57 @@ def run_sport(sport, cfg, captured_at):
 
     sid = cfg["id"]
 
-    def _get(ep):
-        return fetch_json(f"{BASE_LS}/{ep}?Sport={sid}&Site=1&PeriodId={period_id}")
+    def _get(ep, site):
+        return fetch_json(f"{BASE_LS}/{ep}?Sport={sid}&Site={site}&PeriodId={period_id}")
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        fut_fu = pool.submit(_get, "GetFastUpdateV2")
-        fut_pb = pool.submit(_get, "GetPropBets")
-        fut_sv = pool.submit(_get, "GetSalariesV5")
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        fut_fu_dk = pool.submit(_get, "GetFastUpdateV2", 1)
+        fut_pb    = pool.submit(_get, "GetPropBets",     1)
+        fut_sv_dk = pool.submit(_get, "GetSalariesV5",   1)
+        fut_fu_fd = pool.submit(_get, "GetFastUpdateV2", 2)
+        fut_sv_fd = pool.submit(_get, "GetSalariesV5",   2)
         try:
-            fu = fut_fu.result(timeout=30)
-            pb = fut_pb.result(timeout=30)
-            sv = fut_sv.result(timeout=60)
+            fu_dk = fut_fu_dk.result(timeout=30)
+            pb    = fut_pb.result(timeout=30)
+            sv_dk = fut_sv_dk.result(timeout=60)
+            fu_fd = fut_fu_fd.result(timeout=30)
+            sv_fd = fut_sv_fd.result(timeout=60)
         except Exception as exc:
             log(f"  [error] Fetch failed: {exc}")
             return None
 
-    games = fu.get("Games") or []
+    games = (fu_dk or {}).get("Games") or []
     if not games:
         log(f"  [skip] 0 games -- offseason or empty slate")
         return None
 
-    log(f"  Games={len(games)}  Props={len(pb.get('PropBets') or [])}  "
-        f"Books={len(pb.get('SportsBooks') or [])}")
+    dk_n = sal_count(sv_dk)
+    fd_n = sal_count(sv_fd) if sv_fd else 0
+    log(f"  DK: {len(games)} games, {dk_n} players  |  FD: {fd_n} players  |  Props: {len(pb.get('PropBets') or [])}")
 
-    team_map = build_team_map(pb, sv)
-    enriched_games = [
-        {**g,
-         "_AwayAbbr": team_map.get(g.get("AwayTeamId")),
-         "_HomeAbbr": team_map.get(g.get("HomeTeamId"))}
-        for g in games if isinstance(g, dict)
-    ]
-    matched = sum(1 for g in enriched_games if g.get("_AwayAbbr") and g.get("_HomeAbbr"))
-    log(f"  TeamMap={len(team_map)}  matched={matched}/{len(games)} games")
+    team_map    = build_team_map(pb, sv_dk)
+    enriched_dk = enrich_games(fu_dk, team_map)
+    matched     = sum(1 for g in enriched_dk["Games"] if g.get("_AwayAbbr") and g.get("_HomeAbbr"))
+    log(f"  TeamMap: {len(team_map)} teams, {matched}/{len(games)} games matched")
 
     meta = {"sport": sport, "captured_at": captured_at,
             "period_id": period_id, "source": "linestar_github_actions"}
-    return {
-        f"betcouncil_weather_{sport}.json": json.dumps(
-            {**meta, "data": {**fu, "Games": enriched_games, "TeamMap": team_map}}),
-        f"betcouncil_linestar_props_{sport}.json": json.dumps({**meta, "data": pb}),
-        f"betcouncil_linestar_salaries_{sport}.json": json.dumps({**meta, "data": sv}),
+
+    files = {
+        f"betcouncil_weather_{sport}.json":           json.dumps({**meta, "data": enriched_dk}),
+        f"betcouncil_linestar_props_{sport}.json":    json.dumps({**meta, "data": pb}),
+        f"betcouncil_linestar_salaries_{sport}.json": json.dumps({**meta, "data": sv_dk}),
     }
+
+    if fd_n > 0:
+        enriched_fd = enrich_games(fu_fd, team_map)
+        files[f"betcouncil_weather_FD_{sport}.json"]           = json.dumps({**meta, "site": "FanDuel", "data": enriched_fd})
+        files[f"betcouncil_linestar_salaries_FD_{sport}.json"] = json.dumps({**meta, "site": "FanDuel", "data": sv_fd})
+        log(f"  FanDuel slate active -- adding FD files")
+    else:
+        log(f"  FanDuel: no slate today -- skipping FD files")
+
+    return files
 
 
 def push_gist(files, token):
