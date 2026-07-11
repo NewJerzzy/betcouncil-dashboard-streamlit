@@ -1699,6 +1699,70 @@ PLAYER_LOOKUP_OPPONENT_OPTIONS = {
             "NYJ","PHI","PIT","SF","SEA","TB","TEN","WAS"],
 }
 
+# ── ESPN/Action-Network-style abbrev -> full-name fragment, per sport ──
+# Kept sport-separated (unlike a flat dict) because abbreviations collide
+# across sports -- "TB" is Tampa Bay Rays (MLB) AND Buccaneers (NFL), "SF"
+# is Giants (MLB) AND 49ers (NFL), "TOR"/"WSH" appear in multiple leagues
+# too. A flat dict silently keeps only the last-defined value per key,
+# which breaks matching for whichever sport got overwritten.
+TEAM_ABBREV_TO_FRAGMENT = {
+    "MLB": {
+        "ARI":"Arizona","ATL":"Atlanta Braves","BAL":"Baltimore",
+        "BOS":"Boston Red","CHC":"Chicago Cubs","CWS":"Chicago White",
+        "CIN":"Cincinnati","CLE":"Cleveland","COL":"Colorado",
+        "DET":"Detroit","HOU":"Houston Astros","KC":"Kansas City",
+        "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
+        "MIA":"Miami","MIL":"Milwaukee","MIN":"Minnesota",
+        "NYM":"New York Mets","NYY":"New York Yankees",
+        "OAK":"Oakland","ATH":"Athletics",
+        "PHI":"Philadelphia","PIT":"Pittsburgh",
+        "SD":"San Diego","SEA":"Seattle","SF":"San Francisco",
+        "STL":"St. Louis","TB":"Tampa Bay","TEX":"Texas",
+        "TOR":"Toronto","WSH":"Washington Nationals",
+    },
+    "NBA": {
+        "GSW":"Golden State","LAL":"Los Angeles Lakers",
+        "LAC":"Los Angeles Clippers","NYK":"New York Knicks",
+        "NOP":"New Orleans","SAS":"San Antonio",
+        "OKC":"Oklahoma","UTA":"Utah","MEM":"Memphis",
+        "BOS":"Boston Celtics","BKN":"Brooklyn","CHI":"Chicago Bulls",
+        "CLE":"Cleveland Cavaliers","DAL":"Dallas","DEN":"Denver",
+        "DET":"Detroit Pistons","HOU":"Houston Rockets","IND":"Indiana",
+        "MIA":"Miami Heat","MIL":"Milwaukee Bucks","MIN":"Minnesota Timberwolves",
+        "PHX":"Phoenix","POR":"Portland","SAC":"Sacramento",
+        "TOR":"Toronto Raptors","WAS":"Washington Wizards",
+        "ATL":"Atlanta Hawks","CHA":"Charlotte","ORL":"Orlando","PHI":"Philadelphia 76ers",
+    },
+    "NFL": {
+        "NE":"New England","NO":"New Orleans Saints",
+        "GB":"Green Bay","LAR":"Los Angeles Rams","LAC":"Los Angeles Chargers",
+        "NYG":"New York Giants","NYJ":"New York Jets",
+        "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers",
+        "KC":"Kansas City Chiefs","BAL":"Baltimore Ravens","BUF":"Buffalo",
+        "CAR":"Carolina","CHI":"Chicago Bears","CIN":"Cincinnati Bengals",
+        "CLE":"Cleveland Browns","DAL":"Dallas Cowboys","DEN":"Denver Broncos",
+        "DET":"Detroit Lions","HOU":"Houston Texans","IND":"Indianapolis",
+        "JAX":"Jacksonville","LV":"Las Vegas","MIA":"Miami Dolphins",
+        "MIN":"Minnesota Vikings","PHI":"Philadelphia Eagles","PIT":"Pittsburgh Steelers",
+        "SEA":"Seattle Seahawks","TEN":"Tennessee","WSH":"Washington Commanders",
+        "ARI":"Arizona Cardinals","ATL":"Atlanta Falcons",
+    },
+    "NHL": {
+        "TBL":"Tampa Bay Lightning","TOR":"Toronto",
+        "WSH":"Washington Capitals","NJD":"New Jersey",
+        "LAK":"Los Angeles Kings","SJS":"San Jose",
+        "CBJ":"Columbus","VGK":"Vegas Golden",
+        "ANA":"Anaheim","BOS":"Boston Bruins","BUF":"Buffalo Sabres",
+        "CGY":"Calgary","CAR":"Carolina Hurricanes","CHI":"Chicago Blackhawks",
+        "COL":"Colorado Avalanche","DAL":"Dallas Stars","DET":"Detroit Red",
+        "EDM":"Edmonton","FLA":"Florida","MIN":"Minnesota Wild",
+        "MTL":"Montreal","NSH":"Nashville","NYI":"New York Islanders",
+        "NYR":"New York Rangers","OTT":"Ottawa","PHI":"Philadelphia Flyers",
+        "PIT":"Pittsburgh Penguins","SEA":"Seattle Kraken","STL":"St. Louis Blues",
+        "VAN":"Vancouver","WPG":"Winnipeg",
+    },
+}
+
 NFL_TEAM_ABBR_MAP = {
     "Arizona Cardinals": "ARI", "Atlanta Falcons": "ATL",
     "Baltimore Ravens": "BAL", "Buffalo Bills": "BUF",

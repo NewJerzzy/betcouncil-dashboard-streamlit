@@ -106,6 +106,7 @@ from config import (
     _ATP_GRAND_SLAMS, _SLAM_SURFACE,
     _UFC_WEIGHTCLASS_BASELINES, _UFC_ROUND_DEFAULT, _UFC_CHAMPIONSHIP_ROUNDS,
     PLAYER_LOOKUP_OPPONENT_OPTIONS,
+    TEAM_ABBREV_TO_FRAGMENT,
 )
 import time as _time_mod
 from contextlib import contextmanager as _ctx
@@ -6718,9 +6719,23 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     
     public_data = st.session_state.get("public_betting_data", {})
     game_public = None
+
+    def _team_matches_abbr(full_name, abbr, sport_key):
+        # Action Network stores 2-3 letter abbreviations (TB, MIL, PIT), not
+        # full team names, so exact `full_name in [abbrs]` membership only
+        # coincidentally matched — that's why only one team out of an
+        # entire slate was ever showing data. Uses the same validated
+        # abbreviation table as fetch_game_lines' ESPN matching, looked up
+        # by sport (abbreviations collide across leagues: "TB" is Rays in
+        # MLB, Buccaneers in NFL).
+        if not full_name or not abbr:
+            return False
+        fragment = TEAM_ABBREV_TO_FRAGMENT.get(sport_key, {}).get(abbr.upper(), "")
+        return bool(fragment) and fragment.lower() in full_name.lower()
+
     for key, val in public_data.items():
         teams = val.get("teams", [])
-        if (home_team in teams or away_team in teams):
+        if any(_team_matches_abbr(home_team, t, sport) or _team_matches_abbr(away_team, t, sport) for t in teams):
             game_public = val
             break
     

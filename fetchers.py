@@ -73,6 +73,7 @@ try:
         # ── Additional constants used in fetchers but previously missing from import ──
         BDL_API_KEY, BDL_PLAYER_IDS,
         ESPN_ATHLETE_IDS, ESPN_SLUG_MAP,
+        TEAM_ABBREV_TO_FRAGMENT as _TEAM_ABBREV_TO_FRAGMENT_BY_SPORT,
         FL_HEADERS, FL_SPORT_MAP,
         KALSHI_SPORT_SERIES, MLB_STADIUM_COORDS,
         NHL_PLAYER_IDS,
@@ -6840,40 +6841,11 @@ def fetch_game_lines(sport):
     # Covers every MLB team + all major sports. Hoisted out of the
     # ODDS_API_KEY block below so the BetOnline fallback pass (which
     # doesn't depend on that secret) can reuse the same matching logic.
-    TEAM_ABBREV_TO_FRAGMENT = {
-        # MLB
-        "ARI":"Arizona","ATL":"Atlanta Braves","BAL":"Baltimore",
-        "BOS":"Boston Red","CHC":"Chicago Cubs","CWS":"Chicago White",
-        "CIN":"Cincinnati","CLE":"Cleveland","COL":"Colorado",
-        "DET":"Detroit","HOU":"Houston Astros","KC":"Kansas City",
-        "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
-        "MIA":"Miami","MIL":"Milwaukee","MIN":"Minnesota",
-        "NYM":"New York Mets","NYY":"New York Yankees",
-        "OAK":"Oakland","ATH":"Athletics",
-        "PHI":"Philadelphia","PIT":"Pittsburgh",
-        "SD":"San Diego","SEA":"Seattle","SF":"San Francisco",
-        "STL":"St. Louis","TB":"Tampa Bay","TEX":"Texas",
-        "TOR":"Toronto","WSH":"Washington Nationals",
-        # NBA
-        "GSW":"Golden State","LAL":"Los Angeles Lakers",
-        "LAC":"Los Angeles","NYK":"New York Knicks",
-        "NOP":"New Orleans","SAS":"San Antonio",
-        "OKC":"Oklahoma","UTA":"Utah","MEM":"Memphis",
-        # NFL — KC and LAC keys already defined above; omitting duplicates
-        # to prevent the NFL entry silently overwriting the MLB/NBA fragment.
-        # "Kansas City" (MLB KC key) matches both Royals and Chiefs.
-        # "Los Angeles" (NBA LAC key) matches both Clippers and Chargers.
-        "NE":"New England","NO":"New Orleans Saints",
-        "GB":"Green Bay",
-        "LAR":"Los Angeles Rams",
-        "NYG":"New York Giants","NYJ":"New York Jets",
-        "SF":"San Francisco 49ers","TB":"Tampa Bay Buccaneers",
-        # NHL
-        "TBL":"Tampa Bay Lightning","TOR":"Toronto",
-        "WSH":"Washington Capitals","NJD":"New Jersey",
-        "LAK":"Los Angeles Kings","SJS":"San Jose",
-        "CBJ":"Columbus","VGK":"Vegas Golden",
-    }
+    # ── ESPN/Action-Network-style abbrev -> full-name fragment mapping ──
+    # Moved to config.py as TEAM_ABBREV_TO_FRAGMENT (sport-separated, since
+    # abbreviations like "TB"/"SF"/"TOR"/"WSH" collide across leagues and a
+    # flat dict was silently dropping entries to the last sport defined).
+    TEAM_ABBREV_TO_FRAGMENT = _TEAM_ABBREV_TO_FRAGMENT_BY_SPORT.get(sport, {})
 
     # ── SBR/OddsAPI overlay — SBR primary (no key needed), OddsAPI fallback ──
     # fetch_odds_api_game_lines() tries SBR first; falls back to OddsAPI
