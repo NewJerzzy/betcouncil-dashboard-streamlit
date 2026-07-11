@@ -22615,6 +22615,33 @@ with tabs[8]:
 with tabs[9]:
     st.markdown("## ⚙️ System Info")
 
+    def _bc_df_html(data, columns=None):
+        # Plain HTML table instead of st.dataframe — st.dataframe renders via
+        # a canvas-based grid (Glide Data Grid) that has been observed to
+        # fail to paint (empty box, structure intact) right after a
+        # redeploy/restart, as seen on this tab. Every table in System Info
+        # is small/static (status checks, audit summaries) with no need for
+        # sort/filter/scroll, so there's no reason to carry that fragility
+        # anywhere on this tab — applies to all of it, not just one section.
+        try:
+            df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        except Exception:
+            return '<div style="color:var(--bc-dim);font-size:13px;padding:8px;">No data to display.</div>'
+        if df.empty:
+            return '<div style="color:var(--bc-dim);font-size:13px;padding:8px;">No data to display.</div>'
+        cols = columns or list(df.columns)
+        head = "".join(f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--bc-border);white-space:nowrap;">{c}</th>' for c in cols)
+        body = ""
+        for _, row in df.iterrows():
+            cells = "".join(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f;">{row.get(c,"")}</td>' for c in cols)
+            body += f"<tr>{cells}</tr>"
+        return (
+            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+            f'border-radius:8px;overflow:auto;max-height:480px;margin-bottom:0.5rem;">'
+            f'<table style="width:100%;border-collapse:collapse;">'
+            f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+        )
+
     # ── EV Auto-Refresh Control ───────────────────────────────
     _col_tog1, _col_tog2, _col_tog3 = st.columns([2, 2, 3])
     with _col_tog1:
@@ -22945,7 +22972,7 @@ with tabs[9]:
     _grey   = sum(1 for s in _src_statuses if "⚪" in s["Status"])
 
     st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
-    st.dataframe(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses]), use_container_width=True, hide_index=True)
+    st.markdown(_bc_df_html(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses])), unsafe_allow_html=True)
 
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
@@ -22973,7 +23000,7 @@ with tabs[9]:
         _hh_grey   = sum(1 for r in _hh_results if r["status"] == "⚫")
         st.caption(f"{_hh_green} fresh | {_hh_yellow} stale | {_hh_red} dead | {_hh_grey} never seen — out of {len(_hh_results)} tracked harvesters for {_hh_sport}")
         with st.expander("Full harvester health detail"):
-            st.dataframe(pd.DataFrame(_hh_results), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_hh_results)), unsafe_allow_html=True)
     except Exception as _hh_err:
         st.caption(f"Harvester health check unavailable this load: {str(_hh_err)[:100]}")
 
@@ -23007,30 +23034,12 @@ with tabs[9]:
                 + ", ".join(f'{r["name"]} ({r["error_rate"]:.0%} errors)' for r in _fh_dead_or_erroring)
             )
         with st.expander(f"Full fetch health detail ({len(_fh_report)} functions)"):
-            st.dataframe(pd.DataFrame(_fh_report), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_fh_report)), unsafe_allow_html=True)
     except Exception as _fh_err:
         st.caption(f"Fetch health check unavailable this load: {str(_fh_err)[:100]}")
 
 
     # ── API Health Check ─────────────────────────────────────
-    def _bc_status_table_html(rows, columns):
-        # Plain HTML table instead of st.dataframe — st.dataframe renders via
-        # a canvas-based grid (Glide Data Grid) that has been observed to
-        # fail to paint (empty box, structure intact) right after a
-        # redeploy/restart. These tables are small and static (no sort/
-        # scroll needed), so there's no reason to carry that fragility here.
-        head = "".join(f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--bc-border)">{c}</th>' for c in columns)
-        body = ""
-        for r in rows:
-            cells = "".join(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f">{r.get(c,"")}</td>' for c in columns)
-            body += f"<tr>{cells}</tr>"
-        return (
-            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
-            f'border-radius:8px;overflow:hidden;margin-bottom:0.5rem;">'
-            f'<table style="width:100%;border-collapse:collapse;">'
-            f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
-        )
-
     st.markdown("### 🔑 API Keys & Token Status")
     _hc_data = []
     _secrets_check = [
@@ -23049,7 +23058,7 @@ with tabs[9]:
         _hc_val = st.secrets.get(_hc_key, "")
         _hc_status = "🟢 Set" if _hc_val else "🔴 Missing"
         _hc_data.append({"Service": _hc_display, "Status": _hc_status, "Purpose": _hc_purpose, "Secret Key": _hc_key})
-    st.markdown(_bc_status_table_html(_hc_data, ["Service", "Status", "Purpose", "Secret Key"]), unsafe_allow_html=True)
+    st.markdown(_bc_df_html(_hc_data, ["Service", "Status", "Purpose", "Secret Key"]), unsafe_allow_html=True)
 
     st.markdown("### 🍪 Session & Cookie Status")
     _ck_data = [
@@ -23063,7 +23072,7 @@ with tabs[9]:
          "Status": "🔴 Exhausted" if st.session_state.get("scrapeops_exhausted") else "🟢 Available",
          "Refresh Interval": "Monthly reset"},
     ]
-    st.markdown(_bc_status_table_html(_ck_data, ["Service", "Secret", "Status", "Refresh Interval"]), unsafe_allow_html=True)
+    st.markdown(_bc_df_html(_ck_data, ["Service", "Secret", "Status", "Refresh Interval"]), unsafe_allow_html=True)
 
     # ── Performance Telemetry ─────────────────────────────
     _telem = st.session_state.get("bc_telemetry", {})
@@ -23073,7 +23082,7 @@ with tabs[9]:
         for _s, _d in sorted(_telem.items(), key=lambda x: -x[1].get("last",0)):
             _avg = round(_d["total"] / max(_d["runs"],1), 2)
             _rows.append({"Stage":_s,"Last":f'{_d["last"]:.2f}s',"Avg":f'{_avg:.2f}s',"Max":f'{_d["max"]:.2f}s',"Runs":_d["runs"],"Status":"🔴 SLOW" if _d["last"]>5 else "🟡 OK" if _d["last"]>2 else "🟢 FAST"})
-        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_rows)), unsafe_allow_html=True)
         _slow=[r["Stage"] for r in _rows if "SLOW" in r["Status"]]
         if _slow: st.warning(f"🐌 Slow: {chr(44).join(_slow)}")
     else:
@@ -23131,7 +23140,7 @@ with tabs[9]:
                     "Public %": f"{_r.get('public_pct_vs_line',0):.0f}%",
                 })
             import pandas as pd
-            st.dataframe(pd.DataFrame(_rlm_rows), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_rlm_rows)), unsafe_allow_html=True)
 
         # ATS Signals
         _ats = _vsin.get("ats_signals", {})
@@ -23162,7 +23171,7 @@ with tabs[9]:
                         "Bullpen": _t.get("bullpen_rating"),
                     })
                 import pandas as pd
-                st.dataframe(pd.DataFrame(_pr_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_pr_rows)), unsafe_allow_html=True)
 
         # Makinen Game Projections
         if _vsin.get("makinen"):
@@ -23180,7 +23189,7 @@ with tabs[9]:
                         "Starter Δ": f"{_g.get('away_starter_rtg','?')} vs {_g.get('home_starter_rtg','?')}",
                     })
                 import pandas as pd
-                st.dataframe(pd.DataFrame(_mak_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_mak_rows)), unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -23785,7 +23794,7 @@ with tabs[9]:
             _golf_rows = [{"Pos": p["position"], "Player": p["name"],
                            "Total": p["total"], "Today": p["today"],
                            "Thru": p["thru"]} for p in _golf_lb_sys[:15]]
-            st.dataframe(pd.DataFrame(_golf_rows), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_golf_rows)), unsafe_allow_html=True)
             if _golf_odds_sys:
                 st.markdown("**Tournament Win Odds:**")
                 _odds_rows = sorted(_golf_odds_sys.values(),
@@ -23793,7 +23802,7 @@ with tabs[9]:
                 _odds_df = [{"Player": o["name"],
                              "Odds": f"+{o['odds']}" if o["odds"]>0 else str(o["odds"]),
                              "Implied": f"{o['implied_prob']:.1%}"} for o in _odds_rows]
-                st.dataframe(pd.DataFrame(_odds_df), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_odds_df)), unsafe_allow_html=True)
 
     # ── NHL Starting Goalies ────────────────────────────────
     _nhl_goalies_sys = st.session_state.get("nhl_starting_goalies", {})
@@ -23811,7 +23820,7 @@ with tabs[9]:
                 "Home/Away": "Home" if gdata.get("home") else "Away",
             })
         if _goalie_rows:
-            st.dataframe(pd.DataFrame(_goalie_rows), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_goalie_rows)), unsafe_allow_html=True)
 
     # ── Depth Chart Status ──────────────────────────────────
     _depth_charts = st.session_state.get("espn_depth_charts", {})
@@ -23827,7 +23836,7 @@ with tabs[9]:
                 for pl in players[:3]:  # show top 3 per position
                     _dc_rows.append({"Position": pos, "Player": pl["name"], "Depth": pl["depth"]})
             if _dc_rows:
-                st.dataframe(pd.DataFrame(_dc_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_dc_rows)), unsafe_allow_html=True)
     # ── Market Intelligence Dashboard ──────────────────────
     st.markdown("---")
     st.markdown("### 🌐 Market Intelligence")
@@ -23843,12 +23852,12 @@ with tabs[9]:
         st.markdown("**Kalshi Top Markets:**")
         _kal_sorted = sorted(_kal, key=lambda x: -x.get("volume",0))
         _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in _kal_sorted[:5]]
-        st.dataframe(pd.DataFrame(_kal_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_kal_rows)), unsafe_allow_html=True)
     if _poly:
         st.markdown("**Polymarket Top Markets:**")
         _poly_sorted = sorted(_poly, key=lambda x: -x.get("volume",0))
         _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in _poly_sorted[:5]]
-        st.dataframe(pd.DataFrame(_poly_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_poly_rows)), unsafe_allow_html=True)
     if _cov and isinstance(_cov, dict):
         st.markdown("**Public Consensus (Covers):**")
         _cov_rows = []
@@ -23861,7 +23870,7 @@ with tabs[9]:
             else:
                 _cm_pct, _cm_side = _cm_away_pct, _cm_away
             _cov_rows.append({"Matchup": _cm[:40], "Public %": f"{_cm_pct}%", "Side": _cm_side})
-        st.dataframe(pd.DataFrame(_cov_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_cov_rows)), unsafe_allow_html=True)
     elif not st.secrets.get("FIRECRAWL_KEY",""):
         st.info("Add FIRECRAWL_KEY to Streamlit secrets to enable Covers public betting consensus data.")
 
@@ -23906,7 +23915,7 @@ with tabs[9]:
                 _ft_rows.append({"Source": _src[:30], "Time (s)": f"{_t_val:.2f}", "Status": _status})
             if _ft_rows:
                 import pandas as _pd_sys
-                st.dataframe(_pd_sys.DataFrame(_ft_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(_pd_sys.DataFrame(_ft_rows)), unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### 🔬 Signal Intelligence Summary")
@@ -23938,7 +23947,7 @@ with tabs[9]:
         n_bets_s = sport_data_s.get("n_bets", 0)
         wr_s = sport_data_s.get("overall_win_rate", 0)
         weight_rows.append({"Sport": sp, "Status": status_s, "Base": f"{weights_s.get('base',0):.0%}", "Defense": f"{weights_s.get('defense',0):.0%}", "Location": f"{weights_s.get('location',0):.0%}", "Rest": f"{weights_s.get('rest',0):.0%}", "Pace": f"{weights_s.get('pace',0):.0%}", "Bets": n_bets_s, "Win Rate": f"{wr_s:.1%}" if wr_s > 0 else "\u2014", "Type": weight_type_s})
-    st.dataframe(pd.DataFrame(weight_rows), width="stretch", hide_index=True)
+    st.markdown(_bc_df_html(pd.DataFrame(weight_rows)), unsafe_allow_html=True)
     if st.button("Force Recalculate Weights"):
         for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
             compute_optimized_weights(sp)
@@ -23949,7 +23958,7 @@ with tabs[9]:
     tier_stats_s = compute_tier_stats(st.session_state.get("history", []))
     if tier_stats_s:
         sem_df = pd.DataFrame([{"Tier": tier, "Bets": s["n"], "Hit Rate": f"{s['hit_rate']:.1%}", "Predicted": f"{s['avg_predicted']:.1%}", "SEM": f"\u00b1{s['sem']:.3f}" if s['sem'] else "\u2014"} for tier, s in tier_stats_s.items()])
-        st.dataframe(sem_df, width="stretch")
+        st.markdown(_bc_df_html(sem_df), unsafe_allow_html=True)
     else:
         st.info("No calibration data yet.")
     st.markdown("---")
@@ -23982,7 +23991,7 @@ with tabs[9]:
         _cols[0].metric("Total Sources", len(_timing_rows))
         _cols[1].metric("Slowest", f"{max(r['Time (s)'] for r in _timing_rows):.1f}s")
         _cols[2].metric("Wall Time (parallel)", f"{max(r['Time (s)'] for r in _timing_rows):.1f}s")
-        st.dataframe(pd.DataFrame(_timing_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_timing_rows)), unsafe_allow_html=True)
         if st.button("Clear Timing Data", key="clear_timings"):
             st.session_state["fetch_timings"] = {}
             st.rerun()
@@ -24011,7 +24020,7 @@ with tabs[9]:
     if _mem_rows:
         _total_kb = sum(r["Size (KB)"] for r in _mem_rows)
         st.metric("Total tracked memory", f"{_total_kb:.1f} KB")
-        st.dataframe(pd.DataFrame(_mem_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_mem_rows)), unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### 💾 Gist Write Status")
     _dirty = st.session_state.get("gist_dirty", {})
@@ -24027,7 +24036,7 @@ with tabs[9]:
     if _last_writes:
         _write_rows = [{"Type": k, "Last Write": time.strftime("%H:%M:%S", time.localtime(v))}
                        for k, v in _last_writes.items()]
-        st.dataframe(pd.DataFrame(_write_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_write_rows)), unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### 📡 API Control Panel")
     st.caption("Live status of every data source. Hit Refresh to ping all APIs.")
