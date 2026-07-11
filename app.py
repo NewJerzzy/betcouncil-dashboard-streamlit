@@ -9089,7 +9089,7 @@ def generate_gem_summary():
     lines.append(f"Date: {today}")
     lines.append(f"Scanned: {scan_time}")
     lines.append("")
-    history = st.session_state.get("history", [])
+    history = get_calibration_source_records()
     tier_stats = compute_tier_stats(history)
     if tier_stats:
         lines.append("=== SEM CALIBRATION ===")
@@ -9098,7 +9098,7 @@ def generate_gem_summary():
                 lines.append(f"{tier}: {stats['hit_rate']:.1%} hit rate ({stats['n']} bets) | Predicted: {stats['avg_predicted']:.1%} | Error: {stats['calibration_error']:+.3f}")
         lines.append("")
     # Add calibration summary to gem brief
-    _cal_summary_gem = get_calibration_summary(st.session_state.get("history", []))
+    _cal_summary_gem = get_calibration_summary(history)
     lines.append(f"Calibration: {_cal_summary_gem}")
     # Add signal correlation warnings to gem brief
     _gem_perf = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
@@ -13452,7 +13452,7 @@ def load_sport_data(sport):
             existing = game_sharp_flags.get(matchup, {})
             game_sharp_flags[matchup] = {**existing, "steam": True, "steam_signal": move.get("signal", ""), "steam_direction": move.get("direction", "")}
     st.session_state["game_sharp_flags"] = game_sharp_flags
-    history = load_json_data(HISTORY_PATH, [])
+    history = get_calibration_source_records()
     tier_stats = compute_tier_stats(history)
     # ── OVER-only prop normalization ──────────────────────────────────────
     # Fix any props where data source set Side=UNDER for markets that
