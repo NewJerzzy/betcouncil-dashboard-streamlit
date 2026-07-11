@@ -15850,7 +15850,9 @@ def fetch_covers_from_gist(sport: str) -> tuple:
 
 
 def fetch_draftkings_props_from_gist(sport: str) -> tuple:
-    """PRIMARY: DK props from browser harvester. SECONDARY: existing scraper."""
+    """PRIMARY: DK props from browser harvester.
+    SECONDARY: LineStar GetPropBets Source=1 (server-side, no auth, no Tampermonkey).
+    TERTIARY: Python scraper fallback."""
     data = _read_gist_file(f"betcouncil_dk_props_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=22):
         raw = data.get("data",{})
@@ -15859,12 +15861,58 @@ def fetch_draftkings_props_from_gist(sport: str) -> tuple:
             if props:
                 print(f"[DraftKings] PRIMARY: {len(props)} props from browser harvester")
                 return props, "browser_harvester"
+    # SECONDARY: LineStar GetPropBets contains DraftKings prop lines (Source=1) — fully
+    # server-side, no browser harvester or tokens needed. Provides equivalent prop lines.
+    ls_props = _read_gist_file(f"betcouncil_linestar_props_{sport}.json", cache_minutes=5)
+    if ls_props and _is_fresh(ls_props, max_age_minutes=70):
+        props = _parse_linestar_as_dk_props(ls_props.get("data", {}), sport)
+        if props:
+            print(f"[DraftKings] SECONDARY: {len(props)} props from LineStar GetPropBets")
+            return props, "linestar_fallback"
     try:
         from fetchers import fetch_draftkings_props as _fdk
         s = _fdk(sport)
         if s: return s, "scraper_fallback"
     except Exception: pass
     return [], "unavailable"
+
+
+def _parse_linestar_as_dk_props(pb_data: dict, sport: str) -> list:
+    """Convert LineStar GetPropBets response (Source=1=DraftKings) into standard prop format.
+    Output matches the shape produced by _parse_dk_harvested() so downstream code is unchanged."""
+    results = []
+    try:
+        # Build lookup dicts from integer IDs
+        bet_types = {b["Id"]: b["StatName"] for b in pb_data.get("BetTypes", [])}
+        players   = {p["Id"]: p["Name"]    for p in pb_data.get("Players", [])}
+        books     = {b["Source"]: b["Name"] for b in pb_data.get("SportsBooks", [])}
+        for prop in pb_data.get("PropBets", []):
+            if prop.get("Source") != 1:
+                continue  # DraftKings only
+            pid  = prop.get("PlayerId")
+            name = players.get(pid, "")
+            if not name:
+                continue
+            stat = bet_types.get(prop.get("StatId"), "")
+            line = prop.get("OverUnderValue")
+            if line is None:
+                continue
+            over_odds  = prop.get("OverOdds")
+            under_odds = prop.get("UnderOdds")
+            results.append({
+                "Player":    name,
+                "Prop":      stat,
+                "Line":      float(line),
+                "OverOdds":  str(over_odds)  if over_odds  is not None else "N/A",
+                "UnderOdds": str(under_odds) if under_odds is not None else "N/A",
+                "Book":      "DraftKings",
+                "Sport":     sport,
+                "source":    "linestar_fallback",
+                "ls_proj":   prop.get("LineStarStatProj"),
+            })
+    except Exception as e:
+        print(f"[WARN] _parse_linestar_as_dk_props: {e}")
+    return results
 
 
 def _parse_dk_harvested(raw: dict, sport: str) -> list:

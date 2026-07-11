@@ -20918,127 +20918,48 @@ with tabs[4]:
         }});
 
         // ── 30. BaseballPress MLB lineups (every 15 min, MLB only) ───────────
-        if(sport==='MLB'){{
-            throttled('baseballpress',900000,function(){{
-                fetch('https://www.baseballpress.com/lineups',{{headers:{{'Accept':'application/json, text/html','Referer':'https://www.baseballpress.com/'}}}}).then(function(r){{return r.text();}}).then(function(html){{
-                    // Extract lineup JSON from page
-                    var lbr="\x7B",rbr="\x7D";var reLP=new RegExp("window\\\\.__LINEUPS__\\\\s*=\\\\s*("+"\\\\"+lbr+"[^]*?"+"\\\\"+rbr+")","s");var match=html.match(reLP);
-                    var data=match?JSON.parse(match[1]):{{raw:html.substring(0,5000)}};
-                    pushGist('betcouncil_baseballpress.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                }}).catch(function(e){{console.log('[BetCouncil] BaseballPress error:',e.message);}});
-            }});
-        }}
-
-        // ── 31. BettingPros expert consensus (every 20 min) ──────────────────
-        var bpMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
-        var bpSport=bpMap[sport];
-        if(bpSport){{
-            throttled('bettingpros_'+sport,1200000,function(){{
-                fetch('https://www.bettingpros.com/api/v3/picks/?sport='+bpSport+'&market=game&page_size=50',{{headers:{{'Accept':'application/json','Referer':'https://www.bettingpros.com/','X-APP-CLIENT':'web'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bettingpros_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BettingPros error:',e.message);}});
-            }});
-        }}
-
-        // ── 32. Stokastic DFS projections + ownership (every 30 min) ─────────
-        var stoMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
-        var stoSport=stoMap[sport];
-        if(stoSport){{
-            throttled('stokastic_'+sport,1800000,function(){{
-                fetch('https://stokastic.com/api/projections/'+stoSport+'?slate=main&site=dk',{{headers:{{'Accept':'application/json','Referer':'https://stokastic.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_stokastic_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Stokastic error:',e.message);}});
-            }});
-        }}
-
-        // ── 33. RotoGrinders ownership projections (every 30 min) ────────────
-        var rgMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
-        var rgSport=rgMap[sport];
-        if(rgSport){{
-            throttled('rotogrinders_'+sport,1800000,function(){{
-                fetch('https://rotogrinders.com/api/lineups/'+rgSport+'?site=fanduel&type=classic',{{headers:{{'Accept':'application/json','Referer':'https://rotogrinders.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_rotogrinders_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] RotoGrinders error:',e.message);}});
-            }});
-        }}
-
-        // ── 34. OddsPortal historical odds archive (every 60 min) ────────────
-        var opMap={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'hockey','SOCCER':'soccer'}};
-        var opSport=opMap[sport];
-        if(opSport){{
-            throttled('oddsportal_'+sport,3600000,function(){{
-                fetch('https://www.oddsportal.com/api/v1/events/'+opSport+'/today',{{headers:{{'Accept':'application/json','Referer':'https://www.oddsportal.com/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_oddsportal_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] OddsPortal error:',e.message);}});
-            }});
-        }}
-
-        // ── 35. Outlier.bet +EV finder (every 20 min) ────────────────────────
-        throttled('outlier_'+sport,1200000,function(){{
-            fetch('https://outlier.bet/api/opportunities?sport='+sport.toLowerCase()+'&min_ev=0.02',{{headers:{{'Accept':'application/json','Referer':'https://outlier.bet/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_outlier_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Outlier error:',e.message);}});
-        }});
-
-        // ── 36. Smarkets exchange odds (every 25 min) ────────────────────────
-        var smMap={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'ice-hockey','SOCCER':'football'}};
-        var smSport=smMap[sport];
-        if(smSport){{
-            throttled('smarkets_'+sport,1500000,function(){{
-                fetch('https://api.smarkets.com/v3/events/?state=upcoming&type=sport_event&sport='+smSport+'&limit=20',{{headers:{{'Accept':'application/json','Referer':'https://smarkets.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_smarkets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Smarkets error:',e.message);}});
-            }});
-        }}
-
-        // ── 37. Pickwise prop picks + projections (every 20 min) ─────────────
-        throttled('pickwise_'+sport,1200000,function(){{
-            fetch('https://www.pickwise.com/api/picks?sport='+sport.toLowerCase()+'&type=props&limit=50',{{headers:{{'Accept':'application/json','Referer':'https://www.pickwise.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pickwise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Pickwise error:',e.message);}});
-        }});
-
-        // ── 38. NFL Weather / Baseball weather (every 60 min) ────────────────
-        if(sport==='NFL'){{
-            throttled('nflweather',3600000,function(){{
-                fetch('https://www.nflweather.com/api/week-weather',{{headers:{{'Accept':'application/json','Referer':'https://www.nflweather.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_weather_NFL.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] NFLWeather error:',e.message);}});
-            }});
-        }}
-        if(sport==='MLB'){{
-            // BUG FIX (2026-07): old MLB weather harvester called OpenWeatherMap
-            // with appid=demo (not a real key -- always 401'd) and hardcoded
-            // city=Chicago regardless of which games were on the slate. That's
-            // why betcouncil_weather_MLB.json sat at 219 bytes / effectively
-            // empty. Replaced with LineStar's public GetFastUpdateV2 endpoint,
-            // which returns real per-game wind/rain/dome/humidity/temp for
-            // every game on today's MLB slate, no login required.
-            throttled('mlbweather_linestar',3600000,function(){{
-                // Fetch PeriodId from LineStar page, then fire GetFastUpdateV2 +
-                // GetPropBets + GetSalariesV5 in parallel. GetFastUpdateV2 has
-                // per-game weather (wind/rain/dome/temp) but AwayTeamAbrev/HomeTeamAbrev
-                // are null -- we enrich via PropBets Teams[].{{Id,Abbreviation}} cross-
-                // referenced by AwayTeamId/HomeTeamId. Confirmed schema 2026-07.
-                fetch('https://www.linestarapp.com/Projections/Sport/MLB/Site/DraftKings/',{{headers:{{'Accept':'text/html','X-Requested-With':'XMLHttpRequest'}}}})
+        // LineStar: GetFastUpdateV2 (weather+Vegas lines) + GetPropBets (cross-book props incl
+        // DraftKings Source=1, server-side, no auth) + GetSalariesV5 (Ceil/Floor/Conf/wOBA/wRC+).
+        // Sport IDs confirmed 2026-07: NFL=1, NBA=2, MLB=3, NHL=6, WNBA=12.
+        // PeriodId changes daily per sport -- fetched live from each sport page.
+        // DK props via LineStar serve as automatic server-side fallback when browser harvester
+        // hasn't run (Tampermonkey tab not open), eliminating the Tampermonkey dependency for
+        // DK prop lines. Weather pushed for all sports (dome flag useful for WNBA/NBA/NHL too).
+        var lsSportMap = {{'MLB':{{'id':3,'path':'MLB'}},'WNBA':{{'id':12,'path':'WNBA'}},'NFL':{{'id':1,'path':'NFL'}},'NBA':{{'id':2,'path':'NBA'}},'NHL':{{'id':6,'path':'NHL'}}}};
+        var lsCfg = lsSportMap[sport];
+        if(lsCfg){{
+            throttled('linestar_'+sport,3600000,function(){{
+                var lsPath=lsCfg.path; var lsId=lsCfg.id;
+                fetch('https://www.linestarapp.com/Projections/Sport/'+lsPath+'/Site/DraftKings/',{{headers:{{'Accept':'text/html','X-Requested-With':'XMLHttpRequest'}}}})
                     .then(function(r){{return r.text();}})
                     .then(function(html){{
-                        var m = html.match(/LineStar\\.PeriodId\\s*=\\s*(\\d+)/);
-                        if(!m){{ console.log('[BetCouncil] LineStar: could not find PeriodId'); return; }}
-                        var periodId = m[1];
-                        var base = 'https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/';
-                        var hdr = {{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.linestarapp.com/Projections'}};
-                        // GetFastUpdateV2 (weather + live projections) and GetPropBets (cross-book lines + Teams array)
+                        var m=html.match(/LineStar\.PeriodId\s*=\s*(\d+)/);
+                        if(!m){{console.log('[BetCouncil] LineStar '+lsPath+': no PeriodId');return;}}
+                        var periodId=m[1];
+                        var base='https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/';
+                        var hdr={{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.linestarapp.com/Projections'}};
+                        // GetFastUpdateV2 (weather + Vegas lines) and GetPropBets (cross-book props)
+                        // NOTE: AwayTeamAbrev/HomeTeamAbrev are null -- enrich via PropBets Teams[]
                         Promise.all([
-                            fetch(base+'GetFastUpdateV2?Sport=3&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
-                            fetch(base+'GetPropBets?Sport=3&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
+                            fetch(base+'GetFastUpdateV2?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
+                            fetch(base+'GetPropBets?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
                         ]).then(function(results){{
-                            var fu = results[0]; var pb = results[1];
-                            // Build TeamId -> Abbreviation map from PropBets Teams array
-                            var teamMap = {{}};
-                            (pb.Teams||[]).forEach(function(t){{ teamMap[t.Id] = t.Abbreviation; }});
-                            // Enrich FastUpdate games with team abbreviations
-                            var games = (fu.Games||[]).map(function(g){{
-                                return Object.assign({{}},g,{{
-                                    _AwayAbbr: teamMap[g.AwayTeamId]||null,
-                                    _HomeAbbr: teamMap[g.HomeTeamId]||null
-                                }});
+                            var fu=results[0];var pb=results[1];
+                            var teamMap={{}};
+                            (pb.Teams||[]).forEach(function(t){{teamMap[t.Id]=t.Abbreviation;}});
+                            var games=(fu.Games||[]).map(function(g){{
+                                return Object.assign({{}},g,{{_AwayAbbr:teamMap[g.AwayTeamId]||null,_HomeAbbr:teamMap[g.HomeTeamId]||null}});
                             }});
-                            var enriched = Object.assign({{}},fu,{{Games:games,TeamMap:teamMap}});
-                            pushGist('betcouncil_weather_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:enriched,source:'linestar_auto_harvest'}});
-                            pushGist('betcouncil_linestar_props_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:pb,source:'linestar_auto_harvest'}});
-                        }}).catch(function(e){{console.log('[BetCouncil] LineStar weather/props error:',e.message);}});
-                        // GetSalariesV5: full player projection table with Ceil/Floor/Conf/wOBA/ISO/wRC+
-                        fetch(base+'GetSalariesV5?Sport=3&Site=1&PeriodId='+periodId,{{headers:hdr}})
+                            pushGist('betcouncil_weather_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:Object.assign({{}},fu,{{Games:games,TeamMap:teamMap}}),source:'linestar_auto_harvest'}});
+                            pushGist('betcouncil_linestar_props_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:pb,source:'linestar_auto_harvest'}});
+                        }}).catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' weather/props error:',e.message);}});
+                        // GetSalariesV5: Ceil/Floor/Conf/wOBA/ISO/wRC+/HR-PA per player
+                        fetch(base+'GetSalariesV5?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}})
                             .then(function(r){{return r.json();}})
-                            .then(function(data){{pushGist('betcouncil_linestar_salaries_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
-                            .catch(function(e){{console.log('[BetCouncil] LineStar GetSalariesV5 error:',e.message);}});
+                            .then(function(data){{pushGist('betcouncil_linestar_salaries_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
+                            .catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' GetSalariesV5 error:',e.message);}});
                     }})
-                    .catch(function(e){{console.log('[BetCouncil] LineStar PeriodId fetch error:',e.message);}});
+                    .catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' PeriodId error:',e.message);}});
             }});
         }}
 
