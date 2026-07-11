@@ -22877,6 +22877,23 @@ with tabs[8]:
                 _ls_add([_op2], _bk3)
         _ls_add(st.session_state.get("sleeper_props_cache", []), "Sleeper")
 
+        # ── LineStar GetPropBets — cross-book snapshot, all books it covers ──
+        # Labeled "<Book> (LineStar)" rather than merged into the existing
+        # book column: this is a lower-frequency snapshot (hourly, from the
+        # browser harvester) than the dedicated per-book sources above, and
+        # using the same column name would let it silently overwrite a
+        # fresher direct-from-book line depending on call order. Keeping it
+        # as its own column makes it a genuine second opinion instead.
+        _ls_raw_props = st.session_state.get("linestar_props_data", {})
+        if _ls_raw_props:
+            try:
+                from fetchers import parse_linestar_props_all_books as _parse_ls_books
+                _ls_by_book = _parse_ls_books(_ls_raw_props, _sport_ls)
+                for _ls_book, _ls_plist in _ls_by_book.items():
+                    _ls_add(_ls_plist, f"{_ls_book} (LineStar)")
+            except Exception:
+                pass
+
         # ── EV Sharps API — Hard Rock + 20 books live data ──────────────────
         _ev_raw = fetch_ev_api_live()
         _ev_all_props = []
@@ -22977,7 +22994,14 @@ with tabs[8]:
             # made the whole page look broken even on a normal night. Real
             # gaps are now visible in the System tab's Fetch Health panel
             # instead of as permanent "0 ❌" tiles here.
-            active_sources = [b for b in BOOK_ORDER if b != "ParlayPlay"]
+            # BUG FIX (2026-07): active_sources was hardcoded to BOOK_ORDER only,
+            # so any book discovered dynamically at runtime -- EV Sharps' 20+
+            # books, and now LineStar's "<Book> (LineStar)" columns -- got
+            # computed into row[bk] above but was never actually rendered,
+            # since _visible_books filtered strictly to BOOK_ORDER. all_books_ls
+            # already contains BOOK_ORDER plus every book actually seen this
+            # session, so use that instead.
+            active_sources = [b for b in all_books_ls if b != "ParlayPlay"]
             _book_counts = {b: sum(1 for r in rows_ls if r.get(b) not in ("—", None, "")) for b in active_sources}
             _visible_books = [b for b in active_sources if _book_counts[b] > 0]
 

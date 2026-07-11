@@ -15915,6 +15915,50 @@ def _parse_linestar_as_dk_props(pb_data: dict, sport: str) -> list:
     return results
 
 
+# Best-effort LineStar StatName -> BetCouncil canonical Prop name. Matching
+# against board_data's Prop strings is exact-string, so anything not mapped
+# here just won't line up with a board row (safe no-op, not a wrong value).
+# Confirm/extend this against a real captured payload as books show gaps.
+_LS_STAT_NAME_MAP = {
+    "hits": "Hits", "total bases": "Total Bases", "home runs": "Home Runs", "hr": "Home Runs",
+    "rbis": "RBI", "rbi": "RBI", "runs": "Runs", "singles": "Singles", "doubles": "Doubles",
+    "triples": "Triples", "stolen bases": "Stolen Bases", "walks": "Walks",
+    "pitcher strikeouts": "Pitcher Strikeouts", "strikeouts": "Pitcher Strikeouts",
+    "walks allowed": "Walks Allowed", "outs recorded": "Outs Recorded",
+    "earned runs allowed": "Earned Runs Allowed", "hits allowed": "Hits Allowed",
+}
+
+def parse_linestar_props_all_books(pb_data: dict, sport: str) -> dict:
+    """Convert LineStar GetPropBets into {book_name: [{"Player","Prop","Line",...}]}
+    for every book in the payload (not just DraftKings — see _parse_linestar_as_dk_props
+    for the DK-only fallback used elsewhere). Intended for the Line Shop tab, where each
+    book's list gets fed into _ls_add() under a "<Book> (LineStar)" source label so it
+    never overwrites lines already harvested directly from that book.
+    """
+    out = {}
+    try:
+        bet_types = {b["Id"]: b["StatName"] for b in pb_data.get("BetTypes", [])}
+        players   = {p["Id"]: p["Name"]    for p in pb_data.get("Players", [])}
+        books     = {b["Source"]: b["Name"] for b in pb_data.get("SportsBooks", [])}
+        for prop in pb_data.get("PropBets", []):
+            pid  = prop.get("PlayerId")
+            name = players.get(pid, "")
+            book = books.get(prop.get("Source"))
+            line = prop.get("OverUnderValue")
+            if not name or not book or line is None:
+                continue
+            raw_stat = bet_types.get(prop.get("StatId"), "")
+            stat = _LS_STAT_NAME_MAP.get(str(raw_stat).strip().lower(), raw_stat)
+            out.setdefault(book, []).append({
+                "Player": name, "Prop": stat, "Line": float(line),
+                "OverOdds": prop.get("OverOdds"), "UnderOdds": prop.get("UnderOdds"),
+                "ls_proj": prop.get("LineStarStatProj"),
+            })
+    except Exception as e:
+        print(f"[WARN] parse_linestar_props_all_books: {e}")
+    return out
+
+
 def _parse_dk_harvested(raw: dict, sport: str) -> list:
     """Parse DraftKings category API response into prop format."""
     results = []
