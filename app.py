@@ -18618,17 +18618,21 @@ with tabs[2]:
             st.caption("Line movement loads with the board. If empty, ESPN odds data wasn't available for this game.")
 
         # ── Public vs Money Row ─────────────────────────────────
-        # Shows public betting % vs money % from Action Network
-        # + Covers consensus if available
+        # Sources: Action Network (public tickets % vs money %), Covers
+        # (public pick %), Kalshi + Polymarket (prediction-market implied
+        # probability), Pinnacle + VSIN (sharp-book signal, already computed
+        # earlier for the header badges — surfaced here too now instead of
+        # only in the compact pill).
         _pub_data = _g.get("public_data", {})
         _cov_data = st.session_state.get("covers_consensus", [])
+        _home_nm, _away_nm = _g.get("home", ""), _g.get("away", "")
 
         # Match Covers data to this game
         _cov_game = None
         if isinstance(_cov_data, dict):
             for _cd_matchup, _cd_val in _cov_data.items():
                 _cd_matchup_l = _cd_matchup.lower()
-                if any(t.lower() in _cd_matchup_l for t in [_g.get("home",""), _g.get("away","")] if t):
+                if any(t.lower() in _cd_matchup_l for t in [_home_nm, _away_nm] if t):
                     _cd_away, _, _cd_home = _cd_matchup.partition(" @ ")
                     _cd_away_pct = _cd_val.get("away_pct", 50)
                     _cd_home_pct = _cd_val.get("home_pct", 50)
@@ -18638,9 +18642,29 @@ with tabs[2]:
                         _cov_game = {"matchup": _cd_matchup, "public_pct": _cd_away_pct, "side": _cd_away, **_cd_val}
                     break
 
-        _has_pub = (_pub_data and any(
-            _pub_data.get(k) for k in ["ml_pcts","spread_pcts","total_pcts"]
-        )) or _cov_game
+        # Match Kalshi/Polymarket markets to this game by team-name presence
+        # in the market title/event text (same matching pattern as Covers).
+        def _match_prediction_market(markets, home, away):
+            if not markets or not (home or away):
+                return None
+            for m in markets:
+                text = f"{m.get('title','')} {m.get('event','')}".lower()
+                if (home and home.lower() in text) or (away and away.lower() in text):
+                    return m
+            return None
+
+        _kal_game  = _match_prediction_market(st.session_state.get("kalshi_markets", []), _home_nm, _away_nm)
+        _poly_game = _match_prediction_market(st.session_state.get("polymarket_markets", []), _home_nm, _away_nm)
+
+        # Pinnacle/VSIN sharp signals already computed per-game for the
+        # header badges — pull the same objects in here.
+        _pin_sig  = next((r.get("pinnacle_sharp") for r in _g.get("recommendations", []) if r.get("pinnacle_sharp")), None)
+        _vsin_sig = next((r.get("vsin_sharp") for r in _g.get("recommendations", []) if r.get("vsin_sharp")), None)
+
+        _has_pub = bool(
+            (_pub_data and any(_pub_data.get(k) for k in ["ml_pcts", "spread_pcts", "total_pcts"]))
+            or _cov_game or _kal_game or _poly_game or _pin_sig or _vsin_sig
+        )
 
         if _has_pub:
             with st.expander("📊 Public vs Money", expanded=False):
@@ -18676,14 +18700,27 @@ with tabs[2]:
                     else:
                         st.caption("No data")
 
-                # Spread public vs money
+                    # Additional sources beyond Action Network — shown
+                    # whenever present, not just as a fallback for "No data".
+                    if _kal_game:
+                        st.caption(f"🔷 Kalshi: {_kal_game.get('implied_prob',0.5):.0%} implied ({_kal_game.get('title','')[:40]})")
+                    if _poly_game:
+                        st.caption(f"🟣 Polymarket: {_poly_game.get('implied_prob',0.5):.0%} implied ({_poly_game.get('title','')[:40]})")
+                    if _pin_sig and _pin_sig.get("note"):
+                        st.caption(f"📌 Pinnacle: {_pin_sig['note']}")
+                    if _vsin_sig and _vsin_sig.get("note"):
+                        st.caption(f"🎰 VSIN (Nevada): {_vsin_sig['note']}")
                 _sp_pcts = _pub_data.get("spread_pcts", {}) if _pub_data else {}
                 with _pcol2:
                     st.markdown("**Spread**")
                     if _sp_pcts:
                         for _side, _sd in _sp_pcts.items():
                             st.caption(f"{_side}: 🎟️ {_sd.get('tickets',0)}% | 💰 {_sd.get('money',0)}%")
-                    else:
+                    if _pin_sig and _pin_sig.get("note"):
+                        st.caption(f"📌 Pinnacle: {_pin_sig['note']}")
+                    if _vsin_sig and _vsin_sig.get("note"):
+                        st.caption(f"🎰 VSIN (Nevada): {_vsin_sig['note']}")
+                    if not _sp_pcts and not _pin_sig and not _vsin_sig:
                         st.caption("No data")
 
                 # Total public vs money + Covers
@@ -18711,7 +18748,11 @@ with tabs[2]:
                             )
                         elif _pct >= 60:
                             st.caption(f"📊 Mild public lean ({_pct}% on {_fav}) — not extreme enough to fade.")
-                    if not _tot_pcts and not _cov_game:
+                    if _kal_game and "total" in (_kal_game.get("title","") + _kal_game.get("event","")).lower():
+                        st.caption(f"🔷 Kalshi total: {_kal_game.get('implied_prob',0.5):.0%} implied")
+                    if _poly_game and "total" in (_poly_game.get("title","") + _poly_game.get("event","")).lower():
+                        st.caption(f"🟣 Polymarket total: {_poly_game.get('implied_prob',0.5):.0%} implied")
+                    if not _tot_pcts and not _cov_game and not _kal_game and not _poly_game:
                         st.caption("No data")
     else:
         st.info("No games found. Load the board first.")
