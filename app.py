@@ -20918,66 +20918,13 @@ with tabs[4]:
         }});
 
         // ── 30. BaseballPress MLB lineups (every 15 min, MLB only) ───────────
-        // LineStar: GetFastUpdateV2 (weather+Vegas lines) + GetPropBets (cross-book props incl
-        // DraftKings Source=1, server-side, no auth) + GetSalariesV5 (Ceil/Floor/Conf/wOBA/wRC+).
-        // Sport IDs confirmed 2026-07: NFL=1, NBA=2, MLB=3, NHL=6, WNBA=12.
-        // PeriodId changes daily per sport -- fetched live from each sport page.
-        // DK props via LineStar serve as automatic server-side fallback when browser harvester
-        // hasn't run (Tampermonkey tab not open), eliminating the Tampermonkey dependency for
-        // DK prop lines. Weather pushed for all sports (dome flag useful for WNBA/NBA/NHL too).
-        //
-        // TeamMap coverage fix (2026-07): PropBets.Teams[] only contains teams with active props
-        // that day (~10 of 30 MLB teams). SalariesV5.SalaryContainerJson.Salaries[].HTID/HTEAM
-        // and OTID/OTEAM cover every team on the DFS slate. We merge both sources so weather
-        // matching works for all slate games, not just prop-heavy teams.
-        //
-        // WindDirection schema fix (2026-07): live payloads show value 8 (undocumented) in
-        // addition to the expected 0-7 range. Server-side code uses a safe .get() fallback.
-        var lsSportMap = {{'MLB':{{'id':3,'path':'MLB'}},'WNBA':{{'id':12,'path':'WNBA'}},'NFL':{{'id':1,'path':'NFL'}},'NBA':{{'id':2,'path':'NBA'}},'NHL':{{'id':6,'path':'NHL'}}}};
-        var lsCfg = lsSportMap[sport];
-        if(lsCfg){{
-            throttled('linestar_'+sport,3600000,function(){{
-                var lsPath=lsCfg.path; var lsId=lsCfg.id;
-                fetch('https://www.linestarapp.com/Projections/Sport/'+lsPath+'/Site/DraftKings/',{{headers:{{'Accept':'text/html','X-Requested-With':'XMLHttpRequest'}}}})
-                    .then(function(r){{return r.text();}})
-                    .then(function(html){{
-                        var m=html.match(/LineStar\.PeriodId\s*=\s*(\d+)/);
-                        if(!m){{console.log('[BetCouncil] LineStar '+lsPath+': no PeriodId');return;}}
-                        var periodId=m[1];
-                        var base='https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/';
-                        var hdr={{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.linestarapp.com/Projections'}};
-                        // Fetch all three in parallel so we can cross-reference for TeamMap
-                        // before pushing any Gist file. All endpoints confirmed no-auth 2026-07.
-                        Promise.all([
-                            fetch(base+'GetFastUpdateV2?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
-                            fetch(base+'GetPropBets?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
-                            fetch(base+'GetSalariesV5?Sport='+lsId+'&Site=1&PeriodId='+periodId,{{headers:hdr}}).then(function(r){{return r.json();}}),
-                        ]).then(function(results){{
-                            var fu=results[0];var pb=results[1];var sv=results[2];
-                            // Build TeamMap from PropBets.Teams[] (teams with active props only)
-                            // PLUS SalariesV5 HTID/HTEAM + OTID/OTEAM (all DFS-slate teams).
-                            // Confirmed 2026-07: PropBets.Teams[] has 10/30 MLB teams;
-                            // SalariesV5 salaries cover 19/30 — union covers all slate games.
-                            var teamMap={{}};
-                            (pb.Teams||[]).forEach(function(t){{teamMap[t.Id]=t.Abbreviation;}});
-                            try{{
-                                var sc=JSON.parse(sv.SalaryContainerJson||'{{}}');
-                                (sc.Salaries||[]).forEach(function(s){{
-                                    if(s.HTID&&s.HTEAM) teamMap[s.HTID]=s.HTEAM;
-                                    if(s.OTID&&s.OTEAM) teamMap[s.OTID]=s.OTEAM;
-                                }});
-                            }}catch(e){{console.log('[BetCouncil] LineStar SalariesV5 teamMap parse error:',e.message);}}
-                            var games=(fu.Games||[]).map(function(g){{
-                                return Object.assign({{}},g,{{_AwayAbbr:teamMap[g.AwayTeamId]||null,_HomeAbbr:teamMap[g.HomeTeamId]||null}});
-                            }});
-                            pushGist('betcouncil_weather_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:Object.assign({{}},fu,{{Games:games,TeamMap:teamMap}}),source:'linestar_auto_harvest'}});
-                            pushGist('betcouncil_linestar_props_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:pb,source:'linestar_auto_harvest'}});
-                            pushGist('betcouncil_linestar_salaries_'+sport+'.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:sv,source:'linestar_auto_harvest'}});
-                        }}).catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' error:',e.message);}});
-                    }})
-                    .catch(function(e){{console.log('[BetCouncil] LineStar '+sport+' PeriodId error:',e.message);}});
-            }});
-        }}
+        // NOTE (2026-07): LineStar (GetFastUpdateV2/GetPropBets/GetSalariesV5)
+        // used to run here as an in-browser Tampermonkey harvester. It's now
+        // handled server-side by the "LineStar Data Refresh" GitHub Actions
+        // workflow (.github/workflows/linestar_refresh.yml, hourly cron,
+        // scripts/linestar_harvester.py) which pushes the same three Gist
+        // files per sport with no browser/session dependency at all. Removed
+        // the duplicate browser-side version rather than run both.
 
         // ── 39. Scores and Odds betting % (every 15 min) ─────────────────────
         var soMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
@@ -22398,6 +22345,47 @@ with tabs[6]:
                             f'</div>',
                             unsafe_allow_html=True
                         )
+
+            # ── LineStar Projection (2026-07) ─────────────────────────────
+            # GetSalariesV5 (Ceil/Floor/Conf/wOBA/ISO/wRC+) + GetPropBets
+            # (cross-book lines), both harvested hourly server-side via
+            # linestar_refresh.yml -- no browser/session needed. Silent no-op
+            # if the sport isn't one LineStar covers today or the player
+            # isn't found (e.g. not rostered / no salary today), rather than
+            # showing an empty/broken section.
+            _ls_sal_data, _ = fetch_linestar_salaries_from_gist(_pl_sport_used)
+            _ls_row = get_linestar_player_salary_row(_ls_sal_data, pl_name_d) if _ls_sal_data else None
+            _ls_props_data, _ = fetch_linestar_props_from_gist(_pl_sport_used)
+            _ls_book_lines = get_linestar_prop_lines(_ls_props_data, pl_name_d) if _ls_props_data else {}
+
+            if _ls_row or _ls_book_lines:
+                st.markdown("#### 🎯 LineStar Projection")
+                if _ls_row:
+                    ls_cols = st.columns(5)
+                    ls_cols[0].metric("Salary", f"${_ls_row['salary']:,}" if _ls_row.get("salary") else "—")
+                    ls_cols[1].metric("Projection", _ls_row.get("proj", "—"))
+                    ls_cols[2].metric("Ceiling", _ls_row.get("ceil", "—"))
+                    ls_cols[3].metric("Floor", _ls_row.get("floor", "—"))
+                    _conf = _ls_row.get("conf")
+                    ls_cols[4].metric("Confidence", f"{_conf}%" if _conf is not None else "—")
+                    _splits = _ls_row.get("matchup_splits")
+                    if _splits:
+                        st.caption(
+                            f"Matchup splits ({_ls_row.get('matchup_section','')}): "
+                            + " · ".join(f"{k} {v}" for k, v in _splits.items() if v is not None)
+                        )
+                if _ls_book_lines:
+                    _ls_rows = []
+                    for _book, _stats in _ls_book_lines.items():
+                        for _stat, _sv in _stats.items():
+                            _ls_rows.append({
+                                "Book": _book, "Stat": _stat, "Line": _sv.get("line"),
+                                "Over": _sv.get("over_odds"), "Under": _sv.get("under_odds"),
+                                "LS Proj": _sv.get("ls_proj"),
+                            })
+                    if _ls_rows:
+                        st.markdown("###### Cross-book lines (LineStar)")
+                        st.markdown(_bc_df_html(pd.DataFrame(_ls_rows)), unsafe_allow_html=True)
 
 
 with tabs[7]:

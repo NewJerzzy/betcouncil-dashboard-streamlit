@@ -17188,15 +17188,61 @@ def fetch_linestar_salaries_from_gist(sport="MLB"):
         return data.get("data", {}), "browser_harvester"
     return {}, "unavailable"
 
+def get_linestar_player_salary_row(salaries_data, player_name):
+    """Pull one player's row from LineStar GetSalariesV5: Ceil/Floor/Conf/Salary/
+    OppRank plus matchup splits (wOBA/ISO/wRC+/HR-PA) from MatchupData, if present.
+
+    Name matching is case-insensitive exact-match first, then substring fallback,
+    since LineStar/BallsDontLie/MLB-API naming can differ slightly (suffixes,
+    accents, "Jr." etc). Returns None on no match rather than a partial/wrong row.
+    """
+    if not isinstance(salaries_data, dict) or not player_name:
+        return None
+    try:
+        sc = json.loads(salaries_data.get("SalaryContainerJson") or "{}")
+    except Exception:
+        return None
+    salaries = sc.get("Salaries") or []
+    target = player_name.strip().lower()
+    row = next((s for s in salaries if isinstance(s, dict)
+                and str(s.get("Name", "")).strip().lower() == target), None)
+    if row is None:
+        row = next((s for s in salaries if isinstance(s, dict)
+                    and target in str(s.get("Name", "")).strip().lower()), None)
+    if row is None:
+        return None
+    out = {
+        "salary": row.get("SAL"), "proj": row.get("PP"), "ceil": row.get("Ceil"),
+        "floor": row.get("Floor"), "conf": row.get("Conf"), "opp_rank": row.get("OppRank"),
+        "position": row.get("POS"), "game_info": row.get("GI"),
+        "home_team": row.get("HTEAM"), "away_team": row.get("OTEAM"), "notes": row.get("Notes"),
+    }
+    pid = row.get("PID")
+    if pid is not None:
+        _labels = ["PA", "AVG", "SB", "HR", "RBI", "ISO", "wOBA", "wOBA+ISO",
+                   "HR/PA", "HR+SB/PA", "wRC+", "FP/PA"]
+        for md in (sc.get("MatchupData") or []):
+            for pm in (md.get("PlayerMatchups") or []):
+                if pm.get("PlayerId") == pid:
+                    vals = pm.get("Values") or []
+                    out["matchup_splits"] = dict(zip(_labels, vals))
+                    out["matchup_section"] = md.get("Title") or md.get("Name")
+                    break
+            if "matchup_splits" in out:
+                break
+    return out
+
+
 def get_linestar_prop_lines(props_data, player_name):
     """Extract per-book prop lines for a player from LineStar GetPropBets data.
     Returns dict: {book_name: {stat_name: {line, over_odds, under_odds, ls_proj}}}
     Schema confirmed 2026-07: Source=int maps to SportsBooks[].Source/Name;
     StatId=int maps to BetTypes[].Id/StatName; PlayerId int maps to Players[].Id/Name.
 
-    STATUS: Available helper, not yet called by app.py. Intended for the per-player
-    prop card UI to show cross-book odds from LineStar alongside the model's recommendation.
-    Bulk DK-only extraction is handled by _parse_linestar_as_dk_props() instead.
+    STATUS: wired into the Player Lookup tab (2026-07) alongside
+    get_linestar_player_salary_row(). Bulk DK-only extraction for Line Shop
+    is handled separately by _parse_linestar_as_dk_props() /
+    parse_linestar_props_all_books().
     """
     if not isinstance(props_data, dict) or not player_name:
         return {}
@@ -17205,6 +17251,10 @@ def get_linestar_prop_lines(props_data, player_name):
     stats    = {bt["Id"]: bt["StatName"] for bt in props_data.get("BetTypes", []) if isinstance(bt, dict)}
     target   = player_name.strip().lower()
     pid      = next((pid for pid, nm in players.items() if nm.lower() == target), None)
+    if pid is None:
+        # Fallback: substring match (LineStar/BallsDontLie/MLB-API naming can
+        # differ slightly -- suffixes, accents, "Jr." etc).
+        pid = next((pid for pid, nm in players.items() if target in nm.lower()), None)
     if pid is None:
         return {}
     result = {}
