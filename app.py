@@ -20924,12 +20924,6 @@ with tabs[4]:
         // PeriodId changes daily per sport -- fetched live from each sport page.
         // DK props via LineStar serve as automatic server-side fallback when browser harvester
         // hasn't run (Tampermonkey tab not open), eliminating the Tampermonkey dependency for
-        // LineStar: GetFastUpdateV2 (weather+Vegas lines) + GetPropBets (cross-book props incl
-        // DraftKings Source=1, server-side, no auth) + GetSalariesV5 (Ceil/Floor/Conf/wOBA/wRC+).
-        // Sport IDs confirmed 2026-07: NFL=1, NBA=2, MLB=3, NHL=6, WNBA=12.
-        // PeriodId changes daily per sport -- fetched live from each sport page.
-        // DK props via LineStar serve as automatic server-side fallback when browser harvester
-        // hasn't run (Tampermonkey tab not open), eliminating the Tampermonkey dependency for
         // DK prop lines. Weather pushed for all sports (dome flag useful for WNBA/NBA/NHL too).
         //
         // TeamMap coverage fix (2026-07): PropBets.Teams[] only contains teams with active props
