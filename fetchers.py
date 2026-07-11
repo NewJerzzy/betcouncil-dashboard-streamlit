@@ -2190,10 +2190,15 @@ def fetch_fanduel_direct(sport, event_ids=None):
     FD_KEY = "FhMFpcPWXMeyZxOx"
     px_context = _get_fanduel_px_context()
     if not px_context:
-        st.warning(
-            "🔒 FanDuel PerimeterX token missing or expired — FanDuel props blocked. "
-            "Run the Playwright session harvester, or set FANDUEL_PX_CONTEXT in secrets."
-        )
+        # Downgraded from st.warning to a console log (2026-07-11): this token
+        # expires within minutes and can only come from a live browser JS
+        # challenge, so it's realistically never present — this fires on
+        # nearly every OddsPAPI-empty fallback and was pure noise with no
+        # actionable fix for the user. FanDuel props still arrive via the
+        # separate fetch_fanduel_props_from_gist browser harvester; this
+        # function is just a redundant direct-API fallback attempt, same as
+        # the other 6 books in this loop which already fail silently.
+        print("[INFO] fetch_fanduel_direct: no PerimeterX token available, skipping (props still available via Gist harvester)")
         return []
 
     state = _get_fanduel_state()
