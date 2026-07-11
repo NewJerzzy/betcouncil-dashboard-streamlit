@@ -18673,61 +18673,95 @@ with tabs[2]:
 
         if _has_pub:
             with st.expander("📊 Public vs Money", expanded=False):
-                # ── Consensus / Contradiction summary — the actual question
-                # a bettor has: do these sources agree, and if not, which
-                # side is the public on vs which side is the smart money on.
+                # ── Consensus / Contradiction summary — SPLIT BY MARKET.
+                # Previously this blended Moneyline sources (Action Network)
+                # with Covers (also a straight-up team pick, mislabeled
+                # under Total) into one combined verdict with no market
+                # label — a bettor reading "public-only signal on Tb" had
+                # no way to tell if that meant Moneyline, Spread, or Total.
+                # Each market now gets its own explicit, labeled verdict.
+                def _consensus_verdict(market_label, public_votes, sharp_votes):
+                    if not public_votes and not sharp_votes:
+                        return
+                    pub_sides = {v[1] for v in public_votes}
+                    sharp_sides = {v[1] for v in sharp_votes}
+                    st.markdown(f"**{market_label}:**")
+                    if public_votes and sharp_votes and pub_sides and sharp_sides and not (pub_sides & sharp_sides):
+                        st.markdown(f"🔥 Contradiction — public is on **{list(pub_sides)[0]}**, sharp signals point to **{list(sharp_sides)[0]}**.")
+                        st.caption(
+                            f"Public ({', '.join(v[0] for v in public_votes)}) vs sharp ({', '.join(v[0] for v in sharp_votes)}). "
+                            f"Fading the heavy public side has historically been the higher-EV lean here, but check split size first."
+                        )
+                    elif sharp_votes and len(sharp_sides) > 1:
+                        st.markdown(f"⚠️ Sharp sources disagree with each other on {market_label}.")
+                        st.caption("; ".join(f"{v[0]} → {v[1]}" for v in sharp_votes) + " — treat as noisy, not sharp-confirmed.")
+                    elif public_votes and sharp_votes:
+                        st.markdown(f"✅ Public and sharp agree on **{list(pub_sides)[0]}**.")
+                        st.caption(f"{', '.join(v[0] for v in public_votes + sharp_votes)} all point the same direction — stronger than either alone.")
+                    elif sharp_votes:
+                        st.markdown(f"📌 Sharp-only signal on **{list(sharp_sides)[0]}** — no public data to compare yet.")
+                        st.caption(f"Source: {', '.join(v[0] for v in sharp_votes)}")
+                    elif public_votes:
+                        st.markdown(f"👥 Public-only signal on **{list(pub_sides)[0]}** — no sharp confirmation yet, treat with caution.")
+                        st.caption(f"Source: {', '.join(v[0] for v in public_votes)}")
+
+                st.markdown("**🔎 What this means for a bettor, by market:**")
+
+                # -- Moneyline: Action Network tickets/money + Covers (Covers
+                # is a straight-up team pick, i.e. a Moneyline signal, not a
+                # Total signal — was previously shown under "Total/Covers").
                 _ml_pcts_top = _pub_data.get("ml_pcts", {}) if _pub_data else {}
                 _home_ml_top = _ml_pcts_top.get("home", {})
                 _away_ml_top = _ml_pcts_top.get("away", {})
-
-                _public_votes = []   # (source, side, note)
-                _sharp_votes  = []
-
+                _ml_public, _ml_sharp = [], []
                 if _home_ml_top or _away_ml_top:
                     _ht, _hm = _home_ml_top.get("tickets", 0), _home_ml_top.get("money", 0)
                     _at, _am = _away_ml_top.get("tickets", 0), _away_ml_top.get("money", 0)
                     _an_pub_side = _home_nm if _ht > _at else _away_nm
                     _an_sharp_side = _home_nm if _hm > _am else _away_nm
-                    _public_votes.append(("Action Network tickets", _an_pub_side, f"{max(_ht,_at)}% of bets"))
+                    _ml_public.append(("Action Network tickets", _an_pub_side, f"{max(_ht,_at)}% of bets"))
                     if abs(_hm - _ht) >= 10 or abs(_am - _at) >= 10:
-                        _sharp_votes.append(("Action Network money", _an_sharp_side, f"{max(_hm,_am)}% of $ vs {max(_ht,_at)}% of bets"))
+                        _ml_sharp.append(("Action Network money", _an_sharp_side, f"{max(_hm,_am)}% of $ vs {max(_ht,_at)}% of bets"))
                 if _cov_game:
-                    _public_votes.append(("Covers public picks", _cov_game.get("side", ""), f"{_cov_game.get('public_pct',50)}% of contest players"))
+                    _ml_public.append(("Covers straight-up picks", _cov_game.get("side", ""), f"{_cov_game.get('public_pct',50)}% of contest players picked them to win"))
                 if _pin_sig and _pin_sig.get("note"):
-                    (_sharp_votes if _pin_sig.get("confirms") else _public_votes).append(
+                    (_ml_sharp if _pin_sig.get("confirms") else _ml_public).append(
                         ("Pinnacle (sharp book)", "model's pick" if _pin_sig.get("confirms") else "opposite of model", _pin_sig["note"])
                     )
                 if _vsin_sig and _vsin_sig.get("note"):
-                    (_sharp_votes if _vsin_sig.get("confirms") else _public_votes).append(
+                    (_ml_sharp if _vsin_sig.get("confirms") else _ml_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig.get("confirms") else "opposite of model", _vsin_sig["note"])
                     )
-                if _steam_hits:
-                    for _sk, _sv in _steam_hits.items():
-                        _sharp_votes.append(("Steam move", f"{_sv.get('direction','')} {_sk.split('_')[0]}", f"{_sv.get('magnitude',0)} pt move in {_sv.get('elapsed_seconds',0)}s"))
+                _consensus_verdict("Moneyline", _ml_public, _ml_sharp)
 
-                if _public_votes or _sharp_votes:
-                    _pub_sides = {v[1] for v in _public_votes}
-                    _sharp_sides = {v[1] for v in _sharp_votes}
-                    st.markdown("**🔎 What this means for a bettor:**")
-                    if _public_votes and _sharp_votes and _pub_sides and _sharp_sides and not (_pub_sides & _sharp_sides):
-                        st.markdown(f"🔥 **Contradiction — public and sharp money disagree.**")
-                        st.caption(
-                            f"Public money ({', '.join(v[0] for v in _public_votes)}) is on **{list(_pub_sides)[0]}**, "
-                            f"but sharp signals ({', '.join(v[0] for v in _sharp_votes)}) point to **{list(_sharp_sides)[0]}**. "
-                            f"Historically, fading the heavy public side in favor of where the sharp money/steam is moving "
-                            f"has been the higher-EV lean — but check the size of the split before treating this as automatic."
-                        )
-                    elif _sharp_votes and len(_sharp_sides) > 1:
-                        st.markdown("⚠️ **Sharp sources disagree with each other.**")
-                        st.caption("Not a clean signal — " + "; ".join(f"{v[0]} → {v[1]}" for v in _sharp_votes) + ". Treat this market as noisy rather than sharp-confirmed.")
-                    elif _public_votes and _sharp_votes:
-                        st.markdown(f"✅ **Public and sharp money agree on {list(_pub_sides)[0]}.**")
-                        st.caption("Both the betting crowd and the sharp signals point the same direction — a stronger, more confirmed signal than either alone.")
-                    elif _sharp_votes:
-                        st.markdown(f"📌 **Sharp-only signal on {list(_sharp_sides)[0]}** — no public data to compare against yet.")
-                    elif _public_votes:
-                        st.markdown(f"👥 **Public-only signal on {list(_pub_sides)[0]}** — no sharp confirmation yet, treat with caution.")
-                    st.markdown("---")
+                # -- Spread: Action Network spread tickets/money + steam on spread
+                _sp_pcts_top = _pub_data.get("spread_pcts", {}) if _pub_data else {}
+                _sp_public, _sp_sharp = [], []
+                for _side, _sd in _sp_pcts_top.items():
+                    _t, _m = _sd.get("tickets", 0), _sd.get("money", 0)
+                    if _t: _sp_public.append(("Action Network tickets", _side, f"{_t}% of bets"))
+                    if abs(_m - _t) >= 10: _sp_sharp.append(("Action Network money", _side, f"{_m}% of $ vs {_t}% of bets"))
+                for _sk, _sv in _steam_hits.items():
+                    if "spread" in _sk:
+                        _sp_sharp.append(("Steam move", f"{_sv.get('direction','')}", f"{_sv.get('magnitude',0)} pt move in {_sv.get('elapsed_seconds',0)}s"))
+                _consensus_verdict("Spread", _sp_public, _sp_sharp)
+
+                # -- Total: Action Network total tickets/money + steam on total
+                # (Kalshi/Polymarket totals excluded from this verdict — too
+                # thin-volume to treat as a real sharp/public signal, shown
+                # as raw data below instead.)
+                _tot_pcts_top = _pub_data.get("total_pcts", {}) if _pub_data else {}
+                _tot_public, _tot_sharp = [], []
+                for _side, _td in _tot_pcts_top.items():
+                    _t, _m = _td.get("tickets", 0), _td.get("money", 0)
+                    if _t: _tot_public.append(("Action Network tickets", _side, f"{_t}% of bets"))
+                    if abs(_m - _t) >= 10: _tot_sharp.append(("Action Network money", _side, f"{_m}% of $ vs {_t}% of bets"))
+                for _sk, _sv in _steam_hits.items():
+                    if "total" in _sk:
+                        _tot_sharp.append(("Steam move", f"{_sv.get('direction','')}", f"{_sv.get('magnitude',0)} pt move in {_sv.get('elapsed_seconds',0)}s"))
+                _consensus_verdict("Total", _tot_public, _tot_sharp)
+
+                st.markdown("---")
 
                 _pcol1, _pcol2, _pcol3 = st.columns(3)
 
@@ -18761,6 +18795,25 @@ with tabs[2]:
                     else:
                         st.caption("No data")
 
+                    if _cov_game:
+                        _fav  = _cov_game.get("side","")
+                        _pct  = _cov_game.get("public_pct",50)
+                        _raw  = _cov_game.get("raw_pcts",{})
+                        st.caption(f"**Covers Public (straight-up):**")
+                        if not isinstance(_raw, dict):
+                            _raw = {}
+                        for _team, _tpct in _raw.items():
+                            st.caption(f"  {_team}: {_tpct}")
+                        if _pct >= 75:
+                            st.markdown(f"🎯 **Fade candidate:** {_pct}% picked {_fav} to win")
+                            st.caption(
+                                f"Why: {_pct}% of contest players picked {_fav} to win. "
+                                f"Heavy public sides (75%+) often lose because sharp bettors "
+                                f"take the other side, moving the line against the crowd."
+                            )
+                        elif _pct >= 60:
+                            st.caption(f"📊 Mild public lean ({_pct}% picked {_fav} to win) — not extreme enough to fade.")
+
                     # Additional sources beyond Action Network — shown
                     # whenever present, not just as a fallback for "No data".
                     if _kal_game:
@@ -18784,36 +18837,18 @@ with tabs[2]:
                     if not _sp_pcts and not _pin_sig and not _vsin_sig:
                         st.caption("No data")
 
-                # Total public vs money + Covers
+                # Total public vs money
                 _tot_pcts = _pub_data.get("total_pcts", {}) if _pub_data else {}
                 with _pcol3:
-                    st.markdown("**Total / Covers**")
+                    st.markdown("**Total**")
                     if _tot_pcts:
                         for _side, _td in _tot_pcts.items():
                             st.caption(f"{_side}: 🎟️ {_td.get('tickets',0)}% | 💰 {_td.get('money',0)}%")
-                    if _cov_game:
-                        _fav  = _cov_game.get("side","")
-                        _pct  = _cov_game.get("public_pct",50)
-                        _raw  = _cov_game.get("raw_pcts",{})
-                        st.caption(f"**Covers Public:**")
-                        if not isinstance(_raw, dict):
-                            _raw = {}
-                        for _team, _tpct in _raw.items():
-                            st.caption(f"  {_team}: {_tpct}")
-                        if _pct >= 75:
-                            st.markdown(f"🎯 **Fade candidate:** {_pct}% on {_fav}")
-                            st.caption(
-                                f"Why: {_pct}% of contest players picked {_fav}. "
-                                f"Heavy public sides (75%+) often lose because sharp bettors "
-                                f"take the other side, moving the line against the crowd."
-                            )
-                        elif _pct >= 60:
-                            st.caption(f"📊 Mild public lean ({_pct}% on {_fav}) — not extreme enough to fade.")
                     if _kal_game and "total" in (_kal_game.get("title","") + _kal_game.get("event","")).lower():
                         st.caption(f"🔷 Kalshi total: {_kal_game.get('implied_prob',0.5):.0%} implied")
                     if _poly_game and "total" in (_poly_game.get("title","") + _poly_game.get("event","")).lower():
                         st.caption(f"🟣 Polymarket total: {_poly_game.get('implied_prob',0.5):.0%} implied")
-                    if not _tot_pcts and not _cov_game and not _kal_game and not _poly_game:
+                    if not _tot_pcts and not _kal_game and not _poly_game:
                         st.caption("No data")
 
                 # ── Steam moves & RLM — this is the actual industry-standard
