@@ -1761,6 +1761,23 @@ TEAM_ABBREV_TO_FRAGMENT = {
         "PIT":"Pittsburgh Penguins","SEA":"Seattle Kraken","STL":"St. Louis Blues",
         "VAN":"Vancouver","WPG":"Winnipeg",
     },
+    "WNBA": {
+        "NY":"New York Liberty","NYL":"New York Liberty",
+        "PHX":"Phoenix Mercury",
+        "LV":"Las Vegas Aces","LVA":"Las Vegas Aces",
+        "LA":"Los Angeles Sparks","LAS":"Los Angeles Sparks",
+        "DAL":"Dallas Wings",
+        "WAS":"Washington Mystics","WSH":"Washington Mystics",
+        "CONN":"Connecticut Sun","CON":"Connecticut Sun",
+        "MIN":"Minnesota Lynx",
+        "IND":"Indiana Fever",
+        "POR":"Portland Fire","PDX":"Portland Fire",
+        "SEA":"Seattle Storm",
+        "CHI":"Chicago Sky",
+        "ATL":"Atlanta Dream",
+        "GS":"Golden State Valkyries","GSV":"Golden State Valkyries",
+        "TOR":"Toronto Tempo",
+    },
 }
 
 NFL_TEAM_ABBR_MAP = {
