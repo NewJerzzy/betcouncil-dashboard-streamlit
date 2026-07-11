@@ -7139,7 +7139,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _park_city = _park_info.get("city", "")
                     _is_outdoor = _park_info.get("outdoor", True)
                     if _park_city and _is_outdoor:
-                        _wx = fetch_weather_for_game(_park_city, is_outdoor=True)
+                        _wx = fetch_weather_for_game(_park_city, is_outdoor=True, team_abbrev=home_team)
                         if _wx:
                             _ws  = _wx.get("wind_speed_mph", 0)
                             _wd  = _wx.get("wind_dir", "N")
@@ -12245,6 +12245,7 @@ def load_sport_data(sport):
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
         ("fetch_kalshi2_from_gist",            "kalshi2_data",           "kalshi2_src"),
         ("fetch_pick6_props_from_gist",        "pick6_props_h",          "pick6_src"),
+        ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
     ]
     if sport == "MLB":
         try:
@@ -20989,8 +20990,31 @@ with tabs[4]:
             }});
         }}
         if(sport==='MLB'){{
-            throttled('mlbweather',3600000,function(){{
-                fetch('https://api.openweathermap.org/data/2.5/forecast?q=Chicago&appid=demo&units=imperial',{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_weather_MLB.json',{{captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] MLB weather error:',e.message);}});
+            // BUG FIX (2026-07): old MLB weather harvester called OpenWeatherMap
+            // with appid=demo (not a real key -- always 401'd) and hardcoded
+            // city=Chicago regardless of which games were on the slate. That's
+            // why betcouncil_weather_MLB.json sat at 219 bytes / effectively
+            // empty. Replaced with LineStar's public GetFastUpdateV2 endpoint,
+            // which returns real per-game wind/rain/dome/humidity/temp for
+            // every game on today's MLB slate, no login required.
+            throttled('mlbweather_linestar',3600000,function(){{
+                fetch('https://www.linestarapp.com/Projections/Sport/MLB/Site/DraftKings/',{{headers:{{'Accept':'text/html'}}}})
+                    .then(function(r){{return r.text();}})
+                    .then(function(html){{
+                        var m = html.match(/LineStar\\.PeriodId\\s*=\\s*(\\d+)/);
+                        if(!m){{ console.log('[BetCouncil] LineStar: could not find PeriodId in page'); return; }}
+                        var periodId = m[1];
+                        var base = 'https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/';
+                        fetch(base+'GetFastUpdateV2?Sport=3&Site=1&PeriodId='+periodId,{{headers:{{'Accept':'application/json'}}}})
+                            .then(function(r){{return r.json();}})
+                            .then(function(data){{pushGist('betcouncil_weather_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
+                            .catch(function(e){{console.log('[BetCouncil] LineStar GetFastUpdateV2 error:',e.message);}});
+                        fetch(base+'GetPropBets?Sport=3&Site=1&PeriodId='+periodId,{{headers:{{'Accept':'application/json'}}}})
+                            .then(function(r){{return r.json();}})
+                            .then(function(data){{pushGist('betcouncil_linestar_props_MLB.json',{{captured_at:new Date().toISOString(),period_id:periodId,data:data,source:'linestar_auto_harvest'}});}})
+                            .catch(function(e){{console.log('[BetCouncil] LineStar GetPropBets error:',e.message);}});
+                    }})
+                    .catch(function(e){{console.log('[BetCouncil] LineStar PeriodId fetch error:',e.message);}});
             }});
         }}
 

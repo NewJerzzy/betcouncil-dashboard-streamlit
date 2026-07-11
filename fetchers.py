@@ -3065,7 +3065,7 @@ def _fetch_nws_weather(city):
     except (ValueError, KeyError, TypeError):
         return None
 
-def fetch_weather_for_game(city, is_outdoor=True):
+def fetch_weather_for_game(city, is_outdoor=True, team_abbrev=None):
     if not is_outdoor:
         return None
     cache_key = hashlib.md5(f"weather_{city}_{date.today()}".encode()).hexdigest()
@@ -3075,19 +3075,33 @@ def fetch_weather_for_game(city, is_outdoor=True):
         if age_hours < 3:
             return _safe_load_pkl(cache_path)
     weather = None
-    # Tier 1: wttr.in
-    try:
-        url = f"https://wttr.in/{city.replace(' ', '+')}?format=j1"
-        resp = _http.get(url, headers=HEADERS, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            current = data.get("current_condition", [{}])[0]
-            weather = {"city": city, "wind_speed_mph": int(current.get("windspeedMiles", 0)),
-                       "wind_dir": current.get("winddir16Point", "N"), "temp_f": int(current.get("temp_F", 70)),
-                       "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.now().strftime("%H:%M"),
-                       "source": "wttr.in"}
-    except (ValueError, KeyError, TypeError, AttributeError):
-        pass
+    # Tier 0: LineStar GetFastUpdateV2 (2026-07) -- real per-game weather tied
+    # to the actual matchup, rather than a city-name lookup. Falls through
+    # silently to wttr.in/NWS below if the harvester hasn't run yet, the Gist
+    # data is stale, or the team can't be matched.
+    if team_abbrev:
+        try:
+            _ls_data, _ls_src = fetch_weather_from_gist("MLB")
+            if _ls_data:
+                _ls_wx = get_linestar_game_weather(_ls_data, team_abbrev)
+                if _ls_wx:
+                    weather = _ls_wx
+        except Exception:
+            pass
+    # Tier 1: wttr.in (only if LineStar didn't already supply real per-game weather)
+    if weather is None:
+        try:
+            url = f"https://wttr.in/{city.replace(' ', '+')}?format=j1"
+            resp = _http.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                current = data.get("current_condition", [{}])[0]
+                weather = {"city": city, "wind_speed_mph": int(current.get("windspeedMiles", 0)),
+                           "wind_dir": current.get("winddir16Point", "N"), "temp_f": int(current.get("temp_F", 70)),
+                           "humidity": int(current.get("humidity", 50)), "fetched_at": datetime.now().strftime("%H:%M"),
+                           "source": "wttr.in"}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
     # Tier 2: NWS fallback
     if weather is None:
         weather = _fetch_nws_weather(city)
@@ -17055,6 +17069,71 @@ def fetch_weather_from_gist(sport):
     data=_read_gist_file(f"betcouncil_weather_{sport}.json",5)
     if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester"
     return {}, "unavailable"
+
+def fetch_linestar_props_from_gist(sport="MLB"):
+    """Cross-book prop odds snapshot from LineStar's public GetPropBets endpoint
+    (DK/FD/Yahoo/PrizePicks/Underdog/Caesars/BetMGM/PointsBet/SuperDraft),
+    harvested browser-side (see app.py MLB weather/props harvester block).
+    Added 2026-07. Field names below are per LineStar's reported schema
+    (BetTypes / PropBets / SportsBooks) -- not yet confirmed against a live
+    payload, since I couldn't reach linestarapp.com directly to verify. Treat
+    this as raw pass-through until the first real harvest lands in the Gist
+    and the shape is spot-checked.
+    """
+    data = _read_gist_file(f"betcouncil_linestar_props_{sport}.json", 5)
+    if data and _is_fresh(data, 65):
+        return data.get("data", {}), "browser_harvester"
+    return {}, "unavailable"
+
+def get_linestar_game_weather(weather_gist_data, team_abbrev):
+    """Best-effort matcher: pull one game's weather off LineStar's
+    GetFastUpdateV2 'Games' array for a given team abbreviation.
+
+    NOTE (2026-07): the exact key names LineStar uses inside each Games[]
+    entry (team abbrev field, wind/rain/dome field names) were reported
+    second-hand and I have not personally verified them against a live
+    payload -- linestarapp.com isn't reachable from this sandbox. This
+    function tries several plausible key-name variants defensively and
+    returns None rather than guessing if nothing matches, so a schema
+    mismatch fails silently (falls back to wttr.in/NWS in
+    fetch_weather_for_game) instead of feeding wrong data into the model.
+    Once real harvested JSON is available, this should be tightened to the
+    confirmed field names.
+    """
+    if not isinstance(weather_gist_data, dict):
+        return None
+    games = weather_gist_data.get("Games") or weather_gist_data.get("games") or []
+    if not isinstance(games, list):
+        return None
+    team_abbrev = (team_abbrev or "").upper()
+    for g in games:
+        if not isinstance(g, dict):
+            continue
+        home = str(g.get("HomeTeamAbrev") or g.get("HomeTeam") or g.get("Home") or "").upper()
+        away = str(g.get("AwayTeamAbrev") or g.get("AwayTeam") or g.get("Away") or "").upper()
+        if team_abbrev not in (home, away):
+            continue
+        wind_speed = g.get("WindSpeed")
+        wind_dir   = g.get("WindDirection")
+        temp       = g.get("Temp") or g.get("Temperature")
+        humidity   = g.get("Humidity")
+        is_dome    = g.get("IsDome")
+        rain       = g.get("RainAmount") or g.get("RainChance")
+        if is_dome:
+            return {"city": team_abbrev, "wind_speed_mph": 0, "wind_dir": "N",
+                    "temp_f": temp if temp is not None else 72, "humidity": humidity if humidity is not None else 50,
+                    "fetched_at": datetime.now().strftime("%H:%M"), "source": "LineStar(dome)"}
+        if wind_speed is None and temp is None:
+            return None
+        return {"city": team_abbrev,
+                "wind_speed_mph": int(wind_speed) if wind_speed is not None else 0,
+                "wind_dir": wind_dir or "N",
+                "temp_f": int(temp) if temp is not None else 70,
+                "humidity": int(humidity) if humidity is not None else 50,
+                "rain_chance": rain,
+                "fetched_at": datetime.now().strftime("%H:%M"),
+                "source": "LineStar"}
+    return None
 
 def fetch_scoresandodds_from_gist(sport):
     data=_read_gist_file(f"betcouncil_scoresandodds_{sport}.json",5)
