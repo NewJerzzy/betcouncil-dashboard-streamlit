@@ -15939,6 +15939,32 @@ for _safety_k, _safety_v in {
     if _safety_k not in st.session_state:
         st.session_state[_safety_k] = _safety_v
 
+def _bc_df_html(data, columns=None):
+    # Plain HTML table instead of st.dataframe — st.dataframe renders via a
+    # canvas-based grid (Glide Data Grid) that has been observed to fail to
+    # paint (empty box, structure intact) right after a redeploy/restart.
+    # Applied app-wide: every st.dataframe call in the app was converted to
+    # this, not just the System tab where it was first spotted.
+    try:
+        df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+    except Exception:
+        return '<div style="color:var(--bc-dim);font-size:13px;padding:8px;">No data to display.</div>'
+    if df.empty:
+        return '<div style="color:var(--bc-dim);font-size:13px;padding:8px;">No data to display.</div>'
+    cols = columns or list(df.columns)
+    head = "".join(f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--bc-border);white-space:nowrap;">{c}</th>' for c in cols)
+    body = ""
+    for _, row in df.iterrows():
+        cells = "".join(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f;">{row.get(c,"")}</td>' for c in cols)
+        body += f"<tr>{cells}</tr>"
+    return (
+        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+        f'border-radius:8px;overflow:auto;max-height:480px;margin-bottom:0.5rem;">'
+        f'<table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+    )
+
+
 tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
@@ -19272,7 +19298,7 @@ with tabs[4]:
                              sorted(_exp["by_game"].items(), key=lambda x: -x[1])[:10]]
                 if _exp_rows:
                     import pandas as _pd_exp
-                    st.dataframe(_pd_exp.DataFrame(_exp_rows), use_container_width=True, hide_index=True)
+                    st.markdown(_bc_df_html(_pd_exp.DataFrame(_exp_rows)), unsafe_allow_html=True)
 
         st.markdown("---")
         st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
@@ -19459,7 +19485,7 @@ with tabs[4]:
         }
         show_cols = [c for c in display_cols.keys() if c in filtered_hist.columns]
         filtered_hist_display = filtered_hist[show_cols].rename(columns=display_cols)
-        st.dataframe(filtered_hist_display, use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(filtered_hist_display), unsafe_allow_html=True)
         st.caption(f"Showing {len(filtered_hist)} of {len(hist_df)} bets")
 
         # Legend
@@ -19492,12 +19518,12 @@ with tabs[4]:
                     st.markdown("**Hit Rate by Tier**")
                     if "tier" in resolved.columns:
                         tier_stats_h = resolved.groupby("tier").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
-                        st.dataframe(tier_stats_h, width="stretch")
+                        st.markdown(_bc_df_html(tier_stats_h), unsafe_allow_html=True)
                 with col_b:
                     st.markdown("**Hit Rate by Sport**")
                     if "sport" in resolved.columns:
                         sport_stats_h = resolved.groupby("sport").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
-                        st.dataframe(sport_stats_h, width="stretch")
+                        st.markdown(_bc_df_html(sport_stats_h), unsafe_allow_html=True)
                 if "net" in resolved.columns:
                     rc = resolved.copy()
                     rc["cumulative"] = DEFAULT_BANKROLL + rc["net"].cumsum()
@@ -19522,7 +19548,7 @@ with tabs[4]:
                 roi = (data["returned"] - data["wagered"]) / data["wagered"] * 100
                 roi_rows.append({"Pick Count": f"{pc}-pick", "Bets": data["bets"], "Wagered": f"${data['wagered']:.2f}", "Returned": f"${data['returned']:.2f}", "ROI": f"{'🟢' if roi > 0 else '🔴'} {roi:+.1f}%"})
         if roi_rows:
-            st.dataframe(pd.DataFrame(roi_rows), width="stretch", hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(roi_rows)), unsafe_allow_html=True)
     else:
         st.caption("Need 5+ resolved bets for ROI analysis.")
 
@@ -19625,7 +19651,7 @@ with tabs[4]:
         st.info(f"Signal analysis activates at 20 resolved bets. Current: {n_resolved}. Need {20 - n_resolved} more.")
     else:
         st.success(f"\u2705 Analyzing {n_resolved} resolved bets")
-        st.dataframe(pd.DataFrame(signal_results), width="stretch", hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(signal_results)), unsafe_allow_html=True)
 
     # ── Engine 2: Loss Pattern Analyzer ──
     st.markdown("---")
@@ -19646,7 +19672,7 @@ with tabs[4]:
         _show_all_corr = st.checkbox("Show all signal pairs", value=False, key="show_all_corr")
         _display_rows = _corr_rows if _show_all_corr else [r for r in _corr_rows if r["Phi (ϕ)"] != 0][:10]
         if _display_rows:
-            st.dataframe(pd.DataFrame(_display_rows), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_display_rows)), unsafe_allow_html=True)
         st.caption("Phi (ϕ): 0=uncorrelated, 1=always fire together. Co-occur %: when Signal A fires, how often does B also fire?")
 
     st.markdown("---")
@@ -19661,7 +19687,7 @@ with tabs[4]:
         _negative = [r for r in _lift_rows if "Negative" in r["Grade"]]
         if _negative:
             st.warning(f"⚠️ {len(_negative)} signal(s) showing negative drag — consider reducing weight: {', '.join(r['Signal'] for r in _negative)}")
-        st.dataframe(pd.DataFrame(_lift_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_lift_rows)), unsafe_allow_html=True)
         st.caption("Incremental Lift = WR(Base+Signal) minus WR(Base only). Positive = signal adds value. Negative = signal hurts model.")
 
     st.markdown("---")
@@ -19678,7 +19704,7 @@ with tabs[4]:
             st.warning(f"⚠️ Unstable signals detected (high variance across windows): {', '.join(r['Signal'] for r in _unstable)}")
         else:
             st.success("✅ All signals showing stable win rates across time windows.")
-        st.dataframe(pd.DataFrame(_stab_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_stab_rows)), unsafe_allow_html=True)
         st.caption("Stable = WR consistent across L30d/L90d/Season. Unstable = hot/cold streaks — reduce optimizer trust for that signal.")
 
     st.markdown("---")
@@ -19743,7 +19769,7 @@ with tabs[4]:
                     "Net Units": f"{(_ps['payout']-_ps['stake']):.1f}u",
                 })
             if _nfl_pos_rows:
-                st.dataframe(pd.DataFrame(_nfl_pos_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_pos_rows)), unsafe_allow_html=True)
         else:
             st.info(f"NFL position ROI activates after 10 NFL bets. Current: {len(_nfl_bets)}.")
 
@@ -20672,7 +20698,7 @@ with tabs[4]:
                        "Edge":f"{p.get('Edge',0):.1%}","Wager":f"${p.get('adj_wager',0):.2f}"}
                      for p in _sized.get("picks_sized",[]) if p.get("adj_wager",0) > 0]
         if _sized_df:
-            st.dataframe(_sized_df, use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(_sized_df), unsafe_allow_html=True)
     else:
         st.info("Load a board to see sizing recommendations.")
 
@@ -20731,7 +20757,7 @@ with tabs[4]:
             })
 # DUPLICATE REMOVED: import pandas as _pd
         _audit_df = _pd.DataFrame(_audit_rows)
-        st.dataframe(_audit_df, use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(_audit_df), unsafe_allow_html=True)
     elif _resolved_count < 20:
         st.info(f"Signal ROI audit activates at 20 resolved bets. ({_resolved_count}/20)")
     if _resolved_count >= 100:
@@ -20754,7 +20780,7 @@ with tabs[4]:
         _drag = [r for r in _attr_rows if "Drag" in r["Grade"]]
         if _drag:
             st.warning(f"⚠️ Signals with negative ROI: {', '.join(r['Signal'] for r in _drag)} — consider reducing weight")
-        st.dataframe(pd.DataFrame(_attr_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_attr_rows)), unsafe_allow_html=True)
         st.caption("Net Units = total P&L generated when this signal was active. Grade = signal contribution quality.")
 
     # ── Portfolio Exposure ───────────────────────────────────
@@ -20777,7 +20803,7 @@ with tabs[4]:
                    delta_color="inverse" if _corr_score > 0.50 else "off")
         if _corr_score > 0.50 and _corr_groups:
             st.warning(f"⚠️ High portfolio correlation ({_corr_score:.2f}) — bets may rise and fall together:")
-            st.dataframe(pd.DataFrame(_corr_groups), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_corr_groups)), unsafe_allow_html=True)
         if _portfolio["warnings"]:
             for w in _portfolio["warnings"]:
                 st.warning(w)
@@ -20788,7 +20814,7 @@ with tabs[4]:
             _sport_rows = [{"Sport": k, "Count": v.get("count",0), "Exposure %": f"{v.get('pct',0):.1f}%"}
                            for k,v in sorted(_portfolio["sport_breakdown"].items(),
                            key=lambda x: -x[1].get("count",0) if isinstance(x[1],dict) else -float(x[1] or 0))]
-            st.dataframe(pd.DataFrame(_sport_rows), use_container_width=True, hide_index=True)
+            st.markdown(_bc_df_html(pd.DataFrame(_sport_rows)), unsafe_allow_html=True)
     else:
         st.info("Load the board and lock picks to see portfolio exposure.")
 
@@ -20901,7 +20927,7 @@ with tabs[4]:
         if _conflicting:
             st.warning(f"⚠️ {len(_conflicting)} conflicting pair(s): " +
                        ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _conflicting[:2]))
-        st.dataframe(pd.DataFrame(_int_rows), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_int_rows)), unsafe_allow_html=True)
         st.caption("Synergy = WR(both active) minus WR(best signal alone). Positive = combination is stronger.")
 
     # ── Weight Recommendations ───────────────────────────────
@@ -20937,7 +20963,7 @@ with tabs[4]:
             st.info(f"🟡 {_cal_summary}")
         else:
             st.warning(f"⚠️ {_cal_summary} — Review model confidence levels")
-        st.dataframe(pd.DataFrame(_cal_buckets), use_container_width=True, hide_index=True)
+        st.markdown(_bc_df_html(pd.DataFrame(_cal_buckets)), unsafe_allow_html=True)
         st.caption("Error = Actual hit rate − Predicted probability. Negative = model over-confident. Positive = model under-confident.")
     st.markdown("---")
     # ── Closing Line Beat Rate ──────────────────────────────
@@ -21067,7 +21093,7 @@ with tabs[4]:
                     "Status":    "✅" if abs(_diff) < 0.04 else ("⚡" if _diff > 0 else "⚠️"),
                 })
             if _rel_rows:
-                st.dataframe(_rel_rows, use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(_rel_rows), unsafe_allow_html=True)
 
             # ── Sport calibration breakdown ───────────────────────────────────
             st.markdown("#### 🏆 By Sport")
@@ -21098,7 +21124,7 @@ with tabs[4]:
                     "Status":     "✅ Good" if abs(_err) < 0.04 else ("⚠️ Over" if _err > 0 else "⚡ Under"),
                 })
             if _sport_rows:
-                st.dataframe(_sport_rows, use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(_sport_rows), unsafe_allow_html=True)
 
             # ── Calibration trend (last 30 vs lifetime) ───────────────────────
             st.markdown("#### 📅 Recent vs Lifetime")
@@ -21133,7 +21159,7 @@ with tabs[4]:
                         "Direction": "⬆️ Tighter" if _cur > _base else ("⬇️ Looser" if _cur < _base else "➡️ Unchanged"),
                         "Detail":    _log[:60] if _log else "—",
                     })
-                st.dataframe(_thresh_rows, use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(_thresh_rows), unsafe_allow_html=True)
             else:
                 st.info(f"⏳ Auto-calibration activates after 15+ bets per tier. Currently {len(_resolved)} resolved bets logged.")
         else:
@@ -21915,7 +21941,7 @@ with tabs[6]:
             if log_data:
 # DUPLICATE REMOVED: import pandas as pd
                 log_df = pd.DataFrame(log_data)
-                st.dataframe(log_df, hide_index=True, use_container_width=True)
+                st.markdown(_bc_df_html(log_df), unsafe_allow_html=True)
 
             # Find this player on today's board
             board = st.session_state.board_data
@@ -22615,32 +22641,6 @@ with tabs[8]:
 with tabs[9]:
     st.markdown("## ⚙️ System Info")
 
-    def _bc_df_html(data, columns=None):
-        # Plain HTML table instead of st.dataframe — st.dataframe renders via
-        # a canvas-based grid (Glide Data Grid) that has been observed to
-        # fail to paint (empty box, structure intact) right after a
-        # redeploy/restart, as seen on this tab. Every table in System Info
-        # is small/static (status checks, audit summaries) with no need for
-        # sort/filter/scroll, so there's no reason to carry that fragility
-        # anywhere on this tab — applies to all of it, not just one section.
-        try:
-            df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
-        except Exception:
-            return '<div style="color:var(--bc-dim);font-size:13px;padding:8px;">No data to display.</div>'
-        if df.empty:
-            return '<div style="color:var(--bc-dim);font-size:13px;padding:8px;">No data to display.</div>'
-        cols = columns or list(df.columns)
-        head = "".join(f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--bc-border);white-space:nowrap;">{c}</th>' for c in cols)
-        body = ""
-        for _, row in df.iterrows():
-            cells = "".join(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f;">{row.get(c,"")}</td>' for c in cols)
-            body += f"<tr>{cells}</tr>"
-        return (
-            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
-            f'border-radius:8px;overflow:auto;max-height:480px;margin-bottom:0.5rem;">'
-            f'<table style="width:100%;border-collapse:collapse;">'
-            f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
-        )
 
     # ── EV Auto-Refresh Control ───────────────────────────────
     _col_tog1, _col_tog2, _col_tog3 = st.columns([2, 2, 3])
