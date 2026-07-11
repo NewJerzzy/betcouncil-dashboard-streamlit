@@ -70,6 +70,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     pace_adjust_mlb_prop, rest_adjusted_std_dev,
     get_opener_gap, detect_market_maker_divergence,
     build_game_line_consensus, classify_book_role,
+    compute_market_anchored_fair_line, recalibrate_pricer_bias, PRICER_COMPONENT_BIAS,
     )
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import TIER_COLORS
@@ -1495,6 +1496,22 @@ def render_signal_chart(prop, sport="NBA"):
         except Exception:
             pass
 
+    # Market-Anchored Fair Line Pricer — informational, mirrors the
+    # EXPECTED_VS_ACTUAL tile treatment above. Fields already sit on the
+    # enriched prop dict (computed once during board load), so this just
+    # renders them — no extra fetch here.
+    pricer_html = ""
+    _pr_fair = prop.get("PricerFairLine")
+    _pr_edge = prop.get("PricerEdgeVsOpen")
+    if sport == "NBA" and _pr_fair is not None and _pr_edge is not None:
+        _pr_color = "#22c55e" if _pr_edge > 0 else "#e04040" if _pr_edge < 0 else "#6a7a8a"
+        _pr_unc = prop.get("PricerUncertainty", 0) or 0
+        pricer_html = f'''
+        <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;" title="L20 avg + book-bias correction, anchored to the market line">
+          <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Pricer fair line (unc {_pr_unc:.0%})</div>
+          <div style="font-size:18px;font-weight:500;color:{_pr_color}">{_pr_fair:g} <span style="font-size:12px;color:#6a7a8a">({_pr_edge:+.1f})</span></div>
+        </div>'''
+
     html = f"""
 <div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:10px;padding:16px;margin:6px 0;">
 
@@ -1523,7 +1540,7 @@ def render_signal_chart(prop, sport="NBA"):
           <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Market regime</div>
           <div style="font-size:18px;font-weight:700;color:{regime_color}">{regime_label}</div>
           <div style="font-size:9px;color:#6a7a8a">{regime_plain}</div>
-        </div>{eva_html}
+        </div>{eva_html}{pricer_html}
       </div>
     </div>
     <div style="flex-shrink:0;text-align:center;background:{conv_color}18;border:1px solid {conv_color}55;border-radius:10px;padding:10px 18px;min-width:84px;">
@@ -11600,11 +11617,18 @@ def load_sport_data(sport):
         return enriched, [], 0, n_edge, {}, {}
     rolling_avgs = {}
     team_defense = {}
+    l20_pricer_baseline = {}
     if sport == "NBA":
         rolling_avgs = fetch_nba_rolling_averages()
         team_defense = fetch_nba_team_defense()
         live_avgs = fetch_nba_averages_bdl()
         season_avgs = {**PLAYER_AVERAGES.get("NBA", {}), **live_avgs}
+        try:
+            l20_pricer_baseline = fetch_nba_l20_pricer_baseline()
+        except Exception as _l20_err:
+            l20_pricer_baseline = {}
+            print(f"[WARN] fetch_nba_l20_pricer_baseline: {_l20_err}")
+        st.session_state["nba_l20_pricer_baseline"] = l20_pricer_baseline
     elif sport == "WNBA":
         wnba_rolling = fetch_wnba_rolling_averages()
         season_avgs = dict(PLAYER_AVERAGES.get("WNBA", {}))
@@ -14647,6 +14671,27 @@ def load_sport_data(sport):
                           # now exposed as signals["goalie"] inside compute_multi_signal_edge
                           # instead of only being folded silently into the averages.
                           "goalie_quality_adj": round(best_signals.get("goalie", 0), 4) if sport == "NHL" else 0}
+        # ── Market-Anchored Fair Line Pricer (NBA only — needs L20 rolling
+        # data across the fuller stat set; informational signal, not blended
+        # into the core weighted edge, same treatment as EXPECTED_VS_ACTUAL) ──
+        _pricer_stat_map = {"PTS":"PTS","REB":"REB","AST":"AST","PRA":"PRA",
+                             "BLK":"BLK","STL":"STL","TOV":"TOV","THREE_PT":"3PM"}
+        _pricer_info = None
+        if sport == "NBA" and stat_norm in _pricer_stat_map:
+            _l20_row = l20_pricer_baseline.get(player) if l20_pricer_baseline else None
+            if _l20_row:
+                _pricer_key = _pricer_stat_map[stat_norm]
+                _l20_val = _l20_row.get(_pricer_key)
+                _n_games = _l20_row.get("n_games", 20)
+                if _l20_val is not None:
+                    try:
+                        _pricer_info = compute_market_anchored_fair_line(
+                            raw_l20_avg=_l20_val, observed_line=line, stat=_pricer_key,
+                            n_games=_n_games, agreement_factor=1.0,
+                        )
+                    except Exception:
+                        _pricer_info = None
+
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
             "Edge": final_edge, "EdgePct": f"{final_edge:.1%}", "Prob": best_prob,
@@ -14670,6 +14715,9 @@ def load_sport_data(sport):
             "MinutesStability": _mins_stability,
             "VolatilityStd":    _stat_std,
             "RiskLevel":        _risk_level,
+            "PricerFairLine":    _pricer_info.get("fair_line") if _pricer_info else None,
+            "PricerEdgeVsOpen":  _pricer_info.get("edge_vs_open") if _pricer_info else None,
+            "PricerUncertainty": _pricer_info.get("uncertainty_penalty") if _pricer_info else None,
             "RiskNote":         _risk_note,
             "DFFSignal":        p.get("DFFSignal",""),
             "DFFRosterContext":  p.get("DFFRosterContext",[]),

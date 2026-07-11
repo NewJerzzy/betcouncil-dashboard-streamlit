@@ -6001,3 +6001,116 @@ def classify_book_role(book_name):
         return "dfs"
     return "market"
 
+
+# ── Market-Anchored Fair Line Pricer ─────────────────────────────────────
+# 4-stage fair-value pipeline: raw L20 rolling avg -> book-bias correction
+# -> anchor to observed market line with uncertainty-based shrinkage ->
+# (blend/calibration stages intentionally skipped — the reference pricer
+# this was modeled on showed blend_market_weight negligible and
+# calibration_reason IDENTITY on 95%+ of rows, i.e. those stages were
+# effectively inactive there too).
+#
+# Bias constants below are empirically-fit per-stat corrections observed
+# in a reference pricer export (legitimate account access, 2026-07) —
+# how far above the raw L20 average books tend to set lines for that stat.
+# Treated as a documented starting default, NOT gospel: they were fit to
+# a different line source than ours, so recalibrate_pricer_bias() below
+# lets us replace any stat's constant with one fit to our own graded
+# board history once there's enough sample size to trust it.
+PRICER_COMPONENT_BIAS = {
+    "PTS": 0.617, "REB": 0.560, "AST": 0.415, "3PM": 0.185,
+    "PA": 0.877, "PR": 1.001, "PRA": 1.194, "RA": 0.829,
+    "STL": 0.163, "BLK": 0.037, "TOV": 0.000,
+}
+
+
+def recalibrate_pricer_bias(history=None, min_samples=30):
+    """
+    Recompute PRICER_COMPONENT_BIAS from our own graded board history
+    instead of the reference file's constants (fit to a different book/
+    line source than ours). Each history record needs "stat_norm" (or
+    "Prop"), "l20_raw_avg", and "line" (or "Line") to contribute.
+    A stat needs >= min_samples graded records before its constant is
+    replaced; stats below that threshold keep the reference default.
+    Returns a NEW dict — does not mutate PRICER_COMPONENT_BIAS, so the
+    caller decides when/whether to adopt the recalibrated table.
+    """
+    from collections import defaultdict
+    history = history or []
+    deltas = defaultdict(list)
+    for rec in history:
+        stat = str(rec.get("stat_norm", rec.get("Prop", ""))).upper()
+        raw_avg = rec.get("l20_raw_avg")
+        line = rec.get("line", rec.get("Line"))
+        if stat and raw_avg is not None and line is not None:
+            try:
+                deltas[stat].append(float(line) - float(raw_avg))
+            except (TypeError, ValueError):
+                continue
+    out = dict(PRICER_COMPONENT_BIAS)
+    recalibrated = {}
+    for stat, ds in deltas.items():
+        if len(ds) >= min_samples:
+            out[stat] = round(sum(ds) / len(ds), 3)
+            recalibrated[stat] = {"n": len(ds), "old": PRICER_COMPONENT_BIAS.get(stat, 0.0), "new": out[stat]}
+    out["_recalibrated"] = recalibrated
+    return out
+
+
+def compute_market_anchored_fair_line(raw_l20_avg, observed_line, stat, n_games=20, agreement_factor=1.0, bias_table=None):
+    """
+    Stages 2-3 of the market-anchored fair-line pipeline (stage 1, the raw
+    L20 average, comes from fetch_nba_l20_pricer_baseline() in fetchers.py;
+    stage 4 blend/calibration is skipped — see module docstring above).
+
+    Stage 2 — book-bias correction:
+        pre_risk = raw_l20_avg + PRICER_COMPONENT_BIAS[stat]
+
+    Stage 3 — anchor to market, shrunk by uncertainty:
+        base_delta = pre_risk - observed_line
+        uncertainty_penalty scales with (a) how far n_games falls short of
+        a full 20-game window — thin samples are less trustworthy — and
+        (b) low cross-book agreement (agreement_factor, e.g. label_source_
+        count / total books via Unabated cross-book data). This substitutes
+        for the reference pipeline's RotoWire-variance-band input, which we
+        don't have access to; it's a proxy, not a replica.
+        fair_line = observed_line + base_delta * (1 - uncertainty_penalty)
+
+    Args:
+        raw_l20_avg: player's L20 rolling average for this stat
+        observed_line: current market line to anchor to (we don't have a
+            clean props-opener feed, so this is the current best available
+            line — typically PrizePicks/Underdog/Unabated consensus)
+        stat: stat key, matched against PRICER_COMPONENT_BIAS (case-
+            insensitive — "pts", "PTS", "Pts" all resolve the same)
+        n_games: number of games behind raw_l20_avg (from the "n_games"
+            field fetch_nba_l20_pricer_baseline returns per player)
+        agreement_factor: 0-1, fraction of books/platforms agreeing on this
+            line; defaults to 1.0 (no agreement penalty) if unknown
+        bias_table: override PRICER_COMPONENT_BIAS, e.g. with the output of
+            recalibrate_pricer_bias()
+
+    Returns dict: fair_line, edge_vs_open, uncertainty_penalty, pre_risk,
+    bias_applied.
+    """
+    stat_key = str(stat).upper()
+    bias_table = bias_table or PRICER_COMPONENT_BIAS
+    bias = bias_table.get(stat_key, 0.0)
+    pre_risk = float(raw_l20_avg) + bias
+
+    base_delta = pre_risk - float(observed_line)
+
+    sample_penalty = max(0.0, min(0.20, (20 - min(n_games, 20)) / 20 * 0.20))
+    agreement_penalty = max(0.0, min(0.15, (1.0 - max(0.0, min(1.0, agreement_factor))) * 0.15))
+    uncertainty_penalty = round(min(0.27, sample_penalty + agreement_penalty), 3)
+
+    fair_line = float(observed_line) + base_delta * (1 - uncertainty_penalty)
+
+    return {
+        "fair_line": round(fair_line, 2),
+        "edge_vs_open": round(fair_line - float(observed_line), 2),
+        "uncertainty_penalty": uncertainty_penalty,
+        "pre_risk": round(pre_risk, 2),
+        "bias_applied": bias,
+    }
+

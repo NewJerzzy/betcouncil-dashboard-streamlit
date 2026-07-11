@@ -3978,6 +3978,101 @@ def fetch_nba_rolling_averages():
     return rolling
 
 
+def fetch_nba_l20_pricer_baseline():
+    """
+    L20 (last-20-game) rolling averages across all 11 stat types used by
+    compute_market_anchored_fair_line (bc_utils.py) — pts/reb/ast/3pm plus
+    the combo stats (pa/pr/pra/ra) and stl/blk/tov. Separate from
+    fetch_nba_rolling_averages (which is L10, PTS/REB/AST/PRA only, and
+    feeds a different part of the app) so that function's callers aren't
+    affected by widening this one's stat set or window.
+    Cached 6h — L20 averages don't move meaningfully within a day.
+    Returns {player_name: {"PTS":.., "REB":.., ..., "TOV":.., "n_games": n}}.
+    """
+    cache_path = os.path.join(CACHE_DIR, "nba_l20_pricer_baseline.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/",
+        "Connection": "keep-alive",
+        "Origin": "https://www.nba.com",
+    }
+    _yr = date.today().year
+    _season = f"{_yr-1}-{str(_yr)[2:]}" if date.today().month < 9 else f"{_yr}-{str(_yr+1)[2:]}"
+    urls = [
+        f"https://stats.nba.com/stats/playergamelogs?Season={_season}&SeasonType=Playoffs&PlayerOrTeam=P&LastNGames=20",
+        f"https://stats.nba.com/stats/playergamelogs?Season={_season}&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=20",
+    ]
+    baseline = {}
+    for url in urls:
+        try:
+            resp = _http.get(url, headers=nba_headers, timeout=8)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            result_set = data.get("resultSets", [{}])[0]
+            headers = result_set.get("headers", [])
+            rows = result_set.get("rowSet", [])
+            if not headers or not rows:
+                continue
+            col = {h: i for i, h in enumerate(headers)}
+            # NBA Stats playergamelogs at LastNGames=N already returns the
+            # N-game AVERAGE per row (not per-game rows) when queried this
+            # way, matching the same pattern fetch_nba_rolling_averages
+            # relies on for L10 — GP column gives the actual games counted,
+            # which may be <20 early in a season or for injury-limited players.
+            for row in rows:
+                player_name = row[col.get("PLAYER_NAME", -1)] if "PLAYER_NAME" in col else None
+                if not player_name:
+                    continue
+                def _v(key):
+                    i = col.get(key)
+                    if i is None or row[i] is None:
+                        return 0.0
+                    try:
+                        return float(row[i])
+                    except (TypeError, ValueError):
+                        return 0.0
+                pts, reb, ast = _v("PTS"), _v("REB"), _v("AST")
+                fg3m, stl, blk, tov = _v("FG3M"), _v("STL"), _v("BLK"), _v("TOV")
+                n_games = int(_v("GP")) if col.get("GP") is not None else 20
+                baseline[player_name] = {
+                    "PTS": round(pts, 1), "REB": round(reb, 1), "AST": round(ast, 1),
+                    "3PM": round(fg3m, 1), "STL": round(stl, 1), "BLK": round(blk, 1),
+                    "TOV": round(tov, 1),
+                    "PA": round(pts + ast, 1), "PR": round(pts + reb, 1),
+                    "PRA": round(pts + reb + ast, 1), "RA": round(reb + ast, 1),
+                    "n_games": n_games,
+                }
+            if baseline:
+                break
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
+                requests.exceptions.RequestException, ValueError, KeyError, TypeError, AttributeError):
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as _cf:
+                        return pickle.load(_cf)
+                except (pickle.UnpicklingError, OSError, EOFError, AttributeError):
+                    pass
+            continue
+    if not baseline:
+        print("[WARN] fetch_nba_l20_pricer_baseline: FAILED — likely blocked by hosting")
+    if baseline:
+        with open(cache_path, "wb") as f:
+            pickle.dump(baseline, f)
+    return baseline
+
+
 def fetch_nba_all_player_ids():
     """
     Full active-roster name -> stats.nba.com PersonID lookup via
