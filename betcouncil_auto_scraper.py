@@ -2044,21 +2044,71 @@ def _mgm_odds(odds):
         return "—"
 
 def scrape_betmgm_curlffi(sport):
-    """BetMGM props via fixture-offers with gameIds from fixtures list."""
+    """BetMGM props via fixture-offers with gameIds from fixtures list.
+
+    IMPERSONATION ROTATION (2026-07-12): BetMGM's WAF blocks a specific band
+    of curl_cffi TLS/JA3 fingerprints -- confirmed chrome124/chrome131/chrome120
+    all return 403 (HTML block page), while chrome116/chrome99/safari17_0/
+    safari15_5 return 200 with real fixture data. This is NOT an IP-reputation
+    block (same result reproduced from two different hosting origins) and NOT
+    a missing-cookie/session issue (403 persisted even with a primed session
+    from a real homepage load). Verified with real fixture counts that track
+    the `take` request parameter correctly (take=5/30/50 -> 5/30/46 real
+    fixtures, not an echoed/capped value), ruling out a stub/cached response.
+
+    User-Agent is matched to each impersonation profile -- a stale UA against
+    a different TLS fingerprint is a mismatch some WAFs flag independently,
+    so each profile below carries its own correct UA string.
+
+    WAF rulesets rotate, so this tries profiles in order and falls back on
+    403 rather than hardcoding a single one.
+    """
     print(f"\n  BetMGM {sport} (curl_cffi):")
     props = []
     try:
         from curl_cffi import requests as cf
-        session = cf.Session(impersonate="chrome124")
     except ImportError:
         print("    curl_cffi not installed")
         return props
 
     MGM_KEY = "N2Q4OGJjODYtODczMi00NjhhLWJlMWItOGY5MDUzMjYwNWM5"
-    headers = {"User-Agent": UA, "Accept": "application/json",
-               "Origin": "https://www.az.betmgm.com", "Referer": "https://www.az.betmgm.com/"}
     sport_ids = {"NBA": 7, "MLB": 23, "NHL": 19, "WNBA": 7, "NFL": 11}
     sid = sport_ids.get(sport, 7)
+
+    # (impersonate profile, matching User-Agent) -- ordered by confirmed
+    # working profiles; chrome124 deliberately omitted (confirmed WAF-blocked).
+    _MGM_PROFILES = [
+        ("safari17_0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"),
+        ("chrome116",  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"),
+        ("chrome99",   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36"),
+        ("safari15_5", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15"),
+    ]
+
+    session = None
+    headers = None
+    r1 = None
+    for profile, profile_ua in _MGM_PROFILES:
+        try:
+            trial_session = cf.Session(impersonate=profile)
+            trial_headers = {"User-Agent": profile_ua, "Accept": "application/json",
+                              "Origin": "https://www.az.betmgm.com", "Referer": "https://www.az.betmgm.com/"}
+            trial_r1 = trial_session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixtures",
+                params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
+                        "userCountry": "US", "subdivision": "US-AZ", "offerMapping": "Filtered",
+                        "sportIds": sid, "fixtureTypes": "Standard", "state": "Latest",
+                        "skip": 0, "take": 30, "sortBy": "StartDate"},
+                headers=trial_headers, timeout=15)
+            if trial_r1.status_code == 200:
+                session, headers, r1 = trial_session, trial_headers, trial_r1
+                print(f"    Fixtures: 200 (impersonate={profile})")
+                break
+            print(f"    Fixtures: {trial_r1.status_code} (impersonate={profile}, trying next)")
+        except Exception as e:
+            print(f"    Fixtures: error with impersonate={profile}: {e}")
+
+    if session is None:
+        print("    All impersonation profiles blocked -- BetMGM WAF rules may have rotated")
+        return props
 
     US_TEAMS = {"knicks","spurs","celtics","lakers","warriors","heat","bucks","nets",
         "suns","mavericks","nuggets","clippers","pacers","76ers","cavaliers","hawks",
@@ -2074,17 +2124,6 @@ def scrape_betmgm_curlffi(sport):
         "sparks","lynx","wings","valkyries","fire"}
 
     try:
-        # Step 1: Get fixtures with their game IDs
-        r1 = session.get("https://www.az.betmgm.com/cds-api/bettingoffer/fixtures",
-            params={"x-bwin-accessid": MGM_KEY, "lang": "en-us", "country": "US",
-                    "userCountry": "US", "subdivision": "US-AZ", "offerMapping": "Filtered",
-                    "sportIds": sid, "fixtureTypes": "Standard", "state": "Latest",
-                    "skip": 0, "take": 30, "sortBy": "StartDate"},
-            headers=headers, timeout=15)
-        print(f"    Fixtures: {r1.status_code}")
-        if r1.status_code != 200:
-            return props
-
         fixtures = r1.json().get("fixtures", [])
         us_fixtures = [f for f in fixtures if any(t in str(
             f.get("name",{}).get("value","") if isinstance(f.get("name"),dict) else f.get("name","")
