@@ -5997,7 +5997,7 @@ def classify_book_role(book_name):
         return "sharp"
     if b in ("draftkings","fanduel","espnbet","fanatics","betrivers"):
         return "square"
-    if b in ("prizepicks","underdog","betr","novig"):
+    if b in ("prizepicks","underdog","novig"):
         return "dfs"
     return "market"
 

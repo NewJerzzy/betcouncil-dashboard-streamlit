@@ -11160,9 +11160,6 @@ BOARD_SNAP_PATH     = os.path.join(CACHE_DIR, "board_snapshots.json")
 # ── BetRivers Direct (Kambi backend) ──────────────────────────
 
 
-# ── Betr Direct (GraphQL, no auth) ────────────────────────────
-
-
 # ── BetRivers Direct (Kambi backend) ──────────────────────────
 # DUPLICATE fetch_betrivers_direct removed (was identical to L13535)
 
@@ -12270,7 +12267,6 @@ def load_sport_data(sport):
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
         ("fetch_bet365_from_gist",             "bet365_lines_h",         "bet365_src"),
         ("fetch_pregame_from_gist",            "pregame_plays_h",        "pregame_src"),
-        ("fetch_betr_from_gist",               "betr_props_h",           "betr_src"),
         ("fetch_fantasylabs_from_gist",        "fantasylabs_data_h",     "fantasylabs_src"),
         ("fetch_rotowire_from_gist",           "rotowire_injuries_h",    "rotowire_src"),
         ("fetch_numberfire_from_gist",         "numberfire_proj_h",      "numberfire_src"),
@@ -12368,7 +12364,6 @@ def load_sport_data(sport):
             (fetch_caesars_direct,    "Caesars",     "📡"),
             (fetch_betrivers_direct,  "BetRivers",  "📡"),
             (fetch_superbook_direct,  "Superbook",  "📡"),
-            (fetch_betr_direct,       "Betr",       "📡"),
         ]:
             try:
                 if _fn is fetch_fanduel_direct:
@@ -13226,17 +13221,16 @@ def load_sport_data(sport):
                 fetch_draftkings_props_from_gist as _ld_dk,
                 fetch_bovada_from_gist  as _ld_bov,
                 fetch_novig_from_gist   as _ld_nv,
-                fetch_betr_from_gist    as _ld_betr,
             )
             _ld_book_data = {}
             # All fetchers return (list, source_label) — unwrap uniformly.
-            # Bovada/Novig/Betr are no-ops while their Gist files are empty;
+            # Bovada/Novig are no-ops while their Gist files are empty;
             # they activate automatically when the browser harvester pushes data.
             for _ld_bk, _ld_f in (
                 ("prizepicks", _ld_pp),  ("underdog",    _ld_ud),
                 ("fanduel",    _ld_fd),  ("betmgm",      _ld_mgm),
                 ("draftkings", _ld_dk),  ("bovada",      _ld_bov),
-                ("novig",      _ld_nv),  ("betr",        _ld_betr),
+                ("novig",      _ld_nv),
             ):
                 try:
                     _ld_res   = _ld_f(sport)
@@ -20963,11 +20957,6 @@ with tabs[4]:
             fetch('https://pregame.com/api/sharp-plays?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://pregame.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pregame_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Pregame error:',e.message);}});
         }});
 
-        // ── 21. Betr props (every 20 min) ────────────────────────────────
-        throttled('betr_'+sport,1200000,function(){{
-            fetch('https://api.fantasy.betr.app/api/v1/picks?league='+sport.toLowerCase()+'&type=over_under',{{headers:{{'Accept':'application/json','Referer':'https://betr.app/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betr_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Betr error:',e.message);}});
-        }});
-
         // ── 22. FantasyLabs ownership projections (every 30 min) ──────────
         var flSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
         var flSport=flSportMap[sport];
@@ -23407,13 +23396,6 @@ with tabs[9]:
     else:
         _src_statuses.append({"Source": "Pick6", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
-    # Betr (live public GraphQL, no auth needed)
-    _betr = st.session_state.get("betr_props_h", [])
-    if _betr:
-        _src_statuses.append({"Source": "Betr", "Status": f"🟢 {len(_betr)} props (live public API)", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Betr", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
     # Action Network (live public API, no auth needed)
     _an = st.session_state.get("action_network_data", {})
     if _an:
@@ -23429,11 +23411,6 @@ with tabs[9]:
         _src_statuses.append({"Source": "OddsShark", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
     # Pinnacle
-    _betr_count = sum(len([p for p in st.session_state.get(f"oddspapi_props_{s}", []) if p.get("source") == "betr_direct"]) for s in ["NBA","MLB","NHL","WNBA","NFL"])
-    if _betr_count > 0:
-        _src_statuses.append({"Source": "Betr Picks", "Status": f"\U0001f7e2 {_betr_count} props", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Betr Picks", "Status": "\u26aa Not loaded yet", "Action": "Load a board"})
     _pin = st.session_state.get(f"pinnacle_{st.session_state.get('last_sport','NBA')}", {})
     if _pin:
         _src_statuses.append({"Source": "Pinnacle (sharp lines)", "Status": "🟢 Connected", "Action": "None"})

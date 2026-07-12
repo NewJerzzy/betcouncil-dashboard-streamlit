@@ -10412,198 +10412,6 @@ def fetch_betrivers_direct(sport):
 
     return props
 
-def fetch_betr_direct(sport):
-    """Fetch Betr player props and DFS projections via GraphQL (public, no auth).
-
-    Endpoint: https://api.fantasy.betr.app/graphql
-
-    Each Projection in the Betr response carries:
-      name/label   : human-readable stat name (e.g. "Pitching Strikeouts")
-      value        : static DFS projection line
-      currentValue : live-updated line (preferred when non-null)
-      type         : ProjectionType enum ("REGULAR" for all live markets)
-      marketId     : unique market ID.  Two formats exist:
-                       - Integer string (e.g. "1032606232847459352"):
-                           pure DFS market, no canonical stat type.
-                       - Base64 string (e.g. "NmEyZjc4..."):
-                           decodes to {eventId}:{playerId}:{STAT_TYPE}:{line}:{type}
-                           e.g. "....:STRIKEOUTS:5.0:REGULAR"
-                           The STAT_TYPE segment is the canonical stat type code.
-      marketStatus : "OPENED" | "CLOSED" | "SUSPENDED" etc.
-
-    Projections with a base64-encoded marketId carry an embedded statType (e.g.
-    STRIKEOUTS, HITS_ALLOWED).  All OPENED projections are returned as player
-    props in BetCouncil standard format; the decoded stat_type is included as an
-    extra metadata field for downstream deduplication and canonical mapping.
-
-    Over/Under odds are em-dash placeholders — Betr is a DFS platform and does
-    not publish American moneyline odds on this public endpoint.
-
-    Returns list of dicts: {Player, Prop, Line, Over, Under, Sport, Book, ...}
-
-    Early-exit guards:
-      - unsupported sport   -> silent []
-      - HTTP non-200        -> st.warning + []
-      - GraphQL-level error -> st.warning + []
-      - network/parse error -> st.warning + []
-    """
-    league_map = {"NBA": "NBA", "MLB": "MLB", "NHL": "NHL", "WNBA": "WNBA", "NFL": "NFL"}
-    league = league_map.get(sport)
-    if not league:
-        return []
-
-    # marketId and marketStatus added so we can:
-    #   (a) filter out CLOSED/SUSPENDED lines, and
-    #   (b) decode the stat type from base64-encoded market IDs.
-    query = """query LeagueUpcomingEvents($league: League!) {
-      getUpcomingEventsV2(league: $league) {
-        name sport league
-        ... on TeamVersusEvent {
-          teams { name players { firstName lastName position
-            projections { name label value currentValue type marketId marketStatus }
-          }}
-        }
-        ... on IndividualVersusEvent {
-          players { firstName lastName position
-            projections { name label value currentValue type marketId marketStatus }
-          }
-        }
-      }
-    }"""
-
-    props = []
-    try:
-        import requests as _req, base64 as _b64
-
-        def _decode_stat_type(market_id):
-            """Extract canonical stat type from a base64-encoded Betr marketId.
-
-            Base64 marketIds decode to colon-delimited strings of the form:
-              {eventId}:{playerId}:{STAT_TYPE}:{line}:{projectionType}
-            The STAT_TYPE segment (index 2) is ALL_CAPS_WITH_UNDERSCORES.
-            Integer-only IDs are pure DFS markets — returns None for those.
-            """
-            if not market_id or str(market_id).isdigit():
-                return None
-            try:
-                padded = market_id + "=" * (-len(market_id) % 4)
-                decoded = _b64.b64decode(padded).decode("utf-8", errors="ignore")
-                parts = decoded.split(":")
-                if len(parts) >= 3:
-                    candidate = parts[2]
-                    # Stat type codes are ALL_CAPS; guard against decode noise
-                    if candidate and candidate.replace("_", "").isalpha() and candidate == candidate.upper():
-                        return candidate
-            except Exception:
-                pass
-            return None
-
-        r = _req.post(
-            "https://api.fantasy.betr.app/graphql",
-            json={
-                "operationName": "LeagueUpcomingEvents",
-                "query": query,
-                "variables": {"league": league},
-            },
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=12,
-        )
-        if r.status_code != 200:
-            st.warning(
-                f"⚠️ Betr: endpoint returned HTTP {r.status_code} — "
-                "projections unavailable. Try again later."
-            )
-            return []
-
-        data = r.json()
-        gql_errors = data.get("errors")
-        if gql_errors:
-            st.warning(
-                f"⚠️ Betr GraphQL error: {gql_errors[0].get('message', gql_errors)}"
-            )
-            return []
-
-        events = (data.get("data") or {}).get("getUpcomingEventsV2") or []
-        for event in events:
-            players_list = []
-            for team in (event.get("teams") or []):
-                if team and team.get("players"):
-                    players_list.extend(team["players"])
-            if event.get("players"):
-                players_list.extend(event["players"])
-
-            for player in players_list:
-                if not player:
-                    continue
-                full_name = (
-                    f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
-                )
-                if not full_name:
-                    continue
-
-                for proj in (player.get("projections") or []):
-                    if not proj:
-                        continue
-
-                    # Skip markets that are not open (CLOSED, SUSPENDED, etc.)
-                    mkt_status = proj.get("marketStatus") or ""
-                    if mkt_status and mkt_status != "OPENED":
-                        continue
-
-                    # currentValue is the live-updated line; fall back to static value
-                    line_raw = proj.get("currentValue") or proj.get("value")
-                    if line_raw is None:
-                        continue
-
-                    prop_name = proj.get("label") or proj.get("name") or ""
-                    if not prop_name:
-                        continue
-
-                    # Decode stat type from base64-encoded marketId when present.
-                    # e.g. marketId "NmEyZjc4..." → decoded "...:STRIKEOUTS:5.0:REGULAR"
-                    # → stat_type = "STRIKEOUTS".  Integer marketIds → None.
-                    _raw_mid = proj.get("marketId") or ""
-                    stat_type = _decode_stat_type(_raw_mid)
-                    # Fallback: when marketId is an integer (pure DFS) or decode fails,
-                    # use the human-readable label as stat_type for downstream mapping.
-                    # This ensures stat_type is always non-None for OPENED projections.
-                    if stat_type is None:
-                        stat_type = (proj.get("label") or proj.get("name") or "").upper().replace(" ", "_") or None
-
-                    # NOTE: marketId confirmed NOT base64 (decode always fails,
-                    # stat_type correctly falls back to the label). Diagnostic
-                    # logger removed 2026-06-30 now that this is settled.
-
-                    try:
-                        props.append({
-                            "Player":        full_name,
-                            "Prop":          prop_name,
-                            "Line":          float(line_raw),
-                            "Over":          "—",
-                            "Under":         "—",
-                            "Sport":         sport,
-                            "Book":          "Betr",
-                            "source":        "betr_direct",
-                            "stat_type":     stat_type,
-                            "market_id":     proj.get("marketId"),
-                            "market_status": mkt_status,
-                        })
-                    except (ValueError, TypeError):
-                        continue
-
-    except Exception as _e:
-        st.warning(
-            f"⚠️ Betr: failed to fetch projections ({type(_e).__name__}: {_e}). "
-            "Check network connectivity."
-        )
-        return []
-
-    return props
-
-
-# Alias so callers may use either name
-fetch_betr_lines = fetch_betr_direct
-
 
 def fetch_novig_lines(sport):
     """Fetch no-vig reference lines for devig and sharp-line comparison.
@@ -15818,7 +15626,6 @@ HARVESTER_REGISTRY = {
     "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
     "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
     "pregame":         ("betcouncil_pregame_{sport}.json",           30, "signal"),
-    "betr":            ("betcouncil_betr_{sport}.json",              20, "props"),
     "fantasylabs":     ("betcouncil_fantasylabs_{sport}.json",       30, "signal"),
     "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
     "sleeper":         ("betcouncil_sleeper_{sport}.json",           30, "signal"),
@@ -16514,7 +16321,6 @@ def get_harvester_status() -> dict:
         ("ScoresAndOdds %",              "betcouncil_scoresandodds_MLB.json",  18),
         ("Kalshi markets",               "betcouncil_kalshi2_MLB.json",        32),
         ("Pregame sharp plays",          "betcouncil_pregame_MLB.json",        32),
-        ("Betr props",                   "betcouncil_betr_MLB.json",           22),
         ("FantasyLabs ownership",        "betcouncil_fantasylabs_MLB.json",    32),
         ("Rotowire injuries",            "betcouncil_rotowire_MLB.json",       18),
         ("NumberFire projections",       "betcouncil_numberfire_MLB.json",     32),
@@ -16829,69 +16635,6 @@ def _parse_novig_props_harvested(raw, sport: str) -> list:
         print(f"[WARN] _parse_novig_props_harvested: {e}")
     return results
 
-
-def _parse_betr_props_harvested(raw, sport: str) -> list:
-    """
-    Parse Betr harvested data from betcouncil_betr_{sport}.json.
-    
-    Handles two formats:
-      (a) Pre-parsed BetCouncil list: [{Player, Prop, Line, ...}]
-          (harvester may push already-parsed props from fetch_betr_direct)
-      (b) Raw Betr GraphQL: {data: {getUpcomingEventsV2: [{teams: [{players: [
-              {firstName, lastName, projections: [{label, value, currentValue, marketStatus}]}
-          ]}]}]}}
-    """
-    results = []
-    try:
-        # Format (a): already-parsed BetCouncil list
-        items = raw if isinstance(raw, list) else raw.get("props", [])
-        if isinstance(items, list) and items and isinstance(items[0], dict) and "Player" in items[0]:
-            for p in items:
-                if not (p.get("Player") and p.get("Prop") and p.get("Line") is not None):
-                    continue
-                results.append({
-                    "Player":    p["Player"],
-                    "Prop":      p.get("Prop", ""),
-                    "Line":      p["Line"],
-                    "OverOdds":  p.get("OverOdds", "N/A"),
-                    "UnderOdds": p.get("UnderOdds", "N/A"),
-                    "Book":      "Betr",
-                    "Sport":     sport,
-                    "source":    "betr_browser_harvest",
-                })
-            return results
-        # Format (b): raw Betr GraphQL response
-        events = (
-            (raw.get("data") or {}).get("getUpcomingEventsV2") or
-            raw.get("getUpcomingEventsV2") or []
-        )
-        for event in (events if isinstance(events, list) else []):
-            all_teams = event.get("teams") or [{"players": event.get("players", [])}]
-            for team in all_teams:
-                for player in (team.get("players") or []):
-                    fname = player.get("firstName", "")
-                    lname = player.get("lastName", "")
-                    pname = f"{fname} {lname}".strip()
-                    for proj in (player.get("projections") or []):
-                        if proj.get("marketStatus") not in (None, "OPENED"):
-                            continue
-                        line = proj.get("currentValue") or proj.get("value")
-                        stat = proj.get("label") or proj.get("name", "")
-                        if not pname or not stat or line is None:
-                            continue
-                        results.append({
-                            "Player":    pname,
-                            "Prop":      stat,
-                            "Line":      line,
-                            "OverOdds":  "N/A",
-                            "UnderOdds": "N/A",
-                            "Book":      "Betr",
-                            "Sport":     sport,
-                            "source":    "betr_browser_harvest",
-                        })
-    except Exception as e:
-        print(f"[WARN] _parse_betr_props_harvested: {e}")
-    return results
 
 
 def fetch_bovada_from_gist(sport: str) -> tuple:
@@ -17292,18 +17035,6 @@ def fetch_pregame_from_gist(sport: str) -> tuple:
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
     return {}, "unavailable"
-
-def fetch_betr_from_gist(sport: str) -> tuple:
-    """PRIMARY: Betr props from browser harvester (parsed). SECONDARY: returns empty
-    — fetch_betr_direct is a live GraphQL call handled separately in the prop pipeline."""
-    data = _read_gist_file(f"betcouncil_betr_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
-        raw = data.get("data", {})
-        if raw:
-            props = _parse_betr_props_harvested(raw, sport)
-            if props:
-                return props, "browser_harvester"
-    return [], "unavailable"
 
 def fetch_fantasylabs_from_gist(sport: str) -> tuple:
     data = _read_gist_file(f"betcouncil_fantasylabs_{sport}.json", cache_minutes=5)
