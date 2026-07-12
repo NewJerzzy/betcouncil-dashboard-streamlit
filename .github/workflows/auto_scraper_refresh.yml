@@ -19,10 +19,14 @@ jobs:
         id: run_scraper
         env:
           GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
         run: |
           set +e
-          python betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr > /tmp/scraper_output.log 2>&1
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          python -u betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr > /tmp/scraper_output.log 2>&1
+          ec=$?
+          echo "=== EXIT CODE: $ec ===" >> /tmp/scraper_output.log
+          echo "exit_code=$ec" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Push debug log to Gist
