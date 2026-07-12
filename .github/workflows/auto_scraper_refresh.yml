@@ -16,8 +16,21 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run scraper (no-auth books only — PrizePicks/Underdog already covered by their own workflows)
+        id: run_scraper
         env:
           GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
         run: |
-          python betcouncil_auto_scraper.py --all \
-            --books dk,mgm,novig,betr
+          set +e
+          python betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr > /tmp/scraper_output.log 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Push debug log to Gist
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/push_scraper_debug_log.py /tmp/scraper_output.log
+
+      - name: Fail job if scraper failed
+        if: steps.run_scraper.outputs.exit_code != '0'
+        run: exit 1
