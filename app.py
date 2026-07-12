@@ -108,6 +108,7 @@ from config import (
     _UFC_WEIGHTCLASS_BASELINES, _UFC_ROUND_DEFAULT, _UFC_CHAMPIONSHIP_ROUNDS,
     PLAYER_LOOKUP_OPPONENT_OPTIONS,
     TEAM_ABBREV_TO_FRAGMENT,
+    LINE_DEVIATION_THRESHOLD_PCT,
 )
 import time as _time_mod
 from contextlib import contextmanager as _ctx
