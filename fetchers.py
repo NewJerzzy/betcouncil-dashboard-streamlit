@@ -97,7 +97,7 @@ try:
         NFL_INACTIVES_PATH,
         NFL_PRACTICE_PATH,
         ODDSWRAP_SPORT_MAP,
-        ODDS_API_BOOKS_GAMES,
+        ODDS_API_BOOKS_GAMES, ODDS_API_BOOKS_PROPS,
         PARLAYSAVANT_MLB_PROP_MAP,
         PARLAY_API_BASE,
         PARLAY_API_KEY,
@@ -156,6 +156,7 @@ except ImportError:
     NFL_PRACTICE_PATH = ""
     ODDSWRAP_SPORT_MAP = {}
     ODDS_API_BOOKS_GAMES = 0
+    ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex,circa_sports,betonlineag"
     PARLAYSAVANT_MLB_PROP_MAP = {}
     PARLAY_API_BASE = ""
     PARLAY_API_KEY = ""

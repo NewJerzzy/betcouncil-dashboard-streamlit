@@ -1549,6 +1549,7 @@ NFL_INACTIVES_PATH  = os.path.join(CACHE_DIR, "nfl_inactives.json")
 NFL_PRACTICE_PATH   = os.path.join(CACHE_DIR, "nfl_practice.json")
 ODDSWRAP_SPORT_MAP = {"NBA": "nba", "MLB": "mlb", "NFL": "nfl", "NHL": "nhl"}
 ODDS_API_BOOKS_GAMES = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex,circa_sports,betonlineag"
+ODDS_API_BOOKS_PROPS = "bovada,mybookieag,draftkings,fanduel,betmgm,caesars,us_ex,circa_sports,betonlineag"
 PARLAYSAVANT_MLB_PROP_MAP = {
     "Hits": "hits", "Singles": "singles", "Doubles": "doubles", "Triples": "triples",
     "Home Runs": "home-runs", "Total Bases": "total-bases", "RBI": "rbi", "Runs": "runs",
