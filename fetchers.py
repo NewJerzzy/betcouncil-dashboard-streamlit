@@ -4415,7 +4415,10 @@ def _resolve_nhl_stat_for_grading(player: str, stat_key: str, game_date: str):
         g = next((x for x in games if str(x.get("gameDate", ""))[:10] == game_date[:10]), None)
         if not g:
             return None
-        _field = {"GOALS": "goals", "ASSISTS": "assists", "SOG": "shots"}.get(stat_key)
+        _field = {
+            "GOALS": "goals", "ASSISTS": "assists", "SOG": "shots",
+            "PPP": "powerPlayPoints", "BLOCKED_SHOTS": "blockedShots", "HITS": "hits",
+        }.get(stat_key)
         if _field and _field in g:
             return float(g.get(_field, 0) or 0)
         if stat_key == "PTS":  # points = goals + assists
@@ -8531,6 +8534,13 @@ def fetch_espn_player_gamelogs(sport, player_name, n_games=10):
 # for the MLB EXPECTED_VS_ACTUAL build).
 _GRADING_PROP_STAT_MAP = [
     (("pts+reb+ast", "points+rebounds+assists", "pra"), "PRA"),
+    (("pts+reb", "points+rebounds", "points + rebounds"), "PR"),
+    (("pts+ast", "points+assists", "points + assists"), "PA_COMBO"),
+    (("reb+ast", "rebounds+assists", "rebounds + assists"), "RA"),
+    (("three", "3pm", "3-pointer", "3 pointer"), "3PM"),
+    (("steal",), "STL"),
+    (("block",), "BLK"),
+    (("turnover",), "TO"),
     (("point", "pts"), "PTS"),
     (("rebound", "reb"), "REB"),
     (("assist", "ast"), "AST"),
@@ -8558,10 +8568,18 @@ def _map_prop_to_stat_key(prop_type: str, sport: str = None):
     # Order matters: check SOG before GOALS, since "Shots on Goal" contains
     # "goal" as a substring and would otherwise match GOALS first.
     if sport == "NHL":
+        if "power play point" in p or "ppp" in p:
+            return "PPP"
+        if "block" in p:
+            return "BLOCKED_SHOTS"
+        if "hit" in p:
+            return "HITS"
         if "sog" in p or "shot" in p:
             return "SOG"
         if "assist" in p:
             return "ASSISTS"
+        if "point" in p:
+            return "PTS"
         if "goal" in p:
             return "GOALS"
     if sport == "MLB":
@@ -8750,8 +8768,15 @@ def _resolve_espn_core_stat(sport: str, athlete_id, stat_key: str, game_date: st
                 result = {
                     "PTS": game_stat.get("PTS", 0), "REB": game_stat.get("REB", 0),
                     "AST": game_stat.get("AST", 0),
+                    "3PM": game_stat.get("3PM", game_stat.get("TPM", game_stat.get("FG3M", 0))),
+                    "STL": game_stat.get("STL", 0),
+                    "BLK": game_stat.get("BLK", 0),
+                    "TO":  game_stat.get("TO", game_stat.get("TOV", 0)),
                 }
-                result["PRA"] = result["PTS"] + result["REB"] + result["AST"]
+                result["PRA"]       = result["PTS"] + result["REB"] + result["AST"]
+                result["PR"]        = result["PTS"] + result["REB"]
+                result["PA_COMBO"]  = result["PTS"] + result["AST"]
+                result["RA"]        = result["REB"] + result["AST"]
             else:  # NFL
                 result = {
                     "PASS_YDS": game_stat.get("PASSYDS", game_stat.get("YDS", 0)),
