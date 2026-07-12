@@ -4313,6 +4313,171 @@ def fetch_wnba_player_season_avg(player_name):
     except Exception as e:
         return None
 
+_NHL_TEAM_ABBREVS = [
+    "ANA","BOS","BUF","CGY","CAR","CHI","COL","CBJ","DAL","DET","EDM","FLA",
+    "LAK","MIN","MTL","NSH","NJD","NYI","NYR","OTT","PHI","PIT","SJS","SEA",
+    "STL","TBL","TOR","UTA","VAN","VGK","WSH","WPG",
+]
+
+def fetch_nhl_full_roster_ids(force_refresh=False):
+    """
+    Fetch NHL player IDs for ALL active players across all 32 teams via
+    api-web.nhle.com's public roster endpoint. Returns {player_name: player_id}.
+    Cached 24h. Same pattern as fetch_mlb_full_roster_ids -- avoids the
+    hardcoded-subset limitation of NHL_PLAYER_IDS (config.py).
+    """
+    cache_path = os.path.join(CACHE_DIR, "nhl_full_roster_ids.pkl")
+    if not force_refresh and os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 24:
+            try:
+                return _safe_load_pkl(cache_path)
+            except Exception:
+                pass
+
+    all_ids = dict(NHL_PLAYER_IDS)  # seed with known IDs
+    try:
+        for abbr in _NHL_TEAM_ABBREVS:
+            url = f"https://api-web.nhle.com/v1/roster/{abbr}/current"
+            try:
+                resp = _http.get(url, headers=HEADERS, timeout=8)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                for group in ("forwards", "defensemen", "goalies"):
+                    for p in data.get(group, []):
+                        first = (p.get("firstName", {}) or {}).get("default", "")
+                        last  = (p.get("lastName", {}) or {}).get("default", "")
+                        pid   = p.get("id")
+                        name  = f"{first} {last}".strip()
+                        if name and pid and name not in all_ids:
+                            all_ids[name] = pid
+                time.sleep(0.15)
+            except Exception:
+                continue
+        if len(all_ids) > len(NHL_PLAYER_IDS):
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_ids, f)
+    except Exception:
+        pass
+    return all_ids
+
+
+def fetch_wnba_full_roster_ids(force_refresh=False):
+    """
+    Fetch WNBA player IDs for ALL active players via ESPN's athletes list
+    endpoint (site.api.espn.com, limit=300 covers the full league). Returns
+    {player_name: player_id}. Cached 24h.
+    """
+    cache_path = os.path.join(CACHE_DIR, "wnba_full_roster_ids.pkl")
+    if not force_refresh and os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 24:
+            try:
+                return _safe_load_pkl(cache_path)
+            except Exception:
+                pass
+    all_ids = {}
+    try:
+        roster_data = _espn_get(
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/athletes?limit=300&active=true",
+            "wnba_roster_espn_full", ttl_hours=24
+        )
+        for a in (roster_data or {}).get("athletes", []):
+            name = a.get("displayName", "")
+            pid  = a.get("id")
+            if name and pid:
+                all_ids[name] = pid
+        if all_ids:
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_ids, f)
+    except Exception:
+        pass
+    return all_ids
+
+
+def _resolve_nhl_stat_for_grading(player: str, stat_key: str, game_date: str):
+    """NHL grading resolver. Uses the same api-web.nhle.com game-log endpoint
+    already proven in fetch_nhl_player_gamelog_vs_opponent, plus the new
+    full-roster lookup (all 32 teams) instead of the hardcoded NHL_PLAYER_IDS
+    subset. Returns float or None.
+    """
+    all_ids = fetch_nhl_full_roster_ids()
+    player_id = all_ids.get(player)
+    if not player_id:
+        return None
+    url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None
+        games = resp.json().get("gameLog", [])
+        g = next((x for x in games if str(x.get("gameDate", ""))[:10] == game_date[:10]), None)
+        if not g:
+            return None
+        _field = {"GOALS": "goals", "ASSISTS": "assists", "SOG": "shots"}.get(stat_key)
+        if _field and _field in g:
+            return float(g.get(_field, 0) or 0)
+        if stat_key == "PTS":  # points = goals + assists
+            return float((g.get("goals", 0) or 0) + (g.get("assists", 0) or 0))
+    except Exception as e:
+        print(f"[WARN] _resolve_nhl_stat_for_grading: {e}")
+    return None
+
+
+def _resolve_wnba_stat_for_grading(player: str, stat_key: str, game_date: str, athlete_id=None):
+    """WNBA grading resolver. Reuses the same ESPN core eventlog endpoint
+    already proven for NBA/NFL (sport_path-generic), with the athlete ID
+    coming from fetch_wnba_full_roster_ids (full league) instead of a
+    hardcoded subset like ESPN_ATHLETE_IDS.
+    """
+    if not athlete_id:
+        return None
+    sport_path = ESPN_CORE_SPORT_MAP.get("WNBA", "")
+    if not sport_path:
+        return None
+    season = 2025
+    url = f"{ESPN_CORE_BASE}/sports/{sport_path}/seasons/{season}/athletes/{athlete_id}/eventlog?limit=15"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    except Exception as e:
+        print(f"[WARN] _resolve_wnba_stat_for_grading: {e}")
+        return None
+    for item in data.get("events", {}).get("items", []):
+        event_ref = item.get("event", {}).get("$ref", "") or item.get("$ref", "")
+        item_date = item.get("date", "")
+        if not item_date and event_ref:
+            try:
+                ev_resp = _http.get(event_ref, headers=HEADERS, timeout=10)
+                if ev_resp.status_code == 200:
+                    item_date = ev_resp.json().get("date", "")
+            except Exception:
+                pass
+        if not item_date or not item_date.startswith(game_date):
+            continue
+        stats_ref = item.get("statistics", {}).get("$ref", "")
+        if not stats_ref:
+            continue
+        try:
+            stats_resp = _http.get(stats_ref, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            if stats_resp.status_code != 200:
+                continue
+            stats_data = stats_resp.json()
+            game_stat = {}
+            for split in stats_data.get("splits", {}).get("categories", []):
+                for stat in split.get("stats", []):
+                    game_stat[stat.get("abbreviation", "").upper()] = stat.get("value", 0)
+            if not game_stat:
+                continue
+            return game_stat.get(stat_key)
+        except Exception:
+            continue
+    return None
+
+
 def fetch_mlb_full_roster_ids(force_refresh=False):
     """
     Fetch MLB player IDs for ALL active players across all 30 teams.
@@ -8549,14 +8714,16 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
     Coverage note (be upfront about this, don't silently overclaim):
     NBA/NFL only work for players in the hardcoded ESPN_ATHLETE_IDS map
     (config.py — currently ~15-20 well-known players per sport) and only
-    NBA/NFL prop types are mapped there. MLB (2026-07) uses a separate,
-    broader path via statsapi.mlb.com + fetch_mlb_full_roster_ids (all 30
-    teams' rosters, not a hardcoded subset) -- added because MLB was
-    previously the single largest source of ungraded volume (roughly half
-    of all logged bets in the signal_performance sample) despite having
-    zero automated grading coverage. NHL/WNBA remain unresolved -- flagged
-    as the next coverage gap, not solved here. Callers must treat None as
-    "ungradable this pick" rather than assuming a miss.
+    NBA/NFL prop types are mapped there. MLB/NHL/WNBA (2026-07) each use a
+    broader full-roster path instead of a hardcoded subset:
+      - MLB: statsapi.mlb.com + fetch_mlb_full_roster_ids (all 30 teams)
+      - NHL: api-web.nhle.com + fetch_nhl_full_roster_ids (all 32 teams)
+      - WNBA: ESPN core eventlog + fetch_wnba_full_roster_ids (full league,
+        via ESPN's 300-limit active-athletes endpoint)
+    All five sports now have automated grading coverage. NBA/NFL remain on
+    the older hardcoded-subset path -- widening those to full-roster lookups
+    the same way is the next follow-up, not solved here. Callers must treat
+    None as "ungradable this pick" rather than assuming a miss.
 
     Returns: float stat value, or None if unresolvable (unknown player,
     unsupported sport/prop, no game found on that date, or a fetch error).
@@ -8566,6 +8733,19 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
         if not stat_key:
             return None
         return _resolve_mlb_stat_for_grading(player, stat_key, game_date)
+
+    if sport == "NHL":
+        stat_key = _map_prop_to_stat_key(prop_type, sport="NHL")
+        if not stat_key:
+            return None
+        return _resolve_nhl_stat_for_grading(player, stat_key, game_date)
+
+    if sport == "WNBA":
+        stat_key = _map_prop_to_stat_key(prop_type)
+        if not stat_key:
+            return None
+        athlete_id = fetch_wnba_full_roster_ids().get(player)
+        return _resolve_wnba_stat_for_grading(player, stat_key, game_date, athlete_id=athlete_id)
 
     if sport not in ("NBA", "NFL"):
         return None
