@@ -5644,12 +5644,17 @@ def analyze_injury_performance():
     return results, len(injured)
 
 def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
-    """Backfill edge/tier/prob for a manually-logged bet by matching it against
-    that day's saved board_snapshots (same data grade_board_snapshots_for_date
-    reads). Fixes the root cause of signal_performance/history records showing
-    edge=0: manual/OCR/paste entry paths have no board context, so the model's
-    actual recommendation at that time was being silently dropped instead of
-    recovered. Returns (edge, tier, prob) or (None, None, None) if no match.
+    """Backfill edge/tier/prob/signals for a manually-logged bet by matching it
+    against that day's saved board_snapshots (same data grade_board_snapshots_for_date
+    reads). Fixes two related root causes of signal_performance/history records
+    being unusable for calibration: (1) edge/tier/prob defaulting to 0/None
+    when manual/OCR/paste entry paths had no board context, and (2) EVERY
+    signal_* flag in signal_performance showing 0 regardless of tier or
+    outcome -- because no log_manual_bet() call site anywhere ever passed the
+    signals= kwarg, so signals_active was always computed from an empty dict
+    (a dict with 8 False values, which is truthy, so the early-return guard
+    in record_signal_performance never caught it either).
+    Returns (edge, tier, prob, signals) or (None, None, None, None) if no match.
     """
     try:
         target_date = str(date_str)[:10]
@@ -5665,10 +5670,28 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
                     continue
                 if prop_norm and str(p.get("prop", "")).strip().lower() != prop_norm and prop_norm not in str(p.get("prop", "")).strip().lower():
                     continue
-                return p.get("edge"), p.get("tier"), p.get("prob")
+                return p.get("edge"), p.get("tier"), p.get("prob"), p.get("signals")
     except Exception:
         pass
-    return None, None, None
+    return None, None, None, None
+
+
+def _board_prop_signal_values(p: dict) -> dict:
+    """Extract the raw per-prop signal breakdown off a live board row (the
+    SignalBase/SignalDefense/etc keys, same source used when board_snapshots
+    is written). Use this at lock-creation time so locks carry signal_values
+    forward to log_manual_bet(), instead of it always being empty.
+    """
+    return {
+        "base":     p.get("SignalBase", 0),
+        "defense":  p.get("SignalDefense", 0),
+        "location": p.get("SignalLocation", 0),
+        "rest":     p.get("SignalRest", 0),
+        "pace":     p.get("SignalPace", 0),
+        "usage":    p.get("SignalUsage", 0),
+        "blowout":  p.get("SignalBlowout", 0),
+    }
+
 
 
 def record_signal_performance(lock, outcome):
@@ -17843,6 +17866,7 @@ with tabs[1]:
                                     "source":    "EV Optimizer",
                                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                     "prob":      _lk_prop.get("Prob",0.5),
+                                    "signal_values": _board_prop_signal_values(_lk_prop),
                                 })
                                 # Capture Pinnacle CLV at lock-time — this was
                                 # previously dead code (record_pinnacle_line
@@ -17901,6 +17925,7 @@ with tabs[1]:
                                 "source":    "EV Optimizer",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob":      _lk_prop2.get("Prob",0.5),
+                                "signal_values": _board_prop_signal_values(_lk_prop2),
                             })
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], _board)
@@ -17999,6 +18024,7 @@ with tabs[1]:
                             "sport": _sport, "source": "Portfolio Builder",
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "prob": _lp.get("Prob",0.5),
+                            "signal_values": _board_prop_signal_values(_lp),
                         })
                         try:
                             record_pinnacle_line(st.session_state.locks[-1], _board)
@@ -18029,6 +18055,7 @@ with tabs[1]:
                                 "sport": _sport, "source": "EV Optimizer",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob": _p.get("Prob",0.5),
+                                "signal_values": _board_prop_signal_values(_p),
                             })
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], _board)
@@ -19137,7 +19164,8 @@ with tabs[3]:
                             lock.get("side","OVER"), lock.get("sport",""), "WIN",
                             float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
                             lock.get("timestamp","")[:10],
-                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
+                            signals=lock.get("signal_values")
                         )
                     # Remove these locks
                     for lock in slip_locks:
@@ -19154,7 +19182,8 @@ with tabs[3]:
                             lock.get("side","OVER"), lock.get("sport",""), "LOSS",
                             float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
                             lock.get("timestamp","")[:10],
-                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                            tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
+                            signals=lock.get("signal_values")
                         )
                     for lock in slip_locks:
                         if lock in st.session_state.locks:
@@ -19356,7 +19385,8 @@ with tabs[3]:
                                     player, lock.get("prop",""), line, side, sport, outcome,
                                     float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
                                     lock.get("timestamp","")[:10],
-                                    tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob")
+                                    tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
+                                    signals=lock.get("signal_values")
                                 )
                                 if lock in st.session_state.locks:
                                     st.session_state.locks.remove(lock)
@@ -19422,7 +19452,7 @@ with tabs[3]:
                                     continue
                                 actual = float(stat.get(stat_key,0) or 0)
                             outcome = ("WIN" if actual > line else "LOSS") if side == "OVER" else ("WIN" if actual < line else "LOSS")
-                            log_manual_bet(lock.get("player",""), lock.get("prop",""), line, side, "NBA", outcome, float(lock.get("wager") or 0), 2, "prop", "PrizePicks", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"))
+                            log_manual_bet(lock.get("player",""), lock.get("prop",""), line, side, "NBA", outcome, float(lock.get("wager") or 0), 2, "prop", "PrizePicks", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"))
                             if lock in st.session_state.locks:
                                 st.session_state.locks.remove(lock)
                             bdl_resolved += 1
@@ -19562,7 +19592,7 @@ with tabs[3]:
                                         win_is_home = home_score > away_score
                                         outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
                                     if outcome:
-                                        log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"))
+                                        log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"))
                                         if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                         resolved += 1
                                         game_resolved += 1
@@ -21838,6 +21868,7 @@ with tabs[5]:
                     "better_line": better_line,
                     "dk_note": dk_note,
                     "sharp_flag": sharp_flag,
+                    "signal_values": _board_prop_signal_values(board_match) if board_match else {},
                     "line_note": line_note,
                     "confidence": confidence,
                     "data_source": data_source,
@@ -21959,7 +21990,8 @@ with tabs[5]:
                                 "edge": r["edge"], "tier": r["tier"],
                                 "status": "PENDING",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                "sport": r["sport"]
+                                "sport": r["sport"],
+                                "signal_values": _board_prop_signal_values(board_match),
                             })
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], board)
@@ -21997,6 +22029,7 @@ with tabs[5]:
                         sport=r["sport"], outcome=_ls_outcome, wager=_ls_wager,
                         pick_count=len(results), bet_type="prop", source=f"{_ls_source} (via Slip Analyzer)",
                         bet_date=_ls_slip_id, tier=r["tier"], edge=r["edge"], prob=r["prob"],
+                        signals=r.get("signal_values"),
                         notes="Logged from Slip Analyzer",
                     )
                 st.success(f"✅ Logged {len(results)} picks as one parlay — see Log Bet → Recent Activity")
@@ -22508,7 +22541,7 @@ with tabs[7]:
                 _logged_pk = 0
                 for _pkl in _pk_players:
                     try:
-                        _bf_edge, _bf_tier, _bf_prob = lookup_board_edge(
+                        _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
                             _pkl["player"], _pkl["prop"], _pk_sport, _pk_date_str
                         )
                         log_manual_bet(
@@ -22518,7 +22551,7 @@ with tabs[7]:
                             wager=_pk_stake,          # ← total stake per entry, not per player
                             pick_count=int(_pk_picks), bet_type="prop",
                             source=_pk_source, bet_date=_pk_date_str,
-                            tier=_bf_tier, edge=_bf_edge, prob=_bf_prob,
+                            tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals,
                         )
                         _logged_pk += 1
                     except (ValueError, TypeError, ZeroDivisionError) as _e:
@@ -22543,13 +22576,13 @@ with tabs[7]:
         if st.button("✅ Log Single Bet", key="log_single_btn", type="primary"):
             if _sb_player:
                 _sb_date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                _bf_edge, _bf_tier, _bf_prob = lookup_board_edge(_sb_player, _sb_prop, _sb_sport, _sb_date_str)
+                _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(_sb_player, _sb_prop, _sb_sport, _sb_date_str)
                 log_manual_bet(
                     player=_sb_player, prop=_sb_prop, line=_sb_line,
                     side=_sb_side, sport=_sb_sport, outcome=_sb_outcome,
                     wager=_sb_stake, pick_count=1, bet_type="prop",
                     source=_sb_source, bet_date=_sb_date_str,
-                    tier=_bf_tier, edge=_bf_edge, prob=_bf_prob,
+                    tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals,
                 )
                 st.success(f"✅ Logged {_sb_player} {_sb_side} {_sb_line} — {_sb_outcome}")
                 st.rerun()
@@ -22720,10 +22753,10 @@ with tabs[7]:
                             except ValueError:
                                 continue
                     try:
-                        _bf_edge, _bf_tier, _bf_prob = lookup_board_edge(
+                        _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
                             bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str
                         )
-                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob)
+                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals)
                         submitted += 1
                     except (ValueError, TypeError):
                         continue
