@@ -12547,6 +12547,65 @@ def fetch_betmgm_game_lines(sport: str) -> list:
     Fetch BetMGM game lines (ML/spread/total) via widgetdata API.
     No Bearer token needed — uses session cookies from BETMGM_COOKIE secret.
     Cookie lasts ~24h. State: BETMGM_STATE (default az).
+
+    FALLBACK (2026-07): if the direct widgetdata call fails (WAF-blocked
+    from datacenter IPs, matches the same Cloudflare pattern found on
+    Caesars/BetOnline this session), fall back to VSiN's line tracker,
+    which already covers BetMGM (confirmed in its own docstring: "8 books
+    ... + BetMGM, Caesars, Boomers"). VSiN was already being pulled
+    elsewhere in the app for display, but was never wired as an actual
+    fallback source here -- same "computed/fetched but not consumed"
+    pattern found repeatedly this session. Same defensive multi-key
+    book-name lookup as the rest of this session's work, since the exact
+    casing VSiN uses for "BetMGM" in its books{} dict isn't independently
+    confirmed against a live payload.
+    Returns list of {game, home, away, market, selection, odds, book, sport, source}
+    Cached 15 min.
+    """
+    result = _fetch_betmgm_widgetdata(sport)
+    if result:
+        return result
+    return _fetch_betmgm_lines_via_vsin(sport)
+
+
+def _fetch_betmgm_lines_via_vsin(sport: str) -> list:
+    """VSiN-backed fallback for BetMGM game lines. See fetch_betmgm_game_lines
+    for why this exists. Returns [] (not a guess) if VSiN's payload doesn't
+    have a BetMGM entry under any of the plausible key casings.
+    """
+    try:
+        games, src = fetch_vsin_from_gist(sport)
+        if not games:
+            return []
+        out = []
+        for g in games:
+            books = g.get("books", {}) or {}
+            bm = books.get("BetMGM") or books.get("betmgm") or books.get("BETMGM") or books.get("bet_mgm")
+            if not bm:
+                continue
+            out.append({
+                "game":     f"{g.get('away_team','')} @ {g.get('home_team','')}",
+                "home":     g.get("home_team", ""), "away": g.get("away_team", ""),
+                "spread":   bm.get("spread"), "spread_odds": bm.get("spread_odds"),
+                "ml":       bm.get("ml"),     "total": bm.get("total"),
+                "total_odds": bm.get("total_odds"),
+                "book": "BetMGM", "sport": sport, "source": "vsin_fallback",
+            })
+        if out:
+            print(f"[BetMGM] Fallback: {len(out)} games from VSiN")
+        return out
+    except Exception as e:
+        print(f"[BetMGM] VSiN fallback error: {e}")
+        return []
+
+
+def _fetch_betmgm_widgetdata(sport: str) -> list:
+    """
+    Direct BetMGM widgetdata call -- the original implementation of what
+    used to be fetch_betmgm_game_lines(), split out so VSiN can serve as
+    a real fallback (see fetch_betmgm_game_lines / _fetch_betmgm_lines_via_vsin).
+    No Bearer token needed — uses session cookies from BETMGM_COOKIE secret.
+    Cookie lasts ~24h. State: BETMGM_STATE (default az).
     Returns list of {game, home, away, market, selection, odds, book, sport, source}
     Cached 15 min.
     """
