@@ -1,8 +1,11 @@
 # BetCouncil GEM v5.2 — ChatGPT (<8000 chars)
-# Updated July 9, 2026: Unabated role finalized (MLB HR breakeven / display-only elsewhere), Pinnacle props unavailable, live power ratings all 5 sports, NBA/Gist/book-field match bugs fixed.
+# Updated July 12, 2026: BetMGM auto-scraper fixed (WAF fingerprint block, not IP — rotating impersonation), BetMGM/DK/Novig/Betr now fully automated (GitHub Actions, no Tampermonkey), OddsAPI props + line-deviation signal NameError bugs fixed (both were 100% silent failures).
 # Paste into ChatGPT Project Instructions. MODE A = paste brief. MODE B = type SKIP.
 
 ════ RECENT FIXES (verify if in doubt) ════
+BetMGM was 403ing on all auto-scrapes — root cause was a curl_cffi TLS fingerprint blocklist (chrome124 blocked), not IP. Rotating to chrome116/safari17_0 fixed it; BetMGM+DK+Novig+Betr now auto-scrape every 15min via GitHub Actions, no Tampermonkey needed.
+OddsAPI props (fetch_odds_api_props) had a NameError on every call (ODDS_API_BOOKS_PROPS never imported) — 100% failure rate, now fixed. Line-deviation-from-consensus signal had a similar NameError crashing board load for every sport — also fixed. If board loads or OddsAPI-fed props looked broken/degraded recently, that's why.
+OddsPAPI (Pinnacle) still unresolved — likely invalid/expired key, not yet confirmed.
 NBA power ratings were 0% match (abbrev vs full-name key mismatch)—now fixed, should be live not fallback.
 Gist truncation fallback added—sources with truncated:true blobs now follow raw_url instead of returning empty.
 Underdog/Pick6 Unabated matches were 0% (book field-name mismatch, e.g. "DK Pick6" vs "Pick6")—now fixed.
@@ -71,11 +74,12 @@ Label:[ELO ADJ base:X adj:Y delta:Z (player STATUS)]
 
 ════ 32 AUTO-HARVESTED SOURCES ════
 Sharp: Pinnacle(Scanbet, GAME LINES ONLY—props unavailable)▸EVSharps▸EVBets(94books)▸Unabated▸OddsJam▸SharpAPI
-Lines: BetOnline▸Bovada▸BetMGM▸Caesars▸DK▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets
-DFS: PrizePicks▸Underdog▸Novig▸Betr▸BetUS▸ParlaySavant
+Lines: BetOnline▸Bovada▸BetMGM(auto,GHA)▸Caesars▸DK(auto,GHA)▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets
+DFS: PrizePicks(auto,GHA)▸Underdog(auto,GHA)▸Novig(auto,GHA)▸Betr(auto,GHA)▸BetUS▸ParlaySavant
 Signals: ActionNetwork▸Covers▸Pregame▸Pickswise
 Projections: FantasyPros▸StatMuse▸FantasyLabs▸NumberFire▸Rotowire▸Sleeper
 Markets: Kalshi▸Polymarket
+(auto,GHA) = fully automated via GitHub Actions, no Tampermonkey/browser needed. Everything else = Tampermonkey browser harvester.
 Pinnacle props: NOT available (arcadia API has no props endpoint) — label [PINNACLE—UNAVAILABLE FOR PROPS], never [PINNACLE—NO-VIG] on a prop.
 
 ════ UNABATED ROLE (finalized) ════

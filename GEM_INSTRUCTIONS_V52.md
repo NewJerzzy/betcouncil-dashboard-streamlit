@@ -1,5 +1,6 @@
 # BetCouncil GEM Instructions v5.2
 # Updated: July 9, 2026 — v5.2: Monte Carlo Engine (Poisson/Skellam/Log5), SportsbookReview public %, SportsLine multi-book, full sport MC coverage, Unabated MLB-HR breakeven finalized, live power ratings all 5 sports, NBA/Gist/book-field bug fixes, bc_utils devig/Kelly math fixes
+# Session addendum July 12, 2026: BetMGM auto-scraper fixed (WAF blocks specific curl_cffi TLS fingerprints, not IP — rotating impersonation profile fixes it), BetMGM/DraftKings/Novig/Betr now run fully automated via GitHub Actions (no Tampermonkey needed), OddsAPI props NameError fixed (was 100% failure rate), line-deviation-from-consensus signal NameError fixed (was silently never firing) — see Session 12 Addendum below for full detail.
 # Replace your current Gem system prompt with everything below this line.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2102,10 +2103,10 @@ SHARP BENCHMARKS (highest priority sources):
 SPORTSBOOK GAME LINES:
 - BetOnline: server-side (no auth needed) ✅
 - Bovada: browser harvester ✅
-- BetMGM: browser harvester ✅
-- Caesars: browser harvester (WAF auto-captured) ✅
-- DraftKings: browser harvester ✅
-- FanDuel: browser harvester + SharpAPI fallback ✅
+- BetMGM: AUTOMATED via GitHub Actions, every 15 min (curl_cffi with rotating TLS impersonation profile — WAF blocks specific fingerprints like chrome124, safari17_0/chrome116 pass through) — no Tampermonkey needed ← UPDATED 7/12
+- Caesars: browser harvester (WAF auto-captured) ✅ — confirmed WAF-blocks all curl_cffi impersonation profiles tested, browser-only remains correct here
+- DraftKings: AUTOMATED via GitHub Actions, every 15 min (curl_cffi, no auth) — no Tampermonkey needed ← UPDATED 7/12
+- FanDuel: browser harvester + SharpAPI fallback ✅ — confirmed WAF-blocked same as Caesars
 - MyBookie: browser harvester (bypasses cf_clearance) ← NEW
 - Bet365: browser harvester ← NEW
 - Bet105: browser harvester (low-juice lines) ← NEW
@@ -2118,12 +2119,12 @@ SPORTSBOOK GAME LINES:
 DFS PROPS:
 - PrizePicks: AUTOMATED via GitHub Actions (public partner API, every 15 min) — no Tampermonkey needed ← UPDATED
 - Underdog Fantasy: AUTOMATED via GitHub Actions (public API, every 15 min) — no Tampermonkey needed ← UPDATED
-- Pick6 (DraftKings): AUTOMATED via GitHub Actions (SSR-embedded page data, every 30 min) — no login/browser needed ← NEW
-- Novig: browser harvester + scraper fallback ✅ (confirmed CloudFront-blocked from scripted access, no public API found)
-- Betr: LIVE direct GraphQL call (public, no auth) — no Tampermonkey needed, called fresh every board load ← UPDATED
-- DraftKings props: browser harvester ✅
+- Pick6 (DraftKings): AUTOMATED via GitHub Actions but endpoint currently returning 404s (dead/changed API path) — falls back to Tampermonkey DK Pick6 Passive Harvester, which remains the working path ← UPDATED 7/12
+- Novig: AUTOMATED via GitHub Actions, every 15 min (curl_cffi, no auth) — no Tampermonkey needed. Earlier "CloudFront-blocked" note was inaccurate/outdated — confirmed working with 1,900+ real props per run ← UPDATED 7/12
+- Betr: AUTOMATED via GitHub Actions, every 15 min (curl_cffi GraphQL, no auth) — no Tampermonkey needed ← UPDATED 7/12
+- DraftKings props: AUTOMATED via GitHub Actions (same run as game lines above) ← UPDATED 7/12
 - FanDuel props: browser harvester ✅ (confirmed blocked — DNS-dead API subdomains + 400 with no body from scripted access)
-- BetMGM props: browser harvester ✅ (confirmed CloudFront/WAF-blocked, no public API found)
+- BetMGM props: AUTOMATED via GitHub Actions, every 15 min — see SPORTSBOOK GAME LINES above for the fingerprint-rotation fix ← UPDATED 7/12
 - BetUS props builder: browser harvester ← NEW
 - ParlaySavant +EV props: browser harvester ← NEW
 
@@ -2154,15 +2155,25 @@ at all — they either (a) run automatically via scheduled GitHub Actions workfl
 that push to the same Gist the harvester uses, or (b) call a genuinely public,
 unauthenticated API live every time the board loads. These are, in priority order
 same as before, just with a faster/more reliable primary tier:
-  Pick6, PrizePicks, Underdog  → GitHub Actions (scheduled, Gist-backed)
-  Bovada (game lines), Betr, Action Network, Kalshi, OddsShark → live direct call
+  Pick6*, PrizePicks, Underdog  → GitHub Actions (scheduled, Gist-backed)
+  DraftKings, BetMGM, Novig, Betr → GitHub Actions (scheduled every 15 min, curl_cffi) ← UPDATED 7/12
+  Bovada (game lines), Action Network, Kalshi, OddsShark → live direct call
+  *Pick6's GitHub Actions path is currently 404ing (dead/changed endpoint) — falls
+   back to the Tampermonkey DK Pick6 Passive Harvester, which still works.
+BetMGM was moved off the "no viable non-Tampermonkey path" list this session: the
+403s were never an IP-reputation block — BetMGM's WAF blocklists specific curl_cffi
+TLS/JA3 fingerprints (chrome124/131/120 blocked, chrome116/chrome99/safari17_0/
+safari15_5 pass with real data). The scraper now rotates through the working
+profiles and falls back cleanly if a future WAF update blocks all of them; a
+same-origin Tampermonkey harvester (scripts/tampermonkey_betmgm_harvester.user.js)
+exists in the repo as a ready-made fallback if that happens, not currently installed.
 Sites confirmed to have NO viable non-Tampermonkey path (real anti-bot WAF or no
-accessible data at all, not just unexplored): BetMGM, Caesars, Novig, DraftKings
-main sportsbook, FanDuel, MyBookie, Bet365, BetUS, Bet105, BetWhale, YBets,
-Covers, OddsJam, EVBets, SportsInsights, VegasInsider, Stokastic, RotoGrinders,
-FantasyLabs, Outlier, Rotowire, Numberfire, PropsCash, BettingPros, Unabated,
-Pickswise, Pickwise, ParlaySavant, Pregame, OddsPortal, ScoresAndOdds, PropSwap,
-Zamba, Polymarket (stale data only).
+accessible data at all, not just unexplored): Caesars, FanDuel, MyBookie, Bet365,
+BetUS, Bet105, BetWhale, YBets, Covers, OddsJam, EVBets, SportsInsights,
+VegasInsider, Stokastic, RotoGrinders, FantasyLabs, Outlier, Rotowire, Numberfire,
+PropsCash, BettingPros, Unabated, Pickswise, Pickwise, ParlaySavant, Pregame,
+OddsPortal, ScoresAndOdds, PropSwap, Zamba, Polymarket (stale data only).
+
 
 HARVESTER STATUS INTERPRETATION:
 - 🟢 Live (Xmin): use at full signal weight
@@ -2176,4 +2187,40 @@ SOURCE PRIORITY FOR DEVIG:
 3. Circa + BetCris → sharp confirmation
 4. EVBets/EVSharps → pre-computed EV vs sharp books
 5. Soft books (DK/FD/BetMGM) → line shop only, never devig anchor
+
+## Session 12 Addendum (July 12, 2026) — Infra Automation + Two Silent-Failure Bugs Fixed
+
+### BetMGM WAF fingerprint fix (see ARCHITECTURE NOTE above for full detail)
+BetMGM's 403s were misdiagnosed for a while as an IP-reputation block. Verified
+via direct testing (varying `take` param 5/30/50 → 5/30/46 real fixtures, ruling
+out a cached/stub response) that it's a curl_cffi TLS/JA3 fingerprint blocklist:
+chrome124/131/120 blocked, chrome116/chrome99/safari17_0/safari15_5 pass with
+real data. Scraper now rotates profiles with matched User-Agent per profile.
+
+### Two NameError bugs fixed — both caused 100% silent failure, not partial degradation
+- `LINE_DEVIATION_THRESHOLD_PCT` was referenced in `load_sport_data()` but never
+  imported from config.py into app.py — crashed board load for every sport, every
+  session. If you saw boards fail to load recently, this was almost certainly why.
+- `ODDS_API_BOOKS_PROPS` existed only in app.py, never in config.py, so
+  `fetch_odds_api_props()` threw a NameError on every single call — this is why
+  OddsAPI showed 100% error rate / ❌ in Line Shop. Not a key/budget/rate-limit
+  issue as first suspected; fetch_odds_api_props() had literally never once
+  succeeded until this fix.
+Both are now fixed. If OddsAPI/game-line-related model output looked systematically
+degraded or the app crashed on load recently, that timeframe's data quality may be
+suspect — treat pre-fix graded results with extra caution when auditing SEM.
+
+### OddsPAPI (Pinnacle via OddsPAPI) — still unresolved, now diagnosable
+`fetch_pinnacle_lines()` has never once completed successfully (Gist usage counter
+was never written), but previously failed with zero logging so the cause was
+unknown. Now logs the actual HTTP status/response body to Fetch Errors on every
+failure path. Likely cause: invalid/expired ODDSPAPI_KEY — needs verification in
+Streamlit Cloud secrets, not yet confirmed either way.
+
+### Maintenance note
+GEM instructions (this file + the ChatGPT version) should be updated as part of
+any session that changes model logic, data sources, SEM/calibration, or signal
+math — not as a separate follow-up task. Treat doc updates as part of the same
+unit of work as the code change itself.
+
 
