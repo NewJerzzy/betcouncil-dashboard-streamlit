@@ -1,0 +1,23 @@
+name: Auto Scraper Refresh (DK/BetMGM/Novig/Betr)
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run scraper (no-auth books only — PrizePicks/Underdog already covered by their own workflows)
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: |
+          python betcouncil_auto_scraper.py --all \
+            --books dk,mgm,novig,betr
