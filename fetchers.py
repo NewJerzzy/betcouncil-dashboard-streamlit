@@ -8449,6 +8449,35 @@ def _map_prop_to_stat_key(prop_type: str, sport: str = None):
             return "ASSISTS"
         if "goal" in p:
             return "GOALS"
+    if sport == "MLB":
+        if "total base" in p:
+            return "TOTAL_BASES"
+        if "strikeout" in p or p.strip() in ("k", "ks"):
+            return "PITCHER_K"
+        if "home run" in p or p.strip() in ("hr", "hrs"):
+            return "HR"
+        if "rbi" in p:
+            return "RBI"
+        if "run" in p and "home" not in p and "earned" not in p:
+            return "RUNS"
+        if "double" in p:
+            return "DOUBLES"
+        if "triple" in p:
+            return "TRIPLES"
+        if "stolen base" in p or "sb" == p.strip():
+            return "SB"
+        if "walk allowed" in p:
+            return "WALKS_ALLOWED"
+        if "walk" in p:
+            return "WALKS"
+        if "earned run" in p:
+            return "ER"
+        if "hit allowed" in p or "hits allowed" in p:
+            return "HITS_ALLOWED"
+        if "out" in p and "record" in p:
+            return "OUTS"
+        if "hit" in p:
+            return "HITS"
     for keywords, stat_key in _GRADING_PROP_STAT_MAP:
         # Multi-word tuples (e.g. "pass"+"yard") require ALL keywords
         # present, not any single one — otherwise any prop containing just
@@ -8463,23 +8492,81 @@ def _map_prop_to_stat_key(prop_type: str, sport: str = None):
     return None
 
 
+def _resolve_mlb_stat_for_grading(player: str, stat_key: str, game_date: str):
+    """MLB counterpart to the ESPN_ATHLETE_IDS-based NBA/NFL grading path.
+    Uses the same statsapi.mlb.com gameLog endpoint already proven in
+    fetch_mlb_player_gamelog_vs_opponent / fetch_mlb_rolling_averages, and
+    fetch_mlb_full_roster_ids for name->id (all 30 teams, not a hardcoded
+    ~15-20 player subset) -- so MLB grading coverage isn't limited the way
+    the NBA/NFL ESPN_ATHLETE_IDS path is. Returns float or None.
+    """
+    all_ids = fetch_mlb_full_roster_ids()
+    player_id = all_ids.get(player)
+    if not player_id:
+        return None
+    for group in ("hitting", "pitching"):
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season={game_date[:4]}&gameType=R"
+        try:
+            resp = _http.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code != 200:
+                continue
+            splits = (resp.json().get("stats") or [{}])[0].get("splits", [])
+            g = next((s for s in splits if s.get("date") == game_date[:10]), None)
+            if not g:
+                continue
+            stat = g.get("stat", {})
+            if stat_key == "TOTAL_BASES":
+                tb = stat.get("totalBases")
+                if tb is not None:
+                    return float(tb)
+                h, d2, t3, hr = stat.get("hits", 0), stat.get("doubles", 0), stat.get("triples", 0), stat.get("homeRuns", 0)
+                singles = h - d2 - t3 - hr
+                return float(singles + 2 * d2 + 3 * t3 + 4 * hr)
+            _field = {
+                "HITS": "hits", "HR": "homeRuns", "RBI": "rbi", "RUNS": "runs",
+                "DOUBLES": "doubles", "TRIPLES": "triples", "SB": "stolenBases",
+                "WALKS": "baseOnBalls", "PITCHER_K": "strikeOuts", "ER": "earnedRuns",
+                "HITS_ALLOWED": "hits", "WALKS_ALLOWED": "baseOnBalls",
+            }.get(stat_key)
+            if _field and _field in stat:
+                return float(stat.get(_field, 0) or 0)
+            if stat_key == "OUTS":
+                ip = stat.get("inningsPitched")
+                if ip is not None:
+                    whole, _, frac = str(ip).partition(".")
+                    return float(int(whole or 0) * 3 + int(frac or 0))
+        except Exception as e:
+            print(f"[WARN] _resolve_mlb_stat_for_grading ({group}): {e}")
+            continue
+    return None
+
+
 def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, game_date: str):
     """
     Resolve the actual stat value a player recorded on a specific date, for
     grading a board pick after the fact.
 
     Coverage note (be upfront about this, don't silently overclaim):
-    only works for players in the hardcoded ESPN_ATHLETE_IDS map (config.py
-    — currently ~15-20 well-known players per sport) and only NBA/NFL prop
-    types are mapped. Everything else returns None, and callers must treat
-    None as "ungradable this pick" rather than assuming a miss. Expanding
-    coverage means either growing ESPN_ATHLETE_IDS or switching to a
-    dynamic athlete-search lookup instead of the static dict — flagged as
-    a known follow-up, not solved here.
+    NBA/NFL only work for players in the hardcoded ESPN_ATHLETE_IDS map
+    (config.py — currently ~15-20 well-known players per sport) and only
+    NBA/NFL prop types are mapped there. MLB (2026-07) uses a separate,
+    broader path via statsapi.mlb.com + fetch_mlb_full_roster_ids (all 30
+    teams' rosters, not a hardcoded subset) -- added because MLB was
+    previously the single largest source of ungraded volume (roughly half
+    of all logged bets in the signal_performance sample) despite having
+    zero automated grading coverage. NHL/WNBA remain unresolved -- flagged
+    as the next coverage gap, not solved here. Callers must treat None as
+    "ungradable this pick" rather than assuming a miss.
 
     Returns: float stat value, or None if unresolvable (unknown player,
     unsupported sport/prop, no game found on that date, or a fetch error).
     """
+    if sport == "MLB":
+        stat_key = _map_prop_to_stat_key(prop_type, sport="MLB")
+        if not stat_key:
+            return None
+        return _resolve_mlb_stat_for_grading(player, stat_key, game_date)
+
     if sport not in ("NBA", "NFL"):
         return None
     stat_key = _map_prop_to_stat_key(prop_type)
