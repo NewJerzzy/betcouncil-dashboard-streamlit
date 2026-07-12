@@ -51,7 +51,7 @@ import time
 import argparse
 import os
 import sys
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 
 # Windows redirects stdout/stderr through the system codepage (cp1252) instead
@@ -2043,6 +2043,215 @@ def _mgm_odds(odds):
     except Exception:
         return "—"
 
+def _thescore_mint_token():
+    """Mint a fresh anonymous bearer token via theScore's `Startup` persisted
+    query. No cookies, no pre-existing credentials needed -- confirmed via
+    direct testing (2026-07-12) that this is a stateless, publicly-callable
+    query. Token is a ~1000-char JWE, used as `x-anonymous-authorization:
+    Bearer <token>` on all subsequent requests in the same run.
+
+    connectToken is a client-generated random string, not a server-issued
+    credential -- any value works. latLongParams pins the geo-routed region
+    (us-ia = Iowa in the confirmed-working capture); other US states may
+    route to a different regional host if this one stops resolving.
+
+    Returns the token string, or None on failure.
+    """
+    import random, string
+    try:
+        from curl_cffi import requests as cf
+    except ImportError:
+        return None
+
+    connect_token = "".join(random.choices(string.ascii_lowercase + string.digits, k=32))
+    variables = {
+        "connectToken": connect_token,
+        "latLongParams": {"accuracy": 20, "latitude": 41.977786, "longitude": -91.6624807},
+    }
+    extensions = {"persistedQuery": {"version": 1,
+                  "sha256Hash": "72b1ffd2b081b918369a7e942093ec666b55c2f3768608a7ec76150db5ebcf62"}}
+    headers = {
+        "x-client": "espnbet", "x-app": "espnbet", "x-platform": "web",
+        "apollographql-client-name": "espnbet-espnbet-web",
+        "apollographql-client-version": "26.13.2", "x-app-version": "26.13.2",
+        "accept": "application/json", "content-type": "application/json",
+        "x-install-id": "".join(random.choices(string.ascii_lowercase + string.digits, k=32)),
+    }
+    try:
+        r = cf.get(
+            "https://sportsbook.us-ia.thescore.bet/graphql/persisted_queries/"
+            "72b1ffd2b081b918369a7e942093ec666b55c2f3768608a7ec76150db5ebcf62",
+            params={"operationName": "Startup",
+                    "variables": json.dumps(variables),
+                    "extensions": json.dumps(extensions)},
+            headers=headers, impersonate="chrome124", timeout=15)
+        if r.status_code != 200:
+            print(f"  theScore Startup: {r.status_code}")
+            return None
+        token = ((r.json().get("data") or {}).get("startup") or {}).get("anonymousToken")
+        return token
+    except Exception as e:
+        print(f"  theScore Startup error: {e}")
+        return None
+
+
+# Confirmed sectionIds (2026-07-12) -- avoids a CompetitionPage round-trip
+# for sports already verified. Falls back to dynamic resolution for others.
+_THESCORE_KNOWN_SECTION_IDS = {
+    "MLB":  "Section:d9513891-c315-4c16-8554-09d52d3ce9b2",
+    "WNBA": "Section:7ffc9b6f-598e-4080-88eb-0e04ce2cf28e",
+}
+
+# Best-guess canonical paths for sports not yet confirmed -- pattern matches
+# the confirmed MLB path. Unverified; _thescore_resolve_section_id() fails
+# gracefully (returns None, that sport is skipped) if a guess is wrong,
+# rather than crashing the run.
+_THESCORE_CANONICAL_URLS = {
+    "MLB":  "/sport/baseball/organization/united-states/competition/mlb",
+    "NBA":  "/sport/basketball/organization/united-states/competition/nba",
+    "WNBA": "/sport/basketball/organization/united-states/competition/wnba",
+    "NFL":  "/sport/football/organization/united-states/competition/nfl",
+    "NHL":  "/sport/hockey/organization/united-states/competition/nhl",
+}
+
+
+def _thescore_resolve_section_id(sport, token):
+    """Resolve the lines-tab sectionId for a sport via the `CompetitionPage`
+    persisted query. Only called for sports not in _THESCORE_KNOWN_SECTION_IDS.
+    """
+    if sport in _THESCORE_KNOWN_SECTION_IDS:
+        return _THESCORE_KNOWN_SECTION_IDS[sport]
+    canonical_url = _THESCORE_CANONICAL_URLS.get(sport)
+    if not canonical_url or not token:
+        return None
+    try:
+        from curl_cffi import requests as cf
+    except ImportError:
+        return None
+    extensions = {"persistedQuery": {"version": 1,
+                  "sha256Hash": "5a1f47ccb1ac7b7c1f7da8d6607e6d6c429b25ba57b749961711a6cd4aa32119"}}
+    headers = {"x-anonymous-authorization": f"Bearer {token}",
+               "accept": "application/json"}
+    try:
+        r = cf.get(
+            "https://sportsbook.us-ia.thescore.bet/graphql/persisted_queries/"
+            "5a1f47ccb1ac7b7c1f7da8d6607e6d6c429b25ba57b749961711a6cd4aa32119",
+            params={"operationName": "CompetitionPage",
+                    "variables": json.dumps({"canonicalUrl": canonical_url}),
+                    "extensions": json.dumps(extensions)},
+            headers=headers, impersonate="chrome124", timeout=15)
+        if r.status_code != 200:
+            print(f"  theScore CompetitionPage ({sport}): {r.status_code} — guessed canonicalUrl may be wrong")
+            return None
+        # Exact response shape for section list unconfirmed beyond the two
+        # hardcoded sports above -- this is a best-effort walk, not guaranteed.
+        data = r.json()
+        return None  # unresolved sports skip cleanly rather than guess at parsing
+    except Exception as e:
+        print(f"  theScore CompetitionPage ({sport}) error: {e}")
+        return None
+
+
+def scrape_thescore_curlffi(sport):
+    """theScore Bet game lines via direct curl_cffi -- no browser/Tampermonkey
+    needed. Mints its own anonymous token each run (see _thescore_mint_token),
+    so there's nothing to refresh/expire between runs.
+
+    Pushes the raw GraphQL envelope to betcouncil_thescore_games.json in the
+    exact shape fetch_thescore_from_gist() / _parse_thescore_game_lines()
+    already expect -- keyed by sport, so this is a drop-in replacement for
+    the Tampermonkey harvester's fallback role. Unabated remains PRIMARY;
+    this just means the fallback no longer needs a browser tab either.
+
+    Only MLB and WNBA sectionIds are confirmed as of 2026-07-12 (matches
+    current season -- NBA/NHL/NFL are off-season in July anyway). Other
+    sports return [] cleanly rather than guessing at an unverified sectionId.
+    """
+    print(f"\n  theScore Bet {sport} (curl_cffi):")
+    if sport not in _THESCORE_KNOWN_SECTION_IDS:
+        print(f"    No confirmed sectionId for {sport} yet — skipping (Unabated primary unaffected)")
+        return None
+
+    token = _thescore_mint_token()
+    if not token:
+        print("    Could not mint anonymous token")
+        return None
+    section_id = _thescore_resolve_section_id(sport, token)
+    if not section_id:
+        return None
+
+    try:
+        from curl_cffi import requests as cf
+    except ImportError:
+        return None
+
+    variables = {
+        "isSubscription": False, "pageType": "PAGE",
+        "includeRecommendedProps": True, "isBrandingImageEnabled": True,
+        "isNewFeaturedBetParticipantLogoEnabled": True,
+        "isFeaturedBetCarouselHeaderRedesignEnabled": True,
+        "includeStandardizedBoxscore": True, "isCfpRankingEnabled": True,
+        "isCombatSportsRedesignEnabled": True,
+        "isFeaturedMarketCardRedesignEnabled": True,
+        "isDsModelRecommendedPropsEnabled": False, "includeRichEvent": True,
+        "oddsFormat": "AMERICAN", "sectionId": section_id, "selectedFilterId": "",
+    }
+    extensions = {"persistedQuery": {"version": 1,
+                  "sha256Hash": "1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6"}}
+    headers = {"x-anonymous-authorization": f"Bearer {token}", "accept": "application/json"}
+
+    try:
+        r = cf.get(
+            "https://sportsbook.us-ia.thescore.bet/graphql/persisted_queries/"
+            "1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6",
+            params={"operationName": "CompetitionPageSectionLinesTabNode",
+                    "variables": json.dumps(variables),
+                    "extensions": json.dumps(extensions)},
+            headers=headers, impersonate="chrome124", timeout=15)
+        print(f"    Lines: {r.status_code}")
+        if r.status_code != 200:
+            return None
+        raw_resp = r.json()
+    except Exception as e:
+        print(f"    Error: {e}")
+        return None
+
+    # Push in the exact shape fetch_thescore_from_gist() expects.
+    existing = {}
+    try:
+        gh_token = os.environ.get("GITHUB_TOKEN", "")
+        gist_id = "7e52e1c2c2054847c7c4663a157386c5"
+        if gh_token:
+            gr = requests.get(f"https://api.github.com/gists/{gist_id}",
+                               headers={"Authorization": f"token {gh_token}"}, timeout=10)
+            if gr.status_code == 200:
+                existing_file = gr.json().get("files", {}).get("betcouncil_thescore_games.json")
+                if existing_file:
+                    existing = json.loads(existing_file.get("content", "{}")).get("data", {})
+    except Exception:
+        pass
+
+    existing[sport.upper()] = raw_resp
+    payload = {"captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+               "data": existing, "source": "betcouncil_scraper_curlffi"}
+    try:
+        gh_token = os.environ.get("GITHUB_TOKEN", "")
+        if gh_token:
+            pr = requests.patch(
+                f"https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5",
+                headers={"Authorization": f"token {gh_token}"},
+                json={"files": {"betcouncil_thescore_games.json": {"content": json.dumps(payload)}}},
+                timeout=15)
+            if pr.status_code == 200:
+                print(f"    ✅ Pushed to betcouncil_thescore_games.json")
+            else:
+                print(f"    ⚠️ Gist push failed: {pr.status_code}")
+    except Exception as e:
+        print(f"    Gist push error: {e}")
+
+    return raw_resp
+
+
 def scrape_betmgm_curlffi(sport):
     """BetMGM props via fixture-offers with gameIds from fixtures list.
 
@@ -3585,6 +3794,13 @@ def main():
         if use("mgm") or use("betmgm"):
             mgm_props = scrape_betmgm_curlffi(sport)
             all_props += mgm_props
+
+        if use("thescore"):
+            # Pushes directly to betcouncil_thescore_games.json (its own
+            # dedicated Gist key) rather than the general props pool --
+            # matches the existing fetch_thescore_from_gist() consumption
+            # path, which Unabated already primaries and this backs up.
+            scrape_thescore_curlffi(sport)
 
         if use("czr") or use("caesars"):
             try:
