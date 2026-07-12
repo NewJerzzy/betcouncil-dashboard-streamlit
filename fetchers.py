@@ -7595,9 +7595,185 @@ def fetch_game_lines(sport):
     except Exception:
         pass
 
+    # ── Pinnacle overlay — dedicated fields, always populated when available ──
+    # Free arcadia guest API, no key needed. Stores its own Pinnacle ML/Spread/
+    # Total fields (not just N/A-filling) so it's always present for CLV,
+    # since Pinnacle is a sharp reference book regardless of what else fired.
+    try:
+        pinn_games = fetch_pinnacle_game_lines(sport)
+        if pinn_games:
+            for game in today_games:
+                matchup = game.get("Matchup", "")
+                esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
+                best_match = None
+                for pg in pinn_games:
+                    home2 = (pg.get("Home", "") or "").upper()
+                    away2 = (pg.get("Away", "") or "").upper()
+                    both = home2 + " " + away2
+                    matched = False
+                    for abbr in esp_parts:
+                        if not abbr or len(abbr) < 2:
+                            continue
+                        if abbr in home2 or abbr in away2:
+                            matched = True; break
+                        frag = TEAM_ABBREV_TO_FRAGMENT.get(abbr, "").upper()
+                        if frag and frag in both:
+                            matched = True; break
+                        if len(home2) >= 3 and home2[:3] in abbr:
+                            matched = True; break
+                        if len(away2) >= 3 and away2[:3] in abbr:
+                            matched = True; break
+                    if matched:
+                        best_match = pg
+                        break
+                if best_match:
+                    game["Pinnacle ML Home"] = best_match.get("HomeML", "N/A")
+                    game["Pinnacle ML Away"] = best_match.get("AwayML", "N/A")
+                    game["Pinnacle Spread"]  = best_match.get("Spread", "N/A")
+                    game["Pinnacle Total"]   = best_match.get("Total", "N/A")
+                    if game.get("Home ML") in ("N/A", None, "") and best_match.get("HomeML") is not None:
+                        game["Home ML"] = best_match["HomeML"]
+                    if game.get("Away ML") in ("N/A", None, "") and best_match.get("AwayML") is not None:
+                        game["Away ML"] = best_match["AwayML"]
+                    if game.get("Odds Source") in ("ESPN", "N/A", ""):
+                        game["Odds Source"] = "Pinnacle"
+    except Exception as _pinn_err:
+        print(f"[fetch_game_lines] Pinnacle overlay error for {sport}: {_pinn_err}")
+
+    # ── Circa overlay — dedicated fields, bypasses SBR/priority short-circuit ──
+    try:
+        circa_games = fetch_circa_game_lines(sport)
+        if circa_games:
+            for game in today_games:
+                matchup = game.get("Matchup", "")
+                esp_parts = [t.strip().upper() for t in matchup.split("@")] if "@" in matchup else []
+                best_match = None
+                for cg in circa_games:
+                    home2 = (cg.get("Home", "") or "").upper()
+                    away2 = (cg.get("Away", "") or "").upper()
+                    both = home2 + " " + away2
+                    matched = False
+                    for abbr in esp_parts:
+                        if not abbr or len(abbr) < 2:
+                            continue
+                        if abbr in home2 or abbr in away2:
+                            matched = True; break
+                        frag = TEAM_ABBREV_TO_FRAGMENT.get(abbr, "").upper()
+                        if frag and frag in both:
+                            matched = True; break
+                        if len(home2) >= 3 and home2[:3] in abbr:
+                            matched = True; break
+                        if len(away2) >= 3 and away2[:3] in abbr:
+                            matched = True; break
+                    if matched:
+                        best_match = cg
+                        break
+                if best_match:
+                    game["Circa ML Home"] = best_match.get("HomeML", "N/A")
+                    game["Circa ML Away"] = best_match.get("AwayML", "N/A")
+                    game["Circa Spread"]  = best_match.get("Spread", "N/A")
+                    game["Circa Total"]   = best_match.get("Total", "N/A")
+                    if game.get("Home ML") in ("N/A", None, "") and best_match.get("HomeML") is not None:
+                        game["Home ML"] = best_match["HomeML"]
+                    if game.get("Away ML") in ("N/A", None, "") and best_match.get("AwayML") is not None:
+                        game["Away ML"] = best_match["AwayML"]
+                    if game.get("Odds Source") in ("ESPN", "N/A", ""):
+                        game["Odds Source"] = "Circa"
+    except Exception as _circa_err:
+        print(f"[fetch_game_lines] Circa overlay error for {sport}: {_circa_err}")
+
     if not today_games:
         return [], playoff, home_teams, away_teams
     return today_games, playoff, home_teams, away_teams
+
+def fetch_circa_game_lines(sport):
+    """
+    Circa-only game lines via OddsAPI, bypassing the SBR short-circuit and
+    the DK/FanDuel/BetMGM priority picker in fetch_odds_api_game_lines()
+    that always wins before Circa gets a turn. Uses bookmakers=circa_sports
+    exclusively so Circa data is never buried. Requires ODDS_API_KEY +
+    budget — silently no-ops (returns []) if either is unavailable.
+    Cached 60 min. Returns list of dicts keyed like fetch_pinnacle_game_lines.
+    """
+    if not ODDS_API_KEY:
+        return []
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return []
+    allowed, reason = api_budget_check("ODDS_API")
+    if not allowed:
+        print(f"[ODDS_API] budget check blocked Circa game lines for {sport}: {reason}")
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"circa_games_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 60:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+    url = (f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}"
+           f"&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american"
+           f"&bookmakers=circa_sports")
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API", amount=30)  # 10 x 3 markets x 1 region
+        if resp.status_code != 200:
+            print(f"[ODDS_API] Circa game lines HTTP {resp.status_code} for {sport}")
+            return []
+        events = resp.json()
+        results = []
+        for event in events:
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            home_ml = away_ml = spread = spread_odds = total = total_over = total_under = None
+            for bm in event.get("bookmakers", []):
+                if bm.get("key") != "circa_sports":
+                    continue
+                for mkt in bm.get("markets", []):
+                    key = mkt.get("key", "")
+                    outcomes = mkt.get("outcomes", [])
+                    if key == "h2h":
+                        for o in outcomes:
+                            if o["name"] == home:
+                                home_ml = o["price"]
+                            elif o["name"] == away:
+                                away_ml = o["price"]
+                    elif key == "spreads":
+                        for o in outcomes:
+                            if o["name"] == home:
+                                spread = o.get("point")
+                                spread_odds = o.get("price")
+                    elif key == "totals":
+                        for o in outcomes:
+                            if o["name"] == "Over":
+                                total = o.get("point")
+                                total_over = o.get("price")
+                            elif o["name"] == "Under":
+                                total_under = o.get("price")
+                break
+            if home_ml is None and away_ml is None and total is None:
+                continue
+            results.append({
+                "Matchup":    f"{away} @ {home}",
+                "Home":       home,
+                "Away":       away,
+                "HomeML":     home_ml,
+                "AwayML":     away_ml,
+                "Spread":     spread,
+                "SpreadOdds": spread_odds,
+                "Total":      total,
+                "TotalOver":  total_over,
+                "TotalUnder": total_under,
+                "Book":       "Circa",
+                "Sport":      sport,
+                "source":     "circa_lines",
+            })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[ODDS_API] Circa game lines error for {sport}: {e}")
+        return []
+
 
 def fetch_h2h_game_lines(sport):
     """
