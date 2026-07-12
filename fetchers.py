@@ -18298,10 +18298,12 @@ def fetch_pinnacle_lines(sport):
                 return cached
 
     if not ODDSPAPI_KEY:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_pinnacle_lines", "error": "ODDSPAPI_KEY not set in secrets"})
         return {}
 
     allowed, reason = api_budget_check("ODDSPAPI")
     if not allowed:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_pinnacle_lines", "error": reason})
         return {}
 
     sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
@@ -18318,6 +18320,7 @@ def fetch_pinnacle_lines(sport):
             timeout=10
         )
         if t_resp.status_code != 200:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_pinnacle_lines", "error": f"tournaments HTTP {t_resp.status_code}: {t_resp.text[:150]}"})
             return {}
 
         tournaments = t_resp.json()
@@ -18326,6 +18329,7 @@ def fetch_pinnacle_lines(sport):
         if not top_ids:
             top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
         if not top_ids:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_pinnacle_lines", "error": f"no tournaments returned for sportId={sport_id} ({sport})"})
             return {}
 
         tournament_ids = ",".join(top_ids)
@@ -18341,6 +18345,7 @@ def fetch_pinnacle_lines(sport):
         api_budget_increment("ODDSPAPI")
 
         if resp.status_code != 200:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_pinnacle_lines", "error": f"odds-by-tournaments HTTP {resp.status_code}: {resp.text[:150]}"})
             return {}
 
         data = resp.json()
