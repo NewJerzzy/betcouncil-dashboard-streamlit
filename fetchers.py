@@ -4425,56 +4425,6 @@ def _resolve_nhl_stat_for_grading(player: str, stat_key: str, game_date: str):
     return None
 
 
-def _resolve_wnba_stat_for_grading(player: str, stat_key: str, game_date: str, athlete_id=None):
-    """WNBA grading resolver. Reuses the same ESPN core eventlog endpoint
-    already proven for NBA/NFL (sport_path-generic), with the athlete ID
-    coming from fetch_wnba_full_roster_ids (full league) instead of a
-    hardcoded subset like ESPN_ATHLETE_IDS.
-    """
-    if not athlete_id:
-        return None
-    sport_path = ESPN_CORE_SPORT_MAP.get("WNBA", "")
-    if not sport_path:
-        return None
-    season = 2025
-    url = f"{ESPN_CORE_BASE}/sports/{sport_path}/seasons/{season}/athletes/{athlete_id}/eventlog?limit=15"
-    try:
-        resp = _http.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-    except Exception as e:
-        print(f"[WARN] _resolve_wnba_stat_for_grading: {e}")
-        return None
-    for item in data.get("events", {}).get("items", []):
-        event_ref = item.get("event", {}).get("$ref", "") or item.get("$ref", "")
-        item_date = item.get("date", "")
-        if not item_date and event_ref:
-            try:
-                ev_resp = _http.get(event_ref, headers=HEADERS, timeout=10)
-                if ev_resp.status_code == 200:
-                    item_date = ev_resp.json().get("date", "")
-            except Exception:
-                pass
-        if not item_date or not item_date.startswith(game_date):
-            continue
-        stats_ref = item.get("statistics", {}).get("$ref", "")
-        if not stats_ref:
-            continue
-        try:
-            stats_resp = _http.get(stats_ref, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-            if stats_resp.status_code != 200:
-                continue
-            stats_data = stats_resp.json()
-            game_stat = {}
-            for split in stats_data.get("splits", {}).get("categories", []):
-                for stat in split.get("stats", []):
-                    game_stat[stat.get("abbreviation", "").upper()] = stat.get("value", 0)
-            if not game_stat:
-                continue
-            return game_stat.get(stat_key)
-        except Exception:
-            continue
     return None
 
 
@@ -8706,53 +8656,47 @@ def _resolve_mlb_stat_for_grading(player: str, stat_key: str, game_date: str):
     return None
 
 
-def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, game_date: str):
+def fetch_nba_full_roster_ids(force_refresh=False):
     """
-    Resolve the actual stat value a player recorded on a specific date, for
-    grading a board pick after the fact.
-
-    Coverage note (be upfront about this, don't silently overclaim):
-    NBA/NFL only work for players in the hardcoded ESPN_ATHLETE_IDS map
-    (config.py — currently ~15-20 well-known players per sport) and only
-    NBA/NFL prop types are mapped there. MLB/NHL/WNBA (2026-07) each use a
-    broader full-roster path instead of a hardcoded subset:
-      - MLB: statsapi.mlb.com + fetch_mlb_full_roster_ids (all 30 teams)
-      - NHL: api-web.nhle.com + fetch_nhl_full_roster_ids (all 32 teams)
-      - WNBA: ESPN core eventlog + fetch_wnba_full_roster_ids (full league,
-        via ESPN's 300-limit active-athletes endpoint)
-    All five sports now have automated grading coverage. NBA/NFL remain on
-    the older hardcoded-subset path -- widening those to full-roster lookups
-    the same way is the next follow-up, not solved here. Callers must treat
-    None as "ungradable this pick" rather than assuming a miss.
-
-    Returns: float stat value, or None if unresolvable (unknown player,
-    unsupported sport/prop, no game found on that date, or a fetch error).
+    Fetch NBA player IDs for ALL active players via ESPN's athletes list
+    endpoint (site.api.espn.com, limit=500 covers the full league -- 30
+    teams x ~15-17 roster spots). Returns {player_name: player_id}.
+    Cached 24h. Same pattern as fetch_wnba_full_roster_ids.
     """
-    if sport == "MLB":
-        stat_key = _map_prop_to_stat_key(prop_type, sport="MLB")
-        if not stat_key:
-            return None
-        return _resolve_mlb_stat_for_grading(player, stat_key, game_date)
+    cache_path = os.path.join(CACHE_DIR, "nba_full_roster_ids.pkl")
+    if not force_refresh and os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 24:
+            try:
+                return _safe_load_pkl(cache_path)
+            except Exception:
+                pass
+    all_ids = dict(ESPN_ATHLETE_IDS.get("NBA", {}))  # seed with known IDs
+    try:
+        roster_data = _espn_get(
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/athletes?limit=500&active=true",
+            "nba_roster_espn_full", ttl_hours=24
+        )
+        for a in (roster_data or {}).get("athletes", []):
+            name = a.get("displayName", "")
+            pid  = a.get("id")
+            if name and pid and name not in all_ids:
+                all_ids[name] = pid
+        if len(all_ids) > len(ESPN_ATHLETE_IDS.get("NBA", {})):
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_ids, f)
+    except Exception:
+        pass
+    return all_ids
 
-    if sport == "NHL":
-        stat_key = _map_prop_to_stat_key(prop_type, sport="NHL")
-        if not stat_key:
-            return None
-        return _resolve_nhl_stat_for_grading(player, stat_key, game_date)
 
-    if sport == "WNBA":
-        stat_key = _map_prop_to_stat_key(prop_type)
-        if not stat_key:
-            return None
-        athlete_id = fetch_wnba_full_roster_ids().get(player)
-        return _resolve_wnba_stat_for_grading(player, stat_key, game_date, athlete_id=athlete_id)
-
-    if sport not in ("NBA", "NFL"):
-        return None
-    stat_key = _map_prop_to_stat_key(prop_type)
-    if not stat_key:
-        return None
-    athlete_id = ESPN_ATHLETE_IDS.get(sport, {}).get(player)
+def _resolve_espn_core_stat(sport: str, athlete_id, stat_key: str, game_date: str):
+    """Shared ESPN core eventlog resolver for NBA/NFL/WNBA -- same endpoint,
+    same per-game stat-category parsing, same composite stats (PRA for
+    basketball, yardage aliasing for football) for all three, so a WNBA prop
+    graded via this path behaves identically to an NBA one rather than
+    silently missing the composite-stat handling.
+    """
     if not athlete_id:
         return None
     sport_path = ESPN_CORE_SPORT_MAP.get(sport, "")
@@ -8773,14 +8717,13 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
             return None
         data = resp.json()
     except Exception as e:
-        print(f"[WARN] resolve_actual_stat_for_grading: {e}")
+        print(f"[WARN] _resolve_espn_core_stat: {e}")
         return None
 
     for item in data.get("events", {}).get("items", []):
         event_ref = item.get("event", {}).get("$ref", "") or item.get("$ref", "")
         item_date = item.get("date", "")
         if not item_date and event_ref:
-            # Date not inline on the eventlog item — fetch the event itself.
             try:
                 ev_resp = _http.get(event_ref, headers=HEADERS, timeout=10)
                 if ev_resp.status_code == 200:
@@ -8803,7 +8746,7 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
                     game_stat[stat.get("abbreviation", "").upper()] = stat.get("value", 0)
             if not game_stat:
                 continue
-            if sport == "NBA":
+            if sport in ("NBA", "WNBA"):
                 result = {
                     "PTS": game_stat.get("PTS", 0), "REB": game_stat.get("REB", 0),
                     "AST": game_stat.get("AST", 0),
@@ -8820,6 +8763,62 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
             return result.get(stat_key)
         except (ValueError, KeyError, TypeError, AttributeError):
             continue
+    return None
+
+
+def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, game_date: str):
+    """
+    Resolve the actual stat value a player recorded on a specific date, for
+    grading a board pick after the fact.
+
+    Coverage (2026-07): all 5 sports have automated grading, each via a
+    full-roster/full-league player-ID lookup rather than a hardcoded subset:
+      - MLB:  statsapi.mlb.com          + fetch_mlb_full_roster_ids  (30 teams)
+      - NHL:  api-web.nhle.com          + fetch_nhl_full_roster_ids  (32 teams)
+      - NBA:  ESPN core eventlog        + fetch_nba_full_roster_ids  (full league)
+      - WNBA: ESPN core eventlog        + fetch_wnba_full_roster_ids (full league)
+      - NFL:  ESPN core eventlog        + fetch_nfl_full_player_database (32 teams)
+    Callers must treat None as "ungradable this pick" rather than assuming a
+    miss -- a game not yet played, a stat category ESPN/MLB/NHL doesn't
+    expose, or a transient fetch error all return None the same way.
+
+    Returns: float stat value, or None if unresolvable.
+    """
+    if sport == "MLB":
+        stat_key = _map_prop_to_stat_key(prop_type, sport="MLB")
+        if not stat_key:
+            return None
+        return _resolve_mlb_stat_for_grading(player, stat_key, game_date)
+
+    if sport == "NHL":
+        stat_key = _map_prop_to_stat_key(prop_type, sport="NHL")
+        if not stat_key:
+            return None
+        return _resolve_nhl_stat_for_grading(player, stat_key, game_date)
+
+    if sport == "WNBA":
+        stat_key = _map_prop_to_stat_key(prop_type)
+        if not stat_key:
+            return None
+        athlete_id = fetch_wnba_full_roster_ids().get(player)
+        return _resolve_espn_core_stat("WNBA", athlete_id, stat_key, game_date)
+
+    if sport == "NBA":
+        stat_key = _map_prop_to_stat_key(prop_type)
+        if not stat_key:
+            return None
+        athlete_id = fetch_nba_full_roster_ids().get(player)
+        return _resolve_espn_core_stat("NBA", athlete_id, stat_key, game_date)
+
+    if sport == "NFL":
+        stat_key = _map_prop_to_stat_key(prop_type)
+        if not stat_key:
+            return None
+        nfl_db = fetch_nfl_full_player_database()
+        athlete_id = (nfl_db.get(normalize_name(player), {}) or {}).get("athlete_id") \
+            or ESPN_ATHLETE_IDS.get("NFL", {}).get(player)
+        return _resolve_espn_core_stat("NFL", athlete_id, stat_key, game_date)
+
     return None
 
 def fetch_player_id_bdl(player_name):
