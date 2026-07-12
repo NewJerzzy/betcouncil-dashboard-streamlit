@@ -15,6 +15,11 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Write config.json (no-login books only, no credentials needed)
+        env:
+          GIST_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/write_ci_config.py
+
       - name: Run scraper (no-auth books only — PrizePicks/Underdog already covered by their own workflows)
         id: run_scraper
         env:
