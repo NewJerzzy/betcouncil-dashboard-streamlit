@@ -7686,114 +7686,15 @@ def fetch_game_lines(sport):
         return [], playoff, home_teams, away_teams
     return today_games, playoff, home_teams, away_teams
 
-def _fetch_circa_from_gist(sport):
-    """Read Circa game lines pushed by the Tampermonkey harvester from the Gist.
-
-    Returns a list of game-line dicts (same shape as fetch_circa_game_lines) if
-    the Gist file exists, was updated within the last 2 hours, AND its page_url
-    matches the requested sport, else [].
-
-    Sport matching is necessary because the harvester captures whatever sport
-    page the user happened to have open on circasports.com — without this
-    check, an NFL capture would get mislabeled and returned as MLB (or any
-    other sport) data on every subsequent call, since the raw capture itself
-    carries no sport tag.
-    """
-    if not GITHUB_TOKEN or not GITHUB_GIST_ID:
-        return []
-    try:
-        resp = _http.get(
-            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
-            headers={
-                "Authorization": f"token {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github.v3+json",
-            },
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return []
-        gist_data = resp.json()
-        file_info = gist_data.get("files", {}).get("betcouncil_circa_games.json")
-        if not file_info:
-            return []
-        raw = file_info.get("content") or ""
-        if not raw:
-            return []
-        payload = json.loads(raw)
-        # Staleness check — reject if > 2 hours old
-        ts_str = payload.get("ts", "")
-        if ts_str:
-            from datetime import datetime, timezone
-            try:
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
-                if age_hours > 2:
-                    print(f"[Circa/Gist] data is {age_hours:.1f}h old — skipping for {sport}")
-                    return []
-            except Exception:
-                pass
-        # Sport match — reject if the captured page doesn't correspond to the
-        # requested sport. Without this, captures from one sport's page would
-        # get silently relabeled and returned for every other sport too.
-        page_url = (payload.get("page_url") or "").lower()
-        sport_keywords = {
-            "MLB":  ["baseball", "mlb"],
-            "NFL":  ["football", "nfl"],
-            "NBA":  ["basketball", "nba"],
-            "NHL":  ["hockey", "nhl"],
-            "WNBA": ["wnba"],
-        }
-        keywords = sport_keywords.get(sport, [sport.lower()])
-        if page_url and not any(kw in page_url for kw in keywords):
-            print(f"[Circa/Gist] page_url '{page_url}' doesn't match {sport} — skipping")
-            return []
-        if not page_url:
-            # No page_url means an older/incomplete push — don't guess, skip.
-            print(f"[Circa/Gist] no page_url in payload — skipping for {sport} (can't verify sport)")
-            return []
-        games = payload.get("games", [])
-        # Normalise to standard game-line shape
-        results = []
-        for g in games:
-            results.append({
-                "Matchup":    g.get("Matchup", ""),
-                "Home":       g.get("Home", ""),
-                "Away":       g.get("Away", ""),
-                "HomeML":     g.get("HomeML"),
-                "AwayML":     g.get("AwayML"),
-                "Spread":     g.get("Spread"),
-                "SpreadOdds": g.get("SpreadOdds"),
-                "Total":      g.get("Total"),
-                "TotalOver":  g.get("TotalOver"),
-                "TotalUnder": g.get("TotalUnder"),
-                "Book":       "Circa",
-                "Sport":      sport,
-                "source":     "circa_tm",
-            })
-        return results
-    except Exception as e:
-        print(f"[Circa/Gist] read error: {e}")
-        return []
-
-
 def fetch_circa_game_lines(sport):
-    """Circa-only game lines.
-
-    Source priority:
-      1. Tampermonkey harvester → betcouncil_circa_games.json in the Gist
-         (free, no API budget; populated whenever the user has a Circa tab open)
-      2. OddsAPI bookmakers=circa_sports fallback
-         (costs budget; fires only when Gist data is absent or stale)
-
-    Returns list of dicts keyed like fetch_pinnacle_game_lines.
     """
-    # ── 1. Try Tampermonkey Gist feed first ──────────────────────────────────
-    gist_results = _fetch_circa_from_gist(sport)
-    if gist_results:
-        print(f"[Circa] using Tampermonkey Gist feed ({len(gist_results)} games) for {sport}")
-        return gist_results
-
-    # ── 2. OddsAPI fallback ──────────────────────────────────────────────────
+    Circa-only game lines via OddsAPI, bypassing the SBR short-circuit and
+    the DK/FanDuel/BetMGM priority picker in fetch_odds_api_game_lines()
+    that always wins before Circa gets a turn. Uses bookmakers=circa_sports
+    exclusively so Circa data is never buried. Requires ODDS_API_KEY +
+    budget — silently no-ops (returns []) if either is unavailable.
+    Cached 60 min. Returns list of dicts keyed like fetch_pinnacle_game_lines.
+    """
     if not ODDS_API_KEY:
         return []
     sport_key = ODDS_API_SPORT_MAP.get(sport)
