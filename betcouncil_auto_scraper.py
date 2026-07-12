@@ -2217,6 +2217,12 @@ def scrape_thescore_curlffi(sport):
         return None
 
     # Push in the exact shape fetch_thescore_from_gist() expects.
+    # IMPORTANT: GitHub's Gist API truncates the inline "content" field for
+    # files over a size threshold (truncated:true, content:""), which the
+    # first version of this merge-read silently missed -- causing each
+    # sport's push to overwrite the previous one instead of merging, with
+    # the failure swallowed by a bare except. Fixed by checking truncated
+    # and following raw_url when needed, and logging instead of swallowing.
     existing = {}
     try:
         gh_token = os.environ.get("GITHUB_TOKEN", "")
@@ -2227,9 +2233,16 @@ def scrape_thescore_curlffi(sport):
             if gr.status_code == 200:
                 existing_file = gr.json().get("files", {}).get("betcouncil_thescore_games.json")
                 if existing_file:
-                    existing = json.loads(existing_file.get("content", "{}")).get("data", {})
-    except Exception:
-        pass
+                    if existing_file.get("truncated") and existing_file.get("raw_url"):
+                        raw_r = requests.get(existing_file["raw_url"], timeout=10)
+                        raw_r.raise_for_status()
+                        existing = json.loads(raw_r.text).get("data", {})
+                    else:
+                        existing = json.loads(existing_file.get("content", "{}")).get("data", {})
+            else:
+                print(f"    ⚠️ Merge-read gist fetch failed: {gr.status_code} — will overwrite other sports")
+    except Exception as e:
+        print(f"    ⚠️ Merge-read failed ({e}) — will overwrite other sports")
 
     existing[sport.upper()] = raw_resp
     payload = {"captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
