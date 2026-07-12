@@ -14,3 +14,13 @@ Pillow
 cloudscraper
 sportsdataverse
 rapidfuzz
+playwright
+# NOTE (2026-07): playwright pip package alone does not install the
+# Chromium binary. fetch_fanduel_game_lines_playwright() /
+# fetch_fanduel_props_playwright() will raise on first real use until
+# `playwright install chromium` (plus its system deps) also runs as part
+# of the deployment -- that's a platform/build-step change, not something
+# a requirements.txt entry alone configures. Wired as a hard-exception-
+# bounded last-resort fallback (see fetchers.py fetch_fanduel_props_from_gist
+# / fetch_fanduel_lines) so its absence never breaks the working sources
+# ahead of it.

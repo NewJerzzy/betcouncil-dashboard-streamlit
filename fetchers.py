@@ -15913,8 +15913,27 @@ def fetch_caesars_waf_from_gist() -> str:
 
 def fetch_fanduel_props_from_gist(sport: str) -> list:
     """
-    PRIMARY: Read FanDuel props from Gist (pushed by browser harvester).
-    SECONDARY: Falls back to fetch_fanduel_props_sharpapi() if stale.
+    PRIMARY:   Read FanDuel props from Gist (pushed by browser harvester).
+    SECONDARY: fetch_fanduel_props_sharpapi() if stale.
+    TERTIARY (2026-07): LineStar's GetPropBets already includes FanDuel as
+    one of its books (Source=2), server-side, already proven live this
+    session (wired into Line Shop as "FanDuel (LineStar)"). Cheap, real,
+    zero additional infra risk -- added here before Playwright.
+    LAST RESORT (2026-07): fetch_fanduel_props_playwright() -- headed
+    Chromium bypass for FanDuel's PerimeterX wall. Wrapped in a hard
+    try/except here specifically because `playwright` is not currently in
+    requirements.txt and no Chromium binary/system deps are installed on
+    this deployment (Streamlit Community Cloud) -- calling it will raise
+    ImportError or a browser-launch failure and fall straight through to
+    "unavailable" rather than touching anything else. Real headless-browser
+    automation on a free/hobby Streamlit Cloud tier also risks resource
+    exhaustion for the whole app, not just this feature, so this stays a
+    last-resort tier behind three working, lightweight sources rather than
+    being promoted to primary. To ever actually produce data, this needs
+    `playwright` added to requirements.txt AND `playwright install
+    chromium` run as part of the deployment -- neither of which a Git
+    Data API commit to this repo can configure; that's a platform/hosting
+    change, not a code change.
     Returns (props_list, source_label)
     """
     data = _read_gist_file(f"betcouncil_fd_props_{sport}.json", cache_minutes=5)
@@ -15935,6 +15954,30 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
             return secondary, "sharpapi_fallback"
     except Exception:
         pass
+
+    # Tertiary fallback: LineStar GetPropBets, FanDuel book (Source=2)
+    try:
+        ls_data, _ = fetch_linestar_props_from_gist(sport)
+        if ls_data:
+            ls_by_book = parse_linestar_props_all_books(ls_data, sport)
+            fd_list = ls_by_book.get("FanDuel") or ls_by_book.get("Fanduel") or []
+            if fd_list:
+                print(f"[FanDuel] TERTIARY: {len(fd_list)} props from LineStar")
+                return fd_list, "linestar_fallback"
+    except Exception:
+        pass
+
+    # Last resort: headed-Chromium Playwright bypass. See docstring --
+    # will no-op (ImportError) on this deployment until playwright +
+    # chromium are actually installed at the platform level.
+    try:
+        pw_result = fetch_fanduel_props_playwright(sport)
+        if pw_result:
+            print(f"[FanDuel] LAST RESORT: {len(pw_result)} props from Playwright")
+            return pw_result, "playwright_fallback"
+    except Exception as e:
+        print(f"[FanDuel] Playwright fallback unavailable: {e}")
+
     return [], "unavailable"
 
 
@@ -19085,6 +19128,11 @@ def fetch_fanduel_lines(sport: str = "MLB") -> list:
               Public content API, completely separate from the PerimeterX-
               protected smp.*.sportsbook.fanduel.com endpoint.
               HTTP 200 from datacenter IPs confirmed; runner prices embedded.
+    Last resort (2026-07): fetch_fanduel_game_lines_playwright() -- see
+    fetch_fanduel_props_from_gist's docstring for why this is a last
+    resort, not a primary: no playwright/chromium in this deployment yet,
+    hard exception boundary so it can never break the two working sources
+    above it.
 
     sport: "MLB" | "NBA" | "NFL" | "NHL" | "WNBA"
     Returns list of:
@@ -19094,6 +19142,11 @@ def fetch_fanduel_lines(sport: str = "MLB") -> list:
     result = _fetch_an_book_lines(sport, 69, "FanDuel")
     if not result:
         result = _fetch_fanduel_sbapi(sport)
+    if not result:
+        try:
+            result = fetch_fanduel_game_lines_playwright(sport)
+        except Exception as e:
+            print(f"[FanDuel] Playwright game-lines fallback unavailable: {e}")
     return result
 
 
