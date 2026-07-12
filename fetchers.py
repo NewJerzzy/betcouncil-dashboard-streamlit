@@ -7690,7 +7690,14 @@ def _fetch_circa_from_gist(sport):
     """Read Circa game lines pushed by the Tampermonkey harvester from the Gist.
 
     Returns a list of game-line dicts (same shape as fetch_circa_game_lines) if
-    the Gist file exists and was updated within the last 2 hours, else [].
+    the Gist file exists, was updated within the last 2 hours, AND its page_url
+    matches the requested sport, else [].
+
+    Sport matching is necessary because the harvester captures whatever sport
+    page the user happened to have open on circasports.com — without this
+    check, an NFL capture would get mislabeled and returned as MLB (or any
+    other sport) data on every subsequent call, since the raw capture itself
+    carries no sport tag.
     """
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return []
@@ -7725,8 +7732,27 @@ def _fetch_circa_from_gist(sport):
                     return []
             except Exception:
                 pass
+        # Sport match — reject if the captured page doesn't correspond to the
+        # requested sport. Without this, captures from one sport's page would
+        # get silently relabeled and returned for every other sport too.
+        page_url = (payload.get("page_url") or "").lower()
+        sport_keywords = {
+            "MLB":  ["baseball", "mlb"],
+            "NFL":  ["football", "nfl"],
+            "NBA":  ["basketball", "nba"],
+            "NHL":  ["hockey", "nhl"],
+            "WNBA": ["wnba"],
+        }
+        keywords = sport_keywords.get(sport, [sport.lower()])
+        if page_url and not any(kw in page_url for kw in keywords):
+            print(f"[Circa/Gist] page_url '{page_url}' doesn't match {sport} — skipping")
+            return []
+        if not page_url:
+            # No page_url means an older/incomplete push — don't guess, skip.
+            print(f"[Circa/Gist] no page_url in payload — skipping for {sport} (can't verify sport)")
+            return []
         games = payload.get("games", [])
-        # Normalise to standard game-line shape and filter to requested sport
+        # Normalise to standard game-line shape
         results = []
         for g in games:
             results.append({
