@@ -20665,33 +20665,15 @@ with tabs[4]:
         }}
 
 
-        // ── 4. BetMGM props auto-fetch (every 25 min) ───────────────────────
-        var mgmSportMap = {{
-            'MLB': 'baseball', 'NBA': 'basketball',
-            'NFL': 'american-football', 'NHL': 'ice-hockey', 'UFC': 'mma'
-        }};
-        var mgmSport = mgmSportMap[sport];
-        if (mgmSport) {{
-            throttled('betmgm_' + sport, 1500000, function() {{
-                fetch('https://sports.az.betmgm.com/cds-web/api/v2/widgets/live-bettables?sport=' + mgmSport + '&state=az&lang=en-us', {{
-                    headers: {{
-                        'Accept': 'application/json',
-                        'Origin': 'https://sports.az.betmgm.com',
-                        'Referer': 'https://sports.az.betmgm.com/'
-                    }}
-                }}).then(function(r) {{ return r.json(); }})
-                  .then(function(data) {{
-                    pushGist('betcouncil_mgm_props_' + sport + '.json', {{
-                        sport: sport,
-                        captured_at: new Date().toISOString(),
-                        data: data,
-                        source: 'betcouncil_auto_harvest'
-                    }});
-                  }}).catch(function(e) {{
-                    console.log('[BetCouncil] BetMGM harvest error:', e.message);
-                }});
-            }});
-        }}
+        // ── 4. BetMGM: retired 2026-07-12. This cross-origin fetch from the
+        //    Streamlit app's own page to sports.az.betmgm.com was silently
+        //    CORS-blocked every time -- confirmed by the Auto-Harvester status
+        //    panel showing "Pending" forever, never a single successful fire.
+        //    Replaced by scripts/tampermonkey_betmgm_harvester.user.js, which
+        //    runs the identical fetch from betmgm.com's own origin (same-origin,
+        //    no CORS) and pushes to the same betcouncil_mgm_props_{sport}.json
+        //    Gist key -- fetch_betmgm_props_from_gist() and
+        //    _parse_betmgm_harvested() in fetchers.py needed zero changes.
 
         // ── 5. Action Network sharp splits auto-fetch (every 15 min) ────────
         var anSportMap = {{
