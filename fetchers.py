@@ -15784,22 +15784,16 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
     TERTIARY (2026-07): LineStar's GetPropBets already includes FanDuel as
     one of its books (Source=2), server-side, already proven live this
     session (wired into Line Shop as "FanDuel (LineStar)"). Cheap, real,
-    zero additional infra risk -- added here before Playwright.
-    LAST RESORT (2026-07): fetch_fanduel_props_playwright() -- headed
-    Chromium bypass for FanDuel's PerimeterX wall. Wrapped in a hard
-    try/except here specifically because `playwright` is not currently in
-    requirements.txt and no Chromium binary/system deps are installed on
-    this deployment (Streamlit Community Cloud) -- calling it will raise
-    ImportError or a browser-launch failure and fall straight through to
-    "unavailable" rather than touching anything else. Real headless-browser
-    automation on a free/hobby Streamlit Cloud tier also risks resource
-    exhaustion for the whole app, not just this feature, so this stays a
-    last-resort tier behind three working, lightweight sources rather than
-    being promoted to primary. To ever actually produce data, this needs
-    `playwright` added to requirements.txt AND `playwright install
-    chromium` run as part of the deployment -- neither of which a Git
-    Data API commit to this repo can configure; that's a platform/hosting
-    change, not a code change.
+    zero additional infra risk.
+
+    REMOVED (2026-07): a Playwright last-resort tier was briefly wired in
+    here and caused a production segfault -- Playwright's sync API crashes
+    natively when invoked from a background thread with its own event loop,
+    which is exactly how Streamlit executes app.py (_run_script_thread).
+    That's a native crash below the Python interpreter, so the try/except
+    around the call never had a chance to catch it. Do not re-add a
+    Playwright call on this path without running it in a genuinely separate
+    process (not a thread) first.
     Returns (props_list, source_label)
     """
     data = _read_gist_file(f"betcouncil_fd_props_{sport}.json", cache_minutes=5)
@@ -15832,17 +15826,6 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
                 return fd_list, "linestar_fallback"
     except Exception:
         pass
-
-    # Last resort: headed-Chromium Playwright bypass. See docstring --
-    # will no-op (ImportError) on this deployment until playwright +
-    # chromium are actually installed at the platform level.
-    try:
-        pw_result = fetch_fanduel_props_playwright(sport)
-        if pw_result:
-            print(f"[FanDuel] LAST RESORT: {len(pw_result)} props from Playwright")
-            return pw_result, "playwright_fallback"
-    except Exception as e:
-        print(f"[FanDuel] Playwright fallback unavailable: {e}")
 
     return [], "unavailable"
 
@@ -18918,11 +18901,12 @@ def fetch_fanduel_lines(sport: str = "MLB") -> list:
               Public content API, completely separate from the PerimeterX-
               protected smp.*.sportsbook.fanduel.com endpoint.
               HTTP 200 from datacenter IPs confirmed; runner prices embedded.
-    Last resort (2026-07): fetch_fanduel_game_lines_playwright() -- see
-    fetch_fanduel_props_from_gist's docstring for why this is a last
-    resort, not a primary: no playwright/chromium in this deployment yet,
-    hard exception boundary so it can never break the two working sources
-    above it.
+
+    REMOVED (2026-07): a Playwright last-resort tier was briefly wired in
+    here and caused a production segfault -- see fetch_fanduel_props_from_gist's
+    docstring for the full explanation (sync API + Streamlit's threaded
+    script execution is a known-bad combination that crashes natively,
+    bypassing any try/except).
 
     sport: "MLB" | "NBA" | "NFL" | "NHL" | "WNBA"
     Returns list of:
@@ -18932,11 +18916,6 @@ def fetch_fanduel_lines(sport: str = "MLB") -> list:
     result = _fetch_an_book_lines(sport, 69, "FanDuel")
     if not result:
         result = _fetch_fanduel_sbapi(sport)
-    if not result:
-        try:
-            result = fetch_fanduel_game_lines_playwright(sport)
-        except Exception as e:
-            print(f"[FanDuel] Playwright game-lines fallback unavailable: {e}")
     return result
 
 
