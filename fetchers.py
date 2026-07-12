@@ -11094,7 +11094,8 @@ def fetch_savant_statcast(season=2026):
     Baseball Savant xStats leaderboard — completely free, no auth.
     Returns dict: lowercase_name → {xba, xslg, xwoba, xobp, xiso,
       exit_velocity_avg, launch_angle_avg, barrel_batted_rate,
-      hard_hit_percent, strikeout_percent, walk_percent, player_id}
+      hard_hit_percent, strikeout_percent, walk_percent, sweet_spot_percent,
+      player_id}
     Cached 2 hours.
     """
     cache_path = os.path.join(CACHE_DIR, f"savant_xstats_{season}.pkl")
@@ -11107,7 +11108,8 @@ def fetch_savant_statcast(season=2026):
         f"https://baseballsavant.mlb.com/leaderboard/custom"
         f"?year={season}&type=batter&filter=&sort=xwoba&sortDir=desc&min=q"
         f"&selections=xba,xslg,xwoba,xobp,xiso,exit_velocity_avg,launch_angle_avg"
-        f",barrel_batted_rate,hard_hit_percent,strikeout_percent,walk_percent&csv=true"
+        f",barrel_batted_rate,hard_hit_percent,strikeout_percent,walk_percent"
+        f",sweet_spot_percent&csv=true"
     )
     try:
         r = _http.get(url, headers=HEADERS, timeout=25)
@@ -11134,6 +11136,7 @@ def fetch_savant_statcast(season=2026):
                 "hard_hit_percent":   _f("hard_hit_percent"),
                 "strikeout_percent":  _f("strikeout_percent"),
                 "walk_percent":       _f("walk_percent"),
+                "sweet_spot_percent": _f("sweet_spot_percent"),
             }
         if lookup: _safe_save_pkl(cache_path, lookup)
         return lookup

@@ -12910,11 +12910,33 @@ def load_sport_data(sport):
                             elif _hh <= 30.0:  _sav_brl_edge = -0.01; _sav_brl_note = f"SavHH {_hh:.0f}%"
                     except (ValueError, TypeError):
                         pass
+                # ── Launch angle / sweet-spot% (2026-07) ────────────────
+                # Fetched by fetch_savant_statcast() since the start but never
+                # scored. Sweet spot (8-32 degrees) is the launch-angle band
+                # where line drives and well-struck fly balls live -- it's
+                # the actual mechanism barrel rate is measuring indirectly.
+                # Small, capped contribution since it's correlated with
+                # barrel rate/hard-hit (already scored above), not treated
+                # as fully independent evidence.
+                _sav_la_edge = 0.0; _sav_la_note = ""
+                _la = _xs.get("launch_angle_avg"); _swp = _xs.get("sweet_spot_percent")
+                if "Home Run" in _sk[1] or "Hits" in _sk[1]:
+                    try:
+                        if _swp is not None:
+                            if _swp >= 38.0:   _sav_la_edge =  0.01; _sav_la_note = f"SavSweet {_swp:.0f}%"
+                            elif _swp <= 25.0: _sav_la_edge = -0.01; _sav_la_note = f"SavSweet {_swp:.0f}%"
+                        if _la is not None and not _sav_la_note and "Home Run" in _sk[1]:
+                            if _la < 5.0 or _la > 30.0:
+                                _sav_la_edge = -0.01; _sav_la_note = f"SavLA {_la:.0f}\u00b0 (off-profile)"
+                    except (ValueError, TypeError):
+                        pass
                 _sv.update({"sav_xwoba": _xs.get("xwoba"), "sav_xba": _xs.get("xba"),
                             "sav_xslg": _xs.get("xslg"), "sav_barrel_rate": _brl,
                             "sav_hard_hit": _hh, "sav_exit_velo": _xs.get("exit_velocity_avg"),
                             "sav_k_pct": _xs.get("strikeout_percent"), "sav_bb_pct": _xs.get("walk_percent"),
-                            "sav_brl_edge": _sav_brl_edge, "sav_brl_note": _sav_brl_note})
+                            "sav_brl_edge": _sav_brl_edge, "sav_brl_note": _sav_brl_note,
+                            "sav_launch_angle": _la, "sav_sweet_spot_pct": _swp,
+                            "sav_la_edge": _sav_la_edge, "sav_la_note": _sav_la_note})
             # ── Expected stats: xBA-diff catches regression risk ─────────
             _xe = _sav_expected.get(_pname) or {}
             if _xe:
@@ -14004,6 +14026,10 @@ def load_sport_data(sport):
         ev_bvp_edge = 0.0
         ev_bvp_note = ""
         ev_homer_due_edge = 0.0
+        sav_brl_edge = 0.0
+        sav_reg_edge = 0.0
+        sav_spd_edge = 0.0
+        sav_la_edge  = 0.0
 
         # ── EV API signal injection (S6 / S7 / S12 / pitcher) ─────────
         _ev_sig = st.session_state.get("ev_signal_lookup", {}).get(
@@ -14038,6 +14064,23 @@ def load_sport_data(sport):
             ev_bvp_note    = _ev_sig.get("bvp_note", "")
             # Homer due (S12 supplemental)
             ev_homer_due_edge = _ev_sig.get("homer_due_edge", 0.0)
+
+            # ── LineStar/Baseball-Savant batter-CSV edges (2026-07 fix) ──
+            # sav_brl_edge/sav_reg_edge/sav_spd_edge were being computed and
+            # written into this exact dict entry by the Savant enrichment
+            # block earlier in the pipeline, but nothing ever read them back
+            # out -- final_edge only ever pulled EVSharps' own HR-only
+            # statcast_edge. sav_brl_edge only applied for "Hits" here (not
+            # "Home Run") since EVSharps' statcast_edge already covers HR
+            # barrel/exit-velo/hard-hit -- applying both for HR would
+            # double-count the same underlying contact-quality signal from
+            # two data sources. sav_reg_edge (xwOBA-diff regression) and
+            # sav_spd_edge (sprint speed, SB props) have no EVSharps
+            # equivalent, so those apply as-is.
+            sav_brl_edge = _ev_sig.get("sav_brl_edge", 0.0) if "Hits" in stat_raw else 0.0
+            sav_reg_edge = _ev_sig.get("sav_reg_edge", 0.0)
+            sav_spd_edge = _ev_sig.get("sav_spd_edge", 0.0)
+            sav_la_edge  = _ev_sig.get("sav_la_edge", 0.0)
 
             # Pitcher matchup from EV API (live ERA + xwOBA + flyball% + barrel rate)
             if sport == "MLB" and _ev_sig.get("pitcher_era"):
@@ -14475,6 +14518,17 @@ def load_sport_data(sport):
         # ── EV S12 — Homer due (PA streak z-score) ──────────────────────
         if ev_homer_due_edge != 0.0 and sport == "MLB":
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + ev_homer_due_edge))
+
+        # ── LineStar/Baseball-Savant batter-CSV edges (2026-07) ─────────
+        if sport == "MLB":
+            if sav_brl_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_brl_edge))
+            if sav_reg_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_reg_edge))
+            if sav_spd_edge != 0.0 and ("Stolen" in stat_raw or "Base" in stat_raw):
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_spd_edge))
+            if sav_la_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_la_edge))
 
         # ── EV API S6 — Pinnacle/Circa no-vig override ─────────────────
         # Use Shin method for HR props (longshot market, +200 to +800 odds)
