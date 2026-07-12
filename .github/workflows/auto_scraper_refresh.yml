@@ -23,9 +23,16 @@ jobs:
           PYTHONFAULTHANDLER: "1"
         run: |
           set +e
-          python -u betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr > /tmp/scraper_output.log 2>&1
+          echo "=== SANITY CHECK: script started ===" > /tmp/scraper_output.log
+          echo "PWD: $(pwd)" >> /tmp/scraper_output.log
+          echo "Python: $(which python) $(python --version 2>&1)" >> /tmp/scraper_output.log
+          ls -la betcouncil_auto_scraper.py >> /tmp/scraper_output.log 2>&1
+          echo "=== Running scraper now ===" >> /tmp/scraper_output.log
+          python -u betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr >> /tmp/scraper_output.log 2>&1
           ec=$?
           echo "=== EXIT CODE: $ec ===" >> /tmp/scraper_output.log
+          wc -l /tmp/scraper_output.log
+          cat /tmp/scraper_output.log
           echo "exit_code=$ec" >> "$GITHUB_OUTPUT"
         shell: bash
 
