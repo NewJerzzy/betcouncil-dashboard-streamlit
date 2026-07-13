@@ -15974,6 +15974,26 @@ HARVESTER_REGISTRY = {
 }
 
 
+HARVESTER_DISPLAY_NAMES = {
+    "evsharps": "EV Sharps (Pinnacle/Circa benchmark)",
+    "evsharps_ev": "EV Sharps EV feed",
+    "unabated": "Unabated (sharp line consensus)",
+    "oddsjam": "OddsJam (sharp line consensus)",
+    "evbets": "EV Bets (sharp line feed)",
+    "evbets_props": "EV Bets props feed",
+    "betmgm": "BetMGM", "bovada": "Bovada", "mybookie": "MyBookie",
+    "dk_props": "DraftKings props", "underdog": "Underdog",
+    "prizepicks": "PrizePicks", "pick6": "DK Pick6",
+    "caesars": "Caesars",
+}
+
+def harvester_display_name(key: str) -> str:
+    """Falls back to a cleaned-up version of the raw key (underscores to
+    spaces, title case) for anything not explicitly mapped, rather than
+    showing the internal registry key as-is."""
+    return HARVESTER_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
+
+
 def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal")) -> list:
     """
     Check every registered harvester source's Gist payload age against its

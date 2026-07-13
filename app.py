@@ -16913,15 +16913,14 @@ with tabs[0]:
         _climate_snaps = load_from_gist("game_board_snapshots", None) or {}
         _climate = compute_market_climate(_climate_snaps)
         if _climate["verdict"] == "No data yet today":
-            st.caption("📡 Market Climate: no headless snapshot yet today — check back after the next scheduled run (15:00 / 20:00 UTC).")
+            st.caption("📡 Market Climate: No line-movement check has run yet today. This updates twice a day (around 11am and 4pm ET) — check back after the next one.")
         elif _climate["verdict"] == "Quiet":
-            st.caption(f"📡 Market Climate: Quiet — {_climate['n_snapshots_today']} snapshot(s) today ({', '.join(_climate['sports_covered'])}), no meaningful edge movement yet.")
+            st.caption(f"📡 Market Climate: Calm. {_climate['n_snapshots_today']} check(s) so far today across {', '.join(_climate['sports_covered'])} — no game's line has moved enough to flag.")
         else:
-            _top_movers = ", ".join(
-                f"{m['matchup']} {m['market']} ({m['edge_am']:+.1%}→{m['edge_pm']:+.1%}, {m['tier_am']}→{m['tier_pm']})"
-                for m in _climate["movers"][:3]
-            )
-            st.warning(f"📡 Market Climate: **Moving** — {_top_movers}")
+            _m = _climate["movers"][0]
+            _extra = f" (+{len(_climate['movers'])-1} more)" if len(_climate["movers"]) > 1 else ""
+            st.warning(f"📡 Market Climate: Moving. **{_m['matchup']}** ({_m['market']}) — our edge on this shifted from {_m['edge_am']:+.0%} to {_m['edge_pm']:+.0%} "
+                       f"since this morning (tier {_m['tier_am']}→{_m['tier_pm']}){_extra}. Either real news is moving this game, or our number is behind — worth a second look before betting it.")
     except Exception:
         pass
 
@@ -16936,10 +16935,10 @@ with tabs[0]:
         if _density["n_games"] and _density["verdict"] == "Clustered":
             _pw = _density["peak_window_start"]
             _pw_local = _pw.strftime("%I:%M%p UTC").lstrip("0") if _pw else "?"
-            st.warning(f"🕐 Game Density: **Clustered** — {_density['peak_count']} of {_density['n_games']} games "
-                       f"({_density['peak_pct']:.0%}) tip off within 90 min of {_pw_local}. Plan for rapid-fire decisions.")
+            st.warning(f"🕐 Game Density: Bunched up. {_density['peak_count']} of today's {_density['n_games']} games "
+                       f"all tip off within 90 minutes of {_pw_local} — you'll be making several decisions at once in that window. Consider doing your analysis before then.")
         elif _density["n_games"]:
-            st.caption(f"🕐 Game Density: Spread out — {_density['n_games']} games today, peak window is only {_density['peak_pct']:.0%} of the slate.")
+            st.caption(f"🕐 Game Density: Spread out. {_density['n_games']} games today, and no more than {_density['peak_count']} of them start close together — plenty of time to analyze each one.")
     except Exception:
         pass
 
@@ -16949,16 +16948,17 @@ with tabs[0]:
     # visible before the board loads. Pointer + red/yellow/green count
     # here, not a rebuild.
     try:
-        from fetchers import get_harvester_alerts
+        from fetchers import get_harvester_alerts, harvester_display_name
         _pi_sport = st.session_state.get("last_sport", "NBA")
         _pi_alerts = get_harvester_alerts(_pi_sport)
-        _pi_sharp_dead = [a["name"] for a in _pi_alerts if a["tier"] == "sharp"]
+        _pi_sharp_dead = [harvester_display_name(a["name"]) for a in _pi_alerts if a["tier"] == "sharp"]
         if _pi_sharp_dead:
-            st.error(f"🔌 Pipeline Integrity: sharp-tier source(s) dark — {', '.join(_pi_sharp_dead)}. See System tab → Harvester Health.")
+            st.error(f"🔌 Data Check: **{', '.join(_pi_sharp_dead)}** — one of our benchmark sharp-book price feeds — hasn't updated recently. "
+                     f"Edges that lean on it may be based on stale prices right now. See System tab → Harvester Health for details.")
         elif _pi_alerts:
-            st.caption(f"🔌 Pipeline Integrity: {len(_pi_alerts)} source(s) newly degraded. See System tab → Harvester Health.")
+            st.caption(f"🔌 Data Check: {len(_pi_alerts)} data source(s) are updating slower than usual. Probably fine, but see System tab → Harvester Health if something looks off.")
         else:
-            st.caption("🔌 Pipeline Integrity: no harvesters newly dark.")
+            st.caption("🔌 Data Check: all data sources are current.")
     except Exception:
         pass
 
@@ -17654,10 +17654,14 @@ with tabs[0]:
             try:
                 _corr_score, _corr_pairs = compute_parlay_correlation(_top_for_corr)
                 if _corr_score > 0.40 and _corr_pairs:
-                    _cp = _corr_pairs[0]
-                    _cp_pair = _cp.get("pair","") if isinstance(_cp, dict) else str(_cp)
-                    _cp_reason = _cp.get("reason","") if isinstance(_cp, dict) else ""
-                    st.warning(f"⚠️ Top picks correlation score: {_corr_score:.2f} — high correlation may inflate perceived edge. Top pair: {_cp_pair} ({_cp_reason})")
+                    # compute_parlay_correlation() returns plain, already-
+                    # readable sentences (e.g. "Chase DeLauter has multiple
+                    # props"), not a {pair, reason} structure -- the old
+                    # code tried to split one out that never existed,
+                    # which is why this rendered with empty parens.
+                    _cp_reason = _corr_pairs[0] if isinstance(_corr_pairs[0], str) else str(_corr_pairs[0])
+                    st.warning(f"⚠️ These top picks overlap more than usual ({_corr_score:.0%} correlated): {_cp_reason}. "
+                               f"If one of these misses, the others are likely to miss too — treat this as one bigger bet, not several independent ones.")
             except (TypeError, KeyError, IndexError, ValueError):
                 pass
         if len(top_games) >= 2:
