@@ -4488,6 +4488,7 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
                 "timestamp": r.get("timestamp", ""), "net": r.get("net"),
                 "profit": r.get("profit", 0), "wager": r.get("wager", 0),
                 "has_real_prob": r.get("has_real_prob", True),
+                "source": r.get("source", "bet_ledger"),
             })
 
     if not all_records:
@@ -4547,7 +4548,15 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
         # Lightweight backtest: does this move actually help realized ROI?
         idx = tiers.index(tier)
         upper_cap = base[tiers[idx - 1]] if idx > 0 else None
-        roi_old, roi_new, n_old, n_new = _backtest_threshold_move(recs, current, candidate_threshold, upper_cap)
+        # board_grading records have no real wager (they're auto-graded
+        # board picks, not placed bets), so net/profit on them is always 0
+        # via _backtest_threshold_move's fallback -- pooling them in here
+        # would dilute real-money ROI toward zero as board-grading volume
+        # grows. They still fully count toward the hit-rate/eff_n decision
+        # above via _weighted_bucket_stats(recs); only the ROI backtest
+        # step is restricted to real placed bets.
+        backtest_recs = [r for r in recs if r.get("source", "bet_ledger") != "board_grading"]
+        roi_old, roi_new, n_old, n_new = _backtest_threshold_move(backtest_recs, current, candidate_threshold, upper_cap)
         backtest_note = "insufficient data to backtest"
         if roi_old is not None and roi_new is not None:
             if roi_new < roi_old:

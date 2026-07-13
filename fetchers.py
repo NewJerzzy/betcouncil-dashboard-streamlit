@@ -9005,6 +9005,130 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
 
     return None
 
+
+_GAME_GRADING_ESPN_SPORT_MAP = {
+    "NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
+    "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl"),
+}
+
+def resolve_actual_game_result_for_grading(matchup: str, home: str, away: str, sport: str,
+                                            market: str, pick: str, line, game_date: str):
+    """
+    Game-line counterpart to resolve_actual_stat_for_grading() — resolves
+    WIN/LOSS/PUSH for a SPREAD/TOTAL/MONEYLINE/ALT LINE board pick, for
+    grading a game-line board snapshot after the fact (added 2026-07-12,
+    store_game_board_snapshot's grading path).
+
+    Uses the exact same side-detection and outcome math as the interactive
+    Check Results resolver in app.py (fixed 2026-07-12): team-name-in-pick
+    containment (not the reverse — a bug that previously made SPREAD/ML
+    resolution silently backwards), OVER/UNDER token matching rather than
+    exact string equality (the stored pick text is always "OVER 8.5", not
+    "OVER"), ALT LINE scored identically to SPREAD, and PUSH on an exact
+    line tie. This mirrors that logic intentionally rather than importing
+    it (that resolver lives inline in a Streamlit button handler) — if one
+    changes, check the other.
+
+    Returns (outcome, home_score, away_score). outcome is "WIN"/"LOSS"/
+    "PUSH", or None if the game isn't found/final yet, or the pick text
+    couldn't be parsed (caller should treat None as ungradable, same
+    convention as resolve_actual_stat_for_grading).
+    """
+    es_el = _GAME_GRADING_ESPN_SPORT_MAP.get(sport)
+    if not es_el:
+        return None, None, None
+    es, el = es_el
+    try:
+        line = float(line or 0)
+    except (TypeError, ValueError):
+        return None, None, None
+
+    try:
+        d0 = datetime.strptime(game_date, "%Y-%m-%d")
+        check_dates = [d0.strftime("%Y%m%d")] + [
+            (d0 + timedelta(days=delta)).strftime("%Y%m%d") for delta in (-1, 1)
+        ]
+    except (TypeError, ValueError):
+        check_dates = [None]
+
+    pick_norm = normalize_name(pick or "")
+    home_norm = normalize_name(home or "")
+    away_norm = normalize_name(away or "")
+    matchup_lower = (matchup or "").lower()
+
+    for ds in check_dates:
+        try:
+            params = {"dates": ds} if ds else {}
+            resp = requests.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
+                headers={"User-Agent": "Mozilla/5.0"}, params=params, timeout=10,
+            )
+            if resp.status_code != 200:
+                continue
+            for event in resp.json().get("events", []):
+                if not event.get("status", {}).get("type", {}).get("completed"):
+                    continue
+                comps = event.get("competitions", [{}])[0]
+                teams = comps.get("competitors", [])
+                if len(teams) < 2:
+                    continue
+                ev_home, ev_away = teams[0], teams[1]
+                ev_home_name = ev_home.get("team", {}).get("displayName", "")
+                ev_away_name = ev_away.get("team", {}).get("displayName", "")
+                ev_home_abbr = ev_home.get("team", {}).get("abbreviation", "")
+                ev_away_abbr = ev_away.get("team", {}).get("abbreviation", "")
+                ev_home_norm = normalize_name(ev_home_name)
+                ev_away_norm = normalize_name(ev_away_name)
+
+                # Match this ESPN event to our snapshot's matchup by team
+                # name (preferred) or abbreviation-in-matchup-string fallback.
+                home_hit = (home_norm and home_norm in ev_home_norm) or \
+                           (bool(ev_home_abbr) and ev_home_abbr.lower() in matchup_lower)
+                away_hit = (away_norm and away_norm in ev_away_norm) or \
+                           (bool(ev_away_abbr) and ev_away_abbr.lower() in matchup_lower)
+                if not (home_hit and away_hit):
+                    continue
+
+                home_score = float(ev_home.get("score", 0) or 0)
+                away_score = float(ev_away.get("score", 0) or 0)
+                total = home_score + away_score
+                market_up = (market or "").upper()
+
+                if "SPREAD" in market_up or "ALT" in market_up:
+                    pick_is_home = bool(ev_home_norm) and ev_home_norm in pick_norm
+                    pick_is_away = bool(ev_away_norm) and ev_away_norm in pick_norm
+                    if not pick_is_home and not pick_is_away:
+                        return None, home_score, away_score
+                    pick_score = home_score if pick_is_home else away_score
+                    opp_score  = away_score if pick_is_home else home_score
+                    margin = pick_score - opp_score + line
+                    outcome = "PUSH" if margin == 0 else ("WIN" if margin > 0 else "LOSS")
+                    return outcome, home_score, away_score
+
+                if "TOTAL" in market_up:
+                    pick_up = (pick or "").upper()
+                    if "OVER" in pick_up:
+                        outcome = "PUSH" if total == line else ("WIN" if total > line else "LOSS")
+                    elif "UNDER" in pick_up:
+                        outcome = "PUSH" if total == line else ("WIN" if total < line else "LOSS")
+                    else:
+                        return None, home_score, away_score
+                    return outcome, home_score, away_score
+
+                if "ML" in market_up or "MONEYLINE" in market_up:
+                    pick_is_home = bool(ev_home_norm) and ev_home_norm in pick_norm
+                    pick_is_away = bool(ev_away_norm) and ev_away_norm in pick_norm
+                    if not pick_is_home and not pick_is_away:
+                        return None, home_score, away_score
+                    win_is_home = home_score > away_score
+                    outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
+                    return outcome, home_score, away_score
+
+                return None, home_score, away_score
+        except (requests.RequestException, ValueError, TypeError, KeyError):
+            continue
+    return None, None, None
+
 def fetch_player_id_bdl(player_name):
     """Search BallsDontLie for player ID by name."""
     if not BDL_API_KEY:

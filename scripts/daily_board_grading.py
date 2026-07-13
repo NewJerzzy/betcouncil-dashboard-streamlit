@@ -11,13 +11,20 @@ from per day, without waiting weeks for enough placed-bet volume. This is
 model-accuracy tracking — it stays completely separate from your actual
 bankroll/ROI ledger, which only ever reflects real placed bets.
 
-Coverage note, stated plainly rather than overclaimed: grading currently
-only works for NBA and NFL players who are in the hardcoded
-ESPN_ATHLETE_IDS map (config.py — a few dozen well-known players per
-sport). Everything else is marked UNGRADABLE, not silently scored as a
-loss. Expanding coverage to more players/sports is a real follow-up, not
-done here — this ships the working pipeline for what's provably gradable
-today rather than faking full coverage.
+Coverage note, stated plainly rather than overclaimed: player-prop
+grading currently only works for NBA and NFL players who are in the
+hardcoded ESPN_ATHLETE_IDS map (config.py — a few dozen well-known
+players per sport). Everything else is marked UNGRADABLE, not silently
+scored as a loss. Expanding coverage to more players/sports is a real
+follow-up, not done here — this ships the working pipeline for what's
+provably gradable today rather than faking full coverage.
+
+Game-line grading (SPREAD/TOTAL/MONEYLINE/ALT LINE), added 2026-07-12,
+mirrors the prop pipeline exactly but reads a separate snapshot file
+(store_game_board_snapshot in app.py) and writes to a separate grading
+history key so the two never collide. Coverage there is full — team/
+score resolution via ESPN scoreboard works for any NBA/MLB/NFL/NHL
+matchup, not a hardcoded player subset, since it only needs final scores.
 
 This script only reads snapshots and writes grading results. It never
 touches the bet ledger, bankroll, or locks.
@@ -33,6 +40,8 @@ import requests
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 SNAPSHOT_FILE = "betcouncil_board_snapshots.json"
 GRADING_FILE = "betcouncil_board_grading_history.json"
+GAME_SNAPSHOT_FILE = "betcouncil_game_board_snapshots.json"
+GAME_GRADING_FILE = "betcouncil_game_board_grading_history.json"
 
 
 def log(msg: str) -> None:
@@ -134,10 +143,67 @@ def grade_day(target_date: str):
     return {"date": target_date, "total": len(graded_results), "graded": graded_n, "wins": wins, "losses": losses}
 
 
+def grade_game_day(target_date: str):
+    sys.path.insert(0, ".")
+    from fetchers import resolve_actual_game_result_for_grading
+
+    token = os.environ["GITHUB_TOKEN"]
+    stored = gist_read(token, GAME_SNAPSHOT_FILE) or {}
+    day_snaps = {k: v for k, v in stored.items() if v.get("date") == target_date}
+    if not day_snaps:
+        log(f"No game board snapshots found for {target_date} — nothing to grade.")
+        return {"date": target_date, "graded": 0, "results": []}
+
+    latest_by_sport = {}
+    for k, v in day_snaps.items():
+        sp = v.get("sport", "")
+        if sp not in latest_by_sport or v.get("timestamp", "") > latest_by_sport[sp].get("timestamp", ""):
+            latest_by_sport[sp] = v
+
+    graded_results = []
+    for sport, snap in latest_by_sport.items():
+        log(f"Grading {sport} game lines: {len(snap.get('picks', []))} picks from {snap.get('timestamp')}")
+        for p in snap.get("picks", []):
+            matchup = p.get("matchup", "")
+            home, away = p.get("home", ""), p.get("away", "")
+            market, pick, line = p.get("market", ""), p.get("pick", ""), p.get("line", 0)
+            try:
+                outcome, home_score, away_score = resolve_actual_game_result_for_grading(
+                    matchup, home, away, sport, market, pick, line, target_date
+                )
+            except Exception as e:
+                log(f"  resolve error for {matchup}/{market}: {e}")
+                outcome, home_score, away_score = None, None, None
+
+            if outcome is None:
+                outcome = "UNGRADABLE"
+
+            graded_results.append({
+                "date": target_date, "sport": sport, "matchup": matchup,
+                "market": market, "pick": pick, "line": line, "outcome": outcome,
+                "home_score": home_score, "away_score": away_score,
+                "edge": p.get("edge", 0), "tier": p.get("tier", ""), "source": "board_grading",
+            })
+
+    grading_history = gist_read(token, GAME_GRADING_FILE) or {}
+    grading_history[target_date] = graded_results
+    cutoff = (date.today() - timedelta(days=90)).strftime("%Y-%m-%d")
+    grading_history = {k: v for k, v in grading_history.items() if k >= cutoff}
+    gist_write(token, GAME_GRADING_FILE, grading_history)
+
+    graded_n = sum(1 for r in graded_results if r["outcome"] != "UNGRADABLE")
+    wins = sum(1 for r in graded_results if r["outcome"] == "WIN")
+    losses = sum(1 for r in graded_results if r["outcome"] == "LOSS")
+    log(f"Done: {len(graded_results)} total game-line picks, {graded_n} gradable "
+        f"({len(graded_results) - graded_n} ungradable), {wins}W-{losses}L")
+    return {"date": target_date, "total": len(graded_results), "graded": graded_n, "wins": wins, "losses": losses}
+
+
 def main():
     target_date = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
     log(f"Grading board for {target_date}")
     grade_day(target_date)
+    grade_game_day(target_date)
 
 
 if __name__ == "__main__":

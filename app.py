@@ -11180,6 +11180,7 @@ NFL_INACTIVES_PATH  = os.path.join(CACHE_DIR, "nfl_inactives.json")
 NFL_DEPTH_SNAP_PATH = os.path.join(CACHE_DIR, "nfl_depth_snapshots.json")
 OPENING_LINES_PATH  = os.path.join(CACHE_DIR, "opening_lines.json")
 BOARD_SNAP_PATH     = os.path.join(CACHE_DIR, "board_snapshots.json")
+GAME_BOARD_SNAP_PATH = os.path.join(CACHE_DIR, "game_board_snapshots.json")
 
 # ── DraftKings Direct (curl_cffi) ─────────────────────────────
 
@@ -11454,6 +11455,81 @@ def store_board_snapshot(board, sport):
         pass
 
 
+def store_game_board_snapshot(game_analysis, sport):
+    """
+    Game-line counterpart to store_board_snapshot() — same policy, applied
+    to SPREAD/TOTAL/MONEYLINE/ALT LINE picks instead of player props.
+    (Added 2026-07-12: previously only the props board was snapshotted,
+    so the daily grading pipeline had no game-line equivalent at all.)
+
+    Stores up to 30 picks/sport (best-bet tiers and highest edge
+    prioritized), persisted to Gist for the same reason as the props
+    snapshot — Streamlit Cloud's filesystem resets on redeploy/restart.
+    Feeds next-day grading (scripts/daily_board_grading.py →
+    resolve_actual_game_result_for_grading), which writes to a SEPARATE
+    gist key (game_board_grading_history) so it never collides with the
+    props grading history.
+
+    "line" for each pick uses the same numeric field the interactive lock
+    UI stores (market_spread/market_total from the recommendation, not a
+    team-prefixed display string) so grading logic stays consistent with
+    the fixed Check Results resolver.
+    """
+    if not game_analysis:
+        return
+    try:
+        today_key = date.today().strftime("%Y-%m-%d")
+        stored = load_from_gist("game_board_snapshots", None)
+        if stored is None:
+            stored = load_json_data(GAME_BOARD_SNAP_PATH, {})
+        snap_key = f"{today_key}_{sport}_{datetime.now().strftime('%H:%M')}"
+
+        picks = []
+        for g in game_analysis:
+            matchup = g.get("matchup", "")
+            home = g.get("home", "")
+            away = g.get("away", "")
+            for rec in g.get("recommendations", []):
+                market = rec.get("type", "")
+                line = rec.get("market_spread") if market == "SPREAD" else (
+                    rec.get("market_total") if market == "TOTAL" else 0
+                )
+                picks.append({
+                    "matchup": matchup, "home": home, "away": away,
+                    "market": market, "pick": rec.get("pick", ""),
+                    "line": line or 0, "edge": rec.get("edge", 0),
+                    "tier": rec.get("tier", ""),
+                })
+            # Alt line isn't in "recommendations" -- it's enriched directly
+            # onto the game dict after analyze_all_games() runs.
+            if g.get("AltLine"):
+                picks.append({
+                    "matchup": matchup, "home": home, "away": away,
+                    "market": "ALT LINE", "pick": g.get("AltLine", ""),
+                    "line": g.get("AltLineValue", 0) or 0,
+                    "edge": g.get("AltEdge", 0), "tier": g.get("AltTier", ""),
+                })
+
+        _tier_rank = {"SOVEREIGN": 0, "ELITE": 1, "APPROVED": 2, "LEAN": 3, "PASS": 4}
+        capped_picks = sorted(
+            picks,
+            key=lambda p: (_tier_rank.get(p.get("tier", ""), 5), -abs(p.get("edge", 0) or 0)),
+        )[:30]
+
+        stored[snap_key] = {
+            "sport": sport,
+            "date": today_key,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "picks": capped_picks,
+        }
+        cutoff = (date.today() - timedelta(days=45)).strftime("%Y-%m-%d")
+        stored = {k: v for k, v in stored.items() if v.get("date", "0000-00-00") >= cutoff}
+        save_json_data(GAME_BOARD_SNAP_PATH, stored)
+        save_to_gist("game_board_snapshots", stored)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        pass
+
+
 def check_prediction_stability(board, sport):
     """
     Compare current board vs most recent snapshot.
@@ -11576,28 +11652,61 @@ def grade_board_snapshots_for_date(target_date: str):
     }
 
 
-def get_calibration_source_records():
+def get_calibration_source_records(bet_type=None):
     """
     Combine real bet history + board-grading history for calibration
-    purposes ONLY — every returned record is tagged with 'source' so
-    downstream code can filter. Never use this for bankroll/ROI display;
-    those must read st.session_state['history'] directly, unmixed.
+    purposes ONLY — every returned record is tagged with 'source' and
+    'bet_type' so downstream code can filter. Never use this for
+    bankroll/ROI display; those must read st.session_state['history']
+    directly, unmixed.
+
+    bet_type=None (default) returns everything combined — for display-only
+    callers (GEM brief, tier_stats summary) that don't need the prop/game
+    split. Pass "prop" or "game" to get just that pool, matching
+    calibrate_tier_thresholds' own bet_type param.
+
+    2026-07-12: previously this only read the props board_grading_history
+    and was never actually passed into calibrate_tier_thresholds anywhere
+    — the real threshold calibration only ever saw the small manually-
+    placed bet ledger, regardless of how much daily auto-graded board data
+    existed. Now also reads game_board_grading_history (written by
+    scripts/daily_board_grading.py's game-grading pass) and both pools get
+    wired into load_sport_data()'s calibration calls below.
     """
     real_history = list(st.session_state.get("history", []))
     for r in real_history:
         r.setdefault("source", "bet_ledger")
-    grading_history = load_from_gist("board_grading_history", None) or {}
+        r.setdefault("bet_type", "prop")
+
     board_records = []
-    for day_results in grading_history.values():
+    prop_grading = load_from_gist("board_grading_history", None) or {}
+    for day_results in prop_grading.values():
         for r in day_results:
-            if r.get("outcome") in ("WIN", "LOSS"):
+            if r.get("outcome") in ("WIN", "LOSS", "PUSH"):
                 board_records.append({
                     "outcome": r["outcome"], "prob": r.get("prob", 0.5),
                     "sport": r.get("sport", ""), "timestamp": r.get("date", ""),
                     "edge": r.get("edge", 0), "tier": r.get("tier", ""),
-                    "source": "board_grading",
+                    "source": "board_grading", "bet_type": "prop",
+                    "has_real_prob": True,
                 })
-    return real_history + board_records
+
+    game_grading = load_from_gist("game_board_grading_history", None) or {}
+    for day_results in game_grading.values():
+        for r in day_results:
+            if r.get("outcome") in ("WIN", "LOSS", "PUSH"):
+                board_records.append({
+                    "outcome": r["outcome"], "prob": r.get("prob", 0.5),
+                    "sport": r.get("sport", ""), "timestamp": r.get("date", ""),
+                    "edge": r.get("edge", 0), "tier": r.get("tier", ""),
+                    "source": "board_grading", "bet_type": "game",
+                    "has_real_prob": True,
+                })
+
+    combined = real_history + board_records
+    if bet_type is not None:
+        combined = [r for r in combined if r.get("bet_type", "prop") == bet_type]
+    return combined
 
 
 def load_sport_data(sport):
@@ -11619,14 +11728,22 @@ def load_sport_data(sport):
         if _live_bl: st.session_state["nfl_live_baselines"] = _live_bl
 
     # ── Auto-calibrate tier thresholds from bet history ────────────────────
-    _sig_perf  = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
-    _hist      = st.session_state.get("history", [])
-    _cal_thresholds = calibrate_tier_thresholds(_sig_perf, _hist, sport, bet_type="prop")
+    # 2026-07-12: now pulls from get_calibration_source_records() instead of
+    # just st.session_state["history"] — that means both pools include the
+    # daily auto-graded board snapshots (up to 30 picks/sport/day) on top of
+    # the real bet ledger, not just the handful of bets actually placed.
+    # Previously this ran on the manual ledger alone for both props and
+    # games, so the auto-grading pipeline (store_board_snapshot +
+    # daily_board_grading.yml) fed the GEM brief display and nothing else.
+    _sig_perf   = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
+    _prop_hist  = get_calibration_source_records(bet_type="prop")
+    _cal_thresholds = calibrate_tier_thresholds(_sig_perf, _prop_hist, sport, bet_type="prop")
     st.session_state["calibrated_thresholds"] = _cal_thresholds
     if _cal_thresholds.get("_calibrated") and _cal_thresholds.get("_n_records", 0) >= 15:
         _adj_log = _cal_thresholds.get("_log", {})
         _adjusted = {k:v for k,v in _cal_thresholds.items() if not k.startswith("_")}
-        st.caption(f"📐 Prop thresholds auto-calibrated from {_cal_thresholds['_n_records']} {sport} bets: "
+        st.caption(f"📐 Prop thresholds auto-calibrated from {_cal_thresholds['_n_records']} {sport} bets "
+                   f"(ledger + daily board grading): "
                    f"SOV={_adjusted.get('SOVEREIGN',0):.3f} ELI={_adjusted.get('ELITE',0):.3f} "
                    f"APP={_adjusted.get('APPROVED',0):.3f} LEAN={_adjusted.get('LEAN',0):.3f}")
 
@@ -11635,16 +11752,21 @@ def load_sport_data(sport):
     # SPREAD/TOTAL (static GAME_TIER_THRESHOLDS only, never adjusted from
     # results), and ML was quietly reusing the prop calibration pool above
     # even though ML edges run 2-3x smaller than prop edges (bug found
-    # 2026-07-12). See calibrate_tier_thresholds bet_type param.
+    # 2026-07-12). See calibrate_tier_thresholds bet_type param. Also now
+    # pulls in the daily game-line board grading (store_game_board_snapshot
+    # + daily_board_grading.py's game-grading pass), same as props above.
+    _game_hist = get_calibration_source_records(bet_type="game")
     _cal_game_thresholds = calibrate_tier_thresholds(
-        _sig_perf, _hist, sport, bet_type="game", base_thresholds_by_sport=GAME_TIER_THRESHOLDS
+        _sig_perf, _game_hist, sport, bet_type="game", base_thresholds_by_sport=GAME_TIER_THRESHOLDS
     )
     st.session_state["calibrated_game_thresholds"] = _cal_game_thresholds
     if _cal_game_thresholds.get("_calibrated") and _cal_game_thresholds.get("_n_records", 0) >= 15:
         _adj_game = {k:v for k,v in _cal_game_thresholds.items() if not k.startswith("_")}
-        st.caption(f"📐 Game-line thresholds auto-calibrated from {_cal_game_thresholds['_n_records']} {sport} bets: "
+        st.caption(f"📐 Game-line thresholds auto-calibrated from {_cal_game_thresholds['_n_records']} {sport} bets "
+                   f"(ledger + daily board grading): "
                    f"SOV={_adj_game.get('SOVEREIGN',0):.3f} ELI={_adj_game.get('ELITE',0):.3f} "
                    f"APP={_adj_game.get('APPROVED',0):.3f} LEAN={_adj_game.get('LEAN',0):.3f}")
+
 
     min_edge = st.session_state.get("min_edge", MIN_EDGE_DEFAULT)
     skip_def = st.session_state.get("skip_defaults", False)
@@ -16230,6 +16352,8 @@ with st.sidebar:
                         _ga["AltEdge"]  = _best_alt["edge"]
                         _ga["AltTier"]  = _best_alt["tier"]
                         _ga["AltBook"]  = _best_alt.get("book","")
+                        _ga["AltLineValue"] = _best_alt.get("point", 0)
+            store_game_board_snapshot(game_analysis, sport_sel)
         else:
             st.session_state["game_analysis"] = []
         if board:
