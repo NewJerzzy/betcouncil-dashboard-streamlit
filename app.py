@@ -20955,7 +20955,7 @@ with tabs[4]:
         //    panel showing "Pending" forever, never a single successful fire.
         //    Replaced by scripts/tampermonkey_betmgm_harvester.user.js, which
         //    runs the identical fetch from betmgm.com's own origin (same-origin,
-        //    no CORS) and pushes to the same betcouncil_mgm_props_{sport}.json
+        //    no CORS) and pushes to the same betcouncil_mgm_props_{{sport}}.json
         //    Gist key -- fetch_betmgm_props_from_gist() and
         //    _parse_betmgm_harvested() in fetchers.py needed zero changes.
 
