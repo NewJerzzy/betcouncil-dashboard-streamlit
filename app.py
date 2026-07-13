@@ -11331,7 +11331,7 @@ def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
     """
     if not fns:
         return []
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, wait as _cf_wait
     import time as _time
     import threading
     n = len(fns)
@@ -11365,24 +11365,63 @@ def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
     # "board takes forever to load" complaint. Threads are cheap for I/O
     # wait, so 40 is safe here (not CPU-bound work) and roughly halves the
     # number of waves for the largest batches without touching smaller ones.
-    with ThreadPoolExecutor(max_workers=min(n, 40)) as ex:
-        futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
-        for fut in as_completed(futures):
-            idx = futures[fut]
+    #
+    # BUG FIX (2026-07): the old loop used `for fut in as_completed(futures):
+    # fut.result(timeout=25)`. as_completed() only ever yields a future
+    # AFTER it has already finished, so that per-future timeout=25 could
+    # never actually fire — .result() on an already-done future returns
+    # instantly, it doesn't block or raise TimeoutError. In practice this
+    # meant a single slow/hanging source (e.g. scrape_prizepicks observed
+    # taking 64s while failing with 429/403) could silently hold up the
+    # entire batch's wall time with no real ceiling, despite the code
+    # looking like it enforced one. wait(futures, timeout=...) enforces a
+    # REAL deadline on the whole batch: whatever hasn't finished by then is
+    # abandoned (marked as a timeout, its eventual result discarded when
+    # the thread does finish in the background) instead of silently
+    # blocking everyone else.
+    _BATCH_TIMEOUT_S = 25
+    # NOT using `with ThreadPoolExecutor(...) as ex:` here on purpose: that
+    # context manager's __exit__ calls shutdown(wait=True) by default, which
+    # would block until EVERY submitted thread finishes -- including the
+    # slow straggler this whole fix exists to stop waiting on. Caught this
+    # empirically: an isolated test of this exact pattern showed 3s wall
+    # time instead of the intended 1s timeout, because the with-block's
+    # cleanup silently re-introduced the wait. shutdown(wait=False) lets
+    # the function actually return at the deadline; the abandoned thread
+    # keeps running to completion in the background, its result simply
+    # never gets used for this board load.
+    ex = ThreadPoolExecutor(max_workers=min(n, 40))
+    futures = {ex.submit(_timed, fn, i): i for i, fn in enumerate(fns)}
+    done, not_done = _cf_wait(futures.keys(), timeout=_BATCH_TIMEOUT_S)
+    for fut in done:
+        idx = futures[fut]
+        try:
+            results[idx] = fut.result()
+        except Exception as _ex:
+            results[idx] = None
+            _logger.warning("_fetch_parallel future[%d] raised: %s: %s", idx, type(_ex).__name__, _ex)
+        if _prog_bar is not None:
+            _done[0] += 1
+            _pct = _done[0] / n
+            _name = (timings[idx] or {}).get("name", "")
             try:
-                results[idx] = fut.result(timeout=25)
-            except Exception as _ex:
-                results[idx] = None
-                _logger.warning("_fetch_parallel future[%d] raised: %s: %s", idx, type(_ex).__name__, _ex)
-            # Update progress bar as each future completes
-            if _prog_bar is not None:
-                _done[0] += 1
-                _pct = _done[0] / n
-                _name = (timings[idx] or {}).get("name", "")
-                try:
-                    _prog_bar.progress(_pct, text=f"Loading… {_done[0]}/{n} sources ✓ {_name}")
-                except Exception:
-                    pass
+                _prog_bar.progress(_pct, text=f"Loading… {_done[0]}/{n} sources ✓ {_name}")
+            except Exception:
+                pass
+    for fut in not_done:
+        idx = futures[fut]
+        name = getattr(fns[idx], '__name__', f'fn_{idx}').replace('_pf_','').replace('fetch_','')
+        results[idx] = None
+        timings[idx] = {"name": name, "time": float(_BATCH_TIMEOUT_S),
+                         "status": f"⏱️ Timeout — still running after {_BATCH_TIMEOUT_S}s, abandoned so the rest of the board could load"}
+        _logger.warning("_fetch_parallel: %s did not complete within %ds, abandoning for this load", name, _BATCH_TIMEOUT_S)
+        if _prog_bar is not None:
+            _done[0] += 1
+            try:
+                _prog_bar.progress(_done[0] / n, text=f"Loading… {_done[0]}/{n} sources (⏱️ {name} timed out)")
+            except Exception:
+                pass
+    ex.shutdown(wait=False)
 
     # Clear progress indicators
     if _prog_bar is not None:
