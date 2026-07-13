@@ -9009,6 +9009,7 @@ def resolve_actual_stat_for_grading(player: str, sport: str, prop_type: str, gam
 _GAME_GRADING_ESPN_SPORT_MAP = {
     "NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
     "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl"),
+    "WNBA": ("basketball", "wnba"),
 }
 
 def resolve_actual_game_result_for_grading(matchup: str, home: str, away: str, sport: str,

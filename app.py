@@ -19720,7 +19720,7 @@ with tabs[3]:
                 # before/after each lock date: ESPN sometimes buckets a late
                 # night game under the following UTC calendar day, so a single
                 # exact-date query can miss a real, finished game.
-                espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl")}
+                espn_sm = {"NBA":("basketball","nba"),"MLB":("baseball","mlb"),"NFL":("football","nfl"),"NHL":("hockey","nhl"),"WNBA":("basketball","wnba")}
                 exact_dates = set()
                 padding_dates = set()
                 for lock in game_locks:
