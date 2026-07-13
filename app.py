@@ -19646,15 +19646,50 @@ with tabs[3]:
                                         pick = lock.get("side","")
                                         line = float(lock.get("line",0) or 0)
                                         prop_type = lock.get("prop","").upper()
-                                        pick_is_home = _norm_team(pick) and _norm_team(pick) in home_norm
+                                        pick_norm = _norm_team(pick)
+                                        # "side" is stored as the full pick string, e.g.
+                                        # "Pittsburgh Pirates -1.5" or "Pittsburgh Pirates -150",
+                                        # not a bare team name. The old check tested whether the
+                                        # (longer) pick string was contained inside the (shorter)
+                                        # team name — a superstring can never be a substring of a
+                                        # shorter string, so pick_is_home was always False, and
+                                        # every SPREAD/ML/ALT LINE lock was silently graded as if
+                                        # the away side had been picked, regardless of which side
+                                        # was actually locked (bug found 2026-07-12). Fixed by
+                                        # checking containment the other way around.
+                                        pick_is_home = bool(home_norm) and home_norm in pick_norm
+                                        pick_is_away = bool(away_norm) and away_norm in pick_norm
                                         outcome = None
-                                        if "SPREAD" in prop_type:
+                                        if "SPREAD" in prop_type or "ALT" in prop_type:
+                                            # ALT LINE (run line / puck line) is scored identically
+                                            # to a spread bet — it previously matched neither
+                                            # "SPREAD" nor "TOTAL" nor "ML" and so silently never
+                                            # resolved at all (bug found 2026-07-12).
+                                            if not pick_is_home and not pick_is_away:
+                                                raise ValueError(f"can't tell which side was picked from side={pick!r}")
                                             pick_team_score = home_score if pick_is_home else away_score
                                             opp_score = away_score if pick_is_home else home_score
-                                            outcome = "WIN" if (pick_team_score - opp_score + line) > 0 else "LOSS"
+                                            margin = pick_team_score - opp_score + line
+                                            outcome = "PUSH" if margin == 0 else ("WIN" if margin > 0 else "LOSS")
                                         elif "TOTAL" in prop_type:
-                                            outcome = "WIN" if (pick=="OVER" and total>line) or (pick=="UNDER" and total<line) else "LOSS"
+                                            # Stored pick text is "OVER 8.5" / "UNDER 8.5", never a
+                                            # bare "OVER"/"UNDER" — the old `pick=="OVER"` exact
+                                            # match never fired, so the ternary's else branch ran
+                                            # every time and logged EVERY total lock as a LOSS
+                                            # regardless of the actual result (bug found
+                                            # 2026-07-12, likely inflating recorded losses for as
+                                            # long as this path has been in use). Fixed to check
+                                            # for the OVER/UNDER token anywhere in the pick text.
+                                            pick_up = pick.upper()
+                                            if "OVER" in pick_up:
+                                                outcome = "PUSH" if total == line else ("WIN" if total > line else "LOSS")
+                                            elif "UNDER" in pick_up:
+                                                outcome = "PUSH" if total == line else ("WIN" if total < line else "LOSS")
+                                            else:
+                                                raise ValueError(f"can't tell OVER/UNDER from side={pick!r}")
                                         elif "ML" in prop_type:
+                                            if not pick_is_home and not pick_is_away:
+                                                raise ValueError(f"can't tell which side was picked from side={pick!r}")
                                             win_is_home = home_score > away_score
                                             outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
                                         if outcome:
@@ -19662,9 +19697,9 @@ with tabs[3]:
                                             if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                             resolved += 1
                                             game_resolved += 1
-                                            st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
+                                            st.markdown(f"{'✅' if outcome=='WIN' else '❌' if outcome=='LOSS' else '➖'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
                                     except (ValueError, TypeError, ZeroDivisionError) as _lock_err:
-                                        _espn_debug_log.append(f"  ⚠️ failed to resolve {matchup} (line={lock.get('line')!r}): {_lock_err}")
+                                        _espn_debug_log.append(f"  ⚠️ failed to resolve {matchup} {lock.get('prop','')} (line={lock.get('line')!r}, side={lock.get('side')!r}): {_lock_err}")
                                         continue
                         except (ValueError, TypeError, ZeroDivisionError): continue
 
