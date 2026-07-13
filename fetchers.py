@@ -8145,6 +8145,97 @@ def fetch_odds_api_game_lines(sport):
         print(f"[ODDS_API] game lines fetch exception for {sport}: {e}")
         return [], {}, {}
 
+def fetch_preview_game_lines(sport):
+    # PREVIEW BOARD (2026-07): raw next-day game lines only — no tier scoring,
+    # no Kelly staking. Reuses the same OddsAPI /odds bulk call as
+    # fetch_odds_api_game_lines() (that endpoint already returns the full
+    # upcoming window, not just today — it just wasn't being filtered by
+    # date before). This filters to tomorrow's commence_time and stamps the
+    # real game date instead of hardcoding date.today(). Cached separately
+    # from the live board's cache so it never collides with or overwrites
+    # today's board state.
+    if not ODDS_API_KEY:
+        return []
+    sport_key = ODDS_API_SPORT_MAP.get(sport)
+    if not sport_key:
+        return []
+    allowed, reason = api_budget_check("ODDS_API")
+    if not allowed:
+        print(f"[ODDS_API] budget check blocked preview lines for {sport}: {reason}")
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"preview_games_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 60:
+            return _safe_load_pkl(cache_path)
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
+    try:
+        resp = _http.get(url, headers=HEADERS, timeout=15)
+        api_budget_increment("ODDS_API", amount=60)  # 10 x 3 markets x 2 regions
+        if resp.status_code != 200:
+            print(f"[ODDS_API] preview lines HTTP {resp.status_code} for {sport}")
+            return []
+        events = resp.json()
+        if not isinstance(events, list):
+            return []
+        tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+        tomorrow_events = [e for e in events if isinstance(e, dict) and e.get("commence_time", "").startswith(tomorrow_str)]
+        games = []
+        priority = ["bovada", "mybookieag", "draftkings", "fanduel", "betmgm", "caesars", "circa_sports", "betonlineag", "us_ex"]
+        for event in tomorrow_events:
+            home = event.get("home_team", "")
+            away = event.get("away_team", "")
+            if not home or not away:
+                continue
+            matchup = f"{away} @ {home}"
+            spread = "N/A"
+            total = "N/A"
+            home_ml = "N/A"
+            away_ml = "N/A"
+            odds_source = "N/A"
+            for preferred_book in priority:
+                for bm in event.get("bookmakers", []):
+                    if bm.get("key") != preferred_book:
+                        continue
+                    odds_source = bm.get("title", preferred_book)
+                    for mkt in bm.get("markets", []):
+                        key = mkt.get("key", "")
+                        outcomes = mkt.get("outcomes", [])
+                        if key == "h2h":
+                            for o in outcomes:
+                                if o["name"] == home:
+                                    home_ml = o["price"]
+                                elif o["name"] == away:
+                                    away_ml = o["price"]
+                        elif key == "spreads":
+                            for o in outcomes:
+                                if o["name"] == home:
+                                    spread = f"{home} {o['point']:+.1f}"
+                        elif key == "totals":
+                            for o in outcomes:
+                                if o["name"] == "Over":
+                                    total = o.get("point", "N/A")
+                    break
+                if odds_source != "N/A":
+                    break
+            games.append({
+                "Matchup": matchup,
+                "Spread": spread,
+                "Total": total,
+                "Home ML": home_ml,
+                "Away ML": away_ml,
+                "Odds Source": odds_source,
+                "Game Time": event.get("commence_time", ""),
+                "Sport": sport,
+            })
+        if games:
+            with open(cache_path, "wb") as f:
+                pickle.dump(games, f)
+        return games
+    except (IOError, ValueError) as e:
+        print(f"[ODDS_API] preview lines fetch exception for {sport}: {e}")
+        return []
+
 def fetch_oddswrap_props(sport):
     if not ODDSWRAP_AVAILABLE:
         return []

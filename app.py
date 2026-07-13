@@ -16327,7 +16327,7 @@ def _bc_df_html(data, columns=None):
     )
 
 
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "⚙️ System"])
+tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -23262,6 +23262,30 @@ with tabs[8]:
 
 # ----- TAB 7: SYSTEM -----
 with tabs[9]:
+    # PREVIEW BOARD (2026-07): raw next-day game lines only. No tier
+    # classification, no Kelly staking — starters/injuries aren't locked
+    # this far out, so nothing here should be treated as a recommendation.
+    # Separate session-state/cache path from the live board; cannot collide
+    # with today's board_loaded / last_good_props state.
+    st.markdown("## 📅 Preview — Tomorrow's Lines (Provisional)")
+    st.warning(
+        "⚠️ **Provisional data only.** Starting pitchers, injury reports, and lineups "
+        "are not finalized this far out — these lines are raw and unscored. No tier "
+        "ratings, no Kelly stake sizing. Use for line-shopping context only, not as a "
+        "recommendation. Re-check the live board once it becomes today's board."
+    )
+    _preview_sport = st.selectbox("Sport", SPORTS, key="preview_sport_sel")
+    if st.button("🔄 Load Preview", key="preview_load_btn"):
+        with st.spinner(f"Fetching tomorrow's {_preview_sport} lines..."):
+            st.session_state[f"preview_games_{_preview_sport}"] = fetch_preview_game_lines(_preview_sport)
+    _preview_games = st.session_state.get(f"preview_games_{_preview_sport}", [])
+    if _preview_games:
+        st.caption(f"{len(_preview_games)} games found for tomorrow — {_preview_games[0].get('Game Time','')[:10]}")
+        st.markdown(_bc_df_html(_preview_games, columns=["Matchup", "Spread", "Total", "Home ML", "Away ML", "Odds Source", "Game Time"]), unsafe_allow_html=True)
+    else:
+        st.info("No preview data loaded yet — click **Load Preview** above. If empty after loading, tomorrow's lines may not be posted yet for this sport.")
+
+with tabs[10]:
     st.markdown("## ⚙️ System Info")
 
 
