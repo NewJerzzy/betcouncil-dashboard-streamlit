@@ -3375,6 +3375,14 @@ def generate_post_mortem(history, target_date=None):
     total_net = sum(h.get("net", 0) for h in day_bets)
     wr = wins / n
 
+    # Untracked-stake picks: auto-resolved locks (BDL/Bovada resolvers) log
+    # outcome correctly but default wager to 0 if the user never entered a
+    # real stake, so they show as a loss/win worth exactly 0.0u. Left
+    # unflagged, these silently zero out a tier's or bet_type's real net and
+    # make "0.0u" look like a neutral result instead of an untracked one.
+    untracked = [h for h in day_bets if not h.get("wager")]
+    n_untracked = len(untracked)
+
     # Signal performance for the day
     SIGNAL_KEYS = {
         "base":     "Base",
@@ -3411,12 +3419,32 @@ def generate_post_mortem(history, target_date=None):
     for h in day_bets:
         t = h.get("tier","?")
         if t not in tier_day:
-            tier_day[t] = {"wins":0,"losses":0,"net":0}
+            tier_day[t] = {"wins":0,"losses":0,"net":0,"untracked":0}
         tier_day[t]["net"] += h.get("net",0)
         if h.get("outcome") == "WIN":
             tier_day[t]["wins"] += 1
         else:
             tier_day[t]["losses"] += 1
+        if not h.get("wager"):
+            tier_day[t]["untracked"] += 1
+
+    # bet_type breakdown (props vs. game lines) -- this is the split most
+    # people actually want ("did we win props but lose games") and it was
+    # previously computed nowhere in this function even though every record
+    # already carries bet_type.
+    BT_LABEL = {"prop": "Props", "game": "Game Lines"}
+    bt_day = {}
+    for h in day_bets:
+        bt = BT_LABEL.get(h.get("bet_type","prop"), h.get("bet_type","?"))
+        if bt not in bt_day:
+            bt_day[bt] = {"wins":0,"losses":0,"net":0,"untracked":0}
+        bt_day[bt]["net"] += h.get("net",0)
+        if h.get("outcome") == "WIN":
+            bt_day[bt]["wins"] += 1
+        else:
+            bt_day[bt]["losses"] += 1
+        if not h.get("wager"):
+            bt_day[bt]["untracked"] += 1
 
     # Verdict
     if total_net > 0:
@@ -3426,10 +3454,24 @@ def generate_post_mortem(history, target_date=None):
     else:
         verdict = f"🔴 Losing day: {total_net:.1f}u ({wr:.0%} WR)"
 
-    # Primary cause
+    # Primary cause -- checked in order of how structural/actionable it is.
+    # A missing-signal-data day used to fall through straight to "Normal
+    # variance" even when there was an obvious cause (a whole bet_type
+    # underwater, or a tier full of untracked-stake results); those checks
+    # now run before the generic fallback.
+    bt_negative = sorted([(k,v) for k,v in bt_day.items() if v["net"] < 0], key=lambda x: x[1]["net"])
+    bt_positive = [(k,v) for k,v in bt_day.items() if v["net"] > 0]
     if failing:
         top_fail = failing[0]
         cause = f"{top_fail[0]} signal underperformed ({top_fail[1]['net']:+.1f}u)"
+    elif bt_negative and bt_positive:
+        lose_bt, lose_v = bt_negative[0]
+        win_bt, win_v = max(bt_positive, key=lambda x: x[1]["net"])
+        cause = (f"{lose_bt} lost ({lose_v['net']:+.1f}u) while {win_bt} won "
+                 f"({win_v['net']:+.1f}u) — split session, not a broad model issue")
+    elif bt_negative and n_untracked >= n * 0.3:
+        cause = (f"{n_untracked} of {n} picks had no wager entered (net forced to $0) — "
+                  "unit totals and win rates above are unreliable until stakes are logged")
     elif wins == 0:
         cause = "No winning picks — review tier thresholds"
     else:
@@ -3443,10 +3485,13 @@ def generate_post_mortem(history, target_date=None):
         "net":         round(total_net, 2),
         "win_rate":    f"{wr:.1%}",
         "cause":       cause,
+        "n_untracked": n_untracked,
         "failing":     [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in failing[:3]],
         "succeeding":  [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in succeeding[:3]],
-        "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—"}
+        "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—", "untracked": v["untracked"]}
                            for k,v in tier_day.items()},
+        "bet_type_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—", "untracked": v["untracked"]}
+                           for k,v in bt_day.items()},
         "watch_next":  [k for k,v in failing[:2]] if failing else [],
     }
 

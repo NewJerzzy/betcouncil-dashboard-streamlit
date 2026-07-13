@@ -21648,6 +21648,11 @@ with tabs[4]:
                     st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
             if _pm["watch_next"]:
                 st.caption(f"Watch next session: {', '.join(_pm['watch_next'])}")
+            if _pm["bet_type_breakdown"]:
+                st.markdown("**Props vs. Game Lines:**")
+                for bt, btd in _pm["bet_type_breakdown"].items():
+                    _u = f" · {btd['untracked']} untracked" if btd["untracked"] else ""
+                    st.caption(f"{bt}: {btd['net']:+.1f}u ({btd['wr']} WR){_u}")
         with _pm_c2:
             if _pm["succeeding"]:
                 st.markdown("**✅ Succeeding Signals:**")
@@ -21656,7 +21661,12 @@ with tabs[4]:
             if _pm["tier_breakdown"]:
                 st.markdown("**Tier breakdown:**")
                 for t, td in _pm["tier_breakdown"].items():
-                    st.caption(f"{t}: {td['net']:+.1f}u ({td['wr']} WR)")
+                    _u = f" · {td['untracked']} untracked" if td["untracked"] else ""
+                    st.caption(f"{t}: {td['net']:+.1f}u ({td['wr']} WR){_u}")
+        if _pm["n_untracked"]:
+            st.warning(f"⚠️ {_pm['n_untracked']} of {_pm['n']} picks this day had no wager entered — "
+                       "they graded WIN/LOSS correctly but contributed $0.0u, which understates real net "
+                       "for whichever tier/bet_type they fall in. Log a stake on auto-resolved locks to fix this.")
     else:
         st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
 
