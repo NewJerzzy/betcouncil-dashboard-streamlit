@@ -19471,8 +19471,26 @@ with tabs[2]:
 
         # Pinnacle/VSIN sharp signals already computed per-game for the
         # header badges — pull the same objects in here.
-        _pin_sig  = next((r.get("pinnacle_sharp") for r in _g.get("recommendations", []) if r.get("pinnacle_sharp")), None)
-        _vsin_sig = next((r.get("vsin_sharp") for r in _g.get("recommendations", []) if r.get("vsin_sharp")), None)
+        #
+        # BUG FIX (2026-07): each recommendation TYPE (SPREAD/TOTAL/MONEYLINE)
+        # carries its OWN distinct pinnacle_sharp/vsin_sharp value -- but this
+        # used to grab just ONE via next(...) (whichever recommendation
+        # happened to have a truthy value first, in SPREAD->TOTAL->MONEYLINE
+        # append order) and reuse that SAME signal under every market column
+        # below. In practice that meant a TOTAL signal ("Pinnacle neutral on
+        # OVER: 49.1%") could show up mislabeled under Moneyline AND Spread,
+        # while being silently omitted from Total (the market it actually
+        # describes) since Total's own display code never checked _pin_sig
+        # at all. Pulling one variable per market fixes both the mislabeling
+        # and the Total omission in one change.
+        def _sig_for(market_type, key):
+            return next((r.get(key) for r in _g.get("recommendations", []) if r.get("type") == market_type and r.get(key)), None)
+        _pin_sig_ml,  _vsin_sig_ml  = _sig_for("MONEYLINE", "pinnacle_sharp"), _sig_for("MONEYLINE", "vsin_sharp")
+        _pin_sig_sp,  _vsin_sig_sp  = _sig_for("SPREAD",    "pinnacle_sharp"), _sig_for("SPREAD",    "vsin_sharp")
+        _pin_sig_tot, _vsin_sig_tot = _sig_for("TOTAL",     "pinnacle_sharp"), _sig_for("TOTAL",     "vsin_sharp")
+        # Kept for the top verdict summary's Moneyline section below, which
+        # already existed before this fix and expects these two names.
+        _pin_sig, _vsin_sig = _pin_sig_ml, _vsin_sig_ml
 
         _steam_sigs_check = _g.get("steam_signals", {})
         _steam_hits = {k: v for k, v in _steam_sigs_check.items() if isinstance(v, dict) and v.get("is_steam")}
@@ -19481,7 +19499,9 @@ with tabs[2]:
 
         _has_pub = bool(
             (_pub_data and any(_pub_data.get(k) for k in ["ml_pcts", "spread_pcts", "total_pcts"]))
-            or _cov_game or _bp_game or _kal_game or _poly_game or _pin_sig or _vsin_sig or _has_steam
+            or _cov_game or _bp_game or _kal_game or _poly_game
+            or _pin_sig_ml or _vsin_sig_ml or _pin_sig_sp or _vsin_sig_sp or _pin_sig_tot or _vsin_sig_tot
+            or _has_steam
         )
 
         if _has_pub:
@@ -19559,6 +19579,14 @@ with tabs[2]:
                 for _sk, _sv in _steam_hits.items():
                     if "spread" in _sk:
                         _sp_sharp.append(("Steam move", f"{_sv.get('direction','')}", f"{_sv.get('magnitude',0)} pt move in {_sv.get('elapsed_seconds',0)}s"))
+                if _pin_sig_sp and _pin_sig_sp.get("note"):
+                    (_sp_sharp if _pin_sig_sp.get("confirms") else _sp_public).append(
+                        ("Pinnacle (sharp book)", "model's pick" if _pin_sig_sp.get("confirms") else "opposite of model", _pin_sig_sp["note"])
+                    )
+                if _vsin_sig_sp and _vsin_sig_sp.get("note"):
+                    (_sp_sharp if _vsin_sig_sp.get("confirms") else _sp_public).append(
+                        ("VSIN Nevada", "model's pick" if _vsin_sig_sp.get("confirms") else "opposite of model", _vsin_sig_sp["note"])
+                    )
                 _consensus_verdict("Spread", _sp_public, _sp_sharp)
 
                 # -- Total: Action Network total tickets/money + steam on total
@@ -19574,6 +19602,14 @@ with tabs[2]:
                 for _sk, _sv in _steam_hits.items():
                     if "total" in _sk:
                         _tot_sharp.append(("Steam move", f"{_sv.get('direction','')}", f"{_sv.get('magnitude',0)} pt move in {_sv.get('elapsed_seconds',0)}s"))
+                if _pin_sig_tot and _pin_sig_tot.get("note"):
+                    (_tot_sharp if _pin_sig_tot.get("confirms") else _tot_public).append(
+                        ("Pinnacle (sharp book)", "model's pick" if _pin_sig_tot.get("confirms") else "opposite of model", _pin_sig_tot["note"])
+                    )
+                if _vsin_sig_tot and _vsin_sig_tot.get("note"):
+                    (_tot_sharp if _vsin_sig_tot.get("confirms") else _tot_public).append(
+                        ("VSIN Nevada", "model's pick" if _vsin_sig_tot.get("confirms") else "opposite of model", _vsin_sig_tot["note"])
+                    )
                 _consensus_verdict("Total", _tot_public, _tot_sharp)
 
                 st.markdown("---")
@@ -19607,7 +19643,7 @@ with tabs[2]:
                             else:
                                 st.markdown(f"✅ **Public + Sharp agree on {_sharp_side}**")
                                 st.caption("Both public tickets and money % point same direction — stronger signal.")
-                    else:
+                    elif not (_pin_sig or _vsin_sig or _cov_game or _bp_game):
                         st.caption("No data")
 
                     if _cov_game:
@@ -19639,20 +19675,20 @@ with tabs[2]:
                     if _poly_game:
                         st.caption(f"🟣 Polymarket: {_poly_game.get('implied_prob',0.5):.0%} implied ({_poly_game.get('title','')[:40]})")
                     if _pin_sig and _pin_sig.get("note"):
-                        st.caption(f"📌 Pinnacle: {_pin_sig['note']}")
+                        st.caption(_pin_sig["note"])
                     if _vsin_sig and _vsin_sig.get("note"):
-                        st.caption(f"🎰 VSIN (Nevada): {_vsin_sig['note']}")
+                        st.caption(_vsin_sig["note"])
                 _sp_pcts = _pub_data.get("spread_pcts", {}) if _pub_data else {}
                 with _pcol2:
                     st.markdown("**Spread**")
                     if _sp_pcts:
                         for _side, _sd in _sp_pcts.items():
                             st.caption(f"{_side}: 🎟️ {_sd.get('tickets',0)}% | 💰 {_sd.get('money',0)}%")
-                    if _pin_sig and _pin_sig.get("note"):
-                        st.caption(f"📌 Pinnacle: {_pin_sig['note']}")
-                    if _vsin_sig and _vsin_sig.get("note"):
-                        st.caption(f"🎰 VSIN (Nevada): {_vsin_sig['note']}")
-                    if not _sp_pcts and not _pin_sig and not _vsin_sig:
+                    if _pin_sig_sp and _pin_sig_sp.get("note"):
+                        st.caption(_pin_sig_sp["note"])
+                    if _vsin_sig_sp and _vsin_sig_sp.get("note"):
+                        st.caption(_vsin_sig_sp["note"])
+                    if not _sp_pcts and not _pin_sig_sp and not _vsin_sig_sp:
                         st.caption("No data")
 
                 # Total public vs money
@@ -19662,11 +19698,15 @@ with tabs[2]:
                     if _tot_pcts:
                         for _side, _td in _tot_pcts.items():
                             st.caption(f"{_side}: 🎟️ {_td.get('tickets',0)}% | 💰 {_td.get('money',0)}%")
+                    if _pin_sig_tot and _pin_sig_tot.get("note"):
+                        st.caption(_pin_sig_tot["note"])
+                    if _vsin_sig_tot and _vsin_sig_tot.get("note"):
+                        st.caption(_vsin_sig_tot["note"])
                     if _kal_game and "total" in (_kal_game.get("title","") + _kal_game.get("event","")).lower():
                         st.caption(f"🔷 Kalshi total: {_kal_game.get('implied_prob',0.5):.0%} implied")
                     if _poly_game and "total" in (_poly_game.get("title","") + _poly_game.get("event","")).lower():
                         st.caption(f"🟣 Polymarket total: {_poly_game.get('implied_prob',0.5):.0%} implied")
-                    if not _tot_pcts and not _kal_game and not _poly_game:
+                    if not _tot_pcts and not _pin_sig_tot and not _vsin_sig_tot and not _kal_game and not _poly_game:
                         st.caption("No data")
 
                 # ── Steam moves & RLM — this is the actual industry-standard
