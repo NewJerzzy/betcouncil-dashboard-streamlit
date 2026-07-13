@@ -6595,7 +6595,20 @@ def scrape_prizepicks(sport):
                 # Also fixes the prior scrapeops_get() NameError — that helper
                 # was never defined; replaced with a direct requests.get using
                 # the standard ScrapeOps proxy URL pattern.
-                if not _cffi_success and SCRAPEOPS_KEY:
+                #
+                # EXHAUSTION GATE (2026-07): this path used to fire regardless
+                # of known exhaustion — it never checked session_state or the
+                # Gist before calling, unlike scrapeops_get() elsewhere. That
+                # meant it kept burning/re-hitting a dead key on every URL in
+                # this loop (up to 6) for every sport on every board load.
+                # Same check as scrapeops_get(), scoped by month.
+                _pp_so_exhausted = st.session_state.get("scrapeops_exhausted", False)
+                if not _pp_so_exhausted:
+                    _pp_so_gist = load_from_gist("scrapeops_status", None)
+                    if _pp_so_gist and _pp_so_gist.get("exhausted") and _pp_so_gist.get("month") == datetime.now().strftime("%Y-%m"):
+                        _pp_so_exhausted = True
+                        st.session_state["scrapeops_exhausted"] = True
+                if not _cffi_success and SCRAPEOPS_KEY and not _pp_so_exhausted:
                     try:
                         from urllib.parse import quote as _q
                         _so_url = (
@@ -6603,7 +6616,16 @@ def scrape_prizepicks(sport):
                             f"&url={_q(url, safe='')}&residential=true"
                         )
                         resp = _http.get(_so_url, headers=pp_headers, timeout=20)
-                        if resp.status_code == 200:
+                        _pp_quota_phrases = ("insufficient credit", "credit limit", "quota exceeded",
+                                             "out of credits", "usage limit", "no credits remaining")
+                        _pp_body_exhausted = (
+                            resp.status_code == 200 and
+                            any(_p in resp.text[:500].lower() for _p in _pp_quota_phrases)
+                        )
+                        if resp.status_code in (403, 429, 402) or _pp_body_exhausted:
+                            st.session_state["scrapeops_exhausted"] = True
+                            save_to_gist("scrapeops_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
+                        if resp.status_code == 200 and not _pp_body_exhausted:
                             # Check for captcha response (returns HTML not JSON)
                             content_type = resp.headers.get("content-type", "")
                             if "html" in content_type or resp.text.strip().startswith("<"):

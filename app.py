@@ -1957,7 +1957,7 @@ def check_daily_risk_limits(sport=None):
 _GIST_BATCH_WINDOW = 5.0  # seconds
 
 # Keys that must be flushed immediately rather than held in the batch window.
-_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks"})
+_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status"})
 # "locks" added 2026-07: WIN/LOSS/VOID slip buttons remove a lock from
 # st.session_state immediately, then call save_to_gist("locks", ...) — but
 # as a non-critical key that write was only QUEUED, flushed up to 5s later.
