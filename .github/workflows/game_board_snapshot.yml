@@ -1,0 +1,44 @@
+name: Game Board Snapshot (headless)
+
+on:
+  schedule:
+    # 15:00 UTC (~11am ET) and 20:00 UTC (~4pm ET) — twice daily to catch
+    # both early games (day MLB) and evening slates, since odds availability
+    # and game start times vary a lot across MLB/NBA/NHL/WNBA. Missing a
+    # game on one run isn't fatal (grading treats no-snapshot as no data,
+    # same as any other ungradable pick) so this errs toward more coverage
+    # rather than precise timing.
+    - cron: "0 15 * * *"
+    - cron: "0 20 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write placeholder secrets for headless import
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << 'EOF'
+          GITHUB_TOKEN = "${{ secrets.PICK6_GIST_TOKEN }}"
+          GITHUB_GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
+          ODDS_API_KEY = ""
+          ODDSPAPI_KEY = ""
+          PARLAY_API_KEY = ""
+          BALLSDONTLIE_API_KEY = ""
+          SCRAPEOPS_KEY = ""
+          EOF
+
+      - name: Capture today's game-line board (moneyline)
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/game_board_snapshot_headless.py

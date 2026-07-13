@@ -12,16 +12,22 @@ model-accuracy tracking — it stays completely separate from your actual
 bankroll/ROI ledger, which only ever reflects real placed bets.
 
 Coverage note, stated plainly rather than overclaimed: player-prop
-grading currently only works for NBA and NFL players who are in the
-hardcoded ESPN_ATHLETE_IDS map (config.py — a few dozen well-known
-players per sport). Everything else is marked UNGRADABLE, not silently
-scored as a loss. Expanding coverage to more players/sports is a real
-follow-up, not done here — this ships the working pipeline for what's
-provably gradable today rather than faking full coverage.
+grading uses full-roster/full-league player-ID lookups for all 5 sports
+(fetch_mlb_full_roster_ids / fetch_nhl_full_roster_ids /
+fetch_nba_full_roster_ids / fetch_wnba_full_roster_ids /
+fetch_nfl_full_player_database — fetchers.py, closed 2026-07-11), not the
+old hardcoded ESPN_ATHLETE_IDS subset (config.py, ~a few dozen players/
+sport, now only used as an NFL last-resort fallback). A pick can still
+come back UNGRADABLE for other reasons (stat category ESPN/MLB/NHL
+doesn't expose, game not final yet, transient fetch error) — those are
+real gaps, just not a name-coverage gap anymore.
 
 Game-line grading (SPREAD/TOTAL/MONEYLINE/ALT LINE), added 2026-07-12,
 mirrors the prop pipeline exactly but reads a separate snapshot file
-(store_game_board_snapshot in app.py) and writes to a separate grading
+(store_game_board_snapshot in app.py, or scripts/game_board_snapshot_headless.py
+for MONEYLINE-only headless snapshots when nobody's opened the app that
+day — added 2026-07-13, same snapshot schema, tagged "source":
+"headless_snapshot" so it's traceable) and writes to a separate grading
 history key so the two never collide. Coverage there is full — team/
 score resolution via ESPN scoreboard works for any NBA/MLB/NFL/NHL
 matchup, not a hardcoded player subset, since it only needs final scores.
