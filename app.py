@@ -64,7 +64,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     score_rlm, devig_ensemble,
     record_line, detect_steam_move,
     pace_adjust_mlb_prop, rest_adjusted_std_dev,
@@ -5691,6 +5691,33 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
     except Exception:
         pass
     return None, None, None, None
+
+
+def _show_team_exposure_warning(team: str, sport: str):
+    """
+    Surfaces same-team exposure right after a lock is added -- the real
+    gap flagged in compute_team_exposure()'s docstring: pairwise
+    correlation warnings exist elsewhere, but nothing previously summed
+    total same-team $ across a day's separate locks against bankroll.
+    Informational only (doesn't block the lock or silently resize it --
+    changing someone's stake without a clear, visible number attached to
+    it is worse than just telling them where they stand and letting them
+    decide).
+    """
+    if not team:
+        return
+    try:
+        bankroll = st.session_state.get("bankroll", DEFAULT_BANKROLL)
+        exposure, pct, room = compute_team_exposure(
+            team, sport, st.session_state.get("locks", []), bankroll, active_unit()
+        )
+        if pct >= 0.25:
+            st.warning(f"🛑 **{team}** exposure is now ${exposure:.0f} ({pct:.0%} of bankroll) — "
+                       f"at/over the 25% same-team cap. Consider sizing down or stopping here.")
+        elif pct >= 0.18:
+            st.caption(f"⚠️ {team} exposure: ${exposure:.0f} ({pct:.0%} of bankroll) — ${room:.0f} of room left under the 25% cap.")
+    except Exception:
+        pass
 
 
 def _capture_clv_placement(player: str, prop: str, prob) -> dict:
@@ -18161,9 +18188,11 @@ with tabs[1]:
                                     "source":    "EV Optimizer",
                                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                     "prob":      _lk_prop.get("Prob",0.5),
+                                    "team":      _lk_prop.get("Team",""),
                                     "signal_values": _board_prop_signal_values(_lk_prop),
                                     "clv_capture": _capture_clv_placement(_lk_prop.get("Player",""), _lk_prop.get("Prop",""), _lk_prop.get("Prob",0.5)),
                                 })
+                                _show_team_exposure_warning(_lk_prop.get("Team",""), _sport)
                                 # Capture Pinnacle CLV at lock-time — this was
                                 # previously dead code (record_pinnacle_line
                                 # existed but was never called from anywhere),
@@ -18221,9 +18250,11 @@ with tabs[1]:
                                 "source":    "EV Optimizer",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob":      _lk_prop2.get("Prob",0.5),
+                                "team":      _lk_prop2.get("Team",""),
                                 "signal_values": _board_prop_signal_values(_lk_prop2),
                                 "clv_capture": _capture_clv_placement(_lk_prop2.get("Player",""), _lk_prop2.get("Prop",""), _lk_prop2.get("Prob",0.5)),
                             })
+                            _show_team_exposure_warning(_lk_prop2.get("Team",""), _sport)
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], _board)
                             except Exception:
@@ -18321,6 +18352,7 @@ with tabs[1]:
                             "sport": _sport, "source": "Portfolio Builder",
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "prob": _lp.get("Prob",0.5),
+                            "team": _lp.get("Team",""),
                             "signal_values": _board_prop_signal_values(_lp),
                             "clv_capture": _capture_clv_placement(_lp.get("Player",""), _lp.get("Prop",""), _lp.get("Prob",0.5)),
                         })
@@ -18331,6 +18363,12 @@ with tabs[1]:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"Locked {len(_pb_sel)} portfolio bets")
+                # One summary per team, not one warning per lock -- a
+                # multi-bet lock-all action would otherwise stack up to
+                # len(_pb_sel) near-identical warnings.
+                for _pb_team in sorted(set(_lp.get("Team","") for _lp in _pb_sel if _lp.get("Team"))):
+                    _pb_sport = next((_lp.get("Sport", _sport) for _lp in _pb_sel if _lp.get("Team")==_pb_team), _sport)
+                    _show_team_exposure_warning(_pb_team, _pb_sport)
                 st.rerun()
 
         # ── Quick action bar ─────────────────────────────────────
@@ -18353,6 +18391,7 @@ with tabs[1]:
                                 "sport": _sport, "source": "EV Optimizer",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob": _p.get("Prob",0.5),
+                                "team": _p.get("Team",""),
                                 "signal_values": _board_prop_signal_values(_p),
                                 "clv_capture": _capture_clv_placement(_p.get("Player",""), _p.get("Prop",""), _p.get("Prob",0.5)),
                             })
@@ -18363,6 +18402,9 @@ with tabs[1]:
                 save_json_data(LOCKS_PATH, st.session_state.locks)
                 save_to_gist("locks", st.session_state.locks)  # persists across restarts
                 st.success(f"Locked {len([p for p in _board if p.get('Tier') in ('SOVEREIGN','ELITE')])} plays")
+                _bulk_teams = sorted(set(p.get("Team","") for p in _board if p.get("Tier") in ("SOVEREIGN","ELITE") and p.get("Team")))
+                for _bulk_team in _bulk_teams:
+                    _show_team_exposure_warning(_bulk_team, _sport)
                 st.rerun()
         with _qa2:
             if st.button("📥 Export CSV", key="ev_export"):
@@ -22379,6 +22421,7 @@ with tabs[5]:
                                 "status": "PENDING",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "sport": r["sport"],
+                                "team": board_match.get("Team",""),
                                 "signal_values": _board_prop_signal_values(board_match),
                                 "clv_capture": _capture_clv_placement(r["player"], r["stat"], r.get("prob", 0.5)),
                             })
@@ -22391,6 +22434,12 @@ with tabs[5]:
                     save_json_data(LOCKS_PATH, st.session_state.locks)
                     save_to_gist("locks", st.session_state.locks)  # persists across restarts
                     st.success(f"✅ Locked {locked} picks")
+                    _slip_teams = sorted(set(
+                        next((b for b in board if normalize_name(b.get("Player","")) == normalize_name(r["player"])), {}).get("Team","")
+                        for r in good_picks
+                    ) - {""})
+                    for _slip_team in _slip_teams:
+                        _show_team_exposure_warning(_slip_team, good_picks[0]["sport"] if good_picks else "")
                     st.rerun()
 
         # ── Log this slip as a placed bet (merged with Log Bet → Bulk Entry) ──

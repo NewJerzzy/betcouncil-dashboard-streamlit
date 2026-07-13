@@ -4967,6 +4967,46 @@ def get_edge_staleness(last_scan_time):
     except (ValueError, KeyError, TypeError):
         return "⚫ Unknown", "black"
 
+def compute_team_exposure(team, sport, existing_locks, bankroll, default_unit, cap_pct=0.25):
+    """
+    Total $ currently locked TODAY across all bet types (props + game
+    lines) on one team, as a fraction of bankroll -- the real gap in
+    check_portfolio_correlation() above: that function warns about
+    correlation between two SPECIFIC picks being added back-to-back, but
+    nothing sums total same-team exposure across a whole day's separate
+    locks against bankroll (five separate bets that are all effectively
+    "this team's offense goes off" is a wipeout-day risk that pairwise
+    correlation warnings don't catch). It also depends on a
+    player_team_map parameter that's never actually built anywhere in
+    this codebase, which is a real reason it was never wired to a lock
+    button. This uses the Team field already present on props/locks
+    directly instead.
+
+    Locks don't always have a "wager" set yet at lock time (several lock-
+    creation paths never write one -- staking happens later) -- default_unit
+    (pass active_unit()) is used as the assumed stake for any lock missing
+    an explicit wager, same assumption the rest of the app already makes
+    for PENDING locks.
+
+    Returns (exposure_dollars, exposure_pct_of_bankroll, room_dollars_left_under_cap).
+    """
+    if not team or not bankroll:
+        return 0.0, 0.0, round((bankroll or 0) * cap_pct, 2)
+    today = date.today().strftime("%Y-%m-%d")
+    same_team_locks = [
+        l for l in (existing_locks or [])
+        if l.get("status", "PENDING") == "PENDING"
+        and l.get("sport") == sport
+        and (l.get("team") or "") == team
+        and str(l.get("timestamp", ""))[:10] == today
+    ]
+    exposure = sum(float(l.get("wager") or default_unit or 0) for l in same_team_locks)
+    cap_dollars = bankroll * cap_pct
+    room = max(0.0, cap_dollars - exposure)
+    exposure_pct = round(exposure / bankroll, 4) if bankroll else 0.0
+    return round(exposure, 2), exposure_pct, round(room, 2)
+
+
 def check_portfolio_correlation(new_prop, existing_locks, player_team_map, positive_correlations, negative_correlations):
     warnings = []
     new_player = new_prop.get("Player", new_prop.get("player", ""))
