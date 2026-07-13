@@ -9095,14 +9095,23 @@ def resolve_actual_game_result_for_grading(matchup: str, home: str, away: str, s
                 market_up = (market or "").upper()
 
                 if "SPREAD" in market_up or "ALT" in market_up:
-                    pick_is_home = bool(ev_home_norm) and ev_home_norm in pick_norm
-                    pick_is_away = bool(ev_away_norm) and ev_away_norm in pick_norm
+                    pick_is_home = (bool(ev_home_norm) and ev_home_norm in pick_norm) or \
+                                   (bool(ev_home_abbr) and ev_home_abbr.lower() in (pick or "").lower())
+                    pick_is_away = (bool(ev_away_norm) and ev_away_norm in pick_norm) or \
+                                   (bool(ev_away_abbr) and ev_away_abbr.lower() in (pick or "").lower())
                     if not pick_is_home and not pick_is_away:
                         return None, home_score, away_score
-                    pick_score = home_score if pick_is_home else away_score
-                    opp_score  = away_score if pick_is_home else home_score
-                    margin = pick_score - opp_score + line
-                    outcome = "PUSH" if margin == 0 else ("WIN" if margin > 0 else "LOSS")
+                    # "line" is always home-relative (negative = home
+                    # favored). Fixed 2026-07-13: the previous formula
+                    # (pick_score - opp_score + line) only gave the right
+                    # answer for home picks -- an away pick needs the
+                    # home_margin's sign flipped, not "line" added
+                    # directly to the away score.
+                    home_margin = home_score - away_score + line
+                    if pick_is_home:
+                        outcome = "PUSH" if home_margin == 0 else ("WIN" if home_margin > 0 else "LOSS")
+                    else:
+                        outcome = "PUSH" if home_margin == 0 else ("WIN" if home_margin < 0 else "LOSS")
                     return outcome, home_score, away_score
 
                 if "TOTAL" in market_up:
@@ -9116,8 +9125,10 @@ def resolve_actual_game_result_for_grading(matchup: str, home: str, away: str, s
                     return outcome, home_score, away_score
 
                 if "ML" in market_up or "MONEYLINE" in market_up:
-                    pick_is_home = bool(ev_home_norm) and ev_home_norm in pick_norm
-                    pick_is_away = bool(ev_away_norm) and ev_away_norm in pick_norm
+                    pick_is_home = (bool(ev_home_norm) and ev_home_norm in pick_norm) or \
+                                   (bool(ev_home_abbr) and ev_home_abbr.lower() in (pick or "").lower())
+                    pick_is_away = (bool(ev_away_norm) and ev_away_norm in pick_norm) or \
+                                   (bool(ev_away_abbr) and ev_away_abbr.lower() in (pick or "").lower())
                     if not pick_is_home and not pick_is_away:
                         return None, home_score, away_score
                     win_is_home = home_score > away_score

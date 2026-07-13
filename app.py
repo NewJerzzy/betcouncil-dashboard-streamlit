@@ -7949,6 +7949,16 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         "AltLine":     _alt_rec["pick"]    if _alt_rec    else "",
         "AltEdge":     _alt_rec["edge"]    if _alt_rec    else 0,
         "AltTier":     _alt_rec["tier"]    if _alt_rec    else "LEAN",
+        # Clean, unambiguous home-team-relative spread number (e.g. -1.5
+        # means home favored by 1.5), independent of which side the model
+        # actually recommended. This is what locking/grading code should
+        # read for "line" -- never the raw "Spread" string above, which is
+        # team-name-prefixed exactly as scraped ("Pittsburgh Pirates -1.5")
+        # and crashes float() if used directly (bug found 2026-07-13; an
+        # earlier fix on 2026-07-12 mistakenly targeted a dead code path —
+        # build_game_line_consensus() is a stub that always returns {},
+        # so that branch never actually ran).
+        "SpreadLineHome": _spread_rec.get("market_spread") if _spread_rec else None,
         # Run Line (MLB) / Puck Line (NHL): -1.5 spread with adjusted odds
         # Derived from ML when real run line odds aren't scraped yet.
         # Standard approximation: favorite run line ≈ ML + ~130-150 pts of juice
@@ -16352,7 +16362,15 @@ with st.sidebar:
                         _ga["AltEdge"]  = _best_alt["edge"]
                         _ga["AltTier"]  = _best_alt["tier"]
                         _ga["AltBook"]  = _best_alt.get("book","")
-                        _ga["AltLineValue"] = _best_alt.get("point", 0)
+                        # find_best_alt_line's "point" is relative to
+                        # _best_alt["team"] (whichever side scored best),
+                        # not consistently home -- normalize to home-
+                        # relative here so it matches SpreadLineHome's
+                        # convention and the resolver's math (fixed
+                        # 2026-07-13, same bug class as the SPREAD line).
+                        _alt_point = _best_alt.get("point", 0) or 0
+                        _alt_team_is_home = normalize_name(_best_alt.get("team","")) == normalize_name(_h_full)
+                        _ga["AltLineValue"] = _alt_point if _alt_team_is_home else -_alt_point
             store_game_board_snapshot(game_analysis, sport_sel)
         else:
             st.session_state["game_analysis"] = []
@@ -18737,7 +18755,7 @@ with tabs[2]:
                           ("" if _g.get("Spread","N/A") in ("N/A","",None)
                            else ("" if any(r.get("type")=="SPREAD" for r in _g.get("recommendations",[]))
                                 else "No Edge"))),
-                 "line":_g.get("Spread","—"),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","—") if _g.get("SpreadPick") or float(_g.get("SpreadEdge",0) or 0) != 0 else "—"},
+                 "line":(_g.get("SpreadLineHome") if _g.get("SpreadLineHome") is not None else _g.get("Spread","—")),"edge":float(_g.get("SpreadEdge",0) or 0),"tier":_g.get("SpreadTier","—") if _g.get("SpreadPick") or float(_g.get("SpreadEdge",0) or 0) != 0 else "—"},
                 {"label":"TOTAL",
                  "pick":(_g.get("TotalPick") or
                          ("No Market" if _g.get("Total","N/A") in ("N/A","",None)
@@ -18785,12 +18803,14 @@ with tabs[2]:
                      # MLB/NHL: show Run Line (-1.5) with home team label
                      ((_g.get("home","") + " -1.5") if _gsport in ("MLB","NHL") and _g.get("home") else "—")
                  ),
-                 "line": _alt_line or (
-                     # Derive run line odds from ML: home favorite ML → underdog run line
-                     # e.g. home -130 → home -1.5 ≈ +110 to +120
-                     (_g.get("RunLineHome") or
-                      (_g.get("OddsAPI Spread","—")))
-                 ),
+                 # Clean home-relative number (see AltLineValue, fixed
+                 # 2026-07-13) -- NOT _alt_line, which is a full descriptive
+                 # string like "Pittsburgh Pirates -1.5 (-110)" and would
+                 # crash float() in the resolver exactly like the SPREAD
+                 # line bug did.
+                 "line": (_g.get("AltLineValue") if _g.get("AltLineValue") is not None else (
+                     _g.get("RunLineHome") or _g.get("OddsAPI Spread", 0) or 0
+                 )),
                  "edge": _alt_edge, "tier": _alt_tier},
             ]
             # DEBUG: show ML data availability (remove after diagnosis)
@@ -19808,9 +19828,10 @@ with tabs[3]:
                                     # game locked that date, including otherwise-clean locks).
                                     try:
                                         pick = lock.get("side","")
-                                        line = float(lock.get("line",0) or 0)
+                                        raw_line = lock.get("line", 0)
                                         prop_type = lock.get("prop","").upper()
                                         pick_norm = _norm_team(pick)
+                                        pick_lower = pick.lower()
                                         # "side" is stored as the full pick string, e.g.
                                         # "Pittsburgh Pirates -1.5" or "Pittsburgh Pirates -150",
                                         # not a bare team name. The old check tested whether the
@@ -19820,9 +19841,45 @@ with tabs[3]:
                                         # every SPREAD/ML/ALT LINE lock was silently graded as if
                                         # the away side had been picked, regardless of which side
                                         # was actually locked (bug found 2026-07-12). Fixed by
-                                        # checking containment the other way around.
-                                        pick_is_home = bool(home_norm) and home_norm in pick_norm
-                                        pick_is_away = bool(away_norm) and away_norm in pick_norm
+                                        # checking containment the other way around. Also check
+                                        # abbreviations ("MIL +1.5") alongside full names, since
+                                        # legacy locks store abbreviated sides too (confirmed from
+                                        # actual error report, 2026-07-13) and full-name
+                                        # containment alone can't match those.
+                                        pick_is_home = (bool(home_norm) and home_norm in pick_norm) or \
+                                                       (bool(home_abbr) and home_abbr.lower() in pick_lower)
+                                        pick_is_away = (bool(away_norm) and away_norm in pick_norm) or \
+                                                       (bool(away_abbr) and away_abbr.lower() in pick_lower)
+
+                                        # Parse "line" to a clean float. Locks created before
+                                        # 2026-07-13 can still carry a legacy team-prefixed string
+                                        # (e.g. "Pittsburgh Pirates -1.5") -- the 2026-07-12 fix
+                                        # mistakenly targeted a dead code path (a stub that always
+                                        # returned {}) so the actual bug persisted for new locks
+                                        # too until fixed at the source today. Salvage legacy
+                                        # strings here by extracting the trailing signed number and
+                                        # flipping its sign to home-relative if the string names
+                                        # the AWAY team specifically (raw upstream format names
+                                        # whichever team is favored, not always home).
+                                        try:
+                                            line = float(raw_line)
+                                        except (TypeError, ValueError):
+                                            _m = re.search(r'([+-]?\d+(?:\.\d+)?)\s*$', str(raw_line))
+                                            if not _m:
+                                                raise ValueError(f"no parseable number in line={raw_line!r}")
+                                            line = float(_m.group(1))
+                                            _raw_norm = _norm_team(str(raw_line))
+                                            _raw_lower = str(raw_line).lower()
+                                            # Legacy strings use abbreviations ("PIT -1.5"), not
+                                            # full names -- confirmed from the actual error report
+                                            # (2026-07-13), so check both.
+                                            _names_away = (away_norm and away_norm in _raw_norm) or \
+                                                          (bool(away_abbr) and away_abbr.lower() in _raw_lower)
+                                            _names_home = (home_norm and home_norm in _raw_norm) or \
+                                                          (bool(home_abbr) and home_abbr.lower() in _raw_lower)
+                                            if _names_away and not _names_home:
+                                                line = -line
+
                                         outcome = None
                                         if "SPREAD" in prop_type or "ALT" in prop_type:
                                             # ALT LINE (run line / puck line) is scored identically
@@ -19831,10 +19888,18 @@ with tabs[3]:
                                             # resolved at all (bug found 2026-07-12).
                                             if not pick_is_home and not pick_is_away:
                                                 raise ValueError(f"can't tell which side was picked from side={pick!r}")
-                                            pick_team_score = home_score if pick_is_home else away_score
-                                            opp_score = away_score if pick_is_home else home_score
-                                            margin = pick_team_score - opp_score + line
-                                            outcome = "PUSH" if margin == 0 else ("WIN" if margin > 0 else "LOSS")
+                                            # "line" is always home-relative (negative = home
+                                            # favored) -- home_margin>0 means home covers.
+                                            # Fixed 2026-07-13: the previous formula
+                                            # (pick_score - opp_score + line) only gave the
+                                            # right answer for home picks; for an away pick it
+                                            # needs the home_margin's sign flipped, not "line"
+                                            # added to the away score directly.
+                                            home_margin = home_score - away_score + line
+                                            if pick_is_home:
+                                                outcome = "PUSH" if home_margin == 0 else ("WIN" if home_margin > 0 else "LOSS")
+                                            else:
+                                                outcome = "PUSH" if home_margin == 0 else ("WIN" if home_margin < 0 else "LOSS")
                                         elif "TOTAL" in prop_type:
                                             # Stored pick text is "OVER 8.5" / "UNDER 8.5", never a
                                             # bare "OVER"/"UNDER" — the old `pick=="OVER"` exact
