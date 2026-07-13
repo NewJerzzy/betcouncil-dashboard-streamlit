@@ -6690,7 +6690,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     # Prefer consensus median, then Pinnacle, then the ESPN/OddsAPI line
     # already resolved above — never fully replaces, only upgrades it.
     if _gl_consensus.get("spread", {}).get("consensus") is not None:
-        spread_str = f"{home_team} {_gl_consensus['spread']['consensus']:+.1f}" if home_team else spread_str
+        # Keep spread_str a plain numeric string here — it flows into
+        # game["Spread"], which downstream becomes a lock's "line" field
+        # and must survive float(). Team-name prefixing for display is
+        # already handled separately in the pick-label construction below;
+        # embedding it here as well previously produced values like
+        # "Pittsburgh Pirates -1.5" that crashed float(lock["line"]) in the
+        # Check Results resolver and silently aborted that date's entire
+        # event-processing pass (bug found 2026-07-12).
+        spread_str = f"{_gl_consensus['spread']['consensus']:+.1f}"
     if _gl_consensus.get("total", {}).get("consensus") is not None:
         total_str = _gl_consensus["total"]["consensus"]
     if _gl_consensus.get("moneyline", {}).get("home_consensus_prob") is not None:
@@ -19626,26 +19634,38 @@ with tabs[3]:
                                         away_hit = bool(away_mascot) and away_mascot in matchup_norm
                                     if not home_hit and not away_hit:
                                         continue
-                                    pick = lock.get("side","")
-                                    line = float(lock.get("line",0) or 0)
-                                    prop_type = lock.get("prop","").upper()
-                                    pick_is_home = _norm_team(pick) and _norm_team(pick) in home_norm
-                                    outcome = None
-                                    if "SPREAD" in prop_type:
-                                        pick_team_score = home_score if pick_is_home else away_score
-                                        opp_score = away_score if pick_is_home else home_score
-                                        outcome = "WIN" if (pick_team_score - opp_score + line) > 0 else "LOSS"
-                                    elif "TOTAL" in prop_type:
-                                        outcome = "WIN" if (pick=="OVER" and total>line) or (pick=="UNDER" and total<line) else "LOSS"
-                                    elif "ML" in prop_type:
-                                        win_is_home = home_score > away_score
-                                        outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
-                                    if outcome:
-                                        log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"))
-                                        if lock in st.session_state.locks: st.session_state.locks.remove(lock)
-                                        resolved += 1
-                                        game_resolved += 1
-                                        st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
+                                    # Per-lock resolution gets its own try/except so a single
+                                    # malformed lock (e.g. a "line" value that isn't a clean
+                                    # float, such as a team-prefixed spread string) can't abort
+                                    # processing for every other event/lock in this date pass.
+                                    # This mirrors the fix already applied to the prop-lock
+                                    # resolver above (bug found 2026-07-12: a bad line value on
+                                    # one game lock was silently killing resolution for every
+                                    # game locked that date, including otherwise-clean locks).
+                                    try:
+                                        pick = lock.get("side","")
+                                        line = float(lock.get("line",0) or 0)
+                                        prop_type = lock.get("prop","").upper()
+                                        pick_is_home = _norm_team(pick) and _norm_team(pick) in home_norm
+                                        outcome = None
+                                        if "SPREAD" in prop_type:
+                                            pick_team_score = home_score if pick_is_home else away_score
+                                            opp_score = away_score if pick_is_home else home_score
+                                            outcome = "WIN" if (pick_team_score - opp_score + line) > 0 else "LOSS"
+                                        elif "TOTAL" in prop_type:
+                                            outcome = "WIN" if (pick=="OVER" and total>line) or (pick=="UNDER" and total<line) else "LOSS"
+                                        elif "ML" in prop_type:
+                                            win_is_home = home_score > away_score
+                                            outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
+                                        if outcome:
+                                            log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"))
+                                            if lock in st.session_state.locks: st.session_state.locks.remove(lock)
+                                            resolved += 1
+                                            game_resolved += 1
+                                            st.markdown(f"{'✅' if outcome=='WIN' else '❌'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
+                                    except (ValueError, TypeError, ZeroDivisionError) as _lock_err:
+                                        _espn_debug_log.append(f"  ⚠️ failed to resolve {matchup} (line={lock.get('line')!r}): {_lock_err}")
+                                        continue
                         except (ValueError, TypeError, ZeroDivisionError): continue
 
             if game_resolved == 0:
