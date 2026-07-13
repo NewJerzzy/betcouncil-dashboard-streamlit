@@ -23803,7 +23803,29 @@ with tabs[8]:
             st.markdown(_line_shop_table_html(rows_ls, _visible_books), unsafe_allow_html=True)
             _hidden = [b for b in active_sources if b not in _visible_books]
             if _hidden:
-                st.caption(f"Not showing {len(_hidden)} source(s) with no prices loaded tonight: {', '.join(_hidden)}. Check System → Fetch Health if a source you expect is missing.")
+                # Most of these 16 book names (Hard Rock, DraftKings, FanDuel,
+                # BetMGM, Caesars, ESPN Bet, Circa, Bovada, BetRivers,
+                # BetOnline, NoVig, Kalshi, Fliff) all come through ONE feed
+                # -- EV Sharps API (EV_BOOK_LABELS) -- not 16 separate
+                # scrapers. If that one feed is stale/down, all of them go
+                # dark at once, which looks like "16 sites are broken" but
+                # is really "one shared source needs attention." Check that
+                # specific source before assuming anything else is wrong.
+                try:
+                    from fetchers import get_harvester_alerts, harvester_display_name
+                    _ls_alerts = get_harvester_alerts(_sport_ls)
+                    _ls_ev_dark = [harvester_display_name(a["name"]) for a in _ls_alerts if a["name"] in ("evsharps", "evsharps_ev")]
+                except Exception:
+                    _ls_ev_dark = []
+                if _ls_ev_dark:
+                    st.warning(f"⚠️ {len(_hidden)} of tonight's book columns aren't showing prices — but this isn't 16 separate outages. "
+                               f"Almost all of them (Hard Rock, DraftKings, FanDuel, BetMGM, Caesars, ESPN Bet, Circa, Bovada, BetRivers, BetOnline, "
+                               f"NoVig, Kalshi, Fliff) come from one shared feed, **{', '.join(_ls_ev_dark)}**, which hasn't updated recently. "
+                               f"That's the one thing worth checking (System tab → Harvester Health) — not each book individually.")
+                else:
+                    st.caption(f"Not showing {len(_hidden)} source(s) with no prices for tonight's props: {', '.join(_hidden)}. "
+                               f"Most of these share one data feed (EV Sharps) rather than being scraped individually — if it looks "
+                               f"like everything's dark at once, that's usually one feed, not sixteen. Check System → Fetch Health if it persists.")
 
             better_ls = [r for r in rows_ls if r["Best Book"] != "PrizePicks" and r["Edge Gain"] >= 0.5]
             if better_ls:
