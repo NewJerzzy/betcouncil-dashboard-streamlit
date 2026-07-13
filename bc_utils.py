@@ -3410,7 +3410,29 @@ def generate_post_mortem(history, target_date=None):
         }
         if h.get("has_real_prob"):
             entry["prob"] = round(h.get("prob", 0) * 100, 1)
+        # CLV process tag -- only when resolve_clv_records() has actually
+        # filled in clv_vs_novig for this record (real closing-line
+        # comparison, not a guess). Positive = market moved toward you /
+        # you beat the close (bad break, not bad process). Negative = the
+        # close moved away from you (the market saw something your entry
+        # missed). Most records won't have this yet -- the placement
+        # snapshot that makes this resolvable was only wired up 2026-07-13
+        # and only applies going forward, not to historical bets.
+        _clv = h.get("clv_capture", {})
+        if _clv.get("clv_resolved") and _clv.get("clv_vs_novig") is not None:
+            _cv = _clv["clv_vs_novig"]
+            entry["clv_tag"] = "VARIANCE" if _cv >= 0 else "PROCESS"
+            entry["clv_pct"] = round(_cv * 100, 1)
         top_losses.append(entry)
+
+    # Day-level CLV summary -- same gating: only present when at least one
+    # bet this day actually has a resolved closing-line comparison.
+    _clv_resolved_today = [
+        h.get("clv_capture", {}).get("clv_vs_novig") for h in day_bets
+        if h.get("clv_capture", {}).get("clv_resolved") and h.get("clv_capture", {}).get("clv_vs_novig") is not None
+    ]
+    avg_clv = round(sum(_clv_resolved_today) / len(_clv_resolved_today) * 100, 2) if _clv_resolved_today else None
+    n_clv_resolved = len(_clv_resolved_today)
 
     # Signal performance for the day
     SIGNAL_KEYS = {
@@ -3516,6 +3538,8 @@ def generate_post_mortem(history, target_date=None):
         "cause":       cause,
         "n_untracked": n_untracked,
         "top_losses":  top_losses,
+        "avg_clv":       avg_clv,
+        "n_clv_resolved": n_clv_resolved,
         "failing":     [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in failing[:3]],
         "succeeding":  [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in succeeding[:3]],
         "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—", "untracked": v["untracked"]}

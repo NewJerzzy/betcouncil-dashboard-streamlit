@@ -5693,6 +5693,48 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
     return None, None, None, None
 
 
+def _capture_clv_placement(player: str, prop: str, prob) -> dict:
+    """
+    CLV placement snapshot -- Pinnacle/Circa/consensus no-vig odds AT THE
+    MOMENT A PICK IS LOCKED (pre-game), not at the moment it's later
+    logged as a settled result.
+
+    Why this exists as its own function now: log_manual_bet() already had
+    code that tried to do this lookup, but it ran at LOG time -- which for
+    auto-resolved bets (BDL/Bovada resolvers) and slip buttons is well
+    after the game is over, when ev_signal_lookup (a snapshot of the
+    CURRENT live board) no longer has anything for that finished game.
+    Checked the real ledger before writing this: 0 of 289 logged bets had
+    ever resolved a CLV value, for exactly this reason -- the snapshot
+    was always taken too late to mean anything. Calling this at lock
+    time instead (when the market is still live) and carrying the result
+    forward on the lock dict is the actual fix; log_manual_bet() now uses
+    whatever was captured here rather than re-querying at log time.
+
+    Returns the clv_capture dict shape log_manual_bet() already builds,
+    or an all-None version if no matching EV data exists yet at lock time
+    (e.g. the EV Sharps API hasn't priced this player/prop). Never
+    fabricates a value -- an unresolved lookup stays None, not a guess.
+    """
+    result = {
+        "pn_novig_placement": None, "circa_novig_placement": None,
+        "consensus_novig_placement": None, "clv_vs_placement": None,
+    }
+    try:
+        _sig_key = (normalize_name(player), prop)
+        _ev_sig = st.session_state.get("ev_signal_lookup", {}).get(_sig_key, {})
+        if _ev_sig:
+            result["pn_novig_placement"] = _ev_sig.get("pn_novig")
+            result["circa_novig_placement"] = _ev_sig.get("circa_novig")
+            _cons_nv = _ev_sig.get("consensus_novig")
+            result["consensus_novig_placement"] = _cons_nv
+            if _cons_nv is not None and prob is not None:
+                result["clv_vs_placement"] = round(float(_cons_nv) - float(prob), 4)
+    except Exception:
+        pass
+    return result
+
+
 def _board_prop_signal_values(p: dict) -> dict:
     """Extract the raw per-prop signal breakdown off a live board row (the
     SignalBase/SignalDefense/etc keys, same source used when board_snapshots
@@ -9725,7 +9767,7 @@ def parse_prizepicks_history_text(raw_text: str) -> list:
     return slips
 
 
-def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None):
+def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None, clv_capture=None):
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
         if bet_type == "prop":
@@ -9792,26 +9834,40 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
         }
     }
 
-    # Populate CLV placement odds from current ev_signal_lookup
-    try:
-        import streamlit as _st
-        _sig_key = (normalize_name(player), prop)
-        _ev_sig  = _st.session_state.get("ev_signal_lookup", {}).get(_sig_key, {})
-        if _ev_sig:
-            _pn_nv    = _ev_sig.get("pn_novig")
-            _circa_nv = _ev_sig.get("circa_novig")
-            _cons_nv  = _ev_sig.get("consensus_novig")
-            record["clv_capture"]["pn_novig_placement"]    = _pn_nv
-            record["clv_capture"]["circa_novig_placement"] = _circa_nv
-            record["clv_capture"]["consensus_novig_placement"] = _cons_nv
-            # Compute immediate CLV vs current market (pre-close)
-            if _cons_nv and prob:
-                record["clv_capture"]["clv_vs_placement"] = round(
-                    float(_cons_nv) - float(prob), 4
-                )
-    except Exception:
-        _logger.debug("Silent except at line 8782")
-        pass
+    # Populate CLV placement odds. Prefer a snapshot already captured at
+    # LOCK time (passed in via clv_capture= from the lock dict, using
+    # _capture_clv_placement) -- that's the only version of this lookup
+    # that's actually still live when it runs. Falling back to a fresh
+    # lookup here (post-hoc, at log time) is kept for paths with no lock
+    # object at all (manual/bulk/OCR entry), but for anything logged after
+    # the game it will almost always come back empty -- that's a real
+    # limitation of after-the-fact entry, not a bug, so it's left as an
+    # honest empty rather than worked around.
+    if clv_capture:
+        for k in ("pn_novig_placement", "circa_novig_placement",
+                  "consensus_novig_placement", "clv_vs_placement"):
+            if clv_capture.get(k) is not None:
+                record["clv_capture"][k] = clv_capture[k]
+    else:
+        try:
+            import streamlit as _st
+            _sig_key = (normalize_name(player), prop)
+            _ev_sig  = _st.session_state.get("ev_signal_lookup", {}).get(_sig_key, {})
+            if _ev_sig:
+                _pn_nv    = _ev_sig.get("pn_novig")
+                _circa_nv = _ev_sig.get("circa_novig")
+                _cons_nv  = _ev_sig.get("consensus_novig")
+                record["clv_capture"]["pn_novig_placement"]    = _pn_nv
+                record["clv_capture"]["circa_novig_placement"] = _circa_nv
+                record["clv_capture"]["consensus_novig_placement"] = _cons_nv
+                # Compute immediate CLV vs current market (pre-close)
+                if _cons_nv and prob:
+                    record["clv_capture"]["clv_vs_placement"] = round(
+                        float(_cons_nv) - float(prob), 4
+                    )
+        except Exception:
+            _logger.debug("Silent except at line 8782")
+            pass
     # ── Enhance record with tier-based CLV quality before saving ──────────
     try:
         _rec_tier = record.get("tier", "APPROVED")
@@ -18106,6 +18162,7 @@ with tabs[1]:
                                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                     "prob":      _lk_prop.get("Prob",0.5),
                                     "signal_values": _board_prop_signal_values(_lk_prop),
+                                    "clv_capture": _capture_clv_placement(_lk_prop.get("Player",""), _lk_prop.get("Prop",""), _lk_prop.get("Prob",0.5)),
                                 })
                                 # Capture Pinnacle CLV at lock-time — this was
                                 # previously dead code (record_pinnacle_line
@@ -18165,6 +18222,7 @@ with tabs[1]:
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob":      _lk_prop2.get("Prob",0.5),
                                 "signal_values": _board_prop_signal_values(_lk_prop2),
+                                "clv_capture": _capture_clv_placement(_lk_prop2.get("Player",""), _lk_prop2.get("Prop",""), _lk_prop2.get("Prob",0.5)),
                             })
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], _board)
@@ -18264,6 +18322,7 @@ with tabs[1]:
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "prob": _lp.get("Prob",0.5),
                             "signal_values": _board_prop_signal_values(_lp),
+                            "clv_capture": _capture_clv_placement(_lp.get("Player",""), _lp.get("Prop",""), _lp.get("Prob",0.5)),
                         })
                         try:
                             record_pinnacle_line(st.session_state.locks[-1], _board)
@@ -18295,6 +18354,7 @@ with tabs[1]:
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "prob": _p.get("Prob",0.5),
                                 "signal_values": _board_prop_signal_values(_p),
+                                "clv_capture": _capture_clv_placement(_p.get("Player",""), _p.get("Prop",""), _p.get("Prob",0.5)),
                             })
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], _board)
@@ -19406,7 +19466,7 @@ with tabs[3]:
                             float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
                             lock.get("timestamp","")[:10],
                             tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
-                            signals=lock.get("signal_values")
+                            signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
                         )
                     # Remove these locks
                     for lock in slip_locks:
@@ -19424,7 +19484,7 @@ with tabs[3]:
                             float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
                             lock.get("timestamp","")[:10],
                             tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
-                            signals=lock.get("signal_values")
+                            signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
                         )
                     for lock in slip_locks:
                         if lock in st.session_state.locks:
@@ -19627,7 +19687,7 @@ with tabs[3]:
                                     float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
                                     lock.get("timestamp","")[:10],
                                     tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
-                                    signals=lock.get("signal_values")
+                                    signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
                                 )
                                 if lock in st.session_state.locks:
                                     st.session_state.locks.remove(lock)
@@ -19693,7 +19753,7 @@ with tabs[3]:
                                     continue
                                 actual = float(stat.get(stat_key,0) or 0)
                             outcome = ("WIN" if actual > line else "LOSS") if side == "OVER" else ("WIN" if actual < line else "LOSS")
-                            log_manual_bet(lock.get("player",""), lock.get("prop",""), line, side, "NBA", outcome, float(lock.get("wager") or 0), 2, "prop", "PrizePicks", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"))
+                            log_manual_bet(lock.get("player",""), lock.get("prop",""), line, side, "NBA", outcome, float(lock.get("wager") or 0), 2, "prop", "PrizePicks", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture"))
                             if lock in st.session_state.locks:
                                 st.session_state.locks.remove(lock)
                             bdl_resolved += 1
@@ -21671,7 +21731,10 @@ with tabs[4]:
             st.markdown("**Biggest losses today:**")
             for tl in _pm["top_losses"]:
                 _prob_str = f" · modeled {tl['prob']}% win prob" if "prob" in tl else ""
-                st.caption(f"{tl['label']} ({tl['sport']}, {tl['bet_type']}, {tl['tier']}): {tl['net']:+.1f}u{_prob_str}")
+                _clv_str = f" · {tl['clv_tag']} ({tl['clv_pct']:+.1f}% vs close)" if "clv_tag" in tl else ""
+                st.caption(f"{tl['label']} ({tl['sport']}, {tl['bet_type']}, {tl['tier']}): {tl['net']:+.1f}u{_prob_str}{_clv_str}")
+        if _pm["n_clv_resolved"]:
+            st.caption(f"Avg CLV today: {_pm['avg_clv']:+.2f}% ({_pm['n_clv_resolved']} of {_pm['n']} picks with a resolved closing line)")
     else:
         st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
 
@@ -22317,6 +22380,7 @@ with tabs[5]:
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "sport": r["sport"],
                                 "signal_values": _board_prop_signal_values(board_match),
+                                "clv_capture": _capture_clv_placement(r["player"], r["stat"], r.get("prob", 0.5)),
                             })
                             try:
                                 record_pinnacle_line(st.session_state.locks[-1], board)
