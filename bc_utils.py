@@ -6298,6 +6298,35 @@ def compute_market_anchored_fair_line(raw_l20_avg, observed_line, stat, n_games=
 
     fair_line = float(observed_line) + base_delta * (1 - uncertainty_penalty)
 
+def compute_game_density(start_times: list, window_minutes: int = 90) -> dict:
+    """
+    "Am I about to get slammed with a pile of tip-offs at once." Pure
+    sliding-window clustering over a list of datetime start times (one
+    sport or combined across sports -- caller decides). No board load
+    needed to compute this: start times come from a schedule-only fetch
+    (ESPN scoreboard), not the full odds/edge pipeline.
+
+    Returns: n_games, peak_window_start (datetime or None), peak_count,
+    peak_pct (peak_count / n_games), verdict ("Spread out" / "Clustered").
+    """
+    times = sorted(t for t in (start_times or []) if t is not None)
+    n = len(times)
+    if n == 0:
+        return {"n_games": 0, "peak_window_start": None, "peak_count": 0, "peak_pct": 0.0, "verdict": "No games today"}
+    window = timedelta(minutes=window_minutes)
+    best_count, best_start = 0, times[0]
+    for i, anchor in enumerate(times):
+        count = sum(1 for t in times if anchor <= t < anchor + window)
+        if count > best_count:
+            best_count, best_start = count, anchor
+    peak_pct = round(best_count / n, 3)
+    verdict = "Clustered" if peak_pct >= 0.6 and n >= 3 else "Spread out"
+    return {
+        "n_games": n, "peak_window_start": best_start,
+        "peak_count": best_count, "peak_pct": peak_pct, "verdict": verdict,
+    }
+
+
 def compute_market_climate(game_snapshots: dict, target_date: str = None) -> dict:
     """
     "Is the market moving today?" without requiring a board load.

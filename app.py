@@ -64,7 +64,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_market_climate, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_market_climate, compute_game_density, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     score_rlm, devig_ensemble,
     record_line, detect_steam_move,
     pace_adjust_mlb_prop, rest_adjusted_std_dev,
@@ -8255,6 +8255,52 @@ def scan_all_sports_best_plays():
     results["best_props"].sort(key=lambda x: x["Edge"], reverse=True)
     results["best_games"].sort(key=lambda x: x["best_edge"], reverse=True)
     return results
+
+_DENSITY_ESPN_SPORT_MAP = {
+    "NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
+    "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl"),
+    "WNBA": ("basketball", "wnba"),
+}
+
+def fetch_todays_game_start_times(sports=("NBA", "MLB", "NHL", "WNBA", "NFL")) -> list:
+    """
+    Schedule-only fetch (no odds, no edge computation) for the Game
+    Density / Peak Load check on the Summary tab -- deliberately cheap so
+    it can run on every page load without triggering the heavy per-sport
+    load_sport_data() pipeline. Reuses the same ESPN scoreboard endpoint
+    and caching (_espn_get, 3h TTL here -- schedules don't shift
+    intraday) already proven in resolve_actual_game_result_for_grading.
+    Returns a flat list of datetime start times across all sports passed,
+    today's date only, best-effort (skips a sport silently on fetch
+    failure rather than failing the whole check).
+    """
+    times = []
+    today_str = datetime.now().strftime("%Y%m%d")
+    for sport in sports:
+        es_el = _DENSITY_ESPN_SPORT_MAP.get(sport)
+        if not es_el:
+            continue
+        es, el = es_el
+        try:
+            data = _espn_get(
+                f"https://site.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
+                cache_key=f"density_{sport}_{today_str}", ttl_hours=3
+            )
+            if not data:
+                continue
+            for event in data.get("events", []):
+                _dt_str = event.get("date", "")
+                if not _dt_str:
+                    continue
+                try:
+                    _dt = datetime.strptime(_dt_str, "%Y-%m-%dT%H:%MZ")
+                    times.append(_dt)
+                except ValueError:
+                    continue
+        except Exception:
+            continue
+    return times
+
 
 def _espn_get(url, cache_key, ttl_hours=12):
     """Shared ESPN fetch with file cache. Returns parsed JSON or None."""
@@ -16876,6 +16922,43 @@ with tabs[0]:
                 for m in _climate["movers"][:3]
             )
             st.warning(f"📡 Market Climate: **Moving** — {_top_movers}")
+    except Exception:
+        pass
+
+    # Game Density -- "am I about to get slammed with tip-offs at once."
+    # Schedule-only fetch, no board load. Real gap: nothing in this
+    # codebase tracked start-time clustering before this.
+    try:
+        _density_sports = [s for s in ("NBA","MLB","NHL","WNBA","NFL")
+                            if detect_season_regime(s).get("regime") != "Off-season"]
+        _density_times = fetch_todays_game_start_times(_density_sports)
+        _density = compute_game_density(_density_times)
+        if _density["n_games"] and _density["verdict"] == "Clustered":
+            _pw = _density["peak_window_start"]
+            _pw_local = _pw.strftime("%I:%M%p UTC").lstrip("0") if _pw else "?"
+            st.warning(f"🕐 Game Density: **Clustered** — {_density['peak_count']} of {_density['n_games']} games "
+                       f"({_density['peak_pct']:.0%}) tip off within 90 min of {_pw_local}. Plan for rapid-fire decisions.")
+        elif _density["n_games"]:
+            st.caption(f"🕐 Game Density: Spread out — {_density['n_games']} games today, peak window is only {_density['peak_pct']:.0%} of the slate.")
+    except Exception:
+        pass
+
+    # Pipeline Integrity -- the real version of this already exists
+    # (Harvester Health Monitor, System tab, checks actual Gist
+    # captured_at ages against expected refresh intervals) -- just wasn't
+    # visible before the board loads. Pointer + red/yellow/green count
+    # here, not a rebuild.
+    try:
+        from fetchers import get_harvester_alerts
+        _pi_sport = st.session_state.get("last_sport", "NBA")
+        _pi_alerts = get_harvester_alerts(_pi_sport)
+        _pi_sharp_dead = [a["name"] for a in _pi_alerts if a["tier"] == "sharp"]
+        if _pi_sharp_dead:
+            st.error(f"🔌 Pipeline Integrity: sharp-tier source(s) dark — {', '.join(_pi_sharp_dead)}. See System tab → Harvester Health.")
+        elif _pi_alerts:
+            st.caption(f"🔌 Pipeline Integrity: {len(_pi_alerts)} source(s) newly degraded. See System tab → Harvester Health.")
+        else:
+            st.caption("🔌 Pipeline Integrity: no harvesters newly dark.")
     except Exception:
         pass
 
