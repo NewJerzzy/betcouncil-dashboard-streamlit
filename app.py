@@ -21667,6 +21667,11 @@ with tabs[4]:
             st.warning(f"⚠️ {_pm['n_untracked']} of {_pm['n']} picks this day had no wager entered — "
                        "they graded WIN/LOSS correctly but contributed $0.0u, which understates real net "
                        "for whichever tier/bet_type they fall in. Log a stake on auto-resolved locks to fix this.")
+        if _pm["top_losses"]:
+            st.markdown("**Biggest losses today:**")
+            for tl in _pm["top_losses"]:
+                _prob_str = f" · modeled {tl['prob']}% win prob" if "prob" in tl else ""
+                st.caption(f"{tl['label']} ({tl['sport']}, {tl['bet_type']}, {tl['tier']}): {tl['net']:+.1f}u{_prob_str}")
     else:
         st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
 

@@ -3383,6 +3383,35 @@ def generate_post_mortem(history, target_date=None):
     untracked = [h for h in day_bets if not h.get("wager")]
     n_untracked = len(untracked)
 
+    # Top individual losses -- the actual biggest hits today, not just an
+    # aggregate. Deliberately built ONLY from fields that are reliably
+    # populated across the real bet ledger (tier, sport, bet_type, net,
+    # pick description) rather than signal_values or clv_capture, both of
+    # which are correctly coded but empty in practice for the vast
+    # majority of real records (signal_values: populated on ~0% of real
+    # losses; clv_capture.clv_resolved: populated on 0% -- the placement
+    # snapshot only fires for the EV Optimizer lock path, never for
+    # auto-resolved or OCR-logged bets, so it can't resolve after the
+    # fact). Showing "N/A" or a fabricated tag for those would look like
+    # data; it isn't. prob is included only when has_real_prob is True,
+    # since prob otherwise defaults to a neutral placeholder that was
+    # never a real prediction.
+    real_losses = [h for h in day_bets if h.get("outcome") == "LOSS" and h.get("net", 0) != 0]
+    top_losses = []
+    for h in sorted(real_losses, key=lambda h: h.get("net", 0))[:5]:
+        label = h.get("player") or h.get("matchup") or h.get("prop") or "?"
+        prop = h.get("prop", "")
+        entry = {
+            "label": f"{label} {prop}".strip() if prop and prop != label else label,
+            "sport": h.get("sport", ""),
+            "tier": h.get("tier", ""),
+            "bet_type": {"prop": "Prop", "game": "Game Line"}.get(h.get("bet_type", "prop"), h.get("bet_type", "")),
+            "net": round(h.get("net", 0), 2),
+        }
+        if h.get("has_real_prob"):
+            entry["prob"] = round(h.get("prob", 0) * 100, 1)
+        top_losses.append(entry)
+
     # Signal performance for the day
     SIGNAL_KEYS = {
         "base":     "Base",
@@ -3486,6 +3515,7 @@ def generate_post_mortem(history, target_date=None):
         "win_rate":    f"{wr:.1%}",
         "cause":       cause,
         "n_untracked": n_untracked,
+        "top_losses":  top_losses,
         "failing":     [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in failing[:3]],
         "succeeding":  [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in succeeding[:3]],
         "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—", "untracked": v["untracked"]}
