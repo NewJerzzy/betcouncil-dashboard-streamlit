@@ -20668,7 +20668,7 @@ with tabs[4]:
         )
 
         # Filters
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1,1,1,1])
         with filter_col1:
             tier_filter_h = st.multiselect(
                 "Filter by Tier",
@@ -20691,6 +20691,20 @@ with tabs[4]:
                 default=all_sports,
                 key="hist_sport_filter"
             )
+        with filter_col4:
+            # Real-stake-only toggle -- 171 of 280 resolved bets in the real
+            # ledger are auto-tracked picks with no wager logged (BDL/Bovada/
+            # PrizePicks resolvers track model accuracy whether or not a real
+            # bet was placed). They're legitimate for signal/hit-rate tracking
+            # but drag down or distort P&L/ROI views if mixed in silently.
+            # This isolates the two views instead of picking one by default.
+            wager_only_h = st.checkbox(
+                "💰 Real Stake Only",
+                value=False,
+                key="hist_wager_only",
+                help="Hide bets with no wager logged (auto-tracked picks that weren't actually staked). "
+                     "Toggle on to see only real-money results and true ROI."
+            )
 
         # Apply filters
         filtered_hist = hist_df.copy()
@@ -20700,6 +20714,8 @@ with tabs[4]:
             filtered_hist = filtered_hist[filtered_hist["outcome"].fillna("PENDING").isin(outcome_filter)]
         if "sport" in filtered_hist.columns:
             filtered_hist = filtered_hist[filtered_hist["sport"].fillna("NBA").isin(sport_filter_h)]
+        if wager_only_h and "wager" in filtered_hist.columns:
+            filtered_hist = filtered_hist[filtered_hist["wager"].fillna(0).astype(float) > 0]
 
         # Friendly column names
         display_cols = {
@@ -20711,7 +20727,14 @@ with tabs[4]:
         show_cols = [c for c in display_cols.keys() if c in filtered_hist.columns]
         filtered_hist_display = filtered_hist[show_cols].rename(columns=display_cols)
         st.markdown(_bc_df_html(filtered_hist_display), unsafe_allow_html=True)
-        st.caption(f"Showing {len(filtered_hist)} of {len(hist_df)} bets")
+        st.caption(f"Showing {len(filtered_hist)} of {len(hist_df)} bets" + (" — real stake only" if wager_only_h else ""))
+        if wager_only_h and len(filtered_hist):
+            _wo_resolved = filtered_hist[filtered_hist["outcome"].isin(["WIN","LOSS"])] if "outcome" in filtered_hist.columns else filtered_hist
+            if len(_wo_resolved) and "wager" in _wo_resolved.columns and "net" in _wo_resolved.columns:
+                _wo_wagered = _wo_resolved["wager"].astype(float).sum()
+                _wo_net = _wo_resolved["net"].astype(float).sum()
+                _wo_roi = (_wo_net / _wo_wagered * 100) if _wo_wagered else 0
+                st.metric("Real-Stake ROI", f"{_wo_roi:+.1f}%", help=f"${_wo_net:+.2f} net on ${_wo_wagered:.2f} actually wagered, {len(_wo_resolved)} resolved bets")
 
         # Legend
         with st.expander("📖 How to read this tab"):
@@ -20860,15 +20883,16 @@ with tabs[4]:
 
 
     st.markdown("---")
-    st.markdown("### \U0001f921 Injury Performance Tracker")
-    injury_results, n_injured = analyze_injury_performance()
-    if injury_results is None:
-        st.info(f"Injury tracker activates after 20 injury-tagged resolved bets. Current: {n_injured}. Need {20 - n_injured} more.")
-    else:
-        col_i1, col_i2, col_i3 = st.columns(3)
-        col_i1.metric("Injured WR", f"{injury_results['injured_wr']:.1%}")
-        col_i2.metric("Healthy WR", f"{injury_results['healthy_wr']:.1%}")
-        col_i3.metric("WR Gap", f"{injury_results['wr_gap']:+.1%}")
+    with st.expander("📊 Advanced Performance Metrics — Injury Tracker", expanded=False):
+        st.markdown("### \U0001f921 Injury Performance Tracker")
+        injury_results, n_injured = analyze_injury_performance()
+        if injury_results is None:
+            st.info(f"Injury tracker activates after 20 injury-tagged resolved bets. Current: {n_injured}. Need {20 - n_injured} more.")
+        else:
+            col_i1, col_i2, col_i3 = st.columns(3)
+            col_i1.metric("Injured WR", f"{injury_results['injured_wr']:.1%}")
+            col_i2.metric("Healthy WR", f"{injury_results['healthy_wr']:.1%}")
+            col_i3.metric("WR Gap", f"{injury_results['wr_gap']:+.1%}")
     st.markdown("---")
     st.markdown("### \U0001f52c Signal Performance Analysis")
     signal_results, n_resolved = analyze_signal_performance()
@@ -20903,17 +20927,18 @@ with tabs[4]:
     st.markdown("---")
 
     # ── Signal Lift Analysis ───────────────────────────────────
-    st.markdown("### 📈 Signal Lift Analysis")
-    st.caption("Does each signal actually improve results above the base model? Incremental lift = win rate improvement from adding that signal.")
-    _lift_rows, _lift_n = compute_signal_lift_analysis(_perf_data)
-    if _lift_rows is None:
-        st.info(f"Lift analysis activates at 30 resolved bets. Current: {_lift_n}.")
-    else:
-        _negative = [r for r in _lift_rows if "Negative" in r["Grade"]]
-        if _negative:
-            st.warning(f"⚠️ {len(_negative)} signal(s) showing negative drag — consider reducing weight: {', '.join(r['Signal'] for r in _negative)}")
-        st.markdown(_bc_df_html(pd.DataFrame(_lift_rows)), unsafe_allow_html=True)
-        st.caption("Incremental Lift = WR(Base+Signal) minus WR(Base only). Positive = signal adds value. Negative = signal hurts model.")
+    with st.expander("📊 Advanced Performance Metrics — Signal Lift Analysis", expanded=False):
+        st.markdown("### 📈 Signal Lift Analysis")
+        st.caption("Does each signal actually improve results above the base model? Incremental lift = win rate improvement from adding that signal.")
+        _lift_rows, _lift_n = compute_signal_lift_analysis(_perf_data)
+        if _lift_rows is None:
+            st.info(f"Lift analysis activates at 30 resolved bets. Current: {_lift_n}.")
+        else:
+            _negative = [r for r in _lift_rows if "Negative" in r["Grade"]]
+            if _negative:
+                st.warning(f"⚠️ {len(_negative)} signal(s) showing negative drag — consider reducing weight: {', '.join(r['Signal'] for r in _negative)}")
+            st.markdown(_bc_df_html(pd.DataFrame(_lift_rows)), unsafe_allow_html=True)
+            st.caption("Incremental Lift = WR(Base+Signal) minus WR(Base only). Positive = signal adds value. Negative = signal hurts model.")
 
     st.markdown("---")
 
@@ -22106,23 +22131,6 @@ with tabs[4]:
         st.success("✅ All signal weights appear well-calibrated for current data.")
 
     st.markdown("---")
-    st.markdown("### 🎯 Probability Calibration")
-    st.caption("Are your predicted probabilities accurate? Compares model prediction vs actual hit rate per probability bucket. Activates at 30 resolved bets.")
-    _cal_buckets, _cal_n = compute_calibration_buckets(st.session_state.get("history", []))
-    if _cal_buckets is None:
-        st.info(f"Calibration tracking activates at 30 resolved bets. Current: {_cal_n}. Need {30 - _cal_n} more.")
-    else:
-        _cal_summary = get_calibration_summary(st.session_state.get("history", []))
-        _avg_err = sum(abs(float(b["Error"].replace("%","").replace("+",""))/100) for b in _cal_buckets) / len(_cal_buckets)
-        if _avg_err < 0.03:
-            st.success(f"✅ {_cal_summary}")
-        elif _avg_err < 0.07:
-            st.info(f"🟡 {_cal_summary}")
-        else:
-            st.warning(f"⚠️ {_cal_summary} — Review model confidence levels")
-        st.markdown(_bc_df_html(pd.DataFrame(_cal_buckets)), unsafe_allow_html=True)
-        st.caption("Error = Actual hit rate − Predicted probability. Negative = model over-confident. Positive = model under-confident.")
-    st.markdown("---")
     # ── Closing Line Beat Rate ──────────────────────────────
     st.markdown("---")
     st.markdown("### 📐 Closing Line Beat Rate")
@@ -22168,7 +22176,7 @@ with tabs[4]:
         # has_real_prob explicitly True -- require that explicitly.
         _cal_resolved = [r for r in _resolved if r.get("has_real_prob") is True]
 
-        if len(_cal_resolved) >= 10:
+        if len(_cal_resolved) >= 30:
             # ── Tier calibration ─────────────────────────────────────────────
             _tier_cal = {}
             for _r in _cal_resolved:
@@ -22325,7 +22333,10 @@ with tabs[4]:
             else:
                 st.info(f"⏳ Auto-calibration activates after 15+ bets per tier. Currently {len(_resolved)} resolved bets logged.")
         else:
-            st.info(f"📊 Log and resolve **{max(0,10-len(_resolved))} more bets** to unlock the calibration dashboard. Currently {len(_resolved)} resolved.")
+            st.info(f"📊 Calibration Dashboard needs **{max(0,30-len(_cal_resolved))} more bets with a real logged prediction** to unlock "
+                    f"(has_real_prob=True). Currently {len(_cal_resolved)} of {len(_resolved)} total resolved bets have one — "
+                    f"most logged bets don't carry a real probability yet (auto-resolved/OCR-imported bets can't), so this is "
+                    f"expected to take a while even as total bet count grows.")
 
 
 # ----- TAB 5: LOG BET -----
