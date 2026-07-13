@@ -2597,21 +2597,29 @@ def compute_model_drift(history=None, window=50):
     """
     Compares recent N-bet ROI vs all-time ROI.
     Fires alert if recent performance diverges significantly.
+
+    BUG FIX (2026-07): _roi() used to default a missing/zero wager to 1
+    (`b.get("wager",1) or 1`), which meant every auto-tracked pick with no
+    real stake (BDL/Bovada/PrizePicks resolvers logging a result whether
+    or not the user actually bet it -- 171 of 280 resolved bets in the
+    real ledger, 61%) got treated as a real $1 bet with a real win/loss
+    payout. Reproduced this against the live ledger before fixing: it
+    produced a drift of -19.7%, essentially identical to a "-19.3%
+    bankroll drift" figure independently cited as a real finding -- while
+    the actual ROI on real staked money (the 109 bets with a real wager)
+    is +28.5%. This panel was measuring a fabricated "what if every
+    tracked pick had been a $1 bet" number, not real bankroll performance.
+    Excluding untracked-stake bets instead of defaulting them to $1.
     """
     if history is None:
         history = st.session_state.get("history", [])
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS") and h.get("wager")]
     if len(resolved) < 60:
         return None
     # All-time ROI per bet
     def _roi(bets):
-        total_w = sum(float(b.get("wager",1) or 1) for b in bets)
-        total_p = sum(
-            float(b.get("wager",1) or 1) * 0.909
-            if b.get("outcome") == "WIN"
-            else -float(b.get("wager",1) or 1)
-            for b in bets
-        )
+        total_w = sum(float(b.get("wager",0) or 0) for b in bets)
+        total_p = sum(b.get("net", 0) for b in bets)
         return round(total_p / total_w, 3) if total_w > 0 else 0.0
     all_roi    = _roi(resolved)
     recent     = resolved[-window:]
@@ -22153,7 +22161,12 @@ with tabs[4]:
         # entries with a real supplied prob are trusted normally. Excluded
         # bets still count fully toward hit rate, P&L, and every other
         # metric that doesn't require a real prediction.
-        _cal_resolved = [r for r in _resolved if r.get("has_real_prob", True) is not False]
+        # BUG FIX (2026-07): `.get("has_real_prob", True) is not False` meant
+        # any record MISSING the key entirely (129 of 280 in the real
+        # ledger) defaulted to included, same fake-probability contamination
+        # problem as compute_calibration_buckets() had. Only 11 of 280 have
+        # has_real_prob explicitly True -- require that explicitly.
+        _cal_resolved = [r for r in _resolved if r.get("has_real_prob") is True]
 
         if len(_cal_resolved) >= 10:
             # ── Tier calibration ─────────────────────────────────────────────

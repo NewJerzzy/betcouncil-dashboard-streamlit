@@ -4267,8 +4267,22 @@ def compute_calibration_buckets(history):
     If 65% bucket hits only 52%, model is systematically overconfident.
     
     Activates at 30+ resolved bets for meaningful buckets.
+
+    BUG FIX (2026-07): was bucketing on every resolved bet's prob field
+    regardless of has_real_prob. Checked the real ledger before fixing:
+    269 of 280 resolved bets (96%) have has_real_prob=False, and their
+    prob values cluster on exactly 3-5 fixed constants (0.5, 0.6, 0.45,
+    etc.) rather than varying per pick -- these are placeholder defaults,
+    not real model predictions. Feeding them into calibration buckets
+    alongside real predictions produces buckets that look like severe
+    over/under-confidence, but are actually just comparing a hardcoded
+    constant against whatever the real hit rate happens to be for an
+    arbitrarily-labeled slice of bets. Filtering to has_real_prob=True
+    only -- as of this fix there are just 11 such bets, well under the
+    30-bet activation floor, so this will now honestly report
+    "insufficient data" instead of a fabricated-looking crisis.
     """
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS") and h.get("has_real_prob")]
     if len(resolved) < 30:
         return None, len(resolved)
     
