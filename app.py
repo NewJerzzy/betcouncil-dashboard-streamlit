@@ -24001,6 +24001,45 @@ with tabs[9]:
 with tabs[10]:
     st.markdown("## ⚙️ System Info")
 
+    # ── System Health Gauge (top fold) ──────────────────────────────────
+    # "Is the system ready to fire, or is it broken" at a glance, instead
+    # of scrolling past ~25 sections to piece it together. Reuses the same
+    # data every section below already computes (fetch_timings, circuit_
+    # status, harvester alerts) -- this doesn't run anything new, it just
+    # surfaces the 3 things that actually matter first: is anything
+    # tripped, how fresh is the data, how long did the last load take.
+    _shg_cb = circuit_status()
+    _shg_tripped = [p for p, s in _shg_cb.items() if s["tripped"]]
+    _shg_timings = st.session_state.get("fetch_timings", {})
+    _shg_wall_time = max((t.get("time", 0) for t in _shg_timings.values()), default=0)
+    try:
+        _shg_sport = st.session_state.get("last_sport", "NBA")
+        _shg_alerts = get_harvester_alerts(_shg_sport)
+        _shg_sharp_dark = [a for a in _shg_alerts if a["tier"] == "sharp"]
+    except Exception:
+        _shg_alerts, _shg_sharp_dark = [], []
+    _shg_health_pct = max(0, 100 - len(_shg_alerts) * 5 - len(_shg_tripped) * 15)
+
+    if _shg_tripped or _shg_sharp_dark:
+        st.error(f"🛑 **Not ready to fire** — " +
+                 (f"{len(_shg_tripped)} circuit breaker(s) tripped ({', '.join(_shg_tripped)}). " if _shg_tripped else "") +
+                 (f"{len(_shg_sharp_dark)} sharp-tier source(s) dark ({', '.join(harvester_display_name(a['name']) for a in _shg_sharp_dark)})." if _shg_sharp_dark else ""))
+    elif _shg_wall_time > 20:
+        st.warning(f"🟡 **Ready, but slow** — last board load took {_shg_wall_time:.0f}s (target: under 20s). See Network Health below for what's dragging.")
+    elif _shg_timings:
+        st.success("🟢 **Ready to fire** — no tripped circuits, no dark sharp sources, load time normal.")
+    else:
+        st.info("⚪ **Not checked yet** — load a board to populate health data.")
+
+    _shg_c1, _shg_c2, _shg_c3 = st.columns(3)
+    _shg_c1.metric("Data Freshness", f"{_shg_health_pct}%",
+                   help="100% minus a penalty per degraded/dark source and per tripped circuit breaker.")
+    _shg_c2.metric("Last Load Time", f"{_shg_wall_time:.0f}s" if _shg_timings else "—",
+                   delta="🔴 slow" if _shg_wall_time > 20 else None, delta_color="inverse")
+    _shg_c3.metric("Circuit Breakers", f"{len(_shg_tripped)} tripped" if _shg_tripped else "0 tripped",
+                   delta="🔴 action needed" if _shg_tripped else "🟢 clear", delta_color="inverse" if _shg_tripped else "off")
+    st.markdown("---")
+
 
     # ── EV Auto-Refresh Control ───────────────────────────────
     _col_tog1, _col_tog2, _col_tog3 = st.columns([2, 2, 3])
@@ -24320,7 +24359,52 @@ with tabs[10]:
     _grey   = sum(1 for s in _src_statuses if "⚪" in s["Status"])
 
     st.markdown(f"**{_green} connected** | {_red} failing | {_yellow} degraded | {_grey} not loaded")
-    st.markdown(_bc_df_html(pd.DataFrame([{k:str(v) for k,v in r.items()} for r in _src_statuses])), unsafe_allow_html=True)
+
+    # Grouped-by-role display, healthy sources collapsed by default --
+    # a flat 80-row table (all of it, every load) is the "noise" a
+    # bettor doesn't need; what to actually look at is whatever isn't
+    # green. Keyword match against a small explicit map first, falls
+    # back to "Prop & Book Feeds" (the largest, lowest-stakes bucket)
+    # for anything not explicitly classified rather than dropping it.
+    _SRC_ROLE_MAP = {
+        "pinnacle": "Core Lines & Sharp Signals", "circa": "Core Lines & Sharp Signals",
+        "scanbet": "Core Lines & Sharp Signals", "sharpapi": "Core Lines & Sharp Signals",
+        "ev sharps": "Core Lines & Sharp Signals", "oddsapi": "Core Lines & Sharp Signals",
+        "oddspapi": "Core Lines & Sharp Signals", "bookmaker.eu": "Core Lines & Sharp Signals",
+        "heritage sports": "Core Lines & Sharp Signals", "ev line movement": "Core Lines & Sharp Signals",
+        "prizepicks": "Prop & Book Feeds", "underdog": "Prop & Book Feeds",
+        "parlayplay": "Prop & Book Feeds", "pick6": "Prop & Book Feeds",
+        "bovada": "Prop & Book Feeds", "fanduel": "Prop & Book Feeds",
+        "injuries": "Context & Public Signals", "covers": "Context & Public Signals",
+        "kalshi": "Context & Public Signals", "polymarket": "Context & Public Signals",
+        "action network": "Context & Public Signals", "statmuse": "Context & Public Signals",
+        "oddsshark": "Context & Public Signals", "signal odds": "Context & Public Signals",
+        "auto scraper": "Context & Public Signals", "auto-harvester": "Context & Public Signals",
+    }
+    def _src_role(name: str) -> str:
+        nl = name.lower()
+        for kw, role in _SRC_ROLE_MAP.items():
+            if kw in nl:
+                return role
+        return "Prop & Book Feeds"
+
+    _grouped = {"Core Lines & Sharp Signals": [], "Prop & Book Feeds": [], "Context & Public Signals": []}
+    for s in _src_statuses:
+        _grouped[_src_role(s["Source"])].append(s)
+
+    for _role, _rows in _grouped.items():
+        _unhealthy = [r for r in _rows if "🟢" not in r["Status"]]
+        _healthy   = [r for r in _rows if "🟢" in r["Status"]]
+        if not _rows:
+            continue
+        st.markdown(f"**{_role}** ({len(_healthy)}/{len(_rows)} healthy)")
+        if _unhealthy:
+            st.markdown(_bc_df_html(pd.DataFrame([{k: str(v) for k, v in r.items()} for r in _unhealthy])), unsafe_allow_html=True)
+        else:
+            st.caption("✅ All healthy")
+        if _healthy:
+            with st.expander(f"Show {len(_healthy)} healthy source(s) in this group"):
+                st.markdown(_bc_df_html(pd.DataFrame([{k: str(v) for k, v in r.items()} for r in _healthy])), unsafe_allow_html=True)
 
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
@@ -24416,8 +24500,8 @@ with tabs[10]:
     for _hc_key, _hc_display, _hc_purpose in _secrets_check:
         _hc_val = st.secrets.get(_hc_key, "")
         _hc_status = "🟢 Set" if _hc_val else "🔴 Missing"
-        _hc_data.append({"Service": _hc_display, "Status": _hc_status, "Purpose": _hc_purpose, "Secret Key": _hc_key})
-    st.markdown(_bc_df_html(_hc_data, ["Service", "Status", "Purpose", "Secret Key"]), unsafe_allow_html=True)
+        _hc_data.append({"Service": _hc_display, "Status": _hc_status, "Purpose": _hc_purpose})
+    st.markdown(_bc_df_html(_hc_data, ["Service", "Status", "Purpose"]), unsafe_allow_html=True)
 
     st.markdown("### 🍪 Session & Cookie Status")
     _ck_data = [
@@ -25357,29 +25441,30 @@ with tabs[10]:
     else:
         st.info("No timing data yet. Load the board first.")
     st.markdown("---")
-    st.markdown("### 🧠 Session Memory Audit")
-    st.caption("Size of key objects in session state.")
-    import sys as _sys
-    _mem_rows = []
-    _large_keys = ["board_data","history","locks","fetch_timings","oddswrap_props",
-                   "ud_props_compare","public_betting_data","an_props_data",
-                   "parlayapi_props_cache","sleeper_props_cache"]
-    for _k in _large_keys:
-        _val = st.session_state.get(_k)
-        if _val is not None:
-            _sz = _sys.getsizeof(_val)
-            if isinstance(_val, list):
-                _desc = f"list[{len(_val)}]"
-            elif isinstance(_val, dict):
-                _desc = f"dict[{len(_val)}]"
-            else:
-                _desc = type(_val).__name__
-            _mem_rows.append({"Key": _k, "Type": _desc, "Size (bytes)": _sz,
-                              "Size (KB)": round(_sz/1024, 1)})
-    if _mem_rows:
-        _total_kb = sum(r["Size (KB)"] for r in _mem_rows)
-        st.metric("Total tracked memory", f"{_total_kb:.1f} KB")
-        st.markdown(_bc_df_html(pd.DataFrame(_mem_rows)), unsafe_allow_html=True)
+    with st.expander("🔧 Developer Tools — Session Memory Audit", expanded=False):
+        st.markdown("### 🧠 Session Memory Audit")
+        st.caption("Size of key objects in session state.")
+        import sys as _sys
+        _mem_rows = []
+        _large_keys = ["board_data","history","locks","fetch_timings","oddswrap_props",
+                       "ud_props_compare","public_betting_data","an_props_data",
+                       "parlayapi_props_cache","sleeper_props_cache"]
+        for _k in _large_keys:
+            _val = st.session_state.get(_k)
+            if _val is not None:
+                _sz = _sys.getsizeof(_val)
+                if isinstance(_val, list):
+                    _desc = f"list[{len(_val)}]"
+                elif isinstance(_val, dict):
+                    _desc = f"dict[{len(_val)}]"
+                else:
+                    _desc = type(_val).__name__
+                _mem_rows.append({"Key": _k, "Type": _desc, "Size (bytes)": _sz,
+                                  "Size (KB)": round(_sz/1024, 1)})
+        if _mem_rows:
+            _total_kb = sum(r["Size (KB)"] for r in _mem_rows)
+            st.metric("Total tracked memory", f"{_total_kb:.1f} KB")
+            st.markdown(_bc_df_html(pd.DataFrame(_mem_rows)), unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### 💾 Gist Write Status")
     _dirty = st.session_state.get("gist_dirty", {})
@@ -25790,74 +25875,75 @@ with tabs[10]:
         st.success(f"Cleaned {cleaned} old files")
 
     st.markdown("---")
-    st.markdown("#### 🧪 Test Box Score APIs")
-    # Show ScrapeOps debug log
-    scrapeops_log = st.session_state.get("scrapeops_log", [])
-    if scrapeops_log:
-        with st.expander(f"🔍 ScrapeOps Debug Log ({len(scrapeops_log)} calls)"):
-            for entry in scrapeops_log[-10:]:
-                if "error" in entry:
-                    st.caption(f"❌ {entry['url']} — {entry['error']}")
-                else:
-                    icon = "✅" if entry['status']==200 and not entry['html'] else "⚠️"
-                    st.caption(f"{icon} {entry['url']} — {entry['status']} {entry['size']}b HTML:{entry['html']} CT:{entry['ct']}")
+    with st.expander("🔧 Developer Tools — Test Box Score APIs", expanded=False):
+        st.markdown("#### 🧪 Test Box Score APIs")
+        # Show ScrapeOps debug log
+        scrapeops_log = st.session_state.get("scrapeops_log", [])
+        if scrapeops_log:
+            with st.expander(f"🔍 ScrapeOps Debug Log ({len(scrapeops_log)} calls)"):
+                for entry in scrapeops_log[-10:]:
+                    if "error" in entry:
+                        st.caption(f"❌ {entry['url']} — {entry['error']}")
+                    else:
+                        icon = "✅" if entry['status']==200 and not entry['html'] else "⚠️"
+                        st.caption(f"{icon} {entry['url']} — {entry['status']} {entry['size']}b HTML:{entry['html']} CT:{entry['ct']}")
 
-    if st.button("🔍 Test ScrapeOps Proxy", key="test_scrapeops"):
-        if not SCRAPEOPS_KEY:
-            st.error("SCRAPEOPS_KEY not in Secrets")
-        else:
-            with st.spinner("Testing ScrapeOps..."):
+        if st.button("🔍 Test ScrapeOps Proxy", key="test_scrapeops"):
+            if not SCRAPEOPS_KEY:
+                st.error("SCRAPEOPS_KEY not in Secrets")
+            else:
+                with st.spinner("Testing ScrapeOps..."):
+                    try:
+                        # Test 1: Basic connectivity
+                        r1 = _http.get(
+                            "https://proxy.scrapeops.io/v1/",
+                            params={"api_key": SCRAPEOPS_KEY, "url": "https://httpbin.org/ip"},
+                            timeout=15
+                        )
+                        if r1.status_code == 200:
+                            ip = r1.json().get("origin","?")
+                            st.success(f"✅ ScrapeOps working — routing through IP: {ip}")
+                        else:
+                            st.error(f"❌ ScrapeOps: {r1.status_code} — {r1.text[:100]}")
+
+                        # Test 2: PrizePicks through ScrapeOps
+                        r2 = _http.get(
+                            "https://proxy.scrapeops.io/v1/",
+                            params={"api_key": SCRAPEOPS_KEY, "url": "https://api.prizepicks.com/projections?league_id=4&per_page=10", "residential": "true", "country": "us"},
+                            timeout=20
+                        )
+                        st.write(f"PrizePicks via ScrapeOps: {r2.status_code} — {len(r2.text)} bytes")
+
+                        # Test 3: Kalshi through ScrapeOps
+                        r3 = _http.get(
+                            "https://proxy.scrapeops.io/v1/",
+                            params={"api_key": SCRAPEOPS_KEY, "url": "https://api.elections.kalshi.com/v1/events/?series_tickers=KXNBA-26&page_size=5"},
+                            timeout=20
+                        )
+                        if r3.status_code == 200:
+                            data = r3.json()
+                            events = data.get("events", [])
+                            st.success(f"✅ Kalshi via ScrapeOps: {len(events)} events")
+                        else:
+                            st.write(f"Kalshi via ScrapeOps: {r3.status_code}")
+                    except (requests.RequestException, KeyError, ValueError) as e:
+                        st.error(f"Error: {str(e)[:100]}")
+
+        if st.button("Test ESPN + NBA APIs", key="test_boxscore_apis"):
+            test_urls = [
+                ("ESPN web", "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=401584793&region=us&lang=en&contentorigin=espn"),
+                ("NBA CDN", "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"),
+                ("NBA Stats", "https://stats.nba.com/stats/scoreboardv2?DayOffset=0&LeagueID=00&gameDate=05%2F27%2F2026"),
+            ]
+            for name, url in test_urls:
                 try:
-                    # Test 1: Basic connectivity
-                    r1 = _http.get(
-                        "https://proxy.scrapeops.io/v1/",
-                        params={"api_key": SCRAPEOPS_KEY, "url": "https://httpbin.org/ip"},
-                        timeout=15
-                    )
-                    if r1.status_code == 200:
-                        ip = r1.json().get("origin","?")
-                        st.success(f"✅ ScrapeOps working — routing through IP: {ip}")
+                    r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.espn.com/", "x-nba-stats-origin": "stats", "x-nba-stats-token": "true"}, timeout=8)
+                    if r.status_code == 200:
+                        st.success(f"✅ {name}: 200 OK — {len(r.text)} bytes")
                     else:
-                        st.error(f"❌ ScrapeOps: {r1.status_code} — {r1.text[:100]}")
-
-                    # Test 2: PrizePicks through ScrapeOps
-                    r2 = _http.get(
-                        "https://proxy.scrapeops.io/v1/",
-                        params={"api_key": SCRAPEOPS_KEY, "url": "https://api.prizepicks.com/projections?league_id=4&per_page=10", "residential": "true", "country": "us"},
-                        timeout=20
-                    )
-                    st.write(f"PrizePicks via ScrapeOps: {r2.status_code} — {len(r2.text)} bytes")
-
-                    # Test 3: Kalshi through ScrapeOps
-                    r3 = _http.get(
-                        "https://proxy.scrapeops.io/v1/",
-                        params={"api_key": SCRAPEOPS_KEY, "url": "https://api.elections.kalshi.com/v1/events/?series_tickers=KXNBA-26&page_size=5"},
-                        timeout=20
-                    )
-                    if r3.status_code == 200:
-                        data = r3.json()
-                        events = data.get("events", [])
-                        st.success(f"✅ Kalshi via ScrapeOps: {len(events)} events")
-                    else:
-                        st.write(f"Kalshi via ScrapeOps: {r3.status_code}")
+                        st.error(f"❌ {name}: {r.status_code}")
                 except (requests.RequestException, KeyError, ValueError) as e:
-                    st.error(f"Error: {str(e)[:100]}")
-
-    if st.button("Test ESPN + NBA APIs", key="test_boxscore_apis"):
-        test_urls = [
-            ("ESPN web", "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=401584793&region=us&lang=en&contentorigin=espn"),
-            ("NBA CDN", "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"),
-            ("NBA Stats", "https://stats.nba.com/stats/scoreboardv2?DayOffset=0&LeagueID=00&gameDate=05%2F27%2F2026"),
-        ]
-        for name, url in test_urls:
-            try:
-                r = _http.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.espn.com/", "x-nba-stats-origin": "stats", "x-nba-stats-token": "true"}, timeout=8)
-                if r.status_code == 200:
-                    st.success(f"✅ {name}: 200 OK — {len(r.text)} bytes")
-                else:
-                    st.error(f"❌ {name}: {r.status_code}")
-            except (requests.RequestException, KeyError, ValueError) as e:
-                st.error(f"❌ {name}: {str(e)[:50]}")
+                    st.error(f"❌ {name}: {str(e)[:50]}")
 
     st.markdown("---")
     st.markdown("#### 🗑️ Reset Bet History")
