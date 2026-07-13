@@ -15737,7 +15737,17 @@ def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
 
 
 def _is_fresh(data: dict, max_age_minutes: int = 30) -> bool:
-    """Check if harvested data is recent enough to use."""
+    """Check if harvested data is recent enough to use.
+
+    NOTE (2026-07): call sites reading */15 cron-scheduled Gist files used to
+    pass max_age_minutes=22, assuming GitHub Actions actually fires every 15
+    min. Checked real run history — GitHub's scheduled cron is best-effort
+    and was firing every ~65-70 min on average (up to 99 min gaps) on this
+    repo, not 15. A 22-min window rejected fresh data as "stale" on nearly
+    every board load, silently forcing live-scrape fallback (and burning
+    ScrapeOps credits) even when the workflow was running fine. Widened those
+    call sites to max_age_minutes=100 to match observed real-world cadence.
+    """
     ts = data.get("captured_at","")
     if not ts: return False
     try:
@@ -15924,7 +15934,7 @@ def fetch_caesars_waf_from_gist() -> str:
     Falls back to CAESARS_WAF_TOKEN secret.
     """
     data = _read_gist_file("betcouncil_caesars_tokens.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         waf = data.get("waf_token","")
         if waf:
             print("[Caesars] Using auto-harvested WAF token")
@@ -16181,7 +16191,7 @@ def fetch_action_network_from_gist(sport: str) -> dict:
 def fetch_covers_from_gist(sport: str) -> tuple:
     """PRIMARY: Covers consensus % from browser harvester. SECONDARY: scraper."""
     data = _read_gist_file(f"betcouncil_covers_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
             print(f"[Covers] PRIMARY: browser harvester")
@@ -16199,7 +16209,7 @@ def fetch_draftkings_props_from_gist(sport: str) -> tuple:
     SECONDARY: LineStar GetPropBets Source=1 (server-side, no auth, no Tampermonkey).
     TERTIARY: Python scraper fallback."""
     data = _read_gist_file(f"betcouncil_dk_props_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
             props = _parse_dk_harvested(raw, sport)
@@ -16404,7 +16414,7 @@ def fetch_unabated_props(sport: str, platform: str = None) -> tuple:
 def fetch_oddsjam_from_gist(sport: str) -> tuple:
     """PRIMARY: OddsJam +EV from browser harvester. SECONDARY: none (new source)."""
     data = _read_gist_file(f"betcouncil_oddsjam_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
             print(f"[OddsJam] PRIMARY: browser harvester")
@@ -16547,7 +16557,7 @@ def fetch_prizepicks_from_gist(sport: str) -> tuple:
     Returns (props_list, source_label)
     """
     data = _read_gist_file(f"betcouncil_prizepicks_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
             props = _parse_prizepicks_harvested(raw, sport)
@@ -16630,7 +16640,7 @@ def fetch_evsharps_ev_from_gist(sport: str) -> tuple:
 def fetch_underdog_from_gist(sport: str) -> tuple:
     """PRIMARY: Underdog props from browser harvester. SECONDARY: scraper."""
     data = _read_gist_file(f"betcouncil_underdog_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
             props = _parse_underdog_harvested(raw, sport)
@@ -16783,7 +16793,7 @@ def fetch_bovada_from_gist(sport: str) -> tuple:
     """PRIMARY: Bovada props from browser harvester (parsed). SECONDARY: returns empty
     — game-line scraper fallback does not carry player props."""
     data = _read_gist_file(f"betcouncil_bovada_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data", {})
         if raw:
             props = _parse_bovada_props_harvested(raw, sport)
@@ -16795,7 +16805,7 @@ def fetch_novig_from_gist(sport: str) -> tuple:
     """PRIMARY: Novig props from browser harvester (parsed, OddsAPI format).
     SECONDARY: returns empty — fetch_novig_lines gives game lines, not player props."""
     data = _read_gist_file(f"betcouncil_novig_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data", {})
         if raw:
             props = _parse_novig_props_harvested(raw, sport)
@@ -16829,7 +16839,7 @@ def fetch_mybookie_from_gist(sport: str) -> tuple:
 def fetch_parlaysavant_from_gist(sport: str) -> tuple:
     """PRIMARY: ParlaySavant +EV from browser harvester. SECONDARY: server scraper."""
     data = _read_gist_file(f"betcouncil_parlaysavant_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw: return raw, "browser_harvester"
     # fetch_parlaysavant_props did not exist — direct Python HTTP (no CORS server-side)
@@ -17791,7 +17801,7 @@ def fetch_evbets_from_gist(sport: str) -> tuple:
     Returns (list of {event, outcome, market, ev_pct, best_odds, book, kelly}, source)
     """
     data = _read_gist_file(f"betcouncil_evbets_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data", {})
         if raw:
             picks = _parse_evbets_data(raw, sport)
@@ -17804,7 +17814,7 @@ def fetch_evbets_from_gist(sport: str) -> tuple:
 def fetch_evbets_props_from_gist(sport: str) -> tuple:
     """EVBets prop bets +EV feed."""
     data = _read_gist_file(f"betcouncil_evbets_props_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=22):
+    if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data", {})
         if raw:
             picks = _parse_evbets_data(raw, sport)
