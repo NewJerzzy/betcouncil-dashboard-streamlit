@@ -4403,7 +4403,8 @@ def correlated_parlay_kelly(legs: list, bankroll: float,
     }
 
 
-def calibrate_tier_thresholds(signal_performance: list, history: list, sport: str = "NBA") -> dict:
+def calibrate_tier_thresholds(signal_performance: list, history: list, sport: str = "NBA",
+                               bet_type: str = "prop", base_thresholds_by_sport: dict = None) -> dict:
     """
     Auto-calibrate tier thresholds from observed bet outcomes.
 
@@ -4428,6 +4429,16 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
       log explaining exactly why each tier did or didn't move
 
     Called automatically on each board load. Results stored in session_state.
+
+    v3 (July 12, 2026) — bet_type-aware, so it can calibrate game-line
+    (SPREAD/TOTAL/ML) tiers on their own edge scale instead of pooling them
+    with player-prop bets, which previously corrupted both: game edges run
+    roughly 2-3x smaller than prop edges, so a shared calibration pool
+    systematically under-promoted game tiers and diluted prop calibration
+    with off-scale noise. Pass bet_type="game" and base_thresholds_by_sport=
+    GAME_TIER_THRESHOLDS to calibrate the game side; records without a
+    bet_type tag (logged before this field existed) are treated as "prop"
+    for backward compatibility.
     """
     # Base thresholds (fallback if insufficient data)
     BASE_THRESHOLDS = {
@@ -4441,7 +4452,8 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
         "SOCCER": {"SOVEREIGN": 0.10, "ELITE": 0.07, "APPROVED": 0.035,"LEAN": 0.020},
         "UFC":    {"SOVEREIGN": 0.12, "ELITE": 0.08, "APPROVED": 0.04, "LEAN": 0.03},
     }
-    base = BASE_THRESHOLDS.get(sport, BASE_THRESHOLDS["NBA"]).copy()
+    thresholds_source = base_thresholds_by_sport or BASE_THRESHOLDS
+    base = thresholds_source.get(sport, thresholds_source.get("NBA", BASE_THRESHOLDS["NBA"])).copy()
 
     # Regime gate — don't calibrate on a sport that's in a known-unstable
     # window (off-season/no-games); stale-regime data would corrupt the
@@ -4452,18 +4464,23 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
             base["_log"] = {"_all": f"Skipped — {sport} regime is Off-season ({regime_info.get('description','')})"}
             base["_n_records"] = 0
             base["_sport"] = sport
+            base["_bet_type"] = bet_type
             base["_calibrated"] = False
             return base
     except Exception:
         pass  # if regime detection itself fails, fall through and calibrate normally
 
-    # Combine signal_performance + history for this sport
+    # Combine signal_performance + history for this sport, filtered to the
+    # requested bet_type ("prop" or "game"). Records logged before the
+    # bet_type field existed default to "prop" (matches record_signal_
+    # performance's and log_manual_bet's own backward-compat default).
     all_records = []
     for r in (signal_performance or []):
-        if r.get("sport", "") == sport or not sport:
+        if (r.get("sport", "") == sport or not sport) and r.get("bet_type", "prop") == bet_type:
             all_records.append(r)
     for r in (history or []):
-        if r.get("sport", "") == sport and r.get("outcome") in ("WIN", "LOSS"):
+        if (r.get("sport", "") == sport and r.get("outcome") in ("WIN", "LOSS")
+                and r.get("bet_type", "prop") == bet_type):
             all_records.append({
                 "tier": r.get("tier", ""), "outcome": r.get("outcome", ""),
                 "win": 1 if r.get("outcome") == "WIN" else 0,
@@ -4474,9 +4491,10 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
             })
 
     if not all_records:
-        base["_log"] = {"_all": "No records for this sport — using base thresholds"}
+        base["_log"] = {"_all": "No records for this sport/bet_type — using base thresholds"}
         base["_n_records"] = 0
         base["_sport"] = sport
+        base["_bet_type"] = bet_type
         base["_calibrated"] = False
         return base
 
@@ -4557,6 +4575,7 @@ def calibrate_tier_thresholds(signal_performance: list, history: list, sport: st
     adjusted["_log"] = adjustment_log
     adjusted["_n_records"] = len(all_records)
     adjusted["_sport"] = sport
+    adjusted["_bet_type"] = bet_type
     adjusted["_calibrated"] = True
 
     return adjusted

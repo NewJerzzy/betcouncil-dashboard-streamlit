@@ -1126,6 +1126,22 @@ def _get_cal_tier(edge, sport):
     """Wrapper: get_tier with auto-calibrated thresholds from session_state."""
     cal = st.session_state.get("calibrated_thresholds", {})
     return get_tier(edge, sport, cal if cal.get("_calibrated") else None)
+
+# Tier thresholds (game lines: SPREAD/TOTAL/ML) — calibrated separately
+# from props since game edges run on a smaller scale (see
+# calibrate_tier_thresholds v3, 2026-07-12). Falls back to the static
+# GAME_TIER_THRESHOLDS via get_tier's own fallback path if this sport
+# hasn't accumulated enough game-bet history yet to calibrate.
+def _get_cal_game_tier(edge, sport):
+    """Wrapper: get_tier with auto-calibrated GAME thresholds from session_state."""
+    cal = st.session_state.get("calibrated_game_thresholds", {})
+    if cal.get("_calibrated"):
+        return get_tier(edge, sport, cal)
+    # No real calibration yet — force get_tier to use GAME_TIER_THRESHOLDS
+    # (game scale) rather than its own internal fallback to TIER_THRESHOLDS
+    # (prop scale, which would misgrade every game edge).
+    static = GAME_TIER_THRESHOLDS.get(sport, GAME_TIER_THRESHOLDS.get("NBA"))
+    return get_tier(edge, sport, {**static, "_calibrated": True})
 TIER_SOVEREIGN_DEFAULT = 0.15   # 15%+ edge
 TIER_ELITE_DEFAULT     = 0.10   # 10%+ edge
 TIER_APPROVED_DEFAULT  = 0.05   # 5%+ edge
@@ -5707,6 +5723,14 @@ def record_signal_performance(lock, outcome):
         "tier": lock.get("tier", ""),
         "edge": lock.get("edge", 0),
         "prob": lock.get("prob", 0),
+        # Tag so calibration can separate game-line bets (SPREAD/TOTAL/ML,
+        # much smaller edge magnitudes) from player-prop bets — previously
+        # untagged, so every game bet silently pooled into prop calibration
+        # stats (and vice versa) despite the two using different edge
+        # scales entirely (bug found 2026-07-12). Missing/old records
+        # default to "prop" for backward compatibility with data logged
+        # before this field existed.
+        "bet_type": lock.get("bet_type", "prop"),
         "signal_base_positive": int(signals_active.get("base_positive", False)),
         "signal_defense_positive": int(signals_active.get("defense_positive", False)),
         "signal_location_home": int(signals_active.get("location_home", False)),
@@ -7091,7 +7115,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
-                    tier = get_game_tier(abs(spread_edge_pct), sport)
+                    tier = _get_cal_game_tier(abs(spread_edge_pct), sport)
                     _pinn_sp_side = "HOME" if spread_edge > 0 else "AWAY"
                     _pinn_sp_prob, _pinn_sp_conf, _pinn_sp_note = pinnacle_game_fair_value(home_team, away_team, "spread", sport, _pinn_sp_side)
                     _pinn_sp = {"prob": _pinn_sp_prob, "confirms": _pinn_sp_conf, "note": _pinn_sp_note} if _pinn_sp_prob is not None else None
@@ -7616,7 +7640,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     pass
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
-                    tier = get_game_tier(abs(total_edge_pct), sport)
+                    tier = _get_cal_game_tier(abs(total_edge_pct), sport)
                     _pinn_tot_prob, _pinn_tot_conf, _pinn_tot_note = pinnacle_game_fair_value(home_team, away_team, "total", sport, side)
                     _pinn_tot = {"prob": _pinn_tot_prob, "confirms": _pinn_tot_conf, "note": _pinn_tot_note} if _pinn_tot_prob is not None else None
                     _vsin_tot_prob, _vsin_tot_conf, _vsin_tot_note = vsin_sharp_signal(home_team, away_team, "total", sport, side)
@@ -7729,7 +7753,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         ml_pick = f"{away_team} ML ({away_ml})"
                         ml_edge = a_ml_edge
                         fair_prob = a_fair
-                    tier = _get_cal_tier(ml_edge, sport)
+                    tier = _get_cal_game_tier(ml_edge, sport)
                     _ml_picked_odds = home_ml if h_ml_edge > a_ml_edge else away_ml
                     ev = fair_prob * (abs(float(str(_ml_picked_odds).replace("+",""))) / 100) - (1 - fair_prob)
                     _ml_note = f"Fair probability {fair_prob:.1%} vs implied — +EV at these odds"
@@ -11597,14 +11621,30 @@ def load_sport_data(sport):
     # ── Auto-calibrate tier thresholds from bet history ────────────────────
     _sig_perf  = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     _hist      = st.session_state.get("history", [])
-    _cal_thresholds = calibrate_tier_thresholds(_sig_perf, _hist, sport)
+    _cal_thresholds = calibrate_tier_thresholds(_sig_perf, _hist, sport, bet_type="prop")
     st.session_state["calibrated_thresholds"] = _cal_thresholds
     if _cal_thresholds.get("_calibrated") and _cal_thresholds.get("_n_records", 0) >= 15:
         _adj_log = _cal_thresholds.get("_log", {})
         _adjusted = {k:v for k,v in _cal_thresholds.items() if not k.startswith("_")}
-        st.caption(f"📐 Thresholds auto-calibrated from {_cal_thresholds['_n_records']} {sport} bets: "
+        st.caption(f"📐 Prop thresholds auto-calibrated from {_cal_thresholds['_n_records']} {sport} bets: "
                    f"SOV={_adjusted.get('SOVEREIGN',0):.3f} ELI={_adjusted.get('ELITE',0):.3f} "
                    f"APP={_adjusted.get('APPROVED',0):.3f} LEAN={_adjusted.get('LEAN',0):.3f}")
+
+    # Same auto-calibration loop, now applied to game lines (SPREAD/TOTAL/ML)
+    # on their own edge scale — this previously didn't exist at all for
+    # SPREAD/TOTAL (static GAME_TIER_THRESHOLDS only, never adjusted from
+    # results), and ML was quietly reusing the prop calibration pool above
+    # even though ML edges run 2-3x smaller than prop edges (bug found
+    # 2026-07-12). See calibrate_tier_thresholds bet_type param.
+    _cal_game_thresholds = calibrate_tier_thresholds(
+        _sig_perf, _hist, sport, bet_type="game", base_thresholds_by_sport=GAME_TIER_THRESHOLDS
+    )
+    st.session_state["calibrated_game_thresholds"] = _cal_game_thresholds
+    if _cal_game_thresholds.get("_calibrated") and _cal_game_thresholds.get("_n_records", 0) >= 15:
+        _adj_game = {k:v for k,v in _cal_game_thresholds.items() if not k.startswith("_")}
+        st.caption(f"📐 Game-line thresholds auto-calibrated from {_cal_game_thresholds['_n_records']} {sport} bets: "
+                   f"SOV={_adj_game.get('SOVEREIGN',0):.3f} ELI={_adj_game.get('ELITE',0):.3f} "
+                   f"APP={_adj_game.get('APPROVED',0):.3f} LEAN={_adj_game.get('LEAN',0):.3f}")
 
     min_edge = st.session_state.get("min_edge", MIN_EDGE_DEFAULT)
     skip_def = st.session_state.get("skip_defaults", False)
@@ -13764,7 +13804,7 @@ def load_sport_data(sport):
             if _gt_game and _gt_game.get("best_bet"):
                 _gt_bb = _gt_game["best_bet"]
                 _gt_edge = float(_gt_bb.get("edge", 0))
-                _gt_tier  = _get_cal_tier(abs(_gt_edge), sport)
+                _gt_tier  = _get_cal_game_tier(abs(_gt_edge), sport)
                 _gt_prob  = float(_gt_bb.get("fair_prob", 0.55))
                 enriched.append({
                     "Player": player, "Prop": stat_raw, "Line": line,
