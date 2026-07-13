@@ -5475,6 +5475,154 @@ def record_line(book: str, game_key: str, market: str,
         _LINE_HISTORY[key] = _LINE_HISTORY[key][-50:]
 
 
+def _parse_scanbet_time(raw):
+    """
+    parseTime's exact format isn't confirmed anywhere else in this
+    codebase (grepped -- no other consumer), so this tries the plausible
+    encodings rather than assuming one. Returns a unix timestamp (float)
+    or None -- callers must treat None as "can't compute velocity for
+    this snapshot," not fall back to a guess.
+    """
+    if raw is None:
+        return None
+    try:
+        n = float(raw)
+        # Heuristic: unix ms are ~13 digits today, unix seconds ~10.
+        return n / 1000.0 if n > 1e12 else n
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_scanbet_snap_velocity(snaps: list, market_idx: int) -> dict:
+    """
+    Velocity/momentum from a raw Scanbet eventOdds array (odds[market_idx]
+    per snapshot, SCANBET_ODDS_IDX in fetchers.py maps market names to
+    indices -- e.g. 7 = over_juice), as opposed to compute_line_velocity()
+    below, which looks up the _LINE_HISTORY store by (book, game_key,
+    market) key. Different input shape, so a separate function rather
+    than overloading one name with two incompatible signatures (which is
+    what this call site did before -- calling compute_line_velocity(snaps,
+    market_idx=7) when that function didn't exist at all, silently caught
+    by the enclosing try/except).
+
+    Returns {} (not a zero-filled dict) if fewer than 2 snapshots have a
+    parseable timestamp -- caller checks truthiness before using it,
+    since a fabricated zero could look like "confirmed no movement"
+    rather than "couldn't measure."
+    """
+    points = []
+    for s in snaps or []:
+        odds_arr = s.get("odds")
+        if not odds_arr or market_idx >= len(odds_arr):
+            continue
+        ts = _parse_scanbet_time(s.get("parseTime"))
+        if ts is None:
+            continue
+        try:
+            points.append((ts, float(odds_arr[market_idx])))
+        except (TypeError, ValueError):
+            continue
+    if len(points) < 2:
+        return {}
+    points.sort(key=lambda p: p[0])
+    first_ts, first_val = points[0]
+    last_ts, last_val = points[-1]
+    elapsed_hours = max((last_ts - first_ts) / 3600.0, 1e-6)
+    velocity = round((last_val - first_val) / abs(first_val) * 100.0 / elapsed_hours, 3) if first_val else 0.0
+
+    mid = first_ts + (last_ts - first_ts) / 2
+    first_half  = [p for p in points if p[0] <= mid]
+    second_half = [p for p in points if p[0] > mid]
+    accel = 0.0
+    if len(first_half) >= 2 and len(second_half) >= 2:
+        fh_hours = max((first_half[-1][0] - first_half[0][0]) / 3600.0, 1e-6)
+        sh_hours = max((second_half[-1][0] - second_half[0][0]) / 3600.0, 1e-6)
+        fh_vel = (first_half[-1][1] - first_half[0][1]) / fh_hours
+        sh_vel = (second_half[-1][1] - second_half[0][1]) / sh_hours
+        accel = round(sh_vel - fh_vel, 3)
+
+    magnitude = abs(last_val - first_val)
+    momentum_score = round(min(10.0, magnitude * 2.0), 2)
+    return {
+        "velocity_pct_per_hour": velocity, "acceleration": accel,
+        "is_accelerating": abs(accel) > abs(velocity) * 0.1,
+        "momentum_score": momentum_score,
+    }
+
+
+def compute_line_velocity(book: str, game_key: str, market: str,
+                          window_seconds: int = 3600) -> dict:
+    """
+    Line velocity/momentum -- was imported from bc_utils in two places
+    (app.py's game-line steam signal block, and this file's own prop
+    enrichment pipeline a few hundred lines below) but never actually
+    defined anywhere in the codebase. Both call sites wrap the import/call
+    in try/except, so this didn't crash the app -- it silently disabled
+    velocity/momentum signals everywhere they were supposed to appear
+    (game-line steam signals in app.py, prop LineVelocity/MomentumScore
+    enrichment below).
+
+    Uses the same _LINE_HISTORY store record_line()/detect_steam_move()
+    already maintain -- rate of line movement over window_seconds, plus
+    whether that rate is accelerating (comparing the first half of the
+    window's velocity against the second half).
+
+    Returns: velocity_pct_per_hour, acceleration, is_accelerating,
+    momentum_score (0-10ish, magnitude-and-recency weighted, same style
+    as detect_steam_move's confidence calc), first_line, last_line, n_points.
+    """
+    key = (book.lower(), game_key, market.lower())
+    history = _LINE_HISTORY.get(key, [])
+    empty = {"velocity_pct_per_hour": 0.0, "acceleration": 0.0,
+             "is_accelerating": False, "momentum_score": 0.0,
+             "first_line": None, "last_line": None, "n_points": len(history)}
+    if len(history) < 2:
+        return empty
+
+    now = _time.time()
+    cutoff = now - window_seconds
+    recent = [h for h in history if h["ts"] >= cutoff]
+    if len(recent) < 2:
+        return empty
+
+    first_line, last_line = recent[0]["line"], recent[-1]["line"]
+    elapsed_hours = max((recent[-1]["ts"] - recent[0]["ts"]) / 3600.0, 1e-6)
+    if first_line:
+        velocity_pct_per_hour = round((last_line - first_line) / abs(first_line) * 100.0 / elapsed_hours, 3)
+    else:
+        velocity_pct_per_hour = 0.0
+
+    # Acceleration: velocity in the second half of the window vs the first
+    # half -- a widening gap between the two means the move is speeding
+    # up, not just drifting at a steady rate.
+    mid_ts = recent[0]["ts"] + (recent[-1]["ts"] - recent[0]["ts"]) / 2
+    first_half  = [h for h in recent if h["ts"] <= mid_ts]
+    second_half = [h for h in recent if h["ts"] > mid_ts]
+    accel = 0.0
+    if len(first_half) >= 2 and len(second_half) >= 2:
+        fh_hours = max((first_half[-1]["ts"] - first_half[0]["ts"]) / 3600.0, 1e-6)
+        sh_hours = max((second_half[-1]["ts"] - second_half[0]["ts"]) / 3600.0, 1e-6)
+        fh_vel = (first_half[-1]["line"] - first_half[0]["line"]) / fh_hours
+        sh_vel = (second_half[-1]["line"] - second_half[0]["line"]) / sh_hours
+        accel = round(sh_vel - fh_vel, 3)
+
+    magnitude = abs(last_line - first_line)
+    recency_factor = 1.0 - min(1.0, (now - recent[-1]["ts"]) / window_seconds) * 0.3
+    momentum_score = round(min(10.0, magnitude * 2.0) * recency_factor, 2)
+
+    return {
+        "velocity_pct_per_hour": velocity_pct_per_hour,
+        "acceleration":          accel,
+        "is_accelerating":       abs(accel) > abs(velocity_pct_per_hour) * 0.1,
+        "momentum_score":        momentum_score,
+        "first_line": first_line, "last_line": last_line, "n_points": len(recent),
+    }
+
+
 # ── Steam move detector ───────────────────────────────────────────────────────
 
 def detect_steam_move(book: str, game_key: str, market: str,
@@ -6093,13 +6241,14 @@ def apply_all_upgrades(prop: dict, scanbet_raw: dict = None,
         if scanbet_raw:
             snaps = scanbet_raw.get("eventOdds", [])
             if snaps:
-                vel = compute_line_velocity(snaps, market_idx=7)  # over juice
-                prop["LineVelocity"]     = vel["velocity_pct_per_hour"]
-                prop["LineAcceleration"] = vel["acceleration"]
-                prop["IsAccelerating"]   = vel["is_accelerating"]
-                prop["MomentumScore"]    = vel["momentum_score"]
-                if vel["momentum_score"] > 3.0:
-                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚡Velocity:{vel['velocity_pct_per_hour']:+.2f}%/hr"
+                vel = _compute_scanbet_snap_velocity(snaps, market_idx=7)  # over juice
+                if vel:
+                    prop["LineVelocity"]     = vel["velocity_pct_per_hour"]
+                    prop["LineAcceleration"] = vel["acceleration"]
+                    prop["IsAccelerating"]   = vel["is_accelerating"]
+                    prop["MomentumScore"]    = vel["momentum_score"]
+                    if vel["momentum_score"] > 3.0:
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚡Velocity:{vel['velocity_pct_per_hour']:+.2f}%/hr"
     except Exception:
         pass
 
