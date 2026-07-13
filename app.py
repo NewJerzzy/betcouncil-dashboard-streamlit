@@ -64,7 +64,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_market_climate, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     score_rlm, devig_ensemble,
     record_line, detect_steam_move,
     pace_adjust_mlb_prop, rest_adjusted_std_dev,
@@ -4052,21 +4052,37 @@ def _capture_clv_closing_lines():
 
 def resolve_clv_records(history):
     """
-    Auto-resolve CLV for settled bets by comparing placement odds
-    against current EV API odds (proxy for closing line).
-    Called on History tab load.
+    Auto-resolve CLV for settled bets by comparing the placement snapshot
+    (captured at lock time, via _capture_clv_placement / 
+    _capture_clv_placement_game) against a CURRENT market snapshot.
+    Called on History tab load and the 10-min timer.
 
-    Buchdahl standard:
-    - CLV = closing no-vig prob - placement no-vig prob
-    - Positive = you got better odds than close = +EV
-    - Need 50+ resolved bets for statistical significance
-    - Need 1000+ for full P-value confidence
+    Props: Buchdahl standard -- CLV = closing no-vig prob - placement
+    no-vig prob, positive = beat the close = +EV. Needs 50+ resolved bets
+    for statistical significance, 1000+ for full P-value confidence.
+
+    Games (added 2026-07-13): no equivalent single no-vig probability
+    exists for a spread/total in the data this app collects, so this uses
+    a points-based CLV instead -- closing Pinnacle line vs the line
+    captured at lock time. Same PROCESS/VARIANCE direction (beat the
+    close vs lost to it), different unit (points, not percent) --
+    generate_post_mortem() displays it accordingly rather than forcing it
+    into a fabricated percentage.
+
+    Both resolve opportunistically: whichever live snapshot the app
+    happens to have in session state (ev_signal_lookup for props,
+    pinnacle_game_lines for games) at whatever moment this runs. If that
+    moment isn't near the actual game/market close, the record stays
+    unresolved rather than getting a wrong number -- some picks will
+    resolve, some won't, depending on session activity near game time.
+    That's a real, honest limitation, not a bug.
     """
     try:
         import streamlit as _st
         _ev_sig_lookup = _st.session_state.get("ev_signal_lookup", {})
-        if not _ev_sig_lookup:
-            return history, False   # no EV data yet
+        _pinnacle_games = _st.session_state.get("pinnacle_game_lines", [])
+        if not _ev_sig_lookup and not _pinnacle_games:
+            return history, False   # no live market data of either kind yet
 
         changed = False
         for record in history:
@@ -4074,6 +4090,40 @@ def resolve_clv_records(history):
             if not _clv or _clv.get("clv_resolved"):
                 continue
             if record.get("outcome") not in ("WIN", "LOSS"):
+                continue
+
+            if _clv.get("bet_type") == "game":
+                if not _pinnacle_games:
+                    continue
+                _placement_line = _clv.get("placement_line_pinnacle")
+                if _placement_line is None:
+                    continue
+                _matchup = record.get("player", "")  # game records store matchup in "player"
+                _market  = record.get("prop", "")
+                _pin_game = next(
+                    (g for g in _pinnacle_games
+                     if normalize_name(g.get("Matchup", "")) == normalize_name(_matchup)
+                     or normalize_name(_matchup) in normalize_name(g.get("Matchup", ""))),
+                    None
+                )
+                if not _pin_game:
+                    continue
+                _closing_line = _pin_game.get("Spread") if _market == "SPREAD" else (
+                    _pin_game.get("Total") if _market in ("TOTAL", "ALT LINE") else None
+                )
+                if _closing_line is None:
+                    continue
+                try:
+                    _closing_line = float(_closing_line)
+                except (TypeError, ValueError):
+                    continue
+                _side = record.get("side", "")
+                _clv_pts = (_placement_line - _closing_line) if ("OVER" in _side.upper() or "HOME" in _side.upper()) \
+                    else (_closing_line - _placement_line)
+                record["clv_capture"]["closing_line_pinnacle"] = _closing_line
+                record["clv_capture"]["clv_points"]            = round(_clv_pts, 2)
+                record["clv_capture"]["clv_resolved"]           = True
+                changed = True
                 continue
 
             _player = normalize_name(record.get("player", ""))
@@ -5757,6 +5807,50 @@ def _capture_clv_placement(player: str, prop: str, prob) -> dict:
             result["consensus_novig_placement"] = _cons_nv
             if _cons_nv is not None and prob is not None:
                 result["clv_vs_placement"] = round(float(_cons_nv) - float(prob), 4)
+    except Exception:
+        pass
+    return result
+
+
+def _capture_clv_placement_game(matchup: str, market: str, side: str, locked_line) -> dict:
+    """
+    Game-line counterpart to _capture_clv_placement() -- same purpose
+    (snapshot the market at LOCK time, not at whatever later moment the
+    bet gets logged as settled), but props and games can't share a
+    schema: props have a single no-vig win probability (ev_signal_lookup),
+    games have a POINT line (spread/total) with no equivalent single
+    probability in the data this app already collects. Uses Pinnacle's
+    line at lock time (st.session_state["pinnacle_game_lines"], same
+    source record_pinnacle_game_line() already reads) and returns a
+    points-based CLV, not a percentage -- "+1.5 pts better than Pinnacle"
+    is a real, honest number; forcing it into a fabricated win-probability
+    conversion would not be.
+
+    Returns clv_capture dict shape, bet_type="game" flags it for
+    resolve_clv_records() and generate_post_mortem() to format as points
+    instead of percent. All-None if Pinnacle has no line for this matchup
+    yet (never guesses).
+    """
+    result = {
+        "bet_type": "game", "placement_line_pinnacle": None,
+        "closing_line_pinnacle": None, "clv_points": None,
+    }
+    try:
+        pinnacle_lines = st.session_state.get("pinnacle_game_lines", [])
+        pin_game = next(
+            (g for g in pinnacle_lines
+             if normalize_name(g.get("Matchup", "")) == normalize_name(matchup)
+             or normalize_name(matchup) in normalize_name(g.get("Matchup", ""))),
+            None
+        )
+        if not pin_game:
+            return result
+        pinnacle_line = pin_game.get("Spread") if market == "SPREAD" else (
+            pin_game.get("Total") if market in ("TOTAL", "ALT LINE") else None
+        )
+        if pinnacle_line is None:
+            return result
+        result["placement_line_pinnacle"] = float(pinnacle_line)
     except Exception:
         pass
     return result
@@ -9849,14 +9943,19 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
             "placement_ts":       bet_date,
             "placement_edge":     edge or 0,
             "placement_prob":     prob or 0,
-            # Pull live Pinnacle + Circa odds from ev_signal_lookup at placement time
+            "bet_type":           bet_type,
+            # Prop path — no-vig probability vs ev_signal_lookup
             "pn_novig_placement":    None,
             "circa_novig_placement": None,
             "consensus_novig_placement": None,
             "closing_pn_novig":   None,   # filled in after game
             "closing_consensus":  None,   # filled in after game
             "clv_vs_placement":   None,   # filled in after game
-            "clv_vs_novig":       None,   # gold standard CLV vs no-vig close
+            "clv_vs_novig":       None,   # gold standard CLV vs no-vig close (props)
+            # Game path — point-line vs Pinnacle (added 2026-07-13)
+            "placement_line_pinnacle": None,
+            "closing_line_pinnacle":   None,
+            "clv_points":              None,   # points-based CLV (games)
             "clv_resolved":       False,
         }
     }
@@ -9871,10 +9970,13 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     # limitation of after-the-fact entry, not a bug, so it's left as an
     # honest empty rather than worked around.
     if clv_capture:
-        for k in ("pn_novig_placement", "circa_novig_placement",
-                  "consensus_novig_placement", "clv_vs_placement"):
-            if clv_capture.get(k) is not None:
-                record["clv_capture"][k] = clv_capture[k]
+        # Merge whatever shape was captured at lock time (prop: no-vig
+        # probability keys; game: point-line keys, bet_type="game") over
+        # the default all-None scaffold, rather than a hardcoded key list
+        # that only understood the prop shape.
+        for k, v in clv_capture.items():
+            if v is not None:
+                record["clv_capture"][k] = v
     else:
         try:
             import streamlit as _st
@@ -16714,25 +16816,68 @@ with tabs[0]:
     _win_rate_top= round(
         sum(1 for h in _recent_20 if h.get("outcome")=="WIN") / max(len(_recent_20),1) * 100, 1
     ) if _recent_20 else 0.0
-    _clv_top     = load_json_data(CLV_PATH, [])
-    _clv_avg_top = round(
-        sum(c.get("clv",0) for c in _clv_top[-20:]) / max(len(_clv_top[-20:]),1), 2
-    ) if _clv_top else 0.0
+    # CLV Avg card -- was reading CLV_PATH ("clv_tracking.json"), fed only
+    # by _capture_clv_closing_lines(), which only ever processes bets with
+    # outcome=="PENDING". No log_manual_bet() call site ever logs a bet as
+    # PENDING (they all log an already-known WIN/LOSS/PUSH), so that path
+    # never fires and this card was permanently stuck at 0.00 regardless
+    # of real performance. Switched to get_clv_summary(), which reads the
+    # clv_capture pipeline fixed 2026-07-13 (real placement snapshots +
+    # resolve_clv_records). Props only here (percent); game-line CLV is
+    # points, a different unit, and shown as a second card rather than
+    # forced into the same number.
+    _history_for_clv = st.session_state.get("history", [])
+    _clv_sum_top = get_clv_summary(_history_for_clv)
+    _clv_avg_top = _clv_sum_top.get("avg_clv") or 0.0
+    _clv_avg_top_pct = _clv_avg_top * 100
+    _clv_n_top = _clv_sum_top.get("n_resolved", 0)
+    _game_clv_pts = [
+        h.get("clv_capture", {}).get("clv_points") for h in _history_for_clv
+        if h.get("clv_capture", {}).get("clv_resolved")
+        and h.get("clv_capture", {}).get("bet_type") == "game"
+        and h.get("clv_capture", {}).get("clv_points") is not None
+    ]
+    _clv_avg_game_top = round(sum(_game_clv_pts) / len(_game_clv_pts), 2) if _game_clv_pts else 0.0
+    _clv_n_game_top = len(_game_clv_pts)
 
     _wr_c = "#22c55e" if _win_rate_top>=52.4 else "#e04040"
     _wr_b = "34,197,94" if _win_rate_top>=52.4 else "224,64,64"
-    _cl_c = "#22c55e" if _clv_avg_top>0 else "#e04040"
-    _cl_b = "34,197,94" if _clv_avg_top>0 else "224,64,64"
+    _cl_c = "#22c55e" if _clv_avg_top_pct>0 else "#e04040" if _clv_n_top else "#6a7a8a"
+    _cl_b = "34,197,94" if _clv_avg_top_pct>0 else "224,64,64" if _clv_n_top else "106,122,138"
     st.markdown(f"""
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px;">
         <div class="command-card"><div class="command-value">{_total_props}</div><div class="command-label">Props Loaded</div></div>
         <div class="command-card" style="border-color:rgba(245,197,24,0.35)"><div class="command-value" style="color:#f5c518">{_sov_all}</div><div class="command-label">Sovereign</div></div>
         <div class="command-card" style="border-color:rgba(30,144,255,0.35)"><div class="command-value" style="color:#4db8ff">+{_avg_edge}%</div><div class="command-label">Avg Edge</div></div>
         <div class="command-card" style="border-color:rgba({_wr_b},0.35)"><div class="command-value" style="color:{_wr_c}">{_win_rate_top}%</div><div class="command-label">Win Rate L20</div></div>
-        <div class="command-card" style="border-color:rgba({_cl_b},0.35)"><div class="command-value" style="color:{_cl_c}">{_clv_avg_top:+.2f}</div><div class="command-label">CLV Avg L20</div></div>
+        <div class="command-card" style="border-color:rgba({_cl_b},0.35)"><div class="command-value" style="color:{_cl_c}">{f"{_clv_avg_top_pct:+.2f}%" if _clv_n_top else "—"}</div><div class="command-label">CLV Avg{f" (n={_clv_n_top})" if _clv_n_top else ""}</div></div>
         <div class="command-card" style="border-color:rgba(245,197,24,0.35)"><div class="command-value" style="color:#f5c518">{_bi_top.get("label","1.00x")}</div><div class="command-label">Bankroll Mult</div></div>
     </div>
     """, unsafe_allow_html=True)
+    if _clv_n_game_top:
+        st.caption(f"Game-line CLV avg: {_clv_avg_game_top:+.2f}pts (n={_clv_n_game_top}, points not percent -- different unit from prop CLV above)")
+
+    # Market Climate -- "is the market moving today," visible on page load
+    # without triggering a board fetch. Uses game_board_snapshots (the
+    # headless twice-daily generator, scripts/game_board_snapshot_headless.py)
+    # directly from Gist rather than the in-session steam/RLM detection
+    # inside analyze_game_edge(), which only exists after a full per-sport
+    # board load.
+    try:
+        _climate_snaps = load_from_gist("game_board_snapshots", None) or {}
+        _climate = compute_market_climate(_climate_snaps)
+        if _climate["verdict"] == "No data yet today":
+            st.caption("📡 Market Climate: no headless snapshot yet today — check back after the next scheduled run (15:00 / 20:00 UTC).")
+        elif _climate["verdict"] == "Quiet":
+            st.caption(f"📡 Market Climate: Quiet — {_climate['n_snapshots_today']} snapshot(s) today ({', '.join(_climate['sports_covered'])}), no meaningful edge movement yet.")
+        else:
+            _top_movers = ", ".join(
+                f"{m['matchup']} {m['market']} ({m['edge_am']:+.1%}→{m['edge_pm']:+.1%}, {m['tier_am']}→{m['tier_pm']})"
+                for m in _climate["movers"][:3]
+            )
+            st.warning(f"📡 Market Climate: **Moving** — {_top_movers}")
+    except Exception:
+        pass
 
     st.markdown("---")
 
@@ -19040,6 +19185,7 @@ with tabs[2]:
                             "timestamp": st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "prob": 0.5 + _pk["edge"] / 2,
                             "wager": 0,
+                            "clv_capture": _capture_clv_placement_game(_matchup, _pk["label"], _pk["pick"], _pk["line"]),
                         }
                         st.session_state.locks.append(_new_game_lock)
                         try:
@@ -20024,7 +20170,7 @@ with tabs[3]:
                                             win_is_home = home_score > away_score
                                             outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
                                         if outcome:
-                                            log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"))
+                                            log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture"))
                                             if lock in st.session_state.locks: st.session_state.locks.remove(lock)
                                             resolved += 1
                                             game_resolved += 1
@@ -21773,10 +21919,17 @@ with tabs[4]:
             st.markdown("**Biggest losses today:**")
             for tl in _pm["top_losses"]:
                 _prob_str = f" · modeled {tl['prob']}% win prob" if "prob" in tl else ""
-                _clv_str = f" · {tl['clv_tag']} ({tl['clv_pct']:+.1f}% vs close)" if "clv_tag" in tl else ""
+                if "clv_pct" in tl:
+                    _clv_str = f" · {tl['clv_tag']} ({tl['clv_pct']:+.1f}% vs close)"
+                elif "clv_points" in tl:
+                    _clv_str = f" · {tl['clv_tag']} ({tl['clv_points']:+.1f}pts vs close)"
+                else:
+                    _clv_str = ""
                 st.caption(f"{tl['label']} ({tl['sport']}, {tl['bet_type']}, {tl['tier']}): {tl['net']:+.1f}u{_prob_str}{_clv_str}")
         if _pm["n_clv_resolved"]:
-            st.caption(f"Avg CLV today: {_pm['avg_clv']:+.2f}% ({_pm['n_clv_resolved']} of {_pm['n']} picks with a resolved closing line)")
+            st.caption(f"Avg prop CLV today: {_pm['avg_clv']:+.2f}% ({_pm['n_clv_resolved']} of {_pm['n']} picks with a resolved closing line)")
+        if _pm["n_clv_resolved_game"]:
+            st.caption(f"Avg game-line CLV today: {_pm['avg_clv_points']:+.2f}pts ({_pm['n_clv_resolved_game']} of {_pm['n']} picks with a resolved closing line)")
     else:
         st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
 

@@ -3411,28 +3411,51 @@ def generate_post_mortem(history, target_date=None):
         if h.get("has_real_prob"):
             entry["prob"] = round(h.get("prob", 0) * 100, 1)
         # CLV process tag -- only when resolve_clv_records() has actually
-        # filled in clv_vs_novig for this record (real closing-line
-        # comparison, not a guess). Positive = market moved toward you /
-        # you beat the close (bad break, not bad process). Negative = the
-        # close moved away from you (the market saw something your entry
-        # missed). Most records won't have this yet -- the placement
-        # snapshot that makes this resolvable was only wired up 2026-07-13
-        # and only applies going forward, not to historical bets.
+        # filled in a real closing-line comparison for this record.
+        # Positive = market moved toward you / you beat the close (bad
+        # break, not bad process). Negative = the close moved away from
+        # you (the market saw something your entry missed). Props use a
+        # no-vig probability percent (clv_vs_novig); games use points
+        # (clv_points) since there's no equivalent single probability for
+        # a spread/total in the data this app collects -- shown in
+        # whichever unit is real for that bet_type, never converted into
+        # a fake shared unit. Most records won't have this yet -- the
+        # placement snapshot that makes this resolvable was only wired up
+        # 2026-07-13 (props) / same day (games), and only applies going
+        # forward, not to historical bets.
         _clv = h.get("clv_capture", {})
-        if _clv.get("clv_resolved") and _clv.get("clv_vs_novig") is not None:
-            _cv = _clv["clv_vs_novig"]
-            entry["clv_tag"] = "VARIANCE" if _cv >= 0 else "PROCESS"
-            entry["clv_pct"] = round(_cv * 100, 1)
+        if _clv.get("clv_resolved"):
+            if _clv.get("bet_type") == "game" and _clv.get("clv_points") is not None:
+                _cp = _clv["clv_points"]
+                entry["clv_tag"] = "VARIANCE" if _cp >= 0 else "PROCESS"
+                entry["clv_points"] = _cp
+            elif _clv.get("clv_vs_novig") is not None:
+                _cv = _clv["clv_vs_novig"]
+                entry["clv_tag"] = "VARIANCE" if _cv >= 0 else "PROCESS"
+                entry["clv_pct"] = round(_cv * 100, 1)
         top_losses.append(entry)
 
-    # Day-level CLV summary -- same gating: only present when at least one
-    # bet this day actually has a resolved closing-line comparison.
+    # Day-level CLV summary -- percent (props) and points (games) kept
+    # separate rather than averaged together, since they're not the same
+    # unit. Same gating: only present when at least one bet this day
+    # actually has a resolved closing-line comparison of that kind.
     _clv_resolved_today = [
         h.get("clv_capture", {}).get("clv_vs_novig") for h in day_bets
-        if h.get("clv_capture", {}).get("clv_resolved") and h.get("clv_capture", {}).get("clv_vs_novig") is not None
+        if h.get("clv_capture", {}).get("clv_resolved")
+        and h.get("clv_capture", {}).get("bet_type") != "game"
+        and h.get("clv_capture", {}).get("clv_vs_novig") is not None
     ]
     avg_clv = round(sum(_clv_resolved_today) / len(_clv_resolved_today) * 100, 2) if _clv_resolved_today else None
     n_clv_resolved = len(_clv_resolved_today)
+
+    _clv_resolved_today_game = [
+        h.get("clv_capture", {}).get("clv_points") for h in day_bets
+        if h.get("clv_capture", {}).get("clv_resolved")
+        and h.get("clv_capture", {}).get("bet_type") == "game"
+        and h.get("clv_capture", {}).get("clv_points") is not None
+    ]
+    avg_clv_points = round(sum(_clv_resolved_today_game) / len(_clv_resolved_today_game), 2) if _clv_resolved_today_game else None
+    n_clv_resolved_game = len(_clv_resolved_today_game)
 
     # Signal performance for the day
     SIGNAL_KEYS = {
@@ -3540,6 +3563,8 @@ def generate_post_mortem(history, target_date=None):
         "top_losses":  top_losses,
         "avg_clv":       avg_clv,
         "n_clv_resolved": n_clv_resolved,
+        "avg_clv_points": avg_clv_points,
+        "n_clv_resolved_game": n_clv_resolved_game,
         "failing":     [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in failing[:3]],
         "succeeding":  [(k, round(v["net"],2), v["wins"], v["losses"]) for k,v in succeeding[:3]],
         "tier_breakdown": {k: {"net": round(v["net"],2), "wr": f"{v['wins']/(v['wins']+v['losses']):.0%}" if (v['wins']+v['losses'])>0 else "—", "untracked": v["untracked"]}
@@ -6273,11 +6298,70 @@ def compute_market_anchored_fair_line(raw_l20_avg, observed_line, stat, n_games=
 
     fair_line = float(observed_line) + base_delta * (1 - uncertainty_penalty)
 
+def compute_market_climate(game_snapshots: dict, target_date: str = None) -> dict:
+    """
+    "Is the market moving today?" without requiring a board load.
+
+    Deliberately scoped: this is NOT the full steam/RLM/market-maker-
+    divergence detection already computed inside analyze_game_edge()
+    (_steam_signals, _mkt_divergence, _rlm_score in app.py) -- that lives
+    entirely in st.session_state, requires a full per-sport data load
+    (load_sport_data, which fires dozens of scraper calls), and is only
+    ever computed for whichever sport is currently selected in the UI.
+    This uses game_board_snapshots (scripts/game_board_snapshot_headless.py,
+    added 2026-07-13, runs on its own schedule twice daily independent of
+    anyone opening the app) instead: compares the day's earliest and
+    latest snapshot per sport, matchup by matchup, and flags where the
+    modeled edge moved meaningfully between runs. That's a real, if
+    coarser, signal -- available on page load, no board fetch required --
+    not a substitute for the full in-session steam detection once a board
+    IS loaded.
+
+    Returns:
+      n_snapshots_today, sports_covered: coverage of today's headless runs
+      movers: [{matchup, market, sport, edge_am, edge_pm, delta, tier_am, tier_pm}, ...]
+        for matchups present in both the day's first and last snapshot
+        per sport, sorted by |delta| descending
+      verdict: short label -- "Quiet", "Moving", or "No data yet today"
+    """
+    if target_date is None:
+        target_date = date.today().strftime("%Y-%m-%d")
+    day_snaps = {k: v for k, v in (game_snapshots or {}).items() if v.get("date") == target_date}
+    if not day_snaps:
+        return {"n_snapshots_today": 0, "sports_covered": [], "movers": [], "verdict": "No data yet today"}
+
+    by_sport = {}
+    for snap in day_snaps.values():
+        by_sport.setdefault(snap.get("sport", "?"), []).append(snap)
+
+    movers = []
+    for sport, snaps in by_sport.items():
+        if len(snaps) < 2:
+            continue
+        snaps.sort(key=lambda s: s.get("timestamp", ""))
+        first, last = snaps[0], snaps[-1]
+        first_picks = {(p.get("matchup",""), p.get("market","")): p for p in first.get("picks", [])}
+        last_picks  = {(p.get("matchup",""), p.get("market","")): p for p in last.get("picks", [])}
+        for key, lp in last_picks.items():
+            fp = first_picks.get(key)
+            if not fp:
+                continue
+            delta = round((lp.get("edge",0) or 0) - (fp.get("edge",0) or 0), 4)
+            if abs(delta) < 0.02:
+                continue
+            movers.append({
+                "matchup": key[0], "market": key[1], "sport": sport,
+                "edge_am": round(fp.get("edge",0) or 0, 4), "edge_pm": round(lp.get("edge",0) or 0, 4),
+                "delta": delta, "tier_am": fp.get("tier",""), "tier_pm": lp.get("tier",""),
+            })
+    movers.sort(key=lambda m: abs(m["delta"]), reverse=True)
+
+    verdict = "Moving" if any(abs(m["delta"]) >= 0.04 for m in movers) else ("Quiet" if day_snaps else "No data yet today")
     return {
-        "fair_line": round(fair_line, 2),
-        "edge_vs_open": round(fair_line - float(observed_line), 2),
-        "uncertainty_penalty": uncertainty_penalty,
-        "pre_risk": round(pre_risk, 2),
-        "bias_applied": bias,
+        "n_snapshots_today": len(day_snaps),
+        "sports_covered": sorted(by_sport.keys()),
+        "movers": movers[:8],
+        "verdict": verdict,
     }
+
 

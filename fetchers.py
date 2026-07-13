@@ -2964,9 +2964,12 @@ def record_pinnacle_game_line(lock, pinnacle_lines):
         "sport": lock.get("sport", ""), "tier": lock.get("tier", ""),
         "positive": clv > 0, "bet_type": "game",
     }
-    existing = load_json_data(PINNACLE_LINES_PATH, [])
+    existing = load_from_gist("pinnacle_lines", None)
+    if existing is None:
+        existing = load_json_data(PINNACLE_LINES_PATH, [])
     existing.append(record)
     save_json_data(PINNACLE_LINES_PATH, existing)
+    save_to_gist("pinnacle_lines", existing)
     return round(clv, 1)
 
 
@@ -3004,9 +3007,12 @@ def record_pinnacle_line(lock, props_data):
         "tier": lock.get("tier", ""),
         "positive": pinnacle_clv > 0,
     }
-    existing = load_json_data(PINNACLE_LINES_PATH, [])
+    existing = load_from_gist("pinnacle_lines", None)
+    if existing is None:
+        existing = load_json_data(PINNACLE_LINES_PATH, [])
     existing.append(record)
     save_json_data(PINNACLE_LINES_PATH, existing)
+    save_to_gist("pinnacle_lines", existing)
     return round(pinnacle_clv, 1)
 
 def get_nfl_weather(team_abbr):
