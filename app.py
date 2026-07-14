@@ -7154,18 +7154,28 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
     public_data = st.session_state.get("public_betting_data", {})
     game_public = None
 
-    def _team_matches_abbr(full_name, abbr, sport_key):
-        # Action Network stores 2-3 letter abbreviations (TB, MIL, PIT), not
-        # full team names, so exact `full_name in [abbrs]` membership only
-        # coincidentally matched — that's why only one team out of an
-        # entire slate was ever showing data. Uses the same validated
-        # abbreviation table as fetch_game_lines' ESPN matching, looked up
-        # by sport (abbreviations collide across leagues: "TB" is Rays in
-        # MLB, Buccaneers in NFL).
-        if not full_name or not abbr:
+    def _team_matches_abbr(espn_abbr, an_abbr, sport_key):
+        # home_team/away_team (passed in as espn_abbr here) are ESPN's own
+        # short abbreviation (fetch_game_lines stores
+        # competitor["team"]["abbreviation"], not a full team name) -- so
+        # comparing them against an Action Network abbreviation requires
+        # resolving BOTH sides through the same fragment table and checking
+        # they land on the same team, not checking whether one is a
+        # substring of the other (a short code can never contain a long
+        # fragment string, so that check silently failed for every game,
+        # on every sport -- not just the specific one currently under
+        # investigation).
+        if not espn_abbr or not an_abbr:
             return False
-        fragment = TEAM_ABBREV_TO_FRAGMENT.get(sport_key, {}).get(abbr.upper(), "")
-        return bool(fragment) and fragment.lower() in full_name.lower()
+        frag_table = TEAM_ABBREV_TO_FRAGMENT.get(sport_key, {})
+        espn_frag = frag_table.get(espn_abbr.upper(), "")
+        an_frag   = frag_table.get(an_abbr.upper(), "")
+        if espn_frag and an_frag:
+            return espn_frag == an_frag
+        # Either side's abbreviation wasn't in the table (e.g. a sport/code
+        # combo not yet mapped) -- fall back to direct abbreviation equality
+        # rather than silently returning no match.
+        return espn_abbr.upper() == an_abbr.upper()
 
     for key, val in public_data.items():
         teams = val.get("teams", [])
