@@ -7203,26 +7203,16 @@ def fetch_rotowire_injuries(sport):
     injuries.update(underdog_injuries)
     return injuries
 
-def fetch_public_betting(sport):
-    sport_slug = ACTION_NETWORK_SPORT_MAP.get(sport)
-    if not sport_slug:
-        return {}
-    allowed, reason = api_budget_check("ACTION_NETWORK")
-    if not allowed:
-        return {}
-    cache_path = os.path.join(CACHE_DIR, f"public_betting_{sport}.pkl")
-    if os.path.exists(cache_path):
-        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
-        if age_mins < 5:
-            return _safe_load_pkl(cache_path)
-    today = date.today().strftime("%Y%m%d")
-    url = f"{ACTION_NETWORK_BASE}/{sport_slug}?bookIds={ACTION_NETWORK_BOOK_IDS}&date={today}&periods=event"
-    an_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Origin": "https://www.actionnetwork.com",
-        "Referer": "https://www.actionnetwork.com/",
-    }
+def _fetch_public_betting_for_date(sport, sport_slug, date_str, an_headers):
+    """
+    Fetches and parses Action Network public-betting data for a single
+    calendar date (YYYYMMDD). Split out of fetch_public_betting() so the
+    caller can query multiple dates and merge -- see comment there for why.
+    Returns a dict of {game_key: {...}} same as fetch_public_betting(), or
+    {} on any failure (never raises, so a bad second-date call can't drop
+    a good first-date result).
+    """
+    url = f"{ACTION_NETWORK_BASE}/{sport_slug}?bookIds={ACTION_NETWORK_BOOK_IDS}&date={date_str}&periods=event"
     try:
         resp = _http.get(url, headers=an_headers, timeout=15)
         api_budget_increment("ACTION_NETWORK")
@@ -7392,12 +7382,53 @@ def fetch_public_betting(sport):
                 "rlm_signals":   rlm_signals,
                 "has_sharp": len(sharp_signals) > 0,
             }
-        if public_betting:
-            with open(cache_path, "wb") as f:
-                pickle.dump(public_betting, f)
         return public_betting
-    except (KeyError, TypeError, ValueError) as e:
+    except (KeyError, TypeError, ValueError):
         return {}
+
+
+def fetch_public_betting(sport):
+    sport_slug = ACTION_NETWORK_SPORT_MAP.get(sport)
+    if not sport_slug:
+        return {}
+    allowed, reason = api_budget_check("ACTION_NETWORK")
+    if not allowed:
+        return {}
+    cache_path = os.path.join(CACHE_DIR, f"public_betting_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 5:
+            return _safe_load_pkl(cache_path)
+    an_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://www.actionnetwork.com",
+        "Referer": "https://www.actionnetwork.com/",
+    }
+    today_str = date.today().strftime("%Y%m%d")
+    public_betting = _fetch_public_betting_for_date(sport, sport_slug, today_str, an_headers)
+    # Also pull tomorrow's date and merge in any games not already covered.
+    # The server clock here runs UTC (Streamlit Cloud), but Action Network
+    # buckets games by US Eastern slate day. A late-night West Coast game
+    # (e.g. a 10pm ET WNBA tip) can therefore land in AN's "tomorrow"
+    # bucket while every earlier game that same night is still "today" --
+    # that mismatch is why only one of two same-night games was ever
+    # showing public-betting data. Merging both dates closes that gap;
+    # `today_str`'s entries take priority since they're the more precise
+    # match, tomorrow's are only added if that game_key wasn't already found.
+    try:
+        tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+        tomorrow_betting = _fetch_public_betting_for_date(sport, sport_slug, tomorrow_str, an_headers)
+        for _gk, _gv in tomorrow_betting.items():
+            if _gk not in public_betting:
+                public_betting[_gk] = _gv
+    except Exception:
+        pass
+    if public_betting:
+        with open(cache_path, "wb") as f:
+            pickle.dump(public_betting, f)
+    return public_betting
+
 
 def fetch_game_lines(sport):
     if sport not in ["NBA", "MLB", "NFL", "NHL", "WNBA"]:
@@ -16616,57 +16647,66 @@ def fetch_propswap_from_gist(sport: str) -> tuple:
     return {}, "unavailable"
 
 
-def get_harvester_status() -> dict:
+def get_harvester_status(sport: str = "MLB") -> dict:
     """
     Real-time status of ALL browser harvesters.
     Returns dict: {source_name: {active, age_minutes, source, warning}}
     Shown in BetCouncil sidebar — tells you exactly which sources are live vs stale.
+
+    BUG FIX (2026-07): every filename below used to be hardcoded to "_MLB"
+    regardless of which sport's board was actually loaded -- so loading a
+    WNBA (or NBA/NFL/NHL) board always checked MLB's harvester gist files,
+    which are legitimately empty/stale outside MLB season/slate, making
+    every sport-specific harvester (FanDuel props, BetMGM props, DraftKings
+    props, Unabated, Action Network, Covers, etc.) permanently show
+    "Pending — load a board to activate" no matter how many boards were
+    loaded. Now takes the current sport and checks that sport's files.
     """
     checks = [
         ("Scanbet (Pinnacle drops)",    "betcouncil_scanbet_drops.json",     10),
         ("EVSharps JWT",                "betcouncil_tokens.json",             55),
         ("Caesars WAF",                 "betcouncil_caesars_tokens.json",     22),
-        ("FanDuel props",               "betcouncil_fd_props_MLB.json",       28),
-        ("BetMGM props",                "betcouncil_mgm_props_MLB.json",      28),
-        ("Action Network",              "betcouncil_actionnetwork_MLB.json",  18),
-        ("Covers.com consensus",        "betcouncil_covers_MLB.json",         22),
-        ("DraftKings props",            "betcouncil_dk_props_MLB.json",       22),
-        ("Unabated sharp lines",        "betcouncil_unabated_MLB.json",       32),
-        ("Unabated props (PrizePicks)", "betcouncil_unabated_prizepicks_MLB.json", 180),
-        ("Unabated props (Underdog)",   "betcouncil_unabated_underdog_MLB.json",   180),
-        ("Unabated props (Pick6)",      "betcouncil_unabated_pick6_MLB.json",      180),
-        ("OddsJam +EV",                 "betcouncil_oddsjam_MLB.json",        22),
-        ("PrizePicks props",             "betcouncil_prizepicks_MLB.json",     22),
-        ("MyBookie lines",               "betcouncil_mybookie_MLB.json",       28),
-        ("ParlaySavant +EV",             "betcouncil_parlaysavant_MLB.json",   22),
-        ("Bet365 lines",                 "betcouncil_bet365_MLB.json",         28),
-        ("SportsInsights steam",         "betcouncil_sportsinsights_MLB.json", 18),
-        ("OddsShark consensus",          "betcouncil_oddsshark_MLB.json",      22),
-        ("VegasInsider lines",           "betcouncil_vegasinsider_MLB.json",   22),
-        ("Props.cash cross-book",        "betcouncil_propscash_MLB.json",      22),
+        ("FanDuel props",               f"betcouncil_fd_props_{sport}.json",       28),
+        ("BetMGM props",                f"betcouncil_mgm_props_{sport}.json",      28),
+        ("Action Network",              f"betcouncil_actionnetwork_{sport}.json",  18),
+        ("Covers.com consensus",        f"betcouncil_covers_{sport}.json",         22),
+        ("DraftKings props",            f"betcouncil_dk_props_{sport}.json",       22),
+        ("Unabated sharp lines",        f"betcouncil_unabated_{sport}.json",       32),
+        ("Unabated props (PrizePicks)", f"betcouncil_unabated_prizepicks_{sport}.json", 180),
+        ("Unabated props (Underdog)",   f"betcouncil_unabated_underdog_{sport}.json",   180),
+        ("Unabated props (Pick6)",      f"betcouncil_unabated_pick6_{sport}.json",      180),
+        ("OddsJam +EV",                 f"betcouncil_oddsjam_{sport}.json",        22),
+        ("PrizePicks props",             f"betcouncil_prizepicks_{sport}.json",     22),
+        ("MyBookie lines",               f"betcouncil_mybookie_{sport}.json",       28),
+        ("ParlaySavant +EV",             f"betcouncil_parlaysavant_{sport}.json",   22),
+        ("Bet365 lines",                 "betcouncil_bet365_games.json",       28),
+        ("SportsInsights steam",         f"betcouncil_sportsinsights_{sport}.json", 18),
+        ("OddsShark consensus",          f"betcouncil_oddsshark_{sport}.json",      22),
+        ("VegasInsider lines",           f"betcouncil_vegasinsider_{sport}.json",   22),
+        ("Props.cash cross-book",        f"betcouncil_propscash_{sport}.json",      22),
         ("BaseballPress lineups",        "betcouncil_baseballpress.json",       18),
-        ("BettingPros consensus",        "betcouncil_bettingpros_MLB.json",    22),
-        ("Stokastic DFS proj",           "betcouncil_stokastic_MLB.json",      32),
-        ("RotoGrinders ownership",       "betcouncil_rotogrinders_MLB.json",   32),
-        ("OddsPortal history",           "betcouncil_oddsportal_MLB.json",     65),
-        ("Outlier +EV",                  "betcouncil_outlier_MLB.json",        22),
-        ("Smarkets exchange",            "betcouncil_smarkets_MLB.json",       28),
-        ("Pickwise props",               "betcouncil_pickwise_MLB.json",       22),
-        ("Weather data",                 "betcouncil_weather_MLB.json",        65),
-        ("ScoresAndOdds %",              "betcouncil_scoresandodds_MLB.json",  18),
-        ("Kalshi markets",               "betcouncil_kalshi2_MLB.json",        32),
-        ("Pregame sharp plays",          "betcouncil_pregame_MLB.json",        32),
-        ("FantasyLabs ownership",        "betcouncil_fantasylabs_MLB.json",    32),
-        ("Rotowire injuries",            "betcouncil_rotowire_MLB.json",       18),
-        ("NumberFire projections",       "betcouncil_numberfire_MLB.json",     32),
-        ("Pickswise expert picks",       "betcouncil_pickswise_MLB.json",      32),
-        ("BetUS props",                  "betcouncil_betus_MLB.json",          28),
-        ("Bet105 lines",                 "betcouncil_bet105_MLB.json",         28),
-        ("BetWhale lines",               "betcouncil_betwhale_MLB.json",       28),
-        ("Ybets lines",                  "betcouncil_ybets_MLB.json",          28),
-        ("Zamba lines",                  "betcouncil_zamba_MLB.json",          28),
-        ("EVBets +EV feed",              "betcouncil_evbets_MLB.json",         22),
-        ("EVBets props +EV",             "betcouncil_evbets_props_MLB.json",   22),
+        ("BettingPros consensus",        f"betcouncil_bettingpros_{sport}.json",    22),
+        ("Stokastic DFS proj",           f"betcouncil_stokastic_{sport}.json",      32),
+        ("RotoGrinders ownership",       f"betcouncil_rotogrinders_{sport}.json",   32),
+        ("OddsPortal history",           f"betcouncil_oddsportal_{sport}.json",     65),
+        ("Outlier +EV",                  f"betcouncil_outlier_{sport}.json",        22),
+        ("Smarkets exchange",            f"betcouncil_smarkets_{sport}.json",       28),
+        ("Pickwise props",               f"betcouncil_pickwise_{sport}.json",       22),
+        ("Weather data",                 f"betcouncil_weather_{sport}.json",        65),
+        ("ScoresAndOdds %",              f"betcouncil_scoresandodds_{sport}.json",  18),
+        ("Kalshi markets",               f"betcouncil_kalshi2_{sport}.json",        32),
+        ("Pregame sharp plays",          f"betcouncil_pregame_{sport}.json",        32),
+        ("FantasyLabs ownership",        f"betcouncil_fantasylabs_{sport}.json",    32),
+        ("Rotowire injuries",            f"betcouncil_rotowire_{sport}.json",       18),
+        ("NumberFire projections",       f"betcouncil_numberfire_{sport}.json",     32),
+        ("Pickswise expert picks",       f"betcouncil_pickswise_{sport}.json",      32),
+        ("BetUS props",                  f"betcouncil_betus_{sport}.json",          28),
+        ("Bet105 lines",                 f"betcouncil_bet105_{sport}.json",         28),
+        ("BetWhale lines",               f"betcouncil_betwhale_{sport}.json",       28),
+        ("Ybets lines",                  f"betcouncil_ybets_{sport}.json",          28),
+        ("Zamba lines",                  f"betcouncil_zamba_{sport}.json",          28),
+        ("EVBets +EV feed",              f"betcouncil_evbets_{sport}.json",         22),
+        ("EVBets props +EV",             f"betcouncil_evbets_props_{sport}.json",   22),
     ]
     from datetime import datetime, timezone
     status = {}

@@ -5834,6 +5834,44 @@ def _show_team_exposure_warning(team: str, sport: str):
         pass
 
 
+def _lock_board_prop(prop: dict, sport: str, source: str) -> bool:
+    """
+    Shared "lock this prop" action -- appends to st.session_state.locks,
+    captures Pinnacle CLV at lock time, persists to disk + Gist, and shows
+    the team-exposure warning. Same behavior as the Full Board / Portfolio
+    Builder / EV Optimizer lock buttons, just factored out so new lock
+    buttons (e.g. Best Bet Queue) don't have to re-copy the ~15-line block.
+    Returns True if a new lock was added, False if this pick was already
+    locked (caller should show "Already locked" rather than duplicate it).
+    """
+    already = any(
+        normalize_name(l.get("player", "")) == normalize_name(prop.get("Player", "")) and
+        str(l.get("line", "")) == str(prop.get("Line", ""))
+        for l in st.session_state.get("locks", [])
+    )
+    if already:
+        return False
+    st.session_state.locks.append({
+        "player": prop.get("Player", ""), "prop": prop.get("Prop", ""),
+        "line": prop.get("Line", 0), "side": prop.get("Side", "OVER"),
+        "tier": prop.get("Tier", ""), "edge": prop.get("Edge", 0),
+        "sport": sport, "source": source,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "prob": prop.get("Prob", 0.5),
+        "team": prop.get("Team", ""),
+        "signal_values": _board_prop_signal_values(prop),
+        "clv_capture": _capture_clv_placement(prop.get("Player", ""), prop.get("Prop", ""), prop.get("Prob", 0.5)),
+    })
+    try:
+        record_pinnacle_line(st.session_state.locks[-1], st.session_state.get("board", []))
+    except Exception:
+        pass
+    save_json_data(LOCKS_PATH, st.session_state.locks)
+    save_to_gist("locks", st.session_state.locks)  # persists across restarts
+    _show_team_exposure_warning(prop.get("Team", ""), sport)
+    return True
+
+
 def _capture_clv_placement(player: str, prop: str, prob) -> dict:
     """
     CLV placement snapshot -- Pinnacle/Circa/consensus no-vig odds AT THE
@@ -9604,7 +9642,7 @@ def generate_gem_summary():
     # Harvester status
     try:
         from fetchers import get_harvester_status as _ghs
-        _hs = _ghs()
+        _hs = _ghs(sport)
         _h_active = sum(1 for v in _hs.values() if v.get("active"))
         lines.append(f"=== HARVESTER STATUS ({_h_active}/{len(_hs)} LIVE) ===")
         for _hn,_hv in _hs.items():
@@ -17356,11 +17394,30 @@ with tabs[0]:
                     + f'</div>',
                     unsafe_allow_html=True
                 )
-                with st.expander(f"Why this pick — {_qp.get('Player','')}", expanded=False):
-                    st.markdown(
-                        render_signal_chart(_qp, st.session_state.get("last_sport", SPORTS[0])),
-                        unsafe_allow_html=True
-                    )
+                _bbq_already_locked = any(
+                    normalize_name(l.get("player","")) == normalize_name(_qp.get("Player","")) and
+                    str(l.get("line","")) == str(_qp.get("Line",""))
+                    for l in st.session_state.get("locks", [])
+                )
+                _bbq_lock_col, _bbq_why_col = st.columns([1, 5])
+                with _bbq_lock_col:
+                    if _bbq_already_locked:
+                        st.caption("🔒 Locked")
+                    else:
+                        _bbq_lock_key = f"bbq_lock_{_qi}_{normalize_name(_qp.get('Player',''))[:20]}"
+                        if st.button("🔒 Lock", key=_bbq_lock_key, use_container_width=True):
+                            _bbq_sport = _qp.get("Sport", st.session_state.get("last_sport", SPORTS[0]))
+                            if _lock_board_prop(_qp, _bbq_sport, "Best Bet Queue"):
+                                st.success(f"Locked {_qp.get('Player','')} {_qp.get('Prop','')}")
+                                st.rerun()
+                            else:
+                                st.info("Already locked")
+                with _bbq_why_col:
+                    with st.expander(f"Why this pick — {_qp.get('Player','')}", expanded=False):
+                        st.markdown(
+                            render_signal_chart(_qp, st.session_state.get("last_sport", SPORTS[0])),
+                            unsafe_allow_html=True
+                        )
 
 
         # ═══════════════════════════════════════════════════
@@ -24564,7 +24621,7 @@ with tabs[10]:
     # ── Browser Harvester Status Panel ─────────────────────────────────────
     try:
         from fetchers import get_harvester_status as _get_hs
-        _hs       = _get_hs()
+        _hs       = _get_hs(st.session_state.get("last_sport", "NBA"))
         _h_active = sum(1 for v in _hs.values() if v.get("active"))
         _h_total  = len(_hs)
         _h_stale  = {k:v for k,v in _hs.items() if not v.get("active")}
