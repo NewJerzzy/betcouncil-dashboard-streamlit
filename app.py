@@ -5742,9 +5742,22 @@ def analyze_injury_performance():
     return results, len(injured)
 
 def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
-    """Backfill edge/tier/prob/signals for a manually-logged bet by matching it
-    against that day's saved board_snapshots (same data grade_board_snapshots_for_date
-    reads). Fixes two related root causes of signal_performance/history records
+    """Backfill edge/tier/prob/signals for a manually-logged bet.
+
+    Checks TWO sources, live board first:
+    (1) st.session_state.board_data -- the full, uncapped live board for
+        whatever sport is currently loaded. This is the primary path for
+        OCR/manual/paste entries logged same-day, which is the dominant
+        real-world workflow (bet placed externally, screenshotted, then
+        imported here after the fact) -- and unlike board_snapshots it
+        isn't capped to the top 30 picks/sport, so it actually covers
+        the specific player/prop someone bet.
+    (2) board_snapshots.json (Gist) -- the historical fallback, same data
+        grade_board_snapshots_for_date reads. Only useful for the exact
+        date+player+prop combination that happened to be in that day's
+        top-30 snapshot, and only goes back as far as snapshots exist.
+
+    Fixes two related root causes of signal_performance/history records
     being unusable for calibration: (1) edge/tier/prob defaulting to 0/None
     when manual/OCR/paste entry paths had no board context, and (2) EVERY
     signal_* flag in signal_performance showing 0 regardless of tier or
@@ -5752,14 +5765,34 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
     signals= kwarg, so signals_active was always computed from an empty dict
     (a dict with 8 False values, which is truthy, so the early-return guard
     in record_signal_performance never caught it either).
+
     Returns (edge, tier, prob, signals) or (None, None, None, None) if no match.
     """
+    p_norm = normalize_name(player) if player else ""
+    prop_norm = str(prop or "").strip().lower()
+    target_date = str(date_str)[:10]
+
+    # (1) Live board — only meaningful for today, since board_data reflects
+    # whatever is currently loaded, not a historical record.
+    if target_date == date.today().strftime("%Y-%m-%d"):
+        try:
+            _live_board = st.session_state.get("board_data") or []
+            for p in _live_board:
+                if sport and p.get("Sport") and p.get("Sport") != sport:
+                    continue
+                if normalize_name(p.get("Player", "")) != p_norm:
+                    continue
+                _p_prop = str(p.get("Prop", "")).strip().lower()
+                if prop_norm and _p_prop != prop_norm and prop_norm not in _p_prop:
+                    continue
+                return p.get("Edge"), p.get("Tier"), p.get("Prob"), _board_prop_signal_values(p)
+        except Exception:
+            pass
+
+    # (2) Historical snapshot fallback
     try:
-        target_date = str(date_str)[:10]
         stored = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
         day_snaps = {k: v for k, v in stored.items() if v.get("date") == target_date}
-        p_norm = normalize_name(player) if player else ""
-        prop_norm = str(prop or "").strip().lower()
         for snap in day_snaps.values():
             if sport and snap.get("sport") and snap.get("sport") != sport:
                 continue
