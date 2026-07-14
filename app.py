@@ -2644,15 +2644,36 @@ def compute_bankroll_multiplier(history=None, clv_data=None):
       1.00x — neutral / insufficient data
       0.75x — mild drift or negative CLV
       0.50x — significant drift or degraded calibration
+
+    BUG FIX (2026-07): two issues compounding on real data.
+    (1) "recent = resolved[-20:]" assumed list order tracks betting
+    chronology. It doesn't when Screenshot Import bulk-logs a batch of
+    already-resolved historical slips in one sitting -- those get
+    appended at upload time, not placement time. Checked the real
+    ledger: the actual "last 20" were 18 Screenshot Import bets (all
+    timestamped 2026-07-12/13 00:00, a placeholder time -- clearly one
+    bulk-import batch, not 20 bets placed in sequence) plus 2 auto-
+    resolved Bovada bets, producing a 35% "recent" win rate against a
+    54.3% all-time rate -- a -19.3% drift that reproduces the exact
+    number once cited as a real finding, for the same reason as the
+    compute_model_drift bug: the sample isn't what it claims to be.
+    Now explicitly sorts by timestamp before slicing.
+    (2) Included $0-wager (untracked-stake) bets in both the recent
+    window and the baseline. 61% of the real ledger has no wager logged
+    (auto-tracked picks, not staked) -- mixing them into a bankroll-
+    sizing signal doesn't reflect real betting performance. Now filters
+    to real-wager bets only, same principle as the CLV/post-mortem/ROI
+    fixes elsewhere.
     """
     if history is None:
         history = st.session_state.get("history", [])
     if clv_data is None:
         clv_data = load_json_data(CLV_PATH, [])
 
-    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS")]
+    resolved = [h for h in history if h.get("outcome") in ("WIN","LOSS") and h.get("wager")]
+    resolved.sort(key=lambda h: str(h.get("timestamp","")))
     if len(resolved) < 10:
-        return {"multiplier": 1.0, "reason": "Insufficient data (<10 bets)", "label": "1.00x"}
+        return {"multiplier": 1.0, "reason": "Insufficient real-stake data (<10 staked bets)", "label": "1.00x"}
 
     # Recent ROI (last 20)
     recent = resolved[-20:]
