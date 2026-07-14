@@ -3980,6 +3980,15 @@ def extract_ev_props(ev_data, book_key="hr", sport_filter=None):
             if sport_filter and inferred_sport != sport_filter.lower():
                 continue
 
+            # No resolvable player name for this item -- previously
+            # defaulted to the literal string "Unknown" and nothing
+            # downstream filtered it out, so it rode straight through to
+            # the board as a player named "Unknown" for whatever sport
+            # happened to be loading. A prop with no player isn't
+            # bettable, so skip it instead of fabricating a name.
+            if not item.get("player") or not str(item.get("player")).strip():
+                continue
+
             # FIX: bookOdds values are strings ("325") or "over/under" strings ("300/-595")
             # NOT dicts — the old book_odds.get("odds") was always raising AttributeError
             o_odds, u_odds = _parse_ev_odds(item["bookOdds"][book_key])
@@ -3993,7 +4002,7 @@ def extract_ev_props(ev_data, book_key="hr", sport_filter=None):
                 stat_line = None
 
             prop = {
-                "player": item.get("player", "Unknown"),
+                "player": item.get("player", ""),
                 "team": item.get("team", ""),
                 "prop": item.get("prop", ""),
                 "line": stat_line,          # stat threshold (e.g. 0.5 HRs)

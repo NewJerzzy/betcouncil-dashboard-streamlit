@@ -5248,7 +5248,16 @@ def extract_ev_props_for_app(ev_data, sport_filter=None):
             handicap  = item.get("handicap")
             try: stat_line = float(handicap) if handicap is not None else None
             except: stat_line = None
-            player_raw  = item.get("player", "Unknown")
+            player_raw  = item.get("player", "")
+            if not player_raw or not str(player_raw).strip():
+                # No resolvable player name for this item -- previously
+                # defaulted to the literal string "Unknown" and nothing
+                # downstream filtered it, so every book's odds row for
+                # this item rode onto the board as a player named
+                # "Unknown" (same shared function for every sport, which
+                # is why it showed up regardless of sport). A prop with
+                # no player attached isn't bettable, so skip it instead.
+                continue
             player_norm = normalize_name(player_raw)
             sig_key     = (player_norm, prop_name)
 
