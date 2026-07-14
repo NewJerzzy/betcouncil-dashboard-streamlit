@@ -1715,7 +1715,7 @@ TEAM_ABBREV_TO_FRAGMENT = {
         "LAA":"Los Angeles Angels","LAD":"Los Angeles Dodgers",
         "MIA":"Miami","MIL":"Milwaukee","MIN":"Minnesota",
         "NYM":"New York Mets","NYY":"New York Yankees",
-        "OAK":"Oakland","ATH":"Athletics",
+        "OAK":"Athletics","ATH":"Athletics",
         "PHI":"Philadelphia","PIT":"Pittsburgh",
         "SD":"San Diego","SEA":"Seattle","SF":"San Francisco",
         "STL":"St. Louis","TB":"Tampa Bay","TEX":"Texas",
@@ -1750,6 +1750,7 @@ TEAM_ABBREV_TO_FRAGMENT = {
     },
     "NHL": {
         "TBL":"Tampa Bay Lightning","TOR":"Toronto",
+        "UTA":"Utah Mammoth","UTAH":"Utah Mammoth",
         "WSH":"Washington Capitals","NJD":"New Jersey",
         "LAK":"Los Angeles Kings","SJS":"San Jose",
         "CBJ":"Columbus","VGK":"Vegas Golden",
