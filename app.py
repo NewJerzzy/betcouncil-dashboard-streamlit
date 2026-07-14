@@ -1204,6 +1204,8 @@ CALIBRATION_PATH = os.path.join(CACHE_DIR, "calibration.json")
 CLV_PATH = os.path.join(CACHE_DIR, "clv_tracking.json")
 PINNACLE_LINES_PATH = os.path.join(CACHE_DIR, "pinnacle_lines.json")
 INJURY_PERFORMANCE_PATH = os.path.join(CACHE_DIR, "injury_performance.json")
+WEIGHT_OVERRIDES_PATH = os.path.join(CACHE_DIR, "weight_overrides.json")
+WEIGHT_ADJUSTMENT_LOG_PATH = os.path.join(CACHE_DIR, "weight_adjustment_log.json")
 LINE_MOVEMENT_PATH = os.path.join(CACHE_DIR, "line_movement.json")
 SHARP_PATH = os.path.join(CACHE_DIR, "sharp_flags.json")
 SIGNAL_PERFORMANCE_PATH = os.path.join(CACHE_DIR, "signal_performance.json")
@@ -1973,7 +1975,7 @@ def check_daily_risk_limits(sport=None):
 _GIST_BATCH_WINDOW = 5.0  # seconds
 
 # Keys that must be flushed immediately rather than held in the batch window.
-_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status"})
+_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status", "weight_overrides", "weight_adjustment_log"})
 # "locks" added 2026-07: WIN/LOSS/VOID slip buttons remove a lock from
 # st.session_state immediately, then call save_to_gist("locks", ...) — but
 # as a non-critical key that write was only QUEUED, flushed up to 5s later.
@@ -6244,6 +6246,31 @@ def compute_signal_stability(performance_data=None, window_days=30):
     return results, len(resolved)
 
 
+def get_effective_signal_weights(sport):
+    """
+    SPORT_SIGNAL_WEIGHTS[sport] with any auto-applied weight adjustments
+    layered on top (see 'Weight Adjustment Recommendations' in History >
+    Weekly). Adjustments only reach WEIGHT_OVERRIDES_PATH after clearing a
+    95% Wilson confidence interval vs. coin-flip on 30+ bets for that
+    signal, and are clamped here to +/-30% of the hand-tuned base value
+    as a second safety net regardless of what's stored.
+    """
+    base = dict(SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]))
+    try:
+        overrides = load_json_data(WEIGHT_OVERRIDES_PATH, {}, mem_ttl=60)
+    except Exception:
+        overrides = {}
+    sport_overrides = overrides.get(sport, {}) if isinstance(overrides, dict) else {}
+    for key, new_val in sport_overrides.items():
+        if key in base:
+            try:
+                lo, hi = base[key] * 0.7, base[key] * 1.3
+                base[key] = round(max(lo, min(hi, float(new_val))), 4)
+            except (TypeError, ValueError):
+                pass
+    return base
+
+
 def compute_optimized_weights(sport):
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     sport_data = [p for p in performance if p.get("sport") == sport and p.get("outcome") in ("WIN", "LOSS")]
@@ -6258,7 +6285,7 @@ def compute_optimized_weights(sport):
         "signal_usage_boost":      "usage",  # FIX: was incorrectly mapped to "pace"
         "signal_sharp_flag":       "pace",   # sharp money correlates with pace/volume bets
     }
-    base_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]).copy()
+    base_weights = get_effective_signal_weights(sport).copy()
     # Apply online feature importance adjustment from Brier feedback
     _history_for_weights = st.session_state.get("history", [])
     if len(_history_for_weights) >= 15:
@@ -6342,7 +6369,7 @@ def compute_optimized_weights(sport):
     clv_adjs = compute_clv_signal_feedback(sport)
     if clv_adjs:
         clv_blended = {}
-        base_wts = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+        base_wts = get_effective_signal_weights(sport)
         for key, wt in optimized.items():
             clv_adj = clv_adjs.get(key, 0.0)
             # Apply CLV adjustment on top of W/L-optimized weight
@@ -6370,7 +6397,7 @@ def get_active_weights(sport):
             clv_active = sport_data.get("clv_blend_active", False)
             label = f"📊 CLV+W/L blend ({n_bets} bets)" if clv_active else f"📊 Data-driven ({n_bets} bets)"
             return sport_data["weights"], label, "optimized"
-    return SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"]), "⚠️ Hardcoded assumptions (insufficient data)", "hardcoded"
+    return get_effective_signal_weights(sport), "⚠️ Hardcoded assumptions (insufficient data)", "hardcoded"
 
 
 def compute_clv_signal_feedback(sport: str) -> dict:
@@ -10758,7 +10785,7 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
             if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
                 _base_w = sport_optimizer["weights"]
             else:
-                _base_w = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+                _base_w = get_effective_signal_weights(sport)
             # Apply online feature importance adjustment
             _hist_for_adj = st.session_state.get("history", [])
             if len(_hist_for_adj) >= 15:
@@ -14144,7 +14171,7 @@ def load_sport_data(sport):
             _sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
         _preloaded_weights = _sport_optimizer["weights"]
     else:
-        _preloaded_weights = SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS["NBA"])
+        _preloaded_weights = get_effective_signal_weights(sport)
 
     # Pre-build game analysis lookup by matchup for game total routing
     _game_analysis_by_matchup = {}
@@ -16383,6 +16410,18 @@ if "persistence_loaded" not in st.session_state:
             _merged_inj_perf.append(r)
     if len(_merged_inj_perf) > len(_local_inj_perf):
         save_json_data(INJURY_PERFORMANCE_PATH, _merged_inj_perf)
+    # weight_overrides / weight_adjustment_log: Gist-backed so auto-applied
+    # signal weight adjustments (see History > Weekly) survive restarts,
+    # same reasoning as signal_performance above.
+    gist_wt_ovr = load_from_gist("weight_overrides", None)
+    _local_wt_ovr = load_json_data(WEIGHT_OVERRIDES_PATH, {}, mem_ttl=60)
+    if isinstance(gist_wt_ovr, dict) and gist_wt_ovr != _local_wt_ovr:
+        save_json_data(WEIGHT_OVERRIDES_PATH, gist_wt_ovr)
+    gist_wt_log = load_from_gist("weight_adjustment_log", None)
+    _local_wt_log = load_json_data(WEIGHT_ADJUSTMENT_LOG_PATH, [], mem_ttl=60)
+    _gist_wt_log = gist_wt_log if isinstance(gist_wt_log, list) else []
+    if len(_gist_wt_log) > len(_local_wt_log):
+        save_json_data(WEIGHT_ADJUSTMENT_LOG_PATH, _gist_wt_log)
     # clv_tracking: Gist-backed so CLV data survives Streamlit Cloud restarts.
     # Previously an orphan writer (reset was pushed to Gist but never loaded back).
     gist_clv = load_from_gist("clv_tracking", None)
@@ -16464,23 +16503,47 @@ with st.sidebar:
     _bs_n         = _brier_life.get("n", 0)
     _integrity    = max(0, min(100, int((1 - (_bs_val / 0.25)) * 100)))
     _thin_sample  = _bs_n < 20
-    _integrity_color = "#6a7a8a" if _thin_sample else ("#22c55e" if _integrity >= 70 else ("#e8a020" if _integrity >= 50 else "#e04040"))
+    # Grade uses the SAME thresholds as the History tab's Brier cards
+    # (ELITE<0.20, GOOD<0.22, FAIR<0.25, else NEEDS WORK) so the sidebar
+    # number and the History breakdown can never disagree with each other.
+    _cal_grade = "ELITE" if _bs_val < 0.20 else "GOOD" if _bs_val < 0.22 else "FAIR" if _bs_val < 0.25 else "NEEDS WORK"
+    _integrity_color = "#6a7a8a" if _thin_sample else (
+        "#22c55e" if _cal_grade in ("ELITE", "GOOD") else ("#e8a020" if _cal_grade == "FAIR" else "#e04040"))
     _regime_data  = detect_season_regime("MLB")
     _regime_label = _regime_data.get("label", "REGULAR FLOOR")
     _edge_thresh  = _regime_data.get("edge_floor", 0.045)
+    # Auto-generated "why" sentence from the actual per-sport breakdown —
+    # answers "why is it low" without the user having to open History.
+    _per_sport_cal = _brier_data.get("per_sport", {}) or {}
+    _cal_explainer = ""
+    if not _thin_sample and _per_sport_cal:
+        _ranked = sorted(_per_sport_cal.items(), key=lambda x: x[1]["brier_score"])
+        _best   = _ranked[0]
+        _worst  = _ranked[-1]
+        if _worst[1]["grade"] in ("FAIR", "NEEDS WORK") and _worst[0] != _best[0]:
+            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is the main drag on this number. "
+                               f"{_best[0]} is grading {_best[1]['grade']}.")
+        elif _worst[1]["grade"] in ("FAIR", "NEEDS WORK"):
+            _cal_explainer = f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far."
+        else:
+            _cal_explainer = f"All tracked sports are grading GOOD or better — {_best[0]} leads at {_best[1]['grade']}."
+    if not _cal_explainer:
+        _cal_explainer = "How closely your predicted win probabilities have matched real results (higher = better calibrated). See the History tab for the full breakdown."
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:2px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
-        f'title="How well your predicted win probabilities have matched actual results over your last {_bs_n} settled bets. 100 = predictions landed exactly as often as predicted. 0 = no better than a coin flip. Below ~50 means the model has been overconfident or underconfident lately, not that anything is broken.">'
+        f'title="How well your predicted win probabilities have matched actual results over your last {_bs_n} settled bets. 100 = predictions landed exactly as often as predicted. 0 = no better than a coin flip. Grade uses the same ELITE/GOOD/FAIR/NEEDS WORK bands as the History tab.">'
         f'↗ CALIBRATION &#9432;</div>'
         f'</div>'
         + (f'<div style="font-size:16px;font-weight:700;color:var(--bc-dim);margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
            if _thin_sample else
-           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n})</span></div>')
+           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n}) · {_cal_grade}</span></div>')
         + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
         f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
-    st.caption("How closely your predicted odds have matched real results (higher = better calibrated). See the History tab for the full breakdown.")
+    st.caption(_cal_explainer)
+    if not _thin_sample and _cal_grade in ("FAIR", "NEEDS WORK"):
+        st.warning(f"⚠️ Calibration is {_cal_grade} — model confidence has drifted from actual outcomes. Kelly sizing for the affected sport(s) is already being throttled automatically.")
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
@@ -22229,20 +22292,53 @@ with tabs[4]:
         st.markdown("---")
     if _view in ("Weekly", "All"):
         st.markdown("### ⚖️ Weight Adjustment Recommendations")
-        st.caption("Data-driven suggestions after 100+ bets. Human approval required — never auto-applies.")
-        _sport_wr = st.session_state.get("last_sport","NBA")
-        _recs, _recs_n = generate_weight_recommendations(st.session_state.get("history", []), _sport_wr)
+        st.caption("Auto-applies once a signal clears a 95% confidence interval that excludes coin-flip (30+ bets/signal, 100+ bets/sport). Adjustments are capped at ±30% of the hand-tuned base weight. Every change is logged below.")
+        _sport_wr = st.session_state.get("last_sport", "NBA")
+        _cur_weights = get_effective_signal_weights(_sport_wr)
+        _recs, _recs_n = generate_weight_recommendations(
+            st.session_state.get("history", []), _sport_wr, current_weights=_cur_weights
+        )
         if _recs is None:
             st.info(f"Weight recommendations activate after 100 {_sport_wr} bets. Current: {_recs_n}.")
-        elif _recs:
-            st.warning(f"⚠️ {len(_recs)} weight adjustment(s) suggested based on {_recs_n} bets:")
-            for rec in _recs:
-                col1, col2 = st.columns([3,1])
-                col1.markdown(f"**{rec['Signal']}**: {rec['Current W']} → {rec['Suggested W']} ({rec['Action']}) — {rec['Reason']}")
-                if col2.button("Apply", key=f"wrec_{rec['Signal']}"):
-                    st.info(f"Manual step: update SPORT_SIGNAL_WEIGHTS['{_sport_wr}']['{rec['Signal'].lower()[:6]}'] to {rec['Suggested W']}")
         else:
-            st.success("✅ All signal weights appear well-calibrated for current data.")
+            _wt_overrides = load_json_data(WEIGHT_OVERRIDES_PATH, {}, mem_ttl=60)
+            _wt_log = load_json_data(WEIGHT_ADJUSTMENT_LOG_PATH, [], mem_ttl=60)
+            if not isinstance(_wt_overrides, dict): _wt_overrides = {}
+            if not isinstance(_wt_log, list): _wt_log = []
+            _sport_ovr = dict(_wt_overrides.get(_sport_wr, {}))
+            _newly_applied = []
+            for rec in _recs:
+                _wkey = rec["Signal"].lower()[:6]
+                _already = _sport_ovr.get(_wkey)
+                if _already is None or abs(float(_already) - rec["Suggested W"]) > 1e-6:
+                    _sport_ovr[_wkey] = rec["Suggested W"]
+                    _newly_applied.append(rec)
+            if _newly_applied:
+                _wt_overrides[_sport_wr] = _sport_ovr
+                save_json_data(WEIGHT_OVERRIDES_PATH, _wt_overrides)
+                save_to_gist("weight_overrides", _wt_overrides)
+                for rec in _newly_applied:
+                    _wt_log.append({
+                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                        "sport": _sport_wr, "signal": rec["Signal"], "action": rec["Action"],
+                        "from": rec["Current W"], "to": rec["Suggested W"],
+                        "n": rec["N"], "win_rate": rec["Win Rate"],
+                        "ci_low": rec["CI Low"], "ci_high": rec["CI High"],
+                    })
+                save_json_data(WEIGHT_ADJUSTMENT_LOG_PATH, _wt_log)
+                save_to_gist("weight_adjustment_log", _wt_log)
+                st.success(f"✅ Auto-applied {len(_newly_applied)} weight adjustment(s) for {_sport_wr} — statistically significant at 95% confidence.")
+                for rec in _newly_applied:
+                    st.caption(f"**{rec['Signal']}**: {rec['Current W']:.3f} → {rec['Suggested W']:.3f} ({rec['Action']}) — {rec['Reason']}")
+            elif _recs:
+                st.caption(f"{len(_recs)} signal(s) currently qualify and are already applied — no change since last check.")
+            else:
+                st.success("✅ No signals have cleared the 95% significance bar yet for this sport. Weights unchanged.")
+            _sport_log = [l for l in _wt_log if l.get("sport") == _sport_wr]
+            if _sport_log:
+                with st.expander(f"📜 Auto-adjustment log — {_sport_wr} ({len(_sport_log)} change(s))"):
+                    for l in reversed(_sport_log[-20:]):
+                        st.caption(f"{l.get('timestamp','')[:16]} · {l.get('signal','')} {l.get('action','')} {l.get('from',0):.3f}→{l.get('to',0):.3f} (n={l.get('n','?')}, WR={l.get('win_rate',0):.0%})")
 
         st.markdown("---")
         # ── Closing Line Beat Rate ──────────────────────────────

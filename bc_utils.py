@@ -3314,41 +3314,80 @@ def compute_parlay_correlation(props):
 
     return round(min(1.0, score), 2), corr_pairs
 
-def generate_weight_recommendations(history=None, sport="NBA"):
+def _wilson_ci(wins, total, z=1.96):
+    """95% Wilson score confidence interval on a win rate. More reliable
+    than a normal-approximation interval at small/moderate sample sizes,
+    which matters here since these bounds gate live weight adjustments."""
+    if total == 0:
+        return (0.0, 1.0)
+    phat = wins / total
+    denom = 1 + z * z / total
+    center = (phat + z * z / (2 * total)) / denom
+    margin = (z * sqrt((phat * (1 - phat) / total) + (z * z / (4 * total * total)))) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
+
+
+def generate_weight_recommendations(history=None, sport="NBA", current_weights=None, min_n=30):
     """
     Generate signal weight recommendations based on historical performance.
-    Activates at 100+ resolved bets for the given sport.
-    Returns (recommendations_list, resolved_count)
+
+    Tightened (Jul 2026): a signal only qualifies once it has 30+ resolved
+    bets AND its 95% Wilson confidence interval on win rate fully excludes
+    50% (coin-flip) — not the old raw >=58%/<=48% threshold at just 10
+    bets, which was prone to chasing small-sample noise. The panel itself
+    still only activates at 100+ total resolved bets for the sport.
+
+    current_weights, if provided (e.g. from get_effective_signal_weights),
+    is used to compute an actual suggested new weight value, nudged 10%
+    toward the qualifying direction. Downstream callers clamp this to
+    +/-30% of the hand-tuned base regardless.
+
+    Returns (recommendations_list, resolved_count). Each recommendation:
+    Signal, Action, Win Rate, N, CI Low, CI High, Reason, Current W, Suggested W.
     """
     if history is None:
         history = []
+    if current_weights is None:
+        current_weights = {}
     resolved = [h for h in history
                 if h.get("outcome") in ("WIN","LOSS")
                 and h.get("sport","") == sport]
     n = len(resolved)
     if n < 100:
         return None, n
-    # Simple win rate by signal
-    recs = []
+
     signal_perf = {}
     for bet in resolved:
-        sv = bet.get("signal_values", {})
+        sv = bet.get("signal_values", {}) or {}
         for sig, val in sv.items():
             if sig not in signal_perf:
                 signal_perf[sig] = {"wins":0,"total":0}
             signal_perf[sig]["total"] += 1
             if bet.get("outcome") == "WIN":
                 signal_perf[sig]["wins"] += 1
+
+    recs = []
     for sig, perf in sorted(signal_perf.items(), key=lambda x: -x[1]["total"]):
-        if perf["total"] < 10:
+        n_sig = perf["total"]
+        if n_sig < min_n:
             continue
-        wr = perf["wins"] / perf["total"]
-        if wr >= 0.58:
-            recs.append({"signal": sig, "action": "INCREASE", "win_rate": wr,
-                         "reason": f"{wr:.0%} win rate — above threshold"})
-        elif wr <= 0.48:
-            recs.append({"signal": sig, "action": "DECREASE", "win_rate": wr,
-                         "reason": f"{wr:.0%} win rate — below threshold"})
+        wr = perf["wins"] / n_sig
+        lo, hi = _wilson_ci(perf["wins"], n_sig)
+        if lo > 0.50:
+            action = "INCREASE"
+        elif hi < 0.50:
+            action = "DECREASE"
+        else:
+            continue  # CI straddles 50% — not distinguishable from a coin flip yet
+        key = sig.lower()[:6]
+        current_w = float(current_weights.get(key, current_weights.get(sig, 0.0)) or 0.0)
+        suggested_w = round(current_w * (1.10 if action == "INCREASE" else 0.90), 4)
+        recs.append({
+            "Signal": sig, "Action": action, "Win Rate": wr, "N": n_sig,
+            "CI Low": lo, "CI High": hi,
+            "Reason": f"{wr:.0%} WR over {n_sig} bets — 95% CI [{lo:.0%}, {hi:.0%}] excludes coin-flip",
+            "Current W": current_w, "Suggested W": suggested_w,
+        })
     return recs, n
 
 def generate_post_mortem(history, target_date=None):
