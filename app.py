@@ -21252,6 +21252,21 @@ with tabs[4]:
             }});
         }}
 
+        function pullGist(filename) {{
+            return fetch('https://api.github.com/gists/' + GIST_ID, {{
+                method: 'GET',
+                headers: {{
+                    'Authorization': 'token ' + GIST_TOK,
+                    'Accept': 'application/vnd.github.v3+json'
+                }}
+            }}).then(function(r) {{ return r.json(); }})
+              .then(function(d) {{
+                var f = d.files && d.files[filename];
+                if (!f || !f.content) return null;
+                try {{ return JSON.parse(f.content); }} catch (e) {{ return null; }}
+              }}).catch(function(e) {{ return null; }});
+        }}
+
         function pushGist(filename, content) {{
             __bcGistQueue = __bcGistQueue.then(function() {{
                 return __bcPushGistOnce(filename, content).then(function(r) {{
@@ -21287,24 +21302,39 @@ with tabs[4]:
         }}
 
         // ── 1. EVSharps JWT auto-refresh (every 50 min) ─────────────────────
+        // BUG FIX (2026-07): refresh_token was hardcoded to the same seed
+        // value on every call. Supabase rotates the refresh token on each
+        // use (standard OAuth2 refresh-token rotation) -- after the first
+        // successful rotation, every later attempt kept sending the now-
+        // invalidated original token, failed silently (.catch only logs to
+        // console, no Gist push), and never recovered on its own. This is
+        // the direct explanation for betcouncil_tokens.json / betcouncil_
+        // evsharps_ev_*.json staying stale for 9+ days regardless of
+        // whether a browser tab was open to run this at all. Now pulls the
+        // last-saved refresh token from Gist first and uses that.
         throttled('evsharps', 3000000, function() {{
-            fetch('https://nkdhryqpiulrepmphwmt.supabase.co/auth/v1/token?grant_type=refresh_token', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json',
-                           'apikey': '{SUPABASE_ANON}'}},
-                body: JSON.stringify({{refresh_token: 'z325a7doims5'}})
-            }}).then(function(r) {{ return r.json(); }})
-              .then(function(d) {{
-                if (d.access_token) {{
-                    pushGist('betcouncil_tokens.json', {{
-                        ev_jwt: d.access_token,
-                        ev_refresh: d.refresh_token || 'z325a7doims5',
-                        captured_at: new Date().toISOString(),
-                        source: 'betcouncil_auto_harvest'
-                    }});
-                    console.log('[BetCouncil] ✅ EVSharps JWT refreshed automatically');
-                }}
-              }}).catch(function(e) {{ console.log('[BetCouncil] EVSharps refresh error:', e); }});
+            pullGist('betcouncil_tokens.json').then(function(saved) {{
+                var currentRefresh = (saved && saved.ev_refresh) || 'z325a7doims5';
+                fetch('https://nkdhryqpiulrepmphwmt.supabase.co/auth/v1/token?grant_type=refresh_token', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json',
+                               'apikey': '{SUPABASE_ANON}'}},
+                    body: JSON.stringify({{refresh_token: currentRefresh}})
+                }}).then(function(r) {{ return r.json(); }})
+                  .then(function(d) {{
+                    if (d.access_token) {{
+                        pushGist('betcouncil_tokens.json', {{
+                            ev_jwt: d.access_token,
+                            ev_refresh: d.refresh_token || currentRefresh,
+                            captured_at: new Date().toISOString(),
+                            source: 'betcouncil_auto_harvest'
+                        }});
+                        console.log('[BetCouncil] ✅ EVSharps JWT refreshed automatically');
+                    }} else {{
+                        console.log('[BetCouncil] ⚠️ EVSharps refresh returned no access_token -- refresh token may be dead, needs manual re-auth:', JSON.stringify(d));
+                    }}
+                  }}).catch(function(e) {{ console.log('[BetCouncil] EVSharps refresh error:', e); }});
+            }});
         }});
 
         // ── 2. Caesars auth token passive capture (hooks fetch, pushes on every authenticated call) ──

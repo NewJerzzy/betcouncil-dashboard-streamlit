@@ -595,13 +595,13 @@ PLAYER_AVERAGES_UFC = {
 DEFAULT_AVERAGES = {
     "NBA": {"PTS": 18.0, "REB": 5.5, "AST": 4.0, "PRA": 27.5,
             "3PM": 1.8, "STL": 1.0, "BLK": 0.8, "TO": 2.0},
-    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.3, "R": 0.3, "SO": 5.0},
+    "MLB": {"HR": 0.05, "H": 0.8, "RBI": 0.32, "R": 0.28, "SO": 5.0, "TB": 1.15},
     "NFL": {"PASS_YDS": 200, "RUSH_YDS": 35, "REC_YDS": 40, "TD": 0.5},
     "NHL": {"PTS": 0.45, "GOALS": 0.18, "ASSISTS": 0.27, "SOG": 1.8},
     "WNBA": {"PTS": 8.0, "REB": 3.5, "AST": 2.0, "PRA": 13.5},
     "Soccer": {"GOALS": 0.25, "ASSISTS": 0.15, "SHOTS": 2.5},
     "UFC": {"SIG_STR": 30, "TAKEDOWNS": 1.0, "CONTROL_TIME": 4.0},
-    "Golf": {}, "Tennis": {"GAMES_WON": 6.0, "ACES": 6.0, "DOUBLE_FAULTS": 3.0, "SETS_WON": 1.5},
+    "Golf": {}, "Tennis": {"GAMES_WON": 6.0, "ACES": 4.0, "DOUBLE_FAULTS": 3.0, "SETS_WON": 1.5},
 }
 
 STAT_NORMALIZE = {
@@ -613,7 +613,7 @@ STAT_NORMALIZE = {
     ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
     ("NHL", "Shots On Goal"): "SOG", ("WNBA", "Points"): "PTS", ("WNBA", "Rebounds"): "REB",
     ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
-    ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "H",
+    ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "TB",
     ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
     ("NBA", "Pts+Rebs+Asts"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
     ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
