@@ -20474,394 +20474,401 @@ with tabs[3]:
 with tabs[4]:
     st.markdown("## 📈 Full Bet History")
 
-    # ── Auto-resolve CLV for settled bets ──────────────────────────────
-    # Buchdahl methodology: compare placement odds vs current market (closing proxy)
-    if st.session_state.get("history"):
-        _resolved_hist, _clv_changed = resolve_clv_records(st.session_state.get("history", []))
-        if _clv_changed:
-            st.session_state.history = _resolved_hist
-            save_json_data(HISTORY_PATH, st.session_state.get("history", []))
+    st.caption("Daily = today's essentials. Weekly = signal/model audits. Seasonal = deep reference data (Bankroll Intelligence, Season Regime, full Calibration Dashboard).")
+    _view = st.radio("View", ["Daily", "Weekly", "Seasonal", "All"], horizontal=True, key="history_view_selector")
 
-    # ── CLV Performance Dashboard ───────────────────────────────────────
-    _clv_sum = get_clv_summary(st.session_state.get("history", []))
-    _clv_sum = _clv_sum or {"n_resolved": 0, "avg_clv": 0, "beat_rate": 0, "grade": "INSUFFICIENT"}
-    if _clv_sum.get("n_resolved", 0) > 0:
+    if _view in ("Daily", "All"):
 
-        # ── Brier Score + Calibration Z-Score ──────────────────────────────
-        _brier  = compute_brier_score(st.session_state.get("history", []))
-        _zscore = compute_calibration_zscore(st.session_state.get("history", []))
-        _bs_life = _brier.get("lifetime") or {}
-        if _bs_life:
-            st.markdown("### 🎯 Model Calibration — Brier Score & Z-Score")
-            st.caption("Brier Score: 0=perfect, 0.25=random coin flip. Alert if BS>0.25 or |Z|>2.0")
-            _bc1,_bc2,_bc3,_bc4 = st.columns(4)
-            _bs_val = _bs_life.get("brier_score",0)
-            _bs_color = "#22c55e" if _bs_val < 0.22 else ("#ffd700" if _bs_val < 0.25 else "#e04040")
-            _bc1.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Brier Score (All)</div><div style="font-size:22px;font-weight:700;color:{_bs_color}">{_bs_val:.3f}</div><div style="font-size:12px;color:{_bs_color}">{_bs_life.get("grade","")}</div></div>', unsafe_allow_html=True)
-            _bs_l30 = (_brier.get("L30") or {}).get("brier_score")
-            _bc2.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Brier L30</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_bs_l30:.3f if _bs_l30 else "—"}</div><div style="font-size:12px;color:#6a7a8a">30 day window</div></div>', unsafe_allow_html=True)
-            _ll = _bs_life.get("log_loss", 0)
-            _bc3.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Log Loss</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_ll:.3f}</div><div style="font-size:12px;color:#6a7a8a">lower=better</div></div>', unsafe_allow_html=True)
-            _z = _zscore.get("z_score")
-            _z_color = "#22c55e" if _z and abs(_z) <= 2.0 else "#e04040"
-            _z_label = _zscore.get("direction", "insufficient data")
-            _bc4.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">CLV Z-Score</div><div style="font-size:22px;font-weight:700;color:{_z_color}">{f"{_z:+.2f}" if _z else "—"}</div><div style="font-size:12px;color:{_z_color}">{_z_label}</div></div>', unsafe_allow_html=True)
-            if _bs_life.get("alert"):
-                st.warning("⚠️ Brier Score > 0.25 — model underperforming random. Throttle user weight by 10% and audit feature extraction.")
-            if _zscore.get("alert"):
-                st.warning(f"⚠️ CLV Z-Score |{_z:.2f}| > 2.0 — model is {_z_label}. Consider rebalancing sharp anchor weights.")
+        # ── Auto-resolve CLV for settled bets ──────────────────────────────
+        # Buchdahl methodology: compare placement odds vs current market (closing proxy)
+        if st.session_state.get("history"):
+            _resolved_hist, _clv_changed = resolve_clv_records(st.session_state.get("history", []))
+            if _clv_changed:
+                st.session_state.history = _resolved_hist
+                save_json_data(HISTORY_PATH, st.session_state.get("history", []))
 
-            # Per-sport Brier breakdown + adaptive Kelly multiplier
-            _per_sport = _brier.get("per_sport", {})
-            if _per_sport:
-                st.markdown("**Per-Sport Calibration & Adaptive Kelly Multiplier**")
-                st.caption("Kelly fraction auto-scales based on per-sport Brier score. Green = boosted, red = throttled.")
-                _sp_cols = st.columns(min(len(_per_sport), 6))
-                for _i, (_sp, _sd) in enumerate(sorted(_per_sport.items())):
-                    if _i >= 6:
-                        break
-                    _sp_bs    = _sd.get("brier_score", 0.25)
-                    _sp_grade = _sd.get("grade", "—")
-                    _base     = 0.15
-                    _adapted  = adaptive_kelly_fraction(_base, [], sport=_sp)  # uses global BS
-                    # recalculate with actual data
-                    try:
-                        import math as _m
-                        _anchor_bs = 0.22
-                        _scale = _anchor_bs + _m.log(_anchor_bs / max(_sp_bs, 0.01)) * 2.5
-                        _scale = max(0.33, min(1.5, _scale))
-                        _adapted = round(_base * _scale, 3)
-                    except Exception:
-                        pass
-                    _sp_color = "#22c55e" if _adapted > _base else ("#e8a020" if _adapted > _base * 0.6 else "#e04040")
-                    _mult_str = f"{'↑' if _adapted >= _base else '↓'}{_adapted/(_base or 1):.1f}x Kelly"
-                    _sp_cols[_i].markdown(
-                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:8px;text-align:center;">'
-                        f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">{_sp}</div>'
-                        f'<div style="font-size:16px;font-weight:700;color:{_sp_color}">BS {_sp_bs:.3f}</div>'
-                        f'<div style="font-size:11px;color:{_sp_color}">{_mult_str}</div>'
-                        f'<div style="font-size:9px;color:#6a7a8a">{_sp_grade} · n={_sd.get("n","?")}</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
+        # ── CLV Performance Dashboard ───────────────────────────────────────
+        _clv_sum = get_clv_summary(st.session_state.get("history", []))
+        _clv_sum = _clv_sum or {"n_resolved": 0, "avg_clv": 0, "beat_rate": 0, "grade": "INSUFFICIENT"}
+        if _clv_sum.get("n_resolved", 0) > 0:
+
+            # ── Brier Score + Calibration Z-Score ──────────────────────────────
+            _brier  = compute_brier_score(st.session_state.get("history", []))
+            _zscore = compute_calibration_zscore(st.session_state.get("history", []))
+            _bs_life = _brier.get("lifetime") or {}
+            if _bs_life:
+                st.markdown("### 🎯 Model Calibration — Brier Score & Z-Score")
+                st.caption("Brier Score: 0=perfect, 0.25=random coin flip. Alert if BS>0.25 or |Z|>2.0")
+                _bc1,_bc2,_bc3,_bc4 = st.columns(4)
+                _bs_val = _bs_life.get("brier_score",0)
+                _bs_color = "#22c55e" if _bs_val < 0.22 else ("#ffd700" if _bs_val < 0.25 else "#e04040")
+                _bc1.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Brier Score (All)</div><div style="font-size:22px;font-weight:700;color:{_bs_color}">{_bs_val:.3f}</div><div style="font-size:12px;color:{_bs_color}">{_bs_life.get("grade","")}</div></div>', unsafe_allow_html=True)
+                _bs_l30 = (_brier.get("L30") or {}).get("brier_score")
+                _bc2.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Brier L30</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_bs_l30:.3f if _bs_l30 else "—"}</div><div style="font-size:12px;color:#6a7a8a">30 day window</div></div>', unsafe_allow_html=True)
+                _ll = _bs_life.get("log_loss", 0)
+                _bc3.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Log Loss</div><div style="font-size:22px;font-weight:700;color:#e8f0f8">{_ll:.3f}</div><div style="font-size:12px;color:#6a7a8a">lower=better</div></div>', unsafe_allow_html=True)
+                _z = _zscore.get("z_score")
+                _z_color = "#22c55e" if _z and abs(_z) <= 2.0 else "#e04040"
+                _z_label = _zscore.get("direction", "insufficient data")
+                _bc4.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;"><div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">CLV Z-Score</div><div style="font-size:22px;font-weight:700;color:{_z_color}">{f"{_z:+.2f}" if _z else "—"}</div><div style="font-size:12px;color:{_z_color}">{_z_label}</div></div>', unsafe_allow_html=True)
+                if _bs_life.get("alert"):
+                    st.warning("⚠️ Brier Score > 0.25 — model underperforming random. Throttle user weight by 10% and audit feature extraction.")
+                if _zscore.get("alert"):
+                    st.warning(f"⚠️ CLV Z-Score |{_z:.2f}| > 2.0 — model is {_z_label}. Consider rebalancing sharp anchor weights.")
+
+                # Per-sport Brier breakdown + adaptive Kelly multiplier
+                _per_sport = _brier.get("per_sport", {})
+                if _per_sport:
+                    st.markdown("**Per-Sport Calibration & Adaptive Kelly Multiplier**")
+                    st.caption("Kelly fraction auto-scales based on per-sport Brier score. Green = boosted, red = throttled.")
+                    _sp_cols = st.columns(min(len(_per_sport), 6))
+                    for _i, (_sp, _sd) in enumerate(sorted(_per_sport.items())):
+                        if _i >= 6:
+                            break
+                        _sp_bs    = _sd.get("brier_score", 0.25)
+                        _sp_grade = _sd.get("grade", "—")
+                        _base     = 0.15
+                        _adapted  = adaptive_kelly_fraction(_base, [], sport=_sp)  # uses global BS
+                        # recalculate with actual data
+                        try:
+                            import math as _m
+                            _anchor_bs = 0.22
+                            _scale = _anchor_bs + _m.log(_anchor_bs / max(_sp_bs, 0.01)) * 2.5
+                            _scale = max(0.33, min(1.5, _scale))
+                            _adapted = round(_base * _scale, 3)
+                        except Exception:
+                            pass
+                        _sp_color = "#22c55e" if _adapted > _base else ("#e8a020" if _adapted > _base * 0.6 else "#e04040")
+                        _mult_str = f"{'↑' if _adapted >= _base else '↓'}{_adapted/(_base or 1):.1f}x Kelly"
+                        _sp_cols[_i].markdown(
+                            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:8px;text-align:center;">'
+                            f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">{_sp}</div>'
+                            f'<div style="font-size:16px;font-weight:700;color:{_sp_color}">BS {_sp_bs:.3f}</div>'
+                            f'<div style="font-size:11px;color:{_sp_color}">{_mult_str}</div>'
+                            f'<div style="font-size:9px;color:#6a7a8a">{_sp_grade} · n={_sd.get("n","?")}</div>'
+                            f'</div>', unsafe_allow_html=True
+                        )
+                st.markdown("---")
+
+                # ── Online Signal Performance Monitoring ─────────────────────
+                _sig_perf = compute_signal_performance(
+                    st.session_state.get("history", []), window_days=30
+                )
+                if _sig_perf:
+                    st.markdown("**Signal Feature Importance — L30 Days**")
+                    st.caption("Signals with negative lift are being auto-penalized in weight. Positive lift = boosted.")
+                    _sig_cols = st.columns(min(len(_sig_perf), 7))
+                    for _si, (_sig, _sp) in enumerate(sorted(_sig_perf.items(),
+                                                              key=lambda x: -abs(x[1]["lift"]))):
+                        if _si >= 7: break
+                        _lift      = _sp["lift"]
+                        _factor    = _sp["penalty_factor"]
+                        _useful    = _sp["is_useful"]
+                        _sc        = "#22c55e" if _useful and _lift > 0.03 else ("#e04040" if not _useful else "#e8a020")
+                        _icon      = "✅" if _factor > 1 else ("⚠️" if _factor < 1 else "➖")
+                        _sig_cols[_si].markdown(
+                            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:8px;text-align:center;">'
+                            f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">{_sig}</div>'
+                            f'<div style="font-size:16px;font-weight:700;color:{_sc}">{_lift:+.3f}</div>'
+                            f'<div style="font-size:11px;color:{_sc}">{_icon} {_factor:.2f}x wt</div>'
+                            f'<div style="font-size:9px;color:#6a7a8a">n={_sp["n_high"]}</div>'
+                            f'</div>', unsafe_allow_html=True
+                        )
+                else:
+                    st.info("Signal performance monitoring requires 15+ resolved bets.")
+
+                # ── Game Exposure / Covariance Panel ─────────────────────────
+                _open_bets = st.session_state.get("open_bets", [])
+                if _open_bets:
+                    st.markdown("**Portfolio Game Exposure (Covariance Monitor)**")
+                    st.caption(f"Max single-game exposure cap: {int(_MAX_GAME_EXPOSURE*100)}% bankroll. Bets over this receive a correlation haircut.")
+                    _exp = compute_game_exposure(_open_bets)
+                    if _exp["over_limit"]:
+                        st.warning(f"⚠️ Over-concentrated: max game exposure {_exp['max_game']:.0%} exceeds {int(_MAX_GAME_EXPOSURE*100)}% cap — Kelly haircut active")
+                    _exp_rows = [{"Game": g, "Exposure": f"{v:.1%}"} for g, v in
+                                 sorted(_exp["by_game"].items(), key=lambda x: -x[1])[:10]]
+                    if _exp_rows:
+                        import pandas as _pd_exp
+                        st.markdown(_bc_df_html(_pd_exp.DataFrame(_exp_rows)), unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
+            st.caption(
+                f"CLV measures whether you beat the no-vig closing line (Pinnacle+Circa consensus). "
+                f"Per Buchdahl: **{_clv_sum['n_resolved']} resolved bets** | "
+                f"Need 50+ for significance, 1000+ for full confidence."
+            )
+            _clv_grade  = _clv_sum["grade"]
+            _clv_color  = {"ELITE":"#22c55e","GOOD":"#0ea5a0","POSITIVE":"#e8a020",
+                           "NEUTRAL":"#6a7a8a","NEGATIVE":"#e04040","INSUFFICIENT":"#6a7a8a"}.get(_clv_grade,"#6a7a8a")
+            _cc1,_cc2,_cc3,_cc4 = st.columns(4)
+            _cc1.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
+                f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Avg CLV (No-Vig)</div>'
+                f'<div style="font-size:22px;font-weight:700;color:{_clv_color}">'
+                f'{_clv_sum["avg_clv"]:+.2%}</div>'
+                f'<div style="font-size:12px;color:{_clv_color}">{_clv_grade}</div></div>',
+                unsafe_allow_html=True
+            )
+            _cc2.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
+                f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Beat Close Rate</div>'
+                f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
+                f'{_clv_sum["beat_rate"]:.1%}</div>'
+                f'<div style="font-size:12px;color:#6a7a8a">{_clv_sum["n_resolved"]} bets</div></div>',
+                unsafe_allow_html=True
+            )
+            _be_needed = 50 - _clv_sum["n_resolved"]
+            _cc3.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
+                f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">To Significance</div>'
+                f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
+                f'{"✅" if _be_needed <= 0 else str(max(0,_be_needed))+" more"}</div>'
+                f'<div style="font-size:12px;color:#6a7a8a">50 bet threshold</div></div>',
+                unsafe_allow_html=True
+            )
+            _full_conf = 1000 - _clv_sum["n_resolved"]
+            _cc4.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
+                f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Full Confidence</div>'
+                f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
+                f'{"✅" if _full_conf <= 0 else str(max(0,_full_conf))+" more"}</div>'
+                f'<div style="font-size:12px;color:#6a7a8a">1000 bet threshold</div></div>',
+                unsafe_allow_html=True
+            )
             st.markdown("---")
 
-            # ── Online Signal Performance Monitoring ─────────────────────
-            _sig_perf = compute_signal_performance(
-                st.session_state.get("history", []), window_days=30
-            )
-            if _sig_perf:
-                st.markdown("**Signal Feature Importance — L30 Days**")
-                st.caption("Signals with negative lift are being auto-penalized in weight. Positive lift = boosted.")
-                _sig_cols = st.columns(min(len(_sig_perf), 7))
-                for _si, (_sig, _sp) in enumerate(sorted(_sig_perf.items(),
-                                                          key=lambda x: -abs(x[1]["lift"]))):
-                    if _si >= 7: break
-                    _lift      = _sp["lift"]
-                    _factor    = _sp["penalty_factor"]
-                    _useful    = _sp["is_useful"]
-                    _sc        = "#22c55e" if _useful and _lift > 0.03 else ("#e04040" if not _useful else "#e8a020")
-                    _icon      = "✅" if _factor > 1 else ("⚠️" if _factor < 1 else "➖")
-                    _sig_cols[_si].markdown(
-                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:8px;text-align:center;">'
-                        f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">{_sig}</div>'
-                        f'<div style="font-size:16px;font-weight:700;color:{_sc}">{_lift:+.3f}</div>'
-                        f'<div style="font-size:11px;color:{_sc}">{_icon} {_factor:.2f}x wt</div>'
-                        f'<div style="font-size:9px;color:#6a7a8a">n={_sp["n_high"]}</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
+            # ── Pinnacle CLV Tracker (moved here — was 1600 lines away in its
+            # own separate section, even though it's the same CLV concept from
+            # a second data source. Now sits right next to Buchdahl CLV above.
+            st.markdown("### 📍 Pinnacle CLV Tracker")
+            pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
+            if len(pinnacle_data) >= 5:
+                avg_pclv = sum(r.get("pinnacle_clv", 0) for r in pinnacle_data) / len(pinnacle_data)
+                pos_rate = sum(1 for r in pinnacle_data if r.get("positive", False)) / len(pinnacle_data)
+                p1, p2, p3 = st.columns(3)
+                p1.metric("Avg Pinnacle CLV", f"{avg_pclv:+.2f}")
+                p2.metric("Positive Rate", f"{pos_rate:.1%}")
+                p3.metric("Bets Tracked", len(pinnacle_data))
             else:
-                st.info("Signal performance monitoring requires 15+ resolved bets.")
-
-            # ── Game Exposure / Covariance Panel ─────────────────────────
-            _open_bets = st.session_state.get("open_bets", [])
-            if _open_bets:
-                st.markdown("**Portfolio Game Exposure (Covariance Monitor)**")
-                st.caption(f"Max single-game exposure cap: {int(_MAX_GAME_EXPOSURE*100)}% bankroll. Bets over this receive a correlation haircut.")
-                _exp = compute_game_exposure(_open_bets)
-                if _exp["over_limit"]:
-                    st.warning(f"⚠️ Over-concentrated: max game exposure {_exp['max_game']:.0%} exceeds {int(_MAX_GAME_EXPOSURE*100)}% cap — Kelly haircut active")
-                _exp_rows = [{"Game": g, "Exposure": f"{v:.1%}"} for g, v in
-                             sorted(_exp["by_game"].items(), key=lambda x: -x[1])[:10]]
-                if _exp_rows:
-                    import pandas as _pd_exp
-                    st.markdown(_bc_df_html(_pd_exp.DataFrame(_exp_rows)), unsafe_allow_html=True)
-
-        st.markdown("---")
-        st.markdown("### 📊 Closing Line Value (CLV) — Buchdahl Methodology")
-        st.caption(
-            f"CLV measures whether you beat the no-vig closing line (Pinnacle+Circa consensus). "
-            f"Per Buchdahl: **{_clv_sum['n_resolved']} resolved bets** | "
-            f"Need 50+ for significance, 1000+ for full confidence."
-        )
-        _clv_grade  = _clv_sum["grade"]
-        _clv_color  = {"ELITE":"#22c55e","GOOD":"#0ea5a0","POSITIVE":"#e8a020",
-                       "NEUTRAL":"#6a7a8a","NEGATIVE":"#e04040","INSUFFICIENT":"#6a7a8a"}.get(_clv_grade,"#6a7a8a")
-        _cc1,_cc2,_cc3,_cc4 = st.columns(4)
-        _cc1.markdown(
-            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Avg CLV (No-Vig)</div>'
-            f'<div style="font-size:22px;font-weight:700;color:{_clv_color}">'
-            f'{_clv_sum["avg_clv"]:+.2%}</div>'
-            f'<div style="font-size:12px;color:{_clv_color}">{_clv_grade}</div></div>',
-            unsafe_allow_html=True
-        )
-        _cc2.markdown(
-            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Beat Close Rate</div>'
-            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
-            f'{_clv_sum["beat_rate"]:.1%}</div>'
-            f'<div style="font-size:12px;color:#6a7a8a">{_clv_sum["n_resolved"]} bets</div></div>',
-            unsafe_allow_html=True
-        )
-        _be_needed = 50 - _clv_sum["n_resolved"]
-        _cc3.markdown(
-            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">To Significance</div>'
-            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
-            f'{"✅" if _be_needed <= 0 else str(max(0,_be_needed))+" more"}</div>'
-            f'<div style="font-size:12px;color:#6a7a8a">50 bet threshold</div></div>',
-            unsafe_allow_html=True
-        )
-        _full_conf = 1000 - _clv_sum["n_resolved"]
-        _cc4.markdown(
-            f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:10px;text-align:center;">'
-            f'<div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Full Confidence</div>'
-            f'<div style="font-size:22px;font-weight:700;color:#e8f0f8">'
-            f'{"✅" if _full_conf <= 0 else str(max(0,_full_conf))+" more"}</div>'
-            f'<div style="font-size:12px;color:#6a7a8a">1000 bet threshold</div></div>',
-            unsafe_allow_html=True
-        )
-        st.markdown("---")
-
-        # ── Pinnacle CLV Tracker (moved here — was 1600 lines away in its
-        # own separate section, even though it's the same CLV concept from
-        # a second data source. Now sits right next to Buchdahl CLV above.
-        st.markdown("### 📍 Pinnacle CLV Tracker")
-        pinnacle_data = load_json_data(PINNACLE_LINES_PATH, [])
-        if len(pinnacle_data) >= 5:
-            avg_pclv = sum(r.get("pinnacle_clv", 0) for r in pinnacle_data) / len(pinnacle_data)
-            pos_rate = sum(1 for r in pinnacle_data if r.get("positive", False)) / len(pinnacle_data)
-            p1, p2, p3 = st.columns(3)
-            p1.metric("Avg Pinnacle CLV", f"{avg_pclv:+.2f}")
-            p2.metric("Positive Rate", f"{pos_rate:.1%}")
-            p3.metric("Bets Tracked", len(pinnacle_data))
-        else:
-            # NOTE (2026-07): this used to stay stuck at "need 5 more" no
-            # matter how many bets were resolved (174+), because
-            # record_pinnacle_line() — the only function that writes
-            # PINNACLE_LINES_PATH — was built but never called from any
-            # lock-creation button. It's now wired into the EV Optimizer,
-            # Portfolio Builder, Slip Analyzer, and Game Lines lock actions,
-            # so this should start filling in from new locks going forward.
-            # There used to be a "Backfill CLV from History" button here too
-            # — removed, because it can't actually work: Pinnacle's closing
-            # line at the time of a past bet isn't something history ever
-            # stored, so the old backfill just wrote a fake 0.0 CLV
-            # placeholder (and to the wrong file). Real CLV can only be
-            # captured going forward, at lock time.
-            st.info(
-                f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.\n\n"
-                "This only counts bets locked *after* Pinnacle capture was wired in — it can't be "
-                "backfilled from already-resolved bets, since the Pinnacle closing line at that moment "
-                "was never recorded. Lock a few new picks and this will start filling in."
-            )
-        st.markdown("---")
-        # ── Per-book CLV breakdown ─────────────────────────────────────────
-        _clv_by_book = {}
-        for _cr in _clv_top:
-            _bk = _cr.get("source", "") or "Unknown"
-            if not _bk:
-                _bk = "Unknown"
-            _cv = _cr.get("clv_vs_close") or _cr.get("clv", 0) or 0
-            if _bk not in _clv_by_book:
-                _clv_by_book[_bk] = {"vals": [], "beats": 0}
-            _clv_by_book[_bk]["vals"].append(float(_cv))
-            if float(_cv) > 0:
-                _clv_by_book[_bk]["beats"] += 1
-        if _clv_by_book:
-            st.markdown("**CLV by Book**")
-            _book_rows = []
-            for _bk, _bd in sorted(_clv_by_book.items()):
-                _n  = len(_bd["vals"])
-                _avg = sum(_bd["vals"]) / _n if _n else 0
-                _br  = _bd["beats"] / _n if _n else 0
-                _book_rows.append({"Book": _bk, "Bets": _n,
-                                   "Avg CLV": f"{_avg:+.2%}", "Beat Rate": f"{_br:.0%}"})
-            _bk_html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
-            _bk_html += '<tr style="color:var(--bc-dim);text-transform:uppercase;font-size:10px;">'
-            for _hdr in ["Book","Bets","Avg CLV","Beat Rate"]:
-                _bk_html += f'<th style="padding:4px 8px;text-align:left;">{_hdr}</th>'
-            _bk_html += "</tr>"
-            for _row in _book_rows:
-                _rc = "#22c55e" if "+" in _row["Avg CLV"] else "#e04040"
-                _bk_html += f'<tr style="border-top:1px solid #1a2a3a;">'
-                _bk_html += f'<td style="padding:4px 8px;color:var(--bc-text);">{_row["Book"]}</td>'
-                _bk_html += f'<td style="padding:4px 8px;color:var(--bc-muted);">{_row["Bets"]}</td>'
-                _bk_html += f'<td style="padding:4px 8px;color:{_rc};font-weight:700;">{_row["Avg CLV"]}</td>'
-                _bk_html += f'<td style="padding:4px 8px;color:var(--bc-muted);">{_row["Beat Rate"]}</td>'
+                # NOTE (2026-07): this used to stay stuck at "need 5 more" no
+                # matter how many bets were resolved (174+), because
+                # record_pinnacle_line() — the only function that writes
+                # PINNACLE_LINES_PATH — was built but never called from any
+                # lock-creation button. It's now wired into the EV Optimizer,
+                # Portfolio Builder, Slip Analyzer, and Game Lines lock actions,
+                # so this should start filling in from new locks going forward.
+                # There used to be a "Backfill CLV from History" button here too
+                # — removed, because it can't actually work: Pinnacle's closing
+                # line at the time of a past bet isn't something history ever
+                # stored, so the old backfill just wrote a fake 0.0 CLV
+                # placeholder (and to the wrong file). Real CLV can only be
+                # captured going forward, at lock time.
+                st.info(
+                    f"Pinnacle CLV activates after 5 resolved bets. Need {max(0, 5 - len(pinnacle_data))} more.\n\n"
+                    "This only counts bets locked *after* Pinnacle capture was wired in — it can't be "
+                    "backfilled from already-resolved bets, since the Pinnacle closing line at that moment "
+                    "was never recorded. Lock a few new picks and this will start filling in."
+                )
+            st.markdown("---")
+            # ── Per-book CLV breakdown ─────────────────────────────────────────
+            _clv_by_book = {}
+            for _cr in _clv_top:
+                _bk = _cr.get("source", "") or "Unknown"
+                if not _bk:
+                    _bk = "Unknown"
+                _cv = _cr.get("clv_vs_close") or _cr.get("clv", 0) or 0
+                if _bk not in _clv_by_book:
+                    _clv_by_book[_bk] = {"vals": [], "beats": 0}
+                _clv_by_book[_bk]["vals"].append(float(_cv))
+                if float(_cv) > 0:
+                    _clv_by_book[_bk]["beats"] += 1
+            if _clv_by_book:
+                st.markdown("**CLV by Book**")
+                _book_rows = []
+                for _bk, _bd in sorted(_clv_by_book.items()):
+                    _n  = len(_bd["vals"])
+                    _avg = sum(_bd["vals"]) / _n if _n else 0
+                    _br  = _bd["beats"] / _n if _n else 0
+                    _book_rows.append({"Book": _bk, "Bets": _n,
+                                       "Avg CLV": f"{_avg:+.2%}", "Beat Rate": f"{_br:.0%}"})
+                _bk_html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+                _bk_html += '<tr style="color:var(--bc-dim);text-transform:uppercase;font-size:10px;">'
+                for _hdr in ["Book","Bets","Avg CLV","Beat Rate"]:
+                    _bk_html += f'<th style="padding:4px 8px;text-align:left;">{_hdr}</th>'
                 _bk_html += "</tr>"
-            _bk_html += "</table>"
-            st.markdown(_bk_html, unsafe_allow_html=True)
+                for _row in _book_rows:
+                    _rc = "#22c55e" if "+" in _row["Avg CLV"] else "#e04040"
+                    _bk_html += f'<tr style="border-top:1px solid #1a2a3a;">'
+                    _bk_html += f'<td style="padding:4px 8px;color:var(--bc-text);">{_row["Book"]}</td>'
+                    _bk_html += f'<td style="padding:4px 8px;color:var(--bc-muted);">{_row["Bets"]}</td>'
+                    _bk_html += f'<td style="padding:4px 8px;color:{_rc};font-weight:700;">{_row["Avg CLV"]}</td>'
+                    _bk_html += f'<td style="padding:4px 8px;color:var(--bc-muted);">{_row["Beat Rate"]}</td>'
+                    _bk_html += "</tr>"
+                _bk_html += "</table>"
+                st.markdown(_bk_html, unsafe_allow_html=True)
+            st.markdown("---")
+
+
+        if st.session_state.get("history", []):
+            hist_df = pd.DataFrame(st.session_state.get("history", []))
+            hist_df = hist_df.iloc[::-1].reset_index(drop=True)
+
+            # Quick stats row at top
+            total_bets = len(st.session_state.get("history", []))
+            wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
+            losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
+            pending = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "PENDING")
+            total_net = sum(h.get("net", 0) for h in st.session_state.get("history", []))
+            win_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
+            net_color = "#22c55e" if total_net >= 0 else "#e04040"
+            st.markdown(
+                f'<div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">' +
+                f'<div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.3rem;">{wins}</div></div>' +
+                f'<div style="background:var(--bc-bg);border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.3rem;">{losses}</div></div>' +
+                f'<div style="background:var(--bc-bg);border:1px solid #e8a02033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Pending</div><div style="color:#e8a020;font-weight:700;font-size:1.3rem;">{pending}</div></div>' +
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Hit Rate</div><div style="color:var(--bc-text);font-weight:700;font-size:1.3rem;">{win_rate:.1%}</div></div>' +
+                f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.3rem;">${total_net:+.2f}</div></div>' +
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+            # Filters
+            filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1,1,1,1])
+            with filter_col1:
+                tier_filter_h = st.multiselect(
+                    "Filter by Tier",
+                    ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS","N/A"],
+                    default=["SOVEREIGN","ELITE","APPROVED","LEAN","PASS","N/A"],
+                    key="hist_tier_filter"
+                )
+            with filter_col2:
+                outcome_filter = st.multiselect(
+                    "Filter by Result",
+                    ["WIN","LOSS","PENDING"],
+                    default=["WIN","LOSS","PENDING"],
+                    key="hist_outcome_filter"
+                )
+            with filter_col3:
+                all_sports = ["NBA","MLB","NFL","NHL","WNBA","UFC","Soccer","Golf","Tennis"]
+                sport_filter_h = st.multiselect(
+                    "Filter by Sport",
+                    all_sports,
+                    default=all_sports,
+                    key="hist_sport_filter"
+                )
+            with filter_col4:
+                # Real-stake-only toggle -- 171 of 280 resolved bets in the real
+                # ledger are auto-tracked picks with no wager logged (BDL/Bovada/
+                # PrizePicks resolvers track model accuracy whether or not a real
+                # bet was placed). They're legitimate for signal/hit-rate tracking
+                # but drag down or distort P&L/ROI views if mixed in silently.
+                # This isolates the two views instead of picking one by default.
+                wager_only_h = st.checkbox(
+                    "💰 Real Stake Only",
+                    value=False,
+                    key="hist_wager_only",
+                    help="Hide bets with no wager logged (auto-tracked picks that weren't actually staked). "
+                         "Toggle on to see only real-money results and true ROI."
+                )
+
+            # Apply filters
+            filtered_hist = hist_df.copy()
+            if "tier" in filtered_hist.columns:
+                filtered_hist = filtered_hist[filtered_hist["tier"].fillna("N/A").isin(tier_filter_h)]
+            if "outcome" in filtered_hist.columns:
+                filtered_hist = filtered_hist[filtered_hist["outcome"].fillna("PENDING").isin(outcome_filter)]
+            if "sport" in filtered_hist.columns:
+                filtered_hist = filtered_hist[filtered_hist["sport"].fillna("NBA").isin(sport_filter_h)]
+            if wager_only_h and "wager" in filtered_hist.columns:
+                filtered_hist = filtered_hist[filtered_hist["wager"].fillna(0).astype(float) > 0]
+
+            # Friendly column names
+            display_cols = {
+                "timestamp": "Date", "player": "Player", "prop": "Stat",
+                "line": "Line", "side": "Side", "tier": "Tier",
+                "wager": "Wager ($)", "outcome": "Result", "net": "Net ($)",
+                "sport": "Sport", "source": "Platform"
+            }
+            show_cols = [c for c in display_cols.keys() if c in filtered_hist.columns]
+            filtered_hist_display = filtered_hist[show_cols].rename(columns=display_cols)
+            st.markdown(_bc_df_html(filtered_hist_display), unsafe_allow_html=True)
+            st.caption(f"Showing {len(filtered_hist)} of {len(hist_df)} bets" + (" — real stake only" if wager_only_h else ""))
+            if wager_only_h and len(filtered_hist):
+                _wo_resolved = filtered_hist[filtered_hist["outcome"].isin(["WIN","LOSS"])] if "outcome" in filtered_hist.columns else filtered_hist
+                if len(_wo_resolved) and "wager" in _wo_resolved.columns and "net" in _wo_resolved.columns:
+                    _wo_wagered = _wo_resolved["wager"].astype(float).sum()
+                    _wo_net = _wo_resolved["net"].astype(float).sum()
+                    _wo_roi = (_wo_net / _wo_wagered * 100) if _wo_wagered else 0
+                    st.metric("Real-Stake ROI", f"{_wo_roi:+.1f}%", help=f"${_wo_net:+.2f} net on ${_wo_wagered:.2f} actually wagered, {len(_wo_resolved)} resolved bets")
+
+            # Legend
+            with st.expander("📖 How to read this tab"):
+                st.markdown("""
+    **Tier guide:**
+    - 🟢 **SOVEREIGN** — Highest conviction, edge ≥15%
+    - 🔵 **ELITE** — Strong edge, 10-15%
+    - 🟠 **APPROVED** — Solid edge, 5-10%
+    - ⚪ **LEAN** — Small edge, 2-5%
+    - ⬛ **PASS** — No edge, avoid
+
+    **Result:** WIN = hit the line, LOSS = missed, PENDING = not yet resolved
+
+    **Net ($):** Profit or loss after wager. Green = profit, Red = loss.
+
+    **CLV:** Closing Line Value — positive CLV means you got a better price than the market closed at.
+                """)
+            if st.button("Clear History"):
+                st.session_state.history = []
+                save_json_data(HISTORY_PATH, [])
+                save_to_gist("history", st.session_state.get("history", []))
+                st.rerun()
+            st.markdown("---")
+            if len(st.session_state.get("history", [])) >= 5:
+                resolved = hist_df[hist_df["outcome"].isin(["WIN","LOSS"])] if "outcome" in hist_df.columns else pd.DataFrame()
+                if not resolved.empty:
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown("**Hit Rate by Tier**")
+                        if "tier" in resolved.columns:
+                            tier_stats_h = resolved.groupby("tier").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
+                            st.markdown(_bc_df_html(tier_stats_h), unsafe_allow_html=True)
+                    with col_b:
+                        st.markdown("**Hit Rate by Sport**")
+                        if "sport" in resolved.columns:
+                            sport_stats_h = resolved.groupby("sport").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
+                            st.markdown(_bc_df_html(sport_stats_h), unsafe_allow_html=True)
+                    if "net" in resolved.columns:
+                        rc = resolved.copy()
+                        rc["cumulative"] = DEFAULT_BANKROLL + rc["net"].cumsum()
+                        st.line_chart(rc["cumulative"])
         st.markdown("---")
-
-
-    if st.session_state.get("history", []):
-        hist_df = pd.DataFrame(st.session_state.get("history", []))
-        hist_df = hist_df.iloc[::-1].reset_index(drop=True)
-
-        # Quick stats row at top
-        total_bets = len(st.session_state.get("history", []))
-        wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
-        losses = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "LOSS")
-        pending = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "PENDING")
-        total_net = sum(h.get("net", 0) for h in st.session_state.get("history", []))
-        win_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
-        net_color = "#22c55e" if total_net >= 0 else "#e04040"
-        st.markdown(
-            f'<div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">' +
-            f'<div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Wins</div><div style="color:#22c55e;font-weight:700;font-size:1.3rem;">{wins}</div></div>' +
-            f'<div style="background:var(--bc-bg);border:1px solid #e0404033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Losses</div><div style="color:#e04040;font-weight:700;font-size:1.3rem;">{losses}</div></div>' +
-            f'<div style="background:var(--bc-bg);border:1px solid #e8a02033;border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Pending</div><div style="color:#e8a020;font-weight:700;font-size:1.3rem;">{pending}</div></div>' +
-            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Hit Rate</div><div style="color:var(--bc-text);font-weight:700;font-size:1.3rem;">{win_rate:.1%}</div></div>' +
-            f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:6px;padding:0.5rem 1rem;text-align:center;"><div style="color:var(--bc-muted);font-size:1.05rem;text-transform:uppercase;">Net P&L</div><div style="color:{net_color};font-weight:700;font-size:1.3rem;">${total_net:+.2f}</div></div>' +
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-        # Filters
-        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1,1,1,1])
-        with filter_col1:
-            tier_filter_h = st.multiselect(
-                "Filter by Tier",
-                ["SOVEREIGN","ELITE","APPROVED","LEAN","PASS","N/A"],
-                default=["SOVEREIGN","ELITE","APPROVED","LEAN","PASS","N/A"],
-                key="hist_tier_filter"
-            )
-        with filter_col2:
-            outcome_filter = st.multiselect(
-                "Filter by Result",
-                ["WIN","LOSS","PENDING"],
-                default=["WIN","LOSS","PENDING"],
-                key="hist_outcome_filter"
-            )
-        with filter_col3:
-            all_sports = ["NBA","MLB","NFL","NHL","WNBA","UFC","Soccer","Golf","Tennis"]
-            sport_filter_h = st.multiselect(
-                "Filter by Sport",
-                all_sports,
-                default=all_sports,
-                key="hist_sport_filter"
-            )
-        with filter_col4:
-            # Real-stake-only toggle -- 171 of 280 resolved bets in the real
-            # ledger are auto-tracked picks with no wager logged (BDL/Bovada/
-            # PrizePicks resolvers track model accuracy whether or not a real
-            # bet was placed). They're legitimate for signal/hit-rate tracking
-            # but drag down or distort P&L/ROI views if mixed in silently.
-            # This isolates the two views instead of picking one by default.
-            wager_only_h = st.checkbox(
-                "💰 Real Stake Only",
-                value=False,
-                key="hist_wager_only",
-                help="Hide bets with no wager logged (auto-tracked picks that weren't actually staked). "
-                     "Toggle on to see only real-money results and true ROI."
-            )
-
-        # Apply filters
-        filtered_hist = hist_df.copy()
-        if "tier" in filtered_hist.columns:
-            filtered_hist = filtered_hist[filtered_hist["tier"].fillna("N/A").isin(tier_filter_h)]
-        if "outcome" in filtered_hist.columns:
-            filtered_hist = filtered_hist[filtered_hist["outcome"].fillna("PENDING").isin(outcome_filter)]
-        if "sport" in filtered_hist.columns:
-            filtered_hist = filtered_hist[filtered_hist["sport"].fillna("NBA").isin(sport_filter_h)]
-        if wager_only_h and "wager" in filtered_hist.columns:
-            filtered_hist = filtered_hist[filtered_hist["wager"].fillna(0).astype(float) > 0]
-
-        # Friendly column names
-        display_cols = {
-            "timestamp": "Date", "player": "Player", "prop": "Stat",
-            "line": "Line", "side": "Side", "tier": "Tier",
-            "wager": "Wager ($)", "outcome": "Result", "net": "Net ($)",
-            "sport": "Sport", "source": "Platform"
-        }
-        show_cols = [c for c in display_cols.keys() if c in filtered_hist.columns]
-        filtered_hist_display = filtered_hist[show_cols].rename(columns=display_cols)
-        st.markdown(_bc_df_html(filtered_hist_display), unsafe_allow_html=True)
-        st.caption(f"Showing {len(filtered_hist)} of {len(hist_df)} bets" + (" — real stake only" if wager_only_h else ""))
-        if wager_only_h and len(filtered_hist):
-            _wo_resolved = filtered_hist[filtered_hist["outcome"].isin(["WIN","LOSS"])] if "outcome" in filtered_hist.columns else filtered_hist
-            if len(_wo_resolved) and "wager" in _wo_resolved.columns and "net" in _wo_resolved.columns:
-                _wo_wagered = _wo_resolved["wager"].astype(float).sum()
-                _wo_net = _wo_resolved["net"].astype(float).sum()
-                _wo_roi = (_wo_net / _wo_wagered * 100) if _wo_wagered else 0
-                st.metric("Real-Stake ROI", f"{_wo_roi:+.1f}%", help=f"${_wo_net:+.2f} net on ${_wo_wagered:.2f} actually wagered, {len(_wo_resolved)} resolved bets")
-
-        # Legend
-        with st.expander("📖 How to read this tab"):
-            st.markdown("""
-**Tier guide:**
-- 🟢 **SOVEREIGN** — Highest conviction, edge ≥15%
-- 🔵 **ELITE** — Strong edge, 10-15%
-- 🟠 **APPROVED** — Solid edge, 5-10%
-- ⚪ **LEAN** — Small edge, 2-5%
-- ⬛ **PASS** — No edge, avoid
-
-**Result:** WIN = hit the line, LOSS = missed, PENDING = not yet resolved
-
-**Net ($):** Profit or loss after wager. Green = profit, Red = loss.
-
-**CLV:** Closing Line Value — positive CLV means you got a better price than the market closed at.
-            """)
-        if st.button("Clear History"):
-            st.session_state.history = []
-            save_json_data(HISTORY_PATH, [])
-            save_to_gist("history", st.session_state.get("history", []))
-            st.rerun()
-        st.markdown("---")
-        if len(st.session_state.get("history", [])) >= 5:
-            resolved = hist_df[hist_df["outcome"].isin(["WIN","LOSS"])] if "outcome" in hist_df.columns else pd.DataFrame()
-            if not resolved.empty:
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.markdown("**Hit Rate by Tier**")
-                    if "tier" in resolved.columns:
-                        tier_stats_h = resolved.groupby("tier").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
-                        st.markdown(_bc_df_html(tier_stats_h), unsafe_allow_html=True)
-                with col_b:
-                    st.markdown("**Hit Rate by Sport**")
-                    if "sport" in resolved.columns:
-                        sport_stats_h = resolved.groupby("sport").apply(lambda x: pd.Series({"Bets": len(x), "Hit Rate": f"{(x['outcome']=='WIN').mean():.1%}", "Net": f"${x['net'].sum():.2f}" if "net" in x else "\u2014"})).reset_index()
-                        st.markdown(_bc_df_html(sport_stats_h), unsafe_allow_html=True)
-                if "net" in resolved.columns:
-                    rc = resolved.copy()
-                    rc["cumulative"] = DEFAULT_BANKROLL + rc["net"].cumsum()
-                    st.line_chart(rc["cumulative"])
-    st.markdown("---")
-    st.markdown("### \U0001f4b0 ROI by Category")
-    resolved_h = [h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")]
-    if len(resolved_h) >= 5:
-        pick_roi = {}
-        for h in resolved_h:
-            pc = h.get("pick_count", 2)
-            if pc not in pick_roi:
-                pick_roi[pc] = {"bets": 0, "wagered": 0, "returned": 0}
-            pick_roi[pc]["bets"] += 1
-            pick_roi[pc]["wagered"] += h.get("wager", 0)
-            if h["outcome"] == "WIN":
-                pick_roi[pc]["returned"] += h.get("wager", 0) * PRIZEPICKS_MULTIPLIERS.get(pc, 3.0)
-        roi_rows = []
-        for pc in sorted(pick_roi.keys()):
-            data = pick_roi[pc]
-            if data["wagered"] > 0:
-                roi = (data["returned"] - data["wagered"]) / data["wagered"] * 100
-                roi_rows.append({"Pick Count": f"{pc}-pick", "Bets": data["bets"], "Wagered": f"${data['wagered']:.2f}", "Returned": f"${data['returned']:.2f}", "ROI": f"{'🟢' if roi > 0 else '🔴'} {roi:+.1f}%"})
-        if roi_rows:
-            st.markdown(_bc_df_html(pd.DataFrame(roi_rows)), unsafe_allow_html=True)
-    else:
-        st.caption("Need 5+ resolved bets for ROI analysis.")
+    if _view in ("Daily", "All"):
+        st.markdown("### \U0001f4b0 ROI by Category")
+        resolved_h = [h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")]
+        if len(resolved_h) >= 5:
+            pick_roi = {}
+            for h in resolved_h:
+                pc = h.get("pick_count", 2)
+                if pc not in pick_roi:
+                    pick_roi[pc] = {"bets": 0, "wagered": 0, "returned": 0}
+                pick_roi[pc]["bets"] += 1
+                pick_roi[pc]["wagered"] += h.get("wager", 0)
+                if h["outcome"] == "WIN":
+                    pick_roi[pc]["returned"] += h.get("wager", 0) * PRIZEPICKS_MULTIPLIERS.get(pc, 3.0)
+            roi_rows = []
+            for pc in sorted(pick_roi.keys()):
+                data = pick_roi[pc]
+                if data["wagered"] > 0:
+                    roi = (data["returned"] - data["wagered"]) / data["wagered"] * 100
+                    roi_rows.append({"Pick Count": f"{pc}-pick", "Bets": data["bets"], "Wagered": f"${data['wagered']:.2f}", "Returned": f"${data['returned']:.2f}", "ROI": f"{'🟢' if roi > 0 else '🔴'} {roi:+.1f}%"})
+            if roi_rows:
+                st.markdown(_bc_df_html(pd.DataFrame(roi_rows)), unsafe_allow_html=True)
+        else:
+            st.caption("Need 5+ resolved bets for ROI analysis.")
 
         st.markdown("---")
+    if _view in ("Daily", "All"):
         st.markdown("### 🔬 Loss Post-Mortem Analyzer")
         st.caption("Select any losing bet to understand why it lost — variance, bad process, or known risk factor.")
 
@@ -20943,1496 +20950,1514 @@ with tabs[4]:
             )
 
 
-    st.markdown("---")
-    with st.expander("📊 Advanced Performance Metrics — Injury Tracker", expanded=False):
-        st.markdown("### \U0001f921 Injury Performance Tracker")
-        injury_results, n_injured = analyze_injury_performance()
-        if injury_results is None:
-            st.info(f"Injury tracker activates after 20 injury-tagged resolved bets. Current: {n_injured}. Need {20 - n_injured} more.")
-        else:
-            col_i1, col_i2, col_i3 = st.columns(3)
-            col_i1.metric("Injured WR", f"{injury_results['injured_wr']:.1%}")
-            col_i2.metric("Healthy WR", f"{injury_results['healthy_wr']:.1%}")
-            col_i3.metric("WR Gap", f"{injury_results['wr_gap']:+.1%}")
-    st.markdown("---")
-    st.markdown("### \U0001f52c Signal Performance Analysis")
-    signal_results, n_resolved = analyze_signal_performance()
-    if signal_results is None:
-        st.info(f"Signal analysis activates at 20 resolved bets. Current: {n_resolved}. Need {20 - n_resolved} more.")
-    else:
-        st.success(f"\u2705 Analyzing {n_resolved} resolved bets")
-        st.markdown(_bc_df_html(pd.DataFrame(signal_results)), unsafe_allow_html=True)
-
-    # ── Engine 2: Loss Pattern Analyzer ──
-    st.markdown("---")
-
-    # ── Signal Correlation Matrix ──────────────────────────────
-    st.markdown("### 🔗 Signal Correlation Matrix")
-    st.caption("Are your signals independent? High phi (ϕ) = signals fire together frequently = possible double-counting. Run this after 20+ bets.")
-    _perf_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
-    _corr_rows, _corr_n, _corr_warnings = compute_signal_correlation_matrix(_perf_data)
-    if _corr_rows is None:
-        st.info(f"Correlation matrix activates at 20 resolved bets. Current: {_corr_n}.")
-    else:
-        if _corr_warnings:
-            for w in _corr_warnings:
-                st.warning(w)
-        else:
-            st.success("✅ No high-overlap signal pairs detected — signals appear independent.")
-        _show_all_corr = st.checkbox("Show all signal pairs", value=False, key="show_all_corr")
-        _display_rows = _corr_rows if _show_all_corr else [r for r in _corr_rows if r["Phi (ϕ)"] != 0][:10]
-        if _display_rows:
-            st.markdown(_bc_df_html(pd.DataFrame(_display_rows)), unsafe_allow_html=True)
-        st.caption("Phi (ϕ): 0=uncorrelated, 1=always fire together. Co-occur %: when Signal A fires, how often does B also fire?")
-
-    st.markdown("---")
-
-    # ── Signal Lift Analysis ───────────────────────────────────
-    with st.expander("📊 Advanced Performance Metrics — Signal Lift Analysis", expanded=False):
-        st.markdown("### 📈 Signal Lift Analysis")
-        st.caption("Does each signal actually improve results above the base model? Incremental lift = win rate improvement from adding that signal.")
-        _lift_rows, _lift_n = compute_signal_lift_analysis(_perf_data)
-        if _lift_rows is None:
-            st.info(f"Lift analysis activates at 30 resolved bets. Current: {_lift_n}.")
-        else:
-            _negative = [r for r in _lift_rows if "Negative" in r["Grade"]]
-            if _negative:
-                st.warning(f"⚠️ {len(_negative)} signal(s) showing negative drag — consider reducing weight: {', '.join(r['Signal'] for r in _negative)}")
-            st.markdown(_bc_df_html(pd.DataFrame(_lift_rows)), unsafe_allow_html=True)
-            st.caption("Incremental Lift = WR(Base+Signal) minus WR(Base only). Positive = signal adds value. Negative = signal hurts model.")
-
-    st.markdown("---")
-
-    # ── Signal Stability Analysis ──────────────────────────────
-    st.markdown("### 📅 Signal Stability (30d / 90d / Season)")
-    st.caption("Are signals consistent over time? Unstable signals may be chasing recent variance. Use this to audit optimizer decisions.")
-    _stab_rows, _stab_n = compute_signal_stability(_perf_data)
-    if _stab_rows is None:
-        st.info(f"Stability analysis activates at 30 resolved bets. Current: {_stab_n}.")
-    else:
-        _unstable = [r for r in _stab_rows if "Unstable" in r["Stability"]]
-        if _unstable:
-            st.warning(f"⚠️ Unstable signals detected (high variance across windows): {', '.join(r['Signal'] for r in _unstable)}")
-        else:
-            st.success("✅ All signals showing stable win rates across time windows.")
-        st.markdown(_bc_df_html(pd.DataFrame(_stab_rows)), unsafe_allow_html=True)
-        st.caption("Stable = WR consistent across L30d/L90d/Season. Unstable = hot/cold streaks — reduce optimizer trust for that signal.")
-
-    st.markdown("---")
-    st.checkbox("🔧 Show ML debug on Game Lines", key="show_ml_debug", value=False)
-    st.markdown("### 🧠 Loss Pattern Analysis")
-    _lp = st.session_state.get("loss_patterns", [])
-    _resolved_count = len([h for h in st.session_state.get("history",[]) if h.get("outcome") in ("WIN","LOSS")])
-    if _resolved_count < 20:
-        st.info(f"Loss pattern analysis activates at 20 resolved bets. Current: {_resolved_count}. Need {20 - _resolved_count} more.")
-    elif not _lp:
-        st.success("✅ No significant loss patterns detected — model performing as expected across all segments.")
-    else:
-        st.warning(f"⚠️ {len(_lp)} pattern(s) detected in your bet history — review and consider adjustments:")
-        for pattern in _lp:
-            st.markdown(f"- {pattern}")
-        st.caption("These patterns auto-update every time you load the board. Weight optimizer will incorporate them at 50 bets.")
-
-    # ── NFL Prop ROI by Position ──────────────────────────────
-    if st.session_state.get("last_sport") == "NFL" or any(h.get("sport") == "NFL" for h in st.session_state.get("history", [])):
         st.markdown("---")
-        st.markdown("### 🏈 NFL Prop ROI by Position")
-        st.caption("Tracks win rate and ROI separately for QB/RB/WR/TE/K props. Activates after 10 NFL bets.")
-        _nfl_bets = [h for h in st.session_state.get("history", []) if h.get("sport") == "NFL" and h.get("outcome") in ("WIN","LOSS")]
-        if len(_nfl_bets) >= 10:
-            # Classify prop by position
-            _pos_groups = {
-                "QB":  ["pass", "completion", "interception", "qb", "touchdown pass"],
-                "RB":  ["rush", "carry", "rb", "running back"],
-                "WR":  ["receiv", "target", "catch", "wr", "wide"],
-                "TE":  ["tight", "te "],
-                "DEF": ["sack", "tackle", "defense"],
-            }
-            _pos_stats = {}
-            for _nb in _nfl_bets:
-                _prop_lower = (_nb.get("prop","") + " " + _nb.get("player","")).lower()
-                _pos = "Other"
-                for _pg, _keywords in _pos_groups.items():
-                    if any(kw in _prop_lower for kw in _keywords):
-                        _pos = _pg
-                        break
-                if _pos not in _pos_stats:
-                    _pos_stats[_pos] = {"wins":0,"losses":0,"stake":0,"payout":0}
-                _ps = _pos_stats[_pos]
-                _stake = float(_nb.get("wager",0) or 0)
-                _ps["stake"] += _stake
-                if _nb["outcome"] == "WIN":
-                    _ps["wins"] += 1
-                    _mult = PRIZEPICKS_MULTIPLIERS.get(_nb.get("pick_count",2), 3.0)
-                    _ps["payout"] += _stake * _mult
-                else:
-                    _ps["losses"] += 1
-            _nfl_pos_rows = []
-            for _pos, _ps in sorted(_pos_stats.items()):
-                _total = _ps["wins"] + _ps["losses"]
-                _wr = _ps["wins"] / _total if _total else 0
-                _roi = (_ps["payout"] - _ps["stake"]) / _ps["stake"] if _ps["stake"] else 0
-                _nfl_pos_rows.append({
-                    "Position":  _pos,
-                    "Bets":      _total,
-                    "Win Rate":  f"{_wr:.1%}",
-                    "ROI":       f"{_roi:+.1%}",
-                    "Net Units": f"{(_ps['payout']-_ps['stake']):.1f}u",
-                })
-            if _nfl_pos_rows:
-                st.markdown(_bc_df_html(pd.DataFrame(_nfl_pos_rows)), unsafe_allow_html=True)
+        with st.expander("📊 Advanced Performance Metrics — Injury Tracker", expanded=False):
+            st.markdown("### \U0001f921 Injury Performance Tracker")
+            injury_results, n_injured = analyze_injury_performance()
+            if injury_results is None:
+                st.info(f"Injury tracker activates after 20 injury-tagged resolved bets. Current: {n_injured}. Need {20 - n_injured} more.")
+            else:
+                col_i1, col_i2, col_i3 = st.columns(3)
+                col_i1.metric("Injured WR", f"{injury_results['injured_wr']:.1%}")
+                col_i2.metric("Healthy WR", f"{injury_results['healthy_wr']:.1%}")
+                col_i3.metric("WR Gap", f"{injury_results['wr_gap']:+.1%}")
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### \U0001f52c Signal Performance Analysis")
+        signal_results, n_resolved = analyze_signal_performance()
+        if signal_results is None:
+            st.info(f"Signal analysis activates at 20 resolved bets. Current: {n_resolved}. Need {20 - n_resolved} more.")
         else:
-            st.info(f"NFL position ROI activates after 10 NFL bets. Current: {len(_nfl_bets)}.")
+            st.success(f"\u2705 Analyzing {n_resolved} resolved bets")
+            st.markdown(_bc_df_html(pd.DataFrame(signal_results)), unsafe_allow_html=True)
 
-    # ── Bankroll Intelligence ───────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🏦 Bankroll Intelligence")
-    st.caption("Model-aware stake sizing. Adjusts Kelly fraction based on current model confidence.")
-    _bi = compute_bankroll_multiplier()
-    if not isinstance(_bi, dict):
-        _bi = {}
-    _bi.setdefault("color", "#FFFFFF")
-    _bi.setdefault("label", "Standard")
-    _bi.setdefault("multiplier", 1.0)
-    _bi.setdefault("kelly_advised", 0.0)
-    _bi.setdefault("reasons_up", [])
-    _bi.setdefault("reasons_down", [])
-    if not isinstance(_bi, dict):
-        _bi = {}
-    _bi.setdefault("color", "#8a9ab0")
-    _bi.setdefault("label", "Normal")
-    _bi.setdefault("multiplier", 1.0)
-    _bi.setdefault("kelly_advised", 0.02)
-    _bi.setdefault("reasons_up", [])
-    _bi.setdefault("reasons_down", [])
-    st.markdown(
-        f'<div style="background:var(--bc-bg);border:1px solid {_bi["color"]}44;border-radius:8px;padding:0.8rem;">'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="color:{_bi["color"]};font-size:1.1rem;font-weight:700;">{_bi["label"]}</span>'
-        f'<span style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{_bi["multiplier"]:.2f}x</span>'
-        f'</div>'
-        f'<div style="color:var(--bc-muted);font-size:0.85rem;margin-top:4px;">'
-        f'Kelly advised: {_bi["kelly_advised"]:.1%} of bankroll per bet</div>'
-        + (f'<div style="color:#22c55e;font-size:0.85rem;">✅ {" · ".join(_bi["reasons_up"])}</div>' if _bi["reasons_up"] else "")
-        + (f'<div style="color:#e04040;font-size:0.85rem;">⚠️ {" · ".join(_bi["reasons_down"])}</div>' if _bi["reasons_down"] else "")
-        + '</div>',
-        unsafe_allow_html=True
-    )
+        # ── Engine 2: Loss Pattern Analyzer ──
+        st.markdown("---")
+
+        # ── Signal Correlation Matrix ──────────────────────────────
+    if _view in ("Weekly", "All"):
+        st.markdown("### 🔗 Signal Correlation Matrix")
+        st.caption("Are your signals independent? High phi (ϕ) = signals fire together frequently = possible double-counting. Run this after 20+ bets.")
+        _perf_data = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
+        _corr_rows, _corr_n, _corr_warnings = compute_signal_correlation_matrix(_perf_data)
+        if _corr_rows is None:
+            st.info(f"Correlation matrix activates at 20 resolved bets. Current: {_corr_n}.")
+        else:
+            if _corr_warnings:
+                for w in _corr_warnings:
+                    st.warning(w)
+            else:
+                st.success("✅ No high-overlap signal pairs detected — signals appear independent.")
+            _show_all_corr = st.checkbox("Show all signal pairs", value=False, key="show_all_corr")
+            _display_rows = _corr_rows if _show_all_corr else [r for r in _corr_rows if r["Phi (ϕ)"] != 0][:10]
+            if _display_rows:
+                st.markdown(_bc_df_html(pd.DataFrame(_display_rows)), unsafe_allow_html=True)
+            st.caption("Phi (ϕ): 0=uncorrelated, 1=always fire together. Co-occur %: when Signal A fires, how often does B also fire?")
+
+        st.markdown("---")
+
+        # ── Signal Lift Analysis ───────────────────────────────────
+        with st.expander("📊 Advanced Performance Metrics — Signal Lift Analysis", expanded=False):
+            st.markdown("### 📈 Signal Lift Analysis")
+            st.caption("Does each signal actually improve results above the base model? Incremental lift = win rate improvement from adding that signal.")
+            _lift_rows, _lift_n = compute_signal_lift_analysis(_perf_data)
+            if _lift_rows is None:
+                st.info(f"Lift analysis activates at 30 resolved bets. Current: {_lift_n}.")
+            else:
+                _negative = [r for r in _lift_rows if "Negative" in r["Grade"]]
+                if _negative:
+                    st.warning(f"⚠️ {len(_negative)} signal(s) showing negative drag — consider reducing weight: {', '.join(r['Signal'] for r in _negative)}")
+                st.markdown(_bc_df_html(pd.DataFrame(_lift_rows)), unsafe_allow_html=True)
+                st.caption("Incremental Lift = WR(Base+Signal) minus WR(Base only). Positive = signal adds value. Negative = signal hurts model.")
+
+        st.markdown("---")
+
+        # ── Signal Stability Analysis ──────────────────────────────
+    if _view in ("Weekly", "All"):
+        st.markdown("### 📅 Signal Stability (30d / 90d / Season)")
+        st.caption("Are signals consistent over time? Unstable signals may be chasing recent variance. Use this to audit optimizer decisions.")
+        _stab_rows, _stab_n = compute_signal_stability(_perf_data)
+        if _stab_rows is None:
+            st.info(f"Stability analysis activates at 30 resolved bets. Current: {_stab_n}.")
+        else:
+            _unstable = [r for r in _stab_rows if "Unstable" in r["Stability"]]
+            if _unstable:
+                st.warning(f"⚠️ Unstable signals detected (high variance across windows): {', '.join(r['Signal'] for r in _unstable)}")
+            else:
+                st.success("✅ All signals showing stable win rates across time windows.")
+            st.markdown(_bc_df_html(pd.DataFrame(_stab_rows)), unsafe_allow_html=True)
+            st.caption("Stable = WR consistent across L30d/L90d/Season. Unstable = hot/cold streaks — reduce optimizer trust for that signal.")
+
+        st.markdown("---")
+        st.checkbox("🔧 Show ML debug on Game Lines", key="show_ml_debug", value=False)
+    if _view in ("Weekly", "All"):
+        st.markdown("### 🧠 Loss Pattern Analysis")
+        _lp = st.session_state.get("loss_patterns", [])
+        _resolved_count = len([h for h in st.session_state.get("history",[]) if h.get("outcome") in ("WIN","LOSS")])
+        if _resolved_count < 20:
+            st.info(f"Loss pattern analysis activates at 20 resolved bets. Current: {_resolved_count}. Need {20 - _resolved_count} more.")
+        elif not _lp:
+            st.success("✅ No significant loss patterns detected — model performing as expected across all segments.")
+        else:
+            st.warning(f"⚠️ {len(_lp)} pattern(s) detected in your bet history — review and consider adjustments:")
+            for pattern in _lp:
+                st.markdown(f"- {pattern}")
+            st.caption("These patterns auto-update every time you load the board. Weight optimizer will incorporate them at 50 bets.")
+
+        # ── NFL Prop ROI by Position ──────────────────────────────
+        if st.session_state.get("last_sport") == "NFL" or any(h.get("sport") == "NFL" for h in st.session_state.get("history", [])):
+            st.markdown("---")
+            st.markdown("### 🏈 NFL Prop ROI by Position")
+            st.caption("Tracks win rate and ROI separately for QB/RB/WR/TE/K props. Activates after 10 NFL bets.")
+            _nfl_bets = [h for h in st.session_state.get("history", []) if h.get("sport") == "NFL" and h.get("outcome") in ("WIN","LOSS")]
+            if len(_nfl_bets) >= 10:
+                # Classify prop by position
+                _pos_groups = {
+                    "QB":  ["pass", "completion", "interception", "qb", "touchdown pass"],
+                    "RB":  ["rush", "carry", "rb", "running back"],
+                    "WR":  ["receiv", "target", "catch", "wr", "wide"],
+                    "TE":  ["tight", "te "],
+                    "DEF": ["sack", "tackle", "defense"],
+                }
+                _pos_stats = {}
+                for _nb in _nfl_bets:
+                    _prop_lower = (_nb.get("prop","") + " " + _nb.get("player","")).lower()
+                    _pos = "Other"
+                    for _pg, _keywords in _pos_groups.items():
+                        if any(kw in _prop_lower for kw in _keywords):
+                            _pos = _pg
+                            break
+                    if _pos not in _pos_stats:
+                        _pos_stats[_pos] = {"wins":0,"losses":0,"stake":0,"payout":0}
+                    _ps = _pos_stats[_pos]
+                    _stake = float(_nb.get("wager",0) or 0)
+                    _ps["stake"] += _stake
+                    if _nb["outcome"] == "WIN":
+                        _ps["wins"] += 1
+                        _mult = PRIZEPICKS_MULTIPLIERS.get(_nb.get("pick_count",2), 3.0)
+                        _ps["payout"] += _stake * _mult
+                    else:
+                        _ps["losses"] += 1
+                _nfl_pos_rows = []
+                for _pos, _ps in sorted(_pos_stats.items()):
+                    _total = _ps["wins"] + _ps["losses"]
+                    _wr = _ps["wins"] / _total if _total else 0
+                    _roi = (_ps["payout"] - _ps["stake"]) / _ps["stake"] if _ps["stake"] else 0
+                    _nfl_pos_rows.append({
+                        "Position":  _pos,
+                        "Bets":      _total,
+                        "Win Rate":  f"{_wr:.1%}",
+                        "ROI":       f"{_roi:+.1%}",
+                        "Net Units": f"{(_ps['payout']-_ps['stake']):.1f}u",
+                    })
+                if _nfl_pos_rows:
+                    st.markdown(_bc_df_html(pd.DataFrame(_nfl_pos_rows)), unsafe_allow_html=True)
+            else:
+                st.info(f"NFL position ROI activates after 10 NFL bets. Current: {len(_nfl_bets)}.")
+
+        # ── Bankroll Intelligence ───────────────────────────────
+        st.markdown("---")
+    if _view in ("Seasonal", "All"):
+        st.markdown("### 🏦 Bankroll Intelligence")
+        st.caption("Model-aware stake sizing. Adjusts Kelly fraction based on current model confidence.")
+        _bi = compute_bankroll_multiplier()
+        if not isinstance(_bi, dict):
+            _bi = {}
+        _bi.setdefault("color", "#FFFFFF")
+        _bi.setdefault("label", "Standard")
+        _bi.setdefault("multiplier", 1.0)
+        _bi.setdefault("kelly_advised", 0.0)
+        _bi.setdefault("reasons_up", [])
+        _bi.setdefault("reasons_down", [])
+        if not isinstance(_bi, dict):
+            _bi = {}
+        _bi.setdefault("color", "#8a9ab0")
+        _bi.setdefault("label", "Normal")
+        _bi.setdefault("multiplier", 1.0)
+        _bi.setdefault("kelly_advised", 0.02)
+        _bi.setdefault("reasons_up", [])
+        _bi.setdefault("reasons_down", [])
+        st.markdown(
+            f'<div style="background:var(--bc-bg);border:1px solid {_bi["color"]}44;border-radius:8px;padding:0.8rem;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+            f'<span style="color:{_bi["color"]};font-size:1.1rem;font-weight:700;">{_bi["label"]}</span>'
+            f'<span style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{_bi["multiplier"]:.2f}x</span>'
+            f'</div>'
+            f'<div style="color:var(--bc-muted);font-size:0.85rem;margin-top:4px;">'
+            f'Kelly advised: {_bi["kelly_advised"]:.1%} of bankroll per bet</div>'
+            + (f'<div style="color:#22c55e;font-size:0.85rem;">✅ {" · ".join(_bi["reasons_up"])}</div>' if _bi["reasons_up"] else "")
+            + (f'<div style="color:#e04040;font-size:0.85rem;">⚠️ {" · ".join(_bi["reasons_down"])}</div>' if _bi["reasons_down"] else "")
+            + '</div>',
+            unsafe_allow_html=True
+        )
 
 
-    # ── Scanbet Auto-Fetch — All Sports (runs in user's browser) ────────────
-    # JS runs in YOUR browser on board load — bypasses Cloudflare automatically.
-    # Sports with known filterId: direct GetEvents call.
-    # Sports with sportId: GenerateFilterHash first, then GetEvents.
-    # Result pushed to Gist → BetCouncil reads on next board load.
-    _scanbet_sport_map = {
-        "MLB":    {"filterId": "f3e9a7ebfb522115", "sportId": 8},
-        "NBA":    {"filterId": None,                "sportId": 4},
-        "NFL":    {"filterId": None,                "sportId": 11},
-        "UFC":    {"filterId": None,                "sportId": 7},
-        "TENNIS": {"filterId": "c470e5ce21f765bf", "sportId": None},
-        "SOCCER": {"filterId": "195765953ceb385a", "sportId": None},
-        "NHL":    {"filterId": None,                "sportId": 6},
-    }
-    _sbs = _scanbet_sport_map.get(sport_sel, {})
-    _sb_filter_id = _sbs.get("filterId","") or ""
-    _sb_sport_id  = _sbs.get("sportId") or 0
+        # ── Scanbet Auto-Fetch — All Sports (runs in user's browser) ────────────
+        # JS runs in YOUR browser on board load — bypasses Cloudflare automatically.
+        # Sports with known filterId: direct GetEvents call.
+        # Sports with sportId: GenerateFilterHash first, then GetEvents.
+        # Result pushed to Gist → BetCouncil reads on next board load.
+        _scanbet_sport_map = {
+            "MLB":    {"filterId": "f3e9a7ebfb522115", "sportId": 8},
+            "NBA":    {"filterId": None,                "sportId": 4},
+            "NFL":    {"filterId": None,                "sportId": 11},
+            "UFC":    {"filterId": None,                "sportId": 7},
+            "TENNIS": {"filterId": "c470e5ce21f765bf", "sportId": None},
+            "SOCCER": {"filterId": "195765953ceb385a", "sportId": None},
+            "NHL":    {"filterId": None,                "sportId": 6},
+        }
+        _sbs = _scanbet_sport_map.get(sport_sel, {})
+        _sb_filter_id = _sbs.get("filterId","") or ""
+        _sb_sport_id  = _sbs.get("sportId") or 0
 
-    if _sb_filter_id or _sb_sport_id:
-        _scanbet_js = f"""
+        if _sb_filter_id or _sb_sport_id:
+            _scanbet_js = f"""
+            <script>
+            (function() {{
+                var sport = '{sport_sel}';
+                var filterId = '{_sb_filter_id}';
+                var sportId  = {_sb_sport_id};
+                var gistId   = '{GITHUB_GIST_ID}';
+                var gistTok  = '{GITHUB_TOKEN}';
+                var throttleKey = 'scanbet_last_run_' + sport;
+                var now = Date.now();
+                var lastRun = localStorage.getItem(throttleKey);
+                if (lastRun && (now - parseInt(lastRun)) < 300000) {{
+                    console.log('[BetCouncil] Scanbet ' + sport + ': skipping (ran < 5min ago)');
+                    return;
+                }}
+
+                var GQL_URL = 'https://scanbet.io/graphql';
+                var EVENTS_QUERY = 'query GetEvents($input:GetEventsInput!){{events(input:$input){{pageData{{sports{{sportName leagues{{leagueName events{{eventId home away eventOdds{{odds parseTime}}}}}}}}}}totalPages page}}}}';
+
+                function pushToGist(data) {{
+                    return fetch('https://api.github.com/gists/' + gistId, {{
+                        method: 'PATCH',
+                        headers: {{
+                            'Authorization': 'token ' + gistTok,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github.v3+json'
+                        }},
+                        body: JSON.stringify({{files: {{'betcouncil_scanbet_drops.json': {{content: JSON.stringify(data, null, 2)}}}}}})
+                    }}).then(function(r) {{
+                        if (r.ok) {{
+                            localStorage.setItem(throttleKey, Date.now().toString());
+                            console.log('[BetCouncil] ✅ Scanbet ' + sport + ' drops pushed (' + (data.data && data.data.events ? 'got events' : 'no events') + ')');
+                        }}
+                    }});
+                }}
+
+                function getEvents(fid) {{
+                    fetch(GQL_URL, {{
+                        method: 'POST',
+                        headers: {{'content-type': 'application/json'}},
+                        body: JSON.stringify({{
+                            operationName: 'GetEvents',
+                            variables: {{input: {{filterId: fid, page: 1, bookmakerId: 1}}}},
+                            query: EVENTS_QUERY
+                        }})
+                    }}).then(function(r) {{ return r.json(); }})
+                      .then(function(data) {{ pushToGist(data); }})
+                      .catch(function(e) {{ console.log('[BetCouncil] Scanbet GetEvents error:', e); }});
+                }}
+
+                if (filterId) {{
+                    // Direct — already have filterId
+                    getEvents(filterId);
+                }} else if (sportId) {{
+                    // Generate filterId first via GenerateFilterHash mutation
+                    fetch(GQL_URL, {{
+                        method: 'POST',
+                        headers: {{'content-type': 'application/json'}},
+                        body: JSON.stringify({{
+                            operationName: 'GenerateFilterHash',
+                            variables: {{input: {{
+                                bookmakerId: 1,
+                                filters: {{updateTimeFilter:'all_time',startTimeFilter:'all_time',minInitialMax:0,minCurrentMax:0}},
+                                selectedSports: {{sportIds:[sportId],allSportsSelected:false,allLeaguesSelected:true,selectedLeagues:[{{sportId:sportId,allSportLeaguesSelected:true,leagueIds:[]}}]}}
+                            }}}},
+                            query: 'mutation GenerateFilterHash($input:GenerateFilterHashInput!){{generateFilterHash(input:$input){{filterId}}}}'
+                        }})
+                    }}).then(function(r) {{ return r.json(); }})
+                      .then(function(d) {{
+                        var fid = d && d.data && d.data.generateFilterHash && d.data.generateFilterHash.filterId;
+                        if (fid) {{ getEvents(fid); }}
+                        else {{ console.log('[BetCouncil] Scanbet: could not generate filterId for sport', sportId); }}
+                      }})
+                      .catch(function(e) {{ console.log('[BetCouncil] Scanbet GenerateFilterHash error:', e); }});
+                }}
+            }})();
+            </script>
+            """
+            st.components.v1.html(_scanbet_js, height=0, scrolling=False)
+
+        # ── Auto-harvester: EVSharps JWT + Caesars WAF + FanDuel + BetMGM ────────
+        # All run silently in YOUR browser on every board load.
+        # No need to visit any site manually — BetCouncil does it automatically.
+        _harvester_js = f"""
         <script>
         (function() {{
-            var sport = '{sport_sel}';
-            var filterId = '{_sb_filter_id}';
-            var sportId  = {_sb_sport_id};
-            var gistId   = '{GITHUB_GIST_ID}';
-            var gistTok  = '{GITHUB_TOKEN}';
-            var throttleKey = 'scanbet_last_run_' + sport;
-            var now = Date.now();
-            var lastRun = localStorage.getItem(throttleKey);
-            if (lastRun && (now - parseInt(lastRun)) < 300000) {{
-                console.log('[BetCouncil] Scanbet ' + sport + ': skipping (ran < 5min ago)');
-                return;
-            }}
+            var GIST_ID  = '{GITHUB_GIST_ID}';
+            var GIST_TOK = '{GITHUB_TOKEN}';
+            var sport    = '{sport_sel}';
 
-            var GQL_URL = 'https://scanbet.io/graphql';
-            var EVENTS_QUERY = 'query GetEvents($input:GetEventsInput!){{events(input:$input){{pageData{{sports{{sportName leagues{{leagueName events{{eventId home away eventOdds{{odds parseTime}}}}}}}}}}totalPages page}}}}';
+            // BUG FIX (2026-07): pushGist() used to fire concurrent PATCH requests
+            // against the same Gist whenever multiple harvest sources completed
+            // around the same time (common right after page load). GitHub's Gist
+            // API returns 409 Conflict when two PATCHes race, and the old code
+            // never checked r.ok or retried -- it logged nothing on failure, so
+            // some harvested updates were silently dropped every session with no
+            // visible symptom. Fixed by serializing all writes through a single
+            // promise chain (only one PATCH in flight at a time) with automatic
+            // retry-with-backoff specifically on 409.
+            var __bcGistQueue = Promise.resolve();
 
-            function pushToGist(data) {{
-                return fetch('https://api.github.com/gists/' + gistId, {{
+            function __bcPushGistOnce(filename, content) {{
+                return fetch('https://api.github.com/gists/' + GIST_ID, {{
                     method: 'PATCH',
                     headers: {{
-                        'Authorization': 'token ' + gistTok,
+                        'Authorization': 'token ' + GIST_TOK,
                         'Content-Type': 'application/json',
                         'Accept': 'application/vnd.github.v3+json'
                     }},
-                    body: JSON.stringify({{files: {{'betcouncil_scanbet_drops.json': {{content: JSON.stringify(data, null, 2)}}}}}})
-                }}).then(function(r) {{
-                    if (r.ok) {{
-                        localStorage.setItem(throttleKey, Date.now().toString());
-                        console.log('[BetCouncil] ✅ Scanbet ' + sport + ' drops pushed (' + (data.data && data.data.events ? 'got events' : 'no events') + ')');
-                    }}
+                    body: JSON.stringify({{files: {{[filename]: {{content: JSON.stringify(content, null, 2)}}}}}})
                 }});
             }}
 
-            function getEvents(fid) {{
-                fetch(GQL_URL, {{
-                    method: 'POST',
-                    headers: {{'content-type': 'application/json'}},
-                    body: JSON.stringify({{
-                        operationName: 'GetEvents',
-                        variables: {{input: {{filterId: fid, page: 1, bookmakerId: 1}}}},
-                        query: EVENTS_QUERY
-                    }})
-                }}).then(function(r) {{ return r.json(); }})
-                  .then(function(data) {{ pushToGist(data); }})
-                  .catch(function(e) {{ console.log('[BetCouncil] Scanbet GetEvents error:', e); }});
-            }}
-
-            if (filterId) {{
-                // Direct — already have filterId
-                getEvents(filterId);
-            }} else if (sportId) {{
-                // Generate filterId first via GenerateFilterHash mutation
-                fetch(GQL_URL, {{
-                    method: 'POST',
-                    headers: {{'content-type': 'application/json'}},
-                    body: JSON.stringify({{
-                        operationName: 'GenerateFilterHash',
-                        variables: {{input: {{
-                            bookmakerId: 1,
-                            filters: {{updateTimeFilter:'all_time',startTimeFilter:'all_time',minInitialMax:0,minCurrentMax:0}},
-                            selectedSports: {{sportIds:[sportId],allSportsSelected:false,allLeaguesSelected:true,selectedLeagues:[{{sportId:sportId,allSportLeaguesSelected:true,leagueIds:[]}}]}}
-                        }}}},
-                        query: 'mutation GenerateFilterHash($input:GenerateFilterHashInput!){{generateFilterHash(input:$input){{filterId}}}}'
-                    }})
+            function pullGist(filename) {{
+                return fetch('https://api.github.com/gists/' + GIST_ID, {{
+                    method: 'GET',
+                    headers: {{
+                        'Authorization': 'token ' + GIST_TOK,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }}
                 }}).then(function(r) {{ return r.json(); }})
                   .then(function(d) {{
-                    var fid = d && d.data && d.data.generateFilterHash && d.data.generateFilterHash.filterId;
-                    if (fid) {{ getEvents(fid); }}
-                    else {{ console.log('[BetCouncil] Scanbet: could not generate filterId for sport', sportId); }}
-                  }})
-                  .catch(function(e) {{ console.log('[BetCouncil] Scanbet GenerateFilterHash error:', e); }});
+                    var f = d.files && d.files[filename];
+                    if (!f || !f.content) return null;
+                    try {{ return JSON.parse(f.content); }} catch (e) {{ return null; }}
+                  }}).catch(function(e) {{ return null; }});
+            }}
+
+            function pushGist(filename, content) {{
+                __bcGistQueue = __bcGistQueue.then(function() {{
+                    return __bcPushGistOnce(filename, content).then(function(r) {{
+                        if (r.ok) {{
+                            console.log('[BetCouncil] ✅ Auto-pushed: ' + filename);
+                            return;
+                        }}
+                        if (r.status === 409) {{
+                            // Conflict from a racing write elsewhere -- wait briefly and retry once.
+                            return new Promise(function(resolve) {{ setTimeout(resolve, 800); }})
+                                .then(function() {{ return __bcPushGistOnce(filename, content); }})
+                                .then(function(r2) {{
+                                    if (r2.ok) {{
+                                        console.log('[BetCouncil] ✅ Auto-pushed (after retry): ' + filename);
+                                    }} else {{
+                                        console.log('[BetCouncil] ⚠️ Gist push failed after retry: ' + filename + ' status=' + r2.status);
+                                    }}
+                                }});
+                        }}
+                        console.log('[BetCouncil] ⚠️ Gist push failed: ' + filename + ' status=' + r.status);
+                    }}).catch(function(e) {{
+                        console.log('[BetCouncil] Gist push error:', filename, e.message);
+                    }});
+                }});
+                return __bcGistQueue;
+            }}
+
+            function throttled(key, ms, fn) {{
+                var last = localStorage.getItem('bc_harvest_' + key);
+                if (last && (Date.now() - parseInt(last)) < ms) return;
+                localStorage.setItem('bc_harvest_' + key, Date.now().toString());
+                fn();
+            }}
+
+            // ── 1. EVSharps JWT auto-refresh (every 50 min) ─────────────────────
+            // BUG FIX (2026-07): refresh_token was hardcoded to the same seed
+            // value on every call. Supabase rotates the refresh token on each
+            // use (standard OAuth2 refresh-token rotation) -- after the first
+            // successful rotation, every later attempt kept sending the now-
+            // invalidated original token, failed silently (.catch only logs to
+            // console, no Gist push), and never recovered on its own. This is
+            // the direct explanation for betcouncil_tokens.json / betcouncil_
+            // evsharps_ev_*.json staying stale for 9+ days regardless of
+            // whether a browser tab was open to run this at all. Now pulls the
+            // last-saved refresh token from Gist first and uses that.
+            throttled('evsharps', 3000000, function() {{
+                pullGist('betcouncil_tokens.json').then(function(saved) {{
+                    var currentRefresh = (saved && saved.ev_refresh) || 'z325a7doims5';
+                    fetch('https://nkdhryqpiulrepmphwmt.supabase.co/auth/v1/token?grant_type=refresh_token', {{
+                        method: 'POST',
+                        headers: {{'Content-Type': 'application/json',
+                                   'apikey': '{SUPABASE_ANON}'}},
+                        body: JSON.stringify({{refresh_token: currentRefresh}})
+                    }}).then(function(r) {{ return r.json(); }})
+                      .then(function(d) {{
+                        if (d.access_token) {{
+                            pushGist('betcouncil_tokens.json', {{
+                                ev_jwt: d.access_token,
+                                ev_refresh: d.refresh_token || currentRefresh,
+                                captured_at: new Date().toISOString(),
+                                source: 'betcouncil_auto_harvest'
+                            }});
+                            console.log('[BetCouncil] ✅ EVSharps JWT refreshed automatically');
+                        }} else {{
+                            console.log('[BetCouncil] ⚠️ EVSharps refresh returned no access_token -- refresh token may be dead, needs manual re-auth:', JSON.stringify(d));
+                        }}
+                      }}).catch(function(e) {{ console.log('[BetCouncil] EVSharps refresh error:', e); }});
+                }});
+            }});
+
+            // ── 2. Caesars auth token passive capture (hooks fetch, pushes on every authenticated call) ──
+            if (!window.__bcCzrHooked) {{
+                window.__bcCzrHooked = true;
+                var __bcOrigFetchCzr = window.fetch;
+                window.fetch = function() {{
+                    var __bcArgsCzr = arguments;
+                    var __bcUrlCzr = (typeof __bcArgsCzr[0] === 'string') ? __bcArgsCzr[0] : (__bcArgsCzr[0] && __bcArgsCzr[0].url);
+                    var __bcReqInitCzr = __bcArgsCzr[1] || {{}};
+
+                    return __bcOrigFetchCzr.apply(this, __bcArgsCzr).then(function(response) {{
+                        try {{
+                            if (__bcUrlCzr && __bcUrlCzr.indexOf('api.americanwagering.com') !== -1) {{
+                                var __bcAuthCzr = '';
+                                var __bcWafCzr = '';
+                                var __bcSessCzr = '';
+                                try {{
+                                    var __bcHeadersCzr = __bcReqInitCzr.headers || {{}};
+                                    if (__bcHeadersCzr instanceof Headers) {{
+                                        __bcAuthCzr = __bcHeadersCzr.get('authorization') || '';
+                                        __bcWafCzr = __bcHeadersCzr.get('x-aws-waf-token') || '';
+                                        __bcSessCzr = __bcHeadersCzr.get('sessionid') || '';
+                                    }} else {{
+                                        __bcAuthCzr = __bcHeadersCzr['authorization'] || __bcHeadersCzr['Authorization'] || '';
+                                        __bcWafCzr = __bcHeadersCzr['x-aws-waf-token'] || '';
+                                        __bcSessCzr = __bcHeadersCzr['sessionid'] || '';
+                                    }}
+                                }} catch (eHeadCzr) {{}}
+
+                                if (__bcAuthCzr && __bcAuthCzr.toLowerCase().indexOf('bearer ') === 0) {{
+                                    var __bcBearerCzr = __bcAuthCzr.substring(7);
+                                    if (__bcBearerCzr !== window.__bcCzrLastBearer) {{
+                                        window.__bcCzrLastBearer = __bcBearerCzr;
+                                        pushGist('betcouncil_caesars_tokens.json', {{
+                                            bearer_jwt: __bcBearerCzr,
+                                            waf_token: __bcWafCzr,
+                                            session_id: __bcSessCzr,
+                                            captured_at: new Date().toISOString(),
+                                            source: 'betcouncil_auto_harvest_passive'
+                                        }});
+                                        console.log('[BetCouncil] ✅ Caesars tokens captured (bearer + waf)');
+                                    }}
+                                }}
+                            }}
+                        }} catch (eOuterCzr) {{
+                            console.log('[BetCouncil] Caesars passive capture error:', eOuterCzr.message);
+                        }}
+                        return response;
+                    }});
+                }};
+                console.log('[BetCouncil] Caesars passive harvester hooked — browse Caesars to capture tokens');
+            }}
+
+
+
+            // ── 3. FanDuel odds passive capture (hooks fetch, pushes on every getMarketPrices call) ──
+            if (!window.__bcFdHooked) {{
+                window.__bcFdHooked = true;
+                var __bcOrigFetch = window.fetch;
+                window.fetch = function() {{
+                    var __bcArgs = arguments;
+                    var __bcUrl = (typeof __bcArgs[0] === 'string') ? __bcArgs[0] : (__bcArgs[0] && __bcArgs[0].url);
+                    var __bcReqInit = __bcArgs[1] || {{}};
+
+                    return __bcOrigFetch.apply(this, __bcArgs).then(function(response) {{
+                        try {{
+                            if (__bcUrl && __bcUrl.indexOf('getMarketPrices') !== -1) {{
+                                // Capture x-px-context from the outgoing request headers
+                                var __bcPxContext = '';
+                                try {{
+                                    var __bcHeaders = __bcReqInit.headers || {{}};
+                                    if (__bcHeaders instanceof Headers) {{
+                                        __bcPxContext = __bcHeaders.get('x-px-context') || '';
+                                    }} else {{
+                                        __bcPxContext = __bcHeaders['x-px-context'] || '';
+                                    }}
+                                }} catch (eHead) {{}}
+
+                                var __bcClone = response.clone();
+                                __bcClone.json().then(function(data) {{
+                                    if (Array.isArray(data) && data.length) {{
+                                        pushGist('betcouncil_fd_props_' + sport + '.json', {{
+                                            sport: sport,
+                                            captured_at: new Date().toISOString(),
+                                            markets: data,
+                                            source: 'betcouncil_auto_harvest_passive'
+                                        }});
+                                        console.log('[BetCouncil] ✅ FanDuel odds captured: ' + data.length + ' markets');
+
+                                        if (__bcPxContext) {{
+                                            pushGist('fanduel_tokens.json', {{
+                                                px_context: __bcPxContext,
+                                                captured_at: new Date().toISOString(),
+                                                source: 'betcouncil_auto_harvest_passive'
+                                            }});
+                                        }}
+                                    }}
+                                }}).catch(function(eJson) {{
+                                    console.log('[BetCouncil] FanDuel odds parse error:', eJson.message);
+                                }});
+                            }}
+                        }} catch (eOuter) {{
+                            console.log('[BetCouncil] FanDuel passive capture error:', eOuter.message);
+                        }}
+                        return response;
+                    }});
+                }};
+                console.log('[BetCouncil] FanDuel passive harvester hooked — browse FanDuel props to capture odds');
+            }}
+
+
+            // ── 4. BetMGM: retired 2026-07-12. This cross-origin fetch from the
+            //    Streamlit app's own page to sports.az.betmgm.com was silently
+            //    CORS-blocked every time -- confirmed by the Auto-Harvester status
+            //    panel showing "Pending" forever, never a single successful fire.
+            //    Replaced by scripts/tampermonkey_betmgm_harvester.user.js, which
+            //    runs the identical fetch from betmgm.com's own origin (same-origin,
+            //    no CORS) and pushes to the same betcouncil_mgm_props_{{sport}}.json
+            //    Gist key -- fetch_betmgm_props_from_gist() and
+            //    _parse_betmgm_harvested() in fetchers.py needed zero changes.
+
+            // ── 5. Action Network sharp splits auto-fetch (every 15 min) ────────
+            var anSportMap = {{
+                'MLB': 'mlb', 'NBA': 'nba', 'NFL': 'nfl', 'NHL': 'nhl'
+            }};
+            var anSport = anSportMap[sport];
+            if (anSport) {{
+                throttled('actionnetwork_' + sport, 900000, function() {{
+                    fetch('https://api.actionnetwork.com/web/v2/scoreboard/' + anSport + '?period=game&bookIds=15,30,76,75,123,69,68,972&include=teams%2Cgame_lines%2Cschedules%2Codds_history', {{
+                        headers: {{
+                            'Accept': 'application/json',
+                            'Origin': 'https://www.actionnetwork.com',
+                            'Referer': 'https://www.actionnetwork.com/'
+                        }}
+                    }}).then(function(r) {{ if (!r.ok) throw new Error('AN ' + r.status); return r.json(); }})
+                      .then(function(data) {{
+                        pushGist('betcouncil_actionnetwork_' + sport + '.json', {{
+                            sport: sport,
+                            captured_at: new Date().toISOString(),
+                            data: data,
+                            source: 'betcouncil_auto_harvest'
+                        }});
+                      }}).catch(function(e) {{
+                        console.log('[BetCouncil] ActionNetwork harvest error:', e.message);
+                    }});
+                }});
+            }}
+
+            // ── 6. Covers.com consensus betting % (every 20 min) ─────────
+            // URL FIX (Jul 9 2026): old www.covers.com/api/widget/matchups path
+            // is unconfirmed/likely dead along with the old /consensus page;
+            // contests.covers.com/consensus/topconsensus is the confirmed-live
+            // current page (server-rendered HTML, not JSON — parsed server-side
+            // by fetch_covers_consensus() in fetchers.py instead of here).
+            var coversSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','WNBA':'wnba','CFL':'cfl'}};
+            var coversSport = coversSportMap[sport];
+            if (coversSport) {{
+                throttled('covers_' + sport, 1200000, function() {{
+                    fetch('https://contests.covers.com/consensus/topconsensus/' + coversSport + '/overall', {{
+                        headers: {{'Accept':'text/html','Referer':'https://www.covers.com/'}}
+                    }}).then(function(r){{return r.text();}}).then(function(html){{
+                        pushGist('betcouncil_covers_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),html:html,source:'betcouncil_auto_harvest'}});
+                    }}).catch(function(e){{console.log('[BetCouncil] Covers error:',e.message);}});
+                }});
+            }}
+
+            // ── 7. DraftKings props (every 20 min) ───────────────────────
+            var dkCatMap = {{'MLB':84240,'NBA':42648,'NFL':88808,'NHL':42133,'UFC':9}};
+            var dkCat = dkCatMap[sport];
+            if (dkCat) {{
+                throttled('dk_props_' + sport, 1200000, function() {{
+                    fetch('https://sportsbook.draftkings.com/api/odds/v1/categories/' + dkCat + '/subcategories?format=json', {{
+                        headers:{{'Accept':'application/json','Referer':'https://sportsbook.draftkings.com/'}}
+                    }}).then(function(r){{return r.json();}}).then(function(data){{
+                        pushGist('betcouncil_dk_props_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    }}).catch(function(e){{console.log('[BetCouncil] DK props error:',e.message);}});
+                }});
+            }}
+
+            // ── 8. Unabated sharp lines (every 30 min) ───────────────────
+            throttled('unabated_' + sport, 1800000, function() {{
+                fetch('https://unabated.com/api/lines?sport=' + sport.toLowerCase(), {{
+                    headers:{{'Accept':'application/json','Referer':'https://unabated.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_unabated_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] Unabated error:',e.message);}});
+            }});
+
+            // ── 9. OddsJam +EV (every 20 min) ────────────────────────────
+            throttled('oddsjam_' + sport, 1200000, function() {{
+                fetch('https://oddsjam.com/api/v2/positive-ev?sport=' + sport.toLowerCase() + '&sportsbook=pinnacle', {{
+                    headers:{{'Accept':'application/json','Referer':'https://oddsjam.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_oddsjam_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] OddsJam error:',e.message);}});
+            }});
+
+            // ── 10. PropSwap secondary market (every 30 min) ─────────────
+            throttled('propswap_' + sport, 1800000, function() {{
+                fetch('https://www.propswap.com/api/listings?sport=' + sport.toLowerCase() + '&status=active&limit=100', {{
+                    headers:{{'Accept':'application/json','Referer':'https://www.propswap.com/'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_propswap_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] PropSwap error:',e.message);}});
+            }});
+
+            // ── 12. EVSharps EV data (every 25 min) ─────────────────────────
+            throttled('evsharps_ev_' + sport, 1500000, function() {{
+                var evSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','UFC':'mma'}};
+                var evSport = evSportMap[sport];
+                if (!evSport) return;
+                var evJwt = localStorage.getItem('bc_ev_jwt') || '';
+                var evHdrs = {{'Accept':'application/json'}};
+                if (evJwt) evHdrs['Authorization'] = 'Bearer ' + evJwt;
+                fetch('https://api-production-3a3b.up.railway.app/api/ev?sport=' + evSport, {{headers:evHdrs}})
+                .then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_evsharps_ev_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    console.log('[BetCouncil] ✅ EVSharps EV ' + sport + ' harvested');
+                }}).catch(function(e){{console.log('[BetCouncil] EVSharps EV error:',e.message);}});
+            }});
+
+            // ── 13. Underdog Fantasy props (every 20 min) ────────────────────
+            var udSportMap = {{'MLB':'MLB','NBA':'NBA','NFL':'NFL','NHL':'NHL','WNBA':'WNBA'}};
+            var udSport = udSportMap[sport];
+            if (udSport) {{
+                throttled('underdog_' + sport, 1200000, function() {{
+                    fetch('https://api.underdogfantasy.com/beta/v5/over_under_lines?sport_id=' + udSport, {{
+                        headers:{{'Accept':'application/json','Referer':'https://underdogfantasy.com/'}}
+                    }}).then(function(r){{return r.json();}}).then(function(data){{
+                        pushGist('betcouncil_underdog_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                        console.log('[BetCouncil] ✅ Underdog ' + sport + ' harvested');
+                    }}).catch(function(e){{console.log('[BetCouncil] Underdog error:',e.message);}});
+                }});
+            }}
+
+            // ── 14. Bovada game lines (every 20 min) ─────────────────────────
+            // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
+            // header on bovada.lv responses). Gist will remain empty from this hook.
+            // The data IS accessible server-side (Python fetcher uses Kambi API as
+            // fallback). For browser harvest, add a Tampermonkey passive hook that
+            // intercepts XHR/fetch calls WHILE BROWSING www.bovada.lv — same pattern
+            // as the Caesars/FanDuel passive hooks already in this script.
+            var bvSportMap = {{'MLB':'/baseball/mlb','NBA':'/basketball/nba',
+                               'NFL':'/football/nfl','NHL':'/hockey/nhl',
+                               'UFC':'/fighting/ufc','WNBA':'/basketball/wnba'}};
+            var bvPath = bvSportMap[sport];
+            if (bvPath) {{
+                throttled('bovada_' + sport, 1200000, function() {{
+                    fetch('https://www.bovada.lv/services/sports/event/v2/events/A/description' + bvPath + '?lang=en', {{
+                        headers: {{
+                            'Accept':  'application/json',
+                            'Referer': 'https://www.bovada.lv/'
+                        }}
+                    }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
+                        pushGist('betcouncil_bovada_' + sport + '.json', {{
+                            sport: sport, captured_at: new Date().toISOString(),
+                            data: data, source: 'betcouncil_auto_harvest'
+                        }});
+                        console.log('[BetCouncil] ✅ Bovada ' + sport + ' harvested');
+                    }}).catch(function(e) {{ console.log('[BetCouncil] Bovada (CORS expected):', e.message); }});
+                }});
+            }}
+
+            // ── 15. Polymarket prediction markets (every 30 min) ─────────────
+            throttled('polymarket_' + sport, 1800000, function() {{
+                fetch('https://gamma-api.polymarket.com/markets?tag=' + sport.toLowerCase() + '&limit=50&active=true', {{
+                    headers:{{'Accept':'application/json'}}
+                }}).then(function(r){{return r.json();}}).then(function(data){{
+                    pushGist('betcouncil_polymarket_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                }}).catch(function(e){{console.log('[BetCouncil] Polymarket error:',e.message);}});
+            }});
+
+            // ── 16. Novig props (every 20 min) ───────────────────────────────
+            var nvSportMap = {{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+            var nvSport = nvSportMap[sport];
+            if (nvSport) {{
+                /* Novig: api.novig.com is DNS-dead (2025). Disabled browser fetch.
+       Python fallback uses fetch_novig_lines → SBR consensus. */
+    // throttled('novig_' + sport, 1200000, function() {{
+    //                 fetch('https://api.novig.com/lines?sport=' + nvSport + '&market=player_props', {{
+    //                     headers:{{'Accept':'application/json','Referer':'https://novig.com/'}}
+    //                 }}).then(function(r){{return r.json();}}).then(function(data){{
+    //                     pushGist('betcouncil_novig_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    }}).catch(function(e){{console.log('[BetCouncil] Novig error:',e.message);}});
+                }});
+            }}
+
+            // ── 17. MyBookie game lines (every 25 min) ───────────────────────
+            // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
+            // header). MyBookie also has no public JSON API — their sportsbook is an
+            // SPA; all data endpoints return HTML when called cross-origin. The
+            // previous URL (/api/v1/sports/{{sport}}/lines) returned HTML, not JSON.
+            // To harvest MyBookie data, add a Tampermonkey passive hook that fires
+            // while browsing mybookie.ag and intercepts their internal XHR calls
+            // (use DevTools → Network → XHR while on the sportsbook page to find
+            // the actual API path their frontend calls).
+            var mbSportMap = {{'MLB':'baseball','NBA':'basketball',
+                               'NFL':'football','NHL':'hockey','UFC':'mma'}};
+            var mbSport = mbSportMap[sport];
+            if (mbSport) {{
+                throttled('mybookie_' + sport, 1500000, function() {{
+                    // Best-effort attempt — will CORS-fail from Streamlit domain.
+                    // The actual internal API path must be discovered from DevTools.
+                    fetch('https://mybookie.ag/sportsbook/api/events?sport=' + mbSport, {{
+                        headers: {{
+                            'Accept':  'application/json',
+                            'Referer': 'https://mybookie.ag/'
+                        }}
+                    }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
+                        pushGist('betcouncil_mybookie_' + sport + '.json', {{
+                            sport: sport, captured_at: new Date().toISOString(),
+                            data: data, source: 'betcouncil_auto_harvest'
+                        }});
+                        console.log('[BetCouncil] ✅ MyBookie ' + sport + ' harvested');
+                    }}).catch(function(e) {{ console.log('[BetCouncil] MyBookie (CORS/no-API expected):', e.message); }});
+                }});
+            }}
+
+            // ── 18. ParlaySavant +EV props (every 20 min) ────────────────────
+            // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
+            // header). ParlaySavant is a Next.js SPA — their internal API routes
+            // (probed: /api/props, /api/ev-plays, /api/player-props, /api/ev,
+            // /api/best-bets, /api/positive-ev, /api/trpc/props.getEV) all return
+            // HTML when called cross-origin. No public JSON API is accessible.
+            //
+            // Preferred path: the Python server-side fetcher fetch_parlaysavant_ev()
+            // already runs on every board load via the dispatch table and populates
+            // 'parlaysavant_ev_h' in session_state. Use that instead.
+            //
+            // To harvest ParlaySavant from the browser, add a Tampermonkey passive
+            // hook that fires while browsing parlaysavant.com and intercepts the
+            // actual internal fetch calls (check DevTools → Network while on the
+            // +EV tab to find the real API route their app calls).
+            throttled('parlaysavant_' + sport, 1200000, function() {{
+                // Best-effort attempt — will CORS-fail. Real route needs DevTools.
+                fetch('https://parlaysavant.com/api/ev-plays?sport=' + sport.toLowerCase(), {{
+                    headers: {{
+                        'Accept':  'application/json',
+                        'Referer': 'https://parlaysavant.com/'
+                    }}
+                }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
+                    pushGist('betcouncil_parlaysavant_' + sport + '.json', {{
+                        sport: sport, captured_at: new Date().toISOString(),
+                        data: data, source: 'betcouncil_auto_harvest'
+                    }});
+                    console.log('[BetCouncil] ✅ ParlaySavant ' + sport + ' harvested');
+                }}).catch(function(e) {{ console.log('[BetCouncil] ParlaySavant (CORS expected; use Python fetcher):', e.message); }});
+            }});
+
+            // ── 19. Bet365 game lines (every 25 min) ─────────────────────────
+            var b365Map={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'ice-hockey','UFC':'mma','SOCCER':'soccer'}};
+            var b365Sport=b365Map[sport];
+            if(b365Sport){{
+                // NOTE: Bet365 blocks cross-origin requests (CORS) from the Streamlit
+                // domain, so this fetch will fail with ERR_FAILED in browser DevTools.
+                // The correct approach is a Tampermonkey passive hook that intercepts
+                // XHR/fetch calls WHILE BROWSING bet365.com — similar to the Caesars
+                // and FanDuel passive harvesters already in this script.
+                //
+                // The previous URL used cid=97&ctid=97 (hardcoded match-result market,
+                // returns only Home/Away/Tie — no spread or total). The sport-specific
+                // cid values for spreads/totals vary per sport and must be discovered
+                // from DevTools while browsing Bet365.
+                //
+                // Attempting the sport-aware REST endpoint as a best-effort fallback
+                // (may be CORS-blocked, but at least uses the correct sport path):
+                var b365CidMap={{'MLB':14,  // baseball game lines
+                                 'NBA':7,   // basketball game lines
+                                 'NHL':17,  // hockey game lines
+                                 'NFL':12,  // football game lines
+                                 'SOCCER':1}};
+                var b365Cid=b365CidMap[sport]||97;
+                throttled('bet365_'+sport,1500000,function(){{
+                    fetch('https://www.bet365.com/SportsBook.API/web?lid=1&zid=0&pd='+encodeURIComponent('W#SS'+b365Cid+';')+'&cid='+b365Cid+'&ctid='+b365Cid,{{
+                        headers:{{'Accept':'application/json','Referer':'https://www.bet365.com/','Origin':'https://www.bet365.com'}}
+                    }}).then(function(r){{if(!r.ok)throw new Error('b365 '+r.status);return r.json();}}).then(function(data){{
+                        pushGist('betcouncil_bet365_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    }}).catch(function(e){{console.log('[BetCouncil] Bet365 error (CORS expected):',e.message);}});
+                }});
+            }}
+
+            // ── 20. Pregame.com sharp plays (every 30 min) ───────────────────
+            throttled('pregame_'+sport,1800000,function(){{
+                fetch('https://pregame.com/api/sharp-plays?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://pregame.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pregame_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Pregame error:',e.message);}});
+            }});
+
+            // ── 22. FantasyLabs ownership projections (every 30 min) ──────────
+            var flSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+            var flSport=flSportMap[sport];
+            if(flSport){{
+                throttled('fantasylabs_'+sport,1800000,function(){{
+                    fetch('https://www.fantasylabs.com/api/player_models/1/'+flSport+'/?projectionsource=4',{{headers:{{'Accept':'application/json','Referer':'https://www.fantasylabs.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_fantasylabs_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] FantasyLabs error:',e.message);}});
+                }});
+            }}
+
+            // ── 23. Rotowire injuries/lineups (every 15 min) ─────────────────
+            var rwSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+            var rwSport=rwSportMap[sport];
+            if(rwSport){{
+                throttled('rotowire_'+sport,900000,function(){{
+                    fetch('https://www.rotowire.com/'+rwSport+'/tables/injury-report.php',{{headers:{{'Accept':'application/json','Referer':'https://www.rotowire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_rotowire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Rotowire error:',e.message);}});
+                }});
+            }}
+
+            // ── 24. Sleeper ADP/ownership data (every 30 min) ────────────────
+            throttled('sleeper_'+sport,1800000,function(){{
+                fetch('https://api.sleeper.app/v1/players/'+sport.toLowerCase(),{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_sleeper_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Sleeper error:',e.message);}});
+            }});
+
+            // ── 25. NumberFire projections (every 30 min) ────────────────────
+            var nfSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
+            var nfSport=nfSportMap[sport];
+            if(nfSport){{
+                throttled('numberfire_'+sport,1800000,function(){{
+                    fetch('https://www.numberfire.com/api/v1/'+nfSport+'/projections',{{headers:{{'Accept':'application/json','Referer':'https://www.numberfire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_numberfire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] NumberFire error:',e.message);}});
+
+            // ── 26. SportsInsights betting % + steam (every 15 min) ──────────────
+            throttled('sportsinsights_'+sport,900000,function(){{
+                fetch('https://www.sportsinsights.com/api/sportsbookodds/'+sport.toLowerCase()+'?sportsbooks=1,2,3,4,5,6,7,8',{{headers:{{'Accept':'application/json','Referer':'https://www.sportsinsights.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_sportsinsights_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{
+                    // Try alternate endpoint
+                    fetch('https://www.sportsinsights.com/betting-trends/?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://www.sportsinsights.com/'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{pushGist('betcouncil_sportsinsights_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest_alt'}});}}).catch(function(e2){{console.log('[BetCouncil] SportsInsights error:',e2.message);}});
+                }});
+            }});
+
+            // ── 27. OddsShark consensus + line history (every 20 min) ────────────
+            var osMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+            var osSport=osMap[sport];
+            if(osSport){{
+                throttled('oddsshark_'+sport,1200000,function(){{
+                    fetch('https://www.oddsshark.com/api/scores/'+osSport+'/date/'+new Date().toISOString().split('T')[0].replace(/-/g,''),{{headers:{{'Accept':'application/json','Referer':'https://www.oddsshark.com/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_oddsshark_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] OddsShark error:',e.message);}});
+                }});
+            }}
+
+            // ── 28. VegasInsider opening vs current lines (every 20 min) ─────────
+            var viMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','UFC':'mma'}};
+            var viSport=viMap[sport];
+            if(viSport){{
+                throttled('vegasinsider_'+sport,1200000,function(){{
+                    fetch('https://www.vegasinsider.com/api/odds/'+viSport+'/?ajax=1',{{headers:{{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.vegasinsider.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_vegasinsider_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] VegasInsider error:',e.message);}});
+                }});
+            }}
+
+            // ── 29. Props.cash cross-book prop lines (every 20 min) ──────────────
+            throttled('propscash_'+sport,1200000,function(){{
+                fetch('https://props.cash/api/props?sport='+sport.toLowerCase()+'&limit=200',{{headers:{{'Accept':'application/json','Referer':'https://props.cash/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_propscash_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Props.cash error:',e.message);}});
+            }});
+
+            // ── 30. BaseballPress MLB lineups (every 15 min, MLB only) ───────────
+            // NOTE (2026-07): LineStar (GetFastUpdateV2/GetPropBets/GetSalariesV5)
+            // used to run here as an in-browser Tampermonkey harvester. It's now
+            // handled server-side by the "LineStar Data Refresh" GitHub Actions
+            // workflow (.github/workflows/linestar_refresh.yml, hourly cron,
+            // scripts/linestar_harvester.py) which pushes the same three Gist
+            // files per sport with no browser/session dependency at all. Removed
+            // the duplicate browser-side version rather than run both.
+
+            // ── 39. Scores and Odds betting % (every 15 min) ─────────────────────
+            var soMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
+            var soSport2=soMap[sport];
+            if(soSport2){{
+                throttled('scoresandodds_'+sport,900000,function(){{
+                    fetch('https://www.scoresandodds.com/api/'+soSport2+'/betting-trends',{{headers:{{'Accept':'application/json','Referer':'https://www.scoresandodds.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_scoresandodds_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] ScoresAndOdds error:',e.message);}});
+                }});
+            }}
+
+            // ── 40. Kalshi prediction markets (every 30 min) ─────────────────────
+            throttled('kalshi_'+sport,1800000,function(){{
+                fetch('https://trading-api.kalshi.com/trade-api/v2/events/?status=open&series_ticker='+sport,{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_kalshi2_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Kalshi error:',e.message);}});
+            }});
+
+                }});
+            }}
+
+            // ── New: Pickswise expert picks (every 30 min) ───────────────────
+            throttled('pickswise_'+sport,1800000,function(){{
+                fetch('https://www.pickswise.com/api/picks?sport='+sport.toLowerCase()+'&type=expert&limit=50',{{headers:{{'Accept':'application/json','Referer':'https://www.pickswise.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pickswise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{
+                    // Try alternate Pickswise endpoint
+                    fetch('https://www.pickswise.com/api/v2/predictions?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{pushGist('betcouncil_pickswise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest'}});}}).catch(function(e2){{console.log('[BetCouncil] Pickswise error:',e2.message);}});
+                }});
+            }});
+
+            // ── New: BetUS props (every 25 min) ──────────────────────────────
+            var betUsSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','WNBA':'wnba'}};
+            var betUsSport=betUsSportMap[sport];
+            if(betUsSport){{
+                throttled('betus_'+sport,1500000,function(){{
+                    fetch('https://www.betus.com.pa/sportsbook/props-builder/api/'+betUsSport+'/player-props',{{headers:{{'Accept':'application/json','Referer':'https://www.betus.com.pa/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betus_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BetUS error:',e.message);}});
+                }});
+            }}
+
+            // ── New: Bet105 game lines (every 25 min) ────────────────────────
+            throttled('bet105_'+sport,1500000,function(){{
+                fetch('https://app.bet105.ag/api/sports/lines?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://app.bet105.ag/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bet105_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Bet105 error:',e.message);}});
+            }});
+
+            // ── New: BetWhale lines (every 25 min) ───────────────────────────
+            throttled('betwhale_'+sport,1500000,function(){{
+                fetch('https://betwhale.ag/api/sports/'+sport.toLowerCase()+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://betwhale.ag/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betwhale_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BetWhale error:',e.message);}});
+            }});
+
+            // ── New: Ybets lines (every 25 min) ──────────────────────────────
+            throttled('ybets_'+sport,1500000,function(){{
+                fetch('https://ybets.net/api/sport/'+sport.toLowerCase()+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://ybets.net/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_ybets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Ybets error:',e.message);}});
+            }});
+
+            // ── New: Zamba.co lines (every 25 min) ───────────────────────────
+            throttled('zamba_'+sport,1500000,function(){{
+                fetch('https://www.zamba.co/api/sports/'+sport.toLowerCase()+'/events',{{headers:{{'Accept':'application/json','Referer':'https://www.zamba.co/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_zamba_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Zamba error:',e.message);}});
+            }});
+
+
+            // ── EVBets +EV feed (every 20 min) — free, 94 books, no login ──
+            var evbSportMap={{'MLB':'baseball-mlb','NBA':'basketball-nba','NFL':'american-football-nfl','NHL':'hockey-nhl','UFC':'mma-mixed-martial-arts','SOCCER':'soccer-epl','WNBA':'basketball-wnba'}};
+            var evbSport=evbSportMap[sport];
+            if(evbSport){{
+                throttled('evbets_'+sport,1200000,function(){{
+                    // Value bets feed
+                    fetch('https://evbets.app/value-bets/'+evbSport,{{headers:{{'Accept':'application/json','Referer':'https://evbets.app/'}}}}).then(function(r){{return r.json();}}).then(function(data){{
+                        pushGist('betcouncil_evbets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                        console.log('[BetCouncil] ✅ EVBets +EV feed harvested for '+sport);
+                    }}).catch(function(e){{
+                        // Fallback: try the API endpoint directly
+                        fetch('https://evbets.app/api/value-bets?sport='+evbSport+'&min_ev=2&limit=100',{{headers:{{'Accept':'application/json'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{
+                            pushGist('betcouncil_evbets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest_api'}});
+                        }}).catch(function(e2){{console.log('[BetCouncil] EVBets error:',e2.message);}});
+                    }});
+                }});
+            }}
+
+            // ── EVBets prop bets feed (every 20 min) ─────────────────────────
+            if(evbSport){{
+                throttled('evbets_props_'+sport,1200000,function(){{
+                    fetch('https://evbets.app/prop-bets/'+evbSport,{{headers:{{'Accept':'application/json','Referer':'https://evbets.app/prop-bets/'}}}}).then(function(r){{return r.json();}}).then(function(data){{
+                        pushGist('betcouncil_evbets_props_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
+                    }}).catch(function(e){{console.log('[BetCouncil] EVBets props error:',e.message);}});
+                }});
             }}
         }})();
         </script>
         """
-        st.components.v1.html(_scanbet_js, height=0, scrolling=False)
+        st.components.v1.html(_harvester_js, height=0, scrolling=False)
 
-    # ── Auto-harvester: EVSharps JWT + Caesars WAF + FanDuel + BetMGM ────────
-    # All run silently in YOUR browser on every board load.
-    # No need to visit any site manually — BetCouncil does it automatically.
-    _harvester_js = f"""
-    <script>
-    (function() {{
-        var GIST_ID  = '{GITHUB_GIST_ID}';
-        var GIST_TOK = '{GITHUB_TOKEN}';
-        var sport    = '{sport_sel}';
-
-        // BUG FIX (2026-07): pushGist() used to fire concurrent PATCH requests
-        // against the same Gist whenever multiple harvest sources completed
-        // around the same time (common right after page load). GitHub's Gist
-        // API returns 409 Conflict when two PATCHes race, and the old code
-        // never checked r.ok or retried -- it logged nothing on failure, so
-        // some harvested updates were silently dropped every session with no
-        // visible symptom. Fixed by serializing all writes through a single
-        // promise chain (only one PATCH in flight at a time) with automatic
-        // retry-with-backoff specifically on 409.
-        var __bcGistQueue = Promise.resolve();
-
-        function __bcPushGistOnce(filename, content) {{
-            return fetch('https://api.github.com/gists/' + GIST_ID, {{
-                method: 'PATCH',
-                headers: {{
-                    'Authorization': 'token ' + GIST_TOK,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/vnd.github.v3+json'
-                }},
-                body: JSON.stringify({{files: {{[filename]: {{content: JSON.stringify(content, null, 2)}}}}}})
-            }});
-        }}
-
-        function pullGist(filename) {{
-            return fetch('https://api.github.com/gists/' + GIST_ID, {{
-                method: 'GET',
-                headers: {{
-                    'Authorization': 'token ' + GIST_TOK,
-                    'Accept': 'application/vnd.github.v3+json'
-                }}
-            }}).then(function(r) {{ return r.json(); }})
-              .then(function(d) {{
-                var f = d.files && d.files[filename];
-                if (!f || !f.content) return null;
-                try {{ return JSON.parse(f.content); }} catch (e) {{ return null; }}
-              }}).catch(function(e) {{ return null; }});
-        }}
-
-        function pushGist(filename, content) {{
-            __bcGistQueue = __bcGistQueue.then(function() {{
-                return __bcPushGistOnce(filename, content).then(function(r) {{
-                    if (r.ok) {{
-                        console.log('[BetCouncil] ✅ Auto-pushed: ' + filename);
-                        return;
-                    }}
-                    if (r.status === 409) {{
-                        // Conflict from a racing write elsewhere -- wait briefly and retry once.
-                        return new Promise(function(resolve) {{ setTimeout(resolve, 800); }})
-                            .then(function() {{ return __bcPushGistOnce(filename, content); }})
-                            .then(function(r2) {{
-                                if (r2.ok) {{
-                                    console.log('[BetCouncil] ✅ Auto-pushed (after retry): ' + filename);
-                                }} else {{
-                                    console.log('[BetCouncil] ⚠️ Gist push failed after retry: ' + filename + ' status=' + r2.status);
-                                }}
-                            }});
-                    }}
-                    console.log('[BetCouncil] ⚠️ Gist push failed: ' + filename + ' status=' + r.status);
-                }}).catch(function(e) {{
-                    console.log('[BetCouncil] Gist push error:', filename, e.message);
-                }});
-            }});
-            return __bcGistQueue;
-        }}
-
-        function throttled(key, ms, fn) {{
-            var last = localStorage.getItem('bc_harvest_' + key);
-            if (last && (Date.now() - parseInt(last)) < ms) return;
-            localStorage.setItem('bc_harvest_' + key, Date.now().toString());
-            fn();
-        }}
-
-        // ── 1. EVSharps JWT auto-refresh (every 50 min) ─────────────────────
-        // BUG FIX (2026-07): refresh_token was hardcoded to the same seed
-        // value on every call. Supabase rotates the refresh token on each
-        // use (standard OAuth2 refresh-token rotation) -- after the first
-        // successful rotation, every later attempt kept sending the now-
-        // invalidated original token, failed silently (.catch only logs to
-        // console, no Gist push), and never recovered on its own. This is
-        // the direct explanation for betcouncil_tokens.json / betcouncil_
-        // evsharps_ev_*.json staying stale for 9+ days regardless of
-        // whether a browser tab was open to run this at all. Now pulls the
-        // last-saved refresh token from Gist first and uses that.
-        throttled('evsharps', 3000000, function() {{
-            pullGist('betcouncil_tokens.json').then(function(saved) {{
-                var currentRefresh = (saved && saved.ev_refresh) || 'z325a7doims5';
-                fetch('https://nkdhryqpiulrepmphwmt.supabase.co/auth/v1/token?grant_type=refresh_token', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json',
-                               'apikey': '{SUPABASE_ANON}'}},
-                    body: JSON.stringify({{refresh_token: currentRefresh}})
-                }}).then(function(r) {{ return r.json(); }})
-                  .then(function(d) {{
-                    if (d.access_token) {{
-                        pushGist('betcouncil_tokens.json', {{
-                            ev_jwt: d.access_token,
-                            ev_refresh: d.refresh_token || currentRefresh,
-                            captured_at: new Date().toISOString(),
-                            source: 'betcouncil_auto_harvest'
-                        }});
-                        console.log('[BetCouncil] ✅ EVSharps JWT refreshed automatically');
-                    }} else {{
-                        console.log('[BetCouncil] ⚠️ EVSharps refresh returned no access_token -- refresh token may be dead, needs manual re-auth:', JSON.stringify(d));
-                    }}
-                  }}).catch(function(e) {{ console.log('[BetCouncil] EVSharps refresh error:', e); }});
-            }});
-        }});
-
-        // ── 2. Caesars auth token passive capture (hooks fetch, pushes on every authenticated call) ──
-        if (!window.__bcCzrHooked) {{
-            window.__bcCzrHooked = true;
-            var __bcOrigFetchCzr = window.fetch;
-            window.fetch = function() {{
-                var __bcArgsCzr = arguments;
-                var __bcUrlCzr = (typeof __bcArgsCzr[0] === 'string') ? __bcArgsCzr[0] : (__bcArgsCzr[0] && __bcArgsCzr[0].url);
-                var __bcReqInitCzr = __bcArgsCzr[1] || {{}};
-
-                return __bcOrigFetchCzr.apply(this, __bcArgsCzr).then(function(response) {{
-                    try {{
-                        if (__bcUrlCzr && __bcUrlCzr.indexOf('api.americanwagering.com') !== -1) {{
-                            var __bcAuthCzr = '';
-                            var __bcWafCzr = '';
-                            var __bcSessCzr = '';
-                            try {{
-                                var __bcHeadersCzr = __bcReqInitCzr.headers || {{}};
-                                if (__bcHeadersCzr instanceof Headers) {{
-                                    __bcAuthCzr = __bcHeadersCzr.get('authorization') || '';
-                                    __bcWafCzr = __bcHeadersCzr.get('x-aws-waf-token') || '';
-                                    __bcSessCzr = __bcHeadersCzr.get('sessionid') || '';
-                                }} else {{
-                                    __bcAuthCzr = __bcHeadersCzr['authorization'] || __bcHeadersCzr['Authorization'] || '';
-                                    __bcWafCzr = __bcHeadersCzr['x-aws-waf-token'] || '';
-                                    __bcSessCzr = __bcHeadersCzr['sessionid'] || '';
-                                }}
-                            }} catch (eHeadCzr) {{}}
-
-                            if (__bcAuthCzr && __bcAuthCzr.toLowerCase().indexOf('bearer ') === 0) {{
-                                var __bcBearerCzr = __bcAuthCzr.substring(7);
-                                if (__bcBearerCzr !== window.__bcCzrLastBearer) {{
-                                    window.__bcCzrLastBearer = __bcBearerCzr;
-                                    pushGist('betcouncil_caesars_tokens.json', {{
-                                        bearer_jwt: __bcBearerCzr,
-                                        waf_token: __bcWafCzr,
-                                        session_id: __bcSessCzr,
-                                        captured_at: new Date().toISOString(),
-                                        source: 'betcouncil_auto_harvest_passive'
-                                    }});
-                                    console.log('[BetCouncil] ✅ Caesars tokens captured (bearer + waf)');
-                                }}
-                            }}
-                        }}
-                    }} catch (eOuterCzr) {{
-                        console.log('[BetCouncil] Caesars passive capture error:', eOuterCzr.message);
-                    }}
-                    return response;
-                }});
-            }};
-            console.log('[BetCouncil] Caesars passive harvester hooked — browse Caesars to capture tokens');
-        }}
-
-
-
-        // ── 3. FanDuel odds passive capture (hooks fetch, pushes on every getMarketPrices call) ──
-        if (!window.__bcFdHooked) {{
-            window.__bcFdHooked = true;
-            var __bcOrigFetch = window.fetch;
-            window.fetch = function() {{
-                var __bcArgs = arguments;
-                var __bcUrl = (typeof __bcArgs[0] === 'string') ? __bcArgs[0] : (__bcArgs[0] && __bcArgs[0].url);
-                var __bcReqInit = __bcArgs[1] || {{}};
-
-                return __bcOrigFetch.apply(this, __bcArgs).then(function(response) {{
-                    try {{
-                        if (__bcUrl && __bcUrl.indexOf('getMarketPrices') !== -1) {{
-                            // Capture x-px-context from the outgoing request headers
-                            var __bcPxContext = '';
-                            try {{
-                                var __bcHeaders = __bcReqInit.headers || {{}};
-                                if (__bcHeaders instanceof Headers) {{
-                                    __bcPxContext = __bcHeaders.get('x-px-context') || '';
-                                }} else {{
-                                    __bcPxContext = __bcHeaders['x-px-context'] || '';
-                                }}
-                            }} catch (eHead) {{}}
-
-                            var __bcClone = response.clone();
-                            __bcClone.json().then(function(data) {{
-                                if (Array.isArray(data) && data.length) {{
-                                    pushGist('betcouncil_fd_props_' + sport + '.json', {{
-                                        sport: sport,
-                                        captured_at: new Date().toISOString(),
-                                        markets: data,
-                                        source: 'betcouncil_auto_harvest_passive'
-                                    }});
-                                    console.log('[BetCouncil] ✅ FanDuel odds captured: ' + data.length + ' markets');
-
-                                    if (__bcPxContext) {{
-                                        pushGist('fanduel_tokens.json', {{
-                                            px_context: __bcPxContext,
-                                            captured_at: new Date().toISOString(),
-                                            source: 'betcouncil_auto_harvest_passive'
-                                        }});
-                                    }}
-                                }}
-                            }}).catch(function(eJson) {{
-                                console.log('[BetCouncil] FanDuel odds parse error:', eJson.message);
-                            }});
-                        }}
-                    }} catch (eOuter) {{
-                        console.log('[BetCouncil] FanDuel passive capture error:', eOuter.message);
-                    }}
-                    return response;
-                }});
-            }};
-            console.log('[BetCouncil] FanDuel passive harvester hooked — browse FanDuel props to capture odds');
-        }}
-
-
-        // ── 4. BetMGM: retired 2026-07-12. This cross-origin fetch from the
-        //    Streamlit app's own page to sports.az.betmgm.com was silently
-        //    CORS-blocked every time -- confirmed by the Auto-Harvester status
-        //    panel showing "Pending" forever, never a single successful fire.
-        //    Replaced by scripts/tampermonkey_betmgm_harvester.user.js, which
-        //    runs the identical fetch from betmgm.com's own origin (same-origin,
-        //    no CORS) and pushes to the same betcouncil_mgm_props_{{sport}}.json
-        //    Gist key -- fetch_betmgm_props_from_gist() and
-        //    _parse_betmgm_harvested() in fetchers.py needed zero changes.
-
-        // ── 5. Action Network sharp splits auto-fetch (every 15 min) ────────
-        var anSportMap = {{
-            'MLB': 'mlb', 'NBA': 'nba', 'NFL': 'nfl', 'NHL': 'nhl'
-        }};
-        var anSport = anSportMap[sport];
-        if (anSport) {{
-            throttled('actionnetwork_' + sport, 900000, function() {{
-                fetch('https://api.actionnetwork.com/web/v2/scoreboard/' + anSport + '?period=game&bookIds=15,30,76,75,123,69,68,972&include=teams%2Cgame_lines%2Cschedules%2Codds_history', {{
-                    headers: {{
-                        'Accept': 'application/json',
-                        'Origin': 'https://www.actionnetwork.com',
-                        'Referer': 'https://www.actionnetwork.com/'
-                    }}
-                }}).then(function(r) {{ if (!r.ok) throw new Error('AN ' + r.status); return r.json(); }})
-                  .then(function(data) {{
-                    pushGist('betcouncil_actionnetwork_' + sport + '.json', {{
-                        sport: sport,
-                        captured_at: new Date().toISOString(),
-                        data: data,
-                        source: 'betcouncil_auto_harvest'
-                    }});
-                  }}).catch(function(e) {{
-                    console.log('[BetCouncil] ActionNetwork harvest error:', e.message);
-                }});
-            }});
-        }}
-
-        // ── 6. Covers.com consensus betting % (every 20 min) ─────────
-        // URL FIX (Jul 9 2026): old www.covers.com/api/widget/matchups path
-        // is unconfirmed/likely dead along with the old /consensus page;
-        // contests.covers.com/consensus/topconsensus is the confirmed-live
-        // current page (server-rendered HTML, not JSON — parsed server-side
-        // by fetch_covers_consensus() in fetchers.py instead of here).
-        var coversSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','WNBA':'wnba','CFL':'cfl'}};
-        var coversSport = coversSportMap[sport];
-        if (coversSport) {{
-            throttled('covers_' + sport, 1200000, function() {{
-                fetch('https://contests.covers.com/consensus/topconsensus/' + coversSport + '/overall', {{
-                    headers: {{'Accept':'text/html','Referer':'https://www.covers.com/'}}
-                }}).then(function(r){{return r.text();}}).then(function(html){{
-                    pushGist('betcouncil_covers_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),html:html,source:'betcouncil_auto_harvest'}});
-                }}).catch(function(e){{console.log('[BetCouncil] Covers error:',e.message);}});
-            }});
-        }}
-
-        // ── 7. DraftKings props (every 20 min) ───────────────────────
-        var dkCatMap = {{'MLB':84240,'NBA':42648,'NFL':88808,'NHL':42133,'UFC':9}};
-        var dkCat = dkCatMap[sport];
-        if (dkCat) {{
-            throttled('dk_props_' + sport, 1200000, function() {{
-                fetch('https://sportsbook.draftkings.com/api/odds/v1/categories/' + dkCat + '/subcategories?format=json', {{
-                    headers:{{'Accept':'application/json','Referer':'https://sportsbook.draftkings.com/'}}
-                }}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_dk_props_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                }}).catch(function(e){{console.log('[BetCouncil] DK props error:',e.message);}});
-            }});
-        }}
-
-        // ── 8. Unabated sharp lines (every 30 min) ───────────────────
-        throttled('unabated_' + sport, 1800000, function() {{
-            fetch('https://unabated.com/api/lines?sport=' + sport.toLowerCase(), {{
-                headers:{{'Accept':'application/json','Referer':'https://unabated.com/'}}
-            }}).then(function(r){{return r.json();}}).then(function(data){{
-                pushGist('betcouncil_unabated_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-            }}).catch(function(e){{console.log('[BetCouncil] Unabated error:',e.message);}});
-        }});
-
-        // ── 9. OddsJam +EV (every 20 min) ────────────────────────────
-        throttled('oddsjam_' + sport, 1200000, function() {{
-            fetch('https://oddsjam.com/api/v2/positive-ev?sport=' + sport.toLowerCase() + '&sportsbook=pinnacle', {{
-                headers:{{'Accept':'application/json','Referer':'https://oddsjam.com/'}}
-            }}).then(function(r){{return r.json();}}).then(function(data){{
-                pushGist('betcouncil_oddsjam_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-            }}).catch(function(e){{console.log('[BetCouncil] OddsJam error:',e.message);}});
-        }});
-
-        // ── 10. PropSwap secondary market (every 30 min) ─────────────
-        throttled('propswap_' + sport, 1800000, function() {{
-            fetch('https://www.propswap.com/api/listings?sport=' + sport.toLowerCase() + '&status=active&limit=100', {{
-                headers:{{'Accept':'application/json','Referer':'https://www.propswap.com/'}}
-            }}).then(function(r){{return r.json();}}).then(function(data){{
-                pushGist('betcouncil_propswap_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-            }}).catch(function(e){{console.log('[BetCouncil] PropSwap error:',e.message);}});
-        }});
-
-        // ── 12. EVSharps EV data (every 25 min) ─────────────────────────
-        throttled('evsharps_ev_' + sport, 1500000, function() {{
-            var evSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','UFC':'mma'}};
-            var evSport = evSportMap[sport];
-            if (!evSport) return;
-            var evJwt = localStorage.getItem('bc_ev_jwt') || '';
-            var evHdrs = {{'Accept':'application/json'}};
-            if (evJwt) evHdrs['Authorization'] = 'Bearer ' + evJwt;
-            fetch('https://api-production-3a3b.up.railway.app/api/ev?sport=' + evSport, {{headers:evHdrs}})
-            .then(function(r){{return r.json();}}).then(function(data){{
-                pushGist('betcouncil_evsharps_ev_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                console.log('[BetCouncil] ✅ EVSharps EV ' + sport + ' harvested');
-            }}).catch(function(e){{console.log('[BetCouncil] EVSharps EV error:',e.message);}});
-        }});
-
-        // ── 13. Underdog Fantasy props (every 20 min) ────────────────────
-        var udSportMap = {{'MLB':'MLB','NBA':'NBA','NFL':'NFL','NHL':'NHL','WNBA':'WNBA'}};
-        var udSport = udSportMap[sport];
-        if (udSport) {{
-            throttled('underdog_' + sport, 1200000, function() {{
-                fetch('https://api.underdogfantasy.com/beta/v5/over_under_lines?sport_id=' + udSport, {{
-                    headers:{{'Accept':'application/json','Referer':'https://underdogfantasy.com/'}}
-                }}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_underdog_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                    console.log('[BetCouncil] ✅ Underdog ' + sport + ' harvested');
-                }}).catch(function(e){{console.log('[BetCouncil] Underdog error:',e.message);}});
-            }});
-        }}
-
-        // ── 14. Bovada game lines (every 20 min) ─────────────────────────
-        // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
-        // header on bovada.lv responses). Gist will remain empty from this hook.
-        // The data IS accessible server-side (Python fetcher uses Kambi API as
-        // fallback). For browser harvest, add a Tampermonkey passive hook that
-        // intercepts XHR/fetch calls WHILE BROWSING www.bovada.lv — same pattern
-        // as the Caesars/FanDuel passive hooks already in this script.
-        var bvSportMap = {{'MLB':'/baseball/mlb','NBA':'/basketball/nba',
-                           'NFL':'/football/nfl','NHL':'/hockey/nhl',
-                           'UFC':'/fighting/ufc','WNBA':'/basketball/wnba'}};
-        var bvPath = bvSportMap[sport];
-        if (bvPath) {{
-            throttled('bovada_' + sport, 1200000, function() {{
-                fetch('https://www.bovada.lv/services/sports/event/v2/events/A/description' + bvPath + '?lang=en', {{
-                    headers: {{
-                        'Accept':  'application/json',
-                        'Referer': 'https://www.bovada.lv/'
-                    }}
-                }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
-                    pushGist('betcouncil_bovada_' + sport + '.json', {{
-                        sport: sport, captured_at: new Date().toISOString(),
-                        data: data, source: 'betcouncil_auto_harvest'
-                    }});
-                    console.log('[BetCouncil] ✅ Bovada ' + sport + ' harvested');
-                }}).catch(function(e) {{ console.log('[BetCouncil] Bovada (CORS expected):', e.message); }});
-            }});
-        }}
-
-        // ── 15. Polymarket prediction markets (every 30 min) ─────────────
-        throttled('polymarket_' + sport, 1800000, function() {{
-            fetch('https://gamma-api.polymarket.com/markets?tag=' + sport.toLowerCase() + '&limit=50&active=true', {{
-                headers:{{'Accept':'application/json'}}
-            }}).then(function(r){{return r.json();}}).then(function(data){{
-                pushGist('betcouncil_polymarket_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-            }}).catch(function(e){{console.log('[BetCouncil] Polymarket error:',e.message);}});
-        }});
-
-        // ── 16. Novig props (every 20 min) ───────────────────────────────
-        var nvSportMap = {{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
-        var nvSport = nvSportMap[sport];
-        if (nvSport) {{
-            /* Novig: api.novig.com is DNS-dead (2025). Disabled browser fetch.
-   Python fallback uses fetch_novig_lines → SBR consensus. */
-// throttled('novig_' + sport, 1200000, function() {{
-//                 fetch('https://api.novig.com/lines?sport=' + nvSport + '&market=player_props', {{
-//                     headers:{{'Accept':'application/json','Referer':'https://novig.com/'}}
-//                 }}).then(function(r){{return r.json();}}).then(function(data){{
-//                     pushGist('betcouncil_novig_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                }}).catch(function(e){{console.log('[BetCouncil] Novig error:',e.message);}});
-            }});
-        }}
-
-        // ── 17. MyBookie game lines (every 25 min) ───────────────────────
-        // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
-        // header). MyBookie also has no public JSON API — their sportsbook is an
-        // SPA; all data endpoints return HTML when called cross-origin. The
-        // previous URL (/api/v1/sports/{{sport}}/lines) returned HTML, not JSON.
-        // To harvest MyBookie data, add a Tampermonkey passive hook that fires
-        // while browsing mybookie.ag and intercepts their internal XHR calls
-        // (use DevTools → Network → XHR while on the sportsbook page to find
-        // the actual API path their frontend calls).
-        var mbSportMap = {{'MLB':'baseball','NBA':'basketball',
-                           'NFL':'football','NHL':'hockey','UFC':'mma'}};
-        var mbSport = mbSportMap[sport];
-        if (mbSport) {{
-            throttled('mybookie_' + sport, 1500000, function() {{
-                // Best-effort attempt — will CORS-fail from Streamlit domain.
-                // The actual internal API path must be discovered from DevTools.
-                fetch('https://mybookie.ag/sportsbook/api/events?sport=' + mbSport, {{
-                    headers: {{
-                        'Accept':  'application/json',
-                        'Referer': 'https://mybookie.ag/'
-                    }}
-                }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
-                    pushGist('betcouncil_mybookie_' + sport + '.json', {{
-                        sport: sport, captured_at: new Date().toISOString(),
-                        data: data, source: 'betcouncil_auto_harvest'
-                    }});
-                    console.log('[BetCouncil] ✅ MyBookie ' + sport + ' harvested');
-                }}).catch(function(e) {{ console.log('[BetCouncil] MyBookie (CORS/no-API expected):', e.message); }});
-            }});
-        }}
-
-        // ── 18. ParlaySavant +EV props (every 20 min) ────────────────────
-        // CORS STATUS: CORS-BLOCKED from browser (no Access-Control-Allow-Origin
-        // header). ParlaySavant is a Next.js SPA — their internal API routes
-        // (probed: /api/props, /api/ev-plays, /api/player-props, /api/ev,
-        // /api/best-bets, /api/positive-ev, /api/trpc/props.getEV) all return
-        // HTML when called cross-origin. No public JSON API is accessible.
-        //
-        // Preferred path: the Python server-side fetcher fetch_parlaysavant_ev()
-        // already runs on every board load via the dispatch table and populates
-        // 'parlaysavant_ev_h' in session_state. Use that instead.
-        //
-        // To harvest ParlaySavant from the browser, add a Tampermonkey passive
-        // hook that fires while browsing parlaysavant.com and intercepts the
-        // actual internal fetch calls (check DevTools → Network while on the
-        // +EV tab to find the real API route their app calls).
-        throttled('parlaysavant_' + sport, 1200000, function() {{
-            // Best-effort attempt — will CORS-fail. Real route needs DevTools.
-            fetch('https://parlaysavant.com/api/ev-plays?sport=' + sport.toLowerCase(), {{
-                headers: {{
-                    'Accept':  'application/json',
-                    'Referer': 'https://parlaysavant.com/'
-                }}
-            }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
-                pushGist('betcouncil_parlaysavant_' + sport + '.json', {{
-                    sport: sport, captured_at: new Date().toISOString(),
-                    data: data, source: 'betcouncil_auto_harvest'
-                }});
-                console.log('[BetCouncil] ✅ ParlaySavant ' + sport + ' harvested');
-            }}).catch(function(e) {{ console.log('[BetCouncil] ParlaySavant (CORS expected; use Python fetcher):', e.message); }});
-        }});
-
-        // ── 19. Bet365 game lines (every 25 min) ─────────────────────────
-        var b365Map={{'MLB':'baseball','NBA':'basketball','NFL':'american-football','NHL':'ice-hockey','UFC':'mma','SOCCER':'soccer'}};
-        var b365Sport=b365Map[sport];
-        if(b365Sport){{
-            // NOTE: Bet365 blocks cross-origin requests (CORS) from the Streamlit
-            // domain, so this fetch will fail with ERR_FAILED in browser DevTools.
-            // The correct approach is a Tampermonkey passive hook that intercepts
-            // XHR/fetch calls WHILE BROWSING bet365.com — similar to the Caesars
-            // and FanDuel passive harvesters already in this script.
-            //
-            // The previous URL used cid=97&ctid=97 (hardcoded match-result market,
-            // returns only Home/Away/Tie — no spread or total). The sport-specific
-            // cid values for spreads/totals vary per sport and must be discovered
-            // from DevTools while browsing Bet365.
-            //
-            // Attempting the sport-aware REST endpoint as a best-effort fallback
-            // (may be CORS-blocked, but at least uses the correct sport path):
-            var b365CidMap={{'MLB':14,  // baseball game lines
-                             'NBA':7,   // basketball game lines
-                             'NHL':17,  // hockey game lines
-                             'NFL':12,  // football game lines
-                             'SOCCER':1}};
-            var b365Cid=b365CidMap[sport]||97;
-            throttled('bet365_'+sport,1500000,function(){{
-                fetch('https://www.bet365.com/SportsBook.API/web?lid=1&zid=0&pd='+encodeURIComponent('W#SS'+b365Cid+';')+'&cid='+b365Cid+'&ctid='+b365Cid,{{
-                    headers:{{'Accept':'application/json','Referer':'https://www.bet365.com/','Origin':'https://www.bet365.com'}}
-                }}).then(function(r){{if(!r.ok)throw new Error('b365 '+r.status);return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_bet365_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                }}).catch(function(e){{console.log('[BetCouncil] Bet365 error (CORS expected):',e.message);}});
-            }});
-        }}
-
-        // ── 20. Pregame.com sharp plays (every 30 min) ───────────────────
-        throttled('pregame_'+sport,1800000,function(){{
-            fetch('https://pregame.com/api/sharp-plays?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://pregame.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pregame_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Pregame error:',e.message);}});
-        }});
-
-        // ── 22. FantasyLabs ownership projections (every 30 min) ──────────
-        var flSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
-        var flSport=flSportMap[sport];
-        if(flSport){{
-            throttled('fantasylabs_'+sport,1800000,function(){{
-                fetch('https://www.fantasylabs.com/api/player_models/1/'+flSport+'/?projectionsource=4',{{headers:{{'Accept':'application/json','Referer':'https://www.fantasylabs.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_fantasylabs_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] FantasyLabs error:',e.message);}});
-            }});
-        }}
-
-        // ── 23. Rotowire injuries/lineups (every 15 min) ─────────────────
-        var rwSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
-        var rwSport=rwSportMap[sport];
-        if(rwSport){{
-            throttled('rotowire_'+sport,900000,function(){{
-                fetch('https://www.rotowire.com/'+rwSport+'/tables/injury-report.php',{{headers:{{'Accept':'application/json','Referer':'https://www.rotowire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_rotowire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Rotowire error:',e.message);}});
-            }});
-        }}
-
-        // ── 24. Sleeper ADP/ownership data (every 30 min) ────────────────
-        throttled('sleeper_'+sport,1800000,function(){{
-            fetch('https://api.sleeper.app/v1/players/'+sport.toLowerCase(),{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_sleeper_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Sleeper error:',e.message);}});
-        }});
-
-        // ── 25. NumberFire projections (every 30 min) ────────────────────
-        var nfSportMap={{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl'}};
-        var nfSport=nfSportMap[sport];
-        if(nfSport){{
-            throttled('numberfire_'+sport,1800000,function(){{
-                fetch('https://www.numberfire.com/api/v1/'+nfSport+'/projections',{{headers:{{'Accept':'application/json','Referer':'https://www.numberfire.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_numberfire_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] NumberFire error:',e.message);}});
-
-        // ── 26. SportsInsights betting % + steam (every 15 min) ──────────────
-        throttled('sportsinsights_'+sport,900000,function(){{
-            fetch('https://www.sportsinsights.com/api/sportsbookodds/'+sport.toLowerCase()+'?sportsbooks=1,2,3,4,5,6,7,8',{{headers:{{'Accept':'application/json','Referer':'https://www.sportsinsights.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_sportsinsights_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{
-                // Try alternate endpoint
-                fetch('https://www.sportsinsights.com/betting-trends/?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://www.sportsinsights.com/'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{pushGist('betcouncil_sportsinsights_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest_alt'}});}}).catch(function(e2){{console.log('[BetCouncil] SportsInsights error:',e2.message);}});
-            }});
-        }});
-
-        // ── 27. OddsShark consensus + line history (every 20 min) ────────────
-        var osMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
-        var osSport=osMap[sport];
-        if(osSport){{
-            throttled('oddsshark_'+sport,1200000,function(){{
-                fetch('https://www.oddsshark.com/api/scores/'+osSport+'/date/'+new Date().toISOString().split('T')[0].replace(/-/g,''),{{headers:{{'Accept':'application/json','Referer':'https://www.oddsshark.com/','X-Requested-With':'XMLHttpRequest'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_oddsshark_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] OddsShark error:',e.message);}});
-            }});
-        }}
-
-        // ── 28. VegasInsider opening vs current lines (every 20 min) ─────────
-        var viMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','UFC':'mma'}};
-        var viSport=viMap[sport];
-        if(viSport){{
-            throttled('vegasinsider_'+sport,1200000,function(){{
-                fetch('https://www.vegasinsider.com/api/odds/'+viSport+'/?ajax=1',{{headers:{{'Accept':'application/json','X-Requested-With':'XMLHttpRequest','Referer':'https://www.vegasinsider.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_vegasinsider_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] VegasInsider error:',e.message);}});
-            }});
-        }}
-
-        // ── 29. Props.cash cross-book prop lines (every 20 min) ──────────────
-        throttled('propscash_'+sport,1200000,function(){{
-            fetch('https://props.cash/api/props?sport='+sport.toLowerCase()+'&limit=200',{{headers:{{'Accept':'application/json','Referer':'https://props.cash/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_propscash_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Props.cash error:',e.message);}});
-        }});
-
-        // ── 30. BaseballPress MLB lineups (every 15 min, MLB only) ───────────
-        // NOTE (2026-07): LineStar (GetFastUpdateV2/GetPropBets/GetSalariesV5)
-        // used to run here as an in-browser Tampermonkey harvester. It's now
-        // handled server-side by the "LineStar Data Refresh" GitHub Actions
-        // workflow (.github/workflows/linestar_refresh.yml, hourly cron,
-        // scripts/linestar_harvester.py) which pushes the same three Gist
-        // files per sport with no browser/session dependency at all. Removed
-        // the duplicate browser-side version rather than run both.
-
-        // ── 39. Scores and Odds betting % (every 15 min) ─────────────────────
-        var soMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey'}};
-        var soSport2=soMap[sport];
-        if(soSport2){{
-            throttled('scoresandodds_'+sport,900000,function(){{
-                fetch('https://www.scoresandodds.com/api/'+soSport2+'/betting-trends',{{headers:{{'Accept':'application/json','Referer':'https://www.scoresandodds.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_scoresandodds_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] ScoresAndOdds error:',e.message);}});
-            }});
-        }}
-
-        // ── 40. Kalshi prediction markets (every 30 min) ─────────────────────
-        throttled('kalshi_'+sport,1800000,function(){{
-            fetch('https://trading-api.kalshi.com/trade-api/v2/events/?status=open&series_ticker='+sport,{{headers:{{'Accept':'application/json'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_kalshi2_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Kalshi error:',e.message);}});
-        }});
-
-            }});
-        }}
-
-        // ── New: Pickswise expert picks (every 30 min) ───────────────────
-        throttled('pickswise_'+sport,1800000,function(){{
-            fetch('https://www.pickswise.com/api/picks?sport='+sport.toLowerCase()+'&type=expert&limit=50',{{headers:{{'Accept':'application/json','Referer':'https://www.pickswise.com/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_pickswise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{
-                // Try alternate Pickswise endpoint
-                fetch('https://www.pickswise.com/api/v2/predictions?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{pushGist('betcouncil_pickswise_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest'}});}}).catch(function(e2){{console.log('[BetCouncil] Pickswise error:',e2.message);}});
-            }});
-        }});
-
-        // ── New: BetUS props (every 25 min) ──────────────────────────────
-        var betUsSportMap={{'MLB':'baseball','NBA':'basketball','NFL':'football','NHL':'hockey','WNBA':'wnba'}};
-        var betUsSport=betUsSportMap[sport];
-        if(betUsSport){{
-            throttled('betus_'+sport,1500000,function(){{
-                fetch('https://www.betus.com.pa/sportsbook/props-builder/api/'+betUsSport+'/player-props',{{headers:{{'Accept':'application/json','Referer':'https://www.betus.com.pa/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betus_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BetUS error:',e.message);}});
-            }});
-        }}
-
-        // ── New: Bet105 game lines (every 25 min) ────────────────────────
-        throttled('bet105_'+sport,1500000,function(){{
-            fetch('https://app.bet105.ag/api/sports/lines?sport='+sport.toLowerCase(),{{headers:{{'Accept':'application/json','Referer':'https://app.bet105.ag/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_bet105_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Bet105 error:',e.message);}});
-        }});
-
-        // ── New: BetWhale lines (every 25 min) ───────────────────────────
-        throttled('betwhale_'+sport,1500000,function(){{
-            fetch('https://betwhale.ag/api/sports/'+sport.toLowerCase()+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://betwhale.ag/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_betwhale_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] BetWhale error:',e.message);}});
-        }});
-
-        // ── New: Ybets lines (every 25 min) ──────────────────────────────
-        throttled('ybets_'+sport,1500000,function(){{
-            fetch('https://ybets.net/api/sport/'+sport.toLowerCase()+'/lines',{{headers:{{'Accept':'application/json','Referer':'https://ybets.net/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_ybets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Ybets error:',e.message);}});
-        }});
-
-        // ── New: Zamba.co lines (every 25 min) ───────────────────────────
-        throttled('zamba_'+sport,1500000,function(){{
-            fetch('https://www.zamba.co/api/sports/'+sport.toLowerCase()+'/events',{{headers:{{'Accept':'application/json','Referer':'https://www.zamba.co/'}}}}).then(function(r){{return r.json();}}).then(function(data){{pushGist('betcouncil_zamba_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});}}).catch(function(e){{console.log('[BetCouncil] Zamba error:',e.message);}});
-        }});
-
-
-        // ── EVBets +EV feed (every 20 min) — free, 94 books, no login ──
-        var evbSportMap={{'MLB':'baseball-mlb','NBA':'basketball-nba','NFL':'american-football-nfl','NHL':'hockey-nhl','UFC':'mma-mixed-martial-arts','SOCCER':'soccer-epl','WNBA':'basketball-wnba'}};
-        var evbSport=evbSportMap[sport];
-        if(evbSport){{
-            throttled('evbets_'+sport,1200000,function(){{
-                // Value bets feed
-                fetch('https://evbets.app/value-bets/'+evbSport,{{headers:{{'Accept':'application/json','Referer':'https://evbets.app/'}}}}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_evbets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                    console.log('[BetCouncil] ✅ EVBets +EV feed harvested for '+sport);
-                }}).catch(function(e){{
-                    // Fallback: try the API endpoint directly
-                    fetch('https://evbets.app/api/value-bets?sport='+evbSport+'&min_ev=2&limit=100',{{headers:{{'Accept':'application/json'}}}}).then(function(r2){{return r2.json();}}).then(function(d2){{
-                        pushGist('betcouncil_evbets_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:d2,source:'betcouncil_auto_harvest_api'}});
-                    }}).catch(function(e2){{console.log('[BetCouncil] EVBets error:',e2.message);}});
-                }});
-            }});
-        }}
-
-        // ── EVBets prop bets feed (every 20 min) ─────────────────────────
-        if(evbSport){{
-            throttled('evbets_props_'+sport,1200000,function(){{
-                fetch('https://evbets.app/prop-bets/'+evbSport,{{headers:{{'Accept':'application/json','Referer':'https://evbets.app/prop-bets/'}}}}).then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_evbets_props_'+sport+'.json',{{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                }}).catch(function(e){{console.log('[BetCouncil] EVBets props error:',e.message);}});
-            }});
-        }}
-    }})();
-    </script>
-    """
-    st.components.v1.html(_harvester_js, height=0, scrolling=False)
-
-    # ── Season Regime ────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📅 Season Regime — All Sports")
-    st.caption("Live season phase detection for all sports. Off-season suppresses stale signals automatically.")
-    _all_sports_regime = ["NBA","MLB","NFL","NHL","WNBA","GOLF","TENNIS","SOCCER","UFC"]
-    _regime_color_map = {
-        "Off-season":"#e04040","Preseason":"#f59e0b","Early Season":"#f59e0b",
-        "Mid Season":"#22c55e","Late Season":"#0ea5a0","Playoffs":"#a855f7",
-    }
-    _rcols = st.columns(3)
-    for _rsi, _rsp in enumerate(_all_sports_regime):
-        _regime = detect_season_regime(_rsp)
-        _rphase = _regime["regime"]
-        _rcolor = _regime_color_map.get(_rphase, "#6a7a8a")
-        _radj   = _regime.get("adjustments", {})
-        _radj_str = ", ".join(f"{k}:{v:+.2f}" for k,v in _radj.items()) if _radj else "none"
-        _rdesc = _regime["description"][:55] + "..." if len(_regime["description"]) > 55 else _regime["description"]
-        _rcols[_rsi % 3].markdown(
-            f'<div style="background:var(--bc-bg);border:1px solid {_rcolor}55;border-radius:8px;padding:10px;margin-bottom:8px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-            f'<span style="color:var(--bc-text);font-weight:700;font-size:13px;">{_rsp}</span>'
-            f'<span style="color:{_rcolor};font-size:11px;font-weight:600;background:{_rcolor}22;padding:2px 8px;border-radius:10px;">{_rphase}</span></div>'
-            f'<div style="color:var(--bc-dim);font-size:11px;margin-top:4px;">{_rdesc}</div>'
-            f'<div style="color:#e8a020;font-size:10px;margin-top:3px;">adj: {_radj_str}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-    # ── Daily Bet Sizing Optimizer ─────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 💰 Daily Bet Sizing Optimizer")
-    st.caption("Optimal wager sizes for today's picks — accounts for tier Kelly, correlation, and daily risk cap.")
-    _board_for_sizing = [p for p in st.session_state.get("board_data",[])
-                         if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED","LEAN")
-                         and p.get("Edge",0) > 0]
-    if _board_for_sizing:
-        _bankroll_sz = st.session_state.get("bankroll", 100.0)
-        _max_risk_pct = st.slider("Max daily risk %", 5, 25, 15, key="max_risk_slider") / 100
-        _sized = optimize_daily_bet_sizing(
-            picks=_board_for_sizing[:20],
-            bankroll=_bankroll_sz,
-            max_daily_risk_pct=_max_risk_pct,
-        )
-        _sz_c1,_sz_c2,_sz_c3,_sz_c4 = st.columns(4)
-        _sz_c1.metric("Total Risk", f"${_sized['total_risk']:.2f}", f"{_sized['total_risk_pct']:.1%} of bankroll")
-        _sz_c2.metric("Corr Adj", f"{_sized['correlation_adj']:.0%}", help="Reduction from correlated picks")
-        _sz_c3.metric("Scale Applied", f"{_sized['scale_applied']:.0%}", help="Cap enforcement scaling")
-        _sz_c4.metric("Max Daily", f"${_sized['max_daily_risk']:.2f}")
-        if _sized.get("warning"):
-            st.warning(_sized["warning"])
-        st.markdown("**Recommended allocation per tier (per bet):**")
-        _ra = _sized.get("recommended_allocation",{})
-        _ra_cols = st.columns(4)
-        for ci,(_tier,_amt) in enumerate([("SOVEREIGN",_ra.get("SOVEREIGN",0)),
-                                           ("ELITE",_ra.get("ELITE",0)),
-                                           ("APPROVED",_ra.get("APPROVED",0)),
-                                           ("LEAN",_ra.get("LEAN",0))]):
-            _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#3b82f6","LEAN":"#f59e0b"}[_tier]
-            _ra_cols[ci].markdown(
-                f'<div style="background:var(--bc-bg-card);border:1px solid {_tc}44;border-radius:8px;padding:10px;text-align:center">'
-                f'<div style="color:{_tc};font-size:11px;font-weight:700">{_tier}</div>'
-                f'<div style="color:var(--bc-text);font-size:18px;font-weight:700">${_amt:.2f}</div>'
-                f'</div>', unsafe_allow_html=True)
-        # Show sized picks
-        _sized_df = [{"Player":p.get("Player",""),"Prop":p.get("Prop",""),"Tier":p.get("Tier",""),
-                       "Edge":f"{p.get('Edge',0):.1%}","Wager":f"${p.get('adj_wager',0):.2f}"}
-                     for p in _sized.get("picks_sized",[]) if p.get("adj_wager",0) > 0]
-        if _sized_df:
-            st.markdown(_bc_df_html(_sized_df), unsafe_allow_html=True)
-    else:
-        st.info("Load a board to see sizing recommendations.")
-
-    # ── Projection Confidence Overview ──────────────────────
-    st.markdown("---")
-    st.markdown("### 🎯 Projection Confidence & Market Intelligence")
-    st.caption("Confidence score (0-100) based on sample size, injury certainty, lineup confirmation, market agreement, and volatility.")
-    _board_conf = st.session_state.get("board_data", [])
-    if _board_conf:
-        _high_conf  = [p for p in _board_conf if p.get("ProjConfidence",0) >= 80]
-        _med_conf   = [p for p in _board_conf if 60 <= p.get("ProjConfidence",0) < 80]
-        _low_conf   = [p for p in _board_conf if p.get("ProjConfidence",0) < 60]
-        _role_changes = [p for p in _board_conf if p.get("RoleChange")]
-        _cc1, _cc2, _cc3, _cc4 = st.columns(4)
-        _cc1.metric("🟢 High Conf", len(_high_conf), help="Score ≥80 — trust projection")
-        _cc2.metric("🟡 Moderate", len(_med_conf), help="Score 60-79")
-        _cc3.metric("🔴 Low Conf", len(_low_conf), help="Score <60 — use with caution")
-        _cc4.metric("🔄 Role Changes", len(_role_changes), help="Players with detected role change")
-        if _role_changes:
-            st.markdown("**Role Change Alerts:**")
-            for _rc_prop in _role_changes[:5]:
-                _rcd = _rc_prop.get("RoleChange",{})
-                _rcc = "#22c55e" if _rcd.get("direction")=="UP" else "#e04040"
-                st.markdown(
-                    f'<div style="background:var(--bc-bg-card);border-left:3px solid {_rcc};'
-                    f'border-radius:4px;padding:4px 8px;margin-bottom:3px;">'
-                    f'<span style="color:{_rcc};">{_rcd.get("note","")}</span></div>',
-                    unsafe_allow_html=True
-                )
-        # Market vs model divergence for top props
-        _model_bullish = [p for p in _board_conf
-                          if p.get("MarketVsModel",{}) and
-                          p.get("MarketVsModel",{}).get("signal") == "MODEL_BULLISH"
-                          and p.get("Tier") in ("SOVEREIGN","ELITE")]
-        if _model_bullish:
-            st.markdown("**Model > Market (potential value):**")
-            for _mb in _model_bullish[:3]:
-                _mvm = _mb.get("MarketVsModel",{})
-                st.caption(f"  {_mb.get('Player','')} {_mb.get('Prop','')}: {_mvm.get('note','')}")
-
-    # ── Signal ROI Audit ─────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📊 Per-Signal ROI Audit")
-    st.caption("Which signals actually predict wins? Updates as resolved bets accumulate.")
-    _sig_audit = compute_signal_roi_audit(st.session_state.get("history", []))
-    _resolved_count = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
-    if _sig_audit:
-        _audit_rows = []
-        for _sn, _sd in _sig_audit.items():
-            _audit_rows.append({
-                "Signal":   _sn,
-                "Sample":   _sd["sample"],
-                "Win Rate": f"{_sd['win_rate']:.0%}",
-                "ROI":      _sd["roi_pct"],
-                "Verdict":  _sd["verdict"],
-            })
-# DUPLICATE REMOVED: import pandas as _pd
-        _audit_df = _pd.DataFrame(_audit_rows)
-        st.markdown(_bc_df_html(_audit_df), unsafe_allow_html=True)
-    elif _resolved_count < 20:
-        st.info(f"Signal ROI audit activates at 20 resolved bets. ({_resolved_count}/20)")
-    if _resolved_count >= 100:
-        _bq_weights, _learned = get_bq_weights(st.session_state.get("history", []))
-        if _learned:
-            st.success("✅ BQ weights are now learned from your results (500+ bets)")
-        elif _resolved_count >= 200:
-            st.info(f"BQ weight learning activates at 500 bets. ({_resolved_count}/500) — current weights: Edge 40%, Alignment 20%, Agreement 20%, Volatility 10%, CLV 10%")
-    else:
-        st.info("No signals with 5+ samples yet.")
-
-    # ── Signal Attribution ──────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🔬 Signal Attribution Engine")
-    st.caption("Which signals actually created profit? Activates at 20 resolved bets.")
-    _attr_rows, _attr_n = compute_signal_attribution(st.session_state.get("history", []))
-    if _attr_rows is None:
-        st.info(f"Signal attribution activates at 20 resolved bets. Current: {_attr_n}.")
-    else:
-        _drag = [r for r in _attr_rows if "Drag" in r["Grade"]]
-        if _drag:
-            st.warning(f"⚠️ Signals with negative ROI: {', '.join(r['Signal'] for r in _drag)} — consider reducing weight")
-        st.markdown(_bc_df_html(pd.DataFrame(_attr_rows)), unsafe_allow_html=True)
-        st.caption("Net Units = total P&L generated when this signal was active. Grade = signal contribution quality.")
-
-    # ── Portfolio Exposure ───────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🎯 Portfolio Exposure")
-    st.caption("Am I over-concentrated? Checks sport, team, and player exposure across today's locked picks.")
-    _portfolio = compute_portfolio_exposure(st.session_state.board_data)
-    if _portfolio:
-        # Prop correlation score
-        _active_for_corr = [p for p in (st.session_state.board_data or [])
-                            if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")][:8]
-        _corr_score, _corr_groups = compute_prop_correlation_score(_active_for_corr)
-        _corr_color = "#22c55e" if _corr_score < 0.25 else "#e8a020" if _corr_score < 0.50 else "#e04040"
-        _p1, _p2, _p3, _p4 = st.columns(4)
-        _p1.metric("Active Bets", _portfolio["n_active"])
-        _p2.metric("Total Stake", f"${_portfolio['total_stake']:.2f}")
-        _p3.metric("% of Bankroll", f"{_portfolio['total_pct_br']:.1f}%")
-        _p4.metric("Correlation Score", f"{_corr_score:.2f}",
-                   delta="High — review" if _corr_score > 0.50 else "Low — diversified",
-                   delta_color="inverse" if _corr_score > 0.50 else "off")
-        if _corr_score > 0.50 and _corr_groups:
-            st.warning(f"⚠️ High portfolio correlation ({_corr_score:.2f}) — bets may rise and fall together:")
-            st.markdown(_bc_df_html(pd.DataFrame(_corr_groups)), unsafe_allow_html=True)
-        if _portfolio["warnings"]:
-            for w in _portfolio["warnings"]:
-                st.warning(w)
-        if _portfolio["recommendations"]:
-            for rec in _portfolio["recommendations"]:
-                st.info(f"💡 {rec}")
-        if _portfolio["sport_breakdown"]:
-            _sport_rows = [{"Sport": k, "Count": v.get("count",0), "Exposure %": f"{v.get('pct',0):.1f}%"}
-                           for k,v in sorted(_portfolio["sport_breakdown"].items(),
-                           key=lambda x: -x[1].get("count",0) if isinstance(x[1],dict) else -float(x[1] or 0))]
-            st.markdown(_bc_df_html(pd.DataFrame(_sport_rows)), unsafe_allow_html=True)
-    else:
-        st.info("Load the board and lock picks to see portfolio exposure.")
-
-    # ── Model Drift Detection ────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📡 Model Drift Detection")
-    st.caption("Compares recent 50-bet ROI vs all-time. Fires alert if model performance diverges.")
-    _drift = compute_model_drift(st.session_state.get("history", []))
-    if _drift is None:
-        _total_res = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
-        st.info(f"Model drift detection activates at 60+ resolved bets. Current: {_total_res}.")
-    else:
-        _dc = "#22c55e" if not _drift["alert"] else "#e04040"
-        st.markdown(
-            f'<div style="background:var(--bc-bg);border:1px solid {"#e04040" if _drift["alert"] else "var(--bc-bg2)"};border-radius:8px;padding:0.8rem;">'
-            f'<div style="color:{_dc};font-size:1.1rem;font-weight:700;">{_drift["status"]}</div>'
-            f'<div style="display:flex;gap:2rem;margin-top:0.5rem;">'
-            f'<span style="color:var(--bc-muted);">All-time ROI/bet: <b>{_drift["all_time_roi"]:+.3f}u</b></span>'
-            f'<span style="color:var(--bc-muted);">Recent L{_drift["window"]} ROI/bet: <b style="color:{_dc};">{_drift["recent_roi"]:+.3f}u</b></span>'
-            f'<span style="color:var(--bc-muted);">Drift: <b style="color:{_dc};">{_drift["drift"]:+.3f}u</b></span>'
-            f'</div></div>',
-            unsafe_allow_html=True
-        )
-
-    # ── Weekly Model Report ──────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📋 Weekly Model Report")
-    st.caption("Auto-generated weekly performance summary. No manual analysis needed.")
-    _perf_data_wr = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
-    _weekly = generate_weekly_model_report(st.session_state.get("history", []), _perf_data_wr)
-    if _weekly:
-        _wr1, _wr2 = st.columns(2)
-        with _wr1:
-            st.markdown(f"""
-| Metric | Value |
-|--------|-------|
-| Period | {_weekly['period']} |
-| Bets | {_weekly['bets']} ({_weekly['wins']} W) |
-| Win Rate | {_weekly['win_rate']} |
-| Net Units | {_weekly['net_units']} |
-| ROI/bet | {_weekly['roi_per_bet']} |
-""")
-        with _wr2:
-            st.markdown(f"""
-| Metric | Value |
-|--------|-------|
-| Best Sport | {_weekly['best_sport']} |
-| Worst Sport | {_weekly['worst_sport']} |
-| Best Signal | {_weekly['best_signal']} |
-| Worst Signal | {_weekly['worst_signal']} |
-| Avg CLV | {_weekly['avg_clv']} |
-""")
-        st.caption(f"Calibration: {_weekly['calibration']}")
-    else:
-        st.info("No resolved bets in the last 7 days. Weekly report will generate automatically.")
-
-    # ── Post-Mortem Reports ──────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🔍 Daily Post-Mortem")
-    st.caption("Why did we win or lose? Breaks down signal performance by day.")
-    _pm_col1, _pm_col2 = st.columns([2,1])
-    with _pm_col1:
-        _pm_date = st.date_input("Analyze date",
-                                  value=date.today() - __import__("datetime").timedelta(days=1),
-                                  key="pm_date")
-    _pm = generate_post_mortem(st.session_state.get("history", []), _pm_date.strftime("%Y-%m-%d"))
-    if _pm:
-        _pm_color = "#22c55e" if _pm["net"] > 0 else "#e04040" if _pm["net"] < 0 else "#8a9ab0"
-        st.markdown(
-            f'<div style="background:var(--bc-bg);border:1px solid {_pm_color}44;border-radius:8px;padding:0.8rem;">'
-            f'<div style="color:{_pm_color};font-size:1.1rem;font-weight:700;">{_pm["verdict"]}</div>'
-            f'<div style="color:var(--bc-muted);font-size:0.9rem;margin-top:4px;">Primary cause: {_pm["cause"]}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-        _pm_c1, _pm_c2 = st.columns(2)
-        with _pm_c1:
-            if _pm["failing"]:
-                st.markdown("**⚠️ Failing Signals:**")
-                for sig, net, w, l in _pm["failing"]:
-                    st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
-            if _pm["watch_next"]:
-                st.caption(f"Watch next session: {', '.join(_pm['watch_next'])}")
-            if _pm["bet_type_breakdown"]:
-                st.markdown("**Props vs. Game Lines:**")
-                for bt, btd in _pm["bet_type_breakdown"].items():
-                    _u = f" · {btd['untracked']} untracked" if btd["untracked"] else ""
-                    st.caption(f"{bt}: {btd['net']:+.1f}u ({btd['wr']} WR){_u}")
-        with _pm_c2:
-            if _pm["succeeding"]:
-                st.markdown("**✅ Succeeding Signals:**")
-                for sig, net, w, l in _pm["succeeding"]:
-                    st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
-            if _pm["tier_breakdown"]:
-                st.markdown("**Tier breakdown:**")
-                for t, td in _pm["tier_breakdown"].items():
-                    _u = f" · {td['untracked']} untracked" if td["untracked"] else ""
-                    st.caption(f"{t}: {td['net']:+.1f}u ({td['wr']} WR){_u}")
-        if _pm["n_untracked"]:
-            st.warning(f"⚠️ {_pm['n_untracked']} of {_pm['n']} picks this day had no wager entered — "
-                       "they graded WIN/LOSS correctly but contributed $0.0u, which understates real net "
-                       "for whichever tier/bet_type they fall in. Log a stake on auto-resolved locks to fix this.")
-        if _pm["top_losses"]:
-            st.markdown("**Biggest losses today:**")
-            for tl in _pm["top_losses"]:
-                _prob_str = f" · modeled {tl['prob']}% win prob" if "prob" in tl else ""
-                if "clv_pct" in tl:
-                    _clv_str = f" · {tl['clv_tag']} ({tl['clv_pct']:+.1f}% vs close)"
-                elif "clv_points" in tl:
-                    _clv_str = f" · {tl['clv_tag']} ({tl['clv_points']:+.1f}pts vs close)"
-                else:
-                    _clv_str = ""
-                st.caption(f"{tl['label']} ({tl['sport']}, {tl['bet_type']}, {tl['tier']}): {tl['net']:+.1f}u{_prob_str}{_clv_str}")
-        if _pm["n_clv_resolved"]:
-            st.caption(f"Avg prop CLV today: {_pm['avg_clv']:+.2f}% ({_pm['n_clv_resolved']} of {_pm['n']} picks with a resolved closing line)")
-        if _pm["n_clv_resolved_game"]:
-            st.caption(f"Avg game-line CLV today: {_pm['avg_clv_points']:+.2f}pts ({_pm['n_clv_resolved_game']} of {_pm['n']} picks with a resolved closing line)")
-    else:
-        st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
-
-    # ── Signal Interaction Analysis ──────────────────────────
-    st.markdown("---")
-    st.markdown("### 🔗 Signal Interaction Analysis")
-    st.caption("Which signal combinations are stronger than either signal alone? Activates at 50 resolved bets.")
-    _perf_data_int = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
-    _int_rows, _int_n = compute_signal_interactions(_perf_data_int)
-    if _int_rows is None:
-        st.info(f"Signal interaction analysis activates at 50 resolved bets. Current: {_int_n}.")
-    else:
-        _synergistic = [r for r in _int_rows if "Synergistic" in r["Interaction"]]
-        _conflicting = [r for r in _int_rows if "Conflicting" in r["Interaction"]]
-        if _synergistic:
-            st.success(f"✅ {len(_synergistic)} synergistic pair(s): " +
-                       ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _synergistic[:2]))
-        if _conflicting:
-            st.warning(f"⚠️ {len(_conflicting)} conflicting pair(s): " +
-                       ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _conflicting[:2]))
-        st.markdown(_bc_df_html(pd.DataFrame(_int_rows)), unsafe_allow_html=True)
-        st.caption("Synergy = WR(both active) minus WR(best signal alone). Positive = combination is stronger.")
-
-    # ── Weight Recommendations ───────────────────────────────
-    st.markdown("---")
-    st.markdown("### ⚖️ Weight Adjustment Recommendations")
-    st.caption("Data-driven suggestions after 100+ bets. Human approval required — never auto-applies.")
-    _sport_wr = st.session_state.get("last_sport","NBA")
-    _recs, _recs_n = generate_weight_recommendations(st.session_state.get("history", []), _sport_wr)
-    if _recs is None:
-        st.info(f"Weight recommendations activate after 100 {_sport_wr} bets. Current: {_recs_n}.")
-    elif _recs:
-        st.warning(f"⚠️ {len(_recs)} weight adjustment(s) suggested based on {_recs_n} bets:")
-        for rec in _recs:
-            col1, col2 = st.columns([3,1])
-            col1.markdown(f"**{rec['Signal']}**: {rec['Current W']} → {rec['Suggested W']} ({rec['Action']}) — {rec['Reason']}")
-            if col2.button("Apply", key=f"wrec_{rec['Signal']}"):
-                st.info(f"Manual step: update SPORT_SIGNAL_WEIGHTS['{_sport_wr}']['{rec['Signal'].lower()[:6]}'] to {rec['Suggested W']}")
-    else:
-        st.success("✅ All signal weights appear well-calibrated for current data.")
-
-    st.markdown("---")
-    # ── Closing Line Beat Rate ──────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📐 Closing Line Beat Rate")
-    st.caption("Does the model project correctly vs where the closing line ends up? Higher = genuine market edge.")
-    _clb_rate, _clb_total = get_closing_line_hit_rate(st.session_state.get("history", []))
-    if _clb_rate is not None:
-        _clb1, _clb2, _clb3 = st.columns(3)
-        _clb1.metric("Beat Closing Line", f"{_clb_rate:.1%}")
-        _clb2.metric("Sample Size", _clb_total)
-        _clb3.metric("Status", "✅ Edge" if _clb_rate >= 0.55 else "⚠️ Watch" if _clb_rate >= 0.50 else "❌ Review")
-        if _clb_rate >= 0.55:
-            st.success(f"Model beats closing line {_clb_rate:.1%} — genuine edge confirmed.")
-        elif _clb_rate < 0.50:
-            st.warning(f"Model below 50% closing line beat rate — review signal weights.")
-    else:
-        st.info(f"Activates after 10 resolved bets with CLV data. ({_clb_total} tracked so far)")
-
-
+        # ── Season Regime ────────────────────────────────────────
         st.markdown("---")
-        st.markdown("### 🎯 Calibration Dashboard — Predicted vs Actual Hit Rate")
-        st.caption(
-            "If your model is well-calibrated, the bars should match the diagonal. "
-            "Bars above diagonal = underconfident (model is too conservative). "
-            "Bars below = overconfident (model claims more edge than it has)."
-        )
+    if _view in ("Seasonal", "All"):
+        st.markdown("### 📅 Season Regime — All Sports")
+        st.caption("Live season phase detection for all sports. Off-season suppresses stale signals automatically.")
+        _all_sports_regime = ["NBA","MLB","NFL","NHL","WNBA","GOLF","TENNIS","SOCCER","UFC"]
+        _regime_color_map = {
+            "Off-season":"#e04040","Preseason":"#f59e0b","Early Season":"#f59e0b",
+            "Mid Season":"#22c55e","Late Season":"#0ea5a0","Playoffs":"#a855f7",
+        }
+        _rcols = st.columns(3)
+        for _rsi, _rsp in enumerate(_all_sports_regime):
+            _regime = detect_season_regime(_rsp)
+            _rphase = _regime["regime"]
+            _rcolor = _regime_color_map.get(_rphase, "#6a7a8a")
+            _radj   = _regime.get("adjustments", {})
+            _radj_str = ", ".join(f"{k}:{v:+.2f}" for k,v in _radj.items()) if _radj else "none"
+            _rdesc = _regime["description"][:55] + "..." if len(_regime["description"]) > 55 else _regime["description"]
+            _rcols[_rsi % 3].markdown(
+                f'<div style="background:var(--bc-bg);border:1px solid {_rcolor}55;border-radius:8px;padding:10px;margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                f'<span style="color:var(--bc-text);font-weight:700;font-size:13px;">{_rsp}</span>'
+                f'<span style="color:{_rcolor};font-size:11px;font-weight:600;background:{_rcolor}22;padding:2px 8px;border-radius:10px;">{_rphase}</span></div>'
+                f'<div style="color:var(--bc-dim);font-size:11px;margin-top:4px;">{_rdesc}</div>'
+                f'<div style="color:#e8a020;font-size:10px;margin-top:3px;">adj: {_radj_str}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
-        # ── Build calibration data from history ──────────────────────────────
-        _hist_all = st.session_state.get("history", [])
-        _resolved  = [r for r in _hist_all if r.get("outcome") in ("WIN","LOSS")]
-        # Calibration specifically requires a REAL predicted probability to
-        # mean anything -- comparing "predicted vs actual" is meaningless if
-        # the predicted number was a placeholder. Manual entries used to
-        # fabricate prob from the known outcome (0.60 if WIN else 0.45) when
-        # none was supplied -- those are excluded from calibration math only
-        # (has_real_prob is explicitly False). Non-manual entries and manual
-        # entries with a real supplied prob are trusted normally. Excluded
-        # bets still count fully toward hit rate, P&L, and every other
-        # metric that doesn't require a real prediction.
-        # BUG FIX (2026-07): `.get("has_real_prob", True) is not False` meant
-        # any record MISSING the key entirely (129 of 280 in the real
-        # ledger) defaulted to included, same fake-probability contamination
-        # problem as compute_calibration_buckets() had. Only 11 of 280 have
-        # has_real_prob explicitly True -- require that explicitly.
-        _cal_resolved = [r for r in _resolved if r.get("has_real_prob") is True]
+        # ── Daily Bet Sizing Optimizer ─────────────────────────────────
+        st.markdown("---")
+    if _view in ("Daily", "All"):
+        st.markdown("### 💰 Daily Bet Sizing Optimizer")
+        st.caption("Optimal wager sizes for today's picks — accounts for tier Kelly, correlation, and daily risk cap.")
+        _board_for_sizing = [p for p in st.session_state.get("board_data",[])
+                             if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED","LEAN")
+                             and p.get("Edge",0) > 0]
+        if _board_for_sizing:
+            _bankroll_sz = st.session_state.get("bankroll", 100.0)
+            _max_risk_pct = st.slider("Max daily risk %", 5, 25, 15, key="max_risk_slider") / 100
+            _sized = optimize_daily_bet_sizing(
+                picks=_board_for_sizing[:20],
+                bankroll=_bankroll_sz,
+                max_daily_risk_pct=_max_risk_pct,
+            )
+            _sz_c1,_sz_c2,_sz_c3,_sz_c4 = st.columns(4)
+            _sz_c1.metric("Total Risk", f"${_sized['total_risk']:.2f}", f"{_sized['total_risk_pct']:.1%} of bankroll")
+            _sz_c2.metric("Corr Adj", f"{_sized['correlation_adj']:.0%}", help="Reduction from correlated picks")
+            _sz_c3.metric("Scale Applied", f"{_sized['scale_applied']:.0%}", help="Cap enforcement scaling")
+            _sz_c4.metric("Max Daily", f"${_sized['max_daily_risk']:.2f}")
+            if _sized.get("warning"):
+                st.warning(_sized["warning"])
+            st.markdown("**Recommended allocation per tier (per bet):**")
+            _ra = _sized.get("recommended_allocation",{})
+            _ra_cols = st.columns(4)
+            for ci,(_tier,_amt) in enumerate([("SOVEREIGN",_ra.get("SOVEREIGN",0)),
+                                               ("ELITE",_ra.get("ELITE",0)),
+                                               ("APPROVED",_ra.get("APPROVED",0)),
+                                               ("LEAN",_ra.get("LEAN",0))]):
+                _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#3b82f6","LEAN":"#f59e0b"}[_tier]
+                _ra_cols[ci].markdown(
+                    f'<div style="background:var(--bc-bg-card);border:1px solid {_tc}44;border-radius:8px;padding:10px;text-align:center">'
+                    f'<div style="color:{_tc};font-size:11px;font-weight:700">{_tier}</div>'
+                    f'<div style="color:var(--bc-text);font-size:18px;font-weight:700">${_amt:.2f}</div>'
+                    f'</div>', unsafe_allow_html=True)
+            # Show sized picks
+            _sized_df = [{"Player":p.get("Player",""),"Prop":p.get("Prop",""),"Tier":p.get("Tier",""),
+                           "Edge":f"{p.get('Edge',0):.1%}","Wager":f"${p.get('adj_wager',0):.2f}"}
+                         for p in _sized.get("picks_sized",[]) if p.get("adj_wager",0) > 0]
+            if _sized_df:
+                st.markdown(_bc_df_html(_sized_df), unsafe_allow_html=True)
+        else:
+            st.info("Load a board to see sizing recommendations.")
 
-        if len(_cal_resolved) >= 30:
-            # ── Tier calibration ─────────────────────────────────────────────
-            _tier_cal = {}
-            for _r in _cal_resolved:
-                _t = _r.get("tier","")
-                if _t not in ("SOVEREIGN","ELITE","APPROVED","LEAN"): continue
-                _tier_cal.setdefault(_t, {"wins":0,"total":0,"prob_sum":0.0})
-                _tier_cal[_t]["total"] += 1
-                _tier_cal[_t]["wins"]  += int(_r.get("outcome") == "WIN")
-                _tier_cal[_t]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
-
-            _tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
-            _tier_colors = {
-                "SOVEREIGN": "#a855f7",
-                "ELITE":     "#22c55e",
-                "APPROVED":  "#3b82f6",
-                "LEAN":      "#f59e0b",
-            }
-
-            if _tier_cal:
-                _cal_cols = st.columns(len(_tier_cal))
-                _col_idx  = 0
-                for _tier in _tier_order:
-                    if _tier not in _tier_cal: continue
-                    _tc   = _tier_cal[_tier]
-                    _n    = _tc["total"]
-                    _hr   = _tc["wins"] / _n if _n else 0
-                    _pp   = _tc["prob_sum"] / _n if _n else 0.5
-                    _err  = _pp - _hr  # positive = overconfident
-                    _color = _tier_colors.get(_tier, "#6a7a8a")
-                    _err_color = "#22c55e" if abs(_err) < 0.03 else ("#ffd700" if abs(_err) < 0.07 else "#e04040")
-                    _status = "✅ Calibrated" if abs(_err) < 0.03 else ("⚠️ Overconfident" if _err > 0 else "⚡ Underconfident")
-                    _cal_cols[_col_idx].markdown(
-                        f'<div style="background:var(--bc-bg-card);border:1px solid {_color}40;border-radius:10px;padding:12px;text-align:center">'
-                        f'<div style="font-size:10px;color:{_color};font-weight:700;text-transform:uppercase;letter-spacing:1px">{_tier}</div>'
-                        f'<div style="font-size:11px;color:var(--bc-dim);margin:4px 0">n={_n} bets</div>'
-                        f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
-                        f'<span style="font-size:11px;color:#8899aa">Predicted</span>'
-                        f'<span style="font-size:14px;font-weight:700;color:#e8f0f8">{_pp:.1%}</span></div>'
-                        f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
-                        f'<span style="font-size:11px;color:#8899aa">Actual</span>'
-                        f'<span style="font-size:14px;font-weight:700;color:{_color}">{_hr:.1%}</span></div>'
-                        f'<div style="background:#1a2a3a;border-radius:4px;height:6px;margin:8px 0">'
-                        f'<div style="background:{_color};border-radius:4px;height:6px;width:{min(100,_hr*100):.0f}%"></div></div>'
-                        f'<div style="font-size:11px;color:{_err_color};font-weight:600">{_status}</div>'
-                        f'<div style="font-size:10px;color:{_err_color}">Error: {_err:+.1%}</div>'
-                        f'</div>',
+        # ── Projection Confidence Overview ──────────────────────
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### 🎯 Projection Confidence & Market Intelligence")
+        st.caption("Confidence score (0-100) based on sample size, injury certainty, lineup confirmation, market agreement, and volatility.")
+        _board_conf = st.session_state.get("board_data", [])
+        if _board_conf:
+            _high_conf  = [p for p in _board_conf if p.get("ProjConfidence",0) >= 80]
+            _med_conf   = [p for p in _board_conf if 60 <= p.get("ProjConfidence",0) < 80]
+            _low_conf   = [p for p in _board_conf if p.get("ProjConfidence",0) < 60]
+            _role_changes = [p for p in _board_conf if p.get("RoleChange")]
+            _cc1, _cc2, _cc3, _cc4 = st.columns(4)
+            _cc1.metric("🟢 High Conf", len(_high_conf), help="Score ≥80 — trust projection")
+            _cc2.metric("🟡 Moderate", len(_med_conf), help="Score 60-79")
+            _cc3.metric("🔴 Low Conf", len(_low_conf), help="Score <60 — use with caution")
+            _cc4.metric("🔄 Role Changes", len(_role_changes), help="Players with detected role change")
+            if _role_changes:
+                st.markdown("**Role Change Alerts:**")
+                for _rc_prop in _role_changes[:5]:
+                    _rcd = _rc_prop.get("RoleChange",{})
+                    _rcc = "#22c55e" if _rcd.get("direction")=="UP" else "#e04040"
+                    st.markdown(
+                        f'<div style="background:var(--bc-bg-card);border-left:3px solid {_rcc};'
+                        f'border-radius:4px;padding:4px 8px;margin-bottom:3px;">'
+                        f'<span style="color:{_rcc};">{_rcd.get("note","")}</span></div>',
                         unsafe_allow_html=True
                     )
-                    _col_idx += 1
+            # Market vs model divergence for top props
+            _model_bullish = [p for p in _board_conf
+                              if p.get("MarketVsModel",{}) and
+                              p.get("MarketVsModel",{}).get("signal") == "MODEL_BULLISH"
+                              and p.get("Tier") in ("SOVEREIGN","ELITE")]
+            if _model_bullish:
+                st.markdown("**Model > Market (potential value):**")
+                for _mb in _model_bullish[:3]:
+                    _mvm = _mb.get("MarketVsModel",{})
+                    st.caption(f"  {_mb.get('Player','')} {_mb.get('Prop','')}: {_mvm.get('note','')}")
 
-                st.markdown("")
-
-            # ── Probability bucket calibration (reliability diagram) ──────────
-            st.markdown("#### 📈 Reliability Diagram — by Probability Bucket")
-            st.caption("Each bucket shows: how often the model predicted that probability range vs how often it actually hit.")
-
-            _buckets = {}
-            _bucket_labels = ["40-45%","45-50%","50-55%","55-60%","60-65%","65-70%","70%+"]
-            _bucket_ranges = [(0.40,0.45),(0.45,0.50),(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),(0.70,1.0)]
-            for _lo,_hi in _bucket_ranges:
-                _buckets[(_lo,_hi)] = {"wins":0,"total":0,"pred_sum":0.0}
-            for _r in _cal_resolved:
-                _p = float(_r.get("prob",0) or 0)
-                for (_lo,_hi) in _bucket_ranges:
-                    if _lo <= _p < _hi:
-                        _buckets[(_lo,_hi)]["total"] += 1
-                        _buckets[(_lo,_hi)]["wins"]  += int(_r.get("outcome") == "WIN")
-                        _buckets[(_lo,_hi)]["pred_sum"] += _p
-                        break
-
-            _rel_rows = []
-            for (_lo,_hi),_label in zip(_bucket_ranges,_bucket_labels):
-                _b = _buckets[(_lo,_hi)]
-                if _b["total"] < 3: continue
-                _actual = _b["wins"] / _b["total"]
-                _pred   = _b["pred_sum"] / _b["total"]
-                _diff   = _actual - _pred
-                _rel_rows.append({
-                    "Bucket": _label,
-                    "n": _b["total"],
-                    "Predicted": f"{_pred:.1%}",
-                    "Actual":    f"{_actual:.1%}",
-                    "Gap":       f"{_diff:+.1%}",
-                    "Status":    "✅" if abs(_diff) < 0.04 else ("⚡" if _diff > 0 else "⚠️"),
+        # ── Signal ROI Audit ─────────────────────────────────────
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### 📊 Per-Signal ROI Audit")
+        st.caption("Which signals actually predict wins? Updates as resolved bets accumulate.")
+        _sig_audit = compute_signal_roi_audit(st.session_state.get("history", []))
+        _resolved_count = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
+        if _sig_audit:
+            _audit_rows = []
+            for _sn, _sd in _sig_audit.items():
+                _audit_rows.append({
+                    "Signal":   _sn,
+                    "Sample":   _sd["sample"],
+                    "Win Rate": f"{_sd['win_rate']:.0%}",
+                    "ROI":      _sd["roi_pct"],
+                    "Verdict":  _sd["verdict"],
                 })
-            if _rel_rows:
-                st.markdown(_bc_df_html(_rel_rows), unsafe_allow_html=True)
-
-            # ── Sport calibration breakdown ───────────────────────────────────
-            st.markdown("#### 🏆 By Sport")
-            _sport_cal = {}
-            for _r in _cal_resolved:
-                _sp = _r.get("sport","")
-                if not _sp: continue
-                _sport_cal.setdefault(_sp, {"wins":0,"total":0,"prob_sum":0.0,"edge_sum":0.0})
-                _sport_cal[_sp]["total"]    += 1
-                _sport_cal[_sp]["wins"]     += int(_r.get("outcome") == "WIN")
-                _sport_cal[_sp]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
-                _sport_cal[_sp]["edge_sum"] += float(_r.get("edge",0) or 0)
-
-            _sport_rows = []
-            for _sp, _sc in sorted(_sport_cal.items(), key=lambda x:-x[1]["total"]):
-                _n  = _sc["total"]
-                _hr = _sc["wins"] / _n
-                _pp = _sc["prob_sum"] / _n
-                _ae = _sc["edge_sum"] / _n
-                _err = _pp - _hr
-                _sport_rows.append({
-                    "Sport":      _sp,
-                    "Bets":       _n,
-                    "Hit Rate":   f"{_hr:.1%}",
-                    "Pred Prob":  f"{_pp:.1%}",
-                    "Avg Edge":   f"{_ae:+.2%}",
-                    "Cal Error":  f"{_err:+.1%}",
-                    "Status":     "✅ Good" if abs(_err) < 0.04 else ("⚠️ Over" if _err > 0 else "⚡ Under"),
-                })
-            if _sport_rows:
-                st.markdown(_bc_df_html(_sport_rows), unsafe_allow_html=True)
-
-            # ── Calibration trend (last 30 vs lifetime) ───────────────────────
-            st.markdown("#### 📅 Recent vs Lifetime")
-            _recent = [r for r in _cal_resolved[-30:] if r.get("prob")]
-            if len(_recent) >= 5:
-                _r_hr   = sum(1 for r in _recent if r.get("outcome") == "WIN") / len(_recent)
-                _r_pp   = sum(float(r.get("prob",0.5)) for r in _recent) / len(_recent)
-                _l_hr   = sum(1 for r in _cal_resolved if r.get("outcome") == "WIN") / len(_cal_resolved)
-                _l_pp   = sum(float(r.get("prob",0.5)) for r in _cal_resolved) / len(_cal_resolved)
-                _tc1,_tc2,_tc3,_tc4 = st.columns(4)
-                _tc1.metric("Last 30 Hit Rate",    f"{_r_hr:.1%}", f"{_r_hr-_l_hr:+.1%} vs lifetime")
-                _tc2.metric("Last 30 Avg Prob",    f"{_r_pp:.1%}", f"{_r_pp-_l_pp:+.1%} vs lifetime")
-                _tc3.metric("Lifetime Hit Rate",   f"{_l_hr:.1%}")
-                _tc4.metric("Lifetime Avg Prob",   f"{_l_pp:.1%}", f"Error: {_l_pp-_l_hr:+.1%}")
-
-            # ── Auto-calibration status ───────────────────────────────────────
-            st.markdown("---")
-            _cal_thresh = st.session_state.get("calibrated_thresholds", {})
-            if _cal_thresh.get("_calibrated"):
-                st.markdown("#### ⚙️ Active Threshold Calibration")
-                st.caption(f"Auto-calibrated from {_cal_thresh.get('_n_records',0)} {_cal_thresh.get('_sport','')} bets")
-                _thresh_rows = []
-                for _t in ["SOVEREIGN","ELITE","APPROVED","LEAN"]:
-                    _base = {"SOVEREIGN":0.12,"ELITE":0.08,"APPROVED":0.04,"LEAN":0.03}.get(_t,0)
-                    _cur  = _cal_thresh.get(_t, _base)
-                    _log  = _cal_thresh.get("_log",{}).get(_t,"")
-                    _thresh_rows.append({
-                        "Tier":      _t,
-                        "Base":      f"{_base:.3f}",
-                        "Current":   f"{_cur:.3f}",
-                        "Change":    f"{_cur-_base:+.4f}",
-                        "Direction": "⬆️ Tighter" if _cur > _base else ("⬇️ Looser" if _cur < _base else "➡️ Unchanged"),
-                        "Detail":    _log[:60] if _log else "—",
-                    })
-                st.markdown(_bc_df_html(_thresh_rows), unsafe_allow_html=True)
-            else:
-                st.info(f"⏳ Auto-calibration activates after 15+ bets per tier. Currently {len(_resolved)} resolved bets logged.")
+    # DUPLICATE REMOVED: import pandas as _pd
+            _audit_df = _pd.DataFrame(_audit_rows)
+            st.markdown(_bc_df_html(_audit_df), unsafe_allow_html=True)
+        elif _resolved_count < 20:
+            st.info(f"Signal ROI audit activates at 20 resolved bets. ({_resolved_count}/20)")
+        if _resolved_count >= 100:
+            _bq_weights, _learned = get_bq_weights(st.session_state.get("history", []))
+            if _learned:
+                st.success("✅ BQ weights are now learned from your results (500+ bets)")
+            elif _resolved_count >= 200:
+                st.info(f"BQ weight learning activates at 500 bets. ({_resolved_count}/500) — current weights: Edge 40%, Alignment 20%, Agreement 20%, Volatility 10%, CLV 10%")
         else:
-            st.info(f"📊 Calibration Dashboard needs **{max(0,30-len(_cal_resolved))} more bets with a real logged prediction** to unlock "
-                    f"(has_real_prob=True). Currently {len(_cal_resolved)} of {len(_resolved)} total resolved bets have one — "
-                    f"most logged bets don't carry a real probability yet (auto-resolved/OCR-imported bets can't), so this is "
-                    f"expected to take a while even as total bet count grows.")
+            st.info("No signals with 5+ samples yet.")
+
+        # ── Signal Attribution ──────────────────────────────────
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### 🔬 Signal Attribution Engine")
+        st.caption("Which signals actually created profit? Activates at 20 resolved bets.")
+        _attr_rows, _attr_n = compute_signal_attribution(st.session_state.get("history", []))
+        if _attr_rows is None:
+            st.info(f"Signal attribution activates at 20 resolved bets. Current: {_attr_n}.")
+        else:
+            _drag = [r for r in _attr_rows if "Drag" in r["Grade"]]
+            if _drag:
+                st.warning(f"⚠️ Signals with negative ROI: {', '.join(r['Signal'] for r in _drag)} — consider reducing weight")
+            st.markdown(_bc_df_html(pd.DataFrame(_attr_rows)), unsafe_allow_html=True)
+            st.caption("Net Units = total P&L generated when this signal was active. Grade = signal contribution quality.")
+
+        # ── Portfolio Exposure ───────────────────────────────────
+        st.markdown("---")
+    if _view in ("Daily", "All"):
+        st.markdown("### 🎯 Portfolio Exposure")
+        st.caption("Am I over-concentrated? Checks sport, team, and player exposure across today's locked picks.")
+        _portfolio = compute_portfolio_exposure(st.session_state.board_data)
+        if _portfolio:
+            # Prop correlation score
+            _active_for_corr = [p for p in (st.session_state.board_data or [])
+                                if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")][:8]
+            _corr_score, _corr_groups = compute_prop_correlation_score(_active_for_corr)
+            _corr_color = "#22c55e" if _corr_score < 0.25 else "#e8a020" if _corr_score < 0.50 else "#e04040"
+            _p1, _p2, _p3, _p4 = st.columns(4)
+            _p1.metric("Active Bets", _portfolio["n_active"])
+            _p2.metric("Total Stake", f"${_portfolio['total_stake']:.2f}")
+            _p3.metric("% of Bankroll", f"{_portfolio['total_pct_br']:.1f}%")
+            _p4.metric("Correlation Score", f"{_corr_score:.2f}",
+                       delta="High — review" if _corr_score > 0.50 else "Low — diversified",
+                       delta_color="inverse" if _corr_score > 0.50 else "off")
+            if _corr_score > 0.50 and _corr_groups:
+                st.warning(f"⚠️ High portfolio correlation ({_corr_score:.2f}) — bets may rise and fall together:")
+                st.markdown(_bc_df_html(pd.DataFrame(_corr_groups)), unsafe_allow_html=True)
+            if _portfolio["warnings"]:
+                for w in _portfolio["warnings"]:
+                    st.warning(w)
+            if _portfolio["recommendations"]:
+                for rec in _portfolio["recommendations"]:
+                    st.info(f"💡 {rec}")
+            if _portfolio["sport_breakdown"]:
+                _sport_rows = [{"Sport": k, "Count": v.get("count",0), "Exposure %": f"{v.get('pct',0):.1f}%"}
+                               for k,v in sorted(_portfolio["sport_breakdown"].items(),
+                               key=lambda x: -x[1].get("count",0) if isinstance(x[1],dict) else -float(x[1] or 0))]
+                st.markdown(_bc_df_html(pd.DataFrame(_sport_rows)), unsafe_allow_html=True)
+        else:
+            st.info("Load the board and lock picks to see portfolio exposure.")
+
+        # ── Model Drift Detection ────────────────────────────────
+        st.markdown("---")
+    if _view in ("Daily", "All"):
+        st.markdown("### 📡 Model Drift Detection")
+        st.caption("Compares recent 50-bet ROI vs all-time. Fires alert if model performance diverges.")
+        _drift = compute_model_drift(st.session_state.get("history", []))
+        if _drift is None:
+            _total_res = len([h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN","LOSS")])
+            st.info(f"Model drift detection activates at 60+ resolved bets. Current: {_total_res}.")
+        else:
+            _dc = "#22c55e" if not _drift["alert"] else "#e04040"
+            st.markdown(
+                f'<div style="background:var(--bc-bg);border:1px solid {"#e04040" if _drift["alert"] else "var(--bc-bg2)"};border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:{_dc};font-size:1.1rem;font-weight:700;">{_drift["status"]}</div>'
+                f'<div style="display:flex;gap:2rem;margin-top:0.5rem;">'
+                f'<span style="color:var(--bc-muted);">All-time ROI/bet: <b>{_drift["all_time_roi"]:+.3f}u</b></span>'
+                f'<span style="color:var(--bc-muted);">Recent L{_drift["window"]} ROI/bet: <b style="color:{_dc};">{_drift["recent_roi"]:+.3f}u</b></span>'
+                f'<span style="color:var(--bc-muted);">Drift: <b style="color:{_dc};">{_drift["drift"]:+.3f}u</b></span>'
+                f'</div></div>',
+                unsafe_allow_html=True
+            )
+
+        # ── Weekly Model Report ──────────────────────────────────
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### 📋 Weekly Model Report")
+        st.caption("Auto-generated weekly performance summary. No manual analysis needed.")
+        _perf_data_wr = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
+        _weekly = generate_weekly_model_report(st.session_state.get("history", []), _perf_data_wr)
+        if _weekly:
+            _wr1, _wr2 = st.columns(2)
+            with _wr1:
+                st.markdown(f"""
+    | Metric | Value |
+    |--------|-------|
+    | Period | {_weekly['period']} |
+    | Bets | {_weekly['bets']} ({_weekly['wins']} W) |
+    | Win Rate | {_weekly['win_rate']} |
+    | Net Units | {_weekly['net_units']} |
+    | ROI/bet | {_weekly['roi_per_bet']} |
+    """)
+            with _wr2:
+                st.markdown(f"""
+    | Metric | Value |
+    |--------|-------|
+    | Best Sport | {_weekly['best_sport']} |
+    | Worst Sport | {_weekly['worst_sport']} |
+    | Best Signal | {_weekly['best_signal']} |
+    | Worst Signal | {_weekly['worst_signal']} |
+    | Avg CLV | {_weekly['avg_clv']} |
+    """)
+            st.caption(f"Calibration: {_weekly['calibration']}")
+        else:
+            st.info("No resolved bets in the last 7 days. Weekly report will generate automatically.")
+
+        # ── Post-Mortem Reports ──────────────────────────────────
+        st.markdown("---")
+    if _view in ("Daily", "All"):
+        st.markdown("### 🔍 Daily Post-Mortem")
+        st.caption("Why did we win or lose? Breaks down signal performance by day.")
+        _pm_col1, _pm_col2 = st.columns([2,1])
+        with _pm_col1:
+            _pm_date = st.date_input("Analyze date",
+                                      value=date.today() - __import__("datetime").timedelta(days=1),
+                                      key="pm_date")
+        _pm = generate_post_mortem(st.session_state.get("history", []), _pm_date.strftime("%Y-%m-%d"))
+        if _pm:
+            _pm_color = "#22c55e" if _pm["net"] > 0 else "#e04040" if _pm["net"] < 0 else "#8a9ab0"
+            st.markdown(
+                f'<div style="background:var(--bc-bg);border:1px solid {_pm_color}44;border-radius:8px;padding:0.8rem;">'
+                f'<div style="color:{_pm_color};font-size:1.1rem;font-weight:700;">{_pm["verdict"]}</div>'
+                f'<div style="color:var(--bc-muted);font-size:0.9rem;margin-top:4px;">Primary cause: {_pm["cause"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            _pm_c1, _pm_c2 = st.columns(2)
+            with _pm_c1:
+                if _pm["failing"]:
+                    st.markdown("**⚠️ Failing Signals:**")
+                    for sig, net, w, l in _pm["failing"]:
+                        st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
+                if _pm["watch_next"]:
+                    st.caption(f"Watch next session: {', '.join(_pm['watch_next'])}")
+                if _pm["bet_type_breakdown"]:
+                    st.markdown("**Props vs. Game Lines:**")
+                    for bt, btd in _pm["bet_type_breakdown"].items():
+                        _u = f" · {btd['untracked']} untracked" if btd["untracked"] else ""
+                        st.caption(f"{bt}: {btd['net']:+.1f}u ({btd['wr']} WR){_u}")
+            with _pm_c2:
+                if _pm["succeeding"]:
+                    st.markdown("**✅ Succeeding Signals:**")
+                    for sig, net, w, l in _pm["succeeding"]:
+                        st.markdown(f"- {sig}: {net:+.1f}u ({w}W/{l}L)")
+                if _pm["tier_breakdown"]:
+                    st.markdown("**Tier breakdown:**")
+                    for t, td in _pm["tier_breakdown"].items():
+                        _u = f" · {td['untracked']} untracked" if td["untracked"] else ""
+                        st.caption(f"{t}: {td['net']:+.1f}u ({td['wr']} WR){_u}")
+            if _pm["n_untracked"]:
+                st.warning(f"⚠️ {_pm['n_untracked']} of {_pm['n']} picks this day had no wager entered — "
+                           "they graded WIN/LOSS correctly but contributed $0.0u, which understates real net "
+                           "for whichever tier/bet_type they fall in. Log a stake on auto-resolved locks to fix this.")
+            if _pm["top_losses"]:
+                st.markdown("**Biggest losses today:**")
+                for tl in _pm["top_losses"]:
+                    _prob_str = f" · modeled {tl['prob']}% win prob" if "prob" in tl else ""
+                    if "clv_pct" in tl:
+                        _clv_str = f" · {tl['clv_tag']} ({tl['clv_pct']:+.1f}% vs close)"
+                    elif "clv_points" in tl:
+                        _clv_str = f" · {tl['clv_tag']} ({tl['clv_points']:+.1f}pts vs close)"
+                    else:
+                        _clv_str = ""
+                    st.caption(f"{tl['label']} ({tl['sport']}, {tl['bet_type']}, {tl['tier']}): {tl['net']:+.1f}u{_prob_str}{_clv_str}")
+            if _pm["n_clv_resolved"]:
+                st.caption(f"Avg prop CLV today: {_pm['avg_clv']:+.2f}% ({_pm['n_clv_resolved']} of {_pm['n']} picks with a resolved closing line)")
+            if _pm["n_clv_resolved_game"]:
+                st.caption(f"Avg game-line CLV today: {_pm['avg_clv_points']:+.2f}pts ({_pm['n_clv_resolved_game']} of {_pm['n']} picks with a resolved closing line)")
+        else:
+            st.info(f"No resolved bets found for {_pm_date.strftime('%B %d, %Y')}.")
+
+        # ── Signal Interaction Analysis ──────────────────────────
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### 🔗 Signal Interaction Analysis")
+        st.caption("Which signal combinations are stronger than either signal alone? Activates at 50 resolved bets.")
+        _perf_data_int = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
+        _int_rows, _int_n = compute_signal_interactions(_perf_data_int)
+        if _int_rows is None:
+            st.info(f"Signal interaction analysis activates at 50 resolved bets. Current: {_int_n}.")
+        else:
+            _synergistic = [r for r in _int_rows if "Synergistic" in r["Interaction"]]
+            _conflicting = [r for r in _int_rows if "Conflicting" in r["Interaction"]]
+            if _synergistic:
+                st.success(f"✅ {len(_synergistic)} synergistic pair(s): " +
+                           ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _synergistic[:2]))
+            if _conflicting:
+                st.warning(f"⚠️ {len(_conflicting)} conflicting pair(s): " +
+                           ", ".join(f"{r['Signal A']}+{r['Signal B']} ({r['Synergy']})" for r in _conflicting[:2]))
+            st.markdown(_bc_df_html(pd.DataFrame(_int_rows)), unsafe_allow_html=True)
+            st.caption("Synergy = WR(both active) minus WR(best signal alone). Positive = combination is stronger.")
+
+        # ── Weight Recommendations ───────────────────────────────
+        st.markdown("---")
+    if _view in ("Weekly", "All"):
+        st.markdown("### ⚖️ Weight Adjustment Recommendations")
+        st.caption("Data-driven suggestions after 100+ bets. Human approval required — never auto-applies.")
+        _sport_wr = st.session_state.get("last_sport","NBA")
+        _recs, _recs_n = generate_weight_recommendations(st.session_state.get("history", []), _sport_wr)
+        if _recs is None:
+            st.info(f"Weight recommendations activate after 100 {_sport_wr} bets. Current: {_recs_n}.")
+        elif _recs:
+            st.warning(f"⚠️ {len(_recs)} weight adjustment(s) suggested based on {_recs_n} bets:")
+            for rec in _recs:
+                col1, col2 = st.columns([3,1])
+                col1.markdown(f"**{rec['Signal']}**: {rec['Current W']} → {rec['Suggested W']} ({rec['Action']}) — {rec['Reason']}")
+                if col2.button("Apply", key=f"wrec_{rec['Signal']}"):
+                    st.info(f"Manual step: update SPORT_SIGNAL_WEIGHTS['{_sport_wr}']['{rec['Signal'].lower()[:6]}'] to {rec['Suggested W']}")
+        else:
+            st.success("✅ All signal weights appear well-calibrated for current data.")
+
+        st.markdown("---")
+        # ── Closing Line Beat Rate ──────────────────────────────
+        st.markdown("---")
+    if _view in ("Daily", "All"):
+        st.markdown("### 📐 Closing Line Beat Rate")
+        st.caption("Does the model project correctly vs where the closing line ends up? Higher = genuine market edge.")
+        _clb_rate, _clb_total = get_closing_line_hit_rate(st.session_state.get("history", []))
+        if _clb_rate is not None:
+            _clb1, _clb2, _clb3 = st.columns(3)
+            _clb1.metric("Beat Closing Line", f"{_clb_rate:.1%}")
+            _clb2.metric("Sample Size", _clb_total)
+            _clb3.metric("Status", "✅ Edge" if _clb_rate >= 0.55 else "⚠️ Watch" if _clb_rate >= 0.50 else "❌ Review")
+            if _clb_rate >= 0.55:
+                st.success(f"Model beats closing line {_clb_rate:.1%} — genuine edge confirmed.")
+            elif _clb_rate < 0.50:
+                st.warning(f"Model below 50% closing line beat rate — review signal weights.")
+        else:
+            st.info(f"Activates after 10 resolved bets with CLV data. ({_clb_total} tracked so far)")
 
 
-# ----- TAB 5: LOG BET -----
+            st.markdown("---")
+    if _view in ("Seasonal", "All"):
+            st.markdown("### 🎯 Calibration Dashboard — Predicted vs Actual Hit Rate")
+            st.caption(
+                "If your model is well-calibrated, the bars should match the diagonal. "
+                "Bars above diagonal = underconfident (model is too conservative). "
+                "Bars below = overconfident (model claims more edge than it has)."
+            )
 
-# ----- TAB 5: SLIP ANALYZER -----
+            # ── Build calibration data from history ──────────────────────────────
+            _hist_all = st.session_state.get("history", [])
+            _resolved  = [r for r in _hist_all if r.get("outcome") in ("WIN","LOSS")]
+            # Calibration specifically requires a REAL predicted probability to
+            # mean anything -- comparing "predicted vs actual" is meaningless if
+            # the predicted number was a placeholder. Manual entries used to
+            # fabricate prob from the known outcome (0.60 if WIN else 0.45) when
+            # none was supplied -- those are excluded from calibration math only
+            # (has_real_prob is explicitly False). Non-manual entries and manual
+            # entries with a real supplied prob are trusted normally. Excluded
+            # bets still count fully toward hit rate, P&L, and every other
+            # metric that doesn't require a real prediction.
+            # BUG FIX (2026-07): `.get("has_real_prob", True) is not False` meant
+            # any record MISSING the key entirely (129 of 280 in the real
+            # ledger) defaulted to included, same fake-probability contamination
+            # problem as compute_calibration_buckets() had. Only 11 of 280 have
+            # has_real_prob explicitly True -- require that explicitly.
+            _cal_resolved = [r for r in _resolved if r.get("has_real_prob") is True]
+
+            if len(_cal_resolved) >= 30:
+                # ── Tier calibration ─────────────────────────────────────────────
+                _tier_cal = {}
+                for _r in _cal_resolved:
+                    _t = _r.get("tier","")
+                    if _t not in ("SOVEREIGN","ELITE","APPROVED","LEAN"): continue
+                    _tier_cal.setdefault(_t, {"wins":0,"total":0,"prob_sum":0.0})
+                    _tier_cal[_t]["total"] += 1
+                    _tier_cal[_t]["wins"]  += int(_r.get("outcome") == "WIN")
+                    _tier_cal[_t]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
+
+                _tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
+                _tier_colors = {
+                    "SOVEREIGN": "#a855f7",
+                    "ELITE":     "#22c55e",
+                    "APPROVED":  "#3b82f6",
+                    "LEAN":      "#f59e0b",
+                }
+
+                if _tier_cal:
+                    _cal_cols = st.columns(len(_tier_cal))
+                    _col_idx  = 0
+                    for _tier in _tier_order:
+                        if _tier not in _tier_cal: continue
+                        _tc   = _tier_cal[_tier]
+                        _n    = _tc["total"]
+                        _hr   = _tc["wins"] / _n if _n else 0
+                        _pp   = _tc["prob_sum"] / _n if _n else 0.5
+                        _err  = _pp - _hr  # positive = overconfident
+                        _color = _tier_colors.get(_tier, "#6a7a8a")
+                        _err_color = "#22c55e" if abs(_err) < 0.03 else ("#ffd700" if abs(_err) < 0.07 else "#e04040")
+                        _status = "✅ Calibrated" if abs(_err) < 0.03 else ("⚠️ Overconfident" if _err > 0 else "⚡ Underconfident")
+                        _cal_cols[_col_idx].markdown(
+                            f'<div style="background:var(--bc-bg-card);border:1px solid {_color}40;border-radius:10px;padding:12px;text-align:center">'
+                            f'<div style="font-size:10px;color:{_color};font-weight:700;text-transform:uppercase;letter-spacing:1px">{_tier}</div>'
+                            f'<div style="font-size:11px;color:var(--bc-dim);margin:4px 0">n={_n} bets</div>'
+                            f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
+                            f'<span style="font-size:11px;color:#8899aa">Predicted</span>'
+                            f'<span style="font-size:14px;font-weight:700;color:#e8f0f8">{_pp:.1%}</span></div>'
+                            f'<div style="display:flex;justify-content:space-between;margin:6px 0">'
+                            f'<span style="font-size:11px;color:#8899aa">Actual</span>'
+                            f'<span style="font-size:14px;font-weight:700;color:{_color}">{_hr:.1%}</span></div>'
+                            f'<div style="background:#1a2a3a;border-radius:4px;height:6px;margin:8px 0">'
+                            f'<div style="background:{_color};border-radius:4px;height:6px;width:{min(100,_hr*100):.0f}%"></div></div>'
+                            f'<div style="font-size:11px;color:{_err_color};font-weight:600">{_status}</div>'
+                            f'<div style="font-size:10px;color:{_err_color}">Error: {_err:+.1%}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                        _col_idx += 1
+
+                    st.markdown("")
+
+                # ── Probability bucket calibration (reliability diagram) ──────────
+                st.markdown("#### 📈 Reliability Diagram — by Probability Bucket")
+                st.caption("Each bucket shows: how often the model predicted that probability range vs how often it actually hit.")
+
+                _buckets = {}
+                _bucket_labels = ["40-45%","45-50%","50-55%","55-60%","60-65%","65-70%","70%+"]
+                _bucket_ranges = [(0.40,0.45),(0.45,0.50),(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),(0.70,1.0)]
+                for _lo,_hi in _bucket_ranges:
+                    _buckets[(_lo,_hi)] = {"wins":0,"total":0,"pred_sum":0.0}
+                for _r in _cal_resolved:
+                    _p = float(_r.get("prob",0) or 0)
+                    for (_lo,_hi) in _bucket_ranges:
+                        if _lo <= _p < _hi:
+                            _buckets[(_lo,_hi)]["total"] += 1
+                            _buckets[(_lo,_hi)]["wins"]  += int(_r.get("outcome") == "WIN")
+                            _buckets[(_lo,_hi)]["pred_sum"] += _p
+                            break
+
+                _rel_rows = []
+                for (_lo,_hi),_label in zip(_bucket_ranges,_bucket_labels):
+                    _b = _buckets[(_lo,_hi)]
+                    if _b["total"] < 3: continue
+                    _actual = _b["wins"] / _b["total"]
+                    _pred   = _b["pred_sum"] / _b["total"]
+                    _diff   = _actual - _pred
+                    _rel_rows.append({
+                        "Bucket": _label,
+                        "n": _b["total"],
+                        "Predicted": f"{_pred:.1%}",
+                        "Actual":    f"{_actual:.1%}",
+                        "Gap":       f"{_diff:+.1%}",
+                        "Status":    "✅" if abs(_diff) < 0.04 else ("⚡" if _diff > 0 else "⚠️"),
+                    })
+                if _rel_rows:
+                    st.markdown(_bc_df_html(_rel_rows), unsafe_allow_html=True)
+
+                # ── Sport calibration breakdown ───────────────────────────────────
+                st.markdown("#### 🏆 By Sport")
+                _sport_cal = {}
+                for _r in _cal_resolved:
+                    _sp = _r.get("sport","")
+                    if not _sp: continue
+                    _sport_cal.setdefault(_sp, {"wins":0,"total":0,"prob_sum":0.0,"edge_sum":0.0})
+                    _sport_cal[_sp]["total"]    += 1
+                    _sport_cal[_sp]["wins"]     += int(_r.get("outcome") == "WIN")
+                    _sport_cal[_sp]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
+                    _sport_cal[_sp]["edge_sum"] += float(_r.get("edge",0) or 0)
+
+                _sport_rows = []
+                for _sp, _sc in sorted(_sport_cal.items(), key=lambda x:-x[1]["total"]):
+                    _n  = _sc["total"]
+                    _hr = _sc["wins"] / _n
+                    _pp = _sc["prob_sum"] / _n
+                    _ae = _sc["edge_sum"] / _n
+                    _err = _pp - _hr
+                    _sport_rows.append({
+                        "Sport":      _sp,
+                        "Bets":       _n,
+                        "Hit Rate":   f"{_hr:.1%}",
+                        "Pred Prob":  f"{_pp:.1%}",
+                        "Avg Edge":   f"{_ae:+.2%}",
+                        "Cal Error":  f"{_err:+.1%}",
+                        "Status":     "✅ Good" if abs(_err) < 0.04 else ("⚠️ Over" if _err > 0 else "⚡ Under"),
+                    })
+                if _sport_rows:
+                    st.markdown(_bc_df_html(_sport_rows), unsafe_allow_html=True)
+
+                # ── Calibration trend (last 30 vs lifetime) ───────────────────────
+                st.markdown("#### 📅 Recent vs Lifetime")
+                _recent = [r for r in _cal_resolved[-30:] if r.get("prob")]
+                if len(_recent) >= 5:
+                    _r_hr   = sum(1 for r in _recent if r.get("outcome") == "WIN") / len(_recent)
+                    _r_pp   = sum(float(r.get("prob",0.5)) for r in _recent) / len(_recent)
+                    _l_hr   = sum(1 for r in _cal_resolved if r.get("outcome") == "WIN") / len(_cal_resolved)
+                    _l_pp   = sum(float(r.get("prob",0.5)) for r in _cal_resolved) / len(_cal_resolved)
+                    _tc1,_tc2,_tc3,_tc4 = st.columns(4)
+                    _tc1.metric("Last 30 Hit Rate",    f"{_r_hr:.1%}", f"{_r_hr-_l_hr:+.1%} vs lifetime")
+                    _tc2.metric("Last 30 Avg Prob",    f"{_r_pp:.1%}", f"{_r_pp-_l_pp:+.1%} vs lifetime")
+                    _tc3.metric("Lifetime Hit Rate",   f"{_l_hr:.1%}")
+                    _tc4.metric("Lifetime Avg Prob",   f"{_l_pp:.1%}", f"Error: {_l_pp-_l_hr:+.1%}")
+
+                # ── Auto-calibration status ───────────────────────────────────────
+                st.markdown("---")
+                _cal_thresh = st.session_state.get("calibrated_thresholds", {})
+                if _cal_thresh.get("_calibrated"):
+                    st.markdown("#### ⚙️ Active Threshold Calibration")
+                    st.caption(f"Auto-calibrated from {_cal_thresh.get('_n_records',0)} {_cal_thresh.get('_sport','')} bets")
+                    _thresh_rows = []
+                    for _t in ["SOVEREIGN","ELITE","APPROVED","LEAN"]:
+                        _base = {"SOVEREIGN":0.12,"ELITE":0.08,"APPROVED":0.04,"LEAN":0.03}.get(_t,0)
+                        _cur  = _cal_thresh.get(_t, _base)
+                        _log  = _cal_thresh.get("_log",{}).get(_t,"")
+                        _thresh_rows.append({
+                            "Tier":      _t,
+                            "Base":      f"{_base:.3f}",
+                            "Current":   f"{_cur:.3f}",
+                            "Change":    f"{_cur-_base:+.4f}",
+                            "Direction": "⬆️ Tighter" if _cur > _base else ("⬇️ Looser" if _cur < _base else "➡️ Unchanged"),
+                            "Detail":    _log[:60] if _log else "—",
+                        })
+                    st.markdown(_bc_df_html(_thresh_rows), unsafe_allow_html=True)
+                else:
+                    st.info(f"⏳ Auto-calibration activates after 15+ bets per tier. Currently {len(_resolved)} resolved bets logged.")
+            else:
+                st.info(f"📊 Calibration Dashboard needs **{max(0,30-len(_cal_resolved))} more bets with a real logged prediction** to unlock "
+                        f"(has_real_prob=True). Currently {len(_cal_resolved)} of {len(_resolved)} total resolved bets have one — "
+                        f"most logged bets don't carry a real probability yet (auto-resolved/OCR-imported bets can't), so this is "
+                        f"expected to take a while even as total bet count grows.")
+
+
+    # ----- TAB 5: LOG BET -----
+
+    # ----- TAB 5: SLIP ANALYZER -----
 with tabs[5]:
     st.markdown("## 🔍 Slip Analyzer")
     st.caption("Enter any prop slip — from PrizePicks, ParlayPlay, Underdog, or anywhere. The model analyzes each pick and scores the full parlay.")
