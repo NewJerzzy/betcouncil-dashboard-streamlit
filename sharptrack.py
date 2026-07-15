@@ -156,7 +156,23 @@ def render_sharptrack_tab():
                     unsafe_allow_html=True,
                 )
 
-    # ── Wallet Leaderboard ───────────────────────────────────────────
+def _format_periods_seen(periods_seen: list) -> str:
+    """Turns raw entries like ['SPORTS:WEEK','SPORTS:MONTH','ESPORTS:ALL'] into
+    a readable 'Category: Sports (This week, This month) · Esports (All-time)'
+    string. This is per-wallet leaderboard metadata (which Polymarket category
+    that specific wallet ranked in) — not the scope of SharpTrack itself,
+    which tracks all sports."""
+    period_labels = {"WEEK": "this week", "MONTH": "this month", "ALL": "all-time"}
+    by_category = {}
+    for entry in periods_seen or []:
+        if ":" not in entry:
+            continue
+        cat, period = entry.split(":", 1)
+        by_category.setdefault(cat.title(), []).append(period_labels.get(period, period.lower()))
+    if not by_category:
+        return ""
+    parts = [f"{cat} ({', '.join(periods)})" for cat, periods in by_category.items()]
+    return "Category: " + " · ".join(parts)
     with tab_wallets:
         if not wallets:
             st.info("Wallet registry not populated yet.")
@@ -167,7 +183,7 @@ def render_sharptrack_tab():
                 addr = w.get("address") or ""
                 wallet_label = w.get("userName") or (addr[:10] if addr else "unknown")
                 verified = " ✓" if w.get("verifiedBadge") else ""
-                periods = ", ".join(w.get("periods_seen", [])[:3])
+                periods = _format_periods_seen(w.get("periods_seen", []))
                 st.markdown(
                     f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:8px;'
                     f'padding:10px 14px;margin-bottom:6px;">'
@@ -176,7 +192,8 @@ def render_sharptrack_tab():
                     f'{_tier_chip(tier)}</div>'
                     f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
                     f'Score {score} · Best PnL ${w.get("best_pnl",0):,.0f} · '
-                    f'Best Vol ${w.get("best_vol",0):,.0f} · {periods}</div>'
+                    f'Best Vol ${w.get("best_vol",0):,.0f}'
+                    + (f' · {periods}' if periods else '') + '</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
