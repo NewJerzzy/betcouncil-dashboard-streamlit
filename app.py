@@ -8710,12 +8710,15 @@ def build_market_comparison(shortlist):
       - DK Most Bet Props: public DK Network page, no login (props)
       - FanDuel Parlay Hub: Tampermonkey-harvested, needs the harvester
         script running in an authenticated FanDuel tab (parlays)
+      - FavoredProps: public, unauthenticated API (/api/dfs, /api/sportsbook),
+        harvested every ~15 min into the shared Gist — ranked picks with
+        L5/L10/season/H2H hit rates and multi-book odds (props)
       - BettingPros: public API, already fetched every board load
         (expert consensus picks, game lines)
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "bettingpros": [], "covers": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8741,6 +8744,19 @@ def build_market_comparison(shortlist):
             fdph = []
         if fdph:
             result["fd_parlayhub"][sport] = fdph
+
+    # ── FavoredProps: match against shortlist prop players, both dfs
+    # (PrizePicks/Underdog-style) and sportsbook variants ───────────────
+    for sport in sports_needed:
+        for kind in ("dfs", "sportsbook"):
+            try:
+                fp_rows = fetch_favoredprops_from_gist(kind, sport)
+            except Exception:
+                fp_rows = []
+            for row in fp_rows:
+                player_l = str(row.get("player", "")).lower()
+                if player_l in shortlist_players:
+                    result["favoredprops"].append({**row, "kind": kind, "sport": sport})
 
     # ── BettingPros + Covers: match against shortlist game matchups ─────
     shortlist_matchups = [g["Matchup"] for g in shortlist.get("games", [])]
@@ -26850,15 +26866,16 @@ with tabs[1]:
             st.markdown("**🧮 Should you parlay props + game lines together, all in one slip?**")
             _nb_verdict_card(evaluate_parlay_verdict(props_legs + games_legs))
 
-        # ── How This Compares: DK Most Bet / FanDuel Parlay Hub / BettingPros / Covers ──
+        # ── How This Compares: DK Most Bet / FanDuel Parlay Hub / FavoredProps / BettingPros / Covers ──
         st.markdown("---")
         st.markdown("#### 📊 How This Compares")
         st.caption(
             "BetCouncil's shortlist above vs. what's free and public elsewhere: DraftKings' "
             "most-bet props (public popularity, not DK's own pick), FanDuel's Parlay Hub (needs "
-            "the FanDuel harvester running in a logged-in tab — see scripts/ folder), and "
-            "BettingPros/Covers consensus you already scan for other signals. This is context, "
-            "not a signal — none of it changes BetCouncil's tiers."
+            "the FanDuel harvester running in a logged-in tab — see scripts/ folder), FavoredProps' "
+            "hit-rate/multi-book data (public API, no login), and BettingPros/Covers consensus you "
+            "already scan for other signals. This is context, not a signal — none of it changes "
+            "BetCouncil's tiers."
         )
         if st.button("🔍 Load Comparison", key="nb_load_comparison"):
             with st.spinner("Checking public sources..."):
@@ -26879,6 +26896,22 @@ with tabs[1]:
                         )
                 else:
                     st.caption("No overlap with your shortlist found in DK's current most-bet list (or DK Network's page didn't return data this check).")
+
+                st.markdown("**FavoredProps — Hit Rates & Multi-Book Odds**")
+                if comparison["favoredprops"]:
+                    for row in comparison["favoredprops"][:10]:
+                        _fp_kind_label = "DFS (PP/UD)" if row.get("kind") == "dfs" else "Sportsbook"
+                        _fp_hit = row.get("l10_hit_rate")
+                        _fp_hit_str = f"{_fp_hit:.0%} L10" if isinstance(_fp_hit, (int, float)) else ""
+                        st.markdown(
+                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
+                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                            f'✅ <b>{row.get("player","")}</b> {row.get("bet","")} {row.get("line","")} {row.get("stat_type","")} '
+                            f'— {_fp_kind_label}{" · " + _fp_hit_str if _fp_hit_str else ""} '
+                            f'({row.get("n_books","?")} books, avg {row.get("avg_odds","")})</div>', unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No overlap with your shortlist found in FavoredProps' current lists right now.")
 
                 st.markdown("**BettingPros — Expert Consensus**")
                 if comparison["bettingpros"]:

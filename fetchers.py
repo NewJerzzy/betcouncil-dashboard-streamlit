@@ -16770,6 +16770,34 @@ def fetch_fanduel_parlayhub_from_gist(sport: str, max_age_minutes: int = 60) -> 
     return []
 
 
+def fetch_favoredprops_from_gist(kind: str, sport: str, max_age_minutes: int = 100) -> list:
+    """
+    Reads FavoredProps' public props data (no login, no key — confirmed
+    live 2026-07 via direct API discovery: /api/dfs and /api/sportsbook
+    are unauthenticated Next.js API routes) from the Gist file pushed by
+    the FavoredProps harvester workflow, every 15 min.
+
+    kind: "dfs" (PrizePicks/Underdog-style ranked picks with hit rates)
+          or "sportsbook" (multi-book player props with hit rates)
+    sport: BetCouncil sport name — NBA, MLB, NHL, WNBA map directly;
+           NFL isn't in FavoredProps' current league set (CBB/CFB used
+           for college instead), so NFL calls will just return [].
+
+    Returns the raw "props" list from that file, each entry already
+    including hit-rate fields (l5_hit_rate, l10_hit_rate, szn_hit_rate,
+    h2h_hit_rate) and multi-book odds (books list). Comparison/display
+    data only — never wired into SEM or edge computation.
+    """
+    if kind not in ("dfs", "sportsbook"):
+        return []
+    data = _read_gist_file(f"betcouncil_favoredprops_{kind}_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("props", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
 def fetch_unabated_from_gist(sport: str) -> tuple:
     """PRIMARY: Unabated sharp lines from browser harvester. SECONDARY: scraper."""
     data = _read_gist_file(f"betcouncil_unabated_{sport}.json", cache_minutes=5)
