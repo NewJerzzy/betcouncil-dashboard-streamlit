@@ -59,15 +59,19 @@ def fetch_props(sport: str) -> list:
     if r.status_code != 200:
         raise RuntimeError(f"HTTP {r.status_code}")
     data = r.json()
-    # Defensive: exact top-level shape wasn't verified live before this
-    # first deploy. Handle either a flat list or a dict with a "props"/
-    # "data" wrapper.
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
         for key in ("props", "data", "players"):
             if isinstance(data.get(key), list):
                 return data[key]
+        # MLB's actual shape (confirmed 2026-07): a dict keyed directly by
+        # numeric player ID, no wrapper key at all — e.g.
+        # {"99189541": {"Player": "Akil Baddoo", ...}, "...": {...}}.
+        # Treat the dict's values as the record list in that case.
+        values = [v for v in data.values() if isinstance(v, dict)]
+        if values:
+            return values
     return []
 
 
