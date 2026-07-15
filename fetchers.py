@@ -17122,31 +17122,37 @@ def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport
         label_lc = label.lower()
         is_game = label_lc in _PROPHETX_GAME_MARKETS
 
-        # ── Moneyline: uses top-level `selections` (list of 2 inner lists) ──
-        if is_game and label_lc == "moneyline":
-            sels = mkt.get("selections", [])
-            if len(sels) >= 2:
-                p0 = _px_best_price(sels[0])
-                p1 = _px_best_price(sels[1])
-                if p0 and p1:
-                    lines_out.append({
-                        "game": game_label, "home": home, "away": away,
-                        "market": "Moneyline",
-                        "selection": _px_strip_odds_suffix(p0.get("name", "")),
-                        "odds": p0.get("odds"), "line": 0,
-                        "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
-                    })
-                    lines_out.append({
-                        "game": game_label, "home": home, "away": away,
-                        "market": "Moneyline",
-                        "selection": _px_strip_odds_suffix(p1.get("name", "")),
-                        "odds": p1.get("odds"), "line": 0,
-                        "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
-                    })
+        # Structure-first routing (more robust than name matching alone):
+        #   selections len>=2, each element a list → two-sided exchange market (h2h/moneyline)
+        #   marketLines present                    → spread/total/prop (over-under format)
+        sels = mkt.get("selections", [])
+        mkt_lines = mkt.get("marketLines", [])
+        has_two_sided = len(sels) >= 2 and isinstance(sels[0], list)
+        has_market_lines = bool(mkt_lines)
 
-        # ── Spread / Total Points: uses `marketLines[n]["selections"]` ──
-        elif is_game and label_lc in ("spread", "total", "total points"):
-            for ml in mkt.get("marketLines", [])[:1]:  # primary line only
+        if has_two_sided:
+            # ── Two-sided exchange market (Moneyline, 1st Inning ML, h2h, etc.) ──
+            p0 = _px_best_price(sels[0])
+            p1 = _px_best_price(sels[1])
+            if p0 and p1:
+                lines_out.append({
+                    "game": game_label, "home": home, "away": away,
+                    "market": label,
+                    "selection": _px_strip_odds_suffix(p0.get("name", "")),
+                    "odds": p0.get("odds"), "line": 0,
+                    "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
+                })
+                lines_out.append({
+                    "game": game_label, "home": home, "away": away,
+                    "market": label,
+                    "selection": _px_strip_odds_suffix(p1.get("name", "")),
+                    "odds": p1.get("odds"), "line": 0,
+                    "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
+                })
+
+        elif has_market_lines and is_game:
+            # ── Spread / Total (game-level over-under market) ──
+            for ml in mkt_lines[:1]:
                 ml_sels = ml.get("selections", [])
                 if len(ml_sels) < 2:
                     continue
@@ -17170,12 +17176,12 @@ def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport
                     "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
                 })
 
-        # ── Player props: not a game market, uses `marketLines` ──
-        elif not is_game:
+        elif has_market_lines and not is_game:
+            # ── Player props (over-under format via marketLines) ──
             player_name, stat_label = _px_parse_prop_name(label)
             if not player_name:
                 continue
-            for ml in mkt.get("marketLines", [])[:1]:
+            for ml in mkt_lines[:1]:
                 ml_sels = ml.get("selections", [])
                 if len(ml_sels) < 2:
                     continue
