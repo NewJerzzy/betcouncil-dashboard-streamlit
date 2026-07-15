@@ -75,7 +75,12 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
 from styles import TIER_COLORS
 from app_fixes import fetch_vsin_intelligence
-from sharptrack import render_sharptrack_tab
+try:
+    from sharptrack import render_sharptrack_tab
+except Exception as _sharptrack_import_err:
+    def render_sharptrack_tab():
+        st.error(f"SharpTrack failed to load: {_sharptrack_import_err}")
+        st.caption("This tab is isolated from the rest of the app — everything else should work normally. Try rebooting the app from Manage app if this persists.")
 
 # --- API Keys ---
 # --- Config (extracted 2026-06-19 to reduce app.py size) ---
@@ -26343,4 +26348,8 @@ with tabs[10]:
 
 
 with tabs[11]:
-    render_sharptrack_tab()
+    try:
+        render_sharptrack_tab()
+    except Exception as _sharptrack_render_err:
+        st.error(f"SharpTrack hit an error: {_sharptrack_render_err}")
+        st.caption("This is isolated to this tab — the rest of the app is unaffected.")
