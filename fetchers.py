@@ -15975,14 +15975,7 @@ def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
             with urllib.request.urlopen(raw_req, timeout=15) as rr:
                 content = rr.read().decode("utf-8")
         data = json.loads(content or "{}")
-        if data:
-            # Only cache genuinely successful, non-empty reads. Caching an
-            # empty {} here (from a transient GitHub API hiccup, rate limit,
-            # or truncated response) used to lock in "no data" for the full
-            # cache_minutes window even when the Gist itself had good data —
-            # the read would just retry the stale empty cache instead of
-            # GitHub. A failed read now always retries next call instead.
-            _safe_save_pkl(cp, data)
+        _safe_save_pkl(cp, data)
         return data
     except Exception as e:
         print(f"[WARN] _read_gist_file({filename}): {e}")
@@ -16624,6 +16617,89 @@ def _parse_dk_harvested(raw: dict, sport: str) -> list:
     except Exception as e:
         print(f"[WARN] _parse_dk_harvested: {e}")
     return results
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# NEW BETTOR — public/book comparison sources
+# ─────────────────────────────────────────────────────────────────────
+# These two functions feed the "How This Compares" panel in the New
+# Bettor tab only. They are display/comparison data, not signals — do
+# not wire either into compute_multi_signal_edge, SEM, or any
+# signal_performance.json / calibration path.
+# ═══════════════════════════════════════════════════════════════════════
+
+def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
+    """
+    DK Network's public "Most Bet Player Props" page — no login, no
+    Tampermonkey needed, updated ~every 5 min. This is PUBLIC BETTING
+    POPULARITY (what the crowd is stacking their bet slips with by
+    handle), NOT DraftKings' own recommendation — label it that way
+    wherever it's shown.
+
+    Sport-filters the scraped rows by matching a known team abbreviation
+    (TEAM_ABBREV_TO_FRAGMENT) inside the "AWAY @ HOME" event string DK
+    Network uses (e.g. "TEX Rangers @ DET Tigers").
+    """
+    try:
+        import requests as _req
+        from bs4 import BeautifulSoup as _BS
+    except Exception:
+        return []
+    try:
+        r = _req.get(
+            "https://dknetwork.draftkings.com/draftkings-sportsbook-player-props/",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                     "Accept": "text/html,application/xhtml+xml"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return []
+        soup = _BS(r.text, "html.parser")
+        table = soup.find("table")
+        if not table:
+            return []
+        abbrev_map = _TEAM_ABBREV_TO_FRAGMENT_BY_SPORT.get(sport.upper(), {})
+        results = []
+        for row in table.find_all("tr")[1:]:
+            cells = row.find_all("td")
+            if len(cells) < 4:
+                continue
+            event = cells[0].get_text(strip=True)
+            if abbrev_map and not any(a in event for a in abbrev_map):
+                continue  # not this sport
+            results.append({
+                "Sport": sport,
+                "Event": event,
+                "EventDate": cells[1].get_text(strip=True),
+                "Market": cells[2].get_text(strip=True),
+                "Pick": cells[3].get_text(strip=True),
+                "Odds": cells[4].get_text(strip=True) if len(cells) > 4 else "",
+            })
+            if len(results) >= max_rows:
+                break
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_dk_most_bet_props: {e}")
+        return []
+
+
+def fetch_fanduel_parlayhub_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    Reads FanDuel's "Parlay Hub" (curated popular same-game-parlay picks;
+    login-gated in FanDuel's own app) from the Gist file pushed by
+    scripts/tampermonkey_fanduel_parlayhub_harvester.user.js while you
+    browse Parlay Hub in your own authenticated FanDuel tab. No Parlay
+    Hub API is public — this is the only path to it, same pattern as
+    the existing BetMGM/FanDuel-props browser harvesters.
+    Returns [] if the harvester hasn't pushed anything recently (no
+    forced/fake data).
+    """
+    data = _read_gist_file(f"betcouncil_fd_parlayhub_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("data", data.get("parlays", []))
+        if isinstance(raw, list) and raw:
+            return raw
+    return []
 
 
 def fetch_unabated_from_gist(sport: str) -> tuple:

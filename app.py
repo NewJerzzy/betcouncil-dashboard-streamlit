@@ -8699,6 +8699,78 @@ def evaluate_parlay_verdict(legs):
     }
 
 
+def build_market_comparison(shortlist):
+    """
+    Pulls in the free/public comparison sources next to BetCouncil's own
+    shortlist picks, for the "How This Compares" panel in the New Bettor
+    tab. Display-only — matches shortlist picks against each source where
+    possible, but never feeds back into SEM/tiers/signal weights.
+
+    Sources:
+      - DK Most Bet Props: public DK Network page, no login (props)
+      - FanDuel Parlay Hub: Tampermonkey-harvested, needs the harvester
+        script running in an authenticated FanDuel tab (parlays)
+      - BettingPros: public API, already fetched every board load
+        (expert consensus picks, game lines)
+      - Covers: browser-harvested/scraped, already fetched every board
+        load (public betting %, game lines)
+    """
+    result = {"dk_props": [], "fd_parlayhub": {}, "bettingpros": [], "covers": []}
+
+    sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
+                     {g["Sport"] for g in shortlist.get("games", [])}
+
+    # ── DK Most Bet Props: match against shortlist prop players ────────
+    shortlist_players = {p["Player"].lower() for p in shortlist.get("props", [])}
+    for sport in sports_needed:
+        try:
+            dk_rows = fetch_dk_most_bet_props(sport, max_rows=40)
+        except Exception:
+            dk_rows = []
+        for row in dk_rows:
+            market_l = row.get("Market", "").lower()
+            matched_player = next((p for p in shortlist_players if p in market_l), None)
+            if matched_player:
+                result["dk_props"].append({**row, "matches_shortlist": True, "matched_player": matched_player})
+
+    # ── FanDuel Parlay Hub: whatever the harvester has, per sport ───────
+    for sport in list(sports_needed) + ["ALL"]:
+        try:
+            fdph = fetch_fanduel_parlayhub_from_gist(sport)
+        except Exception:
+            fdph = []
+        if fdph:
+            result["fd_parlayhub"][sport] = fdph
+
+    # ── BettingPros + Covers: match against shortlist game matchups ─────
+    shortlist_matchups = [g["Matchup"] for g in shortlist.get("games", [])]
+    bp_data = st.session_state.get("bettingpros_data", {})
+    if bp_data and shortlist_matchups:
+        bp_items = (bp_data if isinstance(bp_data, list)
+                    else bp_data.get("items", bp_data.get("picks", bp_data.get("data", []))))
+        if isinstance(bp_items, list):
+            for matchup in shortlist_matchups:
+                teams = [t for t in matchup.replace(" @ ", " ").split(" ") if len(t) > 2]
+                for bi in bp_items:
+                    if not isinstance(bi, dict):
+                        continue
+                    bi_str = str(bi).lower()
+                    if any(t.lower() in bi_str for t in teams):
+                        result["bettingpros"].append({"matchup": matchup, "pick": bi})
+                        break
+
+    cov_data = st.session_state.get("covers_consensus", [])
+    if isinstance(cov_data, dict) and shortlist_matchups:
+        for matchup in shortlist_matchups:
+            for cov_matchup, cov_val in cov_data.items():
+                teams = [t for t in matchup.replace(" @ ", " ").split(" ") if len(t) > 2]
+                if any(t.lower() in cov_matchup.lower() for t in teams):
+                    result["covers"].append({"matchup": matchup, "cov_matchup": cov_matchup, **cov_val})
+                    break
+
+    return result
+
+
 _DENSITY_ESPN_SPORT_MAP = {
     "NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
     "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl"),
@@ -26741,5 +26813,76 @@ with tabs[1]:
         if shortlist["props"] and shortlist["games"]:
             st.markdown("**🧮 Should you parlay props + game lines together, all in one slip?**")
             _nb_verdict_card(evaluate_parlay_verdict(props_legs + games_legs))
+
+        # ── How This Compares: DK Most Bet / FanDuel Parlay Hub / BettingPros / Covers ──
+        st.markdown("---")
+        st.markdown("#### 📊 How This Compares")
+        st.caption(
+            "BetCouncil's shortlist above vs. what's free and public elsewhere: DraftKings' "
+            "most-bet props (public popularity, not DK's own pick), FanDuel's Parlay Hub (needs "
+            "the FanDuel harvester running in a logged-in tab — see scripts/ folder), and "
+            "BettingPros/Covers consensus you already scan for other signals. This is context, "
+            "not a signal — none of it changes BetCouncil's tiers."
+        )
+        if st.button("🔍 Load Comparison", key="nb_load_comparison"):
+            with st.spinner("Checking public sources..."):
+                st.session_state["nb_comparison"] = build_market_comparison(shortlist)
+
+        comparison = st.session_state.get("nb_comparison")
+        if comparison:
+            cmp_cols = st.columns(2)
+            with cmp_cols[0]:
+                st.markdown("**DraftKings — Most Bet Props (public)**")
+                if comparison["dk_props"]:
+                    for row in comparison["dk_props"][:10]:
+                        st.markdown(
+                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
+                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                            f'✅ <b>{row["Market"]}</b> {row["Pick"]} — also popular on DK '
+                            f'({row["Event"]}, {row["Odds"]})</div>', unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No overlap with your shortlist found in DK's current most-bet list (or DK Network's page didn't return data this check).")
+
+                st.markdown("**BettingPros — Expert Consensus**")
+                if comparison["bettingpros"]:
+                    for row in comparison["bettingpros"][:6]:
+                        st.markdown(
+                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
+                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                            f'{row["matchup"]}: {str(row["pick"])[:120]}</div>', unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No BettingPros match for these games right now.")
+
+            with cmp_cols[1]:
+                st.markdown("**FanDuel — Parlay Hub (needs harvester tab open)**")
+                if comparison["fd_parlayhub"]:
+                    for sport, items in comparison["fd_parlayhub"].items():
+                        st.markdown(f"*{sport}:*")
+                        for item in items[:5]:
+                            st.markdown(
+                                f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
+                                f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                                f'{str(item)[:140]}</div>', unsafe_allow_html=True
+                            )
+                else:
+                    st.caption(
+                        "No FanDuel Parlay Hub data yet — open scripts/tampermonkey_fanduel_parlayhub_harvester.user.js, "
+                        "fill in the Parlay Hub endpoint (instructions at the top of the file), install it, and "
+                        "browse Parlay Hub in a logged-in FanDuel tab."
+                    )
+
+                st.markdown("**Covers — Public Betting %**")
+                if comparison["covers"]:
+                    for row in comparison["covers"][:6]:
+                        st.markdown(
+                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
+                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                            f'{row["matchup"]}: home {row.get("home_pct","?")}% / away {row.get("away_pct","?")}% public</div>',
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No Covers match for these games right now.")
     else:
         st.caption("Click the button above to scan today's boards.")
