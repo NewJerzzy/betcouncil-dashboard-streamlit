@@ -11,15 +11,20 @@ endpoint discovery):
     GET /api/sportsbook?leagues={league}       -> multi-book player props
                                                    with hit rates
 
-Both return {"props": [...]} already in the shape BetCouncil's
-fetch_favoredprops_from_gist() expects — no reshaping needed, just pass
-the response straight through with a captured_at/source wrapper and push
-to the shared Gist as betcouncil_favoredprops_{kind}_{SPORT}.json.
+Raw shape (confirmed 2026-07 via live sample, NOT a flat "props" list —
+first version of this script assumed that and silently produced zero
+records for every league until this fix):
 
-No other code changes are needed for this script to light up the New
-Bettor "How This Compares" panel, Slip Analyzer, and Player Lookup —
-fetch_favoredprops_from_gist() and get_favoredprops_match() in
-fetchers.py already read these exact filenames.
+    dfs:        {"results": {league: {app: {payout_tier: [meta, rec, rec, ...]}}}}
+    sportsbook: {"results": {league: [meta, rec, rec, ...]}}
+
+Where `meta` is always the first list element ({"time_utc","props",
+"props_total"}) and every record after it uses FavoredProps' own
+Title-Case field names (Name, Stat Type, Bet, AVG Odds, L10 Hit Rate,
+etc). This script flattens and remaps both into the flat lowercase
+{"props": [...]} shape BetCouncil's fetch_favoredprops_from_gist() and
+get_favoredprops_match() (fetchers.py) already expect — no changes
+needed on that side, just correct data going in.
 """
 
 import json
@@ -53,27 +58,71 @@ HEADERS = {
 # reliable way to diagnose a failed run after the fact.
 DEBUG_LOG: list = []
 
+# FavoredProps' raw Title-Case field -> BetCouncil's expected lowercase
+# key (matches what fetchers.py's get_favoredprops_match() and every UI
+# consumer already read). Keys not in this map are dropped, not passed
+# through raw — keeps the Gist payload to only what's actually used.
+FIELD_MAP = {
+    "FP ID": "fp_id", "Name": "player", "Position": "position",
+    "Team": "team", "VS": "opp", "Site": "site", "DFS": "dfs_app",
+    "Stat Type": "stat_type", "Bet": "bet", "Line": "line",
+    "AVG Odds": "avg_odds", "AVG Pr": "avg_pr", "AVG Vig": "avg_vig",
+    "N": "n_books", "Low": "low_odds", "High": "high_odds", "Books": "books",
+    "L5 Avg": "l5_avg", "L10 Avg": "l10_avg", "Szn Avg": "szn_avg", "H2H Avg": "h2h_avg",
+    "L5 Hit Rate": "l5_hit_rate", "L10 Hit Rate": "l10_hit_rate",
+    "SZN Hit Rate": "szn_hit_rate", "H2H Hit Rate": "h2h_hit_rate",
+    "H2H Percent": "h2h_pct", "Start Time": "start_time", "Last Updated": "last_updated",
+}
+
 
 def log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] {msg}", flush=True)
 
 
+def _remap(raw: dict) -> dict:
+    return {FIELD_MAP[k]: v for k, v in raw.items() if k in FIELD_MAP}
+
+
+def _flatten_meta_prefixed_list(raw_list: list) -> list:
+    """Every results[league] (sportsbook) or results[league][app][tier]
+    (dfs) list starts with a {"time_utc","props","props_total"} metadata
+    entry, then the real records. Skip the metadata, remap the rest."""
+    if not raw_list:
+        return []
+    records = raw_list[1:] if isinstance(raw_list[0], dict) and "props_total" in raw_list[0] else raw_list
+    return [_remap(r) for r in records if isinstance(r, dict)]
+
+
+
+
 def fetch_dfs(league: str) -> dict | None:
     try:
         r = requests.get(f"{BASE_URL}/api/dfs", params={"league": league, "app": "all"},
                           headers=HEADERS, timeout=30)
-        snippet_len = 4000 if league == "mlb" else 300
+        snippet_len = 300
         DEBUG_LOG.append({"endpoint": f"dfs/{league}", "url": r.url, "status": r.status_code,
                            "body_snippet": r.text[:snippet_len]})
         if r.status_code != 200:
             log(f"  dfs/{league}: HTTP {r.status_code} — {r.text[:200]}")
             return None
         data = r.json()
-        props = data.get("props", data if isinstance(data, list) else [])
+        league_block = data.get("results", {}).get(league, {})
+        if not isinstance(league_block, dict):
+            return None
+        props = []
+        for app_name, tiers in league_block.items():
+            if not isinstance(tiers, dict):
+                continue
+            for tier_name, raw_list in tiers.items():
+                remapped = _flatten_meta_prefixed_list(raw_list)
+                for rec in remapped:
+                    rec["dfs_app"] = rec.get("dfs_app") or app_name
+                    rec["payout_tier"] = tier_name
+                props.extend(remapped)
         if not props:
             return None
-        return {"props": props, "apps": data.get("apps", ["PP", "UD"])} if isinstance(data, dict) else {"props": props}
+        return {"props": props, "apps": data.get("metadata", {}).get("apps_included", ["PP", "UD"])}
     except Exception as e:
         DEBUG_LOG.append({"endpoint": f"dfs/{league}", "error": str(e)[:300]})
         log(f"  dfs/{league}: error — {e}")
@@ -84,14 +133,15 @@ def fetch_sportsbook(league: str) -> dict | None:
     try:
         r = requests.get(f"{BASE_URL}/api/sportsbook", params={"leagues": league},
                           headers=HEADERS, timeout=30)
-        snippet_len = 4000 if league == "mlb" else 300
+        snippet_len = 300
         DEBUG_LOG.append({"endpoint": f"sportsbook/{league}", "url": r.url, "status": r.status_code,
                            "body_snippet": r.text[:snippet_len]})
         if r.status_code != 200:
             log(f"  sportsbook/{league}: HTTP {r.status_code} — {r.text[:200]}")
             return None
         data = r.json()
-        props = data.get("props", data if isinstance(data, list) else [])
+        raw_list = data.get("results", {}).get(league, [])
+        props = _flatten_meta_prefixed_list(raw_list)
         if not props:
             return None
         return {"props": props}
