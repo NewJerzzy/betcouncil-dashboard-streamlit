@@ -23910,6 +23910,42 @@ with tabs[7]:
                 if _ls_chart:
                     st.caption(f"📈 Recent game log (LineStar): {_ls_chart}")
 
+            # ── Situational Usage (2026-07) ─────────────────────────────
+            # Free equivalent of a paid situational-stats tool (Rotobot-
+            # style): NFL red-zone/trailing-game usage from nflverse's
+            # public play-by-play, NBA trailing-game usage from
+            # stats.nba.com's own clutch/AheadBehind split.
+            # Display-only, same standard as LineStar above — not wired
+            # into edge/Kelly until backtested against BetCouncil's own
+            # outcome history.
+            _pl_team_for_situational = board_props[0].get("Team", "") if board else ""
+            if _pl_sport_used == "NFL":
+                try:
+                    from nfl_features import get_player_situational_splits
+                    _situational = get_player_situational_splits(pl_name_d, date.today().year)
+                except Exception:
+                    _situational = {}
+                if _situational:
+                    st.markdown("#### 🎯 Situational Usage (Red Zone / Trailing)")
+                    st.caption("Display only — not yet a model input. Source: nflverse public play-by-play.")
+                    sit_cols = st.columns(4)
+                    sit_cols[0].metric("Red Zone Touches", _situational.get("red_zone_carries", 0) + _situational.get("red_zone_targets", 0))
+                    sit_cols[1].metric("Red Zone Share", f"{_situational.get('red_zone_share', 0):.1%}")
+                    sit_cols[2].metric("Trailing Touches", _situational.get("trailing_carries", 0) + _situational.get("trailing_targets", 0))
+                    sit_cols[3].metric("Trailing Share", f"{_situational.get('trailing_share', 0):.1%}")
+            elif _pl_sport_used == "NBA":
+                try:
+                    _nba_trailing = fetch_nba_trailing_splits(pl_name_d)
+                except Exception:
+                    _nba_trailing = {}
+                if _nba_trailing:
+                    st.markdown("#### 🎯 Situational Usage (Trailing by 5+)")
+                    st.caption("Display only — not yet a model input. Source: stats.nba.com (AheadBehind split).")
+                    sit_cols = st.columns(4)
+                    sit_cols[0].metric("GP (trailing)", _nba_trailing.get("gp", "—"))
+                    sit_cols[1].metric("PTS", _nba_trailing.get("pts", "—"))
+                    sit_cols[2].metric("USG%", _nba_trailing.get("usg_pct", "—"))
+                    sit_cols[3].metric("FGA", _nba_trailing.get("fga", "—"))
 
 
 with tabs[8]:

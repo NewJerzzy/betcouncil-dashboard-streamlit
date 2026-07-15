@@ -4142,6 +4142,74 @@ def fetch_nba_all_player_ids():
         return {}
 
 
+def fetch_nba_trailing_splits(player_name: str, season: str = None, point_diff: int = 5) -> dict:
+    """
+    A player's usage/production specifically for stretches when their
+    team was trailing by up to `point_diff` points — the NBA-side
+    equivalent of "targets while trailing" for NFL. Free, via
+    stats.nba.com's own playerdashboardbyclutch endpoint (AheadBehind
+    filter), same session/header pattern as fetch_nba_rolling_averages.
+
+    Display/context only — NOT wired into compute_multi_signal_edge.
+    Same standard as the LineStar projection panel in Player Lookup:
+    would need a backtest against BetCouncil's own outcome history
+    before it's trusted to influence edge or Kelly sizing.
+
+    Returns {} if the player isn't found or the request fails —
+    callers must treat empty as "not enough data," not "confirmed zero."
+    """
+    player_ids = fetch_nba_all_player_ids()
+    pid = player_ids.get(player_name)
+    if not pid:
+        # fallback: case-insensitive / partial match
+        name_l = player_name.lower()
+        pid = next((v for k, v in player_ids.items() if name_l in k.lower()), None)
+    if not pid:
+        return {}
+
+    nba_headers = {
+        "Host": "stats.nba.com",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Referer": "https://www.nba.com/",
+        "Origin": "https://www.nba.com",
+    }
+    if not season:
+        _yr = date.today().year
+        season = f"{_yr-1}-{str(_yr)[2:]}" if date.today().month < 9 else f"{_yr}-{str(_yr+1)[2:]}"
+
+    url = (
+        "https://stats.nba.com/stats/playerdashboardbyclutch"
+        f"?PlayerID={pid}&Season={season}&SeasonType=Regular+Season"
+        f"&MeasureType=Base&PerMode=PerGame&AheadBehind=Behind&PointDiff={point_diff}"
+        "&PaceAdjust=N&PlusMinus=N&Rank=N&LastNGames=0&Month=0&OpponentTeamID=0"
+        "&Period=0&SeasonSegment=&VsConference=&VsDivision=&GameSegment=&Location=&Outcome="
+    )
+    try:
+        resp = _http.get(url, headers=nba_headers, timeout=12)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        # "PlayerClutch" result set holds the AheadBehind-filtered row
+        for result_set in data.get("resultSets", []):
+            headers_ = result_set.get("headers", [])
+            rows = result_set.get("rowSet", [])
+            if not headers_ or not rows:
+                continue
+            col = {h: i for i, h in enumerate(headers_)}
+            row = rows[0]
+            out = {"player": player_name, "season": season, "point_diff": point_diff}
+            for field in ["GP", "MIN", "PTS", "REB", "AST", "FGA", "FG_PCT", "FG3A", "FTA", "USG_PCT"]:
+                if field in col:
+                    out[field.lower()] = row[col[field]]
+            return out
+    except Exception as e:
+        print(f"[WARN] fetch_nba_trailing_splits: {e}")
+    return {}
+
+
 def fetch_nba_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, sport: str = "NBA"):
     """
     A player's game log filtered to games against a specific opponent, this

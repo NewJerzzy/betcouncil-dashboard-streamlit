@@ -385,6 +385,135 @@ def fetch_nfl_snap_counts(season: int) -> list[dict]:
         return []
 
 
+def fetch_nfl_situational_splits(season: int) -> list[dict]:
+    """
+    Red-zone and trailing-game usage splits, aggregated per player from
+    nflverse's public play-by-play release (same GitHub-releases source
+    and pattern as fetch_nfl_snap_counts above — no login, no key).
+    Source: https://github.com/nflverse/nflverse-data/releases/tag/pbp
+
+    This is the free equivalent of what a paid situational-stats tool
+    (e.g. Rotobot) sells: WR/TE targets while trailing, RB red-zone
+    carries, etc., derived directly from play-by-play.
+
+    Display/context only — NOT wired into compute_multi_signal_edge.
+    Same standard as the LineStar projection panel in Player Lookup:
+    needs a backtest against BetCouncil's own outcome history before
+    it's trusted to influence edge or Kelly sizing.
+
+    Returns list of:
+        {player, team, season, plays,
+         red_zone_carries, red_zone_targets, red_zone_share,
+         trailing_carries, trailing_targets, trailing_share}
+    where red_zone = yardline_100 <= 20 (inside the 20), and trailing =
+    score_differential < 0 (posteam behind at time of play).
+    """
+    cache_path = os.path.join(CACHE_DIR, f"situational_splits_{season}.pkl")
+    if os.path.exists(cache_path):
+        age_days = (time.time() - os.path.getmtime(cache_path)) / 86400
+        if age_days < 1:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return []
+
+    url = f"https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.csv"
+    logger.info("Fetching NFL play-by-play for situational splits %d...", season)
+
+    try:
+        r = _session.get(url, timeout=180)
+        if r.status_code != 200:
+            logger.warning("Situational splits %d: HTTP %s", season, r.status_code)
+            return []
+
+        import io
+        needed_cols = [
+            "rusher_player_name", "receiver_player_name", "posteam",
+            "yardline_100", "score_differential", "play_type", "pass", "rush",
+        ]
+        df = pd.read_csv(io.StringIO(r.text), usecols=lambda c: c in needed_cols, low_memory=False)
+
+        df["yardline_100"] = pd.to_numeric(df.get("yardline_100"), errors="coerce")
+        df["score_differential"] = pd.to_numeric(df.get("score_differential"), errors="coerce")
+        in_red_zone = df["yardline_100"] <= 20
+        is_trailing = df["score_differential"] < 0
+
+        player_stats: dict[tuple, dict] = {}
+
+        def _bump(name, team, field):
+            if not name or (isinstance(name, float)):
+                return
+            key = (str(name), str(team))
+            if key not in player_stats:
+                player_stats[key] = {
+                    "player": name, "team": team, "season": season, "plays": 0,
+                    "red_zone_carries": 0, "red_zone_targets": 0,
+                    "trailing_carries": 0, "trailing_targets": 0,
+                }
+            player_stats[key]["plays"] += 1
+            player_stats[key][field] += 1
+
+        rush_mask = df.get("rush") == 1
+        pass_mask = df.get("pass") == 1
+
+        for _, row in df[rush_mask & in_red_zone].iterrows():
+            _bump(row.get("rusher_player_name"), row.get("posteam"), "red_zone_carries")
+        for _, row in df[pass_mask & in_red_zone].iterrows():
+            _bump(row.get("receiver_player_name"), row.get("posteam"), "red_zone_targets")
+        for _, row in df[rush_mask & is_trailing].iterrows():
+            _bump(row.get("rusher_player_name"), row.get("posteam"), "trailing_carries")
+        for _, row in df[pass_mask & is_trailing].iterrows():
+            _bump(row.get("receiver_player_name"), row.get("posteam"), "trailing_targets")
+
+        records = []
+        for (name, team), stats in player_stats.items():
+            plays = max(1, stats["plays"])
+            stats["red_zone_share"] = round((stats["red_zone_carries"] + stats["red_zone_targets"]) / plays, 3)
+            stats["trailing_share"] = round((stats["trailing_carries"] + stats["trailing_targets"]) / plays, 3)
+            records.append(stats)
+
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(records, f)
+        except Exception:
+            pass
+
+        logger.info("Situational splits %d: %d players", season, len(records))
+        return records
+
+    except Exception as e:
+        logger.warning("Situational splits fetch error: %s", e)
+        return []
+
+
+def get_player_situational_splits(player_name: str, season: int,
+                                    splits: Optional[list] = None) -> dict:
+    """
+    Look up one player's situational usage from fetch_nfl_situational_splits().
+    Fuzzy-matches on last name if an exact match isn't found.
+    """
+    if splits is None:
+        splits = fetch_nfl_situational_splits(season)
+
+    name_l = player_name.lower().strip()
+    for row in splits:
+        if str(row.get("player", "")).lower().strip() == name_l:
+            return row
+
+    last_name = name_l.split()[-1] if name_l.split() else name_l
+    for row in splits:
+        if last_name in str(row.get("player", "")).lower():
+            return row
+
+    return {}
+
+
 def fetch_nfl_cpoe_data(season: int) -> list[dict]:
     """
     Fetch Completion Percentage Over Expected (CPOE) from nflverse pfr_advstats.
