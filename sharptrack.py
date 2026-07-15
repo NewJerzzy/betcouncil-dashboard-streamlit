@@ -112,6 +112,27 @@ def render_sharptrack_tab():
         if not plays:
             st.info("No sharp-wallet plays in the current lookback window.")
         else:
+            with st.expander("What am I looking at?"):
+                st.markdown(
+                    "Each card is one trade a tracked sharp wallet made on a Polymarket "
+                    "market in the last 2 hours.\n\n"
+                    "- **Title** — the market question (e.g. an exact final score, a "
+                    "moneyline, a total).\n"
+                    "- **Outcome (side)** — which side of that market they bought, and "
+                    "whether it was a buy or sell.\n"
+                    "- **$ @ price** — dollars spent, and the price paid per $1 share "
+                    "(price ≈ the market's implied probability, so 0.98 means the market "
+                    "already sees it as ~98% likely).\n"
+                    "- **wallet (score)** — which sharp wallet, and its 1-100 quality score.\n"
+                    "- **sentiment** — the order book's lean at that moment.\n\n"
+                    "⚠️ **A price near 0.95+ or 0.05- is a near-certainty, not a sharp read.** "
+                    "Markets like 'exact final score' have dozens of possible outcomes, so "
+                    "betting against any one specific score is normally a safe, low-edge "
+                    "trade — closer to hedging or market-making than a directional signal. "
+                    "Those are marked below. The plays worth paying attention to are the "
+                    "ones without that flag, especially anything in Cluster Alerts."
+                )
+
             sports_seen = sorted({p.get("sport", "") for p in plays if p.get("sport")})
             sel_sport = st.selectbox("Filter by sport", ["All"] + sports_seen, key="st_sport_filter")
             filtered = [p for p in plays if sel_sport == "All" or p.get("sport") == sel_sport]
@@ -120,6 +141,16 @@ def render_sharptrack_tab():
                 tier = _score_tier(p.get("play_score", 0))
                 cluster_flag = "🔵 " if p.get("cluster_wallet_count", 1) >= 2 else ""
                 sentiment = (p.get("market_sentiment") or {}).get("label", "")
+                price = p.get("price", 0) or 0
+                try:
+                    price_f = float(price)
+                except (TypeError, ValueError):
+                    price_f = 0.5
+                near_certain = price_f >= 0.95 or price_f <= 0.05
+                hedge_note = (
+                    ' <span style="color:#e0a030;font-size:11px;">⚠️ near-certain price — '
+                    'likely hedge, not a directional read</span>' if near_certain else ''
+                )
                 with st.container():
                     st.markdown(
                         f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:8px;'
@@ -129,9 +160,9 @@ def render_sharptrack_tab():
                         f'{_tier_chip(tier)}</div>'
                         f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
                         f'{p.get("sport","")} · {p.get("outcome","")} ({p.get("side","")}) · '
-                        f'${p.get("usd_value",0):,.0f} @ {p.get("price",0)} · '
+                        f'${p.get("usd_value",0):,.0f} @ {price} · '
                         f'wallet <b>{p.get("userName","")}</b> (score {p.get("wallet_score",0)}) · '
-                        f'{sentiment}</div>'
+                        f'{sentiment}{hedge_note}</div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
