@@ -3789,7 +3789,7 @@ def fetch_team_recent_defense(sport, team_abbrev, n_games=10):
     }
     _season_types = ["Playoffs", "Regular+Season"] if date.today().month in (4, 5, 6) else ["Regular+Season"]
     for season_type in _season_types:
-        url = f"https://stats.nba.com/stats/teamgamelogs?Season=2025-26&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
+        url = f"https://stats.nba.com/stats/teamgamelogs?Season={_current_nba_season_str()}&SeasonType={season_type}&TeamID=&LastNGames={n_games}&MeasureType=Defense&PerMode=PerGame"
         try:
             resp = _http.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
@@ -4208,6 +4208,28 @@ def fetch_nba_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, s
         return []
 
 
+def _current_nba_season_start_year():
+    """NBA season starts in October and spans two calendar years (e.g. the
+    '2025-26' season). Jul-Sep (off-season) still resolves to the most
+    recently completed season since that's the freshest real data
+    available; the new season takes over starting in October."""
+    now = datetime.now()
+    return now.year if now.month >= 10 else now.year - 1
+
+
+def _current_nba_season_str():
+    y = _current_nba_season_start_year()
+    return f"{y}-{str(y + 1)[-2:]}"
+
+
+def _current_mlb_season_year():
+    """MLB season runs roughly Mar/Apr-Oct/Nov within a single calendar
+    year. Deep off-season (Jan-Feb) falls back to the most recently
+    completed season."""
+    now = datetime.now()
+    return now.year if now.month >= 3 else now.year - 1
+
+
 def _current_wnba_season_year():
     """WNBA seasons run within a single calendar year (May-Oct, unlike NBA's
     cross-year seasons). Off-season (Nov-Apr) falls back to the most recently
@@ -4474,7 +4496,7 @@ def fetch_mlb_full_roster_ids(force_refresh=False):
     ]
     try:
         for team_id in MLB_TEAM_IDS:
-            url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=active&season=2025"
+            url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=active&season={_current_mlb_season_year()}"
             try:
                 resp = _http.get(url, headers=HEADERS, timeout=8)
                 if resp.status_code != 200:
@@ -4525,7 +4547,7 @@ def fetch_mlb_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, s
                     return games
     by_opponent = {}
     for group in ("hitting", "pitching"):
-        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season=2025&gameType=R"
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season={_current_mlb_season_year()}&gameType=R"
         try:
             resp = _http.get(url, headers=HEADERS, timeout=10)
             if resp.status_code != 200:
@@ -4675,7 +4697,7 @@ def fetch_nba_team_defense():
     seasons = ["Playoffs", "Regular+Season"]
     team_def = {}
     for season_type in seasons:
-        url = f"https://stats.nba.com/stats/leaguedashteamstats?Season=2025-26&SeasonType={season_type}&MeasureType=Defense&PerMode=PerGame"
+        url = f"https://stats.nba.com/stats/leaguedashteamstats?Season={_current_nba_season_str()}&SeasonType={season_type}&MeasureType=Defense&PerMode=PerGame"
         try:
             resp = _http.get(url, headers=nba_headers, timeout=8)
             if resp.status_code != 200:
@@ -5598,8 +5620,8 @@ def fetch_wnba_player_stats(player_name):
         return None
 
     stats_data = _espn_get(
-        f"https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/athletes/{pid}/stats?season=2025",
-        f"wnba_{pid}_stats_2025", ttl_hours=6
+        f"https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/athletes/{pid}/stats?season={_current_wnba_season_year()}",
+        f"wnba_{pid}_stats_{_current_wnba_season_year()}", ttl_hours=6
     )
     if not stats_data:
         return None
@@ -6095,11 +6117,13 @@ def fetch_soccer_club_elo() -> dict:
     return elo_map
 
 
-def fetch_player_season_avg_bdl(player_name, sport="NBA", season=2025):
+def fetch_player_season_avg_bdl(player_name, sport="NBA", season=None):
     """
     Fetch season averages for a specific player by name search.
     Used when player isn't in BDL_PLAYER_IDS (e.g. playoff callups).
     """
+    if season is None:
+        season = _current_nba_season_start_year()
     if not BDL_API_KEY:
         return None
     cache_key = f"bdl_avg_{normalize_name(player_name)}_{season}"
@@ -6163,7 +6187,7 @@ def fetch_nba_averages_bdl():
         return {}
     ids = list(BDL_PLAYER_IDS.values())
     params = "&".join([f"player_ids[]={pid}" for pid in ids])
-    url = f"https://api.balldontlie.io/v1/season_averages?season=2025&{params}"
+    url = f"https://api.balldontlie.io/v1/season_averages?season={_current_nba_season_start_year()}&{params}"
     headers = {"Authorization": BDL_API_KEY}
     try:
         resp = _http.get(url, headers=headers, timeout=15)
@@ -9219,11 +9243,13 @@ def fetch_player_id_bdl(player_name):
         pass
     return None
 
-def fetch_player_game_logs(player_name, season=2025, last_n=15):
+def fetch_player_game_logs(player_name, season=None, last_n=15):
     """
     Fetch last N game logs for a player.
     Returns list of game dicts with pts, reb, ast, min, opponent, date, home/away.
     """
+    if season is None:
+        season = _current_nba_season_start_year()
     if not BDL_API_KEY:
         return []
     cache_key = f"bdl_logs_{normalize_name(player_name)}_{season}"
@@ -11268,7 +11294,7 @@ def _savant_name_key(row):
     return raw.lower().strip()
 
 
-def fetch_savant_statcast(season=2026):
+def fetch_savant_statcast(season=None):
     """
     Baseball Savant xStats leaderboard — completely free, no auth.
     Returns dict: lowercase_name → {xba, xslg, xwoba, xobp, xiso,
@@ -11277,6 +11303,8 @@ def fetch_savant_statcast(season=2026):
       player_id}
     Cached 2 hours.
     """
+    if season is None:
+        season = _current_mlb_season_year()
     cache_path = os.path.join(CACHE_DIR, f"savant_xstats_{season}.pkl")
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
@@ -11324,13 +11352,15 @@ def fetch_savant_statcast(season=2026):
         return _safe_load_pkl(cache_path) or {}
 
 
-def fetch_savant_sprint_speed(season=2026):
+def fetch_savant_sprint_speed(season=None):
     """
     Baseball Savant sprint speed leaderboard — free, no auth.
     Returns dict: lowercase_name → {sprint_speed, bolts, hp_to_1b, team, position}
     sprint_speed in ft/s; bolts = 30+ ft/s sprints; hp_to_1b in seconds.
     Cached 2 hours.
     """
+    if season is None:
+        season = _current_mlb_season_year()
     cache_path = os.path.join(CACHE_DIR, f"savant_sprint_{season}.pkl")
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
@@ -11365,7 +11395,7 @@ def fetch_savant_sprint_speed(season=2026):
         return _safe_load_pkl(cache_path) or {}
 
 
-def fetch_savant_expected_stats(season=2026):
+def fetch_savant_expected_stats(season=None):
     """
     Baseball Savant expected stats (xBA, xSLG, xwOBA) vs actual — catches
     overperformers (due for regression) and underperformers (breakout candidates).
@@ -11373,6 +11403,8 @@ def fetch_savant_expected_stats(season=2026):
                                      woba, xwoba, xwoba_diff, pa}
     Cached 2 hours.
     """
+    if season is None:
+        season = _current_mlb_season_year()
     cache_path = os.path.join(CACHE_DIR, f"savant_expected_{season}.pkl")
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
@@ -11410,7 +11442,7 @@ def fetch_savant_expected_stats(season=2026):
         return _safe_load_pkl(cache_path) or {}
 
 
-def fetch_savant_pitch_arsenal(season=2026):
+def fetch_savant_pitch_arsenal(season=None):
     """
     Baseball Savant pitch arsenal — run value per 100 pitches by type,
     per pitcher.  Negative run value = good for pitcher (run-saving pitch).
@@ -11418,6 +11450,8 @@ def fetch_savant_pitch_arsenal(season=2026):
       each value = run_value_per_100 for that pitch type.
     Cached 2 hours.
     """
+    if season is None:
+        season = _current_mlb_season_year()
     cache_path = os.path.join(CACHE_DIR, f"savant_arsenal_{season}.pkl")
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
@@ -11451,7 +11485,7 @@ def fetch_savant_pitch_arsenal(season=2026):
         return _safe_load_pkl(cache_path) or {}
 
 
-def fetch_savant_batted_ball(season=2026):
+def fetch_savant_batted_ball(season=None):
     """
     Baseball Savant batted-ball profile per batter —
     GB%, FB%, LD%, PU%, pull/straight/oppo rates.
@@ -11459,6 +11493,8 @@ def fetch_savant_batted_ball(season=2026):
                                      pull_rate, oppo_rate, sweet_spot_rate}
     Cached 2 hours.
     """
+    if season is None:
+        season = _current_mlb_season_year()
     cache_path = os.path.join(CACHE_DIR, f"savant_batted_{season}.pkl")
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 3600 < 2:
@@ -12336,7 +12372,7 @@ def fetch_mlb_rolling_averages():
         player_avgs = PLAYER_AVERAGES.get("MLB", {}).get(player_name, {})
         is_pitcher = "SO" in player_avgs or "ER" in player_avgs
         group = "pitching" if is_pitcher else "hitting"
-        url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season=2025&gameType=R")
+        url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season={_current_mlb_season_year()}&gameType=R")
         resp = None
         for _attempt in range(2):  # one retry on transient connection failures
             try:
@@ -13274,7 +13310,7 @@ def fetch_mlb_live_stats() -> dict:
 
     url = (
         "https://statsapi.mlb.com/api/v1/standings"
-        "?leagueId=103,104&season=2026&standingsTypes=regularSeason&hydrate=team"
+        f"?leagueId=103,104&season={_current_mlb_season_year()}&standingsTypes=regularSeason&hydrate=team"
     )
     try:
         resp = _http.get(url, headers=HEADERS, timeout=12)
@@ -13339,7 +13375,7 @@ def fetch_wnba_live_stats() -> dict:
             if cached and isinstance(cached.get("team_ratings"), dict) and len(cached["team_ratings"]) >= 10:
                 return cached
 
-    url = "https://site.api.espn.com/apis/v2/sports/basketball/wnba/standings?season=2026"
+    url = f"https://site.api.espn.com/apis/v2/sports/basketball/wnba/standings?season={_current_wnba_season_year()}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=12)
         if resp.status_code != 200:
@@ -13479,7 +13515,7 @@ def fetch_nba_live_stats() -> dict:
             if cached and isinstance(cached.get("team_ratings"), dict) and len(cached["team_ratings"]) >= 25:
                 return cached
 
-    url = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?season=2026"
+    url = f"https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?season={_current_nba_season_start_year() + 1}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=12)
         if resp.status_code != 200:
@@ -13921,12 +13957,14 @@ def fetch_fangraphs_park_factors(season: int = 2026) -> dict:
 # ── Baseball Savant direct ────────────────────────────────────────────────────
 
 
-def fetch_savant_statcast_player(player_id: int, season: int = 2026) -> dict:
+def fetch_savant_statcast_player(player_id: int, season: int = None) -> dict:
     """
     Fetch Statcast data for a specific player from Baseball Savant.
     Returns detailed exit velo, launch angle, barrel%, hard hit%.
     player_id: MLB player ID (e.g. 660271 = Juan Soto)
     """
+    if season is None:
+        season = _current_mlb_season_year()
     import os
     cache_path = os.path.join(CACHE_DIR, f"savant_player_{player_id}_{season}.pkl")
     cached = _load_pkl(cache_path, max_age_h=3)
@@ -18503,7 +18541,7 @@ def fetch_mlb_player_season_avg(player_name, player_id=None):
     for group in ("hitting", "pitching"):
         try:
             url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
-                   f"?stats=season&group={group}&season=2025&gameType=R")
+                   f"?stats=season&group={group}&season={_current_mlb_season_year()}&gameType=R")
             resp = _http.get(url, headers=HEADERS, timeout=8)
             if resp.status_code != 200:
                 continue
@@ -19060,7 +19098,7 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
         player_id = people[0]["id"]
         # Get recent game logs
         stats_url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
-                     f"?stats=gameLog&season=2026&sportId=1&group=hitting")
+                     f"?stats=gameLog&season={_current_mlb_season_year()}&sportId=1&group=hitting")
         r2 = _http.get(stats_url, timeout=8)
         if r2.status_code != 200: return []
         splits = r2.json().get("stats", [{}])[0].get("splits", [])[-last_n:]
