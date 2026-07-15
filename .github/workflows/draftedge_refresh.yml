@@ -1,0 +1,23 @@
+name: DraftEdge Refresh
+
+on:
+  schedule:
+   - cron: "5,35 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh-draftedge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run DraftEdge scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/draftedge_refresh.py
