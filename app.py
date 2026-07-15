@@ -17268,7 +17268,7 @@ def _bc_df_html(data, columns=None):
     )
 
 
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🆕 New Bettor"])
+tabs = st.tabs(["📋 Summary", "🆕 New Bettor", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -18503,7 +18503,7 @@ with tabs[0]:
 
 
 # ----- TAB 1: EV OPTIMIZER (DFF-style) -----
-with tabs[1]:
+with tabs[2]:
     _board  = st.session_state.board_data or []
     _sport  = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
     _kalshi = st.session_state.get("kalshi_markets", [])
@@ -19195,7 +19195,7 @@ with tabs[1]:
             st.metric("Total Props", len(_rows),
                       delta=f"{len([r for r in _rows if r['_edge_pct'] >= 5])} above 5%")
 # ----- TAB 2: GAME LINES -----
-with tabs[2]:
+with tabs[3]:
     # Use game_analysis (has FavoriteTeam/FavoriteML/TotalEdge/recommendations)
     # Fall back to raw games if game_analysis not loaded yet
     _game_analysis_full = st.session_state.get("game_analysis", [])
@@ -20226,7 +20226,7 @@ with tabs[2]:
         st.info("No games found. Load the board first.")
 
 # ----- TAB 3: LOCKS & LEDGER -----
-with tabs[3]:
+with tabs[4]:
     st.markdown("## 🔒 Active Locks")
 
     if st.session_state.locks:
@@ -20942,7 +20942,7 @@ with tabs[3]:
                 st.markdown("".join(_sport_roi_html), unsafe_allow_html=True)
 
 # ----- TAB 4: HISTORY -----
-with tabs[4]:
+with tabs[5]:
     st.markdown("## 📈 Full Bet History")
 
     st.caption("Daily = today's essentials. Weekly = signal/model audits. Seasonal = deep reference data (Bankroll Intelligence, Season Regime, full Calibration Dashboard).")
@@ -22962,7 +22962,7 @@ with tabs[4]:
     # ----- TAB 5: LOG BET -----
 
     # ----- TAB 5: SLIP ANALYZER -----
-with tabs[5]:
+with tabs[6]:
     st.markdown("## 🔍 Slip Analyzer")
     st.caption("Enter any prop slip — from PrizePicks, ParlayPlay, Underdog, or anywhere. The model analyzes each pick and scores the full parlay.")
 
@@ -23478,7 +23478,7 @@ def get_goalie_for_team(team_abbr, goalies=None):
     return name, confirmed
 
 
-with tabs[6]:
+with tabs[7]:
     st.markdown("## 🔎 Player Lookup")
     st.caption("Deep dive on any player — game log, hit rates, H2H vs tonight's opponent, home/away splits. Powered by BallsDontLie.")
 
@@ -23840,7 +23840,7 @@ with tabs[6]:
 
 
 
-with tabs[7]:
+with tabs[8]:
     st.markdown("## \U0001f4dd Log A Bet")
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
@@ -24138,7 +24138,7 @@ with tabs[7]:
 
 
 
-with tabs[8]:
+with tabs[9]:
     st.markdown("## \U0001f6d2 Line Shopping")
     st.caption("Compares lines across all loaded sources — DFS platforms + sportsbooks. Load the board first to populate.")
     board_ls = st.session_state.board_data
@@ -24618,7 +24618,7 @@ with tabs[8]:
                             st.markdown(f"[🎰 Bet Hard Rock]({_link})")
 
 # ----- TAB 7: SYSTEM -----
-with tabs[9]:
+with tabs[10]:
     # PREVIEW BOARD (2026-07): raw next-day game lines only. No tier
     # classification, no Kelly staking — starters/injuries aren't locked
     # this far out, so nothing here should be treated as a recommendation.
@@ -24642,7 +24642,7 @@ with tabs[9]:
     else:
         st.info("No preview data loaded yet — click **Load Preview** above. If empty after loading, tomorrow's lines may not be posted yet for this sport.")
 
-with tabs[10]:
+with tabs[11]:
     st.markdown("## ⚙️ System Info")
 
     # ── System Health Gauge (top fold) ──────────────────────────────────
@@ -26640,7 +26640,7 @@ with tabs[10]:
 
 
 
-with tabs[11]:
+with tabs[12]:
     try:
         render_sharptrack_tab()
     except Exception as _sharptrack_render_err:
@@ -26648,7 +26648,7 @@ with tabs[11]:
         st.caption("This is isolated to this tab — the rest of the app is unaffected.")
 
 
-with tabs[12]:
+with tabs[1]:
     st.markdown(
         '<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
         'border-radius:6px;padding:12px 16px;margin-bottom:14px;">'
