@@ -17077,7 +17077,7 @@ def _px_best_price(side_list):
 
 def _px_strip_odds_suffix(name):
     """'Chicago Sky -132' → 'Chicago Sky'  |  'over 8.5' → 'over 8.5' (unchanged)"""
-    return _re.sub(r'\s+[+-]\d+\.?\d*$', '', str(name)).strip()
+    return re.sub(r'\s+[+-]\d+\.?\d*$', '', str(name)).strip()
 
 
 def _px_parse_prop_name(market_name):
