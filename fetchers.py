@@ -16798,6 +16798,46 @@ def fetch_favoredprops_from_gist(kind: str, sport: str, max_age_minutes: int = 1
     return []
 
 
+def get_favoredprops_match(player: str, stat: str, sport: str, side: str = None) -> dict:
+    """
+    Single-leg lookup against FavoredProps' sportsbook + dfs data — used
+    by Slip Analyzer and Player Lookup to cross-check one pick at a time
+    (rather than pulling the full list, like build_market_comparison
+    does for the New Bettor shortlist).
+
+    Matches on normalized player name + fuzzy stat_type substring match
+    (FavoredProps' stat names don't always match BetCouncil's exactly,
+    e.g. "Total Bases" vs "TB"). Prefers a side (Over/Under) match when
+    `side` is given, but falls back to any line for that player+stat if
+    no side match — better to show mismatched-side context than none.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    Display/comparison only, same as everywhere else FavoredProps is used.
+    """
+    player_l = str(player).lower().strip()
+    stat_l = str(stat).lower().strip()
+    side_l = str(side).lower().strip() if side else None
+
+    best = {}
+    for kind in ("sportsbook", "dfs"):
+        try:
+            rows = fetch_favoredprops_from_gist(kind, sport)
+        except Exception:
+            rows = []
+        for row in rows:
+            if str(row.get("player", "")).lower().strip() != player_l:
+                continue
+            row_stat_l = str(row.get("stat_type", "")).lower()
+            if stat_l not in row_stat_l and row_stat_l not in stat_l:
+                continue
+            row_bet = str(row.get("bet", "")).lower()
+            if side_l and row_bet and side_l[0] == row_bet[0]:  # "over"/"o" match
+                return {**row, "kind": kind}
+            if not best:
+                best = {**row, "kind": kind}
+    return best
+
+
 def fetch_unabated_from_gist(sport: str) -> tuple:
     """PRIMARY: Unabated sharp lines from browser harvester. SECONDARY: scraper."""
     data = _read_gist_file(f"betcouncil_unabated_{sport}.json", cache_minutes=5)

@@ -23377,6 +23377,19 @@ with tabs[6]:
         for r in results:
             tier_color = TIER_COLORS.get(r["tier"], "#7a8a9a")
             avg_display = f"{r['avg']:.1f}" if r["avg"] else "No data"
+            try:
+                _fp_match = get_favoredprops_match(r["player"], r["stat"], r["sport"], r.get("side"))
+            except Exception:
+                _fp_match = {}
+            _fp_html = ""
+            if _fp_match:
+                _fp_hit = _fp_match.get("l10_hit_rate")
+                _fp_hit_str = f"{_fp_hit:.0%} L10 hit rate" if isinstance(_fp_hit, (int, float)) else ""
+                _fp_html = (
+                    f'<div style="font-size:12px;color:#6a9ac9;margin-top:4px;">'
+                    f'📊 FavoredProps: {_fp_match.get("n_books","?")} books, avg {_fp_match.get("avg_odds","")}'
+                    f'{" · " + _fp_hit_str if _fp_hit_str else ""}</div>'
+                )
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-left:4px solid {r["rec_color"]};'
                 f'border-radius:8px;padding:12px 16px;margin-bottom:10px;">'
@@ -23406,6 +23419,7 @@ with tabs[6]:
                 f'{r["data_source"]} | Confidence: {r["confidence"]}'
                 f'{" | " + r["sharp_flag"] if r["sharp_flag"] else ""}'
                 f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
+                f'{_fp_html}'
                 f'{_better_html}'
                 f'{_note_html}'
                 f'</div>',
@@ -23962,6 +23976,33 @@ with tabs[7]:
                     sit_cols[1].metric("PTS", _nba_trailing.get("pts", "—"))
                     sit_cols[2].metric("USG%", _nba_trailing.get("usg_pct", "—"))
                     sit_cols[3].metric("FGA", _nba_trailing.get("fga", "—"))
+
+            # ── FavoredProps: hit rates + multi-book odds for this player ──
+            # Public API (/api/dfs, /api/sportsbook), no login. Same
+            # display-only standard as the panels above.
+            _fp_player_rows = []
+            for _fp_kind in ("sportsbook", "dfs"):
+                try:
+                    _fp_rows_all = fetch_favoredprops_from_gist(_fp_kind, _pl_sport_used)
+                except Exception:
+                    _fp_rows_all = []
+                for _fpr in _fp_rows_all:
+                    if str(_fpr.get("player", "")).lower().strip() == pl_name_d.lower().strip():
+                        _fp_player_rows.append({**_fpr, "kind": _fp_kind})
+            if _fp_player_rows:
+                st.markdown("#### 📊 FavoredProps — Hit Rates & Multi-Book Odds")
+                st.caption("Display only — not yet a model input. Source: favoredprops.com public API.")
+                _fp_table_rows = []
+                for _fpr in _fp_player_rows[:12]:
+                    _fp_table_rows.append({
+                        "Kind": "DFS (PP/UD)" if _fpr["kind"] == "dfs" else "Sportsbook",
+                        "Stat": _fpr.get("stat_type", ""), "Bet": _fpr.get("bet", ""),
+                        "Line": _fpr.get("line", ""), "Avg Odds": _fpr.get("avg_odds", ""),
+                        "Books": _fpr.get("n_books", ""),
+                        "L5": _fpr.get("l5_hit_rate", ""), "L10": _fpr.get("l10_hit_rate", ""),
+                        "Season": _fpr.get("szn_hit_rate", ""), "H2H": _fpr.get("h2h_hit_rate", ""),
+                    })
+                st.markdown(_bc_df_html(pd.DataFrame(_fp_table_rows)), unsafe_allow_html=True)
 
 
 with tabs[8]:
