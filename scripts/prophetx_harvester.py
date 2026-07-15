@@ -175,12 +175,18 @@ def fetch_commissions(event_ids: list) -> dict:
             {"event_ids": ",".join(str(x) for x in chunk)},
         )
         if isinstance(data, dict):
-            out.update(data)
+            # Real shape: {"commissions": [{commission, eventId, marketId, ...}], "length": N}
+            for row in data.get("commissions", []):
+                eid = str(row.get("eventId") or row.get("event_id") or "")
+                if eid:
+                    out.setdefault(eid, []).append(row)
         elif isinstance(data, list):
             for row in data:
-                eid = row.get("event_id") if isinstance(row, dict) else None
-                if eid is not None:
-                    out[str(eid)] = row
+                if not isinstance(row, dict):
+                    continue
+                eid = str(row.get("eventId") or row.get("event_id") or "")
+                if eid:
+                    out.setdefault(eid, []).append(row)
     return out
 
 
