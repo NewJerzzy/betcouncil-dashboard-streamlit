@@ -19942,6 +19942,26 @@ with tabs[3]:
                     + (f" · O/U {_ol['opening_total']}" if _ol.get("opening_total") is not None else "")
                 )
 
+            # Dimers model edge/win probability (via Stats Insider backend) —
+            # independent second-source comparison, display only.
+            try:
+                _dimers_match = get_dimers_match(_matchup, _gsport)
+            except Exception:
+                _dimers_match = {}
+            if _dimers_match:
+                _dm_h_edge = _dimers_match.get("home_edge")
+                _dm_a_edge = _dimers_match.get("away_edge")
+                if isinstance(_dm_h_edge, (int, float)) and isinstance(_dm_a_edge, (int, float)):
+                    _dm_side, _dm_edge, _dm_win = (
+                        (_g.get("home", "Home"), _dm_h_edge, _dimers_match.get("home_win_pct"))
+                        if _dm_h_edge > _dm_a_edge else
+                        (_g.get("away", "Away"), _dm_a_edge, _dimers_match.get("away_win_pct"))
+                    )
+                    _dm_text = f"📊 Dimers: {_dm_side} edge {_dm_edge:+.1f}%"
+                    if isinstance(_dm_win, (int, float)):
+                        _dm_text += f" · win prob {_dm_win:.0%}"
+                    st.caption(_dm_text)
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):

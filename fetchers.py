@@ -16722,6 +16722,38 @@ def fetch_dimers_from_gist(sport: str, max_age_minutes: int = 100) -> list:
     return []
 
 
+def get_dimers_match(matchup: str, sport: str) -> dict:
+    """
+    Single-game lookup against Dimers' data — matches by team abbreviation
+    substring against a BetCouncil matchup string (e.g. "TOR @ CWS"),
+    same matching approach used in build_market_comparison() for the New
+    Bettor shortlist, factored out here for reuse in Game Lines and
+    anywhere else a per-game comparison is useful.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        matches = fetch_dimers_from_gist(sport)
+    except Exception:
+        matches = []
+    matchup_u = matchup.upper()
+    for dm in matches:
+        match_meta = dm.get("match", {})
+        home_abv = str(match_meta.get("HomeTeam", {}).get("Abv", "")).upper()
+        away_abv = str(match_meta.get("AwayTeam", {}).get("Abv", "")).upper()
+        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
+            tab = dm.get("betting", {}).get("tab", {})
+            return {
+                "home_abv": home_abv, "away_abv": away_abv,
+                "home_edge": tab.get("HomeH2HEdge"), "away_edge": tab.get("AwayH2HEdge"),
+                "home_win_pct": tab.get("HomeLineWinPct"), "away_win_pct": tab.get("AwayLineWinPct"),
+                "home_odds": tab.get("HomeOdds"), "away_odds": tab.get("AwayOdds"),
+                "home_line": tab.get("HomeLine"), "total_line": tab.get("TotalLine"),
+                "over_win_pct": tab.get("OverWinPct"), "under_win_pct": tab.get("UnderWinPct"),
+            }
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
