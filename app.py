@@ -26655,121 +26655,91 @@ with tabs[1]:
         '<div style="color:#fff;font-weight:700;font-size:15px;">🆕 New Bettor Mode</div>'
         '<div style="color:#8ab4d4;font-size:12.5px;margin-top:4px;">'
         'A shortlist for when you don\'t have time to read the full board — only SOVEREIGN/ELITE plays, '
-        'correlation-checked. This is a display layer only: it reads existing model output and never '
-        'changes SEM, signal weights, or any stored performance data.'
+        'correlation-checked, with a go/caution/don\'t verdict already worked out. This is a display '
+        'layer only: it reads existing model output and never changes SEM, signal weights, or any '
+        'stored performance data.'
         '</div></div>',
         unsafe_allow_html=True,
     )
 
-    nb_sub1, nb_sub2 = st.tabs(["⭐ Daily Shortlist", "🧮 Should I Take This Parlay?"])
+    st.caption(
+        "Scans every active sport's board and game lines, keeps only SOVEREIGN/ELITE plays, "
+        "and drops anything too correlated with a pick already on the list. If nothing clears "
+        "the bar today, it says so instead of padding the list with weaker plays."
+    )
+    if st.button("🔍 Build My Shortlist", key="nb_build_shortlist"):
+        with st.spinner("Scanning all boards..."):
+            st.session_state["nb_shortlist"] = build_new_bettor_shortlist()
 
-    # ── Sub-tab 1: Daily Shortlist ──────────────────────────────────────
-    with nb_sub1:
-        st.caption(
-            "Scans every active sport's board and game lines, keeps only SOVEREIGN/ELITE plays, "
-            "and drops anything too correlated with a pick already on the list. If nothing clears "
-            "the bar today, it says so instead of padding the list with weaker plays."
+    shortlist = st.session_state.get("nb_shortlist")
+
+    def _nb_verdict_card(verdict):
+        v = verdict["verdict"]
+        v_color = {"GO": "#22c55e", "CAUTION": "#ff8c00", "DON'T": "#e04040", "—": "#6a7a8a"}.get(v, "#6a7a8a")
+        st.markdown(
+            f'<div style="background:#0d1b2e;border:1px solid {v_color};border-radius:8px;'
+            f'padding:14px 16px;margin:6px 0 16px 0;">'
+            f'<div style="color:{v_color};font-weight:800;font-size:17px;">{v} — combine these into one slip?</div>'
+            f'<div style="color:#e6edf3;font-size:13px;margin-top:6px;">{verdict["reason"]}</div>'
+            + (f'<div style="color:#f5c518;font-size:12.5px;margin-top:6px;"><b>Suggested fix:</b> {verdict["suggested_fix"]}</div>' if verdict["suggested_fix"] else '')
+            + f'<div style="color:#4a6a8a;font-size:11px;margin-top:8px;">Correlation score: {verdict["correlation_score"]:.2f}</div>'
+            + f'</div>', unsafe_allow_html=True
         )
-        if st.button("🔍 Build My Shortlist", key="nb_build_shortlist"):
-            with st.spinner("Scanning all boards..."):
-                st.session_state["nb_shortlist"] = build_new_bettor_shortlist()
+        if verdict["correlated_pairs"]:
+            with st.expander("Why the correlation score is what it is"):
+                for pair in verdict["correlated_pairs"]:
+                    st.write(f"• {pair}")
 
-        shortlist = st.session_state.get("nb_shortlist")
-        if shortlist:
-            st.caption(
-                f"Last built {shortlist['timestamp']} · scanned: {', '.join(shortlist['scanned_sports']) or 'none'}"
-                + (f" · skipped (off-season/error): {', '.join(shortlist['skipped_sports'])}" if shortlist['skipped_sports'] else "")
-            )
+    if shortlist:
+        st.caption(
+            f"Last built {shortlist['timestamp']} · scanned: {', '.join(shortlist['scanned_sports']) or 'none'}"
+            + (f" · skipped (off-season/error): {', '.join(shortlist['skipped_sports'])}" if shortlist['skipped_sports'] else "")
+        )
 
-            st.markdown("#### Top Props")
-            if not shortlist["props"]:
-                st.info("No SOVEREIGN/ELITE props cleared the bar right now — pass on props today.")
-            else:
-                for p in shortlist["props"]:
-                    tc = TIER_COLORS.get(p["Tier"], "#6a7a8a")
-                    st.markdown(
-                        f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
-                        f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                        f'<div style="color:#fff;font-weight:700;font-size:14px;">{p["Player"]} — {p["Prop"]} {p["Side"]} {p["Line"]}</div>'
-                        f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{p["Tier"]}</span>'
-                        f'</div>'
-                        f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{p["Sport"]} · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
-                        f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{p["why"]}</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-
-            st.markdown("#### Top Game Lines")
-            if not shortlist["games"]:
-                st.info("No SOVEREIGN/ELITE game lines cleared the bar right now — pass on game lines today.")
-            else:
-                for g in shortlist["games"]:
-                    tc = TIER_COLORS.get(g["Tier"], "#6a7a8a")
-                    st.markdown(
-                        f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
-                        f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                        f'<div style="color:#fff;font-weight:700;font-size:14px;">{g["Matchup"]} — {g["BetType"]}: {g["Pick"]}</div>'
-                        f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{g["Tier"]}</span>'
-                        f'</div>'
-                        f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{g["Sport"]} · Edge {g["EdgePct"]}</div>'
-                        f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{g["why"]}</div>'
-                        f'</div>', unsafe_allow_html=True
-                    )
-
-            if shortlist["props"] or shortlist["games"]:
-                st.caption(
-                    "⚠️ Even correlation-checked, these are separate high-conviction plays — not a "
-                    "recommendation to parlay all of them together. Use the checker in the next tab "
-                    "before combining any of these into one slip."
-                )
+        st.markdown("#### Top Props")
+        if not shortlist["props"]:
+            st.info("No SOVEREIGN/ELITE props cleared the bar right now — pass on props today.")
         else:
-            st.caption("Click the button above to scan today's boards.")
-
-    # ── Sub-tab 2: Parlay Verdict Checker ───────────────────────────────
-    with nb_sub2:
-        st.caption(
-            "Pick legs from your shortlist or current locks and get a plain go / caution / don't verdict, "
-            "with a reason and a specific fix if there's a problem. Advisory only — nothing here is saved "
-            "to your bet history unless you log it yourself in Log Bet."
-        )
-
-        nb_pool = []
-        shortlist = st.session_state.get("nb_shortlist")
-        if shortlist:
             for p in shortlist["props"]:
-                nb_pool.append({**p, "leg_type": "prop", "_label": f"[Prop] {p['Player']} {p['Prop']} {p['Side']} {p['Line']} ({p['Tier']})"})
-            for g in shortlist["games"]:
-                nb_pool.append({**g, "leg_type": "game", "_label": f"[Game] {g['Matchup']} {g['BetType']}: {g['Pick']} ({g['Tier']})"})
-
-        current_locks = st.session_state.get("locks", []) or []
-        for l in current_locks:
-            nb_pool.append({
-                "leg_type": "prop", "Player": l.get("player", ""), "Prop": l.get("prop", ""),
-                "Team": l.get("team", ""), "Tier": l.get("tier", "LEAN"),
-                "_label": f"[Lock] {l.get('player','')} {l.get('prop','') or l.get('line','')} ({l.get('tier','')})",
-            })
-
-        if not nb_pool:
-            st.info("Build a shortlist above, or add locks elsewhere in the app, to have legs to check here.")
-        else:
-            labels = [l["_label"] for l in nb_pool]
-            picked_labels = st.multiselect("Select the legs you're considering combining:", labels, key="nb_parlay_legs")
-            if st.button("🧮 Check This Parlay", key="nb_check_parlay"):
-                picked_legs = [nb_pool[labels.index(lbl)] for lbl in picked_labels]
-                verdict = evaluate_parlay_verdict(picked_legs)
-                v = verdict["verdict"]
-                v_color = {"GO": "#22c55e", "CAUTION": "#ff8c00", "DON'T": "#e04040", "—": "#6a7a8a"}.get(v, "#6a7a8a")
+                tc = TIER_COLORS.get(p["Tier"], "#6a7a8a")
                 st.markdown(
-                    f'<div style="background:#0d1b2e;border:1px solid {v_color};border-radius:8px;'
-                    f'padding:16px;margin-top:10px;">'
-                    f'<div style="color:{v_color};font-weight:800;font-size:20px;">{v}</div>'
-                    f'<div style="color:#e6edf3;font-size:13.5px;margin-top:8px;">{verdict["reason"]}</div>'
-                    + (f'<div style="color:#f5c518;font-size:13px;margin-top:8px;"><b>Suggested fix:</b> {verdict["suggested_fix"]}</div>' if verdict["suggested_fix"] else '')
-                    + f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:10px;">Correlation score: {verdict["correlation_score"]:.2f}</div>'
-                    + f'</div>', unsafe_allow_html=True
+                    f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
+                    f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div style="color:#fff;font-weight:700;font-size:14px;">{p["Player"]} — {p["Prop"]} {p["Side"]} {p["Line"]}</div>'
+                    f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{p["Tier"]}</span>'
+                    f'</div>'
+                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{p["Sport"]} · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
+                    f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{p["why"]}</div>'
+                    f'</div>', unsafe_allow_html=True
                 )
-                if verdict["correlated_pairs"]:
-                    with st.expander("Why the correlation score is what it is"):
-                        for pair in verdict["correlated_pairs"]:
-                            st.write(f"• {pair}")
+            st.markdown("**🧮 Should you parlay these props together?**")
+            props_legs = [{**p, "leg_type": "prop"} for p in shortlist["props"]]
+            _nb_verdict_card(evaluate_parlay_verdict(props_legs))
+
+        st.markdown("#### Top Game Lines")
+        if not shortlist["games"]:
+            st.info("No SOVEREIGN/ELITE game lines cleared the bar right now — pass on game lines today.")
+        else:
+            for g in shortlist["games"]:
+                tc = TIER_COLORS.get(g["Tier"], "#6a7a8a")
+                st.markdown(
+                    f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
+                    f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div style="color:#fff;font-weight:700;font-size:14px;">{g["Matchup"]} — {g["BetType"]}: {g["Pick"]}</div>'
+                    f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{g["Tier"]}</span>'
+                    f'</div>'
+                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{g["Sport"]} · Edge {g["EdgePct"]}</div>'
+                    f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{g["why"]}</div>'
+                    f'</div>', unsafe_allow_html=True
+                )
+            st.markdown("**🧮 Should you parlay these game lines together?**")
+            games_legs = [{**g, "leg_type": "game"} for g in shortlist["games"]]
+            _nb_verdict_card(evaluate_parlay_verdict(games_legs))
+
+        if shortlist["props"] and shortlist["games"]:
+            st.markdown("**🧮 Should you parlay props + game lines together, all in one slip?**")
+            _nb_verdict_card(evaluate_parlay_verdict(props_legs + games_legs))
+    else:
+        st.caption("Click the button above to scan today's boards.")
