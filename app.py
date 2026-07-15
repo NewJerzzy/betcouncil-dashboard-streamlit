@@ -11548,6 +11548,30 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
         signals["usage"] = usage_signal
     else:
         signals["usage"] = 0.0
+
+    # ── ParlaySavant +EV confirmation overlay (2026-07 fix) ─────────────
+    # ps_ev_edge/ps_ev_confirm were being computed into ev_signal_lookup
+    # (second-source EV confirmation from parlaysavant.com) but nothing
+    # ever read them back — dead bookkeeping. This closes that loop.
+    # Matched by player only, not exact stat/prop key: ParlaySavant's own
+    # prop-name strings don't cleanly map to BetCouncil's short stat_key
+    # codes (e.g. "HR" vs "Home Runs"), so treat this as "an independent
+    # EV engine flagged something for this player" rather than a
+    # stat-specific confirmation. Capped small and additive, same
+    # conservative style as the usage signal above — not a replacement
+    # for BetCouncil's own edge, just a nudge.
+    if player_name:
+        _ps_conf_edge = 0.0
+        _pn_norm = normalize_name(player_name)
+        _ev_lookup_all = st.session_state.get("ev_signal_lookup", {})
+        for (_lk_p, _lk_prop), _lk_v in _ev_lookup_all.items():
+            if _lk_p == _pn_norm and isinstance(_lk_v, dict) and _lk_v.get("ps_ev_confirm"):
+                _ps_raw = safe_float(_lk_v.get("ps_ev_edge", 0))
+                _ps_conf_edge = max(_ps_conf_edge, max(-0.03, min(0.03, _ps_raw)))
+        if _ps_conf_edge:
+            combined += _ps_conf_edge
+            signals["parlaysavant_confirm"] = _ps_conf_edge
+
     if odds_type == "demon":
         combined *= 0.85
     elif odds_type == "goblin":
