@@ -16754,6 +16754,54 @@ def get_dimers_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_draftedge_from_gist(sport: str, max_age_minutes: int = 100) -> list:
+    """
+    DraftEdge.com's player props/projections — public SSR JSON, no auth
+    (confirmed live 2026-07: /api/{sport}/{sport}props.json). MLB is the
+    rich one: per-stat sections (Hits/HR/RBI/TB/SB) each with L5/L15/L30
+    hit rates and a projection, plus opposing pitcher ERA/WHIP/K9,
+    weather (temp/wind/humidity/description), DFS salary, and injury
+    designation, all bundled per player.
+
+    BetCouncil already has its own live weather (LineStar+NWS/wttr.in)
+    and park-factor (FanGraphs) pipelines, so this isn't a new signal —
+    it's comparison/cross-check context, same tier as FavoredProps.
+    Not wired into edge computation.
+
+    Returns the raw "props" list (each entry is one player's full
+    record — see get_draftedge_player() for a single-player lookup).
+    """
+    data = _read_gist_file(f"betcouncil_draftedge_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("props", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_draftedge_player(player_name: str, sport: str) -> dict:
+    """
+    Single-player lookup against DraftEdge's data. Matches on exact name
+    first, falls back to last-name substring (same fuzzy pattern used by
+    get_player_situational_splits in nfl_features.py).
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        records = fetch_draftedge_from_gist(sport)
+    except Exception:
+        records = []
+    name_l = player_name.lower().strip()
+    for row in records:
+        if str(row.get("Player", "")).lower().strip() == name_l:
+            return row
+    last_name = name_l.split()[-1] if name_l.split() else name_l
+    for row in records:
+        if last_name in str(row.get("Player", "")).lower():
+            return row
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no

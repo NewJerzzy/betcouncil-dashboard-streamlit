@@ -8718,7 +8718,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8757,6 +8757,18 @@ def build_market_comparison(shortlist):
                 player_l = str(row.get("player", "")).lower()
                 if player_l in shortlist_players:
                     result["favoredprops"].append({**row, "kind": kind, "sport": sport})
+
+    # ── DraftEdge: match against shortlist prop players (rich for MLB —
+    # opposing pitcher ERA/WHIP/K9, weather, DFS salary, hit rates) ─────
+    for sport in sports_needed:
+        try:
+            de_rows = fetch_draftedge_from_gist(sport)
+        except Exception:
+            de_rows = []
+        for row in de_rows:
+            player_l = str(row.get("Player", row.get("name", ""))).lower()
+            if player_l in shortlist_players:
+                result["draftedge"].append({**row, "sport": sport})
 
     # ── BettingPros + Covers: match against shortlist game matchups ─────
     shortlist_matchups = [g["Matchup"] for g in shortlist.get("games", [])]
@@ -24092,6 +24104,51 @@ with tabs[7]:
                     })
                 st.markdown(_bc_df_html(pd.DataFrame(_fp_table_rows)), unsafe_allow_html=True)
 
+            # ── DraftEdge: opposing pitcher matchup, weather, DFS salary,
+            # hit rates for this player (MLB is richest — NBA/NFL/NHL
+            # also covered when in-season). Public SSR JSON, no auth.
+            # Display only — BetCouncil already has its own weather and
+            # park-factor pipelines, so this is cross-check context,
+            # not a new signal.
+            try:
+                _de_row = get_draftedge_player(pl_name_d, _pl_sport_used)
+            except Exception:
+                _de_row = {}
+            if _de_row:
+                st.markdown("#### 🌤️ DraftEdge — Matchup & Weather Context")
+                st.caption("Display only — not a model input (you already have live weather/park-factor pipelines). Source: draftedge.com public API.")
+                _de_cols = st.columns(4)
+                _de_pitcher = _de_row.get("OppPitcher_PitcherName")
+                if _de_pitcher:
+                    _de_cols[0].metric("Opp Pitcher", _de_pitcher)
+                    _de_cols[1].metric("ERA / WHIP", f'{_de_row.get("OppPitcher_ERA","—")} / {_de_row.get("OppPitcher_WHIP","—")}')
+                    _de_cols[2].metric("K/9", _de_row.get("OppPitcher_K9", "—"))
+                else:
+                    _de_cols[0].metric("DFS Salary", _de_row.get("DFS_Salary", "—"))
+                    _de_cols[1].metric("Position", _de_row.get("Pos", _de_row.get("position", "—")))
+                    _de_cols[2].metric("Team", _de_row.get("Team Abbr.", _de_row.get("team", "—")))
+                _de_weather = _de_row.get("Weather_Desc")
+                if _de_weather:
+                    _de_cols[3].metric("Weather", f'{_de_weather}, {_de_row.get("Temperature","—")}°F')
+                elif _de_row.get("Injury_Designation"):
+                    _de_cols[3].metric("Injury", _de_row.get("Injury_Designation"))
+
+                _de_stat_sections = {
+                    "Hits": _de_row.get("HitsSection", {}), "HR": _de_row.get("HRSection", {}),
+                    "RBI": _de_row.get("RBISection", {}), "TB": _de_row.get("TBSection", {}),
+                    "SB": _de_row.get("SBSection", {}),
+                }
+                _de_stat_rows = []
+                for _stat_name, _sec in _de_stat_sections.items():
+                    if isinstance(_sec, dict) and _sec.get("Proj") is not None:
+                        _de_stat_rows.append({
+                            "Stat": _stat_name, "Proj": _sec.get("Proj", ""),
+                            "L5 Over%": _sec.get("OverL5", ""), "L15 Over%": _sec.get("OverL15", ""),
+                            "L30 Over%": _sec.get("OverL30", ""),
+                        })
+                if _de_stat_rows:
+                    st.markdown(_bc_df_html(pd.DataFrame(_de_stat_rows)), unsafe_allow_html=True)
+
 
 with tabs[8]:
     st.markdown("## \U0001f4dd Log A Bet")
@@ -26936,6 +26993,7 @@ with tabs[1]:
         "bp":      {"label": "BettingPros", "color": "#14b8a6"},
         "cov":     {"label": "Covers",      "color": "#3b82f6"},
         "dimers":  {"label": "Dimers",      "color": "#ec4899"},
+        "de":      {"label": "DraftEdge",   "color": "#22c55e"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -26976,6 +27034,9 @@ with tabs[1]:
         _fp_by_player = {}
         for row in cmp.get("favoredprops", []):
             _fp_by_player.setdefault(str(row.get("player", "")).lower(), row)
+        _de_by_player = {}
+        for row in cmp.get("draftedge", []):
+            _de_by_player.setdefault(str(row.get("Player", "")).lower(), row)
         _bp_by_matchup = {row.get("matchup", ""): row for row in cmp.get("bettingpros", [])}
         _cov_by_matchup = {row.get("matchup", ""): row for row in cmp.get("covers", [])}
         _dimers_by_matchup = {row.get("matchup", ""): row for row in cmp.get("dimers", [])}
@@ -26996,6 +27057,11 @@ with tabs[1]:
                     _fp_hit = _fp_row.get("l10_hit_rate")
                     _fp_txt = f"{_fp_hit:.0%} L10" if isinstance(_fp_hit, (int, float)) else f'{_fp_row.get("n_books","?")} books'
                     chips += _chip("fp", _fp_txt)
+                _de_row = _de_by_player.get(p["Player"].lower())
+                if _de_row:
+                    _de_pitcher = _de_row.get("OppPitcher_PitcherName")
+                    _de_txt = f"vs {_de_pitcher}" if _de_pitcher else "matchup data"
+                    chips += _chip("de", _de_txt)
                 with prop_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'
