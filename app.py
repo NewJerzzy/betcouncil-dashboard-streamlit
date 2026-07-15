@@ -26908,23 +26908,44 @@ with tabs[1]:
         '<div style="color:#fff;font-weight:700;font-size:15px;">🆕 New Bettor Mode</div>'
         '<div style="color:#8ab4d4;font-size:12.5px;margin-top:4px;">'
         'A shortlist for when you don\'t have time to read the full board — only SOVEREIGN/ELITE plays, '
-        'correlation-checked, with a go/caution/don\'t verdict already worked out. This is a display '
-        'layer only: it reads existing model output and never changes SEM, signal weights, or any '
-        'stored performance data.'
+        'correlation-checked, with a go/caution/don\'t verdict already worked out, and how it compares '
+        'to what\'s free and public elsewhere. Display layer only — never changes SEM, signal weights, '
+        'or any stored performance data.'
         '</div></div>',
         unsafe_allow_html=True,
     )
 
     st.caption(
-        "Scans every active sport's board and game lines, keeps only SOVEREIGN/ELITE plays, "
-        "and drops anything too correlated with a pick already on the list. If nothing clears "
-        "the bar today, it says so instead of padding the list with weaker plays."
+        "Scans every active sport's board and game lines, keeps only SOVEREIGN/ELITE plays, checks them "
+        "against DraftKings/FavoredProps/BettingPros/Covers/Dimers/FanDuel, and drops anything too "
+        "correlated with a pick already on the list. If nothing clears the bar today, it says so instead "
+        "of padding the list with weaker plays."
     )
     if st.button("🔍 Build My Shortlist", key="nb_build_shortlist"):
-        with st.spinner("Scanning all boards..."):
-            st.session_state["nb_shortlist"] = build_new_bettor_shortlist()
+        with st.spinner("Scanning all boards and checking public sources..."):
+            _nb_sl = build_new_bettor_shortlist()
+            st.session_state["nb_shortlist"] = _nb_sl
+            st.session_state["nb_comparison"] = build_market_comparison(_nb_sl)
 
     shortlist = st.session_state.get("nb_shortlist")
+    comparison = st.session_state.get("nb_comparison")
+
+    _SOURCE_STYLE = {
+        "dk":      {"label": "DK",          "color": "#ff8c00"},
+        "fp":      {"label": "FavoredProps","color": "#a855f7"},
+        "bp":      {"label": "BettingPros", "color": "#14b8a6"},
+        "cov":     {"label": "Covers",      "color": "#3b82f6"},
+        "dimers":  {"label": "Dimers",      "color": "#ec4899"},
+        "fd":      {"label": "FanDuel",     "color": "#1493ff"},
+    }
+
+    def _chip(source_key, text):
+        s = _SOURCE_STYLE[source_key]
+        return (
+            f'<span style="display:inline-block;background:{s["color"]}22;color:{s["color"]};'
+            f'border:1px solid {s["color"]}55;padding:2px 9px;border-radius:12px;font-size:11px;'
+            f'font-weight:700;margin:3px 5px 0 0;white-space:nowrap;">{s["label"]} · {text}</span>'
+        )
 
     def _nb_verdict_card(verdict):
         v = verdict["verdict"]
@@ -26949,44 +26970,85 @@ with tabs[1]:
             + (f" · skipped (off-season/error): {', '.join(shortlist['skipped_sports'])}" if shortlist['skipped_sports'] else "")
         )
 
-        st.markdown("#### Top Props")
+        # ── Build per-source lookup indices for chip matching ───────────
+        cmp = comparison or {}
+        _dk_by_player = {row.get("matched_player", ""): row for row in cmp.get("dk_props", [])}
+        _fp_by_player = {}
+        for row in cmp.get("favoredprops", []):
+            _fp_by_player.setdefault(str(row.get("player", "")).lower(), row)
+        _bp_by_matchup = {row.get("matchup", ""): row for row in cmp.get("bettingpros", [])}
+        _cov_by_matchup = {row.get("matchup", ""): row for row in cmp.get("covers", [])}
+        _dimers_by_matchup = {row.get("matchup", ""): row for row in cmp.get("dimers", [])}
+
+        st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
             st.info("No SOVEREIGN/ELITE props cleared the bar right now — pass on props today.")
         else:
-            for p in shortlist["props"]:
+            prop_cols = st.columns(2)
+            for _i, p in enumerate(shortlist["props"]):
                 tc = TIER_COLORS.get(p["Tier"], "#6a7a8a")
-                st.markdown(
-                    f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
-                    f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                    f'<div style="color:#fff;font-weight:700;font-size:14px;">{p["Player"]} — {p["Prop"]} {p["Side"]} {p["Line"]}</div>'
-                    f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{p["Tier"]}</span>'
-                    f'</div>'
-                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{p["Sport"]} · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
-                    f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{p["why"]}</div>'
-                    f'</div>', unsafe_allow_html=True
-                )
+                chips = ""
+                _dk_row = _dk_by_player.get(p["Player"])
+                if _dk_row:
+                    chips += _chip("dk", "also most-bet")
+                _fp_row = _fp_by_player.get(p["Player"].lower())
+                if _fp_row:
+                    _fp_hit = _fp_row.get("l10_hit_rate")
+                    _fp_txt = f"{_fp_hit:.0%} L10" if isinstance(_fp_hit, (int, float)) else f'{_fp_row.get("n_books","?")} books'
+                    chips += _chip("fp", _fp_txt)
+                with prop_cols[_i % 2]:
+                    st.markdown(
+                        f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'
+                        f'border-left:5px solid {tc};border-radius:10px;padding:12px 14px;margin-bottom:10px;'
+                        f'box-shadow:0 2px 8px rgba(0,0,0,0.25);">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div style="color:#fff;font-weight:800;font-size:14px;">{p["Player"]}</div>'
+                        f'<span style="background:{tc};color:#0a1420;padding:2px 10px;border-radius:4px;font-weight:800;font-size:11px;">{p["Tier"]}</span>'
+                        f'</div>'
+                        f'<div style="color:{tc};font-weight:700;font-size:13px;margin-top:2px;">{p["Prop"]} {p["Side"]} {p["Line"]}</div>'
+                        f'<div style="color:#8ab4d4;font-size:11.5px;margin-top:4px;">{p["Sport"]} · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
+                        + (f'<div style="margin-top:8px;">{chips}</div>' if chips else '')
+                        + f'</div>', unsafe_allow_html=True
+                    )
             st.markdown("**🧮 Should you parlay these props together?**")
             props_legs = [{**p, "leg_type": "prop"} for p in shortlist["props"]]
             _nb_verdict_card(evaluate_parlay_verdict(props_legs))
 
-        st.markdown("#### Top Game Lines")
+        st.markdown("#### 🏟️ Top Game Lines")
         if not shortlist["games"]:
             st.info("No SOVEREIGN/ELITE game lines cleared the bar right now — pass on game lines today.")
         else:
-            for g in shortlist["games"]:
+            game_cols = st.columns(2)
+            for _i, g in enumerate(shortlist["games"]):
                 tc = TIER_COLORS.get(g["Tier"], "#6a7a8a")
-                st.markdown(
-                    f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
-                    f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                    f'<div style="color:#fff;font-weight:700;font-size:14px;">{g["Matchup"]} — {g["BetType"]}: {g["Pick"]}</div>'
-                    f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{g["Tier"]}</span>'
-                    f'</div>'
-                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{g["Sport"]} · Edge {g["EdgePct"]}</div>'
-                    f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{g["why"]}</div>'
-                    f'</div>', unsafe_allow_html=True
-                )
+                chips = ""
+                _bp_row = _bp_by_matchup.get(g["Matchup"])
+                if _bp_row:
+                    chips += _chip("bp", str(_bp_row.get("pick", ""))[:24])
+                _cov_row = _cov_by_matchup.get(g["Matchup"])
+                if _cov_row:
+                    chips += _chip("cov", f'{_cov_row.get("home_pct","?")}% home')
+                _dm_row = _dimers_by_matchup.get(g["Matchup"])
+                if _dm_row:
+                    _dm_h, _dm_a = _dm_row.get("home_edge"), _dm_row.get("away_edge")
+                    if isinstance(_dm_h, (int, float)) and isinstance(_dm_a, (int, float)):
+                        _dm_side = "home" if _dm_h > _dm_a else "away"
+                        _dm_edge = _dm_h if _dm_h > _dm_a else _dm_a
+                        chips += _chip("dimers", f"{_dm_side} {_dm_edge:+.1f}%")
+                with game_cols[_i % 2]:
+                    st.markdown(
+                        f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'
+                        f'border-left:5px solid {tc};border-radius:10px;padding:12px 14px;margin-bottom:10px;'
+                        f'box-shadow:0 2px 8px rgba(0,0,0,0.25);">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div style="color:#fff;font-weight:800;font-size:14px;">{g["Matchup"]}</div>'
+                        f'<span style="background:{tc};color:#0a1420;padding:2px 10px;border-radius:4px;font-weight:800;font-size:11px;">{g["Tier"]}</span>'
+                        f'</div>'
+                        f'<div style="color:{tc};font-weight:700;font-size:13px;margin-top:2px;">{g["BetType"]}: {g["Pick"]}</div>'
+                        f'<div style="color:#8ab4d4;font-size:11.5px;margin-top:4px;">{g["Sport"]} · Edge {g["EdgePct"]}</div>'
+                        + (f'<div style="margin-top:8px;">{chips}</div>' if chips else '')
+                        + f'</div>', unsafe_allow_html=True
+                    )
             st.markdown("**🧮 Should you parlay these game lines together?**")
             games_legs = [{**g, "leg_type": "game"} for g in shortlist["games"]]
             _nb_verdict_card(evaluate_parlay_verdict(games_legs))
@@ -26995,115 +27057,21 @@ with tabs[1]:
             st.markdown("**🧮 Should you parlay props + game lines together, all in one slip?**")
             _nb_verdict_card(evaluate_parlay_verdict(props_legs + games_legs))
 
-        # ── How This Compares: DK Most Bet / FanDuel Parlay Hub / FavoredProps / BettingPros / Covers ──
-        st.markdown("---")
-        st.markdown("#### 📊 How This Compares")
-        st.caption(
-            "BetCouncil's shortlist above vs. what's free and public elsewhere: DraftKings' "
-            "most-bet props (public popularity, not DK's own pick), FanDuel's Parlay Hub (needs "
-            "the FanDuel harvester running in a logged-in tab — see scripts/ folder), FavoredProps' "
-            "hit-rate/multi-book data (public API, no login), and BettingPros/Covers consensus you "
-            "already scan for other signals, and Dimers' model edges/win probabilities (their picks "
-            "are publicly available under a Pro paywall on their own site, but the underlying data isn't "
-            "gated). This is context, not a signal — none of it changes "
-            "BetCouncil's tiers."
-        )
-        if st.button("🔍 Load Comparison", key="nb_load_comparison"):
-            with st.spinner("Checking public sources..."):
-                st.session_state["nb_comparison"] = build_market_comparison(shortlist)
-
-        comparison = st.session_state.get("nb_comparison")
-        if comparison:
-            cmp_cols = st.columns(2)
-            with cmp_cols[0]:
-                st.markdown("**DraftKings — Most Bet Props (public)**")
-                if comparison["dk_props"]:
-                    for row in comparison["dk_props"][:10]:
-                        st.markdown(
-                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
-                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                            f'✅ <b>{row["Market"]}</b> {row["Pick"]} — also popular on DK '
-                            f'({row["Event"]}, {row["Odds"]})</div>', unsafe_allow_html=True
-                        )
-                else:
-                    st.caption("No overlap with your shortlist found in DK's current most-bet list (or DK Network's page didn't return data this check).")
-
-                st.markdown("**FavoredProps — Hit Rates & Multi-Book Odds**")
-                if comparison["favoredprops"]:
-                    for row in comparison["favoredprops"][:10]:
-                        _fp_kind_label = "DFS (PP/UD)" if row.get("kind") == "dfs" else "Sportsbook"
-                        _fp_hit = row.get("l10_hit_rate")
-                        _fp_hit_str = f"{_fp_hit:.0%} L10" if isinstance(_fp_hit, (int, float)) else ""
-                        st.markdown(
-                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
-                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                            f'✅ <b>{row.get("player","")}</b> {row.get("bet","")} {row.get("line","")} {row.get("stat_type","")} '
-                            f'— {_fp_kind_label}{" · " + _fp_hit_str if _fp_hit_str else ""} '
-                            f'({row.get("n_books","?")} books, avg {row.get("avg_odds","")})</div>', unsafe_allow_html=True
-                        )
-                else:
-                    st.caption("No overlap with your shortlist found in FavoredProps' current lists right now.")
-
-                st.markdown("**BettingPros — Expert Consensus**")
-                if comparison["bettingpros"]:
-                    for row in comparison["bettingpros"][:6]:
-                        st.markdown(
-                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
-                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                            f'{row["matchup"]}: {str(row["pick"])[:120]}</div>', unsafe_allow_html=True
-                        )
-                else:
-                    st.caption("No BettingPros match for these games right now.")
-
-            with cmp_cols[1]:
-                st.markdown("**FanDuel — Parlay Hub (needs harvester tab open)**")
-                if comparison["fd_parlayhub"]:
-                    for sport, items in comparison["fd_parlayhub"].items():
-                        st.markdown(f"*{sport}:*")
-                        for item in items[:5]:
-                            st.markdown(
-                                f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
-                                f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                                f'{str(item)[:140]}</div>', unsafe_allow_html=True
-                            )
-                else:
-                    st.caption(
-                        "No FanDuel Parlay Hub data yet — open scripts/tampermonkey_fanduel_parlayhub_harvester.user.js, "
-                        "fill in the Parlay Hub endpoint (instructions at the top of the file), install it, and "
-                        "browse Parlay Hub in a logged-in FanDuel tab."
+        # ── FanDuel Parlay Hub: not per-pick matchable, shown as its own block ──
+        if cmp.get("fd_parlayhub"):
+            st.markdown("#### 🔷 FanDuel Parlay Hub")
+            for sport, items in cmp["fd_parlayhub"].items():
+                st.markdown(f'<span style="color:#8ab4d4;font-size:12px;font-weight:700;">{sport}</span>', unsafe_allow_html=True)
+                for item in items[:5]:
+                    st.markdown(
+                        f'<div style="background:{_SOURCE_STYLE["fd"]["color"]}15;border:1px solid {_SOURCE_STYLE["fd"]["color"]}44;'
+                        f'border-radius:6px;padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                        f'{str(item)[:140]}</div>', unsafe_allow_html=True
                     )
-
-                st.markdown("**Covers — Public Betting %**")
-                if comparison["covers"]:
-                    for row in comparison["covers"][:6]:
-                        st.markdown(
-                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
-                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                            f'{row["matchup"]}: home {row.get("home_pct","?")}% / away {row.get("away_pct","?")}% public</div>',
-                            unsafe_allow_html=True
-                        )
-                else:
-                    st.caption("No Covers match for these games right now.")
-
-                st.markdown("**Dimers — Model Edge & Win Probability**")
-                if comparison["dimers"]:
-                    for row in comparison["dimers"][:6]:
-                        _dm_side = "Home" if (row.get("home_edge") or 0) > (row.get("away_edge") or 0) else "Away"
-                        _dm_edge = row.get("home_edge") if _dm_side == "Home" else row.get("away_edge")
-                        _dm_win = row.get("home_win_pct") if _dm_side == "Home" else row.get("away_win_pct")
-                        if isinstance(_dm_edge, (int, float)):
-                            _dm_text = f'{row["matchup"]}: {_dm_side} edge {_dm_edge:+.1f}%'
-                        else:
-                            _dm_text = f'{row["matchup"]}: no clear edge'
-                        if isinstance(_dm_win, (int, float)):
-                            _dm_text += f' · win prob {_dm_win:.0%}'
-                        st.markdown(
-                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
-                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                            f'{_dm_text}</div>',
-                            unsafe_allow_html=True
-                        )
-                else:
-                    st.caption("No Dimers match for these games right now.")
+        elif comparison:
+            st.caption(
+                "🔷 No FanDuel Parlay Hub data yet — open scripts/tampermonkey_fanduel_parlayhub_harvester.user.js, "
+                "fill in the Parlay Hub endpoint, install it, and browse Parlay Hub in a logged-in FanDuel tab."
+            )
     else:
-        st.caption("Click the button above to scan today's boards.")
+        st.caption("Click the button above to scan today's boards and check them against the public sources.")
