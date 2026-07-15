@@ -161,18 +161,25 @@ def render_sharptrack_tab():
         if not wallets:
             st.info("Wallet registry not populated yet.")
         else:
-            rows = []
             for w in wallets[:100]:
-                rows.append({
-                    "Score": w.get("score"),
-                    "Tier": _score_tier(w.get("score", 0)),
-                    "Wallet": w.get("userName") or w.get("address", "")[:10],
-                    "Verified": "✓" if w.get("verifiedBadge") else "",
-                    "Best PnL": f"${w.get('best_pnl',0):,.0f}",
-                    "Best Vol": f"${w.get('best_vol',0):,.0f}",
-                    "Periods": ", ".join(w.get("periods_seen", [])[:3]),
-                })
-            st.dataframe(rows, hide_index=True, use_container_width=True)
+                score = w.get("score") or 0
+                tier = _score_tier(score)
+                addr = w.get("address") or ""
+                wallet_label = w.get("userName") or (addr[:10] if addr else "unknown")
+                verified = " ✓" if w.get("verifiedBadge") else ""
+                periods = ", ".join(w.get("periods_seen", [])[:3])
+                st.markdown(
+                    f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:8px;'
+                    f'padding:10px 14px;margin-bottom:6px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<span style="color:#fff;font-weight:600;">{wallet_label}{verified}</span>'
+                    f'{_tier_chip(tier)}</div>'
+                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
+                    f'Score {score} · Best PnL ${w.get("best_pnl",0):,.0f} · '
+                    f'Best Vol ${w.get("best_vol",0):,.0f} · {periods}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             st.caption(f"Wallets below score {SHARPTRACK_MIN_WALLET_SCORE} are dropped from tracking entirely.")
 
     # ── My Plays ─────────────────────────────────────────────────────
@@ -201,12 +208,21 @@ def render_sharptrack_tab():
                 st.rerun()
 
         if my_plays:
-            st.dataframe(
-                [{"When": p.get("timestamp", "")[:16].replace("T", " "),
-                  "Sport": p.get("sport"), "Side": p.get("side"),
-                  "Stake": f"${p.get('stake',0):,.2f}", "Result": p.get("result", "pending"),
-                  "Note": p.get("note", "")} for p in reversed(my_plays[-50:])],
-                hide_index=True, use_container_width=True,
-            )
+            for p in reversed(my_plays[-50:]):
+                when = (p.get("timestamp") or "")[:16].replace("T", " ")
+                result = p.get("result", "pending")
+                result_color = {"win": "#2ecc71", "loss": "#e74c3c"}.get(result, "#8ab4d4")
+                st.markdown(
+                    f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:8px;'
+                    f'padding:10px 14px;margin-bottom:6px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<span style="color:#fff;font-weight:600;">{p.get("sport","")} — {p.get("side","")}</span>'
+                    f'<span style="color:{result_color};font-size:12px;font-weight:600;">{result}</span></div>'
+                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
+                    f'{when} · ${p.get("stake",0):,.2f}'
+                    + (f' · {p.get("note","")}' if p.get("note") else '')
+                    + '</div></div>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.info("No plays logged yet.")
