@@ -17044,6 +17044,203 @@ def fetch_polymarket_from_gist(sport: str) -> tuple:
         if raw: return raw, "browser_harvester"
     return {}, "unavailable"
 
+def _prophetx_selection_odds(sel: dict):
+    """ProphetX's exact odds field name isn't confirmed yet (raw capture
+    only, harvester hasn't run against a live market payload). Probe every
+    plausible key an exchange API would use, in priority order, so this
+    keeps working once the real shape is inspected instead of silently
+    returning nothing."""
+    for key in ("american_odds", "americanOdds", "odds", "price", "american_price"):
+        v = sel.get(key)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _prophetx_selection_line(sel: dict):
+    for key in ("line", "point", "handicap", "spread", "total"):
+        v = sel.get(key)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _prophetx_market_label(mkt: dict) -> str:
+    for key in ("name", "market_name", "title", "display_name", "type", "market_type"):
+        v = mkt.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return ""
+
+
+_PROPHETX_PROP_STAT_KEYWORDS = (
+    # Kept as a documented reference of stat types ProphetX exposes per the
+    # live sample (WNBA: rebounds/points/assists/3PM/PRA per player) — not
+    # used for classification since "Total Points" (a game market) would
+    # false-positive on "points". Classification instead keys off the
+    # presence of a participant/player field on the market's selections.
+    "points", "rebounds", "assists", "3-point", "3 point", "threes", "three pointers",
+    "pra", "steals", "blocks", "strikeouts", "hits", "home run", "rbi", "runs",
+    "passing yards", "rushing yards", "receiving yards", "receptions", "touchdown",
+    "shots on goal", "saves", "goals",
+)
+
+
+def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport):
+    """Split one event's raw v2 markets payload into (game_line_rows, prop_rows)
+    using BetCouncil's standard schemas. Defensive against unknown field
+    names — returns whatever it can positively identify and skips the rest
+    rather than raising."""
+    lines_out, props_out = [], []
+    if not markets_payload:
+        return lines_out, props_out
+    markets = markets_payload
+    if isinstance(markets_payload, dict):
+        for key in ("markets", "data", "results"):
+            if isinstance(markets_payload.get(key), list):
+                markets = markets_payload[key]
+                break
+        else:
+            markets = []
+    if not isinstance(markets, list):
+        return lines_out, props_out
+
+    for mkt in markets:
+        if not isinstance(mkt, dict):
+            continue
+        label = _prophetx_market_label(mkt)
+        label_lc = label.lower()
+        selections = None
+        for key in ("selections", "outcomes", "lines", "runners"):
+            if isinstance(mkt.get(key), list):
+                selections = mkt[key]
+                break
+        if not selections:
+            continue
+
+        is_prop = "player" in label_lc or any(
+            isinstance(sel, dict) and any(
+                isinstance(sel.get(k), str) and sel.get(k)
+                for k in ("participant", "player", "player_name")
+            )
+            for sel in selections
+        )
+
+        if is_prop:
+            by_player: dict = {}
+            for sel in selections:
+                if not isinstance(sel, dict):
+                    continue
+                pname = None
+                for key in ("participant", "player", "player_name", "name"):
+                    v = sel.get(key)
+                    if isinstance(v, str) and v:
+                        pname = v
+                        break
+                if not pname:
+                    continue
+                side = ""
+                for key in ("side", "selection_type", "outcome"):
+                    v = sel.get(key)
+                    if isinstance(v, str):
+                        side = v.lower()
+                        break
+                line_val = _prophetx_selection_line(sel)
+                odds_val = _prophetx_selection_odds(sel)
+                rec = by_player.setdefault(pname, {})
+                if line_val is not None:
+                    rec["line"] = line_val
+                if "under" in side:
+                    rec["under_odds"] = odds_val
+                elif "over" in side:
+                    rec["over_odds"] = odds_val
+                elif odds_val is not None and "over_odds" not in rec:
+                    rec["over_odds"] = odds_val
+            for pname, pdata in by_player.items():
+                if pdata.get("line") is None:
+                    continue
+                props_out.append({
+                    "Player":    pname,
+                    "Prop":      label,
+                    "Line":      pdata["line"],
+                    "OverOdds":  pdata.get("over_odds", "N/A"),
+                    "UnderOdds": pdata.get("under_odds", "N/A"),
+                    "Book":      "ProphetX",
+                    "Sport":     sport,
+                    "source":    "prophetx_exchange",
+                })
+        else:
+            for sel in selections:
+                if not isinstance(sel, dict):
+                    continue
+                sel_name = ""
+                for key in ("name", "selection_name", "team", "runner_name"):
+                    v = sel.get(key)
+                    if isinstance(v, str) and v:
+                        sel_name = v
+                        break
+                odds_val = _prophetx_selection_odds(sel)
+                if odds_val is None:
+                    continue
+                lines_out.append({
+                    "game":      game_label,
+                    "home":      home,
+                    "away":      away,
+                    "market":    label,
+                    "selection": sel_name,
+                    "odds":      odds_val,
+                    "line":      _prophetx_selection_line(sel),
+                    "book":      "ProphetX",
+                    "sport":     sport,
+                    "source":    "prophetx_exchange",
+                })
+    return lines_out, props_out
+
+
+def _parse_prophetx_events(events: list, sport: str):
+    all_lines, all_props = [], []
+    for ev in (events or []):
+        if not isinstance(ev, dict):
+            continue
+        home = ev.get("home_team") or ev.get("home") or ""
+        away = ev.get("away_team") or ev.get("away") or ""
+        if isinstance(home, dict):
+            home = home.get("name", "")
+        if isinstance(away, dict):
+            away = away.get("name", "")
+        name = ev.get("name") or ev.get("title") or (f"{away} @ {home}" if (home or away) else "")
+        lines, props = _parse_prophetx_event_markets(ev.get("markets"), name, home, away, sport)
+        all_lines.extend(lines)
+        all_props.extend(props)
+    return all_lines, all_props
+
+
+def fetch_prophetx_game_lines_from_gist(sport: str) -> tuple:
+    """ProphetX exchange game lines (moneyline/spread/total), normalized to
+    BetCouncil's standard {game, home, away, market, selection, odds, book,
+    sport, source} schema — same shape as fetch_bovada_game_lines."""
+    events, _ = fetch_prophetx_from_gist(sport)
+    if not events:
+        return [], "unavailable"
+    lines, _props = _parse_prophetx_events(events, sport)
+    if lines:
+        return lines, "prophetx_exchange"
+    return [], "unavailable"
+
+
+def fetch_prophetx_props_from_gist(sport: str) -> tuple:
+    """ProphetX exchange player props, normalized to BetCouncil's standard
+    {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source} schema —
+    same shape as fetch_novig_from_gist."""
+    events, _ = fetch_prophetx_from_gist(sport)
+    if not events:
+        return [], "unavailable"
+    _lines, props = _parse_prophetx_events(events, sport)
+    if props:
+        return props, "prophetx_exchange"
+    return [], "unavailable"
+
+
 def fetch_prophetx_from_gist(sport: str) -> tuple:
     """ProphetX exchange odds (all sports) from scripts/prophetx_harvester.py,
     run every 15 min via .github/workflows/prophetx_refresh.yml. Public,

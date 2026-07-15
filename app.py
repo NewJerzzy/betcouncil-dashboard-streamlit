@@ -12866,6 +12866,8 @@ def load_sport_data(sport):
         ("fetch_bovada_from_gist",            "bovada_lines_h",         "bovada_src"),
         ("fetch_novig_from_gist",             "novig_props_h",          "novig_src"),
         ("fetch_polymarket_from_gist",        "polymarket_data",        "polymarket_src"),
+        ("fetch_prophetx_game_lines_from_gist","prophetx_lines_h",       "prophetx_lines_src"),
+        ("fetch_prophetx_props_from_gist",     "prophetx_props_h",       "prophetx_props_src"),
         ("fetch_mybookie_from_gist",           "mybookie_lines_h",       "mybookie_src"),
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
         ("fetch_bet365_from_gist",             "bet365_lines_h",         "bet365_src"),

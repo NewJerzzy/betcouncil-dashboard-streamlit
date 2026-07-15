@@ -56,7 +56,7 @@ CBS_SPORT_MAP = {
 }
 
 # === BOOKS ===
-ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "DraftKings", "BetMGM", "Bovada", "BetOnline", "PaddyPower"]
+ACTIVE_BOOKS = ["PrizePicks", "Underdog", "Novig", "DraftKings", "BetMGM", "Bovada", "BetOnline", "PaddyPower", "ProphetX"]
 DISABLED_BOOKS = ["Sleeper", "FanDuel", "Caesars"]
 
 # === PADDY POWER (direct HTML harvest, confirmed server-rendered — no WAF
