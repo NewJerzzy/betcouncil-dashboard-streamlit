@@ -48,14 +48,25 @@ CLOB_API = "https://clob.polymarket.com"
 # BetCouncil sports -> best-effort Polymarket gamma tag slugs.
 # Any slug that returns zero events is skipped silently (off-season, or
 # Polymarket hasn't listed markets for it yet) rather than erroring.
-SPORT_TAG_SLUGS = {
-    "NFL":    ["nfl", "football"],
-    "NBA":    ["nba", "basketball"],
-    "MLB":    ["mlb", "baseball"],
-    "NHL":    ["nhl", "hockey"],
-    "WNBA":   ["wnba"],
-    "MMA":    ["mma", "ufc"],
-    "ESPORTS": ["esports", "csgo", "valorant", "league-of-legends"],
+SPORT_TAG_IDS = {
+    # Verified against gamma-api.polymarket.com/sports (per-sport "tags" field)
+    # and cross-checked against gamma-api.polymarket.com/tags.
+    # NOTE: Polymarket's own docs warn that ?tag_slug=... on /events is
+    # unreliable and silently falls back to unfiltered/default ordering —
+    # confirmed empirically (tag_slug=nba returned unrelated politics/
+    # election events, zero NBA content). Numeric tag_id is the only
+    # reliable filter; do not revert to tag_slug.
+    "NFL":    [450],
+    "NBA":    [745],
+    "WNBA":   [100254],
+    "MLB":    [100381],
+    "NHL":    [899],
+    "TENNIS": [864],
+    "SOCCER": [100350],
+    "ESPORTS": [64],   # parent esports tag (covers CS2/Valorant/LoL/Dota2/etc.)
+    # MMA/UFC has no dedicated numeric tag_id in Polymarket's sports metadata
+    # (only generic "1"/"100639") as of this harvester's last check — omitted
+    # rather than risk pulling the unfiltered/generic sports bucket again.
 }
 
 LOOKBACK_SECONDS = 2 * 60 * 60          # only trades from the last 2 hours
@@ -157,16 +168,16 @@ def score_wallets(wallets: dict) -> list:
 # ── Step 2: live sports markets ────────────────────────────────────────
 def fetch_active_sports_markets():
     """Returns list of (conditionId, market_meta) for the highest-volume
-    open markets across the configured sport tag slugs."""
-    seen_slugs = set()
+    open markets across the configured sport tag IDs."""
+    seen_ids = set()
     markets = []
-    for sport, slugs in SPORT_TAG_SLUGS.items():
-        for slug in slugs:
-            if slug in seen_slugs:
+    for sport, tag_ids in SPORT_TAG_IDS.items():
+        for tag_id in tag_ids:
+            if tag_id in seen_ids:
                 continue
-            seen_slugs.add(slug)
+            seen_ids.add(tag_id)
             events = _http_get_json(f"{GAMMA_API}/events", {
-                "tag_slug": slug,
+                "tag_id": tag_id,
                 "active": "true",
                 "closed": "false",
                 "order": "volume24hr",
@@ -189,7 +200,7 @@ def fetch_active_sports_markets():
                         "clobTokenIds": m.get("clobTokenIds", ""),
                         "outcomes": m.get("outcomes", ""),
                     })
-            log(f"  events tag={slug}: {len(events)} events")
+            log(f"  events tag_id={tag_id} ({sport}): {len(events)} events")
     markets.sort(key=lambda x: -x["volume24hr"])
     # de-dupe by conditionId, keep highest volume first
     dedup, out = set(), []
