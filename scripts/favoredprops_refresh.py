@@ -63,8 +63,9 @@ def fetch_dfs(league: str) -> dict | None:
     try:
         r = requests.get(f"{BASE_URL}/api/dfs", params={"league": league, "app": "all"},
                           headers=HEADERS, timeout=30)
+        snippet_len = 4000 if league == "mlb" else 300
         DEBUG_LOG.append({"endpoint": f"dfs/{league}", "url": r.url, "status": r.status_code,
-                           "body_snippet": r.text[:300]})
+                           "body_snippet": r.text[:snippet_len]})
         if r.status_code != 200:
             log(f"  dfs/{league}: HTTP {r.status_code} — {r.text[:200]}")
             return None
@@ -83,8 +84,9 @@ def fetch_sportsbook(league: str) -> dict | None:
     try:
         r = requests.get(f"{BASE_URL}/api/sportsbook", params={"leagues": league},
                           headers=HEADERS, timeout=30)
+        snippet_len = 4000 if league == "mlb" else 300
         DEBUG_LOG.append({"endpoint": f"sportsbook/{league}", "url": r.url, "status": r.status_code,
-                           "body_snippet": r.text[:300]})
+                           "body_snippet": r.text[:snippet_len]})
         if r.status_code != 200:
             log(f"  sportsbook/{league}: HTTP {r.status_code} — {r.text[:200]}")
             return None
