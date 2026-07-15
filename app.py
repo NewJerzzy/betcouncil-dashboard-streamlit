@@ -8718,7 +8718,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8782,6 +8782,30 @@ def build_market_comparison(shortlist):
                 teams = [t for t in matchup.replace(" @ ", " ").split(" ") if len(t) > 2]
                 if any(t.lower() in cov_matchup.lower() for t in teams):
                     result["covers"].append({"matchup": matchup, "cov_matchup": cov_matchup, **cov_val})
+                    break
+
+    # ── Dimers (via Stats Insider backend): match against shortlist games ──
+    for sport in sports_needed:
+        try:
+            dimers_matches = fetch_dimers_from_gist(sport)
+        except Exception:
+            dimers_matches = []
+        for dm in dimers_matches:
+            match_meta = dm.get("match", {})
+            home_abv = str(match_meta.get("HomeTeam", {}).get("Abv", "")).upper()
+            away_abv = str(match_meta.get("AwayTeam", {}).get("Abv", "")).upper()
+            if not (home_abv and away_abv):
+                continue
+            for matchup in shortlist_matchups:
+                if home_abv in matchup.upper() and away_abv in matchup.upper():
+                    tab = dm.get("betting", {}).get("tab", {})
+                    result["dimers"].append({
+                        "matchup": matchup, "sport": sport,
+                        "home_edge": tab.get("HomeH2HEdge"), "away_edge": tab.get("AwayH2HEdge"),
+                        "home_win_pct": tab.get("HomeLineWinPct"), "away_win_pct": tab.get("AwayLineWinPct"),
+                        "home_odds": tab.get("HomeOdds"), "away_odds": tab.get("AwayOdds"),
+                        "total_line": tab.get("TotalLine"), "over_win_pct": tab.get("OverWinPct"),
+                    })
                     break
 
     return result
@@ -26959,7 +26983,9 @@ with tabs[1]:
             "most-bet props (public popularity, not DK's own pick), FanDuel's Parlay Hub (needs "
             "the FanDuel harvester running in a logged-in tab — see scripts/ folder), FavoredProps' "
             "hit-rate/multi-book data (public API, no login), and BettingPros/Covers consensus you "
-            "already scan for other signals. This is context, not a signal — none of it changes "
+            "already scan for other signals, and Dimers' model edges/win probabilities (their picks "
+            "are publicly available under a Pro paywall on their own site, but the underlying data isn't "
+            "gated). This is context, not a signal — none of it changes "
             "BetCouncil's tiers."
         )
         if st.button("🔍 Load Comparison", key="nb_load_comparison"):
@@ -27038,5 +27064,26 @@ with tabs[1]:
                         )
                 else:
                     st.caption("No Covers match for these games right now.")
+
+                st.markdown("**Dimers — Model Edge & Win Probability**")
+                if comparison["dimers"]:
+                    for row in comparison["dimers"][:6]:
+                        _dm_side = "Home" if (row.get("home_edge") or 0) > (row.get("away_edge") or 0) else "Away"
+                        _dm_edge = row.get("home_edge") if _dm_side == "Home" else row.get("away_edge")
+                        _dm_win = row.get("home_win_pct") if _dm_side == "Home" else row.get("away_win_pct")
+                        if isinstance(_dm_edge, (int, float)):
+                            _dm_text = f'{row["matchup"]}: {_dm_side} edge {_dm_edge:+.1f}%'
+                        else:
+                            _dm_text = f'{row["matchup"]}: no clear edge'
+                        if isinstance(_dm_win, (int, float)):
+                            _dm_text += f' · win prob {_dm_win:.0%}'
+                        st.markdown(
+                            f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-radius:6px;'
+                            f'padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
+                            f'{_dm_text}</div>',
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No Dimers match for these games right now.")
     else:
         st.caption("Click the button above to scan today's boards.")

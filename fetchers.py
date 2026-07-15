@@ -16696,6 +16696,32 @@ def _parse_dk_harvested(raw: dict, sport: str) -> list:
 # signal_performance.json / calibration path.
 # ═══════════════════════════════════════════════════════════════════════
 
+def fetch_dimers_from_gist(sport: str, max_age_minutes: int = 100) -> list:
+    """
+    Dimers.com game-line picks (edges, model win probabilities, odds per
+    market) via their Stats Insider backend — confirmed live 2026-07,
+    every field verified against a real response. Dimers visually gates
+    most picks behind "Dimers Pro" on their own site, but that gating is
+    frontend-only; the underlying data (scripts/dimers_refresh.py) is
+    public and unauthenticated.
+
+    Returns the raw "matches" list, each with:
+        {sim_match_id, match: {AwayTeam, HomeTeam, Date, ...},
+         betting: {tab: {AwayH2HEdge, HomeH2HEdge, AwayLineEdge,
+                          HomeLineEdge, OverEdge, UnderEdge, AwayOdds,
+                          HomeOdds, HomeLine, TotalLine, AwayLineWinPct,
+                          HomeLineWinPct, OverWinPct, UnderWinPct, ...}}}
+    Game-line comparison data — same category as BettingPros/Covers in
+    the New Bettor panel, not props like FavoredProps/DK.
+    """
+    data = _read_gist_file(f"betcouncil_dimers_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("matches", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
