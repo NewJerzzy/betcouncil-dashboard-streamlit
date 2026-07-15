@@ -8408,6 +8408,297 @@ def scan_all_sports_best_plays():
     results["best_games"].sort(key=lambda x: x["best_edge"], reverse=True)
     return results
 
+# ═══════════════════════════════════════════════════════════════════════
+# NEW BETTOR SHORTLIST — advisory-only presentation layer
+# ─────────────────────────────────────────────────────────────────────
+# Purpose: give a bettor who doesn't have time to read the Full Board /
+# Game Lines tabs a short, curated list of only the model's highest-
+# conviction plays (SOVEREIGN/ELITE), correlation-checked so it doesn't
+# just staple 6 same-game props together into a parlay.
+#
+# IMPORTANT — isolation guarantee: everything in this section only READS
+# from data structures that already exist elsewhere in the app (board
+# props, game analysis, calibrated thresholds). It never writes to
+# signal_performance.json, injury_performance.json, history.json, SEM
+# calibration, or any other file that feeds the model. It is a pure
+# display/advisory layer on top of outputs that already exist — it must
+# stay that way in any future edits.
+# ═══════════════════════════════════════════════════════════════════════
+
+_BEGINNER_TIER_ORDER = {"SOVEREIGN": 4, "ELITE": 3, "APPROVED": 2, "LEAN": 1, "PASS": 0}
+_BEGINNER_TIER_SCORE = {"SOVEREIGN": 1.0, "ELITE": 0.8, "APPROVED": 0.6, "LEAN": 0.3, "PASS": 0.1}
+_BEGINNER_ELIGIBLE_SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL"]  # sports with reliable board scans
+
+
+def build_new_bettor_shortlist(max_props=6, max_games=6, min_tier="ELITE"):
+    """
+    Scans every active sport's board + game lines and returns only the
+    plays that clear the SOVEREIGN/ELITE bar, correlation-checked so the
+    shortlist doesn't quietly stack correlated legs.
+
+    Does NOT force a fixed count — if fewer than max_props/max_games
+    plays clear the bar today, it returns fewer (or none) rather than
+    backfilling with weaker tiers. That's intentional: a forced quota
+    would mean showing a new bettor a LEAN play labeled as a "top pick,"
+    which is worse than saying "nothing elite today."
+
+    Returns:
+        {
+          "props": [ {..prop dict.., "why": str}, ... ],   # <= max_props
+          "games": [ {..game dict.., "why": str}, ... ],    # <= max_games
+          "scanned_sports": [...], "skipped_sports": [...],
+          "timestamp": "HH:MM"
+        }
+    """
+    min_rank = _BEGINNER_TIER_ORDER.get(min_tier, 3)
+    candidate_props = []
+    candidate_games = []
+    scanned, skipped = [], []
+
+    progress = st.progress(0)
+    status = st.empty()
+    active_sports = [s for s in _BEGINNER_ELIGIBLE_SPORTS]
+
+    for idx, sport in enumerate(active_sports):
+        try:
+            status.write(f"Scanning {sport} board for elite plays...")
+            progress.progress((idx) / max(1, len(active_sports)))
+            regime = detect_season_regime(sport)
+            if regime.get("regime") == "Off-season":
+                skipped.append(sport)
+                continue
+
+            # ── Props ──────────────────────────────────────────────
+            props = scrape_prizepicks_with_gist_fallback(sport)
+            if not props:
+                props = fetch_underdog_props(sport)
+            sport_defaults = DEFAULT_AVERAGES.get(sport, {})
+            sport_avgs = PLAYER_AVERAGES.get(sport, {})
+            cal_thresholds = st.session_state.get("calibrated_thresholds")
+
+            for p in (props or [])[:60]:
+                stat_raw = p.get("Prop", "")
+                stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
+                player = p.get("Player", "")
+                line = p.get("Line")
+                if line is None:
+                    continue
+                player_stats, using_default = find_player_avg(player, sport_avgs)
+                if using_default:
+                    continue
+                avg = player_stats.get(stat_norm, sport_defaults.get(stat_norm, line))
+                if not avg or avg <= 0:
+                    continue
+                edge, prob, _ = compute_multi_signal_edge(
+                    line, avg, 112.0, False, 0, "OVER", stat_norm, 0.0, 2, "standard", sport
+                )
+                tier = get_tier(edge, sport, cal_thresholds)
+                if _BEGINNER_TIER_ORDER.get(tier, 0) < min_rank:
+                    continue
+                ev_2 = calculate_prizepicks_ev(prob, 2)
+                candidate_props.append({
+                    "Sport": sport, "Player": player, "Prop": stat_raw,
+                    "Line": line, "Side": "OVER", "Team": p.get("Team", ""),
+                    "Edge": edge, "EdgePct": f"{edge:.1%}", "EV_2pick": f"{ev_2:+.1%}",
+                    "Tier": tier, "Avg": avg, "Prob": prob,
+                })
+
+            # ── Game lines ─────────────────────────────────────────
+            games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
+            if games:
+                game_results = analyze_all_games(games, sport, home_teams, away_teams)
+                for gr in game_results:
+                    # pick the single best-tier bet type on this game
+                    bet_options = [
+                        ("Spread", gr.get("SpreadTier", "LEAN"), gr.get("SpreadEdge", 0), gr.get("SpreadPick", "")),
+                        ("Total",  gr.get("TotalTier", "LEAN"),  gr.get("TotalEdge", 0),  gr.get("TotalPick", "")),
+                        ("ML",     gr.get("MLTier", "LEAN"),     gr.get("MLEdge", 0),     gr.get("MLPick", "")),
+                    ]
+                    bet_options.sort(key=lambda o: _BEGINNER_TIER_ORDER.get(o[1], 0), reverse=True)
+                    best_type, best_tier, best_edge, best_pick = bet_options[0]
+                    if _BEGINNER_TIER_ORDER.get(best_tier, 0) < min_rank or not best_pick:
+                        continue
+                    candidate_games.append({
+                        "Sport": sport, "Matchup": gr.get("matchup", ""),
+                        "Home": gr.get("home", ""), "Away": gr.get("away", ""),
+                        "BetType": best_type, "Pick": best_pick,
+                        "Edge": best_edge, "EdgePct": f"{best_edge:.1%}",
+                        "Tier": best_tier,
+                    })
+            scanned.append(sport)
+        except Exception as e:
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": f"new_bettor_shortlist_{sport}", "error": str(e)[:150]
+            })
+            skipped.append(sport)
+            continue
+
+    progress.progress(1.0)
+    status.empty()
+    progress.empty()
+
+    candidate_props.sort(key=lambda x: x["Edge"], reverse=True)
+    candidate_games.sort(key=lambda x: x["Edge"], reverse=True)
+
+    # ── Correlation-aware greedy selection for props ────────────────
+    # Walk candidates best-edge-first; only add a leg if it doesn't push
+    # the running correlation score of the selected set past 0.30. This
+    # is the same compute_parlay_correlation() function used by the
+    # Slip Analyzer, so the bar here matches what the rest of the app
+    # already considers "too correlated."
+    selected_props = []
+    for cand in candidate_props:
+        if len(selected_props) >= max_props:
+            break
+        trial = selected_props + [cand]
+        score, _pairs = compute_parlay_correlation(trial)
+        if score <= 0.30 or not selected_props:
+            selected_props.append(cand)
+
+    # ── De-dupe game lines: one bet per matchup, cap at max_games ────
+    selected_games = []
+    seen_matchups = set()
+    for cand in candidate_games:
+        if len(selected_games) >= max_games:
+            break
+        if cand["Matchup"] in seen_matchups:
+            continue
+        seen_matchups.add(cand["Matchup"])
+        selected_games.append(cand)
+
+    for p in selected_props:
+        p["why"] = (
+            f"{p['Tier'].title()} tier · {p['EdgePct']} model edge on "
+            f"{p['Player']} {p['Prop']} {p['Side']} {p['Line']}."
+        )
+    for g in selected_games:
+        g["why"] = (
+            f"{g['Tier'].title()} tier · {g['EdgePct']} model edge on "
+            f"{g['Matchup']} — {g['BetType']}: {g['Pick']}."
+        )
+
+    return {
+        "props": selected_props, "games": selected_games,
+        "scanned_sports": scanned, "skipped_sports": skipped,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def evaluate_parlay_verdict(legs):
+    """
+    Advisory-only "should I take this parlay" check for new bettors.
+    Combines correlation risk (via compute_parlay_correlation, same
+    function the Slip Analyzer uses) with tier composition and leg
+    count. Read-only: does not touch SEM, signal weights, or any stored
+    performance/history data.
+
+    legs: list of dicts. Prop legs use Player/Prop/Team/Tier keys
+    (same shape as board props). Game legs use Matchup/BetType/Tier.
+
+    Returns:
+        {
+          "verdict": "GO" | "CAUTION" | "DON'T",
+          "reason": str,
+          "suggested_fix": str or None,
+          "correlation_score": float,
+          "correlated_pairs": [...],
+        }
+    """
+    if not legs:
+        return {"verdict": "—", "reason": "No legs selected.", "suggested_fix": None,
+                "correlation_score": 0.0, "correlated_pairs": []}
+
+    prop_legs = [l for l in legs if l.get("leg_type", "prop") == "prop"]
+    game_legs = [l for l in legs if l.get("leg_type") == "game"]
+
+    corr_score, corr_pairs = compute_parlay_correlation(prop_legs) if len(prop_legs) >= 2 else (0.0, [])
+
+    # Same-game correlation between a prop leg and a game-line leg on the
+    # same matchup/team isn't covered by compute_parlay_correlation
+    # (it's prop-shaped only), so add a lightweight same-team check here.
+    same_game_hits = []
+    for gl in game_legs:
+        gl_teams = {gl.get("Home", ""), gl.get("Away", "")}
+        for pl in prop_legs:
+            if pl.get("Team", "") in gl_teams and pl.get("Team", ""):
+                same_game_hits.append(f"{pl.get('Player','')} prop shares a game with your {gl.get('BetType','')} pick")
+    if same_game_hits:
+        corr_score = min(1.0, corr_score + 0.15 * len(same_game_hits))
+        corr_pairs = corr_pairs + same_game_hits
+
+    tier_scores = [_BEGINNER_TIER_SCORE.get(l.get("Tier", "LEAN"), 0.3) for l in legs]
+    avg_tier_score = sum(tier_scores) / len(tier_scores)
+    weakest_idx = min(range(len(legs)), key=lambda i: tier_scores[i])
+    weakest_leg = legs[weakest_idx]
+    weakest_label = weakest_leg.get("Player") or weakest_leg.get("Matchup") or "that leg"
+
+    n_legs = len(legs)
+
+    # ── Verdict logic ────────────────────────────────────────────────
+    if any(l.get("Tier") in ("PASS",) for l in legs):
+        return {
+            "verdict": "DON'T",
+            "reason": f"{weakest_label} is a PASS-tier play — the model has no edge there. "
+                      f"Including it drags the whole slip's expected value down regardless of the other legs.",
+            "suggested_fix": f"Drop {weakest_label} and re-check the rest as a smaller slip.",
+            "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+        }
+
+    if corr_score >= 0.50:
+        return {
+            "verdict": "DON'T",
+            "reason": f"Correlation score {corr_score:.2f} is high — these legs are likely to win or lose "
+                      f"together, not independently, so the parlay's real odds of hitting are worse than "
+                      f"the payout implies.",
+            "suggested_fix": f"Remove one leg from the correlated group ({corr_pairs[0]}) and keep the rest.",
+            "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+        }
+
+    if any(l.get("Tier") == "LEAN" for l in legs):
+        return {
+            "verdict": "CAUTION",
+            "reason": f"{weakest_label} is only LEAN tier — low conviction. The other legs may be solid, "
+                      f"but this one is weighing down the combined edge.",
+            "suggested_fix": f"Drop {weakest_label}; the remaining legs would form a stronger slip on their own.",
+            "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+        }
+
+    if n_legs > 4:
+        return {
+            "verdict": "CAUTION",
+            "reason": f"{n_legs} legs is a lot to stack even with good individual tiers — each added leg "
+                      f"multiplies the chance the whole slip misses, since every leg has to hit.",
+            "suggested_fix": "Consider splitting this into two smaller slips instead of one big one.",
+            "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+        }
+
+    if 0.25 <= corr_score < 0.50:
+        return {
+            "verdict": "CAUTION",
+            "reason": f"Correlation score {corr_score:.2f} is moderate — {corr_pairs[0] if corr_pairs else 'some legs'} "
+                      f"move together somewhat, which adds variance beyond what the tier grades alone suggest.",
+            "suggested_fix": "Fine to take, but size it a little smaller than you would an uncorrelated slip.",
+            "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+        }
+
+    if avg_tier_score >= 0.7 and corr_score < 0.25 and n_legs <= 4:
+        return {
+            "verdict": "GO",
+            "reason": f"All {n_legs} legs are APPROVED tier or better, correlation is low ({corr_score:.2f}), "
+                      f"and the slip size is reasonable.",
+            "suggested_fix": None,
+            "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+        }
+
+    return {
+        "verdict": "CAUTION",
+        "reason": "Nothing disqualifying, but this slip isn't a clean high-conviction combo either.",
+        "suggested_fix": "Double check the weakest leg before locking it in.",
+        "correlation_score": corr_score, "correlated_pairs": corr_pairs,
+    }
+
+
 _DENSITY_ESPN_SPORT_MAP = {
     "NBA": ("basketball", "nba"), "MLB": ("baseball", "mlb"),
     "NFL": ("football", "nfl"), "NHL": ("hockey", "nhl"),
@@ -16977,7 +17268,7 @@ def _bc_df_html(data, columns=None):
     )
 
 
-tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack"])
+tabs = st.tabs(["📋 Summary", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🆕 New Bettor"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -26355,3 +26646,130 @@ with tabs[11]:
     except Exception as _sharptrack_render_err:
         st.error(f"SharpTrack hit an error: {_sharptrack_render_err}")
         st.caption("This is isolated to this tab — the rest of the app is unaffected.")
+
+
+with tabs[12]:
+    st.markdown(
+        '<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
+        'border-radius:6px;padding:12px 16px;margin-bottom:14px;">'
+        '<div style="color:#fff;font-weight:700;font-size:15px;">🆕 New Bettor Mode</div>'
+        '<div style="color:#8ab4d4;font-size:12.5px;margin-top:4px;">'
+        'A shortlist for when you don\'t have time to read the full board — only SOVEREIGN/ELITE plays, '
+        'correlation-checked. This is a display layer only: it reads existing model output and never '
+        'changes SEM, signal weights, or any stored performance data.'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    nb_sub1, nb_sub2 = st.tabs(["⭐ Daily Shortlist", "🧮 Should I Take This Parlay?"])
+
+    # ── Sub-tab 1: Daily Shortlist ──────────────────────────────────────
+    with nb_sub1:
+        st.caption(
+            "Scans every active sport's board and game lines, keeps only SOVEREIGN/ELITE plays, "
+            "and drops anything too correlated with a pick already on the list. If nothing clears "
+            "the bar today, it says so instead of padding the list with weaker plays."
+        )
+        if st.button("🔍 Build My Shortlist", key="nb_build_shortlist"):
+            with st.spinner("Scanning all boards..."):
+                st.session_state["nb_shortlist"] = build_new_bettor_shortlist()
+
+        shortlist = st.session_state.get("nb_shortlist")
+        if shortlist:
+            st.caption(
+                f"Last built {shortlist['timestamp']} · scanned: {', '.join(shortlist['scanned_sports']) or 'none'}"
+                + (f" · skipped (off-season/error): {', '.join(shortlist['skipped_sports'])}" if shortlist['skipped_sports'] else "")
+            )
+
+            st.markdown("#### Top Props")
+            if not shortlist["props"]:
+                st.info("No SOVEREIGN/ELITE props cleared the bar right now — pass on props today.")
+            else:
+                for p in shortlist["props"]:
+                    tc = TIER_COLORS.get(p["Tier"], "#6a7a8a")
+                    st.markdown(
+                        f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
+                        f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div style="color:#fff;font-weight:700;font-size:14px;">{p["Player"]} — {p["Prop"]} {p["Side"]} {p["Line"]}</div>'
+                        f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{p["Tier"]}</span>'
+                        f'</div>'
+                        f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{p["Sport"]} · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
+                        f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{p["why"]}</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+
+            st.markdown("#### Top Game Lines")
+            if not shortlist["games"]:
+                st.info("No SOVEREIGN/ELITE game lines cleared the bar right now — pass on game lines today.")
+            else:
+                for g in shortlist["games"]:
+                    tc = TIER_COLORS.get(g["Tier"], "#6a7a8a")
+                    st.markdown(
+                        f'<div style="background:#0d1b2e;border:1px solid #1a3a5c;border-left:4px solid {tc};'
+                        f'border-radius:8px;padding:10px 14px;margin-bottom:8px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div style="color:#fff;font-weight:700;font-size:14px;">{g["Matchup"]} — {g["BetType"]}: {g["Pick"]}</div>'
+                        f'<span style="background:{tc}22;color:{tc};padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;">{g["Tier"]}</span>'
+                        f'</div>'
+                        f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">{g["Sport"]} · Edge {g["EdgePct"]}</div>'
+                        f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:4px;">{g["why"]}</div>'
+                        f'</div>', unsafe_allow_html=True
+                    )
+
+            if shortlist["props"] or shortlist["games"]:
+                st.caption(
+                    "⚠️ Even correlation-checked, these are separate high-conviction plays — not a "
+                    "recommendation to parlay all of them together. Use the checker in the next tab "
+                    "before combining any of these into one slip."
+                )
+        else:
+            st.caption("Click the button above to scan today's boards.")
+
+    # ── Sub-tab 2: Parlay Verdict Checker ───────────────────────────────
+    with nb_sub2:
+        st.caption(
+            "Pick legs from your shortlist or current locks and get a plain go / caution / don't verdict, "
+            "with a reason and a specific fix if there's a problem. Advisory only — nothing here is saved "
+            "to your bet history unless you log it yourself in Log Bet."
+        )
+
+        nb_pool = []
+        shortlist = st.session_state.get("nb_shortlist")
+        if shortlist:
+            for p in shortlist["props"]:
+                nb_pool.append({**p, "leg_type": "prop", "_label": f"[Prop] {p['Player']} {p['Prop']} {p['Side']} {p['Line']} ({p['Tier']})"})
+            for g in shortlist["games"]:
+                nb_pool.append({**g, "leg_type": "game", "_label": f"[Game] {g['Matchup']} {g['BetType']}: {g['Pick']} ({g['Tier']})"})
+
+        current_locks = st.session_state.get("locks", []) or []
+        for l in current_locks:
+            nb_pool.append({
+                "leg_type": "prop", "Player": l.get("player", ""), "Prop": l.get("prop", ""),
+                "Team": l.get("team", ""), "Tier": l.get("tier", "LEAN"),
+                "_label": f"[Lock] {l.get('player','')} {l.get('prop','') or l.get('line','')} ({l.get('tier','')})",
+            })
+
+        if not nb_pool:
+            st.info("Build a shortlist above, or add locks elsewhere in the app, to have legs to check here.")
+        else:
+            labels = [l["_label"] for l in nb_pool]
+            picked_labels = st.multiselect("Select the legs you're considering combining:", labels, key="nb_parlay_legs")
+            if st.button("🧮 Check This Parlay", key="nb_check_parlay"):
+                picked_legs = [nb_pool[labels.index(lbl)] for lbl in picked_labels]
+                verdict = evaluate_parlay_verdict(picked_legs)
+                v = verdict["verdict"]
+                v_color = {"GO": "#22c55e", "CAUTION": "#ff8c00", "DON'T": "#e04040", "—": "#6a7a8a"}.get(v, "#6a7a8a")
+                st.markdown(
+                    f'<div style="background:#0d1b2e;border:1px solid {v_color};border-radius:8px;'
+                    f'padding:16px;margin-top:10px;">'
+                    f'<div style="color:{v_color};font-weight:800;font-size:20px;">{v}</div>'
+                    f'<div style="color:#e6edf3;font-size:13.5px;margin-top:8px;">{verdict["reason"]}</div>'
+                    + (f'<div style="color:#f5c518;font-size:13px;margin-top:8px;"><b>Suggested fix:</b> {verdict["suggested_fix"]}</div>' if verdict["suggested_fix"] else '')
+                    + f'<div style="color:#4a6a8a;font-size:11.5px;margin-top:10px;">Correlation score: {verdict["correlation_score"]:.2f}</div>'
+                    + f'</div>', unsafe_allow_html=True
+                )
+                if verdict["correlated_pairs"]:
+                    with st.expander("Why the correlation score is what it is"):
+                        for pair in verdict["correlated_pairs"]:
+                            st.write(f"• {pair}")
