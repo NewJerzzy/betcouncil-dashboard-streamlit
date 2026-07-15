@@ -114,23 +114,31 @@ def render_sharptrack_tab():
         else:
             with st.expander("What am I looking at?"):
                 st.markdown(
-                    "Each card is one trade a tracked sharp wallet made on a Polymarket "
-                    "market in the last 2 hours.\n\n"
-                    "- **Title** — the market question (e.g. an exact final score, a "
-                    "moneyline, a total).\n"
-                    "- **Outcome (side)** — which side of that market they bought, and "
-                    "whether it was a buy or sell.\n"
-                    "- **$ @ price** — dollars spent, and the price paid per $1 share "
-                    "(price ≈ the market's implied probability, so 0.98 means the market "
-                    "already sees it as ~98% likely).\n"
-                    "- **wallet (score)** — which sharp wallet, and its 1-100 quality score.\n"
-                    "- **sentiment** — the order book's lean at that moment.\n\n"
-                    "⚠️ **A price near 0.95+ or 0.05- is a near-certainty, not a sharp read.** "
-                    "Markets like 'exact final score' have dozens of possible outcomes, so "
-                    "betting against any one specific score is normally a safe, low-edge "
-                    "trade — closer to hedging or market-making than a directional signal. "
-                    "Those are marked below. The plays worth paying attention to are the "
-                    "ones without that flag, especially anything in Cluster Alerts."
+                    "Each card shows one bet a tracked sharp trader just placed on "
+                    "Polymarket, in the last 2 hours.\n\n"
+                    "**Walking through an example card:**\n\n"
+                    "> Exact Score: England 2 - 3 Argentina — No (BUY) — $8,390 @ 0.979\n\n"
+                    "- **\"Exact Score: England 2-3 Argentina\"** is the specific bet available — "
+                    "will the game finish with that exact score?\n"
+                    "- **\"No\"** means the wallet bet AGAINST that score happening.\n"
+                    "- **\"@ 0.979\"** is the price — think of it like American odds. A price "
+                    "this close to 1.00 is like betting on a massive favorite (something like "
+                    "-5000 at a sportsbook) — nearly a lock. A price close to 0.00 is like a "
+                    "massive underdog (+5000-ish) — a long shot.\n"
+                    "- **\"$8,390\"** is how much money they put on it.\n\n"
+                    "**Why that example isn't a useful signal:** there are dozens of possible "
+                    "exact final scores, and betting against any *one* of them is almost always "
+                    "a safe bet — like betting the Chiefs don't lose by exactly 17 points. "
+                    "It doesn't mean the wallet has real insight, it just means math. We flag "
+                    "these with ⚠️ below so they don't look like a real read.\n\n"
+                    "**What's actually worth your attention:** plays *without* the ⚠️ flag — "
+                    "those are closer to a coin-flip price, meaning the wallet is making a real "
+                    "directional call. And anything showing up in **Cluster Alerts** (multiple "
+                    "sharp wallets independently taking the same side) is the strongest signal "
+                    "this tool surfaces.\n\n"
+                    "Other fields on each card: **which wallet** made the bet and its 1-100 "
+                    "quality score, and **market sentiment** — whether more people are currently "
+                    "trying to buy or sell that outcome."
                 )
 
             sports_seen = sorted({p.get("sport", "") for p in plays if p.get("sport")})
@@ -148,8 +156,8 @@ def render_sharptrack_tab():
                     price_f = 0.5
                 near_certain = price_f >= 0.95 or price_f <= 0.05
                 hedge_note = (
-                    ' <span style="color:#e0a030;font-size:11px;">⚠️ near-certain price — '
-                    'likely hedge, not a directional read</span>' if near_certain else ''
+                    ' <span style="color:#e0a030;font-size:11px;">⚠️ safe bet, not a real signal — '
+                    'see "What am I looking at?" above</span>' if near_certain else ''
                 )
                 with st.container():
                     st.markdown(
