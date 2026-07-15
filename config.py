@@ -1815,3 +1815,26 @@ NFL_STAT_NORMALIZE_MAP = {
 
 BOOKMAKER_CF      = ""  # cf_clearance cookie
 BOOKMAKER_SESSID  = ""  # PHPSESSID cookie
+
+# === SharpTrack (Polymarket sharp-wallet tracker) — added 2026-07-14 ===
+POLYMARKET_DATA_API  = "https://data-api.polymarket.com"
+POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
+POLYMARKET_CLOB_API  = "https://clob.polymarket.com"
+
+SHARPTRACK_MIN_WALLET_SCORE   = 35     # floor score (1-100) to classify a wallet "sharp"
+SHARPTRACK_LOOKBACK_HOURS     = 2      # plays older than this are dropped from the live feed
+SHARPTRACK_CLUSTER_MIN_WALLETS = 2     # distinct sharp wallets on the same side to flag a cluster
+SHARPTRACK_GIST_WALLETS_KEY   = "sharptrack_wallets"
+SHARPTRACK_GIST_LIVE_KEY      = "sharptrack_live"
+SHARPTRACK_GIST_MYPLAYS_KEY   = "sharptrack_myplays"
+
+# Score-band -> tier label, reusing the existing SOVEREIGN/ELITE/APPROVED/LEAN/PASS
+# color system from styles.TIER_COLORS so SharpTrack visually matches the rest
+# of the board instead of inventing a parallel palette.
+SHARPTRACK_SCORE_TIERS = [
+    (90, "SOVEREIGN"),
+    (75, "ELITE"),
+    (60, "APPROVED"),
+    (40, "LEAN"),
+    (0,  "PASS"),
+]
