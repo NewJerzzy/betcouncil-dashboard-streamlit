@@ -1,0 +1,31 @@
+name: ProphetX Exchange Refresh (all sports)
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  prophetx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run ProphetX harvester
+        id: run_harvester
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set +e
+          python -u scripts/prophetx_harvester.py
+          ec=$?
+          echo "exit_code=$ec" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Fail job if harvester failed
+        if: steps.run_harvester.outputs.exit_code != '0'
+        run: exit 1

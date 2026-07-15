@@ -17044,6 +17044,22 @@ def fetch_polymarket_from_gist(sport: str) -> tuple:
         if raw: return raw, "browser_harvester"
     return {}, "unavailable"
 
+def fetch_prophetx_from_gist(sport: str) -> tuple:
+    """ProphetX exchange odds (all sports) from scripts/prophetx_harvester.py,
+    run every 15 min via .github/workflows/prophetx_refresh.yml. Public,
+    unauthenticated exchange API — consensus/peer-to-peer pricing, not a
+    book's posted line. Raw pass-through: 'events' each carry 'markets'
+    (v2 live odds) and 'commissions'. Sport bucket is one of NFL/NBA/WNBA/
+    MLB/NHL/MMA/TENNIS/GOLF/SOCCER/OTHER (see prophetx_harvester.py
+    classify_sport). Not yet normalized into BetCouncil's internal prop/
+    line schema — callers get the raw harvester payload today."""
+    data = _read_gist_file(f"betcouncil_prophetx_{sport}.json", cache_minutes=10)
+    if data and _is_fresh(data, max_age_minutes=100):
+        events = data.get("events", [])
+        if events:
+            return events, "prophetx_exchange"
+    return [], "unavailable"
+
 
 
 def fetch_mybookie_from_gist(sport: str) -> tuple:

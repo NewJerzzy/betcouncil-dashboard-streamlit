@@ -404,13 +404,13 @@ def run():
     now_iso = datetime.now(timezone.utc).isoformat()
 
     wallets_payload = {
-        "updated": now_iso,
+        "captured_at": now_iso, "updated": now_iso,
         "min_score_threshold": MIN_WALLET_SCORE_TO_TRACK,
         "wallet_count": len(sharp_wallets),
         "wallets": sharp_wallets[:300],
     }
     live_payload = {
-        "updated": now_iso,
+        "captured_at": now_iso, "updated": now_iso,
         "lookback_hours": LOOKBACK_SECONDS / 3600,
         "markets_tracked": len(markets),
         "plays": plays[:150],
