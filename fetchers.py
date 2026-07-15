@@ -4208,6 +4208,19 @@ def fetch_nba_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, s
         return []
 
 
+def _current_wnba_season_year():
+    """WNBA seasons run within a single calendar year (May-Oct, unlike NBA's
+    cross-year seasons). Off-season (Nov-Apr) falls back to the most recently
+    completed season since there's no live data for a season that hasn't
+    started. Computed dynamically instead of hardcoded so this doesn't go
+    stale every year the way the previous hardcoded 'Season=2025' did —
+    that bug caused every WNBA player lookup to miss (querying a season that
+    had already ended) and silently fall back to defaults for almost the
+    entire board."""
+    now = datetime.now()
+    return now.year if now.month >= 5 else now.year - 1
+
+
 def fetch_wnba_rolling_averages():
     cache_path = os.path.join(CACHE_DIR, "wnba_rolling_avgs.pkl")
     nba_headers = {
@@ -4220,9 +4233,10 @@ def fetch_wnba_rolling_averages():
         "Referer": "https://www.wnba.com/",
         "Origin": "https://www.wnba.com",
     }
+    _wnba_season = _current_wnba_season_year()
     urls = [
-        "https://stats.wnba.com/stats/playergamelogs?Season=2025&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
-        "https://stats.wnba.com/stats/playergamelogs?Season=2024&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
+        f"https://stats.wnba.com/stats/playergamelogs?Season={_wnba_season}&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
+        f"https://stats.wnba.com/stats/playergamelogs?Season={_wnba_season - 1}&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=10",
     ]
     rolling = {}
     for url in urls:
@@ -4279,7 +4293,7 @@ def fetch_wnba_player_season_avg(player_name):
     try:
         # stats.wnba.com player search
         url = ("https://stats.wnba.com/stats/playergamelogs"
-               "?Season=2025&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=0")
+               f"?Season={_current_wnba_season_year()}&SeasonType=Regular+Season&PlayerOrTeam=P&LastNGames=0")
         hdrs = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
             "Referer": "https://www.wnba.com/",
@@ -19122,7 +19136,7 @@ def fetch_wnba_player_game_logs(player_name, last_n=15):
                "?DateFrom=&DateTo=&GameSegment=&LastNGames=0&LeagueID=10"
                "&Location=&MeasureType=Base&Month=0&OpponentTeamID=0"
                "&Outcome=&PORound=0&PerMode=PerGame&Period=0&PlayerID=0"
-               f"&Season=2025&SeasonSegment=&SeasonType=Regular+Season"
+               f"&Season={_current_wnba_season_year()}&SeasonSegment=&SeasonType=Regular+Season"
                "&ShotClockRange=&VsConference=&VsDivision=")
         headers = {
             "User-Agent": "Mozilla/5.0",
