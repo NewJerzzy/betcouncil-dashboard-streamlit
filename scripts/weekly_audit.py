@@ -174,15 +174,19 @@ def audit_dead_signal_fields():
         total = len(re.findall(rf'"{re.escape(key)}"', app_src))
         in_write_blocks = sum(len(re.findall(rf'"{re.escape(key)}"', b)) for b in write_blocks)
         read_count = total - in_write_blocks
+        status = "WIRED" if read_count > 0 else "ORPHANED"
         line = None
-        m = re.search(rf'"{re.escape(key)}"\s*:', app_src)
-        if m:
-            line = app_src[: m.start()].count("\n") + 1
-        date = _git_blame_date("app.py", line) if line else None
-        results.append({
-            "key": key, "status": "WIRED" if read_count > 0 else "ORPHANED",
-            "added": date, "line": line,
-        })
+        date = None
+        if status == "ORPHANED":
+            # Only blame ORPHANED entries — WIRED ones never show a date in
+            # the report, and git blame on app.py (heavily-churned, 25k+
+            # lines) is the slow part of this whole audit; skipping it for
+            # the ~20% that don't need it is a free, easy win.
+            m = re.search(rf'"{re.escape(key)}"\s*:', app_src)
+            if m:
+                line = app_src[: m.start()].count("\n") + 1
+                date = _git_blame_date("app.py", line)
+        results.append({"key": key, "status": status, "added": date, "line": line})
 
     results.sort(key=lambda r: (r["status"] != "ORPHANED", r["key"]))
     return results
