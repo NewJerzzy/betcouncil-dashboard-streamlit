@@ -45,6 +45,14 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# Collects per-request status/error info so it can be pushed to the Gist
+# as a debug file even on failure — GitHub Actions log access requires
+# following a redirect to Azure blob storage that isn't reachable from
+# every environment used to maintain this script, so self-reporting into
+# the Gist (already readable everywhere else in this project) is the
+# reliable way to diagnose a failed run after the fact.
+DEBUG_LOG: list = []
+
 
 def log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -55,8 +63,10 @@ def fetch_dfs(league: str) -> dict | None:
     try:
         r = requests.get(f"{BASE_URL}/api/dfs", params={"league": league, "app": "all"},
                           headers=HEADERS, timeout=30)
+        DEBUG_LOG.append({"endpoint": f"dfs/{league}", "url": r.url, "status": r.status_code,
+                           "body_snippet": r.text[:300]})
         if r.status_code != 200:
-            log(f"  dfs/{league}: HTTP {r.status_code}")
+            log(f"  dfs/{league}: HTTP {r.status_code} — {r.text[:200]}")
             return None
         data = r.json()
         props = data.get("props", data if isinstance(data, list) else [])
@@ -64,6 +74,7 @@ def fetch_dfs(league: str) -> dict | None:
             return None
         return {"props": props, "apps": data.get("apps", ["PP", "UD"])} if isinstance(data, dict) else {"props": props}
     except Exception as e:
+        DEBUG_LOG.append({"endpoint": f"dfs/{league}", "error": str(e)[:300]})
         log(f"  dfs/{league}: error — {e}")
         return None
 
@@ -72,8 +83,10 @@ def fetch_sportsbook(league: str) -> dict | None:
     try:
         r = requests.get(f"{BASE_URL}/api/sportsbook", params={"leagues": league},
                           headers=HEADERS, timeout=30)
+        DEBUG_LOG.append({"endpoint": f"sportsbook/{league}", "url": r.url, "status": r.status_code,
+                           "body_snippet": r.text[:300]})
         if r.status_code != 200:
-            log(f"  sportsbook/{league}: HTTP {r.status_code}")
+            log(f"  sportsbook/{league}: HTTP {r.status_code} — {r.text[:200]}")
             return None
         data = r.json()
         props = data.get("props", data if isinstance(data, list) else [])
@@ -81,6 +94,7 @@ def fetch_sportsbook(league: str) -> dict | None:
             return None
         return {"props": props}
     except Exception as e:
+        DEBUG_LOG.append({"endpoint": f"sportsbook/{league}", "error": str(e)[:300]})
         log(f"  sportsbook/{league}: error — {e}")
         return None
 
@@ -152,9 +166,16 @@ def main() -> int:
         # NFL in July) is fine and expected; all of them empty means the
         # API itself is down or changed shape.
         log("FATAL: zero leagues returned data — API may be down or changed")
+        files_payload["betcouncil_favoredprops_debug.json"] = {
+            "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG}, indent=2)
+        }
+        push_files(files_payload)
         return 1
 
     log(f"Total: {total_props} props across {len(files_payload)} files")
+    files_payload["betcouncil_favoredprops_debug.json"] = {
+        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG}, indent=2)
+    }
     pushed = push_files(files_payload)
     log(f"Pushed {pushed} files to Gist")
     return 0 if pushed > 0 else 1
