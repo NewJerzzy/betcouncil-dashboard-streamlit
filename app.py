@@ -14334,26 +14334,36 @@ def load_sport_data(sport):
 
     if _mv_lookup or _mv_alerts:
         st.session_state["ev_movement_lookup"] = _mv_lookup
-        # oddsportal_data: today's opening lines — supplement ev_movement_lookup for CLV.
-        _op_data   = st.session_state.get("oddsportal_data", {})
-        _op_raw    = (_op_data if isinstance(_op_data, list)
-                      else _op_data.get("data", _op_data.get("events", [])))
-        _op_events = _op_raw if isinstance(_op_raw, list) else []
-        for _oe in _op_events:
-            if not isinstance(_oe, dict): continue
-            _ohm = _oe.get("home_team","") or _oe.get("home","")
-            _oam = _oe.get("away_team","") or _oe.get("away","")
-            _oml_h = _oe.get("opening_home_ml") or _oe.get("open_home_ml")
-            _oml_a = _oe.get("opening_away_ml") or _oe.get("open_away_ml")
-            if _ohm and _oam and (_oml_h is not None or _oml_a is not None):
-                _okey = f"{_oam} @ {_ohm}"
-                _mv_lookup.setdefault(_okey, {}).update(
-                    {"op_open_home_ml": _oml_h, "op_open_away_ml": _oml_a, "op_source": "oddsportal"})
-        if _op_events:
-            st.session_state["ev_movement_lookup"] = _mv_lookup
         st.session_state["sharp_alerts"]       = _mv_alerts
         if _mv_alerts:
             st.caption(f"📡 Movement: {len(_mv_alerts)} sharp alerts detected")
+
+    # ── Opening lines (ESPN capture, once/day — see espn_opening_lines_refresh.py) ──
+    # 2026-07 fix: this used to be nested inside the `if _mv_lookup or
+    # _mv_alerts:` block above and written into _mv_lookup (a
+    # (player_norm, prop)-keyed dict for S8/S9 signals) under an
+    # "away @ home" string key — a key format nothing ever reads, so it
+    # silently did nothing even when data was present. Opening lines are
+    # game-level, not player-prop-level, so they get their own
+    # matchup-keyed dict here, independent of whether EVSharps movement
+    # data came back, and a real consumer in the Game Lines tab.
+    _op_data = st.session_state.get("oddsportal_data", {})
+    _op_events = _op_data.get("data", []) if isinstance(_op_data, dict) else []
+    if isinstance(_op_events, list) and _op_events:
+        _opening_lines_lookup = {}
+        for _oe in _op_events:
+            if not isinstance(_oe, dict):
+                continue
+            _matchup = _oe.get("matchup", "")
+            if not _matchup:
+                continue
+            _opening_lines_lookup[_matchup] = {
+                "opening_home_ml": _oe.get("opening_home_ml"),
+                "opening_away_ml": _oe.get("opening_away_ml"),
+                "opening_spread":  _oe.get("opening_spread"),
+                "opening_total":   _oe.get("opening_total"),
+            }
+        st.session_state["opening_lines_lookup"] = _opening_lines_lookup
 
     # DFS platforms
     if ud_props_compare:
@@ -19897,6 +19907,16 @@ with tabs[3]:
                 st.markdown(f'<div style="padding:5px 14px;font-size:14px;color:var(--bc-dim);border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;background:var(--bc-bg-card);">ℹ️ {_injury}</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="border:0.5px solid #1e2d3d;border-top:none;border-radius:0 0 6px 6px;height:4px;background:#08111a;"></div>', unsafe_allow_html=True)
+
+            # Opening line vs current (ESPN capture, once/day) — real CLV context,
+            # replaces the old dead "oddsportal" write that nothing ever read.
+            _ol = st.session_state.get("opening_lines_lookup", {}).get(_matchup, {})
+            if _ol and (_ol.get("opening_home_ml") is not None or _ol.get("opening_away_ml") is not None):
+                st.caption(
+                    f"📌 Opening: {_g.get('away','Away')} {_ol.get('opening_away_ml','—')} / "
+                    f"{_g.get('home','Home')} {_ol.get('opening_home_ml','—')}"
+                    + (f" · O/U {_ol['opening_total']}" if _ol.get("opening_total") is not None else "")
+                )
 
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)

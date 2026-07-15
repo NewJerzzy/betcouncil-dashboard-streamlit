@@ -16120,7 +16120,7 @@ HARVESTER_REGISTRY = {
     "bettingpros":     ("betcouncil_bettingpros_{sport}.json",       20, "signal"),
     "stokastic":       ("betcouncil_stokastic_{sport}.json",         30, "signal"),
     "rotogrinders":    ("betcouncil_rotogrinders_{sport}.json",      30, "signal"),
-    "oddsportal":      ("betcouncil_oddsportal_{sport}.json",        60, "signal"),
+    "oddsportal":      ("betcouncil_oddsportal_{sport}.json",        300, "signal"),  # now ESPN opening-lines capture, once/day
     "outlier":         ("betcouncil_outlier_{sport}.json",           20, "signal"),
     "smarkets":        ("betcouncil_smarkets_{sport}.json",          25, "signal"),
     "pickwise":        ("betcouncil_pickwise_{sport}.json",          20, "signal"),
@@ -18096,28 +18096,24 @@ def fetch_rotogrinders_from_gist(sport):
     return {}, "unavailable"
 
 def fetch_oddsportal_from_gist(sport):
-    """OddsPortal historical odds archive.
-    Gist fallback + direct Python fetch (CORS-bypass).
     """
-    data=_read_gist_file(f"betcouncil_oddsportal_{sport}.json",5)
-    if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester"
-    try:
-        import requests as _req
-        _op_map = {"MLB":"baseball","NBA":"basketball","NFL":"american-football",
-                   "NHL":"hockey","UFC":"mma","SOCCER":"soccer"}
-        _op_s = _op_map.get(sport)
-        if not _op_s: return {}, "unavailable"
-        _r = _req.get(
-            f"https://www.oddsportal.com/api/v1/events/{_op_s}/today",
-            headers={"Accept": "application/json",
-                     "Referer": "https://www.oddsportal.com/",
-                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=14)
-        if _r.status_code == 200:
-            _d = _r.json()
-            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
-    except Exception:
-        pass
+    Today's opening lines (moneyline/spread/total), captured once per
+    day. Despite the function name (kept for gist-filename/registry
+    compatibility), the real source is ESPN's scoreboard endpoint via
+    scripts/espn_opening_lines_refresh.py — not OddsPortal.
+
+    2026-07 fix: this previously called
+    "https://www.oddsportal.com/api/v1/events/{sport}/today", an
+    endpoint that was never verified and, on inspection, doesn't appear
+    to be real — OddsPortal's odds tables load via client-side JS, not
+    present in server-rendered HTML, and the site has no documented
+    public API. Rather than keep a silently-broken guess in place, this
+    now reads the real harvester's output. Returns ({}, "unavailable")
+    if the harvester hasn't run yet today.
+    """
+    data = _read_gist_file(f"betcouncil_oddsportal_{sport}.json", 5)
+    if data and _is_fresh(data, 300):  # capture happens once/day, so allow up to 5hrs old
+        return data, "espn_opening_lines"
     return {}, "unavailable"
 
 def fetch_outlier_from_gist(sport):

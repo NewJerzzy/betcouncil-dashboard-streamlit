@@ -1,0 +1,23 @@
+name: ESPN Opening Lines Capture (replaces OddsPortal slot)
+
+on:
+  schedule:
+   - cron: "0 10,14,18 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  capture-opening-lines:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run opening-lines capture
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/espn_opening_lines_refresh.py
