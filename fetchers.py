@@ -15975,7 +15975,14 @@ def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
             with urllib.request.urlopen(raw_req, timeout=15) as rr:
                 content = rr.read().decode("utf-8")
         data = json.loads(content or "{}")
-        _safe_save_pkl(cp, data)
+        if data:
+            # Only cache genuinely successful, non-empty reads. Caching an
+            # empty {} here (from a transient GitHub API hiccup, rate limit,
+            # or truncated response) used to lock in "no data" for the full
+            # cache_minutes window even when the Gist itself had good data —
+            # the read would just retry the stale empty cache instead of
+            # GitHub. A failed read now always retries next call instead.
+            _safe_save_pkl(cp, data)
         return data
     except Exception as e:
         print(f"[WARN] _read_gist_file({filename}): {e}")
