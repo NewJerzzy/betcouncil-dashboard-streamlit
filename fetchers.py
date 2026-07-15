@@ -17044,156 +17044,159 @@ def fetch_polymarket_from_gist(sport: str) -> tuple:
         if raw: return raw, "browser_harvester"
     return {}, "unavailable"
 
-def _prophetx_selection_odds(sel: dict):
-    """ProphetX's exact odds field name isn't confirmed yet (raw capture
-    only, harvester hasn't run against a live market payload). Probe every
-    plausible key an exchange API would use, in priority order, so this
-    keeps working once the real shape is inspected instead of silently
-    returning nothing."""
-    for key in ("american_odds", "americanOdds", "odds", "price", "american_price"):
-        v = sel.get(key)
-        if v not in (None, ""):
-            return v
-    return None
+# ── ProphetX normalizer — confirmed against live API 2026-07-13 ──────────
+# Real payload shape:
+#   GET /trade/public/api/v2/events/{id}/markets
+#   → {"data": {"markets": [...]}}
+#   Each market: {id, name, status, type, subType,
+#                 selections (list-of-lists, Moneyline only),
+#                 marketLines (list, Spread/Total/Props)}
+#   selections:   [[side0_price0, side0_price1, ...], [side1_price0, ...]]
+#   marketLines:  [{id, name, selections: [[over_px0,...],[under_px0,...]]}]
+#   Each price:   {odds (int, American), line (float), name, displayOdds, value, stake}
+#   Commissions:  GET /commission/public/commissions?event_ids=…
+#   → {"commissions": [{commission, eventId, marketId, source, subType}], "length": N}
+
+import re as _re
+
+# Game-level market names — everything else is a player prop
+_PROPHETX_GAME_MARKETS = frozenset({
+    "moneyline", "spread", "total", "total points",
+    "1st half total", "1st half moneyline", "1st half spread",
+    "1st quarter total", "1st quarter moneyline",
+    "draw no bet", "asian handicap", "match winner",
+})
 
 
-def _prophetx_selection_line(sel: dict):
-    for key in ("line", "point", "handicap", "spread", "total"):
-        v = sel.get(key)
-        if v not in (None, ""):
-            return v
-    return None
+def _px_best_price(side_list):
+    """Return the best (first) price from one side's price list, or None."""
+    if not side_list or not isinstance(side_list[0], dict):
+        return None
+    return side_list[0]
 
 
-def _prophetx_market_label(mkt: dict) -> str:
-    for key in ("name", "market_name", "title", "display_name", "type", "market_type"):
-        v = mkt.get(key)
-        if isinstance(v, str) and v:
-            return v
-    return ""
+def _px_strip_odds_suffix(name):
+    """'Chicago Sky -132' → 'Chicago Sky'  |  'over 8.5' → 'over 8.5' (unchanged)"""
+    return _re.sub(r'\s+[+-]\d+\.?\d*$', '', str(name)).strip()
 
 
-_PROPHETX_PROP_STAT_KEYWORDS = (
-    # Kept as a documented reference of stat types ProphetX exposes per the
-    # live sample (WNBA: rebounds/points/assists/3PM/PRA per player) — not
-    # used for classification since "Total Points" (a game market) would
-    # false-positive on "points". Classification instead keys off the
-    # presence of a participant/player field on the market's selections.
-    "points", "rebounds", "assists", "3-point", "3 point", "threes", "three pointers",
-    "pra", "steals", "blocks", "strikeouts", "hits", "home run", "rbi", "runs",
-    "passing yards", "rushing yards", "receiving yards", "receptions", "touchdown",
-    "shots on goal", "saves", "goals",
-)
+def _px_parse_prop_name(market_name):
+    """'Kamilla Cardoso Total Rebounds' → ('Kamilla Cardoso', 'Total Rebounds')
+    Falls back to (market_name, market_name) if no split point found."""
+    for marker in ("Total ", "First ", "Last ", "Alternate "):
+        idx = market_name.find(marker)
+        if idx > 0:
+            return market_name[:idx].strip(), market_name[idx:].strip()
+    return market_name, market_name
 
 
 def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport):
-    """Split one event's raw v2 markets payload into (game_line_rows, prop_rows)
-    using BetCouncil's standard schemas. Defensive against unknown field
-    names — returns whatever it can positively identify and skips the rest
-    rather than raising."""
+    """Split one event's raw v2 markets payload into (game_line_rows, prop_rows)."""
     lines_out, props_out = [], []
     if not markets_payload:
         return lines_out, props_out
-    markets = markets_payload
+
+    # Real envelope: {"data": {"markets": [...]}}
+    markets = []
     if isinstance(markets_payload, dict):
-        for key in ("markets", "data", "results"):
-            if isinstance(markets_payload.get(key), list):
-                markets = markets_payload[key]
-                break
+        inner = markets_payload.get("data")
+        if isinstance(inner, dict):
+            markets = inner.get("markets", [])
+        elif isinstance(inner, list):
+            markets = inner
         else:
-            markets = []
+            for key in ("markets", "results"):
+                if isinstance(markets_payload.get(key), list):
+                    markets = markets_payload[key]
+                    break
     if not isinstance(markets, list):
         return lines_out, props_out
 
     for mkt in markets:
         if not isinstance(mkt, dict):
             continue
-        label = _prophetx_market_label(mkt)
-        label_lc = label.lower()
-        selections = None
-        for key in ("selections", "outcomes", "lines", "runners"):
-            if isinstance(mkt.get(key), list):
-                selections = mkt[key]
-                break
-        if not selections:
+        if mkt.get("status") != "active":
             continue
 
-        is_prop = "player" in label_lc or any(
-            isinstance(sel, dict) and any(
-                isinstance(sel.get(k), str) and sel.get(k)
-                for k in ("participant", "player", "player_name")
-            )
-            for sel in selections
-        )
+        label = mkt.get("name", "")
+        label_lc = label.lower()
+        is_game = label_lc in _PROPHETX_GAME_MARKETS
 
-        if is_prop:
-            by_player: dict = {}
-            for sel in selections:
-                if not isinstance(sel, dict):
+        # ── Moneyline: uses top-level `selections` (list of 2 inner lists) ──
+        if is_game and label_lc == "moneyline":
+            sels = mkt.get("selections", [])
+            if len(sels) >= 2:
+                p0 = _px_best_price(sels[0])
+                p1 = _px_best_price(sels[1])
+                if p0 and p1:
+                    lines_out.append({
+                        "game": game_label, "home": home, "away": away,
+                        "market": "Moneyline",
+                        "selection": _px_strip_odds_suffix(p0.get("name", "")),
+                        "odds": p0.get("odds"), "line": 0,
+                        "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
+                    })
+                    lines_out.append({
+                        "game": game_label, "home": home, "away": away,
+                        "market": "Moneyline",
+                        "selection": _px_strip_odds_suffix(p1.get("name", "")),
+                        "odds": p1.get("odds"), "line": 0,
+                        "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
+                    })
+
+        # ── Spread / Total Points: uses `marketLines[n]["selections"]` ──
+        elif is_game and label_lc in ("spread", "total", "total points"):
+            for ml in mkt.get("marketLines", [])[:1]:  # primary line only
+                ml_sels = ml.get("selections", [])
+                if len(ml_sels) < 2:
                     continue
-                pname = None
-                for key in ("participant", "player", "player_name", "name"):
-                    v = sel.get(key)
-                    if isinstance(v, str) and v:
-                        pname = v
-                        break
-                if not pname:
+                p0 = _px_best_price(ml_sels[0])
+                p1 = _px_best_price(ml_sels[1])
+                if not (p0 and p1):
                     continue
-                side = ""
-                for key in ("side", "selection_type", "outcome"):
-                    v = sel.get(key)
-                    if isinstance(v, str):
-                        side = v.lower()
-                        break
-                line_val = _prophetx_selection_line(sel)
-                odds_val = _prophetx_selection_odds(sel)
-                rec = by_player.setdefault(pname, {})
-                if line_val is not None:
-                    rec["line"] = line_val
-                if "under" in side:
-                    rec["under_odds"] = odds_val
-                elif "over" in side:
-                    rec["over_odds"] = odds_val
-                elif odds_val is not None and "over_odds" not in rec:
-                    rec["over_odds"] = odds_val
-            for pname, pdata in by_player.items():
-                if pdata.get("line") is None:
+                mkt_label = "Spread" if label_lc == "spread" else "Total"
+                lines_out.append({
+                    "game": game_label, "home": home, "away": away,
+                    "market": mkt_label,
+                    "selection": _px_strip_odds_suffix(p0.get("name", "")),
+                    "odds": p0.get("odds"), "line": p0.get("line"),
+                    "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
+                })
+                lines_out.append({
+                    "game": game_label, "home": home, "away": away,
+                    "market": mkt_label,
+                    "selection": _px_strip_odds_suffix(p1.get("name", "")),
+                    "odds": p1.get("odds"), "line": p1.get("line"),
+                    "book": "ProphetX", "sport": sport, "source": "prophetx_exchange",
+                })
+
+        # ── Player props: not a game market, uses `marketLines` ──
+        elif not is_game:
+            player_name, stat_label = _px_parse_prop_name(label)
+            if not player_name:
+                continue
+            for ml in mkt.get("marketLines", [])[:1]:
+                ml_sels = ml.get("selections", [])
+                if len(ml_sels) < 2:
+                    continue
+                p_over  = _px_best_price(ml_sels[0])
+                p_under = _px_best_price(ml_sels[1])
+                if not p_over:
+                    continue
+                line_val = p_over.get("line")
+                if line_val is None:
                     continue
                 props_out.append({
-                    "Player":    pname,
-                    "Prop":      label,
-                    "Line":      pdata["line"],
-                    "OverOdds":  pdata.get("over_odds", "N/A"),
-                    "UnderOdds": pdata.get("under_odds", "N/A"),
+                    "Player":    player_name,
+                    "Prop":      stat_label,
+                    "Line":      line_val,
+                    "OverOdds":  p_over.get("odds", "N/A"),
+                    "UnderOdds": p_under.get("odds", "N/A") if p_under else "N/A",
                     "Book":      "ProphetX",
                     "Sport":     sport,
                     "source":    "prophetx_exchange",
                 })
-        else:
-            for sel in selections:
-                if not isinstance(sel, dict):
-                    continue
-                sel_name = ""
-                for key in ("name", "selection_name", "team", "runner_name"):
-                    v = sel.get(key)
-                    if isinstance(v, str) and v:
-                        sel_name = v
-                        break
-                odds_val = _prophetx_selection_odds(sel)
-                if odds_val is None:
-                    continue
-                lines_out.append({
-                    "game":      game_label,
-                    "home":      home,
-                    "away":      away,
-                    "market":    label,
-                    "selection": sel_name,
-                    "odds":      odds_val,
-                    "line":      _prophetx_selection_line(sel),
-                    "book":      "ProphetX",
-                    "sport":     sport,
-                    "source":    "prophetx_exchange",
-                })
+
     return lines_out, props_out
 
 
@@ -17202,13 +17205,13 @@ def _parse_prophetx_events(events: list, sport: str):
     for ev in (events or []):
         if not isinstance(ev, dict):
             continue
-        home = ev.get("home_team") or ev.get("home") or ""
-        away = ev.get("away_team") or ev.get("away") or ""
-        if isinstance(home, dict):
-            home = home.get("name", "")
-        if isinstance(away, dict):
-            away = away.get("name", "")
-        name = ev.get("name") or ev.get("title") or (f"{away} @ {home}" if (home or away) else "")
+        # ProphetX event name: "Away Team at Home Team" — no separate home/away fields
+        name = ev.get("name") or ev.get("displayName") or ev.get("title") or ""
+        parts = name.split(" at ", 1)
+        if len(parts) == 2:
+            away, home = parts[0].strip(), parts[1].strip()
+        else:
+            home, away = name, ""
         lines, props = _parse_prophetx_event_markets(ev.get("markets"), name, home, away, sport)
         all_lines.extend(lines)
         all_props.extend(props)
