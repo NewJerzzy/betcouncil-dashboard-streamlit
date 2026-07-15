@@ -12,16 +12,29 @@ What it checks, every run:
      with the git-blame add-date so a 2-week-old function built for an
      upcoming feature doesn't get flagged the same way as something that's
      been sitting dead for 6 months.
-  2. Harvester freshness: pulls check_harvester_health() results for all
+  2. Dead signal-field audit (added 2026-07, after finding ps_ev_edge —
+     a ParlaySavant confirmation signal that was computed into
+     ev_signal_lookup via _sv.update({...}) but never read back
+     anywhere, so it silently did nothing). Scans every _sv.update({...})
+     block in app.py's board-build section, extracts each written key,
+     and checks whether that key is ever read (.get(...)/[...]) outside
+     its own write block. This is the same "written but never consumed"
+     bug class as #1, just for dict fields instead of whole functions.
+  3. Harvester freshness: pulls check_harvester_health() results for all
      HARVESTER_REGISTRY sources (reads Gist only — no live scraping, safe
-     to run from a GitHub-hosted runner).
-  3. File-size watch: app.py / fetchers.py / bc_utils.py byte size and
+     to run from a GitHub-hosted runner). Separates sources that are
+     currently 🔴 STALE (were producing data, now not — actionable) from
+     ⚫ NEVER SEEN (registered but no harvester has ever pushed for it —
+     could be off-season, could be a registry entry with no real
+     implementation behind it; needs human judgment either way, but
+     shouldn't drown out the more urgent stale ones).
+  4. File-size watch: app.py / fetchers.py / bc_utils.py byte size and
      line count, flagged if app.py is approaching the 1MB Git Contents
      API cutoff (already over it — this just tracks the trend).
-  4. Week-over-week diff: compares against last week's audit (stored in
-     the Gist) and calls out anything NEW — a function that flipped from
-     WIRED to ORPHANED, a harvester that went from fresh to dead, a file
-     that crossed a size threshold.
+  5. Week-over-week diff: compares against last week's audit (stored in
+     the Gist) and calls out anything NEW — a function or signal field
+     that flipped from WIRED to ORPHANED, a harvester that went from
+     fresh to dead, a file that crossed a size threshold.
 
 Output: pushes betcouncil_weekly_audit.json to the Gist (so the app or
 any future dashboard tab can read history), and opens/updates a GitHub
@@ -29,14 +42,15 @@ Issue with a human-readable summary — so the result is visible without
 anyone needing to go looking for it.
 
 This script only reads and reports. It never deletes, edits, or disables
-anything — deciding what to do with an ORPHANED function (wire it in,
-hold it for a pending feature, or remove it) is a judgment call that
+anything — deciding what to do with an ORPHANED function/field (wire it
+in, hold it for a pending feature, or remove it) is a judgment call that
 stays with a human.
 """
 
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -137,6 +151,43 @@ def audit_dead_code():
     return results
 
 
+# ── 1b. Dead signal-field audit ─────────────────────────────────────────
+# Catches a different bug class than #1: not a whole orphaned function,
+# but a dict key written into ev_signal_lookup (via `_sv.update({...})`
+# in app.py's board-build section) and never read back anywhere. Found
+# this by hand in ps_ev_edge (2026-07) — it was computed every board
+# load and silently did nothing. This makes sure the next one doesn't
+# sit undetected for months.
+
+def audit_dead_signal_fields():
+    app_src = _read("app.py")
+    write_pattern = re.compile(r"_sv\.update\(\{(.*?)\}\)", re.DOTALL)
+    key_pattern = re.compile(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:')
+
+    write_blocks = write_pattern.findall(app_src)
+    written_keys = set()
+    for block in write_blocks:
+        written_keys.update(key_pattern.findall(block))
+
+    results = []
+    for key in sorted(written_keys):
+        total = len(re.findall(rf'"{re.escape(key)}"', app_src))
+        in_write_blocks = sum(len(re.findall(rf'"{re.escape(key)}"', b)) for b in write_blocks)
+        read_count = total - in_write_blocks
+        line = None
+        m = re.search(rf'"{re.escape(key)}"\s*:', app_src)
+        if m:
+            line = app_src[: m.start()].count("\n") + 1
+        date = _git_blame_date("app.py", line) if line else None
+        results.append({
+            "key": key, "status": "WIRED" if read_count > 0 else "ORPHANED",
+            "added": date, "line": line,
+        })
+
+    results.sort(key=lambda r: (r["status"] != "ORPHANED", r["key"]))
+    return results
+
+
 # ── 2. Harvester freshness (Gist read only, no live scraping) ──────────
 
 def audit_harvester_health():
@@ -224,6 +275,15 @@ def diff_reports(prev, current):
     for n in sorted(newly_wired):
         changes.append(f"✅ Now wired in (was orphaned last week): {n}")
 
+    prev_dead_sig = {r["key"] for r in prev.get("dead_signal_fields", []) if r["status"] == "ORPHANED"}
+    cur_dead_sig = {r["key"] for r in current.get("dead_signal_fields", []) if r["status"] == "ORPHANED"}
+    newly_orphaned_sig = cur_dead_sig - prev_dead_sig
+    newly_wired_sig = prev_dead_sig - cur_dead_sig
+    for n in sorted(newly_orphaned_sig):
+        changes.append(f"🔴 NEW orphaned signal field this week: {n}")
+    for n in sorted(newly_wired_sig):
+        changes.append(f"✅ Signal field now wired in (was orphaned last week): {n}")
+
     prev_sizes = {r["file"]: r["status"] for r in prev.get("file_sizes", [])}
     for r in current["file_sizes"]:
         old = prev_sizes.get(r["file"])
@@ -239,8 +299,13 @@ def build_summary_markdown(current, diff):
     dead = [r for r in current["dead_code"] if r["status"] == "ORPHANED"]
     wired_count = len(current["dead_code"]) - len(dead)
 
+    dead_sig = [r for r in current.get("dead_signal_fields", []) if r["status"] == "ORPHANED"]
+    wired_sig_count = len(current.get("dead_signal_fields", [])) - len(dead_sig)
+
     lines = [f"## BetCouncil Weekly Self-Audit — {current['run_date']}", ""]
     lines.append(f"**Fetch functions:** {wired_count} wired in / {len(dead)} orphaned (defined, never referenced)")
+    lines.append(f"**Signal fields:** {wired_sig_count} wired in / {len(dead_sig)} orphaned "
+                  f"(written into ev_signal_lookup, never read back — see ps_ev_edge, fixed 2026-07)")
     lines.append("")
     lines.append("### Changes since last audit")
     for c in diff:
@@ -261,6 +326,21 @@ def build_summary_markdown(current, diff):
             lines.append(f"| ...and {len(dead_sorted)-40} more | | |")
         lines.append("")
 
+    if dead_sig:
+        lines.append("### Currently orphaned signal fields (age-sorted, newest first)")
+        lines.append("*A field computed into ev_signal_lookup but never read back anywhere — "
+                      "silently inert, same bug class as ps_ev_edge. Either wire it into "
+                      "compute_multi_signal_edge or remove the dead write.*")
+        lines.append("")
+        lines.append("| Field | Added | Line |")
+        lines.append("|---|---|---|")
+        dead_sig_sorted = sorted(dead_sig, key=lambda r: r.get("added") or "", reverse=True)
+        for r in dead_sig_sorted[:40]:
+            lines.append(f"| `{r['key']}` | {r.get('added') or 'unknown'} | {r.get('line') or '?'} |")
+        if len(dead_sig_sorted) > 40:
+            lines.append(f"| ...and {len(dead_sig_sorted)-40} more | | |")
+        lines.append("")
+
     lines.append("### File sizes")
     lines.append("| File | Bytes | Lines | Status |")
     lines.append("|---|---|---|---|")
@@ -270,6 +350,32 @@ def build_summary_markdown(current, diff):
 
     hh = current["harvester_health"]
     lines.append("### Harvester freshness (by sport)")
+    lines.append("*🔴 STALE = was producing data, now hasn't in longer than expected — actionable, "
+                  "check the workflow/harvester script. ⚫ NEVER SEEN = registered but no data has "
+                  "ever landed — could be off-season, could be a registry entry with nothing wired "
+                  "behind it; lower urgency but still worth a look if it's a core props/sharp source.*")
+    lines.append("")
+    # Surface actually-actionable regressions by name, not just a count —
+    # a wall of "N never-seen" per sport buries the sources that were
+    # WORKING and have since broken, which matter far more.
+    stale_by_tier = {}
+    for sport, results in hh.items():
+        if isinstance(results, dict) and "error" in results:
+            continue
+        for r in results:
+            if r.get("status") == "🔴":
+                stale_by_tier.setdefault(r.get("tier", "signal"), []).append(
+                    f"{r['name']} ({sport}, {r.get('age_minutes', '?')}min old, expected {r.get('expected_minutes','?')}min)"
+                )
+    tier_priority = ["props", "sharp", "lines", "signal"]
+    any_stale = any(stale_by_tier.get(t) for t in tier_priority)
+    if any_stale:
+        lines.append("**🔴 Actionable — currently stale (was working, now isn't):**")
+        for tier in tier_priority:
+            for item in sorted(set(stale_by_tier.get(tier, []))):
+                lines.append(f"- [{tier}] {item}")
+        lines.append("")
+
     for sport, results in hh.items():
         if isinstance(results, dict) and "error" in results:
             lines.append(f"- **{sport}**: check failed — {results['error']}")
@@ -278,7 +384,7 @@ def build_summary_markdown(current, diff):
         red = sum(1 for r in results if r.get("status") == "🔴")
         yellow = sum(1 for r in results if r.get("status") == "🟡")
         grey = sum(1 for r in results if r.get("status") == "⚫")
-        lines.append(f"- **{sport}**: {green} fresh, {yellow} stale, {red} dead, {grey} never-seen")
+        lines.append(f"- **{sport}**: {green} fresh, {yellow} stale, {red} broken, {grey} never-seen")
 
     return "\n".join(lines)
 
@@ -305,6 +411,10 @@ def main():
     dead_code = audit_dead_code()
     log(f"  {sum(1 for r in dead_code if r['status']=='ORPHANED')} orphaned / {len(dead_code)} total fetch functions")
 
+    log("Running dead signal-field audit...")
+    dead_signal_fields = audit_dead_signal_fields()
+    log(f"  {sum(1 for r in dead_signal_fields if r['status']=='ORPHANED')} orphaned / {len(dead_signal_fields)} total signal fields")
+
     log("Checking harvester health...")
     harvester_health = audit_harvester_health()
 
@@ -315,6 +425,7 @@ def main():
         "run_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "run_ts": datetime.now(timezone.utc).isoformat(),
         "dead_code": dead_code,
+        "dead_signal_fields": dead_signal_fields,
         "harvester_health": harvester_health,
         "file_sizes": file_sizes,
     }
