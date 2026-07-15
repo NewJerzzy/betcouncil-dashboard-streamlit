@@ -1,0 +1,23 @@
+name: FavoredProps Refresh (DFS + Sportsbook)
+
+on:
+  schedule:
+   - cron: "10,25,40,55 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh-favoredprops:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run FavoredProps scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/favoredprops_refresh.py
