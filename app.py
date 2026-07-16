@@ -24263,6 +24263,25 @@ with tabs[7]:
                 if _de_stat_rows:
                     st.markdown(_bc_df_html(pd.DataFrame(_de_stat_rows)), unsafe_allow_html=True)
 
+            # ── RotoGrinders: lineup confirmation + DFS projected points ──
+            # Public JSON, no login. Real prop-picks tools are fully
+            # paywalled (checked, no free preview) -- this is just lineup
+            # status + pfpts, same display-only standard as everything
+            # else here.
+            try:
+                _rg_row = get_rotogrinders_player(pl_name_d, _pl_sport_used)
+            except Exception:
+                _rg_row = {}
+            if _rg_row:
+                st.markdown("#### 📋 RotoGrinders — Lineup & DFS Projection")
+                st.caption("Display only — not a model input. Source: rotogrinders.com public lineups API.")
+                _rg_cols = st.columns(4)
+                _rg_status = "Confirmed" if _rg_row.get("status") == "C" else "Unconfirmed"
+                _rg_cols[0].metric("Lineup Status", _rg_status)
+                _rg_cols[1].metric("Batting Order", _rg_row.get("batting_order", "—"))
+                _rg_cols[2].metric("DFS Salary", _rg_row.get("salary", "—"))
+                _rg_cols[3].metric("Proj DFS Pts", _rg_row.get("pfpts", "—"))
+
 
 with tabs[8]:
     st.markdown("## \U0001f4dd Log A Bet")
