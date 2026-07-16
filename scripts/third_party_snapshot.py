@@ -13,17 +13,20 @@ yesterday's snapshot the next day using the exact same ground-truth
 resolvers (resolve_actual_stat_for_grading / resolve_actual_game_result_
 for_grading) that already grade BetCouncil's own board every day.
 
-Scope, stated plainly rather than overclaimed: only sources with their
-own persisted Gist harvester (FavoredProps, DraftEdge, Dimers) are
-snapshotted here. BettingPros/Covers/DK-Most-Bet are fetched live inside
-the running Streamlit app (no standalone Gist file a GitHub Actions job
-can read on its own), and LineStar/Situational-Splits/NBA-Trailing-Splits
-aren't "picks" at all — they're context stats with no win/loss to grade
-against. Backtesting those would need either a dedicated harvester built
-first (for the live-fetch sources) or a completely different validation
-approach (a feature-correlation study, not a hit-rate grade, for the
-context-stat sources). Not attempted here — scoped honestly to what's
-actually gradable with what already exists.
+Scope, stated plainly rather than overclaimed: FavoredProps/DraftEdge/
+Dimers read their own persisted Gist harvester output directly.
+BettingPros/Covers/DK-Most-Bet don't have a persisted Gist file, but all
+three already have standalone, session-independent fetch functions in
+fetchers.py (no Streamlit dependency) — this script calls those
+directly. DK Most Bet needed one extra step: its raw data embeds the
+player name inside a "Market" text field with no clean separator from
+the stat type, so it's matched against the player names already
+collected from FavoredProps/DraftEdge in the same run, and skipped if no
+match is found (no guessing). LineStar/Situational-Splits/NBA-Trailing-
+Splits aren't "picks" at all — they're context stats with no win/loss to
+grade against. Backtesting those needs a completely different validation
+approach (a feature-correlation study, not a hit-rate grade) — not
+attempted here.
 
 This script only reads existing source Gist files and writes a snapshot
 history file. It never touches compute_multi_signal_edge, SEM, or any
@@ -149,6 +152,129 @@ def snapshot_dimers(today: str) -> list:
     return records
 
 
+def snapshot_covers(today: str) -> list:
+    """
+    fetch_covers_consensus(sport) -> {matchup_str: {away_pct, home_pct}}.
+    Public betting %, not a model pick — treat the more-bet side as the
+    "pick" for grading purposes (same convention used elsewhere for
+    public-consensus sources), so it can still be graded against actual
+    results even though it isn't really a prediction claim on Covers'
+    part.
+    """
+    sys.path.insert(0, ".")
+    from fetchers import fetch_covers_consensus
+
+    records = []
+    for sport in SPORTS:
+        try:
+            consensus = fetch_covers_consensus(sport)
+        except Exception as e:
+            log(f"  covers/{sport}: error — {e}")
+            continue
+        if not isinstance(consensus, dict):
+            continue
+        for matchup, pct in consensus.items():
+            if not isinstance(pct, dict):
+                continue
+            home_pct, away_pct = pct.get("home_pct"), pct.get("away_pct")
+            if not (isinstance(home_pct, (int, float)) and isinstance(away_pct, (int, float))):
+                continue
+            parts = matchup.replace(" @ ", " ").split(" ")
+            teams = [t for t in parts if len(t) > 2]
+            if len(teams) < 2:
+                continue
+            side = "HOME" if home_pct > away_pct else "AWAY"
+            records.append({
+                "source": "covers", "sport": sport, "matchup": matchup,
+                "home": teams[-1], "away": teams[0], "market": "MONEYLINE", "pick": side,
+                "line": 0, "implied_prob": max(home_pct, away_pct) / 100 if max(home_pct, away_pct) > 1 else max(home_pct, away_pct),
+            })
+    return records
+
+
+def snapshot_bettingpros(today: str) -> list:
+    """
+    fetch_bettingpros_from_gist(sport) -> (data, source_tag). Exact field
+    names for the "python_direct" path weren't verified live before this
+    first deploy — parsed defensively; if the real shape differs this
+    will just under-produce records rather than crash, and the next run's
+    debug won't silently look identical since gradable count will show it.
+    """
+    sys.path.insert(0, ".")
+    from fetchers import fetch_bettingpros_from_gist
+
+    records = []
+    for sport in SPORTS:
+        try:
+            data, _tag = fetch_bettingpros_from_gist(sport)
+        except Exception as e:
+            log(f"  bettingpros/{sport}: error — {e}")
+            continue
+        picks = data if isinstance(data, list) else data.get("picks", data.get("data", [])) if isinstance(data, dict) else []
+        if not isinstance(picks, list):
+            continue
+        for p in picks:
+            if not isinstance(p, dict):
+                continue
+            matchup = p.get("matchup") or p.get("event") or ""
+            home = p.get("home_team") or p.get("home") or ""
+            away = p.get("away_team") or p.get("away") or ""
+            market = str(p.get("market_type") or p.get("market") or "").upper()
+            pick = p.get("pick") or p.get("selection") or ""
+            line = p.get("line", 0)
+            if not (matchup and home and away and market and pick):
+                continue
+            records.append({
+                "source": "bettingpros", "sport": sport, "matchup": matchup,
+                "home": home, "away": away, "market": market, "pick": pick,
+                "line": line, "implied_prob": p.get("consensus_pct") or p.get("win_pct"),
+            })
+    return records
+
+
+def snapshot_dk_most_bet(today: str, known_players: set) -> list:
+    """
+    fetch_dk_most_bet_props returns {Event, EventDate, Market, Pick, Odds}
+    where the player name is embedded inside "Market" text (e.g. "Kerry
+    Carpenter Home Runs") with no clean separator from the stat type.
+    Rather than guess-parse that, match against `known_players` — the
+    player names already collected from FavoredProps/DraftEdge in this
+    same run — and split on the matched name to recover the stat type.
+    Anything that doesn't match a known player this same day is skipped
+    rather than guessed at.
+    """
+    sys.path.insert(0, ".")
+    from fetchers import fetch_dk_most_bet_props
+
+    records = []
+    for sport in SPORTS:
+        try:
+            rows = fetch_dk_most_bet_props(sport, max_rows=60)
+        except Exception as e:
+            log(f"  dk_most_bet/{sport}: error — {e}")
+            continue
+        for row in rows:
+            market = row.get("Market", "")
+            market_l = market.lower()
+            matched_player = next((p for p in known_players if p.lower() in market_l), None)
+            if not matched_player:
+                continue
+            prop_type = market_l.replace(matched_player.lower(), "").strip(" -:")
+            pick_text = str(row.get("Pick", "")).upper()
+            side = "OVER" if pick_text.startswith("O") else ("UNDER" if pick_text.startswith("U") else None)
+            if not (prop_type and side):
+                continue
+            try:
+                line = float("".join(c for c in pick_text if c.isdigit() or c == "."))
+            except ValueError:
+                continue
+            records.append({
+                "source": "dk_most_bet", "sport": sport, "player": matched_player,
+                "prop_type": prop_type, "line": line, "side": side, "implied_prob": None,
+            })
+    return records
+
+
 def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -156,10 +282,20 @@ def main() -> int:
         return 1
 
     today = date.today().isoformat()
-    props_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
-    game_records = snapshot_dimers(today)
+    fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
+    known_players = {r["player"] for r in fp_de_records if r.get("player")}
 
-    log(f"FavoredProps+DraftEdge props: {len(props_records)} | Dimers games: {len(game_records)}")
+    props_records = fp_de_records + snapshot_dk_most_bet(today, known_players)
+    game_records = snapshot_dimers(today) + snapshot_covers(today) + snapshot_bettingpros(today)
+
+    by_source_props = {}
+    for r in props_records:
+        by_source_props[r["source"]] = by_source_props.get(r["source"], 0) + 1
+    by_source_games = {}
+    for r in game_records:
+        by_source_games[r["source"]] = by_source_games.get(r["source"], 0) + 1
+    log(f"Props by source: {by_source_props}")
+    log(f"Games by source: {by_source_games}")
 
     history = gist_read(SNAPSHOT_FILE) or {}
     history[today] = {"props": props_records, "games": game_records}
