@@ -161,6 +161,19 @@ def fetch_sport_props(sport: str) -> list:
     if sport == "MLB":
         DEBUG_LOG.append({"sport": sport, "array_len": len(array),
                            "player_names_found": len(player_names), "stat_names_found": len(stat_names)})
+        if not player_names or not stat_names:
+            # Capture real samples to fix field names precisely instead of
+            # guessing again — first few dicts containing "dkId" (should be
+            # player-profile-like), and first few small dicts with an
+            # integer id-ish field (candidate stat-type lookups).
+            dkid_samples = [item for item in array if isinstance(item, dict) and "dkId" in item][:3]
+            small_int_id_samples = [
+                item for item in array
+                if isinstance(item, dict) and 1 <= len(item) <= 4
+                and any(isinstance(v, int) for v in item.values())
+            ][:5]
+            DEBUG_LOG.append({"sport": sport, "dkid_samples": dkid_samples,
+                               "small_int_id_samples": small_int_id_samples})
 
     normalized = []
     for item in array:
