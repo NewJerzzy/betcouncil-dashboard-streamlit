@@ -73,6 +73,30 @@ def _extract_next_data(html: str) -> dict:
         return {}
 
 
+def _find_any_json_scripts(html: str) -> list:
+    """
+    Fallback survey when __NEXT_DATA__ isn't present: find every
+    <script> tag that looks like it might hold embedded JSON (has an
+    id/type suggesting data, or a large inline blob), so the debug
+    output shows what's actually on the page instead of guessing blind
+    a second time.
+    """
+    candidates = []
+    for m in re.finditer(r'<script([^>]*)>(.*?)</script>', html, re.DOTALL):
+        attrs, body = m.group(1), m.group(2).strip()
+        if len(body) < 200:
+            continue
+        looks_jsonish = body.startswith("{") or body.startswith("[")
+        has_data_hint = any(h in attrs.lower() for h in ["json", "data", "state", "__"])
+        if looks_jsonish or has_data_hint:
+            candidates.append({
+                "attrs": attrs.strip()[:200],
+                "body_len": len(body),
+                "body_snippet": body[:400],
+            })
+    return candidates[:8]
+
+
 def _find_props_list(obj, depth=0, max_depth=12):
     """
     Walk the Next.js data tree looking for a list of dicts that look
@@ -111,7 +135,11 @@ def fetch_sport_props(sport: str) -> list:
 
     next_data = _extract_next_data(r.text)
     if not next_data:
-        DEBUG_LOG.append({"sport": sport, "note": "no __NEXT_DATA__ script tag found"})
+        entry = {"sport": sport, "note": "no __NEXT_DATA__ script tag found"}
+        if sport == "MLB":
+            entry["json_script_survey"] = _find_any_json_scripts(r.text)
+            entry["html_head_snippet"] = r.text[:1500]
+        DEBUG_LOG.append(entry)
         return []
 
     props_list = _find_props_list(next_data)
