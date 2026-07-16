@@ -16995,6 +16995,58 @@ def get_vegasinsider_match(matchup: str, sport: str = "MLB") -> dict:
     return result
 
 
+def fetch_rotogrinders_lineups_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    RotoGrinders' lineup confirmation + DFS projected points (pfpts) —
+    public JSON, no auth (confirmed live 2026-07-16 via
+    rotogrinders_refresh.py). Real prop-picks tools are fully paywalled
+    (checked — no free preview at all), but the lineups.json endpoint is
+    genuinely open.
+
+    Named "_lineups_" rather than the more obvious
+    fetch_rotogrinders_from_gist — that name is already used by an older
+    dead stub (board-load dispatch table entry from the June 29 bulk
+    add, expects a per-sport gist file that was never populated), same
+    collision issue found and worked around for VegasInsider.
+
+    This is lineup-confirmation + DFS-projection context, not a pick —
+    same category as LineStar/Situational Splits, belongs in Player
+    Lookup, not the New Bettor comparison panel.
+
+    Returns [] if no fresh data — treat as "no data," not "confirmed
+    absent."
+    """
+    data = _read_gist_file(f"betcouncil_rotogrinders_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("records", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_rotogrinders_player(player_name: str, sport: str) -> dict:
+    """
+    Single-player lookup against RotoGrinders' lineup data. Matches on
+    exact name first, falls back to last-name substring (same fuzzy
+    pattern used by get_player_situational_splits/get_draftedge_player).
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        records = fetch_rotogrinders_lineups_from_gist(sport)
+    except Exception:
+        records = []
+    name_l = player_name.lower().strip()
+    for row in records:
+        if str(row.get("player", "")).lower().strip() == name_l:
+            return row
+    last_name = name_l.split()[-1] if name_l.split() else name_l
+    for row in records:
+        if last_name in str(row.get("player", "")).lower():
+            return row
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
