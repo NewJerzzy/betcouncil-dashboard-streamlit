@@ -8780,7 +8780,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8892,6 +8892,15 @@ def build_market_comparison(shortlist):
             if mb_match:
                 result["mybookie"].append({"matchup": matchup, "sport": sport, **mb_match})
                 break
+
+    # ── VegasInsider (public trends + consensus, MLB only right now) ───
+    for matchup in shortlist_matchups:
+        try:
+            vi_match = get_vegasinsider_match(matchup, "MLB")
+        except Exception:
+            vi_match = {}
+        if vi_match:
+            result["vegasinsider"].append({"matchup": matchup, "sport": "MLB", **vi_match})
 
     return result
 
@@ -20058,6 +20067,18 @@ with tabs[3]:
                     _mb_text += f" · O/U {_mb_match['total_points']} ({_mb_match.get('total_odds','')})"
                 st.caption(_mb_text)
 
+            # VegasInsider (public trends + consensus, MLB only) — display only.
+            try:
+                _vi_match = get_vegasinsider_match(_matchup, _gsport)
+            except Exception:
+                _vi_match = {}
+            if _vi_match:
+                if _vi_match.get("trends"):
+                    _vi_parts = [f'{t.get("team","")} {t.get("ml_pct","")} ML' for t in _vi_match["trends"][:2]]
+                    st.caption(f"🌐 VegasInsider public %: {' vs '.join(_vi_parts)}")
+                if _vi_match.get("open_ml") and _vi_match.get("consensus_ml"):
+                    st.caption(f"🌐 VegasInsider line move: opened {_vi_match['open_ml']} → now {_vi_match['consensus_ml']}")
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
@@ -27088,6 +27109,7 @@ with tabs[1]:
         "dimers":  {"label": "Dimers",      "color": "#ec4899"},
         "de":      {"label": "DraftEdge",   "color": "#22c55e"},
         "mb":      {"label": "MyBookie",    "color": "#f59e0b"},
+        "vi":      {"label": "VegasInsider","color": "#06b6d4"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -27135,6 +27157,7 @@ with tabs[1]:
         _cov_by_matchup = {row.get("matchup", ""): row for row in cmp.get("covers", [])}
         _dimers_by_matchup = {row.get("matchup", ""): row for row in cmp.get("dimers", [])}
         _mybookie_by_matchup = {row.get("matchup", ""): row for row in cmp.get("mybookie", [])}
+        _vegasinsider_by_matchup = {row.get("matchup", ""): row for row in cmp.get("vegasinsider", [])}
 
         st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
@@ -27199,6 +27222,10 @@ with tabs[1]:
                 _mb_row = _mybookie_by_matchup.get(g["Matchup"])
                 if _mb_row and _mb_row.get("ml_odds"):
                     chips += _chip("mb", f'{_mb_row.get("ml_team","")[:12]} {_mb_row.get("ml_odds","")}')
+                _vi_row = _vegasinsider_by_matchup.get(g["Matchup"])
+                if _vi_row and _vi_row.get("trends"):
+                    _vi_top = max(_vi_row["trends"], key=lambda t: int(str(t.get("ml_pct","0%")).rstrip("%") or 0))
+                    chips += _chip("vi", f'{_vi_top.get("team","")} {_vi_top.get("ml_pct","")} public')
                 with game_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'
