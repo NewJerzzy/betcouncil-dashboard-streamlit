@@ -293,6 +293,13 @@ def main() -> int:
     today = date.today().isoformat()
     debug_info = {"today": today, "run_id": os.environ.get("GITHUB_RUN_ID", "local"), "steps": [], "error": None}
 
+    # Heartbeat: confirm the gist write path itself works from this job,
+    # before anything else runs. If this doesn't show up but the job
+    # still shows failure, the problem is upstream of gist_write.
+    heartbeat_ok = gist_write(token, "betcouncil_third_party_snapshot_debug.json",
+                               {"heartbeat": True, **debug_info})
+    log(f"Heartbeat write: {heartbeat_ok}")
+
     try:
         fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
         debug_info["steps"].append(f"favoredprops+draftedge: {len(fp_de_records)}")
