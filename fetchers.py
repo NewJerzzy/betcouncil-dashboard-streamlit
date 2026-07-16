@@ -16919,6 +16919,82 @@ def get_mybookie_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_vegasinsider_consensus_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -> dict:
+    """
+    VegasInsider's public betting trends (public %, SU/OU/ATS records) +
+    consensus lines (opening vs current) — no login, no API. Confirmed
+    live 2026-07-16 via vegasinsider_refresh.py, MLB only right now
+    (same as the investigation covered). CSS display-gate only, same
+    pattern as MyBookie/RotoGrinders — the data is present in the
+    unauthenticated response, just visually hidden on the live site for
+    non-members.
+
+    Named "_consensus_" rather than the more obvious
+    fetch_vegasinsider_from_gist — that name is already used by an older
+    dead stub (board-load dispatch table entry from the June 29 bulk
+    add, expects a per-sport gist file that was never populated).
+    Reusing it would have created a same-name collision where Python
+    resolves to whichever definition is later in the file, silently
+    breaking one of the two callers.
+
+    Returns {} if sport isn't MLB or no fresh data — treat as "no data,"
+    not "confirmed absent." Returns the raw {"trends": [...], "consensus":
+    [...]} dict otherwise.
+    """
+    if sport.upper() != "MLB":
+        return {}
+    data = _read_gist_file("betcouncil_vegasinsider.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        return data
+    return {}
+
+
+def get_vegasinsider_match(matchup: str, sport: str = "MLB") -> dict:
+    """
+    Single-game lookup against VegasInsider's trends + consensus data.
+    VegasInsider's own records use team abbreviations directly ("NYM",
+    "PHI"), same format BetCouncil's matchup strings already use — no
+    fragment-mapping needed here, unlike MyBookie/Dimers.
+
+    Uses fetch_vegasinsider_consensus_from_gist(), not
+    fetch_vegasinsider_from_gist() — that name was already taken by an
+    older dead stub (part of the June 29 bulk-add batch, registered in
+    the board-load dispatch table expecting a (data, source) tuple from
+    a per-sport gist file that was never populated). Reusing that name
+    here would have silently shadowed one function or the other
+    depending on definition order — renamed instead of touching the
+    shared dispatcher.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        data = fetch_vegasinsider_consensus_from_gist(sport)
+    except Exception:
+        data = {}
+    if not data:
+        return {}
+
+    matchup_u = matchup.upper()
+    result = {}
+
+    for consensus in data.get("consensus", []):
+        away, home = consensus.get("away_team", ""), consensus.get("home_team", "")
+        if away and home and away.upper() in matchup_u and home.upper() in matchup_u:
+            result.update({
+                "open_ml": consensus.get("open_ml"), "open_total": consensus.get("open_total"),
+                "open_spread": consensus.get("open_spread"),
+                "consensus_ml": consensus.get("consensus_ml"), "consensus_total": consensus.get("consensus_total"),
+                "consensus_spread": consensus.get("consensus_spread"),
+            })
+            break
+
+    trend_rows = [t for t in data.get("trends", []) if str(t.get("team", "")).upper() in matchup_u]
+    if trend_rows:
+        result["trends"] = trend_rows
+
+    return result
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
