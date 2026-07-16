@@ -68,13 +68,22 @@ def gist_read(filename: str):
 
 
 def gist_write(token: str, filename: str, payload) -> bool:
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {filename: {"content": json.dumps(payload)}}},
-        timeout=30,
-    )
-    return resp.status_code in (200, 201)
+    import time
+    for attempt in range(4):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={"files": {filename: {"content": json.dumps(payload)}}},
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        if resp.status_code == 409 and attempt < 3:
+            time.sleep((attempt + 1) * 5)
+            continue
+        log(f"gist_write({filename}) failed: {resp.status_code} {resp.text[:200]}")
+        return False
+    return False
 
 
 def snapshot_favoredprops(today: str) -> list:
