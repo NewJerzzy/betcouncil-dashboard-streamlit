@@ -221,13 +221,16 @@ CROSS_TEAM_CORRELATION_PAIRS = {
 
 def group_props_by_event(props: list) -> dict:
     """
-    Group a flat list of enriched props by Matchup ("Away @ Home"), the
-    same field already populated elsewhere in app.py. Returns
-    {matchup: [props]}. Props with no Matchup are dropped.
+    Group a flat list of enriched props by event. Real board props (built
+    in app.py's EV extraction pipeline) carry "Game", not "Matchup" —
+    checked directly against the prop-construction code before this fix
+    (2026-07-16) rather than assumed; "Matchup"/"matchup" are also
+    accepted for props built by other paths that do use that key.
+    Returns {event_key: [props]}. Props with neither key are dropped.
     """
     grouped: dict = {}
     for p in props or []:
-        matchup = p.get("Matchup") or p.get("matchup") or ""
+        matchup = p.get("Matchup") or p.get("matchup") or p.get("Game") or p.get("game") or ""
         if not matchup:
             continue
         grouped.setdefault(matchup, []).append(p)
