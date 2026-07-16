@@ -282,11 +282,33 @@ def main() -> int:
         return 1
 
     today = date.today().isoformat()
-    fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
-    known_players = {r["player"] for r in fp_de_records if r.get("player")}
+    debug_info = {"today": today, "steps": [], "error": None}
 
-    props_records = fp_de_records + snapshot_dk_most_bet(today, known_players)
-    game_records = snapshot_dimers(today) + snapshot_covers(today) + snapshot_bettingpros(today)
+    try:
+        fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
+        debug_info["steps"].append(f"favoredprops+draftedge: {len(fp_de_records)}")
+        known_players = {r["player"] for r in fp_de_records if r.get("player")}
+
+        dk_records = snapshot_dk_most_bet(today, known_players)
+        debug_info["steps"].append(f"dk_most_bet: {len(dk_records)}")
+        props_records = fp_de_records + dk_records
+
+        dimers_records = snapshot_dimers(today)
+        debug_info["steps"].append(f"dimers: {len(dimers_records)}")
+        covers_records = snapshot_covers(today)
+        debug_info["steps"].append(f"covers: {len(covers_records)}")
+        bp_records = snapshot_bettingpros(today)
+        debug_info["steps"].append(f"bettingpros: {len(bp_records)}")
+        game_records = dimers_records + covers_records + bp_records
+    except Exception as e:
+        import traceback
+        debug_info["error"] = f"{e}\n{traceback.format_exc()}"
+        log(f"FATAL during snapshot collection: {e}")
+        try:
+            gist_write(token, "betcouncil_third_party_snapshot_debug.json", debug_info)
+        except Exception:
+            pass
+        return 1
 
     by_source_props = {}
     for r in props_records:
@@ -296,6 +318,8 @@ def main() -> int:
         by_source_games[r["source"]] = by_source_games.get(r["source"], 0) + 1
     log(f"Props by source: {by_source_props}")
     log(f"Games by source: {by_source_games}")
+    debug_info["by_source_props"] = by_source_props
+    debug_info["by_source_games"] = by_source_games
 
     history = gist_read(SNAPSHOT_FILE) or {}
     history[today] = {"props": props_records, "games": game_records}
@@ -304,6 +328,7 @@ def main() -> int:
 
     ok = gist_write(token, SNAPSHOT_FILE, history)
     log("Snapshot pushed" if ok else "Snapshot push FAILED")
+    gist_write(token, "betcouncil_third_party_snapshot_debug.json", debug_info)
     return 0 if ok else 1
 
 
