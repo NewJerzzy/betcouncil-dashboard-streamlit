@@ -1,0 +1,23 @@
+name: Third-Party Source Snapshot (for backtesting)
+
+on:
+  schedule:
+   - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run snapshot
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/third_party_snapshot.py
