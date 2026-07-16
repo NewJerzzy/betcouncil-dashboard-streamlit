@@ -299,6 +299,8 @@ def main() -> int:
     heartbeat_ok = gist_write(token, "betcouncil_third_party_snapshot_debug.json",
                                {"heartbeat": True, **debug_info})
     log(f"Heartbeat write: {heartbeat_ok}")
+    brand_new_ok = gist_write(token, "brand_new_test_marker.json", {"marker": "hello", **debug_info})
+    log(f"Brand-new marker write: {brand_new_ok}")
 
     try:
         fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
