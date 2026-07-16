@@ -15,22 +15,19 @@
     var GIST_ID  = '7e52e1c2c2054847c7c4663a157386c5';
     var GIST_TOK = 'PASTE_YOUR_GITHUB_TOKEN_HERE';
 
-    // ── ONE-TIME SETUP — Parlay Hub has no public API, so this endpoint  ──
-    // ── has to be captured from your own logged-in session:              ──
-    //   1. Log into FanDuel, open Parlay Hub from the nav menu.
-    //   2. Open DevTools (F12) → Network tab → filter "Fetch/XHR".
-    //   3. Scroll Parlay Hub so it loads more cards, watch for a request
-    //      whose URL contains something like "parlay", "sgp", or "hub"
-    //      and whose response is JSON containing the parlay legs/odds.
-    //   4. Right-click that request → Copy → Copy as cURL (or just copy
-    //      the Request URL) and paste the URL below.
-    //   5. If the request needs a header beyond what's listed here (some
-    //      FanDuel endpoints want an x-authentication or similar token
-    //      header), copy that header/value from the same DevTools panel
-    //      into the `headers` object below.
-    // Until this is filled in, the script logs what it would have fetched
-    // and does nothing else — it will NOT push placeholder/fake data.
-    var PARLAY_HUB_ENDPOINT = 'PASTE_PARLAY_HUB_JSON_ENDPOINT_HERE';
+    // ── ENDPOINT — confirmed live 2026-07-16 via DevTools capture ────────
+    // Real request: GET boapi.sportsbook.fanduel.com/betting-opportunities/all
+    // Response confirmed to contain popularBettingOpportunities (PARLAY/SGP
+    // entries with narrative, americanOdds, totalBets, selections) plus an
+    // "attachments" block with full market/runner/team data to resolve
+    // those selections into readable picks. No extra auth header needed —
+    // credentials:'include' (session cookies) was sufficient.
+    //
+    // The `_ak` query param looks account/session-scoped and may need
+    // refreshing if this stops returning data — same DevTools steps as
+    // before: open Parlay Hub, Network tab, find the fresh
+    // betting-opportunities/all request, copy its Request URL here.
+    var PARLAY_HUB_ENDPOINT = 'https://boapi.sportsbook.fanduel.com/betting-opportunities/all?cardVersion=v1&_ak=FhMFpcPWXMeyZxOx&source=ORGANIC,MANUAL';
 
     var __bcGistQueue = Promise.resolve();
 

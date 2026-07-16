@@ -27200,10 +27200,21 @@ with tabs[1]:
             for sport, items in cmp["fd_parlayhub"].items():
                 st.markdown(f'<span style="color:#8ab4d4;font-size:12px;font-weight:700;">{sport}</span>', unsafe_allow_html=True)
                 for item in items[:5]:
+                    if isinstance(item, dict) and "narrative" in item:
+                        _fd_odds = item.get("american_odds")
+                        _fd_odds_str = f"+{_fd_odds}" if isinstance(_fd_odds, (int, float)) and _fd_odds > 0 else str(_fd_odds or "")
+                        _fd_text = (
+                            f'<b>{item.get("narrative") or item.get("matchup") or item.get("type","")}</b>'
+                            f'<div style="color:#8ab4d4;font-size:11px;margin-top:2px;">'
+                            f'{item.get("type","")} · {item.get("num_legs","?")} legs · {_fd_odds_str} · '
+                            f'{item.get("total_bets","?")} bets placed</div>'
+                        )
+                    else:
+                        _fd_text = str(item)[:140]
                     st.markdown(
                         f'<div style="background:{_SOURCE_STYLE["fd"]["color"]}15;border:1px solid {_SOURCE_STYLE["fd"]["color"]}44;'
                         f'border-radius:6px;padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                        f'{str(item)[:140]}</div>', unsafe_allow_html=True
+                        f'{_fd_text}</div>', unsafe_allow_html=True
                     )
         elif comparison:
             st.caption(
