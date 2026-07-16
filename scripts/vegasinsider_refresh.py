@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timezone
 
-GIST_ID = "a331ba6e75238b9232c6d93d7d33513b"
+GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 TODAY = date.today().isoformat()
 
@@ -212,7 +212,7 @@ def main() -> None:
     payload = {
         "source": "vegasinsider",
         "date": TODAY,
-        "fetched_at": now_utc,
+        "captured_at": now_utc,
         "sport": "mlb",
         "trends": trends,
         "consensus": consensus,
