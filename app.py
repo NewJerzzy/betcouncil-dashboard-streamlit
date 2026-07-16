@@ -8780,7 +8780,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8881,6 +8881,17 @@ def build_market_comparison(shortlist):
                         "total_line": tab.get("TotalLine"), "over_win_pct": tab.get("OverWinPct"),
                     })
                     break
+
+    # ── MyBookie (public SSR HTML): match against shortlist games ──────
+    for matchup in shortlist_matchups:
+        for sport in sports_needed:
+            try:
+                mb_match = get_mybookie_match(matchup, sport)
+            except Exception:
+                mb_match = {}
+            if mb_match:
+                result["mybookie"].append({"matchup": matchup, "sport": sport, **mb_match})
+                break
 
     return result
 
@@ -20036,6 +20047,17 @@ with tabs[3]:
                         _dm_text += f" · win prob {_dm_win:.0%}"
                     st.caption(_dm_text)
 
+            # MyBookie (public SSR HTML) — real-book line comparison, display only.
+            try:
+                _mb_match = get_mybookie_match(_matchup, _gsport)
+            except Exception:
+                _mb_match = {}
+            if _mb_match and _mb_match.get("ml_odds"):
+                _mb_text = f"📗 MyBookie: {_mb_match.get('ml_team','')} ML {_mb_match.get('ml_odds','')}"
+                if _mb_match.get("total_points"):
+                    _mb_text += f" · O/U {_mb_match['total_points']} ({_mb_match.get('total_odds','')})"
+                st.caption(_mb_text)
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
@@ -27065,6 +27087,7 @@ with tabs[1]:
         "cov":     {"label": "Covers",      "color": "#3b82f6"},
         "dimers":  {"label": "Dimers",      "color": "#ec4899"},
         "de":      {"label": "DraftEdge",   "color": "#22c55e"},
+        "mb":      {"label": "MyBookie",    "color": "#f59e0b"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -27111,6 +27134,7 @@ with tabs[1]:
         _bp_by_matchup = {row.get("matchup", ""): row for row in cmp.get("bettingpros", [])}
         _cov_by_matchup = {row.get("matchup", ""): row for row in cmp.get("covers", [])}
         _dimers_by_matchup = {row.get("matchup", ""): row for row in cmp.get("dimers", [])}
+        _mybookie_by_matchup = {row.get("matchup", ""): row for row in cmp.get("mybookie", [])}
 
         st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
@@ -27172,6 +27196,9 @@ with tabs[1]:
                         _dm_side = "home" if _dm_h > _dm_a else "away"
                         _dm_edge = _dm_h if _dm_h > _dm_a else _dm_a
                         chips += _chip("dimers", f"{_dm_side} {_dm_edge:+.1f}%")
+                _mb_row = _mybookie_by_matchup.get(g["Matchup"])
+                if _mb_row and _mb_row.get("ml_odds"):
+                    chips += _chip("mb", f'{_mb_row.get("ml_team","")[:12]} {_mb_row.get("ml_odds","")}')
                 with game_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'

@@ -16848,6 +16848,77 @@ def get_draftedge_player(player_name: str, sport: str) -> dict:
     return {}
 
 
+def fetch_mybookie_ssr_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    MyBookie's game lines via their public server-rendered HTML (data-*
+    attributes on bet buttons) — no login, no API. Confirmed live
+    2026-07-16 via mybookie_refresh.py. This replaced the original
+    Tampermonkey MyBookie harvester, which watched for XHR calls
+    (/sports_api/leagues-lines, /sports_api/search-props) that the
+    current site version doesn't appear to fire anymore.
+
+    Returns the raw "games" list, each a dict with game_id, sport,
+    game_date, is_live, and "sides" (per-team spread/moneyline/total
+    entries). Game-line comparison data — same category as Dimers/
+    BettingPros/Covers, not props.
+    """
+    data = _read_gist_file(f"betcouncil_mybookie_ssr_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("games", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_mybookie_match(matchup: str, sport: str) -> dict:
+    """
+    Single-game lookup against MyBookie's SSR data. MyBookie's own game
+    records use full team names ("New York Mets"), while BetCouncil's
+    matchup strings use abbreviations ("NYM @ PHI") — matched via
+    TEAM_ABBREV_TO_FRAGMENT (same team-name-fragment table used
+    elsewhere in this codebase), checking whether each abbreviation's
+    fragment appears in the game's team names.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    frag_map = _TEAM_ABBREV_TO_FRAGMENT_BY_SPORT.get(sport.upper(), {})
+    if not frag_map:
+        return {}
+    matchup_abbrevs = [a for a in frag_map if a in matchup.upper().replace(" @ ", " ").split(" ")]
+    if len(matchup_abbrevs) < 2:
+        # fall back to substring match against the whole matchup string,
+        # in case abbreviations aren't cleanly space-separated
+        matchup_abbrevs = [a for a in frag_map if a in matchup.upper()]
+    if not matchup_abbrevs:
+        return {}
+    fragments = [frag_map[a].upper() for a in matchup_abbrevs]
+
+    try:
+        games = fetch_mybookie_ssr_from_gist(sport)
+    except Exception:
+        games = []
+
+    for game in games:
+        team_names_u = " ".join(
+            str(s.get("team", "")) + " " + str(s.get("vs", "")) for s in game.get("sides", [])
+        ).upper()
+        if all(frag in team_names_u for frag in fragments):
+            sp_side = next((s for s in game.get("sides", []) if s.get("type") == "sp"), None)
+            ml_side = next((s for s in game.get("sides", []) if s.get("type") == "ml"), None)
+            to_side = next((s for s in game.get("sides", []) if s.get("type") == "to"), None)
+            return {
+                "game_id": game.get("game_id"), "is_live": game.get("is_live"),
+                "spread_team": sp_side.get("team") if sp_side else None,
+                "spread_points": sp_side.get("points") if sp_side else None,
+                "spread_odds": sp_side.get("odds") if sp_side else None,
+                "ml_team": ml_side.get("team") if ml_side else None,
+                "ml_odds": ml_side.get("odds") if ml_side else None,
+                "total_points": to_side.get("points") if to_side else None,
+                "total_odds": to_side.get("odds") if to_side else None,
+            }
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
