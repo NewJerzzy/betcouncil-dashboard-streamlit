@@ -282,7 +282,7 @@ def main() -> int:
         return 1
 
     today = date.today().isoformat()
-    debug_info = {"today": today, "steps": [], "error": None}
+    debug_info = {"today": today, "run_id": os.environ.get("GITHUB_RUN_ID", "local"), "steps": [], "error": None}
 
     try:
         fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
