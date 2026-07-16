@@ -54,75 +54,94 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def _extract_next_data(html: str) -> dict:
+def _extract_stream_payload(html: str) -> list:
     """
-    Next.js apps embed their SSR page-data payload in a
-    <script id="__NEXT_DATA__" type="application/json">{...}</script>
-    tag. Regex-extract rather than full HTML parsing since we only need
-    this one script tag's contents.
+    Pick6 (React Router v7) streams its full loader data directly into
+    the initial HTML via:
+        window.__reactRouterContext.streamController.enqueue("[ ...escaped JSON... ]")
+    Confirmed 2026-07-16 (via cross-check against Replit's report, plus
+    independent evidence: raw HTML body size — 851KB captured here vs.
+    "858 KB" reported — is a close match). This is NOT a normal
+    __NEXT_DATA__/embedded-JSON-object pattern (that first attempt at
+    this script assumed the wrong SSR mechanism and found nothing) — the
+    payload here is a JS string literal argument to .enqueue(), so it
+    needs to be extracted and un-escaped as a string before json.loads,
+    not parsed as an inline object.
+
+    Returns the flat array (~3000+ elements) as-is, unresolved — see
+    _resolve_refs() for turning "_N"-style references into their real
+    values.
     """
     m = re.search(
-        r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+        r'streamController\.enqueue\(\s*"((?:[^"\\]|\\.)*)"\s*\)',
         html, re.DOTALL,
     )
     if not m:
-        return {}
+        return []
+    raw_str = m.group(1)
     try:
-        return json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return {}
+        # The captured text is itself a JS string literal (escaped) —
+        # decoding it as a JSON string turns \" \\ \n etc. back into
+        # real characters, giving us the actual JSON array text.
+        unescaped = json.loads('"' + raw_str + '"')
+        return json.loads(unescaped)
+    except (json.JSONDecodeError, ValueError) as e:
+        DEBUG_LOG.append({"note": f"stream payload found but failed to parse: {e}",
+                           "raw_len": len(raw_str), "raw_snippet": raw_str[:500]})
+        return []
 
 
-def _find_any_json_scripts(html: str) -> list:
+def _resolve_refs(obj, array: list, depth=0, max_depth=20):
     """
-    Fallback survey when __NEXT_DATA__ isn't present: find every
-    <script> tag that looks like it might hold embedded JSON (has an
-    id/type suggesting data, or a large inline blob), so the debug
-    output shows what's actually on the page instead of guessing blind
-    a second time.
-    """
-    candidates = []
-    for m in re.finditer(r'<script([^>]*)>(.*?)</script>', html, re.DOTALL):
-        attrs, body = m.group(1), m.group(2).strip()
-        if len(body) < 200:
-            continue
-        looks_jsonish = body.startswith("{") or body.startswith("[")
-        has_data_hint = any(h in attrs.lower() for h in ["json", "data", "state", "__"])
-        if looks_jsonish or has_data_hint:
-            candidates.append({
-                "attrs": attrs.strip()[:200],
-                "body_len": len(body),
-                "body_snippet": body[:400],
-            })
-    return candidates[:8]
-
-
-def _find_props_list(obj, depth=0, max_depth=12):
-    """
-    Walk the Next.js data tree looking for a list of dicts that look
-    like prop entries (has a player name + a numeric line/target value)
-    — structure-agnostic since the exact nesting path wasn't verified
-    before this first deploy.
+    Recursively resolve "_N"-style reference dicts (single key matching
+    `_\\d+`) into the value at that index of the flat array. Exact
+    reference format wasn't independently verified before this first
+    deploy — this handles the single-key `{"_N": true/anything}` shape
+    Replit described; if the real shape differs, resolution will just
+    no-op on unmatched dicts rather than crash, and self-diagnostics
+    will show a low apply rate so the mismatch is visible.
     """
     if depth > max_depth:
-        return None
-    if isinstance(obj, list) and obj and isinstance(obj[0], dict):
-        sample = obj[0]
-        keys_lower = {k.lower() for k in sample.keys()}
-        if ({"player", "playername", "firstname"} & keys_lower) and \
-           ({"line", "targetvalue", "statvalue"} & keys_lower):
-            return obj
+        return obj
     if isinstance(obj, dict):
-        for v in obj.values():
-            found = _find_props_list(v, depth + 1, max_depth)
-            if found:
-                return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _find_props_list(item, depth + 1, max_depth)
-            if found:
-                return found
-    return None
+        if len(obj) == 1:
+            (k, _v), = obj.items()
+            if isinstance(k, str) and re.fullmatch(r"_\d+", k):
+                idx = int(k[1:])
+                if 0 <= idx < len(array):
+                    return _resolve_refs(array[idx], array, depth + 1, max_depth)
+        return {k: _resolve_refs(v, array, depth + 1, max_depth) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_resolve_refs(v, array, depth + 1, max_depth) for v in obj]
+    return obj
+
+
+def _build_lookup_tables(array: list) -> tuple:
+    """
+    Scan the flat array for player-profile dicts (has dkId + a name-like
+    field) and stat-type dicts (has an id matching a market's
+    pickSixMarketId + a name/label field), building dkId->name and
+    marketId->stat_name lookups. Exact field names for these two
+    weren't given directly — best-effort scan, logged via debug if
+    either lookup ends up empty so a schema mismatch is visible rather
+    than silently producing "Unknown Player" for everything.
+    """
+    player_names, stat_names = {}, {}
+    for item in array:
+        if not isinstance(item, dict):
+            continue
+        if "dkId" in item:
+            name = (item.get("displayName") or item.get("fullName") or
+                    item.get("name") or
+                    (f"{item.get('firstName','')} {item.get('lastName','')}".strip()))
+            if name:
+                player_names[item["dkId"]] = name
+        for id_key in ("pickSixMarketId", "marketId", "id"):
+            if id_key in item and isinstance(item.get(id_key), int):
+                label = item.get("marketName") or item.get("statName") or item.get("name") or item.get("label")
+                if label and id_key != "id":  # "id" is too generic/ambiguous to trust alone
+                    stat_names[item[id_key]] = label
+    return player_names, stat_names
 
 
 def fetch_sport_props(sport: str) -> list:
@@ -133,33 +152,40 @@ def fetch_sport_props(sport: str) -> list:
     if r.status_code != 200:
         return []
 
-    next_data = _extract_next_data(r.text)
-    if not next_data:
-        entry = {"sport": sport, "note": "no __NEXT_DATA__ script tag found"}
-        if sport == "MLB":
-            entry["json_script_survey"] = _find_any_json_scripts(r.text)
-            entry["html_head_snippet"] = r.text[:1500]
-        DEBUG_LOG.append(entry)
+    array = _extract_stream_payload(r.text)
+    if not array:
+        DEBUG_LOG.append({"sport": sport, "note": "no streamController.enqueue payload found or failed to parse"})
         return []
 
-    props_list = _find_props_list(next_data)
-    if not props_list:
-        DEBUG_LOG.append({"sport": sport, "note": "__NEXT_DATA__ found but no matching props list inside it",
-                           "top_level_keys": list(next_data.keys())[:20]})
-        return []
+    player_names, stat_names = _build_lookup_tables(array)
+    if sport == "MLB":
+        DEBUG_LOG.append({"sport": sport, "array_len": len(array),
+                           "player_names_found": len(player_names), "stat_names_found": len(stat_names)})
 
     normalized = []
-    for p in props_list:
-        player = p.get("player") or p.get("playerName") or p.get("firstName", "") + " " + p.get("lastName", "")
-        stat_name = p.get("stat_name") or p.get("statName") or p.get("marketName") or p.get("category")
-        line = p.get("line") or p.get("targetValue") or p.get("statValue")
-        multiplier = p.get("multiplier") or p.get("standingsMultiplier")
-        if not player or line is None:
+    for item in array:
+        if not isinstance(item, dict) or "pickableId" not in item:
             continue
-        normalized.append({
-            "player": str(player).strip(), "stat_name": stat_name,
-            "line": line, "multiplier": multiplier, "sport": sport,
-        })
+        resolved = _resolve_refs(item, array)
+        entities = resolved.get("entities", [])
+        dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
+        player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
+
+        for market in resolved.get("activePickableMarkets", []):
+            if not isinstance(market, dict):
+                continue
+            line = market.get("targetValue")
+            market_id = market.get("pickSixMarketId")
+            stat_name = stat_names.get(market_id, f"market_{market_id}" if market_id else None)
+            for sel in market.get("activeSelections", []):
+                if not isinstance(sel, dict):
+                    continue
+                if not player or line is None:
+                    continue
+                normalized.append({
+                    "player": player, "stat_name": stat_name, "line": line,
+                    "multiplier": sel.get("standingsMultiplier"), "sport": sport,
+                })
     return normalized
 
 
