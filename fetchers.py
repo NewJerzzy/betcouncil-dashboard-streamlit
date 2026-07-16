@@ -13880,8 +13880,54 @@ def fetch_pinnacle_game_lines(sport: str) -> list:
 
 
 def fetch_pinnacle_props(sport: str) -> list:
-    """Pinnacle player props — not available on arcadia guest API. Returns []."""
-    return []
+    """
+    Pinnacle player prop odds via EVSharps /api/outliers (bookOdds.pn key).
+    The arcadia guest API only serves game lines; EVSharps is a free public
+    proxy for Pinnacle's prop book. Falls back to [] if the EVSharps API is
+    down or returns no Pinnacle odds for this sport (e.g. off-season).
+    """
+    try:
+        ev = fetch_ev_api_outliers(sport)
+        items = ev.get("data") or []
+        props = []
+        for item in items:
+            book_odds = item.get("bookOdds") or {}
+            pn_raw = book_odds.get("pn")
+            if not pn_raw:
+                continue
+            pn_str = str(pn_raw).strip()
+            over_odds = under_odds = None
+            if "/" in pn_str:
+                parts = pn_str.split("/", 1)
+                try:
+                    over_odds  = int(parts[0].replace("+", ""))
+                    under_odds = int(parts[1].replace("+", ""))
+                except (ValueError, IndexError):
+                    pass
+            else:
+                try:
+                    over_odds = int(pn_str.replace("+", ""))
+                except ValueError:
+                    pass
+            if over_odds is None:
+                continue
+            props.append({
+                "Player":     item.get("player", ""),
+                "Prop":       item.get("prop", ""),
+                "Line":       (item.get("handicap") if item.get("handicap") is not None
+                               else item.get("ou")),
+                "Book":       "Pinnacle",
+                "Sport":      sport.upper(),
+                "over_odds":  over_odds,
+                "under_odds": under_odds,
+                "fair_val":   item.get("fairVal"),
+                "ev":         item.get("ev"),
+                "kelly":      item.get("kelly"),
+                "source":     "evsharps_pn",
+            })
+        return props
+    except Exception:
+        return []
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ADDITIONAL DATA SOURCES — v9.1

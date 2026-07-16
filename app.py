@@ -5992,9 +5992,52 @@ def _board_prop_signal_values(p: dict) -> dict:
 
 
 def record_signal_performance(lock, outcome):
-    signals_active = lock.get("signals_active", {})
-    if not signals_active:
-        return
+    # Primary source: signals_active (explicit boolean flags set by older code paths).
+    # Fallback: signal_values (raw magnitudes captured at lock-creation time via
+    # _board_prop_signal_values) — convert to boolean flags here.
+    # This fixes the all-zeros bug: log_manual_bet() never passes signals_active,
+    # so it was always an empty or all-False dict, and every int(False) wrote 0.
+    signals_active = lock.get("signals_active") or {}
+    signal_values  = lock.get("signal_values")  or {}
+
+    if not any(signals_active.values() if signals_active else []):
+        if signal_values and any(abs(v or 0) > 0.001 for v in signal_values.values()):
+            # Convert raw magnitudes to boolean flags
+            signals_active = {
+                "base_positive":    (signal_values.get("base",     0) or 0) > 0.001,
+                "defense_positive": (signal_values.get("defense",  0) or 0) > 0.001,
+                "location_home":    (signal_values.get("location", 0) or 0) > 0.001,
+                "back_to_back":     (signal_values.get("rest",     0) or 0) < -0.001,
+                "sharp_flag":       (signal_values.get("sharp",    0) or 0) > 0.001,
+                "weather_active":   abs(signal_values.get("weather", 0) or 0) > 0.001,
+                "blowout_risk":     (signal_values.get("blowout",  0) or 0) < -0.001,
+                "usage_boost":      (signal_values.get("usage",    0) or 0) > 0.001,
+            }
+        else:
+            # Last resort: look up the live board by player+prop
+            try:
+                import streamlit as _st
+                _pn = normalize_name(lock.get("player", ""))
+                _pp = str(lock.get("prop", "")).strip().lower()
+                for _bp in (_st.session_state.get("board_data") or []):
+                    if (normalize_name(_bp.get("Player", "")) == _pn and
+                            str(_bp.get("Prop", "")).strip().lower() == _pp):
+                        _sv = _board_prop_signal_values(_bp)
+                        if any(abs(v or 0) > 0.001 for v in _sv.values()):
+                            signals_active = {
+                                "base_positive":    (_sv.get("base",     0) or 0) > 0.001,
+                                "defense_positive": (_sv.get("defense",  0) or 0) > 0.001,
+                                "location_home":    (_sv.get("location", 0) or 0) > 0.001,
+                                "back_to_back":     (_sv.get("rest",     0) or 0) < -0.001,
+                                "sharp_flag":       (_sv.get("sharp",    0) or 0) > 0.001,
+                                "weather_active":   abs(_sv.get("weather", 0) or 0) > 0.001,
+                                "blowout_risk":     (_sv.get("blowout",  0) or 0) < -0.001,
+                                "usage_boost":      (_sv.get("usage",    0) or 0) > 0.001,
+                            }
+                        break
+            except Exception:
+                pass
+
     record = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "outcome": outcome,
@@ -22729,6 +22772,15 @@ with tabs[5]:
             if _corr_score > 0.50 and _corr_groups:
                 st.warning(f"⚠️ High portfolio correlation ({_corr_score:.2f}) — bets may rise and fall together:")
                 st.markdown(_bc_df_html(pd.DataFrame(_corr_groups)), unsafe_allow_html=True)
+            # Cross-team same-game correlations (e.g. QB TDs ↔ opposing WR receiving)
+            try:
+                from prop_market_intelligence import find_cross_team_correlations as _fctc
+                _cross = _fctc(_active_for_corr)
+                if _cross:
+                    st.caption("🔗 **Cross-team correlations** (same game, opposing teams):")
+                    st.markdown(_bc_df_html(pd.DataFrame(_cross)), unsafe_allow_html=True)
+            except Exception:
+                pass
             if _portfolio["warnings"]:
                 for w in _portfolio["warnings"]:
                     st.warning(w)
