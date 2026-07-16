@@ -192,7 +192,90 @@ def audit_dead_signal_fields():
     return results
 
 
-# ── 2. Harvester freshness (Gist read only, no live scraping) ──────────
+# ── 1c. Suspected stub functions (2026-07-16, added after a real miss) ──
+# audit_dead_code() only catches functions that are never CALLED. It
+# completely missed build_game_line_consensus() being a no-op — that
+# function genuinely was called (once, from analyze_game_edge) and would
+# have shown as WIRED. The actual bug: its whole body was a docstring
+# plus `return {}`, ignoring every argument, so 18 books' worth of real
+# game-line data fed into it and produced nothing every single time.
+# "Called from somewhere" and "does something with what it's called
+# with" are different questions — this checks the second one, which
+# audit_dead_code() structurally cannot.
+#
+# Detection: AST-parse every CORE_FILES module, walk top-level (and
+# class-level) function defs, and flag any whose body — after stripping
+# a leading docstring — is just ONE statement, and that statement is
+# `pass` or `return <constant-shaped literal>` (a bare value, an empty
+# dict/list/set, or None) with NO reference to the function's own
+# arguments anywhere in it. A function that echoes back one of its
+# arguments isn't flagged (that's a real, if simple, function) — only
+# ones whose return value is provably independent of every input.
+def audit_stub_functions():
+    results = []
+    for filename in CORE_FILES:
+        try:
+            src = _read(filename)
+        except Exception:
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = node.body
+            # Strip a leading docstring, if present
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                getattr(body[0], "value", None), (ast.Constant,)
+            ) and isinstance(body[0].value.value, str):
+                body = body[1:]
+            if len(body) != 1:
+                continue
+
+            stmt = body[0]
+            is_trivial = False
+            if isinstance(stmt, ast.Pass):
+                is_trivial = True
+            elif isinstance(stmt, ast.Return):
+                val = stmt.value
+                if val is None:
+                    is_trivial = True
+                elif isinstance(val, ast.Constant):
+                    is_trivial = True
+                elif isinstance(val, (ast.Dict, ast.List, ast.Set, ast.Tuple)) and not (
+                    val.keys if isinstance(val, ast.Dict) else val.elts
+                ):
+                    is_trivial = True  # empty {}/[]/()/set()
+
+            if not is_trivial:
+                continue
+
+            # Skip if the function has no arguments at all — a genuinely
+            # argument-less constant-returning function (a config getter,
+            # a version string) isn't a "silently ignores its inputs" bug,
+            # since it has no inputs to ignore.
+            arg_names = [a.arg for a in node.args.args + node.args.kwonlyargs]
+            if node.args.vararg:
+                arg_names.append(node.args.vararg.arg)
+            if node.args.kwarg:
+                arg_names.append(node.args.kwarg.arg)
+            if not arg_names:
+                continue
+
+            date = _git_blame_date(filename, node.lineno)
+            results.append({
+                "name": node.name, "file": filename, "line": node.lineno,
+                "args": arg_names, "added": date,
+            })
+
+    results.sort(key=lambda r: r.get("added") or "", reverse=True)
+    return results
+
+
+
 
 def audit_harvester_health():
     try:
@@ -288,6 +371,13 @@ def diff_reports(prev, current):
     for n in sorted(newly_wired_sig):
         changes.append(f"✅ Signal field now wired in (was orphaned last week): {n}")
 
+    prev_stubs = {(r["file"], r["name"]) for r in prev.get("stub_functions", [])}
+    cur_stubs = {(r["file"], r["name"]) for r in current.get("stub_functions", [])}
+    for f, n in sorted(cur_stubs - prev_stubs):
+        changes.append(f"🔴 NEW suspected stub function this week: {f}::{n}")
+    for f, n in sorted(prev_stubs - cur_stubs):
+        changes.append(f"✅ Stub function now implemented (was a stub last week): {f}::{n}")
+
     prev_sizes = {r["file"]: r["status"] for r in prev.get("file_sizes", [])}
     for r in current["file_sizes"]:
         old = prev_sizes.get(r["file"])
@@ -306,10 +396,16 @@ def build_summary_markdown(current, diff):
     dead_sig = [r for r in current.get("dead_signal_fields", []) if r["status"] == "ORPHANED"]
     wired_sig_count = len(current.get("dead_signal_fields", [])) - len(dead_sig)
 
+    stubs = current.get("stub_functions", [])
+
     lines = [f"## BetCouncil Weekly Self-Audit — {current['run_date']}", ""]
     lines.append(f"**Fetch functions:** {wired_count} wired in / {len(dead)} orphaned (defined, never referenced)")
     lines.append(f"**Signal fields:** {wired_sig_count} wired in / {len(dead_sig)} orphaned "
                   f"(written into ev_signal_lookup, never read back — see ps_ev_edge, fixed 2026-07)")
+    lines.append(f"**Suspected stub functions:** {len(stubs)} — called from real code, but their entire "
+                  f"body is a docstring + a constant return that ignores every argument (see "
+                  f"build_game_line_consensus, fixed 2026-07 — 18 books' real data fed a function "
+                  f"that silently returned {{}} regardless)")
     lines.append("")
     lines.append("### Changes since last audit")
     for c in diff:
@@ -343,6 +439,23 @@ def build_summary_markdown(current, diff):
             lines.append(f"| `{r['key']}` | {r.get('added') or 'unknown'} | {r.get('line') or '?'} |")
         if len(dead_sig_sorted) > 40:
             lines.append(f"| ...and {len(dead_sig_sorted)-40} more | | |")
+        lines.append("")
+
+    if stubs:
+        lines.append("### Suspected stub functions (age-sorted, newest first)")
+        lines.append("*Called from real code, but the whole body is a docstring + a constant "
+                      "return (`return {}`, `return []`, `return None`, `pass`) that ignores every "
+                      "argument. Not automatically wrong — some of these may be deliberate "
+                      "compatibility shims — but each one is worth a human look, since this is "
+                      "exactly the shape build_game_line_consensus had for who knows how long "
+                      "before anyone noticed 18 books' worth of real data was going nowhere.*")
+        lines.append("")
+        lines.append("| Function | File | Args ignored | Added | Line |")
+        lines.append("|---|---|---|---|---|")
+        for r in stubs[:40]:
+            lines.append(f"| `{r['name']}` | {r['file']} | {', '.join(r['args'])} | {r.get('added') or 'unknown'} | {r['line']} |")
+        if len(stubs) > 40:
+            lines.append(f"| ...and {len(stubs)-40} more | | | | |")
         lines.append("")
 
     lines.append("### File sizes")
@@ -419,6 +532,10 @@ def main():
     dead_signal_fields = audit_dead_signal_fields()
     log(f"  {sum(1 for r in dead_signal_fields if r['status']=='ORPHANED')} orphaned / {len(dead_signal_fields)} total signal fields")
 
+    log("Running stub-function audit...")
+    stub_functions = audit_stub_functions()
+    log(f"  {len(stub_functions)} suspected stub functions found")
+
     log("Checking harvester health...")
     harvester_health = audit_harvester_health()
 
@@ -430,6 +547,7 @@ def main():
         "run_ts": datetime.now(timezone.utc).isoformat(),
         "dead_code": dead_code,
         "dead_signal_fields": dead_signal_fields,
+        "stub_functions": stub_functions,
         "harvester_health": harvester_health,
         "file_sizes": file_sizes,
     }
