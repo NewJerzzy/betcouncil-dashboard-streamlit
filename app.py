@@ -5978,6 +5978,15 @@ def _board_prop_signal_values(p: dict) -> dict:
     SignalBase/SignalDefense/etc keys, same source used when board_snapshots
     is written). Use this at lock-creation time so locks carry signal_values
     forward to log_manual_bet(), instead of it always being empty.
+
+    2026-07-16 fix: added "sharp" and "weather". record_signal_performance's
+    signal_values fallback reads signal_values.get("sharp")/get("weather")
+    to populate signal_sharp_flag/signal_weather_active, but neither key
+    was produced here, so both flags were still always 0 after that fix.
+    "sharp" has no numeric SignalSharp field on props (checked — doesn't
+    exist), so it's sourced from the prop's own boolean sharp_flag field
+    instead, cast to 1.0/0.0 to match the magnitude shape of the other
+    values here.
     """
     return {
         "base":     p.get("SignalBase", 0),
@@ -5987,6 +5996,8 @@ def _board_prop_signal_values(p: dict) -> dict:
         "pace":     p.get("SignalPace", 0),
         "usage":    p.get("SignalUsage", 0),
         "blowout":  p.get("SignalBlowout", 0),
+        "weather":  p.get("SignalWeather", 0),
+        "sharp":    1.0 if p.get("sharp_flag") else 0.0,
     }
 
 
@@ -6012,6 +6023,7 @@ def record_signal_performance(lock, outcome):
                 "weather_active":   abs(signal_values.get("weather", 0) or 0) > 0.001,
                 "blowout_risk":     (signal_values.get("blowout",  0) or 0) < -0.001,
                 "usage_boost":      (signal_values.get("usage",    0) or 0) > 0.001,
+                "pace_active":      abs(signal_values.get("pace",  0) or 0) > 0.001,
             }
         else:
             # Last resort: look up the live board by player+prop
@@ -6033,6 +6045,7 @@ def record_signal_performance(lock, outcome):
                                 "weather_active":   abs(_sv.get("weather", 0) or 0) > 0.001,
                                 "blowout_risk":     (_sv.get("blowout",  0) or 0) < -0.001,
                                 "usage_boost":      (_sv.get("usage",    0) or 0) > 0.001,
+                                "pace_active":      abs(_sv.get("pace",  0) or 0) > 0.001,
                             }
                         break
             except Exception:
@@ -6062,6 +6075,10 @@ def record_signal_performance(lock, outcome):
         "signal_weather_active": int(signals_active.get("weather_active", False)),
         "signal_blowout_risk": int(signals_active.get("blowout_risk", False)),
         "signal_usage_boost": int(signals_active.get("usage_boost", False)),
+        # 2026-07-16 fix: "pace" was already computed into signal_values by
+        # _board_prop_signal_values but had no destination field here, so
+        # it was silently dropped every time regardless of whether it fired.
+        "signal_pace_active": int(signals_active.get("pace_active", False)),
     }
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     performance.append(record)
@@ -6082,6 +6099,7 @@ def analyze_signal_performance():
         "signal_weather_active",
         "signal_blowout_risk",
         "signal_usage_boost",
+        "signal_pace_active",
     ]
     signal_labels = {
         "signal_base_positive": "Base (avg above line)",
@@ -6092,6 +6110,7 @@ def analyze_signal_performance():
         "signal_weather_active": "Weather factor",
         "signal_blowout_risk": "Blowout risk",
         "signal_usage_boost": "Usage boost",
+        "signal_pace_active": "Pace factor",
     }
     results = []
     overall_wr = sum(r["win"] for r in resolved) / len(resolved)
