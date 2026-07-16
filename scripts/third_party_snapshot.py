@@ -213,6 +213,7 @@ def snapshot_bettingpros(today: str) -> list:
     from fetchers import fetch_bettingpros_from_gist
 
     records = []
+    raw_samples = []
     for sport in SPORTS:
         try:
             data, _tag = fetch_bettingpros_from_gist(sport)
@@ -220,6 +221,11 @@ def snapshot_bettingpros(today: str) -> list:
             log(f"  bettingpros/{sport}: error — {e}")
             continue
         picks = data if isinstance(data, list) else data.get("picks", data.get("data", [])) if isinstance(data, dict) else []
+        if sport == "MLB" and len(raw_samples) < 1:
+            raw_samples.append({"sport": sport, "tag": _tag,
+                                 "data_type": type(data).__name__,
+                                 "data_keys": list(data.keys())[:20] if isinstance(data, dict) else None,
+                                 "picks_sample": picks[:2] if isinstance(picks, list) else str(picks)[:500]})
         if not isinstance(picks, list):
             continue
         for p in picks:
@@ -238,6 +244,11 @@ def snapshot_bettingpros(today: str) -> list:
                 "home": home, "away": away, "market": market, "pick": pick,
                 "line": line, "implied_prob": p.get("consensus_pct") or p.get("win_pct"),
             })
+    if not records and raw_samples:
+        try:
+            gist_write(os.environ.get("GITHUB_TOKEN", ""), "betcouncil_bettingpros_snapshot_debug.json", raw_samples)
+        except Exception:
+            pass
     return records
 
 
@@ -292,15 +303,6 @@ def main() -> int:
 
     today = date.today().isoformat()
     debug_info = {"today": today, "run_id": os.environ.get("GITHUB_RUN_ID", "local"), "steps": [], "error": None}
-
-    # Heartbeat: confirm the gist write path itself works from this job,
-    # before anything else runs. If this doesn't show up but the job
-    # still shows failure, the problem is upstream of gist_write.
-    heartbeat_ok = gist_write(token, "betcouncil_third_party_snapshot_debug.json",
-                               {"heartbeat": True, **debug_info})
-    log(f"Heartbeat write: {heartbeat_ok}")
-    brand_new_ok = gist_write(token, "brand_new_test_marker.json", {"marker": "hello", **debug_info})
-    log(f"Brand-new marker write: {brand_new_ok}")
 
     try:
         fp_de_records = snapshot_favoredprops(today) + snapshot_draftedge(today)
