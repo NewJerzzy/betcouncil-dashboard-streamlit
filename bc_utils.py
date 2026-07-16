@@ -6355,9 +6355,126 @@ def apply_all_upgrades(prop: dict, scanbet_raw: dict = None,
 
 
 # ── Compatibility stubs (functions moved/renamed) ────────────────────────────
-def build_game_line_consensus(*args, **kwargs):
-    """Stub — logic integrated into main scoring pipeline."""
-    return {}
+def build_game_line_consensus(home_team, away_team, books: dict) -> dict:
+    """
+    2026-07-16 fix: this was a pure stub (`return {}` unconditionally) —
+    despite app.py already collecting real game-line data from 18 books
+    (Pinnacle, MyBookie, Bovada, BetMGM, BetRivers, Fanatics, ESPN Bet,
+    Hard Rock, WynnBet, Unibet, Bet365, Heritage, Bookmaker, FanDuel,
+    Caesars, SportsLine, SBR, TheScore) into session_state specifically
+    to feed this function, none of it ever actually got combined into a
+    consensus — every one of analyze_game_edge's spread_str/total_str/
+    edge calculations was silently falling back to the single ESPN/
+    OddsAPI line the whole time, regardless of how many other books had
+    real data sitting right there unused.
+
+    This does the real job: for each book's *_game_lines list, finds the
+    entry matching (home_team, away_team) via case-insensitive substring
+    match (book name formats vary slightly — "LA Dodgers" vs "Los
+    Angeles Dodgers" — so exact-match would silently drop real matches),
+    pulls Spread/Total/HomeML/AwayML, and combines:
+      - spread/total: median across books that have a numeric value
+      - moneyline: average no-vig home probability (no_vig_prob, same
+        devig math already used for props) across books with both
+        HomeML and AwayML present
+      - agreement: ADX-style label based on how tightly books cluster,
+        not just "some data exists"
+
+    Returns the exact shape the app.py caller already expects (was
+    written against this function's intended shape before the stub was
+    ever filled in):
+        {"agreement": str, "agreement_note": str, "n_books_total": int,
+         "spread": {"consensus": float|None, "n_books": int},
+         "total": {"consensus": float|None, "n_books": int},
+         "moneyline": {"home_consensus_prob": float|None, "n_books": int}}
+    """
+    import statistics
+
+    home_l = str(home_team).lower().strip()
+    away_l = str(away_team).lower().strip()
+    if not (home_l and away_l):
+        return {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
+                "spread": {}, "total": {}, "moneyline": {}}
+
+    spreads, totals, home_probs = [], [], []
+    n_books_matched = 0
+
+    for book_name, rows in (books or {}).items():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_home = str(row.get("Home", "")).lower().strip()
+            row_away = str(row.get("Away", "")).lower().strip()
+            if not (row_home and row_away):
+                continue
+            # Substring match both directions — book team-name formats
+            # vary ("LA Dodgers" vs "Los Angeles Dodgers"), so neither
+            # side being a clean superset of the other is assumed.
+            home_match = home_l in row_home or row_home in home_l
+            away_match = away_l in row_away or row_away in away_l
+            if not (home_match and away_match):
+                continue
+
+            n_books_matched += 1
+            spread_val = row.get("Spread")
+            total_val = row.get("Total")
+            home_ml = row.get("HomeML")
+            away_ml = row.get("AwayML")
+
+            try:
+                if spread_val not in (None, "", "N/A"):
+                    spreads.append(float(spread_val))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if total_val not in (None, "", "N/A"):
+                    totals.append(float(total_val))
+            except (TypeError, ValueError):
+                pass
+            if home_ml not in (None, "", "N/A") and away_ml not in (None, "", "N/A"):
+                try:
+                    home_probs.append(no_vig_prob(float(home_ml), float(away_ml)))
+                except (TypeError, ValueError):
+                    pass
+            break  # one matching row per book is enough
+
+    if n_books_matched == 0:
+        return {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
+                "spread": {}, "total": {}, "moneyline": {}}
+
+    result = {
+        "agreement": "NO_DATA", "agreement_note": "", "n_books_total": n_books_matched,
+        "spread": {}, "total": {}, "moneyline": {},
+    }
+    if spreads:
+        result["spread"] = {"consensus": round(statistics.median(spreads), 1), "n_books": len(spreads)}
+    if totals:
+        result["total"] = {"consensus": round(statistics.median(totals), 1), "n_books": len(totals)}
+    if home_probs:
+        result["moneyline"] = {"home_consensus_prob": round(statistics.mean(home_probs), 4),
+                                "n_books": len(home_probs)}
+
+    # Agreement label: how tightly books cluster, not just "data exists" —
+    # a spread of 8+ books all within 0.5 pts is a much stronger signal
+    # than 2 books that happen to match.
+    if len(spreads) >= 2:
+        spread_range = max(spreads) - min(spreads)
+        if spread_range <= 0.5:
+            result["agreement"] = "STRONG_AGREE"
+            result["agreement_note"] = f"{len(spreads)} books within 0.5 pts on spread"
+        elif spread_range <= 1.5:
+            result["agreement"] = "AGREE"
+            result["agreement_note"] = f"{len(spreads)} books within 1.5 pts on spread"
+        else:
+            result["agreement"] = "SPLIT"
+            result["agreement_note"] = f"{len(spreads)} books span {spread_range:.1f} pts on spread"
+    elif n_books_matched >= 1:
+        result["agreement"] = "SINGLE_BOOK"
+        result["agreement_note"] = f"only {n_books_matched} book matched this game"
+
+    return result
 
 def rest_adjusted_std_dev(base_std, *args, **kwargs):
     """Adjust std dev for rest days. Accepts (base_std, days_rest, sport) or (base_std, days_rest)."""
