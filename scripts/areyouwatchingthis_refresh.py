@@ -84,7 +84,7 @@ def fetch_json(url: str, params: dict, sport: str, label: str):
         DEBUG_LOG.append({"sport": sport, "label": label, "url": url, "error": str(e)})
         return None
     DEBUG_LOG.append({"sport": sport, "label": label, "url": r.url, "status": r.status_code,
-                       "body_snippet": r.text[:400]})
+                       "body_snippet": r.text[:3000]})
     if r.status_code != 200:
         return None
     try:
@@ -94,30 +94,38 @@ def fetch_json(url: str, params: dict, sport: str, label: str):
 
 
 def normalize_game(game: dict) -> dict:
-    providers_raw = game.get("providers", game.get("odds", []))
-    providers = providers_raw if isinstance(providers_raw, list) else []
+    odds_raw = game.get("odds", [])
+    odds_list = odds_raw if isinstance(odds_raw, list) else []
 
     normalized_providers = []
-    for p in providers:
+    for p in odds_list:
         if not isinstance(p, dict):
             continue
-        ml_away_dec, ml_home_dec = p.get("moneyLineAway"), p.get("moneyLineHome")
+        # Field names confirmed from a live sample this run: provider,
+        # spreadLine1/spreadLine2 (decimal moneyline-style prices, not
+        # points-spread despite the name -- areyouwatchingthis stores
+        # moneyline prices as "spreadLine"), overUnder. Kept generic
+        # with .get() fallbacks since the exact meaning of 1 vs 2
+        # (home/away or team1/team2) wasn't independently confirmed here.
+        ml1_dec, ml2_dec = p.get("spreadLine1"), p.get("spreadLine2")
         normalized_providers.append({
-            "provider": p.get("provider") or p.get("name"),
-            "moneyline_away_decimal": ml_away_dec,
-            "moneyline_home_decimal": ml_home_dec,
-            "moneyline_away_american": decimal_to_american(ml_away_dec),
-            "moneyline_home_american": decimal_to_american(ml_home_dec),
-            "spread": p.get("spread"),
-            "total": p.get("total") or p.get("overUnder"),
-            "last_updated": p.get("lastUpdated") or p.get("timestamp"),
+            "provider": p.get("provider"),
+            "moneyline_1_decimal": ml1_dec,
+            "moneyline_2_decimal": ml2_dec,
+            "moneyline_1_american": decimal_to_american(ml1_dec),
+            "moneyline_2_american": decimal_to_american(ml2_dec),
+            "over_under": p.get("overUnder"),
+            "over_under_line1": p.get("overUnderLine1"),
+            "over_under_line2": p.get("overUnderLine2"),
+            "date": p.get("date"),
         })
 
     return {
-        "game_id": game.get("gameID") or game.get("id"),
-        "home_team": game.get("homeTeam") or game.get("home"),
-        "away_team": game.get("awayTeam") or game.get("away"),
-        "start_time": game.get("dateTime") or game.get("startTime"),
+        "game_id": game.get("gameID"),
+        "team1_name": game.get("team1Name"), "team1_city": game.get("team1City"),
+        "team2_name": game.get("team2Name"), "team2_city": game.get("team2City"),
+        "team1_initials": game.get("team1Initials"), "team2_initials": game.get("team2Initials"),
+        "start_time_ms": game.get("date"),
         "providers": normalized_providers,
     }
 
@@ -126,8 +134,11 @@ def fetch_sport(sport: str, query: str) -> list:
     data = fetch_json(f"{BASE_URL}/odds.json", {"apiKey": API_KEY, "q": query}, sport, "odds")
     if not isinstance(data, dict):
         return []
-    games_raw = data.get("games", data if isinstance(data, list) else [])
+    games_raw = data.get("results", [])
     games_list = games_raw if isinstance(games_raw, list) else []
+    if games_list:
+        DEBUG_LOG.append({"sport": sport, "label": "sample_game_full",
+                           "sample": json.dumps(games_list[0])[:3000]})
     return [normalize_game(g) for g in games_list if isinstance(g, dict)]
 
 
