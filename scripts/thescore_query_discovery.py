@@ -40,7 +40,7 @@ import requests
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GIST_FILE = "betcouncil_thescore_query_discovery.json"
 TARGET_OPERATION = "CompetitionPageSectionLinesTabNode"
-MLB_PAGE_URL = "https://sportsbook.thescore.bet/us/az/bet/baseball/mlb"
+MLB_PAGE_URL = "https://sportsbook.thescore.bet/"
 MAX_WAIT_SECONDS = 45
 
 
@@ -142,7 +142,24 @@ def run() -> dict:
         try:
             page.goto(MLB_PAGE_URL, wait_until="networkidle", timeout=40_000)
         except Exception as e:
-            log(f"Page load: {e}")
+            log(f"Homepage load: {e}")
+
+        # Dismiss cookie banner if present -- otherwise it can overlay nav links
+        for sel in ["#onetrust-accept-btn-handler", "button:has-text('Accept')"]:
+            try:
+                page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                continue
+
+        # Click into MLB via the real nav UI instead of guessing a URL path --
+        # the first run showed /us/az/bet/baseball/mlb is a 404 on the live
+        # site, which is why zero target requests ever fired.
+        try:
+            page.click("text=MLB", timeout=10_000)
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except Exception as e:
+            log(f"Click MLB nav: {e}")
 
         import time
         deadline = time.time() + MAX_WAIT_SECONDS
