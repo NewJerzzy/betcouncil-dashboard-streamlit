@@ -124,16 +124,12 @@ def fetch_league_games(sport: str, league_path: str) -> list:
                            "top_level_keys": list(data.keys())[:20],
                            "data_sample": json.dumps(data)[:800]})
         return []
-    if sport == "MLB":
-        DEBUG_LOG.append({"sport": sport, "note": "games list found, sample first game full structure",
-                           "num_games": len(games), "first_game_full": json.dumps(games[0])[:2500]})
     return games
 
 
 def fetch_game_pick(league_path: str, slug: str) -> dict:
     url = f"{BASE_URL}/{league_path}/games/{slug}/picks/"
     r = requests.get(url, headers=HEADERS, timeout=20)
-    DEBUG_LOG.append({"step": "game_pick", "url": url, "status": r.status_code})
     if r.status_code != 200:
         return {}
 
@@ -145,6 +141,12 @@ def fetch_game_pick(league_path: str, slug: str) -> dict:
         result["pick_team_or_side"] = m.group(1).strip()
         result["pick_bet_and_odds"] = m.group(2).strip()
         result["pick_playable_to"] = m.group(3).strip()
+    elif sum(1 for e in DEBUG_LOG if e.get("step") == "game_pick_diagnostic") < 5:
+        DEBUG_LOG.append({"step": "game_pick_diagnostic", "url": url,
+                           "pick_obj_found": pick_obj is not None, "pick_obj_sample": json.dumps(pick_obj)[:500] if pick_obj else None,
+                           "has_prediction_word": "prediction:" in r.text.lower(),
+                           "has_playable_word": "playable to" in r.text.lower(),
+                           "body_len": len(r.text)})
     return result
 
 
@@ -232,7 +234,7 @@ def main() -> int:
         log(f"FATAL unhandled error: {e}")
 
     files_payload["betcouncil_pickswise_debug.json"] = {
-        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15],
+        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:30],
                                 "fatal_error": fatal_error}, indent=2)
     }
 
