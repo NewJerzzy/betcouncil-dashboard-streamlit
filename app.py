@@ -8780,7 +8780,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8901,6 +8901,17 @@ def build_market_comparison(shortlist):
             vi_match = {}
         if vi_match:
             result["vegasinsider"].append({"matchup": matchup, "sport": "MLB", **vi_match})
+
+    # ── Sports Insights (public ticket-% trends) ────────────────────────
+    for matchup in shortlist_matchups:
+        for sport in sports_needed:
+            try:
+                si_match = get_sportsinsights_match(matchup, sport)
+            except Exception:
+                si_match = {}
+            if si_match:
+                result["sportsinsights"].append({"matchup": matchup, "sport": sport, **si_match})
+                break
 
     return result
 
@@ -20105,6 +20116,18 @@ with tabs[3]:
                 if _vi_match.get("open_ml") and _vi_match.get("consensus_ml"):
                     st.caption(f"🌐 VegasInsider line move: opened {_vi_match['open_ml']} → now {_vi_match['consensus_ml']}")
 
+            # Sports Insights (public ticket %) — display only.
+            try:
+                _si_match = get_sportsinsights_match(_matchup, _gsport)
+            except Exception:
+                _si_match = {}
+            if _si_match and _si_match.get("home_pct_ml") is not None:
+                st.caption(
+                    f"🎟️ Sports Insights: {_si_match.get('home_abv','')} {_si_match['home_pct_ml']}% ML tickets, "
+                    f"{_si_match.get('home_pct_spread','?')}% spread, {_si_match.get('home_pct_ou','?')}% O/U "
+                    f"({_si_match.get('total_bets','?')} bets)"
+                )
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
@@ -27155,6 +27178,7 @@ with tabs[1]:
         "de":      {"label": "DraftEdge",   "color": "#22c55e"},
         "mb":      {"label": "MyBookie",    "color": "#f59e0b"},
         "vi":      {"label": "VegasInsider","color": "#06b6d4"},
+        "si":      {"label": "SportsInsights","color": "#a3e635"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -27203,6 +27227,7 @@ with tabs[1]:
         _dimers_by_matchup = {row.get("matchup", ""): row for row in cmp.get("dimers", [])}
         _mybookie_by_matchup = {row.get("matchup", ""): row for row in cmp.get("mybookie", [])}
         _vegasinsider_by_matchup = {row.get("matchup", ""): row for row in cmp.get("vegasinsider", [])}
+        _sportsinsights_by_matchup = {row.get("matchup", ""): row for row in cmp.get("sportsinsights", [])}
 
         st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
@@ -27271,6 +27296,12 @@ with tabs[1]:
                 if _vi_row and _vi_row.get("trends"):
                     _vi_top = max(_vi_row["trends"], key=lambda t: int(str(t.get("ml_pct","0%")).rstrip("%") or 0))
                     chips += _chip("vi", f'{_vi_top.get("team","")} {_vi_top.get("ml_pct","")} public')
+                _si_row = _sportsinsights_by_matchup.get(g["Matchup"])
+                if _si_row and _si_row.get("home_pct_ml") is not None:
+                    _si_ml = _si_row["home_pct_ml"]
+                    _si_side = _si_row.get("home_abv","") if _si_ml >= 50 else _si_row.get("away_abv","")
+                    _si_pct = _si_ml if _si_ml >= 50 else 100 - _si_ml
+                    chips += _chip("si", f'{_si_side} {_si_pct}% tickets ({_si_row.get("total_bets","?")})')
                 with game_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'

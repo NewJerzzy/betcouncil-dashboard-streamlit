@@ -17047,6 +17047,52 @@ def get_rotogrinders_player(player_name: str, sport: str) -> dict:
     return {}
 
 
+def fetch_sportsinsights_trends_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    Sports Insights' public ticket-percentage betting trends — no login,
+    no API key. Confirmed live 2026-07-17 via sportsinsights_refresh.py,
+    matches Sports Insights' own marketing copy which explicitly calls
+    out "money percentages" as the premium unlock (the free data here is
+    ticket %, not money %, exactly as advertised).
+
+    Named "_trends_" rather than the more obvious
+    fetch_sportsinsights_from_gist — that name is already used by an
+    older dead stub (board-load dispatch table entry from the June 29
+    bulk add, expects a per-sport gist file that was never populated),
+    same collision pattern found and worked around for VegasInsider/
+    RotoGrinders.
+
+    Returns [] if no fresh data — treat as "no data," not "confirmed
+    absent."
+    """
+    data = _read_gist_file(f"betcouncil_sportsinsights_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("games", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_sportsinsights_match(matchup: str, sport: str) -> dict:
+    """
+    Single-game lookup against Sports Insights' ticket-% data. Uses team
+    abbreviations directly ("PHI", "NYM"), same format BetCouncil's
+    matchup strings already use.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        games = fetch_sportsinsights_trends_from_gist(sport)
+    except Exception:
+        games = []
+    matchup_u = matchup.upper()
+    for game in games:
+        home_abv, away_abv = str(game.get("home_abv", "")).upper(), str(game.get("away_abv", "")).upper()
+        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
+            return game
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
