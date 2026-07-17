@@ -83,7 +83,7 @@ def push_to_gist(payload: dict, github_token: str) -> bool:
     return False
 
 
-def mint_token(host: str, cf):
+def mint_token(host: str, cf, session=None):
     import random, string
     connect_token = "".join(random.choices(string.ascii_lowercase + string.digits, k=32))
     variables = {
@@ -98,8 +98,9 @@ def mint_token(host: str, cf):
         "accept": "application/json", "content-type": "application/json",
         "x-install-id": "".join(random.choices(string.ascii_lowercase + string.digits, k=32)),
     }
+    requester = session if session is not None else cf
     try:
-        r = cf.get(
+        r = requester.get(
             f"https://{host}/graphql/persisted_queries/{STARTUP_HASH}",
             params={"operationName": "Startup", "variables": json.dumps(variables),
                     "extensions": json.dumps(extensions)},
@@ -116,7 +117,20 @@ def test_host(host: str) -> dict:
     from curl_cffi import requests as cf
 
     result = {"host": host}
-    token, mint_status = mint_token(host, cf)
+
+    # Establish session cookies via the homepage first -- a bare, stateless
+    # request to every regional host except us-ia returned a 302, which is
+    # consistent with real browsers needing geo/session cookies set on first
+    # load before the regional host will respond directly.
+    session = cf.Session()
+    try:
+        home = session.get("https://sportsbook.thescore.bet/", impersonate="chrome124", timeout=15)
+        result["homepage_status"] = home.status_code
+        result["cookies_set"] = list(session.cookies.keys()) if hasattr(session, "cookies") else []
+    except Exception as e:
+        result["homepage_status"] = f"error: {e}"
+
+    token, mint_status = mint_token(host, cf, session=session)
     result["mint_status"] = mint_status
     if not token:
         result["verdict"] = "no_token"
@@ -136,7 +150,7 @@ def test_host(host: str) -> dict:
     extensions = {"persistedQuery": {"version": 1, "sha256Hash": LINES_HASH}}
     headers = {"x-anonymous-authorization": f"Bearer {token}", "accept": "application/json"}
     try:
-        r = cf.get(
+        r = session.get(
             f"https://{host}/graphql/persisted_queries/{LINES_HASH}",
             params={"operationName": "CompetitionPageSectionLinesTabNode",
                     "variables": json.dumps(variables), "extensions": json.dumps(extensions)},
