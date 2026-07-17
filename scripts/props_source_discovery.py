@@ -170,6 +170,12 @@ def run_oddsshopper():
         "n_key_like_strings": len(api_key_like),
     })
 
+    # Guessed sub-page paths above may be wrong -- extract real internal
+    # links from the homepage's own <a href> / Next.js <Link> targets
+    # rather than continuing to guess blind.
+    real_links = sorted(set(re.findall(r'href="(/[a-zA-Z0-9\-/]+)"', html)))
+    findings["oddsshopper"].append({"step": "real_links_found", "links": real_links[:30]})
+
     for path in chunk_paths[:5]:
         chunk_url = f"https://www.oddsshopper.com{path}" if path.startswith("/") else path
         try:
@@ -188,7 +194,11 @@ def run_oddsshopper():
     # polyfills, main-app shell) -- route-specific data-fetching logic
     # loads on demand when visiting an actual props page, not on "/".
     # Fetch a real MLB props sub-page and repeat the chunk scan there.
-    for sub_path in ["/mlb/props", "/mlb", "/sportsbook-promos/mlb"]:
+    # Try real links found on the homepage that look like odds/props
+    # pages, since the guessed paths above all 404'd.
+    plausible = [l for l in real_links if any(
+        kw in l.lower() for kw in ("mlb", "nba", "nfl", "prop", "odds", "bet"))]
+    for sub_path in plausible[:6]:
         sub_url = f"https://www.oddsshopper.com{sub_path}"
         try:
             r = requests.get(sub_url, headers=HEADERS, timeout=15)
