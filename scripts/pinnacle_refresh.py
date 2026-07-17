@@ -84,33 +84,45 @@ def normalize(sport: str, league_id: int) -> list:
     if not isinstance(markets, list):
         markets = []
 
-    # Diagnostic only: first live run returned None for home_team/away_team,
-    # meaning the "alignment"/"name" field assumptions below are wrong for
-    # this API's actual shape. Dump the first matchup's raw participants
-    # (and full matchup keys) so the real field names are visible without
-    # needing to re-guess blind.
-    if matchups:
-        DEBUG_LOG.append({
-            "sport": sport, "label": "sample_matchup_keys",
-            "keys": list(matchups[0].keys()) if isinstance(matchups[0], dict) else None,
-            "participants_raw": matchups[0].get("participants") if isinstance(matchups[0], dict) else None,
-        })
-        # Round 2: alignment was always "neutral" and several sampled
-        # matchups were Over/Under specials or full-league team lists, not
-        # individual games -- need "type"/"parent"/"special" across a wider
-        # sample to find what actually distinguishes a real 2-team game.
-        DEBUG_LOG.append({
-            "sport": sport, "label": "matchup_type_survey",
-            "sample": [
-                {"id": m.get("id"), "type": m.get("type"), "special": m.get("special"),
-                 "parentId": m.get("parentId"), "parent": m.get("parent"),
-                 "n_participants": len(m.get("participants", [])),
-                 "participant_names": [p.get("name") for p in m.get("participants", [])][:6]}
-                for m in matchups[:15] if isinstance(m, dict)
-            ],
-        })
+    # /matchups returns mostly prop "specials" (player props, exact scores,
+    # etc.), each carrying a "parent" object that IS the real 2-team game --
+    # confirmed live: top-level entries have alignment="neutral" always (even
+    # for actual games), while parent.participants correctly has
+    # alignment="home"/"away". Build the real game list from deduped
+    # parents rather than the top-level entries themselves.
+    real_games: dict = {}
+    for m in matchups:
+        if not isinstance(m, dict):
+            continue
+        parent = m.get("parent")
+        # A genuine top-level game (not wrapped as someone's "parent") has
+        # no parent of its own and exactly 2 participants with real
+        # alignment -- handle both shapes.
+        candidates = []
+        if parent and isinstance(parent, dict):
+            candidates.append(parent)
+        elif m.get("participants") and all(
+            p.get("alignment") in ("home", "away") for p in m.get("participants", [])
+        ) and len(m.get("participants", [])) == 2:
+            candidates.append(m)
 
-    matchup_by_id = {m.get("id"): m for m in matchups if isinstance(m, dict)}
+        for g in candidates:
+            gid = g.get("id")
+            if gid is None or gid in real_games:
+                continue
+            participants = g.get("participants", [])
+            home = next((p for p in participants if p.get("alignment") == "home"), {})
+            away = next((p for p in participants if p.get("alignment") == "away"), {})
+            real_games[gid] = {
+                "sport": sport,
+                "matchup_id": gid,
+                "start_time": g.get("startTime"),
+                "home_team": home.get("name"),
+                "away_team": away.get("name"),
+                "is_live": g.get("isLive"),
+                "markets": [],
+            }
+
     markets_by_matchup: dict = {}
     for mkt in markets:
         if not isinstance(mkt, dict):
@@ -118,21 +130,10 @@ def normalize(sport: str, league_id: int) -> list:
         mid = mkt.get("matchupId")
         markets_by_matchup.setdefault(mid, []).append(mkt)
 
-    games = []
-    for mid, matchup in matchup_by_id.items():
-        participants = matchup.get("participants", [])
-        home = next((p for p in participants if p.get("alignment") == "home"), {})
-        away = next((p for p in participants if p.get("alignment") == "away"), {})
-        games.append({
-            "sport": sport,
-            "matchup_id": mid,
-            "start_time": matchup.get("startTime"),
-            "home_team": home.get("name"),
-            "away_team": away.get("name"),
-            "is_live": matchup.get("isLive"),
-            "markets": markets_by_matchup.get(mid, []),  # raw ML/spread/total entries, prices[] per side
-        })
-    return games
+    for gid, game in real_games.items():
+        game["markets"] = markets_by_matchup.get(gid, [])
+
+    return list(real_games.values())
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
