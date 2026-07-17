@@ -67,6 +67,14 @@ def _extract_json_after_marker(text: str, marker: str):
     Find the marker string, then locate the JSON object that starts at
     the next `{` and balance braces to find its true end (can't just
     regex a fixed-size chunk — nested objects vary in length).
+
+    Works when marker is itself a wrapper key whose value is the object
+    we want (e.g. "initialData":{...}). Does NOT work when marker is a
+    field *inside* a larger object with sibling fields after it (e.g.
+    "shortReasoningHtml" is a string value, not an object — the next
+    "{" after it belongs to some unrelated sibling object, not the
+    object we actually want). Use _parse_rsc_chunks + _find_dict_with_key
+    for that case instead.
     """
     idx = text.find(marker)
     if idx == -1:
@@ -86,6 +94,54 @@ def _extract_json_after_marker(text: str, marker: str):
                     return json.loads(candidate)
                 except json.JSONDecodeError:
                     return None
+    return None
+
+
+def _parse_rsc_chunks(text: str) -> list:
+    """
+    RSC responses are newline-delimited chunks: `3a:{...}` or `4:[...]`
+    (a chunk ID, colon, then a JSON value — sometimes prefixed further
+    with a type char like `3a:I[...]` for client references, which
+    won't parse as JSON and are skipped). Returns every chunk value that
+    successfully parses as JSON, so callers can search across all of
+    them for a specific key rather than guessing position from a
+    substring marker (a marker string found *inside* a value doesn't
+    tell you where that value's enclosing object actually starts —
+    this is what _extract_json_after_marker got wrong for
+    "shortReasoningHtml", which found an unrelated sibling object).
+    """
+    chunks = []
+    for line in text.split("\n"):
+        m = re.match(r"^[0-9a-f]+:(.*)$", line.strip(), re.IGNORECASE)
+        if not m:
+            continue
+        payload = m.group(1)
+        if not payload or payload[0] not in "{[":
+            continue
+        try:
+            chunks.append(json.loads(payload))
+        except json.JSONDecodeError:
+            continue
+    return chunks
+
+
+def _find_dict_with_key(obj, target_key: str, depth=0, max_depth=15):
+    """Walk a parsed structure looking for the first dict that has
+    target_key as one of its own keys (not nested inside it)."""
+    if depth > max_depth:
+        return None
+    if isinstance(obj, dict):
+        if target_key in obj:
+            return obj
+        for v in obj.values():
+            found = _find_dict_with_key(v, target_key, depth + 1, max_depth)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _find_dict_with_key(item, target_key, depth + 1, max_depth)
+            if found:
+                return found
     return None
 
 
@@ -133,7 +189,13 @@ def fetch_game_pick(league_path: str, slug: str) -> dict:
     if r.status_code != 200:
         return {}
 
-    pick_obj = _extract_json_after_marker(r.text, '"rating"')
+    chunks = _parse_rsc_chunks(r.text)
+    pick_obj = None
+    for chunk in chunks:
+        found = _find_dict_with_key(chunk, "shortReasoningHtml")
+        if found:
+            pick_obj = found
+            break
     result = dict(pick_obj) if isinstance(pick_obj, dict) else {}
 
     m = PICK_STATEMENT_RE.search(r.text)
@@ -143,7 +205,8 @@ def fetch_game_pick(league_path: str, slug: str) -> dict:
         result["pick_playable_to"] = m.group(3).strip()
     elif sum(1 for e in DEBUG_LOG if e.get("step") == "game_pick_diagnostic") < 5:
         DEBUG_LOG.append({"step": "game_pick_diagnostic", "url": url,
-                           "pick_obj_found": pick_obj is not None, "pick_obj_sample": json.dumps(pick_obj)[:500] if pick_obj else None,
+                           "num_chunks": len(chunks), "pick_obj_found": pick_obj is not None,
+                           "pick_obj_sample": json.dumps(pick_obj)[:500] if pick_obj else None,
                            "has_prediction_word": "prediction:" in r.text.lower(),
                            "has_playable_word": "playable to" in r.text.lower(),
                            "body_len": len(r.text)})
