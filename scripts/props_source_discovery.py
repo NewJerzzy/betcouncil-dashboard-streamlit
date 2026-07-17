@@ -207,9 +207,9 @@ def _run_oddsshopper_inner():
     # pages, since the guessed paths above all 404'd. Prioritize
     # expert-picks/free pages specifically -- those are the actual props
     # display, not blog articles that happen to mention "bet" or "mlb".
-    priority = [l for l in real_links if l.startswith("/expert-picks/free/")]
+    priority = [l for l in real_links if l.startswith("/odds/shop/")]
     other_plausible = [l for l in real_links if any(
-        kw in l.lower() for kw in ("prop", "odds")) and l not in priority]
+        kw in l.lower() for kw in ("liveodds", "expert-picks/free")) and l not in priority]
     findings["oddsshopper"].append({"step": "filtered_lists_debug",
                                       "priority": priority, "other_plausible": other_plausible})
     for sub_path in (priority + other_plausible)[:6]:
