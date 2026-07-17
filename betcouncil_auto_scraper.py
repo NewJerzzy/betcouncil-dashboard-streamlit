@@ -2328,7 +2328,8 @@ def scrape_thescore_curlffi(sport):
         body = r.json() if r.status_code == 200 else None
         if r.status_code != 200 or (body is not None and body.get("errors")):
             if body is not None and body.get("errors"):
-                print(f"    Schema/hash error on {current_hash[:12]}… — self-healing")
+                print(f"    Schema/hash error on {current_hash[:12]}… — {json.dumps(body['errors'])[:500]}")
+                print(f"    (sectionId used: {variables.get('sectionId')}) — self-healing")
             fresh_hash = _thescore_discover_current_hash()
             if not fresh_hash or fresh_hash == current_hash:
                 print(f"    Self-heal gave up (fresh_hash={fresh_hash!r}, current={current_hash[:12]}…)")
