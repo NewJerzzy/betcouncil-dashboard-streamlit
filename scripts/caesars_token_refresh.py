@@ -247,18 +247,38 @@ def harvest(email: str, password: str, github_token: str) -> dict:
         # mis-clicked).
         if not stop["done"]:
             try:
-                page.click(
-                    'button[type="submit"]:not([data-qa="login-cta-log-in-btn"]), '
-                    '[data-qa*="submit" i]:not([data-qa="login-cta-log-in-btn"]), '
-                    '[data-qa*="signin" i], [data-qa*="sign-in" i]',
-                    timeout=8_000,
-                )
-                note("submit via targeted button click", True)
+                # Confirmed via button-inventory dump (2026-07-17): the modal's
+                # real submit control is data-qa="login-form-cta-log-in-button"
+                # -- distinct from the outer nav button data-qa=
+                # "login-cta-log-in-btn" that opens the modal in the first
+                # place (same visible text "LOG IN", which is what fooled the
+                # original :has-text() selector into matching the wrong one).
+                page.click('[data-qa="login-form-cta-log-in-button"]', timeout=8_000)
+                note("submit via login-form-cta-log-in-button", True)
             except Exception as e:
-                note("submit via targeted button click", False, e)
+                note("submit via login-form-cta-log-in-button", False, e)
 
         time.sleep(3)
         note("post-submit state", True, page.url)
+
+        # Check specifically for an MFA challenge -- the DOM inventory showed
+        # multifactor-authentication-{change-method,code-entry}-drawer
+        # containers present (closed) even before login; a first-time
+        # automated login from a new environment is a plausible trigger for
+        # one to open, and if so, this is a hard stop no selector fix solves
+        # -- it needs a human to read a code off email/SMS.
+        try:
+            mfa_state = page.eval_on_selector_all(
+                "[class*='multifactor-authentication' i]",
+                "els => els.map(e => e.className)",
+            )
+            mfa_open = [c for c in mfa_state if "closed" not in c]
+            if mfa_open:
+                note("MFA challenge detected", False, mfa_open)
+            else:
+                note("MFA challenge check", True, "none open")
+        except Exception as e:
+            note("MFA challenge check", False, e)
 
         # After login, browse into the sportsbook itself -- the auth headers
         # get attached to the odds/props API calls that fire once a sport
