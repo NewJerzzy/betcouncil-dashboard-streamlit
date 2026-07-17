@@ -100,16 +100,47 @@ def run_action_network_probes():
                                params={"period": "game"}, headers=HEADERS, timeout=15)
         props_r = requests.get("https://api.actionnetwork.com/web/v1/scoreboard/mlb",
                                 params={"period": "player_props"}, headers=HEADERS, timeout=15)
-        game_keys = set(json.loads(game_r.text).get("games", [{}])[0].keys()) if game_r.status_code == 200 else set()
-        props_keys = set(json.loads(props_r.text).get("games", [{}])[0].keys()) if props_r.status_code == 200 else set()
+        game_data = json.loads(game_r.text) if game_r.status_code == 200 else {}
+        props_data = json.loads(props_r.text) if props_r.status_code == 200 else {}
+        game_games = game_data.get("games", [])
+        props_games = props_data.get("games", [])
+        game_keys = set(game_games[0].keys()) if game_games else set()
+        props_keys = set(props_games[0].keys()) if props_games else set()
+
+        # The existing scraper filters odds to type=="game" specifically --
+        # implying other type values exist in the same array. Check what's
+        # actually in there across both period variants.
+        def odds_types(games):
+            types = set()
+            for g in games:
+                for o in (g.get("odds") or []):
+                    if isinstance(o, dict):
+                        types.add(o.get("type"))
+            return types
+
         findings["action_network_probes"].append({
             "step": "period_param_comparison",
             "game_len": len(game_r.text), "props_len": len(props_r.text),
-            "identical_length": len(game_r.text) == len(props_r.text),
+            "n_games_game_period": len(game_games), "n_games_props_period": len(props_games),
             "game_first_game_keys": sorted(game_keys),
             "props_first_game_keys": sorted(props_keys),
             "keys_differ": game_keys != props_keys,
+            "odds_types_in_game_period": sorted(str(t) for t in odds_types(game_games)),
+            "odds_types_in_props_period": sorted(str(t) for t in odds_types(props_games)),
         })
+
+        # If a non-"game" type exists, dump one full example so field names
+        # are visible without guessing.
+        for g in props_games:
+            for o in (g.get("odds") or []):
+                if isinstance(o, dict) and o.get("type") != "game":
+                    findings["action_network_probes"].append({
+                        "step": "non_game_odds_sample", "sample": o,
+                    })
+                    break
+            else:
+                continue
+            break
     except Exception as e:
         findings["action_network_probes"].append({"step": "period_param_comparison_error", "error": str(e)})
 
