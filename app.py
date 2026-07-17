@@ -9984,6 +9984,32 @@ def generate_why_drivers(prop):
         elif _rlm.get("has_sharp"):
             for _ss in _rlm.get("sharp_signals",[])[:1]:
                 drivers.append(("⚡ Sharp signal", "+1.0%", "#22c55e"))
+        else:
+            # 2026-07-16 fix: compute_public_fade_signal existed but was
+            # never called anywhere — dead code. Wired in here as a
+            # fallback specifically when the RLM-based divergence check
+            # above found nothing (no sharp/RLM data available for this
+            # matchup), using covers/action-network/bettingpros public %
+            # instead. Labeled explicitly as unconfirmed — Sports
+            # Insights' own published research is clear that raw public-
+            # betting-% fades without reverse-line-movement confirmation
+            # aren't reliably profitable on their own, so this shouldn't
+            # be presented with the same confidence as the RLM-confirmed
+            # signal above.
+            try:
+                _fade = compute_public_fade_signal(_matchup_key, prop.get("Sport", ""), prop.get("Side", ""))
+            except Exception:
+                _fade = None
+            if _fade and _fade.get("fade_signal") == "CONTRARIAN":
+                drivers.append((
+                    f"🎯 Public fade (unconfirmed — no RLM): {_fade['public_pct']}% public {_fade['side']}",
+                    f"+{_fade.get('edge_adj', 0)*100:.0f}%", "#8ab4d4"
+                ))
+            elif _fade and _fade.get("fade_signal") == "WITH_PUBLIC":
+                risks.append((
+                    f"⚠️ With the public (unconfirmed): {_fade['public_pct']}% on {_fade['side']}",
+                    f"{_fade.get('edge_adj', 0)*100:.0f}%", "#f5c518"
+                ))
 
     # ── Market move quality ─────────────────────────────────
     mmq = int(prop.get("MarketMoveQuality", 0) or 0)

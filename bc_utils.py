@@ -6368,14 +6368,33 @@ def build_game_line_consensus(home_team, away_team, books: dict) -> dict:
     OddsAPI line the whole time, regardless of how many other books had
     real data sitting right there unused.
 
+    2026-07-16, same day, second fix: the first version combined books
+    with a plain equal-weighted median/mean — Pinnacle counted the same
+    as MyBookie. Checked this against Unabated's own published
+    methodology for their "Unabated Line" (not just their basic no-vig
+    calculator): they explicitly weight each book, per sport, based on
+    which books empirically reach the closing line fastest and most
+    accurately in that sport. This codebase doesn't have the historical
+    closing-line-tracking infrastructure to derive weights empirically
+    the way Unabated does, so BOOK_WEIGHTS below is a static, reputation-
+    based proxy for the same idea (Pinnacle universally recognized as
+    the sharpest reference book; Bookmaker/Heritage respected sharp-
+    leaning offshore books; standard regulated US books in the middle;
+    Bovada/MyBookie — recreational-skewing offshore books with softer,
+    slower-to-move lines — weighted down). Not sport-specific yet (that
+    would need real tracking data this codebase doesn't have) — same
+    weights across all sports for now, which is still a real improvement
+    over treating every book identically.
+
     This does the real job: for each book's *_game_lines list, finds the
     entry matching (home_team, away_team) via case-insensitive substring
     match (book name formats vary slightly — "LA Dodgers" vs "Los
     Angeles Dodgers" — so exact-match would silently drop real matches),
     pulls Spread/Total/HomeML/AwayML, and combines:
-      - spread/total: median across books that have a numeric value
-      - moneyline: average no-vig home probability (no_vig_prob, same
-        devig math already used for props) across books with both
+      - spread/total: weighted average across books that have a numeric
+        value (sharp books count more)
+      - moneyline: weighted average no-vig home probability (no_vig_prob,
+        same devig math already used for props) across books with both
         HomeML and AwayML present
       - agreement: ADX-style label based on how tightly books cluster,
         not just "some data exists"
@@ -6390,16 +6409,28 @@ def build_game_line_consensus(home_team, away_team, books: dict) -> dict:
     """
     import statistics
 
+    # Static reputation-based weights (see docstring) — session_state key
+    # -> weight. Defaults to 1.0 (STANDARD tier) for any key not listed.
+    BOOK_WEIGHTS = {
+        "pinnacle_game_lines":   3.0,   # SHARP — the industry reference book
+        "bookmaker_game_lines":  1.5,   # RESPECTED — sharp-leaning offshore
+        "heritage_game_lines":   1.5,   # RESPECTED — sharp-leaning offshore
+        "bovada_game_lines":     0.6,   # SOFT — recreational-skewing offshore
+        "mybookie_game_lines":   0.6,   # SOFT — recreational-skewing offshore
+    }
+    DEFAULT_WEIGHT = 1.0  # STANDARD — regulated US books that follow the market
+
     home_l = str(home_team).lower().strip()
     away_l = str(away_team).lower().strip()
     if not (home_l and away_l):
         return {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
                 "spread": {}, "total": {}, "moneyline": {}}
 
-    spreads, totals, home_probs = [], [], []
+    spreads, totals, home_probs = [], [], []  # each a list of (value, weight)
     n_books_matched = 0
 
     for book_name, rows in (books or {}).items():
+        weight = BOOK_WEIGHTS.get(book_name, DEFAULT_WEIGHT)
         if not isinstance(rows, list):
             continue
         for row in rows:
@@ -6425,17 +6456,17 @@ def build_game_line_consensus(home_team, away_team, books: dict) -> dict:
 
             try:
                 if spread_val not in (None, "", "N/A"):
-                    spreads.append(float(spread_val))
+                    spreads.append((float(spread_val), weight))
             except (TypeError, ValueError):
                 pass
             try:
                 if total_val not in (None, "", "N/A"):
-                    totals.append(float(total_val))
+                    totals.append((float(total_val), weight))
             except (TypeError, ValueError):
                 pass
             if home_ml not in (None, "", "N/A") and away_ml not in (None, "", "N/A"):
                 try:
-                    home_probs.append(no_vig_prob(float(home_ml), float(away_ml)))
+                    home_probs.append((no_vig_prob(float(home_ml), float(away_ml)), weight))
                 except (TypeError, ValueError):
                     pass
             break  # one matching row per book is enough
@@ -6444,32 +6475,46 @@ def build_game_line_consensus(home_team, away_team, books: dict) -> dict:
         return {"agreement": "NO_DATA", "agreement_note": "", "n_books_total": 0,
                 "spread": {}, "total": {}, "moneyline": {}}
 
+    def _weighted_mean(pairs):
+        total_w = sum(w for _, w in pairs)
+        if total_w <= 0:
+            return None
+        return sum(v * w for v, w in pairs) / total_w
+
     result = {
         "agreement": "NO_DATA", "agreement_note": "", "n_books_total": n_books_matched,
         "spread": {}, "total": {}, "moneyline": {},
     }
     if spreads:
-        result["spread"] = {"consensus": round(statistics.median(spreads), 1), "n_books": len(spreads)}
+        wm = _weighted_mean(spreads)
+        if wm is not None:
+            result["spread"] = {"consensus": round(wm, 1), "n_books": len(spreads)}
     if totals:
-        result["total"] = {"consensus": round(statistics.median(totals), 1), "n_books": len(totals)}
+        wm = _weighted_mean(totals)
+        if wm is not None:
+            result["total"] = {"consensus": round(wm, 1), "n_books": len(totals)}
     if home_probs:
-        result["moneyline"] = {"home_consensus_prob": round(statistics.mean(home_probs), 4),
-                                "n_books": len(home_probs)}
+        wm = _weighted_mean(home_probs)
+        if wm is not None:
+            result["moneyline"] = {"home_consensus_prob": round(wm, 4), "n_books": len(home_probs)}
 
     # Agreement label: how tightly books cluster, not just "data exists" —
     # a spread of 8+ books all within 0.5 pts is a much stronger signal
-    # than 2 books that happen to match.
-    if len(spreads) >= 2:
-        spread_range = max(spreads) - min(spreads)
+    # than 2 books that happen to match. Range check uses raw values,
+    # independent of weighting (weighting affects the consensus number,
+    # not how tightly the raw prices actually cluster).
+    spread_vals = [v for v, _ in spreads]
+    if len(spread_vals) >= 2:
+        spread_range = max(spread_vals) - min(spread_vals)
         if spread_range <= 0.5:
             result["agreement"] = "STRONG_AGREE"
-            result["agreement_note"] = f"{len(spreads)} books within 0.5 pts on spread"
+            result["agreement_note"] = f"{len(spread_vals)} books within 0.5 pts on spread"
         elif spread_range <= 1.5:
             result["agreement"] = "AGREE"
-            result["agreement_note"] = f"{len(spreads)} books within 1.5 pts on spread"
+            result["agreement_note"] = f"{len(spread_vals)} books within 1.5 pts on spread"
         else:
             result["agreement"] = "SPLIT"
-            result["agreement_note"] = f"{len(spreads)} books span {spread_range:.1f} pts on spread"
+            result["agreement_note"] = f"{len(spread_vals)} books span {spread_range:.1f} pts on spread"
     elif n_books_matched >= 1:
         result["agreement"] = "SINGLE_BOOK"
         result["agreement_note"] = f"only {n_books_matched} book matched this game"
