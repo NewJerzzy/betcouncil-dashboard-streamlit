@@ -86,6 +86,11 @@ def normalize_game(sport: str, game: dict) -> dict:
 
     odds_list = [o for o in game.get("odds", []) if isinstance(o, dict)]
     game_odds = [o for o in odds_list if o.get("type") == "game"]
+    # book_id 30 is Action Network's "Open" pseudo-book -- the actual
+    # opening line, timestamped when it first went live. Pulled out
+    # separately since it's the specific reference price most signals
+    # want to diff against, not just another book in the list.
+    opening_line = next((o for o in game_odds if o.get("book_id") == 30), None)
 
     player_stats = game.get("player_stats", {})
 
@@ -97,6 +102,7 @@ def normalize_game(sport: str, game: dict) -> dict:
         "home_record": (home.get("standings") or {}), "away_record": (away.get("standings") or {}),
         "away_rotation": game.get("away_rotation_number"), "home_rotation": game.get("home_rotation_number"),
         "odds": game_odds,  # keep raw — multiple books, book_id keyed
+        "opening_line": opening_line,  # book_id=30 "Open" pulled out for convenience
         "starting_pitchers": {
             "away": (player_stats.get("away") or [{}])[0] if player_stats.get("away") else None,
             "home": (player_stats.get("home") or [{}])[0] if player_stats.get("home") else None,
