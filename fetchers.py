@@ -18524,25 +18524,31 @@ def fetch_oddsportal_from_gist(sport):
     return {}, "unavailable"
 
 def fetch_outlier_from_gist(sport):
-    """Outlier.bet +EV opportunities.
-    Gist fallback + direct Python fetch (CORS-bypass).
+    """
+    Outlier.bet +EV opportunities.
+
+    2026-07-16: investigated properly (Replit, verified independently).
+    The direct Python fetch this used to attempt was wrong on two counts:
+    outlier.bet is just the WordPress marketing site (the real app is at
+    app.outlier.bet, a separate React SPA), and the path
+    "/api/opportunities" doesn't exist anywhere — the real backend is
+    api.outlier.bet with paths like
+    /sportsdata/marketOpportunities/positiveEV, gated by a genuine AWS
+    Cognito JWT check at the API Gateway level (no CSS trick, no public
+    subset — confirmed via {"message":"Missing Authentication Token"} /
+    x-amzn-ErrorType: UnauthorizedException on every unauthenticated
+    call). There's no server-side workaround, so the direct-fetch
+    attempt has been removed rather than left pointing at a dead URL.
+
+    The gist-harvester fallback below is left in place — unlike the
+    server-side fetch, a browser-based approach (a Tampermonkey script
+    capturing the user's own Cognito ID token while logged into
+    app.outlier.bet, same pattern as the FanDuel Parlay Hub harvester)
+    is still theoretically possible if this becomes worth building later.
+    Currently unpopulated — no harvester has ever pushed to this file.
     """
     data=_read_gist_file(f"betcouncil_outlier_{sport}.json",5)
     if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
-    try:
-        import requests as _req
-        _sport_l = sport.lower()
-        _r = _req.get(
-            f"https://outlier.bet/api/opportunities?sport={_sport_l}&min_ev=0.02",
-            headers={"Accept": "application/json",
-                     "Referer": "https://outlier.bet/",
-                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=14)
-        if _r.status_code == 200:
-            _d = _r.json()
-            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
-    except Exception:
-        pass
     return {}, "unavailable"
 
 def fetch_smarkets_from_gist(sport):
