@@ -1,0 +1,141 @@
+"""
+edgeterminal_refresh.py — EdgeTerminal's demo API (their own public demo mode)
+================================================================================
+
+Not a workaround against a WAF or auth gate -- demo.edgeterminal.ai is a
+hostname EdgeTerminal's own frontend JS recognizes and routes through their
+`/api/data` gateway with a literal `demo-anon` key. This is intentional
+demo access they built, not something bypassed.
+
+Endpoint: https://demo.edgeterminal.ai/api/data/rest/v1/{table}
+Headers: apikey: demo-anon, Authorization: Bearer demo-anon
+(app.edgeterminal.ai/api/data/rest/v1/{table} also confirmed to work)
+
+Tables confirmed live this session:
+  - our_picks: EdgeTerminal's own graded picks (win/loss/void/push), team
+    names deliberately scrambled in display fields, but offer_id encodes
+    book|league|market|side|line unobfuscated. Only ~3 picks/day in demo
+    mode (a cherry-picked sample, not their full pick list).
+  - live_game_feed: full raw ESPN API responses re-hosted in their Supabase
+    -- real team/player/venue names, scores, DK open/close lines. Covers
+    MLB, WNBA, ATP, WTA, EPL, La Liga, Bundesliga, Ligue 1, Serie A, World
+    Cup. This is the most independently useful table -- a free live ESPN
+    feed across 10+ leagues regardless of EdgeTerminal's own model output.
+  - soccer_priced_offers: live EV model (p_win, edge_prob_novig,
+    kelly_stake, is_top_pick) for soccer, through ~2 days out. Team names
+    scrambled, market/odds data real.
+
+mv_latest_prop_offers exists in their schema but returned only a stale
+March 2026 snapshot when checked -- not pulled here; revisit if it's ever
+seen live.
+
+Not independently verified byte-for-byte by Claude before this first
+deploy (built from a research summary, not re-probed live from this
+sandbox -- edgeterminal.ai isn't in this environment's network
+allowlist). Ships with debug logging so a schema drift or the demo route
+getting revoked is caught immediately on first live run.
+
+Pushes to betcouncil_edgeterminal_{TABLE}.json.
+"""
+
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+import requests
+
+GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
+BASE_URL = "https://demo.edgeterminal.ai/api/data/rest/v1"
+
+HEADERS = {
+    "apikey": "demo-anon",
+    "Authorization": "Bearer demo-anon",
+    "Accept": "application/json",
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+}
+
+TABLES = ["our_picks", "live_game_feed", "soccer_priced_offers"]
+
+DEBUG_LOG: list = []
+
+
+def log(msg: str) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] {msg}", flush=True)
+
+
+def fetch_table(table: str, params: dict = None):
+    url = f"{BASE_URL}/{table}"
+    try:
+        r = requests.get(url, headers=HEADERS, params=params or {"select": "*", "limit": 500}, timeout=20)
+    except Exception as e:
+        DEBUG_LOG.append({"table": table, "url": url, "error": str(e)})
+        return None
+    DEBUG_LOG.append({"table": table, "url": r.url, "status": r.status_code,
+                       "body_snippet": r.text[:400]})
+    if r.status_code != 200:
+        return None
+    try:
+        return r.json()
+    except json.JSONDecodeError:
+        return None
+
+
+def push_files(files_payload: dict, github_token: str) -> int:
+    resp = requests.patch(
+        f"https://api.github.com/gists/{GIST_ID}",
+        headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+        json={"files": files_payload}, timeout=30,
+    )
+    if resp.status_code in (200, 201):
+        return len(files_payload)
+    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    return 0
+
+
+def main() -> int:
+    github_token = os.environ.get("GITHUB_TOKEN")
+    if not github_token:
+        log("FATAL: GITHUB_TOKEN not set")
+        return 1
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    files_payload = {}
+    any_data = False
+
+    for table in TABLES:
+        try:
+            rows = fetch_table(table)
+        except Exception as e:
+            log(f"  {table}: error — {e}")
+            continue
+        if not isinstance(rows, list) or not rows:
+            log(f"  {table}: 0 rows")
+            continue
+        any_data = True
+        log(f"  {table}: {len(rows)} rows")
+        files_payload[f"betcouncil_edgeterminal_{table}.json"] = {
+            "content": json.dumps({
+                "source": "edgeterminal_demo", "table": table,
+                "captured_at": now_iso, "rows": rows,
+            })
+        }
+
+    files_payload["betcouncil_edgeterminal_debug.json"] = {
+        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15]}, indent=2)
+    }
+
+    if not any_data:
+        log("No data captured across any table — demo route may have been revoked")
+        push_files(files_payload, github_token)
+        return 1
+
+    pushed = push_files(files_payload, github_token)
+    log(f"Pushed {pushed} files")
+    return 0 if pushed > 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,21 @@
+name: EdgeTerminal Demo Refresh
+
+on:
+  schedule:
+    - cron: "8,23,38,53 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh-edgeterminal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run EdgeTerminal demo scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/edgeterminal_refresh.py
