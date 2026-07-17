@@ -69,11 +69,21 @@ def run() -> dict:
         "target_requests_seen": [],   # every request whose operationName matches, before/after mangling
         "retry_post_bodies": [],      # any POST to a graphql endpoint we capture after the mangled request
         "hash_mangled": False,
+        "all_graphql_like_requests": [],  # broader net: anything with graphql/persisted_quer in the URL
+        "all_request_hosts": {},          # host -> count, so we can see what actually loaded
     }
     state = {"mangled_once": False}
 
     def on_request(request):
         url = request.url
+        try:
+            host = url.split("/")[2]
+        except Exception:
+            host = "?"
+        findings["all_request_hosts"][host] = findings["all_request_hosts"].get(host, 0) + 1
+        if "graphql" in url.lower() or "persisted_quer" in url.lower():
+            findings["all_graphql_like_requests"].append(
+                {"method": request.method, "url": url[:250]})
         if "persisted_quer" in url and TARGET_OPERATION in url:
             findings["target_requests_seen"].append({
                 "method": request.method, "url": url,
@@ -140,6 +150,14 @@ def run() -> dict:
             time.sleep(1)
 
         try:
+            findings["final_url"] = page.url
+        except Exception as e:
+            findings["final_url"] = f"<error: {e}>"
+        try:
+            findings["page_text"] = page.inner_text("body")[:3000]
+        except Exception as e:
+            findings["page_text"] = f"<error: {e}>"
+        try:
             findings["screenshot_b64_png"] = base64.b64encode(
                 page.screenshot(full_page=False, timeout=10_000)).decode("ascii")
         except Exception as e:
@@ -159,6 +177,11 @@ def main() -> int:
 
     findings = run()
     findings["captured_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    log(f"final_url: {findings.get('final_url')}")
+    log(f"request hosts: {findings.get('all_request_hosts')}")
+    log(f"graphql-like requests seen: {len(findings.get('all_graphql_like_requests', []))}")
+    for r in findings.get("all_graphql_like_requests", [])[:10]:
+        log(f"  {r['method']} {r['url']}")
     log(f"target_requests_seen: {len(findings['target_requests_seen'])}")
     log(f"retry_post_bodies captured: {len(findings['retry_post_bodies'])}")
     log(f"hash_mangled: {findings['hash_mangled']}")
