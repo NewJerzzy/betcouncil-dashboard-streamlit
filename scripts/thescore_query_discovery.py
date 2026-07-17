@@ -161,6 +161,17 @@ def run() -> dict:
         except Exception as e:
             log(f"Click MLB nav: {e}")
 
+        # The MLB nav pill just filters the homepage -- it doesn't open a
+        # competition/event page, so CompetitionPageSectionLinesTabNode never
+        # fires from there. Click into an actual game row (matches an
+        # "AAA @ BBB" team-matchup pattern visible on the homepage) to reach
+        # the page that actually issues that query.
+        try:
+            page.click("text=/[A-Z]{2,4} @ [A-Z]{2,4}/", timeout=10_000)
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except Exception as e:
+            log(f"Click game row: {e}")
+
         import time
         deadline = time.time() + MAX_WAIT_SECONDS
         while time.time() < deadline and not findings["retry_post_bodies"]:
