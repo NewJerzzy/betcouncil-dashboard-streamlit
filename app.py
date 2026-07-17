@@ -8780,7 +8780,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8922,6 +8922,17 @@ def build_market_comparison(shortlist):
                 sao_match = {}
             if sao_match:
                 result["scoresandodds"].append({"matchup": matchup, "sport": sport, **sao_match})
+                break
+
+    # ── Pickswise (expert picks + consensus odds) ───────────────────────
+    for matchup in shortlist_matchups:
+        for sport in sports_needed:
+            try:
+                pw_match = get_pickswise_match(matchup, sport)
+            except Exception:
+                pw_match = {}
+            if pw_match:
+                result["pickswise"].append({"matchup": matchup, "sport": sport, **pw_match})
                 break
 
     return result
@@ -20164,6 +20175,21 @@ with tabs[3]:
                     _sao_text += f" · O/U {_sao_to['value']}"
                 st.caption(_sao_text)
 
+            # Pickswise (expert picks + consensus odds) — display only.
+            try:
+                _pw_match = get_pickswise_match(_matchup, _gsport)
+            except Exception:
+                _pw_match = {}
+            if _pw_match:
+                if _pw_match.get("pick_side"):
+                    _pw_stars = "★" * int(_pw_match.get("pick_rating") or 0)
+                    _pw_text = f"✍️ Pickswise pick: {_pw_match['pick_side']} — {_pw_match.get('pick_bet','')} {_pw_stars}"
+                    if _pw_match.get("pick_author"):
+                        _pw_text += f" (by {_pw_match['pick_author']})"
+                    st.caption(_pw_text)
+                elif _pw_match.get("odds"):
+                    st.caption(f"✍️ Pickswise: no pick published yet for this game ({len(_pw_match['odds'])} consensus odds lines available)")
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
@@ -27216,6 +27242,7 @@ with tabs[1]:
         "vi":      {"label": "VegasInsider","color": "#06b6d4"},
         "si":      {"label": "SportsInsights","color": "#a3e635"},
         "sao":     {"label": "ScoresAndOdds", "color": "#fb7185"},
+        "pw":      {"label": "Pickswise",     "color": "#c084fc"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -27266,6 +27293,7 @@ with tabs[1]:
         _vegasinsider_by_matchup = {row.get("matchup", ""): row for row in cmp.get("vegasinsider", [])}
         _sportsinsights_by_matchup = {row.get("matchup", ""): row for row in cmp.get("sportsinsights", [])}
         _scoresandodds_by_matchup = {row.get("matchup", ""): row for row in cmp.get("scoresandodds", [])}
+        _pickswise_by_matchup = {row.get("matchup", ""): row for row in cmp.get("pickswise", [])}
 
         st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
@@ -27345,6 +27373,10 @@ with tabs[1]:
                     _sao_ml = _sao_row["moneyline"]
                     _sao_nbooks = len(_sao_ml.get("comparison", {}))
                     chips += _chip("sao", f'{_sao_row.get("home_team","")} {_sao_ml.get("home","")} ({_sao_nbooks} books)')
+                _pw_row = _pickswise_by_matchup.get(g["Matchup"])
+                if _pw_row and _pw_row.get("pick_side"):
+                    _pw_stars = "★" * int(_pw_row.get("pick_rating") or 0)
+                    chips += _chip("pw", f'{_pw_row["pick_side"]} {_pw_row.get("pick_bet","")} {_pw_stars}')
                 with game_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'

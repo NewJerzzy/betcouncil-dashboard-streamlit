@@ -17137,6 +17137,55 @@ def get_scoresandodds_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_pickswise_picks_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    Pickswise's expert picks + consensus odds — no login, no paywall on
+    any field (confirmed 2026-07-17 via pickswise_refresh.py). Same site
+    as pickwise.com (a plain alias, not a different product).
+
+    Named "_picks_" rather than the more obvious
+    fetch_pickswise_from_gist — that name is already used by an older
+    dead stub (board-load dispatch table entry from the June 29 bulk
+    add), same collision pattern found and worked around for
+    VegasInsider/RotoGrinders/Sports Insights/ScoresAndOdds.
+
+    Note: pick_rating/pick_side/pick_bet/pick_playable_to will be None
+    for games Pickswise hasn't published a pick article for yet
+    (confirmed via live testing — only imminent games reliably have
+    picks; further-out games return real odds but no pick yet). That's
+    real data sparsity, not a bug — treat a None pick as "not published
+    yet," not "confirmed no pick."
+
+    Returns [] if no fresh data.
+    """
+    data = _read_gist_file(f"betcouncil_pickswise_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("games", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_pickswise_match(matchup: str, sport: str) -> dict:
+    """
+    Single-game lookup against Pickswise's picks/odds data. Uses team
+    abbreviations directly ("PHI", "NYM"), same format BetCouncil's
+    matchup strings already use.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        games = fetch_pickswise_picks_from_gist(sport)
+    except Exception:
+        games = []
+    matchup_u = matchup.upper()
+    for game in games:
+        home_abv, away_abv = str(game.get("home_team", "")).upper(), str(game.get("away_team", "")).upper()
+        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
+            return game
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
