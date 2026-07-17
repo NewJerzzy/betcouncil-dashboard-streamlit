@@ -46,7 +46,7 @@ import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://api.the-odds-api.com/v4"
-API_KEY = os.environ.get("ODDS_API_KEY", "6c4421ef9db7d9d28d7cb81bd30076b4")
+API_KEY = os.environ.get("ODDS_API_KEY", "")
 
 SPORT_KEYS = {"MLB": "baseball_mlb"}
 
