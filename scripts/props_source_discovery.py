@@ -195,10 +195,13 @@ def run_oddsshopper():
     # loads on demand when visiting an actual props page, not on "/".
     # Fetch a real MLB props sub-page and repeat the chunk scan there.
     # Try real links found on the homepage that look like odds/props
-    # pages, since the guessed paths above all 404'd.
-    plausible = [l for l in real_links if any(
-        kw in l.lower() for kw in ("mlb", "nba", "nfl", "prop", "odds", "bet"))]
-    for sub_path in plausible[:6]:
+    # pages, since the guessed paths above all 404'd. Prioritize
+    # expert-picks/free pages specifically -- those are the actual props
+    # display, not blog articles that happen to mention "bet" or "mlb".
+    priority = [l for l in real_links if l.startswith("/expert-picks/free/")]
+    other_plausible = [l for l in real_links if any(
+        kw in l.lower() for kw in ("prop", "odds")) and l not in priority]
+    for sub_path in (priority + other_plausible)[:6]:
         sub_url = f"https://www.oddsshopper.com{sub_path}"
         try:
             r = requests.get(sub_url, headers=HEADERS, timeout=15)
