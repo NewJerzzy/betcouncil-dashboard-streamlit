@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BetCouncil FanDuel Parlay Hub Harvester
 // @namespace    betcouncil
-// @version      2.0
-// @description  Passively captures FanDuel's "Parlay Hub" (curated popular SGP/parlay picks — login-gated, no public API) from your own authenticated FanDuel tab, and pushes to the shared Gist so BetCouncil's New Bettor tab can show it next to BetCouncil's own picks. v2.0: intercepts FanDuel's own network calls instead of a hardcoded URL, so there's no session token to hand-refresh — install once and forget it.
+// @version      2.1
+// @description  Passively captures FanDuel's "Parlay Hub" (curated popular SGP/parlay picks — login-gated, no public API) from your own authenticated FanDuel tab, and pushes to the shared Gist so BetCouncil's New Bettor tab can show it next to BetCouncil's own picks. v2.0: intercepts FanDuel's own network calls instead of a hardcoded URL, so there's no session token to hand-refresh — install once and forget it. v2.1: adds XHR interception (not just fetch) and broad debug logging of any parlay/odds-related request, to diagnose exactly what FanDuel is calling.
 // @match        https://*.fanduel.com/*
 // @grant        none
 // @run-at       document-start
@@ -97,6 +97,21 @@
         });
     }
 
+    // ── v2.1 diagnostics: log every fetch/XHR whose URL looks parlay/odds-
+    // related, whether or not it matches PARLAY_HUB_URL_MATCH. If the exact
+    // capture below isn't firing, these lines tell us what to match instead
+    // — no DevTools Network tab needed, just paste the console output back.
+    var DEBUG_KEYWORDS = ['parlay', 'betting-opp', 'popular', 'boapi'];
+    function debugLog(kind, url) {
+        var l = url.toLowerCase();
+        for (var i = 0; i < DEBUG_KEYWORDS.length; i++) {
+            if (l.indexOf(DEBUG_KEYWORDS[i]) !== -1) {
+                console.log('[BetCouncil-FDParlayHub][debug] ' + kind + ' -> ' + url);
+                return;
+            }
+        }
+    }
+
     // ── Passive capture: patch window.fetch so we see the response the
     // moment FanDuel's own front-end calls betting-opportunities/all while
     // you're just browsing Parlay Hub normally. No separate request is
@@ -107,19 +122,43 @@
         var __bcOrigFetch = window.fetch;
         window.fetch = function (input, init) {
             var url = (typeof input === 'string') ? input : (input && input.url) || '';
+            debugLog('fetch', url);
             var p = __bcOrigFetch.apply(this, arguments);
             if (url.indexOf(PARLAY_HUB_URL_MATCH) !== -1) {
                 p.then(function (r) {
                     r.clone().json().then(function (data) {
-                        console.log('[BetCouncil-FDParlayHub] Captured live betting-opportunities response');
+                        console.log('[BetCouncil-FDParlayHub] Captured live betting-opportunities response (fetch)');
                         pushParlayHubData(data);
                     }).catch(function () {});
                 }).catch(function () {});
             }
             return p;
         };
+
+        // Same capture, but for XMLHttpRequest — some FanDuel modules use
+        // XHR instead of fetch for this kind of call.
+        var __bcOrigOpen = XMLHttpRequest.prototype.open;
+        var __bcOrigSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (method, url) {
+            this.__bcUrl = url;
+            debugLog('xhr', url);
+            return __bcOrigOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function () {
+            var self = this;
+            if (self.__bcUrl && self.__bcUrl.indexOf(PARLAY_HUB_URL_MATCH) !== -1) {
+                self.addEventListener('load', function () {
+                    try {
+                        var data = JSON.parse(self.responseText);
+                        console.log('[BetCouncil-FDParlayHub] Captured live betting-opportunities response (xhr)');
+                        pushParlayHubData(data);
+                    } catch (e) {}
+                });
+            }
+            return __bcOrigSend.apply(this, arguments);
+        };
     }
 
     console.log('[BetCouncil-FDParlayHub] Harvester active on ' + window.location.hostname
-        + (GIST_TOK.indexOf('PASTE_') === 0 ? ' — waiting on GIST_TOK to be filled in' : ' — watching for Parlay Hub data'));
+        + (GIST_TOK.indexOf('PASTE_') === 0 ? ' — waiting on GIST_TOK to be filled in' : ' — watching for Parlay Hub data (v2.1 debug mode: logging any parlay/odds-related request)'));
 })();
