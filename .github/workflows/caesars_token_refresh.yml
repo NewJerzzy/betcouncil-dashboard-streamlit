@@ -1,0 +1,32 @@
+name: Caesars Token Refresh (headless login)
+
+on:
+  schedule:
+    # Twice daily, well inside the JWT's ~24h expiry -- gives a full run's
+    # worth of buffer if one attempt fails (bad selector match, WAF hiccup,
+    # transient network issue) before the token actually goes stale.
+    - cron: "0 4 * * *"
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests playwright
+          playwright install --with-deps chromium
+
+      - name: Log in and harvest fresh Caesars tokens
+        env:
+          CAESARS_EMAIL: ${{ secrets.CAESARS_EMAIL }}
+          CAESARS_PASSWORD: ${{ secrets.CAESARS_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/caesars_token_refresh.py

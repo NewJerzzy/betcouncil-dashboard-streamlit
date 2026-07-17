@@ -10307,9 +10307,12 @@ def harvest_caesars_tokens(max_wait: int = 90) -> dict:
         return {}
 
     # ── Persist to Gist ──────────────────────────────────────────────────────
-    # File is named "caesars_tokens.json"; content is the JSON-serialised dict.
-    # load_from_gist("caesars_tokens", None) in app.py parses this back to a
-    # dict — that's the shape fetch_caesars_direct() reads from the Gist.
+    # File is "betcouncil_caesars_tokens.json" -- this MUST match the filename
+    # every consumer reads (_get_caesars_tokens, fetch_caesars_waf_from_gist,
+    # the curl_cffi Caesars props fetcher in betcouncil_auto_scraper.py, and
+    # scripts/caesars_token_refresh.py). Previously wrote to "caesars_tokens.json"
+    # instead -- a filename that no reader in the codebase actually looked at,
+    # so every token this function ever harvested was silently discarded.
     if GITHUB_TOKEN and GITHUB_GIST_ID:
         try:
             _http.patch(
@@ -10318,7 +10321,7 @@ def harvest_caesars_tokens(max_wait: int = 90) -> dict:
                     "Authorization": f"token {GITHUB_TOKEN}",
                     "Accept": "application/vnd.github.v3+json",
                 },
-                json={"files": {"caesars_tokens.json": {"content": json.dumps(harvested, indent=2)}}},
+                json={"files": {"betcouncil_caesars_tokens.json": {"content": json.dumps(harvested, indent=2)}}},
                 timeout=10,
             )
         except Exception as _ge:
