@@ -253,10 +253,37 @@ def harvest(email: str, password: str, github_token: str) -> dict:
                 # "login-cta-log-in-btn" that opens the modal in the first
                 # place (same visible text "LOG IN", which is what fooled the
                 # original :has-text() selector into matching the wrong one).
+                btn_state = {}
+                try:
+                    btn_state = page.eval_on_selector(
+                        '[data-qa="login-form-cta-log-in-button"]',
+                        """e => {
+                            const r = e.getBoundingClientRect();
+                            const cs = getComputedStyle(e);
+                            return {disabled: e.disabled, ariaDisabled: e.getAttribute('aria-disabled'),
+                                    width: r.width, height: r.height,
+                                    visibility: cs.visibility, display: cs.display,
+                                    pointerEvents: cs.pointerEvents, opacity: cs.opacity};
+                        }""",
+                    )
+                except Exception as e:
+                    btn_state = {"eval_error": str(e)}
+                note("submit button state before click", True, btn_state)
+
                 page.click('[data-qa="login-form-cta-log-in-button"]', timeout=8_000)
                 note("submit via login-form-cta-log-in-button", True)
             except Exception as e:
                 note("submit via login-form-cta-log-in-button", False, e)
+                # Diagnostic-only forced click: bypasses Playwright's
+                # actionability wait (visible/stable/receives-events/enabled)
+                # to tell "obscured by an overlay" apart from "genuinely
+                # disabled" -- if this also produces no token, the button
+                # itself isn't the blocker.
+                try:
+                    page.click('[data-qa="login-form-cta-log-in-button"]', timeout=5_000, force=True)
+                    note("forced click (diagnostic)", True)
+                except Exception as e2:
+                    note("forced click (diagnostic)", False, e2)
 
         time.sleep(3)
         note("post-submit state", True, page.url)
