@@ -20,12 +20,14 @@ Markets requested (confirmed available for MLB on the free tier):
     Batter:  batter_home_runs, batter_hits, batter_total_bases, batter_rbis,
              batter_runs_scored, batter_stolen_bases, batter_walks
 
-Credit math: this uses one combined regions=us,eu call per event (not
-separate us/eu calls), and only for events inside the pre-game window --
-that's the whole point of the window filter. Still, 13 markets x 15 games
-would burn the entire monthly budget in a couple of polls, so
-MAX_EVENTS_PER_RUN and a trimmed default market list cap the damage; widen
-either only if credit usage (logged every run) shows headroom.
+Credit math (measured live, not estimated): the original 13-market list
+cost ~26 credits/event (13 markets x 2 regions actually returning data) --
+confirmed via the `x-requests-remaining` header dropping by exactly that
+much per event on the first live run. At that rate 500 credits/month only
+covers ~19 events total, nowhere near a daily MLB slate. Cut to 4 markets
+(~8 credits/event) so a full slate is sustainable across a month, not a
+day. Widen the market list only after checking several days of logged
+`requests_remaining` trend, not from the original estimate.
 
 Not independently verified byte-for-byte by Claude before this first
 deploy (market key names come from public docs/research, not re-probed
@@ -51,15 +53,17 @@ API_KEY = os.environ.get("ODDS_API_KEY", "")
 SPORT_KEYS = {"MLB": "baseball_mlb"}
 
 MARKETS = [
-    "pitcher_strikeouts", "pitcher_record_a_win", "pitcher_hits_allowed",
-    "pitcher_walks", "pitcher_earned_runs", "pitcher_outs",
-    "batter_home_runs", "batter_hits", "batter_total_bases",
-    "batter_rbis", "batter_runs_scored", "batter_stolen_bases", "batter_walks",
+    "pitcher_strikeouts", "batter_home_runs", "batter_hits", "batter_total_bases",
 ]
 
 REGIONS = "us,eu"
 PRE_GAME_WINDOW_HOURS = 6
-MAX_EVENTS_PER_RUN = 8  # hard credit-burn cap; raise only after checking logged usage
+MAX_EVENTS_PER_RUN = 4  # measured real cost: ~2 credits per market per region
+                        # actually returning data (confirmed live: 13 markets
+                        # x 2 regions = ~26 credits/event). 500/month only
+                        # covers ~19 events at the original 13-market list --
+                        # cut to 4 markets (~8 credits/event) so a full daily
+                        # MLB slate is actually affordable across a month.
 
 DEBUG_LOG: list = []
 
