@@ -17093,6 +17093,50 @@ def get_sportsinsights_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_scoresandodds_multibook_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    ScoresAndOdds' 11-book multi-book odds comparison (Action Network's
+    public Lambda, no auth) — confirmed live 2026-07-17, event ID
+    cross-validated against 4 other independently-verified sources this
+    session before build.
+
+    Named "_multibook_" rather than the more obvious
+    fetch_scoresandodds_from_gist — that name is already used by an
+    older dead stub (board-load dispatch table entry from the June 29
+    bulk add), same collision pattern found and worked around for
+    VegasInsider/RotoGrinders/Sports Insights.
+
+    Returns [] if no fresh data — treat as "no data," not "confirmed
+    absent."
+    """
+    data = _read_gist_file(f"betcouncil_scoresandodds_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("games", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_scoresandodds_match(matchup: str, sport: str) -> dict:
+    """
+    Single-game lookup against ScoresAndOdds' multi-book data. Uses team
+    abbreviations directly ("PHI", "NYM"), same format BetCouncil's
+    matchup strings already use.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        games = fetch_scoresandodds_multibook_from_gist(sport)
+    except Exception:
+        games = []
+    matchup_u = matchup.upper()
+    for game in games:
+        home_abv, away_abv = str(game.get("home_team", "")).upper(), str(game.get("away_team", "")).upper()
+        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
+            return game
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no

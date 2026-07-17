@@ -8780,7 +8780,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8911,6 +8911,17 @@ def build_market_comparison(shortlist):
                 si_match = {}
             if si_match:
                 result["sportsinsights"].append({"matchup": matchup, "sport": sport, **si_match})
+                break
+
+    # ── ScoresAndOdds (11-book multi-book odds comparison) ──────────────
+    for matchup in shortlist_matchups:
+        for sport in sports_needed:
+            try:
+                sao_match = get_scoresandodds_match(matchup, sport)
+            except Exception:
+                sao_match = {}
+            if sao_match:
+                result["scoresandodds"].append({"matchup": matchup, "sport": sport, **sao_match})
                 break
 
     return result
@@ -20128,6 +20139,24 @@ with tabs[3]:
                     f"({_si_match.get('total_bets','?')} bets)"
                 )
 
+            # ScoresAndOdds (11-book multi-book odds comparison) — display only.
+            try:
+                _sao_match = get_scoresandodds_match(_matchup, _gsport)
+            except Exception:
+                _sao_match = {}
+            if _sao_match:
+                _sao_ml = _sao_match.get("moneyline", {})
+                _sao_sp = _sao_match.get("spread", {})
+                _sao_to = _sao_match.get("total", {})
+                _sao_text = f"📚 ScoresAndOdds ({len(_sao_ml.get('comparison', {}))} books): "
+                if _sao_ml.get("home") is not None:
+                    _sao_text += f"ML {_sao_match.get('home_team','')} {_sao_ml['home']}/{_sao_match.get('away_team','')} {_sao_ml.get('away','')}"
+                if _sao_sp.get("value"):
+                    _sao_text += f" · Spread {_sao_sp['value']}"
+                if _sao_to.get("value"):
+                    _sao_text += f" · O/U {_sao_to['value']}"
+                st.caption(_sao_text)
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
@@ -27179,6 +27208,7 @@ with tabs[1]:
         "mb":      {"label": "MyBookie",    "color": "#f59e0b"},
         "vi":      {"label": "VegasInsider","color": "#06b6d4"},
         "si":      {"label": "SportsInsights","color": "#a3e635"},
+        "sao":     {"label": "ScoresAndOdds", "color": "#fb7185"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -27228,6 +27258,7 @@ with tabs[1]:
         _mybookie_by_matchup = {row.get("matchup", ""): row for row in cmp.get("mybookie", [])}
         _vegasinsider_by_matchup = {row.get("matchup", ""): row for row in cmp.get("vegasinsider", [])}
         _sportsinsights_by_matchup = {row.get("matchup", ""): row for row in cmp.get("sportsinsights", [])}
+        _scoresandodds_by_matchup = {row.get("matchup", ""): row for row in cmp.get("scoresandodds", [])}
 
         st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
@@ -27302,6 +27333,11 @@ with tabs[1]:
                     _si_side = _si_row.get("home_abv","") if _si_ml >= 50 else _si_row.get("away_abv","")
                     _si_pct = _si_ml if _si_ml >= 50 else 100 - _si_ml
                     chips += _chip("si", f'{_si_side} {_si_pct}% tickets ({_si_row.get("total_bets","?")})')
+                _sao_row = _scoresandodds_by_matchup.get(g["Matchup"])
+                if _sao_row and _sao_row.get("moneyline", {}).get("home") is not None:
+                    _sao_ml = _sao_row["moneyline"]
+                    _sao_nbooks = len(_sao_ml.get("comparison", {}))
+                    chips += _chip("sao", f'{_sao_row.get("home_team","")} {_sao_ml.get("home","")} ({_sao_nbooks} books)')
                 with game_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'
