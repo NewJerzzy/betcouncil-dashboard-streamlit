@@ -64,21 +64,32 @@ def push_to_gist(payload: dict, github_token: str, filename: str = GIST_FILE) ->
     return False
 
 
-def push_debug(page, steps: list, github_token: str) -> None:
-    """Dump current URL, a truncated HTML snapshot, and a full-page screenshot
-    to Gist. Exists because this sandbox's network allowlist can't reach
-    GitHub Actions' log-storage host (results-receiver.actions.githubusercontent.com),
-    so raw run logs aren't fetchable here -- this is the diagnostic channel
-    that IS reachable (plain Gist API, same host used for everything else)."""
+def push_debug(page, steps: list, github_token: str, button_inventory=None) -> None:
+    """Dump current URL, a targeted HTML snapshot, a full button inventory,
+    and a full-page screenshot to Gist. Exists because this sandbox's network
+    allowlist can't reach GitHub Actions' log-storage host
+    (results-receiver.actions.githubusercontent.com), so raw run logs aren't
+    fetchable here -- this is the diagnostic channel that IS reachable (plain
+    Gist API, same host used for everything else)."""
     debug = {"captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-              "steps": steps}
+              "steps": steps, "button_inventory": button_inventory or []}
     try:
         debug["current_url"] = page.url
     except Exception as e:
         debug["current_url"] = f"<error: {e}>"
     try:
-        debug["html_snippet"] = page.content()[:20000]
+        # Prefer the modal/dialog markup over page.content()[:N] -- the
+        # first run's head-heavy page meant a flat truncation never reached
+        # the login form at all. Fall back to the plain truncation if no
+        # dialog-like container is found.
+        modal_html = page.eval_on_selector_all(
+            "dialog, [role='dialog'], [class*='Modal' i], [class*='modal' i]",
+            "els => els.map(e => e.outerHTML).join('\\n---\\n')",
+        )
+        debug["modal_html"] = (modal_html or "")[:20000]
+        debug["html_snippet"] = page.content()[:8000]
     except Exception as e:
+        debug["modal_html"] = f"<error: {e}>"
         debug["html_snippet"] = f"<error: {e}>"
     try:
         png_bytes = page.screenshot(full_page=False, timeout=10_000)
@@ -88,7 +99,7 @@ def push_debug(page, steps: list, github_token: str) -> None:
     if not push_to_gist(debug, github_token, DEBUG_GIST_FILE):
         log("Debug dump push also failed")
     else:
-        log(f"Debug dump pushed to {DEBUG_GIST_FILE} ({len(debug.get('html_snippet',''))} char HTML, "
+        log(f"Debug dump pushed to {DEBUG_GIST_FILE} ({len(debug.get('modal_html',''))} char modal HTML, "
             f"{'screenshot ok' if not str(debug['screenshot_b64_png']).startswith('<error') else 'screenshot FAILED'})")
 
 
@@ -197,11 +208,54 @@ def harvest(email: str, password: str, github_token: str) -> dict:
             note("fill password", False, e)
         time.sleep(0.5)
 
+        # Diagnostic only: inventory every button on the page right before
+        # attempting submit. The first run showed the generic submit selector
+        # resolving to the *outer nav* "Log In" button (data-qa=
+        # "login-cta-log-in-btn", the one that opens the modal) rather than
+        # the modal's actual submit control -- this snapshot is how we find
+        # the real one instead of guessing again.
+        button_inventory = []
         try:
-            page.click('button[type="submit"], button:has-text("LOG IN"), button:has-text("Sign In")')
-            note("click submit", True)
+            button_inventory = page.eval_on_selector_all(
+                "button",
+                """els => els.map(e => ({
+                    text: (e.innerText || '').trim().slice(0, 40),
+                    dataQa: e.getAttribute('data-qa') || '',
+                    type: e.getAttribute('type') || '',
+                    ariaLabel: e.getAttribute('aria-label') || '',
+                    visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)
+                }))""",
+            )
         except Exception as e:
-            note("click submit", False, e)
+            note("button inventory", False, e)
+
+        # Strategy 1: Enter key in the password field -- submits most login
+        # forms without needing to disambiguate which button is "the" submit
+        # button, sidestepping the exact problem the first run hit.
+        try:
+            page.focus('input[type="password"]')
+            page.keyboard.press("Enter")
+            note("submit via Enter key", True)
+        except Exception as e:
+            note("submit via Enter key", False, e)
+
+        time.sleep(3)
+
+        # Strategy 2 (only if Enter didn't do it): click a button that looks
+        # like a real submit control, explicitly excluding the nav button
+        # that opens the modal (the one the first run's generic selector
+        # mis-clicked).
+        if not stop["done"]:
+            try:
+                page.click(
+                    'button[type="submit"]:not([data-qa="login-cta-log-in-btn"]), '
+                    '[data-qa*="submit" i]:not([data-qa="login-cta-log-in-btn"]), '
+                    '[data-qa*="signin" i], [data-qa*="sign-in" i]',
+                    timeout=8_000,
+                )
+                note("submit via targeted button click", True)
+            except Exception as e:
+                note("submit via targeted button click", False, e)
 
         time.sleep(3)
         note("post-submit state", True, page.url)
@@ -222,7 +276,7 @@ def harvest(email: str, password: str, github_token: str) -> dict:
         note("token capture", stop["done"])
 
         if not stop["done"]:
-            push_debug(page, steps, github_token)
+            push_debug(page, steps, github_token, button_inventory)
 
         ctx.close()
         browser.close()
