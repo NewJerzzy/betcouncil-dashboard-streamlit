@@ -13463,7 +13463,6 @@ def load_sport_data(sport):
         ("fetch_oddsjam_from_gist",         "oddsjam_ev",             "oddsjam_src"),
         ("fetch_propswap_from_gist",        "propswap_listings",      "propswap_src"),
         ("fetch_prizepicks_from_gist",       "prizepicks_props_h",     "prizepicks_src"),
-        ("fetch_evsharps_ev_from_gist",      "evsharps_ev_data",       "evsharps_ev_src"),
         ("fetch_underdog_from_gist",          "underdog_props_h",       "underdog_src"),
         ("fetch_bovada_from_gist",            "bovada_lines_h",         "bovada_src"),
         ("fetch_novig_from_gist",             "novig_props_h",          "novig_src"),
@@ -14424,7 +14423,6 @@ def load_sport_data(sport):
                 fetch_prizepicks_from_gist as _ld_pp,
                 fetch_underdog_from_gist   as _ld_ud,
                 fetch_fanduel_props_from_gist   as _ld_fd,
-                fetch_betmgm_props_from_gist    as _ld_mgm,
                 fetch_draftkings_props_from_gist as _ld_dk,
                 fetch_bovada_from_gist  as _ld_bov,
                 fetch_novig_from_gist   as _ld_nv,
@@ -14435,7 +14433,7 @@ def load_sport_data(sport):
             # they activate automatically when the browser harvester pushes data.
             for _ld_bk, _ld_f in (
                 ("prizepicks", _ld_pp),  ("underdog",    _ld_ud),
-                ("fanduel",    _ld_fd),  ("betmgm",      _ld_mgm),
+                ("fanduel",    _ld_fd),
                 ("draftkings", _ld_dk),  ("bovada",      _ld_bov),
                 ("novig",      _ld_nv),
             ):
@@ -14446,6 +14444,15 @@ def load_sport_data(sport):
                         _ld_book_data[_ld_bk] = _ld_props
                 except Exception:
                     pass
+            # BetMGM: sourced from the curl_cffi scraper pool (already running
+            # every 15 min in auto_scraper_refresh.yml) rather than the
+            # Tampermonkey-harvested Gist file, which produces nothing.
+            try:
+                _ld_mgm_props = [p for p in fetch_auto_scraped_props(sport) if p.get("Book") == "BetMGM"]
+                if _ld_mgm_props:
+                    _ld_book_data["betmgm"] = _ld_mgm_props
+            except Exception:
+                pass
             if _ld_book_data:
                 st.session_state["line_deviation_lookup"] = _cbe_fn(sport, _ld_book_data)
                 _hl_fn(_ld_book_data, sport)
@@ -22394,42 +22401,23 @@ with tabs[5]:
             }}
 
 
-            // ── 4. BetMGM: retired 2026-07-12. This cross-origin fetch from the
-            //    Streamlit app's own page to sports.az.betmgm.com was silently
-            //    CORS-blocked every time -- confirmed by the Auto-Harvester status
-            //    panel showing "Pending" forever, never a single successful fire.
-            //    Replaced by scripts/tampermonkey_betmgm_harvester.user.js, which
-            //    runs the identical fetch from betmgm.com's own origin (same-origin,
-            //    no CORS) and pushes to the same betcouncil_mgm_props_{{sport}}.json
-            //    Gist key -- fetch_betmgm_props_from_gist() and
-            //    _parse_betmgm_harvested() in fetchers.py needed zero changes.
+            // ── 4. BetMGM: retired 2026-07-12 (in-app fetch), then fully removed
+            //    2026-07-17 -- scripts/tampermonkey_betmgm_harvester.user.js turned out
+            //    to be producing no data at all (confirmed via Gist), and
+            //    scrape_betmgm_curlffi() in betcouncil_auto_scraper.py already covers
+            //    BetMGM server-side via WAF impersonation-profile rotation. The
+            //    LINE_DEVIATION cross-book signal now sources BetMGM from that pool
+            //    directly (filtered by Book=="BetMGM") instead of a Gist file.
+            //    Tampermonkey BetMGM harvester can be disabled/uninstalled.
 
-            // ── 5. Action Network sharp splits auto-fetch (every 15 min) ────────
-            var anSportMap = {{
-                'MLB': 'mlb', 'NBA': 'nba', 'NFL': 'nfl', 'NHL': 'nhl'
-            }};
-            var anSport = anSportMap[sport];
-            if (anSport) {{
-                throttled('actionnetwork_' + sport, 900000, function() {{
-                    fetch('https://api.actionnetwork.com/web/v2/scoreboard/' + anSport + '?period=game&bookIds=15,30,76,75,123,69,68,972&include=teams%2Cgame_lines%2Cschedules%2Codds_history', {{
-                        headers: {{
-                            'Accept': 'application/json',
-                            'Origin': 'https://www.actionnetwork.com',
-                            'Referer': 'https://www.actionnetwork.com/'
-                        }}
-                    }}).then(function(r) {{ if (!r.ok) throw new Error('AN ' + r.status); return r.json(); }})
-                      .then(function(data) {{
-                        pushGist('betcouncil_actionnetwork_' + sport + '.json', {{
-                            sport: sport,
-                            captured_at: new Date().toISOString(),
-                            data: data,
-                            source: 'betcouncil_auto_harvest'
-                        }});
-                      }}).catch(function(e) {{
-                        console.log('[BetCouncil] ActionNetwork harvest error:', e.message);
-                    }});
-                }});
-            }}
+            // ── Action Network in-app harvester removed 2026-07-17: it wrote to
+            //    betcouncil_actionnetwork_{{sport}}.json under a "data" key, while
+            //    actionnetwork_refresh.py (GitHub Actions cron, unauthenticated,
+            //    confirmed live) writes the SAME filename under a "games" key --
+            //    two processes racing to overwrite one file with incompatible
+            //    shapes. The cron script already covers this server-side with no
+            //    browser needed; removing the conflicting write, not just a
+            //    redundant one.
 
             // ── 6. Covers.com consensus betting % (every 20 min) ─────────
             // URL FIX (Jul 9 2026): old www.covers.com/api/widget/matchups path
@@ -22489,20 +22477,12 @@ with tabs[5]:
                 }}).catch(function(e){{console.log('[BetCouncil] PropSwap error:',e.message);}});
             }});
 
-            // ── 12. EVSharps EV data (every 25 min) ─────────────────────────
-            throttled('evsharps_ev_' + sport, 1500000, function() {{
-                var evSportMap = {{'MLB':'mlb','NBA':'nba','NFL':'nfl','NHL':'nhl','UFC':'mma'}};
-                var evSport = evSportMap[sport];
-                if (!evSport) return;
-                var evJwt = localStorage.getItem('bc_ev_jwt') || '';
-                var evHdrs = {{'Accept':'application/json'}};
-                if (evJwt) evHdrs['Authorization'] = 'Bearer ' + evJwt;
-                fetch('https://api-production-3a3b.up.railway.app/api/ev?sport=' + evSport, {{headers:evHdrs}})
-                .then(function(r){{return r.json();}}).then(function(data){{
-                    pushGist('betcouncil_evsharps_ev_' + sport + '.json', {{sport:sport,captured_at:new Date().toISOString(),data:data,source:'betcouncil_auto_harvest'}});
-                    console.log('[BetCouncil] ✅ EVSharps EV ' + sport + ' harvested');
-                }}).catch(function(e){{console.log('[BetCouncil] EVSharps EV error:',e.message);}});
-            }});
+            // ── EVSharps EV data harvester removed 2026-07-17: evsharps_ev_data
+            //    session state was never read anywhere downstream, and the same
+            //    Railway API (api-production-3a3b.up.railway.app/api/ev) already
+            //    runs unauthenticated server-side via
+            //    scripts/evsharps_dingers_harvester.py -- confirmed working from
+            //    a GitHub Actions IP, no JWT/browser needed for MLB HR props.
 
             // ── 13. Underdog Fantasy props (every 20 min) ────────────────────
             var udSportMap = {{'MLB':'MLB','NBA':'NBA','NFL':'NFL','NHL':'NHL','WNBA':'WNBA'}};

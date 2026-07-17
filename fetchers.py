@@ -16302,29 +16302,6 @@ def get_harvester_alerts(sport: str, persist: bool = True) -> list:
     return alerts
 
 
-def fetch_evsharps_jwt_from_gist() -> str:
-    """
-    Get fresh EVSharps JWT from Gist (pushed by browser harvester).
-    Falls back to SECRETS if harvester data is stale.
-    Returns JWT string or empty string.
-    """
-    data = _read_gist_file("betcouncil_tokens.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=55):
-        jwt = data.get("ev_jwt","")
-        if jwt:
-            print(f"[EVSharps] Using auto-harvested JWT (age OK)")
-            return jwt
-    # Fallback to Streamlit secret
-    try:
-        import streamlit as st
-        jwt = st.secrets.get("EV_JWT","")
-        if jwt:
-            print("[EVSharps] Fallback: using EV_JWT from Streamlit secrets")
-        return jwt
-    except Exception:
-        return ""
-
-
 def fetch_caesars_waf_from_gist() -> str:
     """
     Get Caesars WAF token from Gist (pushed by browser harvester).
@@ -16561,33 +16538,26 @@ def _parse_betmgm_harvested(raw, sport: str) -> list:
 
 def fetch_action_network_from_gist(sport: str) -> dict:
     """
-    PRIMARY: Action Network sharp splits from Gist (browser harvester).
-    SECONDARY: Falls back to fetch_action_network_public_betting() scraper.
-    Returns dict of game data with sharp split percentages.
+    Action Network public betting % (sharp splits) via
+    fetch_action_network_public_betting(). Returns dict of game data with
+    sharp split percentages.
 
-    Note: "betcouncil_actionnetwork_{sport}.json" (the PRIMARY path here)
-    is the same gist filename actionnetwork_refresh.py (2026-07-17, a
-    real, live, verified harvester built this session) now pushes real
-    scoreboard data to — but that data uses a "games" key, while this
-    function's PRIMARY path expects "data". A schema mismatch here just
-    falls through to SECONDARY without crashing (data.get("data", {})
-    safely returns {} when the key is absent) — left as-is rather than
-    merged, since this whole function is otherwise dead (never called
-    from a live path per the harvester-registry audit).
+    Previously had a PRIMARY Gist-harvester path reading
+    "betcouncil_actionnetwork_{sport}.json" under a "data" key -- removed
+    2026-07-17. That path was doubly broken even before its in-app JS
+    harvester was removed: (1) the harvester fetched Action Network's
+    scoreboard/game-lines endpoint, not the public-betting-% endpoint this
+    function actually needs, and (2) actionnetwork_refresh.py (the real,
+    live, server-side cron that now owns that same Gist filename) writes
+    scoreboard data under a "games" key for a *different* consumer
+    (fetch_actionnetwork_from_gist / get_actionnetwork_match) entirely.
+    Public betting % has no working harvested source right now, so this
+    just calls the scraper directly.
     """
-    data = _read_gist_file(f"betcouncil_actionnetwork_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=18):
-        raw = data.get("data",{})
-        if raw:
-            print(f"[ActionNetwork] PRIMARY: using browser harvester data")
-            return raw, "browser_harvester"
-
-    # Secondary: existing scraper
     try:
         from fetchers import fetch_action_network_public_betting as _fetch_an
         secondary = _fetch_an(sport)
         if secondary:
-            print(f"[ActionNetwork] SECONDARY: using scraper")
             return secondary, "scraper_fallback"
     except Exception:
         pass
@@ -17779,19 +17749,6 @@ def _parse_prizepicks_harvested(raw, sport: str) -> list:
     return results
 
 
-
-def fetch_evsharps_ev_from_gist(sport: str) -> tuple:
-    """PRIMARY: EVSharps EV data from browser harvester. SECONDARY: server scraper."""
-    data = _read_gist_file(f"betcouncil_evsharps_ev_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    try:
-        from fetchers import fetch_ev_opportunities as _f
-        s = _f(sport)
-        if s: return s, "scraper_fallback"
-    except Exception: pass
-    return {}, "unavailable"
 
 def fetch_underdog_from_gist(sport: str) -> tuple:
     """PRIMARY: Underdog props from browser harvester. SECONDARY: scraper."""
