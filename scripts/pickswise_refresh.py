@@ -183,39 +183,54 @@ def main() -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     files_payload = {}
     any_data = False
+    fatal_error = None
 
-    for sport, league_path in LEAGUE_PATHS.items():
-        try:
-            games = fetch_league_games(sport, league_path)
-        except Exception as e:
-            log(f"  {sport}: error fetching games — {e}")
-            continue
-        if not games:
-            log(f"  {sport}: 0 games")
-            continue
+    try:
+        for sport, league_path in LEAGUE_PATHS.items():
+            try:
+                games = fetch_league_games(sport, league_path)
+            except Exception as e:
+                import traceback
+                log(f"  {sport}: error fetching games — {e}")
+                DEBUG_LOG.append({"sport": sport, "step": "fetch_league_games_exception",
+                                   "error": str(e), "traceback": traceback.format_exc()[-1500:]})
+                continue
+            if not games:
+                log(f"  {sport}: 0 games")
+                continue
 
-        normalized = []
-        for g in games[:30]:  # reasonable cap per run
-            slug = g.get("slug")
-            pick = {}
-            if slug:
+            normalized = []
+            for g in games[:30]:  # reasonable cap per run
+                slug = g.get("slug") if isinstance(g, dict) else None
+                pick = {}
+                if slug:
+                    try:
+                        pick = fetch_game_pick(league_path, slug)
+                    except Exception as e:
+                        log(f"  {sport}/{slug}: pick fetch error — {e}")
                 try:
-                    pick = fetch_game_pick(league_path, slug)
+                    normalized.append(normalize_game(sport, g, pick))
                 except Exception as e:
-                    log(f"  {sport}/{slug}: pick fetch error — {e}")
-            normalized.append(normalize_game(sport, g, pick))
+                    import traceback
+                    DEBUG_LOG.append({"sport": sport, "step": "normalize_game_exception",
+                                       "error": str(e), "traceback": traceback.format_exc()[-1000:]})
 
-        any_data = True
-        log(f"  {sport}: {len(normalized)} games")
-        files_payload[f"betcouncil_pickswise_{sport}.json"] = {
-            "content": json.dumps({
-                "source": "pickswise", "sport": sport,
-                "captured_at": now_iso, "games": normalized,
-            })
-        }
+            any_data = True
+            log(f"  {sport}: {len(normalized)} games")
+            files_payload[f"betcouncil_pickswise_{sport}.json"] = {
+                "content": json.dumps({
+                    "source": "pickswise", "sport": sport,
+                    "captured_at": now_iso, "games": normalized,
+                })
+            }
+    except Exception as e:
+        import traceback
+        fatal_error = {"error": str(e), "traceback": traceback.format_exc()}
+        log(f"FATAL unhandled error: {e}")
 
     files_payload["betcouncil_pickswise_debug.json"] = {
-        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15]}, indent=2)
+        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15],
+                                "fatal_error": fatal_error}, indent=2)
     }
 
     if not any_data:
