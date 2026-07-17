@@ -100,6 +100,10 @@ def fetch_league_games(sport: str, league_path: str) -> list:
 
     data = _extract_json_after_marker(r.text, '"initialData"')
     if data is None:
+        DEBUG_LOG.append({"sport": sport, "note": "initialData marker not found or brace-matching failed",
+                           "has_initialData_string": '"initialData"' in r.text,
+                           "has_games_string": '"games"' in r.text,
+                           "has_homeTeam_string": '"homeTeam"' in r.text})
         # marker approach failed — try treating the whole response as
         # concatenated RSC chunks and scanning each JSON-looking line
         for line in r.text.split("\n"):
@@ -115,7 +119,10 @@ def fetch_league_games(sport: str, league_path: str) -> list:
         return []
 
     games = data.get("games", data.get("initialData", {}).get("games", []))
-    if not isinstance(games, list):
+    if not isinstance(games, list) or not games:
+        DEBUG_LOG.append({"sport": sport, "note": "initialData found but no games list inside it",
+                           "top_level_keys": list(data.keys())[:20],
+                           "data_sample": json.dumps(data)[:800]})
         return []
     return games
 
