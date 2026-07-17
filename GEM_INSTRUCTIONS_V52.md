@@ -2224,3 +2224,128 @@ math — not as a separate follow-up task. Treat doc updates as part of the same
 unit of work as the code change itself.
 
 
+## Session 13 Addendum (July 17, 2026) — Dead-Weight Cleanup, Four Confirmed-Blocked Automation Attempts, Six New Data Sources
+
+### Tampermonkey harvester status (final, after full audit this session)
+Every remaining Tampermonkey harvester was individually re-investigated this
+session, not just carried forward. Only one came out:
+- **BetMGM** — REMOVED. The Tampermonkey/in-app harvester was producing zero
+  data (no Gist file at all), and was redundant regardless since
+  `scrape_betmgm_curlffi()` already covers BetMGM server-side (WAF
+  impersonation-profile rotation, see Session 12 addendum). Safe to
+  uninstall the Tampermonkey script.
+- **Bet365, FanDuel, FanDuel Parlay Hub, TheScore, Caesars** — CONFIRMED
+  STILL REQUIRED, each for a distinct, verified reason (see below). Do not
+  suggest removing any of these without new evidence.
+
+### Four automation attempts this session, each hit a confirmed wall (not guesses — live-tested)
+- **Caesars headless login**: built a full Playwright automation (login +
+  token harvest) and iterated through selector fixes, Enter-key submit,
+  forced clicks, and simulated human mouse movement. Root cause: the login
+  modal's real submit button (`data-qa=login-form-cta-log-in-button`) has
+  `pointer-events:none` that survives all of the above — consistent with an
+  invisible WAF/bot-detection gate, not a selector problem. Abandoned;
+  Tampermonkey remains the only Caesars token source. (Also fixed in
+  passing: the harvester was writing tokens to the wrong Gist filename —
+  `caesars_tokens.json` instead of `betcouncil_caesars_tokens.json` — so
+  every manually-harvested token was silently discarded before this fix.)
+- **TheScore persisted-query GraphQL**: root-caused conclusively. TheScore
+  Bet now runs on ESPN Bet infrastructure — every real request (even a
+  30-second Heartbeat keepalive) carries a Bearer JWT, and that JWT is only
+  issued after GeoComply verifies the request comes from a real device
+  physically in a legal betting state. Datacenter IPs fail GeoComply
+  outright; no hash fix, region-host fix, or query-document fix changes
+  this. Confirmed independently three ways (bundle-scrape hash self-heal,
+  live schema-error text, and every regional host except one 302-ing even
+  with cookies established). Closed — do not revisit without a residential
+  proxy or real device.
+- **FanDuel curl_cffi** (the existing `scrape_fanduel_curlffi`, matching a
+  public `_ak=` key): live-tested, confirmed blocked at the CloudFront edge
+  — a synthetic 400 (content-length 0) returns before the request ever
+  reaches FanDuel's backend. Reverted from cron.
+- **The Odds API props** (see below) is NOT blocked — it's a legitimate paid
+  API, budget-managed, not an automation wall.
+
+### Dead in-app/browser harvesters removed (redundant or actively harmful, not just unused)
+- **EVSharps EV** (`fetch_evsharps_ev_from_gist`, `fetch_evsharps_jwt_from_gist`,
+  and the in-app JS block) — removed entirely. Confirmed the resulting
+  session state (`evsharps_ev_data`) was never read anywhere downstream, and
+  the same Railway API (`api-production-3a3b.up.railway.app/api/ev`) already
+  runs unauthenticated server-side via `scripts/evsharps_dingers_harvester.py`.
+- **Action Network in-app harvester** — removed. It was writing to the exact
+  same Gist filename as `actionnetwork_refresh.py` (the real server-side
+  cron) under an incompatible schema key ("data" vs "games") — an active
+  write conflict, not just redundancy. `fetch_action_network_from_gist`
+  simplified to call the public-betting-% scraper directly; its old PRIMARY
+  path was reading the wrong endpoint's data even before removal.
+
+### New data sources added this session (all verified live via GitHub Actions, not assumed)
+1. **Pinnacle** (`guest.api.arcadia.pinnacle.com`) — `scripts/pinnacle_refresh.py`,
+   every 15 min. Sports: MLB/NBA/WNBA/NFL/NCAAF/NCAAB/MLS. Non-obvious
+   parsing: real games live inside each prop-special's `parent` object
+   (correct home/away `alignment` there), not the top-level matchup entries
+   (always `alignment:"neutral"`).
+2. **Kambi/BetRivers** (`eu.offering-api.kambicdn.com`) —
+   `scripts/kambi_refresh.py`, every 15 min. Sports: MLB/NBA/WNBA/NFL/NCAAF/
+   NHL/MLS. 196+ bet offers/game including deep player props, but only
+   BetRivers-quality odds (not FD/DK/BetMGM/Caesars).
+3. **Action Network opening line** — `book_id=30` "Open" pseudo-book
+   extracted as its own `opening_line` field in `actionnetwork_refresh.py`
+   (the raw data was already being captured, just not labeled/surfaced).
+4. **TheScore public sports API** (`api.thescore.com` — a completely
+   different product from the GeoComply-gated `sportsbook.thescore.bet`) —
+   `scripts/thescore_scores_refresh.py`, every 15 min. Sports: MLB/NBA/NFL/
+   NHL. Consensus `odd` + full `timestamped_odds` line-movement history,
+   not attributed to any specific book.
+5. **areyouwatchingthis.com** (`metabet.static.api.areyouwatchingthis.com`)
+   — `scripts/areyouwatchingthis_refresh.py`, every 15 min. Sports: MLB/NFL/
+   NHL/NCAAF only (no NBA/WNBA/MLS). 29 sportsbook providers per game
+   (FanDuel/DK/BetMGM/Bet365/ESPNBet/Fanatics/Novig/Kalshi/Polymarket/
+   BetRivers-per-state/etc), game lines only, no player props. Uses a
+   hardcoded public API key found in MetaBet's own widget JS — could be
+   rotated by MetaBet without notice, treat as best-effort. Field names:
+   top-level key is `results` (not `games`); `moneyLine1`/`moneyLine2` are
+   the real moneyline odds (`spreadLine1`/`spreadLine2` are the *spread's*
+   juice, not moneyline, despite the name).
+6. **EdgeTerminal demo API** (`demo.edgeterminal.ai` — their own
+   intentional demo-mode hostname, `apikey`/`Authorization` both
+   `demo-anon`) — `scripts/edgeterminal_refresh.py`, every 15 min. Three
+   tables: `our_picks` (500 graded picks, team names scrambled but
+   `offer_id` encodes book|league|market|side|line unobfuscated),
+   `live_game_feed` (112 real events/day, full raw ESPN data — real
+   names/venues/scores/DK open-close lines across MLB/WNBA/ATP/WTA/EPL/La
+   Liga/Bundesliga/Ligue1/SerieA/World Cup — independently useful regardless
+   of EdgeTerminal's own model), `soccer_priced_offers` (live EV model,
+   team names scrambled but market/odds data real).
+7. **The Odds API player props** — `scripts/the_odds_api_refresh.py`, hourly,
+   using the user's own paid-tier-adjacent key (`ODDS_API_KEY` secret).
+   Covers FD/DK/BetMGM/BetRivers (regions=us) + Pinnacle (regions=eu) for
+   pitcher_strikeouts/batter_home_runs/batter_hits/batter_total_bases.
+   **Budget-managed, not always-on**: free tier is 500 credits/month,
+   resets 1st of each month at 00:00 UTC. Real measured cost is ~2
+   credits per market per region — a wider market list (13 markets, tried
+   first) costs ~26 credits/event and only affords ~19 games for the whole
+   month; the shipped 4-market list costs ~8/event. Pre-game-window polling
+   (6h) with event-id dedupe against the Gist keeps a game's props from
+   being re-fetched every run. If OddsAPI props output looks thin or
+   missing for a stretch, check remaining credits at
+   the-odds-api.com/account/ before assuming a code break — running dry
+   mid-month is expected behavior, not a bug.
+
+### Confirmed already covered (no new work was needed despite research suggesting otherwise)
+ScoresAndOdds (`scoresandodds_refresh.py`, FD+7 more books, live) and ESPN's
+DraftKings odds (`fetch_game_lines()` / `espn_opening_lines_refresh.py`) were
+both independently "discovered" again by later research this session — both
+already existed from prior work. Betstamp, and OddsJam/PropSwap/OddsShopper/
+Action-Network-player-props were all investigated and confirmed genuine dead
+ends (see repo commit history around scripts/props_source_discovery.py,
+deleted after use — full findings preserved in git log if ever revisited).
+
+### Policy note
+Declined to build automation using API keys found scraped from other
+developers' public GitHub repos (The Odds API) — different category from
+finding a company's own public unauthenticated endpoint. Built the props
+scraper only once the user supplied their own key.
+
+
+
