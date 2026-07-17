@@ -2152,6 +2152,104 @@ def _thescore_resolve_section_id(sport, token):
         return None
 
 
+_THESCORE_LINES_HASH_GIST_KEY = "betcouncil_thescore_lines_hash.json"
+
+# Fallback default -- confirmed live 2026-07-12. Persisted-query hashes rotate
+# with theScore's frontend deploys without notice (confirmed stale 2026-07-16:
+# the site's live Next.js bundle now references a different hash for this
+# same operationName). _thescore_discover_current_hash() below is the primary
+# defense against future rotations; this constant is just the last-known-good
+# seed used before any self-heal has run.
+_THESCORE_LINES_HASH_FALLBACK = "4fcab2e9b286b7b14db66c66280a38bceab9effed830e3a805e833d7ce8cac0b"
+
+
+def _thescore_discover_current_hash(operation_name="CompetitionPageSectionLinesTabNode"):
+    """Self-heal: pull the *current* persisted-query sha256Hash for
+    `operation_name` straight from theScore's live frontend bundle, rather
+    than trusting a hardcoded constant that goes stale on every frontend
+    deploy (confirmed to happen at least once already -- see
+    _THESCORE_LINES_HASH_FALLBACK).
+
+    Fetches the homepage, finds the Next.js page chunk, and regexes for
+    the `"<operation_name>":"<64-char sha256>"` mapping the client bundle
+    embeds for persisted-query lookups. Returns the hash string, or None if
+    any step fails (network, layout change, pattern not found) -- callers
+    must treat None as "fall back to the last-known hash", never crash.
+    """
+    import re as _re
+    try:
+        from curl_cffi import requests as cf
+    except ImportError:
+        return None
+    try:
+        home = cf.get("https://sportsbook.thescore.bet/", impersonate="chrome124", timeout=15)
+        if home.status_code != 200:
+            return None
+        chunk_paths = _re.findall(r"/_next/static/chunks/pages/index[^\"'\s]*\.js", home.text)
+        if not chunk_paths:
+            chunk_paths = _re.findall(r"/_next/static/chunks/[^\"'\s]*\.js", home.text)
+        for path in chunk_paths[:8]:
+            try:
+                chunk = cf.get(f"https://sportsbook.thescore.bet{path}",
+                                impersonate="chrome124", timeout=15)
+            except Exception:
+                continue
+            if chunk.status_code != 200:
+                continue
+            m = _re.search(rf'"{operation_name}"\s*:\s*"([a-f0-9]{{64}})"', chunk.text)
+            if m:
+                return m.group(1)
+        return None
+    except Exception as e:
+        print(f"    theScore hash discovery error: {e}")
+        return None
+
+
+def _thescore_get_lines_hash():
+    """Resolve the sha256Hash to use for CompetitionPageSectionLinesTabNode:
+    Gist cache (last self-heal result) -> hardcoded fallback. Discovery
+    against the live bundle only runs when both of those fail to produce a
+    200 (see scrape_thescore_curlffi), since it costs 2+ extra HTTP round
+    trips and the hash rarely rotates.
+    """
+    gh_token = os.environ.get("GITHUB_TOKEN", "")
+    gist_id = "7e52e1c2c2054847c7c4663a157386c5"
+    if gh_token:
+        try:
+            gr = requests.get(f"https://api.github.com/gists/{gist_id}",
+                               headers={"Authorization": f"token {gh_token}"}, timeout=10)
+            if gr.status_code == 200:
+                f = gr.json().get("files", {}).get(_THESCORE_LINES_HASH_GIST_KEY)
+                if f and f.get("content"):
+                    cached = json.loads(f["content"]).get("sha256Hash")
+                    if cached:
+                        return cached
+        except Exception:
+            pass
+    return _THESCORE_LINES_HASH_FALLBACK
+
+
+def _thescore_save_lines_hash(sha256_hash):
+    """Push a freshly self-healed hash to Gist so the next run (and every
+    run after, until the frontend deploys again) picks it up without
+    re-discovering it from the bundle every time."""
+    gh_token = os.environ.get("GITHUB_TOKEN", "")
+    if not gh_token:
+        return
+    try:
+        requests.patch(
+            "https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5",
+            headers={"Authorization": f"token {gh_token}"},
+            json={"files": {_THESCORE_LINES_HASH_GIST_KEY: {
+                "content": json.dumps({
+                    "sha256Hash": sha256_hash,
+                    "discovered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                })}}},
+            timeout=15)
+    except Exception as e:
+        print(f"    theScore hash Gist save error: {e}")
+
+
 def scrape_thescore_curlffi(sport):
     """theScore Bet game lines via direct curl_cffi -- no browser/Tampermonkey
     needed. Mints its own anonymous token each run (see _thescore_mint_token),
@@ -2166,6 +2264,14 @@ def scrape_thescore_curlffi(sport):
     Only MLB and WNBA sectionIds are confirmed as of 2026-07-12 (matches
     current season -- NBA/NHL/NFL are off-season in July anyway). Other
     sports return [] cleanly rather than guessing at an unverified sectionId.
+
+    Self-heals its persisted-query hash: theScore rotates the sha256Hash for
+    this operation on frontend deploys with no warning (this is exactly what
+    broke the endpoint once already -- schema-validation errors against a
+    stale hash, mistaken at the time for an auth block). On a non-200 or a
+    200-with-GraphQL-errors response, this re-discovers the current hash from
+    the live bundle, retries once, and persists the new hash to Gist so
+    later runs don't pay the discovery cost again.
     """
     print(f"\n  theScore Bet {sport} (curl_cffi):")
     if sport not in _THESCORE_KNOWN_SECTION_IDS:
@@ -2196,22 +2302,40 @@ def scrape_thescore_curlffi(sport):
         "isDsModelRecommendedPropsEnabled": False, "includeRichEvent": True,
         "oddsFormat": "AMERICAN", "sectionId": section_id, "selectedFilterId": "",
     }
-    extensions = {"persistedQuery": {"version": 1,
-                  "sha256Hash": "1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6"}}
     headers = {"x-anonymous-authorization": f"Bearer {token}", "accept": "application/json"}
 
-    try:
+    def _try_hash(sha256_hash):
+        extensions = {"persistedQuery": {"version": 1, "sha256Hash": sha256_hash}}
         r = cf.get(
             "https://sportsbook.us-ia.thescore.bet/graphql/persisted_queries/"
-            "1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6",
+            f"{sha256_hash}",
             params={"operationName": "CompetitionPageSectionLinesTabNode",
                     "variables": json.dumps(variables),
                     "extensions": json.dumps(extensions)},
             headers=headers, impersonate="chrome124", timeout=15)
+        return r
+
+    current_hash = _thescore_get_lines_hash()
+    try:
+        r = _try_hash(current_hash)
         print(f"    Lines: {r.status_code}")
-        if r.status_code != 200:
-            return None
-        raw_resp = r.json()
+        body = r.json() if r.status_code == 200 else None
+        if r.status_code != 200 or (body is not None and body.get("errors")):
+            if body is not None and body.get("errors"):
+                print(f"    Schema/hash error on {current_hash[:12]}… — self-healing")
+            fresh_hash = _thescore_discover_current_hash()
+            if not fresh_hash or fresh_hash == current_hash:
+                return None
+            r = _try_hash(fresh_hash)
+            print(f"    Lines (retry with fresh hash {fresh_hash[:12]}…): {r.status_code}")
+            if r.status_code != 200:
+                return None
+            body = r.json()
+            if body.get("errors"):
+                print(f"    Still erroring after self-heal: {body['errors']}")
+                return None
+            _thescore_save_lines_hash(fresh_hash)
+        raw_resp = body
     except Exception as e:
         print(f"    Error: {e}")
         return None
