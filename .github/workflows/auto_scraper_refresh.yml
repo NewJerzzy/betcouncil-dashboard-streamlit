@@ -27,7 +27,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set +e
-          python -u betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr,thescore > /tmp/scraper_output.log 2>&1
+          python -u betcouncil_auto_scraper.py --all --books dk,mgm,novig,betr > /tmp/scraper_output.log 2>&1
           ec=$?
           echo "=== EXIT CODE: $ec ===" >> /tmp/scraper_output.log
           echo "exit_code=$ec" >> "$GITHUB_OUTPUT"
