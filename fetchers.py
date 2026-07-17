@@ -8482,11 +8482,25 @@ def fetch_oddswrap_lines(sport):
         pass
     return lines_data
 
-def fetch_action_network_props(sport: str) -> dict:
+def fetch_action_network_public_betting(sport: str) -> dict:
     """
     Fetch Action Network public betting percentages.
     Returns {matchup: {home_pct, away_pct, over_pct, under_pct, tickets, money}}
     Cached 20 min. Free — no API key needed.
+
+    2026-07-17 fix: renamed from fetch_action_network_props (kept that
+    name would silently collide with an unrelated, different-purpose
+    function of the exact same name defined later in app.py — Action
+    Network's PROP PROJECTIONS fetcher, not public betting %. Because
+    app.py does `from fetchers import *` and then defines its own
+    fetch_action_network_props afterward, app.py's version always wins
+    inside app.py; this function was completely unreachable under its
+    old name from anywhere in the app, real and correct as it is. Only
+    fetchers.py's own internal self-import (in
+    fetch_action_network_from_gist below) ever actually reached this
+    implementation, since that import targets the fetchers module
+    explicitly. Renamed so both functions can coexist without either
+    silently shadowing the other.
     """
     sport_slug = ACTION_NETWORK_SPORT_MAP.get(sport)
     league_id  = ACTION_NETWORK_LEAGUE_IDS.get(sport)
@@ -8536,7 +8550,7 @@ def fetch_action_network_props(sport: str) -> dict:
             _safe_save_pkl(cache_path, result)
         return result
     except Exception as e:
-        print(f"[WARN] fetch_action_network_props: {e}")
+        print(f"[WARN] fetch_action_network_public_betting: {e}")
         return {}
 
 
@@ -16545,8 +16559,18 @@ def _parse_betmgm_harvested(raw, sport: str) -> list:
 def fetch_action_network_from_gist(sport: str) -> dict:
     """
     PRIMARY: Action Network sharp splits from Gist (browser harvester).
-    SECONDARY: Falls back to fetch_action_network_props() scraper.
+    SECONDARY: Falls back to fetch_action_network_public_betting() scraper.
     Returns dict of game data with sharp split percentages.
+
+    Note: "betcouncil_actionnetwork_{sport}.json" (the PRIMARY path here)
+    is the same gist filename actionnetwork_refresh.py (2026-07-17, a
+    real, live, verified harvester built this session) now pushes real
+    scoreboard data to — but that data uses a "games" key, while this
+    function's PRIMARY path expects "data". A schema mismatch here just
+    falls through to SECONDARY without crashing (data.get("data", {})
+    safely returns {} when the key is absent) — left as-is rather than
+    merged, since this whole function is otherwise dead (never called
+    from a live path per the harvester-registry audit).
     """
     data = _read_gist_file(f"betcouncil_actionnetwork_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=18):
@@ -16557,7 +16581,7 @@ def fetch_action_network_from_gist(sport: str) -> dict:
 
     # Secondary: existing scraper
     try:
-        from fetchers import fetch_action_network_props as _fetch_an
+        from fetchers import fetch_action_network_public_betting as _fetch_an
         secondary = _fetch_an(sport)
         if secondary:
             print(f"[ActionNetwork] SECONDARY: using scraper")
@@ -17196,14 +17220,17 @@ def fetch_actionnetwork_from_gist(sport: str, max_age_minutes: int = 60) -> list
     subdomain isn't.
 
     Note: this is a distinct function from the existing (unrelated)
-    fetch_action_network_props()/fetch_action_network_lines() in this
-    file, which hit different Action Network endpoints (public betting
-    %, a different lines path) — not renamed to avoid a collision here,
-    since "actionnetwork" (no underscore) vs "action_network" (with
-    underscore) don't collide. Worth knowing separately: there are two
-    different functions both named fetch_action_network_props — one
-    here, one in app.py — a pre-existing collision unrelated to this
-    build, not fixed here.
+    fetch_action_network_public_betting()/fetch_action_network_lines()
+    in this file, which hit different Action Network endpoints (public
+    betting %, a different lines path). fetch_action_network_public_
+    betting was renamed (2026-07-17) from fetch_action_network_props
+    specifically because that name collided with a different, real,
+    already-in-use function of the same name in app.py (prop
+    projections, not public betting %) — since app.py does
+    `from fetchers import *` and then defines its own version after,
+    app.py's always won, leaving this one permanently unreachable under
+    the shared name. Fixed by renaming; app.py's own version is
+    untouched and behaves exactly as before.
 
     Returns [] if no fresh data.
     """
