@@ -101,22 +101,30 @@ def normalize_game(game: dict) -> dict:
     for p in odds_list:
         if not isinstance(p, dict):
             continue
-        # Field names confirmed from a live sample this run: provider,
-        # spreadLine1/spreadLine2 (decimal moneyline-style prices, not
-        # points-spread despite the name -- areyouwatchingthis stores
-        # moneyline prices as "spreadLine"), overUnder. Kept generic
-        # with .get() fallbacks since the exact meaning of 1 vs 2
-        # (home/away or team1/team2) wasn't independently confirmed here.
-        ml1_dec, ml2_dec = p.get("spreadLine1"), p.get("spreadLine2")
+        # Field names confirmed from a live full-sample dump this session:
+        # moneyLine1/moneyLine2 = actual moneyline decimal odds (team1/team2).
+        # spread = the point spread value; spreadLine1/spreadLine2 = the
+        # decimal juice on either side of that spread. overUnder = the
+        # total points line; overUnderLineOver/overUnderLineUnder = the
+        # decimal juice on over/under.
+        ml1_dec, ml2_dec = p.get("moneyLine1"), p.get("moneyLine2")
         normalized_providers.append({
             "provider": p.get("provider"),
             "moneyline_1_decimal": ml1_dec,
             "moneyline_2_decimal": ml2_dec,
             "moneyline_1_american": decimal_to_american(ml1_dec),
             "moneyline_2_american": decimal_to_american(ml2_dec),
+            "spread_points": p.get("spread"),
+            "spread_line1_decimal": p.get("spreadLine1"),
+            "spread_line2_decimal": p.get("spreadLine2"),
+            "spread_line1_american": decimal_to_american(p.get("spreadLine1")),
+            "spread_line2_american": decimal_to_american(p.get("spreadLine2")),
             "over_under": p.get("overUnder"),
-            "over_under_line1": p.get("overUnderLine1"),
-            "over_under_line2": p.get("overUnderLine2"),
+            "over_juice_decimal": p.get("overUnderLineOver"),
+            "under_juice_decimal": p.get("overUnderLineUnder"),
+            "over_juice_american": decimal_to_american(p.get("overUnderLineOver")),
+            "under_juice_american": decimal_to_american(p.get("overUnderLineUnder")),
+            "deeplink": p.get("url"),
             "date": p.get("date"),
         })
 
