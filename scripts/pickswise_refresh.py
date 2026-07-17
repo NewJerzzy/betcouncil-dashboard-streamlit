@@ -118,12 +118,15 @@ def fetch_league_games(sport: str, league_path: str) -> list:
         DEBUG_LOG.append({"sport": sport, "note": "could not locate initialData in RSC payload"})
         return []
 
-    games = data.get("games", data.get("initialData", {}).get("games", []))
+    games = data.get("data", data.get("games", data.get("initialData", {}).get("games", [])))
     if not isinstance(games, list) or not games:
         DEBUG_LOG.append({"sport": sport, "note": "initialData found but no games list inside it",
                            "top_level_keys": list(data.keys())[:20],
                            "data_sample": json.dumps(data)[:800]})
         return []
+    if sport == "MLB":
+        DEBUG_LOG.append({"sport": sport, "note": "games list found, sample first game full structure",
+                           "num_games": len(games), "first_game_full": json.dumps(games[0])[:2500]})
     return games
 
 
