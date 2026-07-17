@@ -45,7 +45,7 @@ HEADERS = {
 }
 
 EVENTS_QUERY = """
-query GetEvents($after: String!, $before: String!, $league: League!, $limit: Int!) {
+query GetEvents($after: DateTime!, $before: DateTime!, $league: LeagueEnum!, $limit: Int!) {
   events(after: $after, before: $before, eventType: TEAM, league: $league, limit: $limit) {
     id
     slugId
