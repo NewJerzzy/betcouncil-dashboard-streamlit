@@ -2180,25 +2180,31 @@ def _thescore_discover_current_hash(operation_name="CompetitionPageSectionLinesT
     try:
         from curl_cffi import requests as cf
     except ImportError:
+        print("    [hash discovery] curl_cffi import failed")
         return None
     try:
         home = cf.get("https://sportsbook.thescore.bet/", impersonate="chrome124", timeout=15)
+        print(f"    [hash discovery] homepage: {home.status_code}, {len(home.text)} chars")
         if home.status_code != 200:
             return None
         chunk_paths = _re.findall(r"/_next/static/chunks/pages/index[^\"'\s]*\.js", home.text)
         if not chunk_paths:
             chunk_paths = _re.findall(r"/_next/static/chunks/[^\"'\s]*\.js", home.text)
+        print(f"    [hash discovery] found {len(chunk_paths)} chunk paths: {chunk_paths[:5]}")
         for path in chunk_paths[:8]:
             try:
                 chunk = cf.get(f"https://sportsbook.thescore.bet{path}",
                                 impersonate="chrome124", timeout=15)
-            except Exception:
+            except Exception as e:
+                print(f"    [hash discovery] chunk fetch error ({path}): {e}")
                 continue
             if chunk.status_code != 200:
+                print(f"    [hash discovery] chunk {path}: {chunk.status_code}")
                 continue
             m = _re.search(rf'"{operation_name}"\s*:\s*"([a-f0-9]{{64}})"', chunk.text)
             if m:
                 return m.group(1)
+        print(f"    [hash discovery] no chunk matched \"{operation_name}\" pattern")
         return None
     except Exception as e:
         print(f"    theScore hash discovery error: {e}")
@@ -2325,6 +2331,7 @@ def scrape_thescore_curlffi(sport):
                 print(f"    Schema/hash error on {current_hash[:12]}… — self-healing")
             fresh_hash = _thescore_discover_current_hash()
             if not fresh_hash or fresh_hash == current_hash:
+                print(f"    Self-heal gave up (fresh_hash={fresh_hash!r}, current={current_hash[:12]}…)")
                 return None
             r = _try_hash(fresh_hash)
             print(f"    Lines (retry with fresh hash {fresh_hash[:12]}…): {r.status_code}")
