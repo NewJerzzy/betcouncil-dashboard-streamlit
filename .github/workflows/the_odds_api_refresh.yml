@@ -1,8 +1,13 @@
 name: The Odds API Props Refresh
 
 on:
-  schedule:
-    - cron: "20 * * * *"
+  # Schedule disabled 2026-07-17: the first live test (before markets were
+  # trimmed) cost ~26 credits/event and burned the account down to 3
+  # credits remaining out of 500 for the month. Re-enable only after
+  # confirming the monthly reset date and deciding a per-day credit budget
+  # up front, not after the fact.
+  # schedule:
+  #   - cron: "20 * * * *"
   workflow_dispatch: {}
 
 jobs:
