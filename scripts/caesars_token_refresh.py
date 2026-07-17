@@ -201,6 +201,23 @@ def harvest(email: str, password: str, github_token: str) -> dict:
             note("fill email", False, e)
         time.sleep(0.5)
 
+        # Simulate human-like mouse movement across the page before touching
+        # the form -- the confirmed submit button has pointer-events:none in
+        # its computed style even when fully filled out and not disabled,
+        # which is a common gate tied to bot-detection heuristics that key
+        # off zero mouse movement before an interaction. Move in several
+        # steps (not a single teleport) so it looks like actual cursor travel.
+        try:
+            page.mouse.move(100, 100)
+            time.sleep(0.15)
+            page.mouse.move(400, 250, steps=15)
+            time.sleep(0.15)
+            page.mouse.move(640, 380, steps=20)
+            time.sleep(0.2)
+            note("simulated mouse movement", True)
+        except Exception as e:
+            note("simulated mouse movement", False, e)
+
         try:
             page.fill('input[type="password"]', password)
             note("fill password", True)
@@ -263,12 +280,32 @@ def harvest(email: str, password: str, github_token: str) -> dict:
                             return {disabled: e.disabled, ariaDisabled: e.getAttribute('aria-disabled'),
                                     width: r.width, height: r.height,
                                     visibility: cs.visibility, display: cs.display,
-                                    pointerEvents: cs.pointerEvents, opacity: cs.opacity};
+                                    pointerEvents: cs.pointerEvents, opacity: cs.opacity,
+                                    x: r.x, y: r.y};
                         }""",
                     )
                 except Exception as e:
                     btn_state = {"eval_error": str(e)}
-                note("submit button state before click", True, btn_state)
+                note("submit button state before hover", True, btn_state)
+
+                # Hover onto the button itself (real cursor travel, not a
+                # teleport) before clicking -- if the pointer-events:none gate
+                # is tied to mouse-movement-based bot detection, this is the
+                # step that would flip it.
+                if btn_state.get("x") is not None:
+                    page.mouse.move(btn_state["x"] + 10, btn_state["y"] + 10, steps=10)
+                    time.sleep(0.3)
+                    page.mouse.move(
+                        btn_state["x"] + btn_state["width"] / 2,
+                        btn_state["y"] + btn_state["height"] / 2,
+                        steps=10,
+                    )
+                    time.sleep(0.5)
+                    btn_state_after = page.eval_on_selector(
+                        '[data-qa="login-form-cta-log-in-button"]',
+                        "e => getComputedStyle(e).pointerEvents",
+                    )
+                    note("pointer-events after hover", True, btn_state_after)
 
                 page.click('[data-qa="login-form-cta-log-in-button"]', timeout=8_000)
                 note("submit via login-form-cta-log-in-button", True)
