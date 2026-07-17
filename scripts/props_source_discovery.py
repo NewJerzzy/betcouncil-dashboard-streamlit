@@ -223,6 +223,27 @@ def _run_oddsshopper_inner():
                                           "body_len": len(r.text)})
         if r.status_code != 200:
             continue
+
+        # Check for Next.js __NEXT_DATA__ -- SSR pages often pre-render
+        # initial props server-side into this script tag, which would
+        # contain real odds data directly without needing to reverse a
+        # runtime XHR call.
+        next_data_match = re.search(
+            r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
+        if next_data_match:
+            try:
+                next_data = json.loads(next_data_match.group(1))
+                page_props = (next_data.get("props", {}) or {}).get("pageProps", {})
+                findings["oddsshopper"].append({
+                    "step": "next_data_found", "path": sub_path,
+                    "top_level_keys": list(next_data.keys()),
+                    "page_props_keys": list(page_props.keys()) if isinstance(page_props, dict) else None,
+                    "page_props_sample": json.dumps(page_props, default=str)[:2000],
+                })
+            except Exception as e:
+                findings["oddsshopper"].append({"step": "next_data_parse_error", "path": sub_path, "error": str(e)})
+        else:
+            findings["oddsshopper"].append({"step": "no_next_data_found", "path": sub_path})
         sub_chunks = re.findall(r'/_next/static/chunks/[^"\'\s]*\.js', r.text)
         new_chunks = [c for c in sub_chunks if c not in chunk_paths]
         findings["oddsshopper"].append({"step": "subpage_new_chunks", "path": sub_path,
