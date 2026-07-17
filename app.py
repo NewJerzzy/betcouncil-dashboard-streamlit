@@ -8780,7 +8780,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8933,6 +8933,17 @@ def build_market_comparison(shortlist):
                 pw_match = {}
             if pw_match:
                 result["pickswise"].append({"matchup": matchup, "sport": sport, **pw_match})
+                break
+
+    # ── Action Network (multi-book odds + starting pitcher stats) ──────
+    for matchup in shortlist_matchups:
+        for sport in sports_needed:
+            try:
+                an_match = get_actionnetwork_match(matchup, sport)
+            except Exception:
+                an_match = {}
+            if an_match:
+                result["actionnetwork"].append({"matchup": matchup, "sport": sport, **an_match})
                 break
 
     return result
@@ -20190,6 +20201,30 @@ with tabs[3]:
                 elif _pw_match.get("odds"):
                     st.caption(f"✍️ Pickswise: no pick published yet for this game ({len(_pw_match['odds'])} consensus odds lines available)")
 
+            # Action Network (multi-book odds + starting pitcher stats) — display only.
+            try:
+                _an_match = get_actionnetwork_match(_matchup, _gsport)
+            except Exception:
+                _an_match = {}
+            if _an_match and _an_match.get("odds"):
+                _an_book = _an_match["odds"][0]
+                _an_text = (
+                    f"🔷 Action Network ({len(_an_match['odds'])} books): "
+                    f"ML {_an_match.get('away_team','')} {_an_book.get('ml_away','')} / "
+                    f"{_an_match.get('home_team','')} {_an_book.get('ml_home','')}"
+                )
+                if _an_book.get("total"):
+                    _an_text += f" · O/U {_an_book['total']}"
+                st.caption(_an_text)
+                _an_sp = _an_match.get("starting_pitchers", {})
+                for _side, _label in [("away", _an_match.get("away_team","Away")), ("home", _an_match.get("home_team","Home"))]:
+                    _sp = _an_sp.get(_side)
+                    if _sp and _sp.get("pitching"):
+                        _era = _sp["pitching"].get("era")
+                        _whip = _sp["pitching"].get("whip")
+                        if _era:
+                            st.caption(f"⚾ {_label} SP: ERA {_era}, WHIP {_whip}")
+
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
             for _lk_idx, (_lk_col, _pk) in enumerate(zip(_lk_cols, _picks)):
@@ -27243,6 +27278,7 @@ with tabs[1]:
         "si":      {"label": "SportsInsights","color": "#a3e635"},
         "sao":     {"label": "ScoresAndOdds", "color": "#fb7185"},
         "pw":      {"label": "Pickswise",     "color": "#c084fc"},
+        "an":      {"label": "ActionNetwork", "color": "#38bdf8"},
         "fd":      {"label": "FanDuel",     "color": "#1493ff"},
     }
 
@@ -27294,6 +27330,7 @@ with tabs[1]:
         _sportsinsights_by_matchup = {row.get("matchup", ""): row for row in cmp.get("sportsinsights", [])}
         _scoresandodds_by_matchup = {row.get("matchup", ""): row for row in cmp.get("scoresandodds", [])}
         _pickswise_by_matchup = {row.get("matchup", ""): row for row in cmp.get("pickswise", [])}
+        _actionnetwork_by_matchup = {row.get("matchup", ""): row for row in cmp.get("actionnetwork", [])}
 
         st.markdown("#### ⭐ Top Props")
         if not shortlist["props"]:
@@ -27377,6 +27414,11 @@ with tabs[1]:
                 if _pw_row and _pw_row.get("pick_side"):
                     _pw_stars = "★" * int(_pw_row.get("pick_rating") or 0)
                     chips += _chip("pw", f'{_pw_row["pick_side"]} {_pw_row.get("pick_bet","")} {_pw_stars}')
+                _an_row = _actionnetwork_by_matchup.get(g["Matchup"])
+                if _an_row and _an_row.get("odds"):
+                    _an_book = _an_row["odds"][0]
+                    _an_nbooks = len(_an_row["odds"])
+                    chips += _chip("an", f'ML {_an_row.get("home_team","")} {_an_book.get("ml_home","")} ({_an_nbooks} books)')
                 with game_cols[_i % 2]:
                     st.markdown(
                         f'<div style="background:linear-gradient(145deg,#0d1b2e,#0a1420);border:1px solid #1a3a5c;'

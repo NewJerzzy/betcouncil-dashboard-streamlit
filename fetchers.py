@@ -17186,6 +17186,55 @@ def get_pickswise_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_actionnetwork_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    Action Network's scoreboard API (game odds across 4+ books, starting
+    pitcher stats, standings, rotation numbers) — confirmed live
+    2026-07-17 via actionnetwork_refresh.py. Same open backend already
+    confirmed powering Sports Insights/RotoGrinders/VegasInsider/
+    ScoresAndOdds — the flagship AN site is WAF bot-gated, but this API
+    subdomain isn't.
+
+    Note: this is a distinct function from the existing (unrelated)
+    fetch_action_network_props()/fetch_action_network_lines() in this
+    file, which hit different Action Network endpoints (public betting
+    %, a different lines path) — not renamed to avoid a collision here,
+    since "actionnetwork" (no underscore) vs "action_network" (with
+    underscore) don't collide. Worth knowing separately: there are two
+    different functions both named fetch_action_network_props — one
+    here, one in app.py — a pre-existing collision unrelated to this
+    build, not fixed here.
+
+    Returns [] if no fresh data.
+    """
+    data = _read_gist_file(f"betcouncil_actionnetwork_{sport.upper()}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("games", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_actionnetwork_match(matchup: str, sport: str) -> dict:
+    """
+    Single-game lookup against Action Network's scoreboard data. Uses
+    team abbreviations directly ("PHI", "NYM"), same format BetCouncil's
+    matchup strings already use.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        games = fetch_actionnetwork_from_gist(sport)
+    except Exception:
+        games = []
+    matchup_u = matchup.upper()
+    for game in games:
+        home_abv, away_abv = str(game.get("home_team", "")).upper(), str(game.get("away_team", "")).upper()
+        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
+            return game
+    return {}
+
+
 def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
     """
     DK Network's public "Most Bet Player Props" page — no login, no
