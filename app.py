@@ -16204,7 +16204,12 @@ def load_sport_data(sport):
 
 
     # ── Kalshi prediction market signal ─────────────────────────────────────
-    _kalshi = st.session_state.get("kalshi_raw", [])
+    # 2026-07-17 fix: was reading "kalshi_raw", a key that's never set —
+    # the real data is stored under "kalshi_markets" (confirmed: every
+    # other consumer in this file already uses that key correctly). This
+    # block was silently firing on an empty list the entire time despite
+    # fetch_kalshi_markets() genuinely working and returning real data.
+    _kalshi = st.session_state.get("kalshi_markets", [])
     if _kalshi:
         _kal_lookup = {}
         for _km in _kalshi:
@@ -16231,7 +16236,9 @@ def load_sport_data(sport):
                 prop["KalshiYesBid"] = None
 
     # ── Polymarket signal ────────────────────────────────────────────────────
-    _poly = st.session_state.get("polymarket_raw", [])
+    # 2026-07-17 fix: same key-mismatch bug as Kalshi above — was reading
+    # "polymarket_raw" (never set), real data is under "polymarket_markets".
+    _poly = st.session_state.get("polymarket_markets", [])
     if _poly:
         _poly_lookup = {}
         for _pm in _poly:
