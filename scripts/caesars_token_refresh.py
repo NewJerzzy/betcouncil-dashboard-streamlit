@@ -30,6 +30,7 @@ Cadence: run at least once within every ~24h window (the JWT's expiry) --
 see .github/workflows/caesars_token_refresh.yml for the actual schedule.
 """
 
+import base64
 import json
 import os
 import sys
@@ -40,6 +41,7 @@ import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GIST_FILE = "betcouncil_caesars_tokens.json"
+DEBUG_GIST_FILE = "betcouncil_caesars_debug.json"
 LOGIN_URL = "https://sportsbook.caesars.com/us/az/bet#login"
 MAX_WAIT_SECONDS = 90
 
@@ -49,24 +51,57 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def push_to_gist(payload: dict, github_token: str) -> bool:
+def push_to_gist(payload: dict, github_token: str, filename: str = GIST_FILE) -> bool:
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": {GIST_FILE: {"content": json.dumps(payload, indent=2)}}},
+        json={"files": {filename: {"content": json.dumps(payload, indent=2)}}},
         timeout=30,
     )
     if resp.status_code in (200, 201):
         return True
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    log(f"Gist push failed ({filename}): {resp.status_code} {resp.text[:300]}")
     return False
 
 
-def harvest(email: str, password: str) -> dict:
+def push_debug(page, steps: list, github_token: str) -> None:
+    """Dump current URL, a truncated HTML snapshot, and a full-page screenshot
+    to Gist. Exists because this sandbox's network allowlist can't reach
+    GitHub Actions' log-storage host (results-receiver.actions.githubusercontent.com),
+    so raw run logs aren't fetchable here -- this is the diagnostic channel
+    that IS reachable (plain Gist API, same host used for everything else)."""
+    debug = {"captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "steps": steps}
+    try:
+        debug["current_url"] = page.url
+    except Exception as e:
+        debug["current_url"] = f"<error: {e}>"
+    try:
+        debug["html_snippet"] = page.content()[:20000]
+    except Exception as e:
+        debug["html_snippet"] = f"<error: {e}>"
+    try:
+        png_bytes = page.screenshot(full_page=False, timeout=10_000)
+        debug["screenshot_b64_png"] = base64.b64encode(png_bytes).decode("ascii")
+    except Exception as e:
+        debug["screenshot_b64_png"] = f"<error: {e}>"
+    if not push_to_gist(debug, github_token, DEBUG_GIST_FILE):
+        log("Debug dump push also failed")
+    else:
+        log(f"Debug dump pushed to {DEBUG_GIST_FILE} ({len(debug.get('html_snippet',''))} char HTML, "
+            f"{'screenshot ok' if not str(debug['screenshot_b64_png']).startswith('<error') else 'screenshot FAILED'})")
+
+
+def harvest(email: str, password: str, github_token: str) -> dict:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
     harvested: dict = {}
     stop = {"done": False}
+    steps: list = []
+
+    def note(step_name, ok, detail=""):
+        steps.append({"step": step_name, "ok": ok, "detail": str(detail)[:300]})
+        log(f"  [{'OK' if ok else 'FAIL'}] {step_name}" + (f" — {detail}" if detail else ""))
 
     def on_request(request):
         if stop["done"] or "americanwagering.com" not in request.url:
@@ -112,27 +147,64 @@ def harvest(email: str, password: str) -> dict:
 
         try:
             page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=45_000)
-            time.sleep(3)
-            try:
-                page.click("button:has-text('LOG IN')", timeout=5_000)
-                time.sleep(2)
-            except Exception:
-                pass  # login modal may already be open from the #login URL fragment
+            note("goto login page", True, page.url)
+        except Exception as e:
+            note("goto login page", False, e)
 
+        time.sleep(3)
+
+        # Dismiss a cookie-consent banner if one is covering the form —
+        # common cause of "click"/"fill" landing on the wrong element.
+        for sel in ["button:has-text('Accept')", "button:has-text('Accept All')",
+                    "#onetrust-accept-btn-handler", "button:has-text('I Accept')"]:
+            try:
+                page.click(sel, timeout=2_000)
+                note(f"dismiss consent banner ({sel})", True)
+                time.sleep(1)
+                break
+            except Exception:
+                continue
+
+        try:
+            page.click("button:has-text('LOG IN')", timeout=5_000)
+            note("click LOG IN", True)
+            time.sleep(2)
+        except Exception as e:
+            note("click LOG IN", False, e)
+            # login modal may already be open from the #login URL fragment —
+            # not fatal on its own, keep going
+
+        try:
             page.wait_for_selector(
                 'input[type="email"], input[name="username"], input[placeholder*="email" i]',
                 timeout=10_000,
             )
-            page.fill('input[type="email"], input[name="username"], input[placeholder*="email" i]', email)
-            time.sleep(0.5)
-            page.fill('input[type="password"]', password)
-            time.sleep(0.5)
-            page.click('button[type="submit"], button:has-text("LOG IN"), button:has-text("Sign In")')
-            log(f"Post-login URL: {page.url}")
-        except PWTimeout:
-            log("Login flow timed out at some step — request listener stays active, still polling")
+            note("email field appeared", True)
         except Exception as e:
-            log(f"Login flow error: {e} — request listener stays active, still polling")
+            note("email field appeared", False, e)
+
+        try:
+            page.fill('input[type="email"], input[name="username"], input[placeholder*="email" i]', email)
+            note("fill email", True)
+        except Exception as e:
+            note("fill email", False, e)
+        time.sleep(0.5)
+
+        try:
+            page.fill('input[type="password"]', password)
+            note("fill password", True)
+        except Exception as e:
+            note("fill password", False, e)
+        time.sleep(0.5)
+
+        try:
+            page.click('button[type="submit"], button:has-text("LOG IN"), button:has-text("Sign In")')
+            note("click submit", True)
+        except Exception as e:
+            note("click submit", False, e)
+
+        time.sleep(3)
+        note("post-submit state", True, page.url)
 
         # After login, browse into the sportsbook itself -- the auth headers
         # get attached to the odds/props API calls that fire once a sport
@@ -140,12 +212,17 @@ def harvest(email: str, password: str) -> dict:
         try:
             page.goto("https://sportsbook.caesars.com/us/az/bet/baseball/mlb",
                        wait_until="domcontentloaded", timeout=30_000)
-        except Exception:
-            pass
+            note("goto MLB odds page", True, page.url)
+        except Exception as e:
+            note("goto MLB odds page", False, e)
 
         deadline = time.time() + MAX_WAIT_SECONDS
         while not stop["done"] and time.time() < deadline:
             time.sleep(1)
+        note("token capture", stop["done"])
+
+        if not stop["done"]:
+            push_debug(page, steps, github_token)
 
         ctx.close()
         browser.close()
@@ -165,7 +242,7 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
-    harvested = harvest(email, password)
+    harvested = harvest(email, password, github_token)
     if not harvested.get("bearer_jwt"):
         log(f"No Bearer token captured after {MAX_WAIT_SECONDS}s — "
             "login may have failed or Caesars changed its login form/selectors")
