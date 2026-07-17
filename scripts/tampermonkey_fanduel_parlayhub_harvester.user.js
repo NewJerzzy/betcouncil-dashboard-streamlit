@@ -1,33 +1,29 @@
 // ==UserScript==
 // @name         BetCouncil FanDuel Parlay Hub Harvester
 // @namespace    betcouncil
-// @version      1.0
-// @description  Passively captures FanDuel's "Parlay Hub" (curated popular SGP/parlay picks — login-gated, no public API) from your own authenticated FanDuel tab, and pushes to the shared Gist so BetCouncil's New Bettor tab can show it next to BetCouncil's own picks.
+// @version      2.0
+// @description  Passively captures FanDuel's "Parlay Hub" (curated popular SGP/parlay picks — login-gated, no public API) from your own authenticated FanDuel tab, and pushes to the shared Gist so BetCouncil's New Bettor tab can show it next to BetCouncil's own picks. v2.0: intercepts FanDuel's own network calls instead of a hardcoded URL, so there's no session token to hand-refresh — install once and forget it.
 // @match        https://*.fanduel.com/*
 // @grant        none
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    // ── Fill these in once, matching your existing BetMGM/Caesars scripts ──
+    // ── Fill this in once, matching your existing BetMGM/Caesars scripts ──
     var GIST_ID  = '7e52e1c2c2054847c7c4663a157386c5';
     var GIST_TOK = 'PASTE_YOUR_GITHUB_TOKEN_HERE';
 
-    // ── ENDPOINT — confirmed live 2026-07-16 via DevTools capture ────────
-    // Real request: GET boapi.sportsbook.fanduel.com/betting-opportunities/all
-    // Response confirmed to contain popularBettingOpportunities (PARLAY/SGP
-    // entries with narrative, americanOdds, totalBets, selections) plus an
-    // "attachments" block with full market/runner/team data to resolve
-    // those selections into readable picks. No extra auth header needed —
-    // credentials:'include' (session cookies) was sufficient.
-    //
-    // The `_ak` query param looks account/session-scoped and may need
-    // refreshing if this stops returning data — same DevTools steps as
-    // before: open Parlay Hub, Network tab, find the fresh
-    // betting-opportunities/all request, copy its Request URL here.
-    var PARLAY_HUB_ENDPOINT = 'https://boapi.sportsbook.fanduel.com/betting-opportunities/all?cardVersion=v1&_ak=FhMFpcPWXMeyZxOx&source=ORGANIC,MANUAL';
+    // ── No hardcoded endpoint needed anymore ──────────────────────────────
+    // v1 hardcoded the betting-opportunities/all URL including its `_ak`
+    // session token, which expires and had to be re-copied from DevTools
+    // by hand. v2 instead patches window.fetch (below) to watch every
+    // request FanDuel's own app already makes and grabs the response the
+    // moment FanDuel calls this endpoint itself — same data, zero manual
+    // upkeep, and it keeps working even if FanDuel changes the `_ak` value
+    // or query params.
+    var PARLAY_HUB_URL_MATCH = 'betting-opportunities/all';
 
     var __bcGistQueue = Promise.resolve();
 
@@ -89,39 +85,41 @@
         return 'ALL';
     }
 
-    function harvestParlayHub() {
-        if (PARLAY_HUB_ENDPOINT.indexOf('PASTE_') === 0) {
-            console.log('[BetCouncil-FDParlayHub] Endpoint not configured yet — see setup comment at top of this script. Not pushing anything.');
-            return;
-        }
-        throttled('parlayhub', 1500000, function () { // every 25 min
-            fetch(PARLAY_HUB_ENDPOINT, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Referer': window.location.href
-                },
-                credentials: 'include'  // send your logged-in session cookies
-            }).then(function (r) { return r.json(); })
-              .then(function (data) {
-                var sport = detectActiveSport();
-                pushGist('betcouncil_fd_parlayhub_' + sport + '.json', {
-                    sport: sport,
-                    captured_at: new Date().toISOString(),
-                    data: data,
-                    source: 'betcouncil_tampermonkey_harvest'
-                });
-              }).catch(function (e) {
-                console.log('[BetCouncil-FDParlayHub] Harvest error:', e.message);
-              });
+    function pushParlayHubData(data) {
+        throttled('parlayhub', 1500000, function () { // every 25 min, max
+            var sport = detectActiveSport();
+            pushGist('betcouncil_fd_parlayhub_' + sport + '.json', {
+                sport: sport,
+                captured_at: new Date().toISOString(),
+                data: data,
+                source: 'betcouncil_tampermonkey_harvest_v2'
+            });
         });
     }
 
-    // Only harvest while actually on a Parlay Hub page/tab, not every
-    // FanDuel page — avoids wasted requests and matches the "browse
-    // Parlay Hub in an authenticated tab" protocol used elsewhere.
-    if (window.location.href.toLowerCase().indexOf('parlay') !== -1) {
-        harvestParlayHub();
+    // ── Passive capture: patch window.fetch so we see the response the
+    // moment FanDuel's own front-end calls betting-opportunities/all while
+    // you're just browsing Parlay Hub normally. No separate request is
+    // made, no CORS issue, and no session token ever needs updating —
+    // whatever URL/params FanDuel is using right now is exactly what gets
+    // captured. ──────────────────────────────────────────────────────────
+    if (GIST_TOK.indexOf('PASTE_') !== 0) {
+        var __bcOrigFetch = window.fetch;
+        window.fetch = function (input, init) {
+            var url = (typeof input === 'string') ? input : (input && input.url) || '';
+            var p = __bcOrigFetch.apply(this, arguments);
+            if (url.indexOf(PARLAY_HUB_URL_MATCH) !== -1) {
+                p.then(function (r) {
+                    r.clone().json().then(function (data) {
+                        console.log('[BetCouncil-FDParlayHub] Captured live betting-opportunities response');
+                        pushParlayHubData(data);
+                    }).catch(function () {});
+                }).catch(function () {});
+            }
+            return p;
+        };
     }
 
-    console.log('[BetCouncil-FDParlayHub] Harvester active on ' + window.location.hostname);
+    console.log('[BetCouncil-FDParlayHub] Harvester active on ' + window.location.hostname
+        + (GIST_TOK.indexOf('PASTE_') === 0 ? ' — waiting on GIST_TOK to be filled in' : ' — watching for Parlay Hub data'));
 })();
