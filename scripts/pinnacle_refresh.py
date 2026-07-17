@@ -95,6 +95,20 @@ def normalize(sport: str, league_id: int) -> list:
             "keys": list(matchups[0].keys()) if isinstance(matchups[0], dict) else None,
             "participants_raw": matchups[0].get("participants") if isinstance(matchups[0], dict) else None,
         })
+        # Round 2: alignment was always "neutral" and several sampled
+        # matchups were Over/Under specials or full-league team lists, not
+        # individual games -- need "type"/"parent"/"special" across a wider
+        # sample to find what actually distinguishes a real 2-team game.
+        DEBUG_LOG.append({
+            "sport": sport, "label": "matchup_type_survey",
+            "sample": [
+                {"id": m.get("id"), "type": m.get("type"), "special": m.get("special"),
+                 "parentId": m.get("parentId"), "parent": m.get("parent"),
+                 "n_participants": len(m.get("participants", [])),
+                 "participant_names": [p.get("name") for p in m.get("participants", [])][:6]}
+                for m in matchups[:15] if isinstance(m, dict)
+            ],
+        })
 
     matchup_by_id = {m.get("id"): m for m in matchups if isinstance(m, dict)}
     markets_by_matchup: dict = {}
