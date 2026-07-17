@@ -147,6 +147,15 @@ def run_action_network_probes():
 
 def run_oddsshopper():
     log("Probing OddsShopper homepage + bundle...")
+    try:
+        _run_oddsshopper_inner()
+    except Exception as e:
+        import traceback
+        findings["oddsshopper"].append({"step": "FATAL_EXCEPTION", "error": str(e),
+                                          "traceback": traceback.format_exc()})
+
+
+def _run_oddsshopper_inner():
     home = probe("https://www.oddsshopper.com/")
     findings["oddsshopper"].append({"step": "homepage", **home})
 
@@ -201,6 +210,8 @@ def run_oddsshopper():
     priority = [l for l in real_links if l.startswith("/expert-picks/free/")]
     other_plausible = [l for l in real_links if any(
         kw in l.lower() for kw in ("prop", "odds")) and l not in priority]
+    findings["oddsshopper"].append({"step": "filtered_lists_debug",
+                                      "priority": priority, "other_plausible": other_plausible})
     for sub_path in (priority + other_plausible)[:6]:
         sub_url = f"https://www.oddsshopper.com{sub_path}"
         try:
