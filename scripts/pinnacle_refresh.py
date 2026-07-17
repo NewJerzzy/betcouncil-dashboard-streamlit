@@ -84,6 +84,18 @@ def normalize(sport: str, league_id: int) -> list:
     if not isinstance(markets, list):
         markets = []
 
+    # Diagnostic only: first live run returned None for home_team/away_team,
+    # meaning the "alignment"/"name" field assumptions below are wrong for
+    # this API's actual shape. Dump the first matchup's raw participants
+    # (and full matchup keys) so the real field names are visible without
+    # needing to re-guess blind.
+    if matchups:
+        DEBUG_LOG.append({
+            "sport": sport, "label": "sample_matchup_keys",
+            "keys": list(matchups[0].keys()) if isinstance(matchups[0], dict) else None,
+            "participants_raw": matchups[0].get("participants") if isinstance(matchups[0], dict) else None,
+        })
+
     matchup_by_id = {m.get("id"): m for m in matchups if isinstance(m, dict)}
     markets_by_matchup: dict = {}
     for mkt in markets:

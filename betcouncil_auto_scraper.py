@@ -2680,9 +2680,10 @@ def scrape_fanduel_curlffi(sport):
             timeout=15
         )
         print(f"    Events: {r1.status_code}")
-
         if r1.status_code != 200:
-            print(f"    Response: {r1.text[:100]}")
+            print(f"    URL: {r1.url}")
+            print(f"    Response headers: {dict(r1.headers)}")
+            print(f"    Response body: {r1.text[:500]!r}")
             return props
 
         data = r1.json()
