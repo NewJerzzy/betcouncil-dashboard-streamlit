@@ -93,6 +93,26 @@ def run_action_network_probes():
     for url, params in candidates:
         findings["action_network_probes"].append(probe(url, params, referer="https://www.actionnetwork.com/"))
 
+    # Direct comparison: does period=player_props actually change the
+    # response shape vs period=game, or is the param silently ignored?
+    try:
+        game_r = requests.get("https://api.actionnetwork.com/web/v1/scoreboard/mlb",
+                               params={"period": "game"}, headers=HEADERS, timeout=15)
+        props_r = requests.get("https://api.actionnetwork.com/web/v1/scoreboard/mlb",
+                                params={"period": "player_props"}, headers=HEADERS, timeout=15)
+        game_keys = set(json.loads(game_r.text).get("games", [{}])[0].keys()) if game_r.status_code == 200 else set()
+        props_keys = set(json.loads(props_r.text).get("games", [{}])[0].keys()) if props_r.status_code == 200 else set()
+        findings["action_network_probes"].append({
+            "step": "period_param_comparison",
+            "game_len": len(game_r.text), "props_len": len(props_r.text),
+            "identical_length": len(game_r.text) == len(props_r.text),
+            "game_first_game_keys": sorted(game_keys),
+            "props_first_game_keys": sorted(props_keys),
+            "keys_differ": game_keys != props_keys,
+        })
+    except Exception as e:
+        findings["action_network_probes"].append({"step": "period_param_comparison_error", "error": str(e)})
+
 
 def run_oddsshopper():
     log("Probing OddsShopper homepage + bundle...")
@@ -132,6 +152,39 @@ def run_oddsshopper():
             })
         except Exception as e:
             findings["oddsshopper"].append({"step": "chunk_scan_error", "chunk": path, "error": str(e)})
+
+    # Homepage-only chunks are generic Next.js framework code (webpack,
+    # polyfills, main-app shell) -- route-specific data-fetching logic
+    # loads on demand when visiting an actual props page, not on "/".
+    # Fetch a real MLB props sub-page and repeat the chunk scan there.
+    for sub_path in ["/mlb/props", "/mlb", "/sportsbook-promos/mlb"]:
+        sub_url = f"https://www.oddsshopper.com{sub_path}"
+        try:
+            r = requests.get(sub_url, headers=HEADERS, timeout=15)
+        except Exception as e:
+            findings["oddsshopper"].append({"step": "subpage_fetch_error", "path": sub_path, "error": str(e)})
+            continue
+        findings["oddsshopper"].append({"step": "subpage", "path": sub_path, "status": r.status_code,
+                                          "body_len": len(r.text)})
+        if r.status_code != 200:
+            continue
+        sub_chunks = re.findall(r'/_next/static/chunks/[^"\'\s]*\.js', r.text)
+        new_chunks = [c for c in sub_chunks if c not in chunk_paths]
+        findings["oddsshopper"].append({"step": "subpage_new_chunks", "path": sub_path,
+                                          "new_chunks": new_chunks[:8]})
+        for chunk in new_chunks[:6]:
+            chunk_url = f"https://www.oddsshopper.com{chunk}"
+            try:
+                cr = requests.get(chunk_url, headers=HEADERS, timeout=15)
+                keys_in_chunk = re.findall(r'apiKey["\']?\s*[:=]\s*["\']([A-Za-z0-9_\-]{15,60})["\']', cr.text, re.I)
+                hosts_in_chunk = re.findall(r'https?://[a-zA-Z0-9.\-]*(?:api|odds)[a-zA-Z0-9.\-]*', cr.text, re.I)
+                findings["oddsshopper"].append({
+                    "step": "subpage_chunk_scan", "path": sub_path, "chunk": chunk, "status": cr.status_code,
+                    "keys_found": keys_in_chunk[:5],
+                    "api_hosts_found": list(set(hosts_in_chunk))[:10],
+                })
+            except Exception as e:
+                findings["oddsshopper"].append({"step": "subpage_chunk_scan_error", "chunk": chunk, "error": str(e)})
 
 
 def push_to_gist(payload: dict, github_token: str) -> bool:
