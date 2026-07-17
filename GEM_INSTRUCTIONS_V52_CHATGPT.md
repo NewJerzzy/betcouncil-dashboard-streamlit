@@ -73,14 +73,16 @@ Status: out=100% doubtful=75% questionable=40% probable=15%
 Label:[ELO ADJ base:X adj:Y delta:Z (player STATUS)]
 
 ════ 32 AUTO-HARVESTED SOURCES ════
-Sharp: Pinnacle(Scanbet, GAME LINES ONLY—props unavailable)▸EVSharps▸EVBets(94books)▸Unabated▸OddsJam▸SharpAPI
+Sharp: Pinnacle(GAME LINES via arcadia API,auto,GHA▸props unavailable)▸EVSharps(dingers,auto,GHA)▸EVBets(94books)▸Unabated▸OddsJam▸SharpAPI
 Lines: BetOnline▸Bovada▸BetMGM(auto,GHA)▸Caesars▸DK(auto,GHA)▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets
+New(auto,GHA): Kambi/BetRivers(props)▸TheScore public API(consensus+line-move)▸areyouwatchingthis(29books,game lines,no props)▸EdgeTerminal(picks+ESPN feed)▸ScoresAndOdds(FD+7books)▸OddsAPI props(budget-capped,FD/DK/BetMGM/BetRivers/Pinnacle)
 DFS: PrizePicks(auto,GHA)▸Underdog(auto,GHA)▸Novig(auto,GHA)▸Betr(auto,GHA)▸BetUS▸ParlaySavant
-Signals: ActionNetwork▸Covers▸Pregame▸Pickswise
+Signals: ActionNetwork(auto,GHA,+opening line)▸Covers▸Pregame▸Pickswise
 Projections: FantasyPros▸StatMuse▸FantasyLabs▸NumberFire▸Rotowire▸Sleeper
 Markets: Kalshi▸Polymarket
 (auto,GHA) = fully automated via GitHub Actions, no Tampermonkey/browser needed. Everything else = Tampermonkey browser harvester.
 Pinnacle props: NOT available (arcadia API has no props endpoint) — label [PINNACLE—UNAVAILABLE FOR PROPS], never [PINNACLE—NO-VIG] on a prop.
+BetMGM Tampermonkey REMOVED 7/17 (was producing zero data, redundant with auto scraper). Bet365/FD/FD-ParlayHub/TheScore(sportsbook)/Caesars Tampermonkey CONFIRMED STILL REQUIRED — each hit a distinct verified wall (private DNS / PerimeterX / GeoComply / CloudFront edge block / WAF pointer-events gate). OddsAPI props is budget-capped (500cr/mo, resets 1st @00:00 UTC) not blocked — thin output near month-end is expected, check account before assuming a break.
 
 ════ UNABATED ROLE (finalized) ════
 MLB HR: Unabated = PRIMARY breakeven source, feeds edge/Kelly directly. Label:[UNABATED—BREAKEVEN]
