@@ -188,19 +188,26 @@ def main() -> int:
     market_ids = [str(m.get("id")) for m in markets if m.get("id")]
     prices_by_contract = {}
     prices_calls_made = 0
-    if market_ids:
-        # batch in chunks of 50 market ids per call
-        for i in range(0, len(market_ids), 50):
-            chunk = market_ids[i:i + 50]
-            prices_calls_made += 1
-            prices_resp = fetch_json(f"{BASE_URL}/prices/", params={"market_ids": ",".join(chunk)})
-            if isinstance(prices_resp, dict):
-                for mkt_id, contracts in prices_resp.get("prices", prices_resp.get("results", {})).items():
-                    if isinstance(contracts, list):
-                        for c in contracts:
-                            cid = str(c.get("contract_id") or c.get("id") or "")
-                            if cid:
-                                prices_by_contract[cid] = c
+    contracts_endpoint_sample = None
+    # 2026-07-18 live run #4: bulk /v3/prices/?market_ids= 404'd across
+    # all 35 chunked calls despite 1732 real market_ids found -- same
+    # "bulk query-param endpoint doesn't exist" pattern as the markets
+    # fix earlier. Given the scale here (1700+ markets), a full per-market
+    # nested fetch every 15 min isn't practical even if it's the right
+    # shape -- testing on a 5-market sample first to confirm the real
+    # per-market contracts/prices path before deciding whether to widen it.
+    for mid in market_ids[:5]:
+        resp = fetch_json(f"{BASE_URL}/markets/{mid}/contracts/")
+        prices_calls_made += 1
+        if contracts_endpoint_sample is None:
+            contracts_endpoint_sample = resp
+        if isinstance(resp, dict):
+            for c in resp.get("contracts", resp.get("results", [])):
+                if isinstance(c, dict):
+                    cid = str(c.get("id", ""))
+                    if cid:
+                        prices_by_contract[cid] = c
+    DEBUG_LOG.append({"step": "contracts_endpoint_sample", "sample": contracts_endpoint_sample})
 
     games_out, props_out = {}, []
     for m in markets:
