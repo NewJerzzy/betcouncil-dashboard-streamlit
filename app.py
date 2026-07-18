@@ -15299,6 +15299,15 @@ def load_sport_data(sport):
             sav_reg_edge = _ev_sig.get("sav_reg_edge", 0.0)
             sav_spd_edge = _ev_sig.get("sav_spd_edge", 0.0)
             sav_la_edge  = _ev_sig.get("sav_la_edge", 0.0)
+            # sav_ars_edge (pitch-arsenal run-value for the pitcher's best
+            # pitch, computed only when "Strikeout" is in stat_raw — see the
+            # computation site) — added 2026-07-18, same "computed but never
+            # read back" bug class as the four above. No overlap risk with
+            # statcast_edge/brl_edge/preview_hr_rate_edge: those are all
+            # BATTER contact-quality signals for HR props; this is a
+            # PITCHER pitch-effectiveness signal for K props — different
+            # player, different prop type, no shared underlying data.
+            sav_ars_edge = _ev_sig.get("sav_ars_edge", 0.0) if "Strikeout" in stat_raw else 0.0
 
             # Pitcher matchup from EV API (live ERA + xwOBA + flyball% + barrel rate)
             if sport == "MLB" and _ev_sig.get("pitcher_era"):
@@ -15747,6 +15756,8 @@ def load_sport_data(sport):
                 final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_spd_edge))
             if sav_la_edge != 0.0:
                 final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_la_edge))
+            if sav_ars_edge != 0.0 and "Strikeout" in stat_raw:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_ars_edge))
 
         # ── EV API S6 — Pinnacle/Circa no-vig override ─────────────────
         # Use Shin method for HR props (longshot market, +200 to +800 odds)
