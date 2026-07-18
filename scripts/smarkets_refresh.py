@@ -179,7 +179,7 @@ def main() -> int:
     # each event instead: /v3/events/{id}/markets/. Fetched per event
     # (capped at 20 events/run to keep runtime reasonable).
     markets = []
-    for eid in event_ids[:20]:
+    for eid in event_ids[:8]:
         mkt_resp = fetch_json(f"{BASE_URL}/events/{eid}/markets/")
         if isinstance(mkt_resp, dict):
             for m in mkt_resp.get("markets", mkt_resp.get("results", [])):
@@ -197,10 +197,24 @@ def main() -> int:
     # 2026-07-18 live run #5: /v3/markets/{id}/contracts/ confirmed real
     # (200, correct contract identity: id/name/side/market_id) -- markets
     # themselves have no inline contracts field, confirmed via a direct
-    # key check. But contracts carry NO pricing fields at all (no
-    # best_back_price etc) -- contracts are just identity, pricing is a
-    # separate lookup keyed by contract_id, not market_id (which explains
-    # why /v3/prices/?market_ids= 404'd on every one of 35 chunks).
+    # key check. Contracts carry NO pricing fields at all (no
+    # best_back_price etc).
+    #
+    # Live run #6: tried bulk /v3/prices/ keyed by both market_ids AND
+    # contract_ids -- both 404 on every chunk, meaning that whole bulk
+    # endpoint path doesn't exist under either key. Per-contract fetching
+    # would need ~4800 additional calls at full event scope (the
+    # contracts fetch alone already took ~12 minutes for 1732 markets --
+    # not viable inside a 15-min cron window either way). Stopping the
+    # pricing chase here rather than continuing to guess indefinitely or
+    # scale this cron job into something that risks overlapping runs or
+    # hammering Smarkets with thousands of calls every 15 min.
+    #
+    # Ships as identity/structure only for now: real matchups, real
+    # markets (moneyline/totals/props), real contract names and sides,
+    # NO live back/lay prices. Still useful for cross-referencing which
+    # lines Smarkets even offers, just not (yet) for a price comparison.
+    # Revisit if a real single-contract pricing endpoint gets found later.
     contracts_by_market = {}
     for m in markets:
         mid = str(m.get("id", ""))
@@ -212,19 +226,8 @@ def main() -> int:
     all_contract_ids = [str(c.get("id")) for cs in contracts_by_market.values() for c in cs if c.get("id")]
     log(f"contracts found: {len(all_contract_ids)} across {len(contracts_by_market)} markets")
 
-    prices_by_contract = {}
+    prices_by_contract = {}  # intentionally empty -- see note above
     prices_calls_made = 0
-    for i in range(0, len(all_contract_ids), 50):
-        chunk = all_contract_ids[i:i + 50]
-        prices_calls_made += 1
-        prices_resp = fetch_json(f"{BASE_URL}/prices/", params={"contract_ids": ",".join(chunk)})
-        if isinstance(prices_resp, dict):
-            for p in prices_resp.get("prices", prices_resp.get("results", [])):
-                if isinstance(p, dict):
-                    cid = str(p.get("contract_id") or p.get("id") or "")
-                    if cid:
-                        prices_by_contract[cid] = p
-    log(f"prices resolved: {len(prices_by_contract)} of {len(all_contract_ids)} contracts")
 
     games_out, props_out = {}, []
     for m in markets:
@@ -262,7 +265,11 @@ def main() -> int:
                 "volume_pence": m.get("volume", 0), "contracts": contracts_out,
             })
 
-    note = "prices on 0-10000 scale; volume in GBP pence; american_odds derived from best back (bid) price"
+    note = ("Identity/structure only as of 2026-07-18 -- real matchups, markets, and contract "
+            "names/sides, but no live back/lay pricing yet (Smarkets' bulk pricing endpoint "
+            "returns 404 under both market_ids and contract_ids; per-contract fetching isn't "
+            "practical at this scale within a cron job). american_odds/implied_pct/best_back_price "
+            "fields will be null until a working pricing endpoint is found.")
     files_payload["betcouncil_smarkets_game_lines_MLB.json"] = {
         "content": json.dumps({
             "source": "smarkets_exchange", "league": LEAGUE, "captured_at": now_iso,
