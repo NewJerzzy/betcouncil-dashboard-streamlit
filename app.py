@@ -24569,6 +24569,26 @@ with tabs[7]:
                     })
                 st.markdown(_bc_df_html(pd.DataFrame(_lt_table_rows)), unsafe_allow_html=True)
 
+                # Brief plain-language comparison against BetCouncil's own
+                # model read for the same stat, when this player is also on
+                # today's board. Display only — doesn't change board_props.
+                _lt_board_by_stat = {}
+                for _bp in locals().get("board_props", []) or []:
+                    _lt_board_by_stat.setdefault(str(_bp.get("Prop", "")).lower(), _bp)
+                for _ltr in _lt_rows[:12]:
+                    _lt_stat_l = str(_ltr.get("stat_label", "")).lower()
+                    _bp_match = _lt_board_by_stat.get(_lt_stat_l)
+                    if not _bp_match:
+                        continue
+                    _lt_edge = _ltr.get("edge_pct")
+                    _lt_edge_str = f"{_lt_edge:+.1f}%" if isinstance(_lt_edge, (int, float)) else "—"
+                    _lt_line = (
+                        f'**{_ltr.get("stat_label")}**: LineTerminal says {_ltr.get("model_prob_pct","—")}% probability, '
+                        f'market says {_ltr.get("implied_prob_pct","—")}%, edge = {_lt_edge_str} '
+                        f'· Your model says {_bp_match.get("ModelProb","—")} (Edge {_bp_match.get("EdgePct","—")})'
+                    )
+                    st.caption(_lt_line)
+
             # ── RotoGrinders: lineup confirmation + DFS projected points ──
             # Public JSON, no login. Real prop-picks tools are fully
             # paywalled (checked, no free preview) -- this is just lineup
