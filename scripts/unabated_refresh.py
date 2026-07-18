@@ -109,6 +109,43 @@ def fetch_json(url: str, params: dict = None):
         return None
 
 
+def test_data_unabated_claim(github_token: str) -> None:
+    """
+    2026-07-18: testing a newly claimed second endpoint from a secondary
+    session — data.unabated.com/market/{sport}/props/odds, claimed to
+    hold PLAYER PROPS (personId-keyed), which the confirmed-working
+    api-k.unabated.com/markets/changes/query endpoint does NOT capture
+    (that one only had gameOdds, no props). Different domain than either
+    of the two earlier failed guesses on this same "data.unabated.com"
+    host, so worth a real test rather than assuming it shares their fate
+    or trusting it blind — same standard as every claim in this repo.
+    """
+    test_results = {}
+    for label, url in [
+        ("bettype", "https://data.unabated.com/bettype"),
+        ("props_odds", "https://data.unabated.com/market/mlb/props/odds"),
+        ("props_people", "https://data.unabated.com/market/mlb/props/people"),
+        ("straight_odds", "https://data.unabated.com/market/mlb/straight/odds"),
+    ]:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            body_sample = None
+            try:
+                parsed = r.json()
+                body_sample = json.dumps(parsed, default=str)[:1000]
+            except Exception:
+                body_sample = r.text[:500]
+            test_results[label] = {"url": url, "status": r.status_code,
+                                     "content_type": r.headers.get("content-type", ""),
+                                     "body_sample": body_sample}
+        except Exception as e:
+            test_results[label] = {"url": url, "error": str(e)}
+    push_files({"betcouncil_unabated_second_claim_test.json": {
+        "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
+                                "results": test_results}, indent=2, default=str)
+    }}, github_token)
+
+
 def flatten_market_changes(payload: dict) -> list:
     rows = []
     unmapped_leagues = set()
