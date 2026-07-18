@@ -177,6 +177,9 @@ def main() -> int:
             log(f"  {sport_label}: no data / non-200 / empty games")
             continue
         games = payload["games"]
+        if games and games[0].get("props") and sport_label == "MLB":
+            DEBUG_LOG.append({"raw_sample_prop": games[0]["props"][0],
+                               "raw_sample_game_keys": list(games[0].keys())})
         slim_games = []
         total_props = 0
         for g in games:
