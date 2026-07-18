@@ -17,14 +17,13 @@ check before building, since an unrelated public feed (Snapp's /news) was
 independently found to be frozen ~3 months stale during the same research
 pass and was correctly rejected for that reason.
 
-NOT independently verified byte-for-byte by Claude before this first deploy
--- regexes were written against partial copy/pasted terminal excerpts of the
-page (Windows curl mangled UTF-8 punctuation into 'ΓÇö'/'┬╖' sequences in
-those pastes, which do not appear in a clean UTF-8 fetch, so the live
-scraper should see cleaner separators than the debug excerpts did). Ships
-with debug logging (raw pick-block count, parse failures, a raw HTML
-snippet) so a schema drift or a wrong regex is caught on first live run
-instead of silently returning zero picks.
+Verified live via GitHub Actions (run 29624366106, 2026-07-18): 200 fetch,
+137 RSC push blocks found, 114 matched as pick blocks, 110 deduped picks
+parsed with real matchups/odds/rationale/graded results. Confirmed correct
+via the Gist output, not just a green checkmark. Ships with debug logging
+(raw pick-block count, parse failures, a raw HTML snippet on zero-pick runs)
+so a future schema drift is caught immediately instead of silently returning
+zero picks.
 
 Pushes to betcouncil_wagerbird_picks.json (+ betcouncil_wagerbird_debug.json).
 """
@@ -180,8 +179,12 @@ def main() -> int:
         return 1
 
     picks = extract_picks(html)
-    todays_picks = [p for p in picks if p["pick_date"] == today]
-    log(f"Parsed {len(picks)} total picks, {len(todays_picks)} dated today ({today})")
+    # WagerBird dates picks by US Eastern game day, not UTC — comparing
+    # against UTC "today" undercounts near midnight UTC (i.e. all evening
+    # ET games). Use the most recent pick_date actually present instead.
+    latest_date = max((p["pick_date"] for p in picks if p["pick_date"]), default=today)
+    todays_picks = [p for p in picks if p["pick_date"] == latest_date]
+    log(f"Parsed {len(picks)} total picks, {len(todays_picks)} dated on latest slate ({latest_date})")
 
     files_payload["betcouncil_wagerbird_picks.json"] = {
         "content": json.dumps({
