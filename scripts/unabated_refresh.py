@@ -1,20 +1,36 @@
 """
-unabated_refresh.py — Unabated sharp-line comparison (public API attempt, no auth)
+unabated_refresh.py — Unabated sharp-line comparison (public API, no auth)
 ================================================================================
 
 Unabated (unabated.com) — cross-book sharp-line comparison, plus DFS
-platform (PrizePicks/Underdog/Pick6) line tracking. A browser-side
-harvester for this already exists in app.py (`unabated.com/api/lines?
-sport=X`, no special auth headers beyond Accept/Referer) — this script
-tests whether that same endpoint is reachable server-side too, same as
-several other sources this repo migrated off browser-only harvesting
-once confirmed unnecessary (BetMGM, EVSharps, Action Network).
+platform (PrizePicks/Underdog/Pick6) line tracking.
 
-REAL SCHEMA CONFIRMED (not guessed): a prior session manually pushed real,
-live data for all 4 variants straight to the Gist on 2026-07-18 without
-committing any code (1,472 Pick6 lines, 624 sportsbook-comparison lines
-confirmed). This script's output shape is built directly against that
-actual captured payload:
+First attempt at unabated.com/api/lines (the existing browser-harvester's
+endpoint) was confirmed dead server-side — returns a generic Next.js 404
+HTML page, not JSON (verified via a live GitHub Actions run 2026-07-18).
+
+Second attempt, base https://data.unabated.com, per a secondary session's
+claim — NOT yet independently verified from this sandbox (data.unabated.com
+isn't in the network allowlist), being tested live via Actions before
+trusting it, same standard applied to every claimed endpoint in this repo
+(a prior Smarkets claim from the same kind of source turned out to be
+exactly right after verification; treat this the same way — test, don't
+assume either way):
+
+    GET /market/{sport}/props/odds     — prop lines (mlb/nfl/wnba/nhl/nba/pga/ufc/cbb/cfb)
+    GET /market/{sport}/straight/odds  — game lines w/ no-vig (Bet365/Caesars/TheScoreUS)
+    GET /players/{sport}               — player name + ID map
+    GET /bet-types                     — bet type ID -> name map
+
+Required headers per the claim: standard browser User-Agent + Referer
+https://unabated.com/ — no auth token claimed.
+
+REAL SCHEMA CONFIRMED for the payload shape (not guessed): a prior
+session manually pushed real, live data for all 4 platform variants
+straight to the Gist on 2026-07-18 without committing any code (1,472
+Pick6 lines, 624 sportsbook-comparison lines independently confirmed by
+inspecting that pushed data directly). This script's output shape is
+built against that actual captured payload:
 
     pick6/prizepicks/underdog: {platform, league, captured_at, source,
         lines: [{player_name, player_id, position, event, event_id,
@@ -26,12 +42,11 @@ actual captured payload:
                  bet_type, bet_type_id, side_index, team_id, rotation_num,
                  points, price, source_id, book}]}
 
-NOT independently verified live from this sandbox (unabated.com isn't in
-this environment's network allowlist) — confirm on first live Actions
-run whether this endpoint is really server-reachable or whether it needs
-the existing browser-side harvester after all (in which case this script
-will cleanly report zero data rather than crash, and the browser
-harvester stays the real source).
+market_source_id / source_id conventions already established elsewhere
+in this repo: 36=theScore Bet, 78=Bet365. Platform split (which
+market_source_id maps to PrizePicks/Underdog/Pick6) not yet confirmed —
+first live run dumps the raw response so this can be mapped correctly
+rather than guessed.
 """
 
 import json
@@ -42,8 +57,8 @@ from datetime import datetime, timezone
 import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
-BASE_URL = "https://unabated.com/api/lines"
-LEAGUE = "MLB"
+BASE_URL = "https://data.unabated.com"
+LEAGUE = "mlb"
 
 HEADERS = {
     "Accept": "application/json",
@@ -69,14 +84,13 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def fetch_json(params: dict):
+def fetch_json(url: str):
     try:
-        r = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=25)
+        r = requests.get(url, headers=HEADERS, timeout=25)
     except Exception as e:
-        DEBUG_LOG.append({"params": params, "error": str(e)})
+        DEBUG_LOG.append({"url": url, "error": str(e)})
         return None
-    DEBUG_LOG.append({"params": params, "status": r.status_code,
-                       "body_snippet": r.text[:500]})
+    DEBUG_LOG.append({"url": url, "status": r.status_code, "body_snippet": r.text[:500]})
     if r.status_code != 200:
         return None
     try:
@@ -105,33 +119,46 @@ def main() -> int:
 
     now_iso = datetime.now(timezone.utc).isoformat()
     files_payload = {}
+    any_data = False
 
-    data = fetch_json({"sport": LEAGUE.lower()})
-    log(f"raw response type: {type(data).__name__}, "
-        f"{'keys=' + str(list(data.keys())) if isinstance(data, dict) else ''}")
+    props_resp = fetch_json(f"{BASE_URL}/market/{LEAGUE}/props/odds")
+    log(f"props response type: {type(props_resp).__name__}, "
+        f"{'keys=' + str(list(props_resp.keys())) if isinstance(props_resp, dict) else ''}")
+
+    straight_resp = fetch_json(f"{BASE_URL}/market/{LEAGUE}/straight/odds")
+    log(f"straight response type: {type(straight_resp).__name__}, "
+        f"{'keys=' + str(list(straight_resp.keys())) if isinstance(straight_resp, dict) else ''}")
 
     files_payload["betcouncil_unabated_debug.json"] = {
         "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:10],
-                                "got_data": data is not None}, indent=2, default=str)
+                                "props_got_data": props_resp is not None,
+                                "straight_got_data": straight_resp is not None}, indent=2, default=str)
     }
 
-    if not data:
-        log("No data returned — endpoint likely needs the existing browser-side "
-            "harvester after all (CORS/session-cookie requirement), not server-reachable")
+    if not props_resp and not straight_resp:
+        log("No data returned from either endpoint — see debug log")
         push_files(files_payload, github_token)
         return 1
 
-    # Structure unconfirmed live -- push the raw response as-is under a
-    # single file for manual inspection rather than guessing at how to
-    # split it into pick6/prizepicks/underdog/straight, which would risk
-    # silently mis-splitting real data across the wrong files.
-    files_payload["betcouncil_unabated_raw_MLB.json"] = {
-        "content": json.dumps({"source": "unabated", "league": LEAGUE,
-                                "captured_at": now_iso, "raw": data}, default=str)
-    }
+    # Structure unconfirmed live -- push raw responses as-is for manual
+    # inspection rather than guessing at the platform split (which
+    # market_source_id is PrizePicks vs Underdog vs Pick6) blind.
+    if props_resp:
+        any_data = True
+        files_payload[f"betcouncil_unabated_props_raw_{LEAGUE}.json"] = {
+            "content": json.dumps({"source": "unabated", "league": LEAGUE,
+                                    "captured_at": now_iso, "raw": props_resp}, default=str)
+        }
+    if straight_resp:
+        any_data = True
+        files_payload[f"betcouncil_unabated_straight_raw_{LEAGUE}.json"] = {
+            "content": json.dumps({"source": "unabated", "league": LEAGUE,
+                                    "captured_at": now_iso, "raw": straight_resp}, default=str)
+        }
+
     pushed = push_files(files_payload, github_token)
-    log(f"Pushed {pushed} files (raw response captured for schema inspection)")
-    return 0 if pushed > 0 else 1
+    log(f"Pushed {pushed} files (raw responses captured for schema inspection)")
+    return 0 if pushed > 0 and any_data else 1
 
 
 if __name__ == "__main__":
