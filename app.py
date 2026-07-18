@@ -8531,39 +8531,51 @@ def build_new_bettor_shortlist(max_props=6, max_games=6, min_tier="ELITE"):
                 continue
 
             # ── Props ──────────────────────────────────────────────
-            props = scrape_prizepicks_with_gist_fallback(sport)
-            if not props:
-                props = fetch_underdog_props(sport)
-            sport_defaults = DEFAULT_AVERAGES.get(sport, {})
-            sport_avgs = PLAYER_AVERAGES.get(sport, {})
-            cal_thresholds = st.session_state.get("calibrated_thresholds")
-
-            for p in (props or [])[:60]:
-                stat_raw = p.get("Prop", "")
-                stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
-                player = p.get("Player", "")
-                line = p.get("Line")
-                if line is None:
-                    continue
-                player_stats, using_default = find_player_avg(player, sport_avgs)
-                if using_default:
-                    continue
-                avg = player_stats.get(stat_norm, sport_defaults.get(stat_norm, line))
-                if not avg or avg <= 0:
-                    continue
-                edge, prob, _ = compute_multi_signal_edge(
-                    line, avg, 112.0, False, 0, "OVER", stat_norm, 0.0, 2, "standard", sport
-                )
-                tier = get_tier(edge, sport, cal_thresholds)
-                if _BEGINNER_TIER_ORDER.get(tier, 0) < min_rank:
-                    continue
-                ev_2 = calculate_prizepicks_ev(prob, 2)
-                candidate_props.append({
-                    "Sport": sport, "Player": player, "Prop": stat_raw,
-                    "Line": line, "Side": "OVER", "Team": p.get("Team", ""),
-                    "Edge": edge, "EdgePct": f"{edge:.1%}", "EV_2pick": f"{ev_2:+.1%}",
-                    "Tier": tier, "Avg": avg, "Prob": prob,
-                })
+            # 2026-07-18 fix: this used to independently re-derive edge
+            # from scratch (compute_multi_signal_edge with hardcoded
+            # opp_def_rating=112.0, is_home=False always, no player_name
+            # -- meaning every signal keyed by player_name, including all
+            # of today's sav_ars_edge/sav_fb_edge/today_brl_edge/etc
+            # fixes, silently contributed nothing here -- and OVER-only,
+            # never checking UNDER at all). That crude fallback routinely
+            # produced far fewer SOVEREIGN/ELITE hits than the real board
+            # ("no props cleared the bar" even on days Full Board clearly
+            # had them), because it wasn't running the real model, just an
+            # impoverished copy of it.
+            #
+            # Now reads from store_board_snapshot()'s Gist-persisted
+            # capture of the ACTUAL fully-enriched board (same Tier/Edge
+            # shown on Full Board) — guarantees this shortlist can never
+            # diverge from what the real board says. Only sees a sport's
+            # props if that sport's board was actually loaded at least
+            # once today (snapshot only exists after a real board render);
+            # skipped_sports below reflects that honestly rather than
+            # silently returning nothing.
+            try:
+                _snap_store = load_from_gist("board_snapshots", None) or {}
+            except Exception:
+                _snap_store = {}
+            today_key = date.today().strftime("%Y-%m-%d")
+            _sport_snaps = [
+                (k, v) for k, v in _snap_store.items()
+                if v.get("date") == today_key and v.get("sport") == sport
+            ]
+            if not _sport_snaps:
+                skipped.append(f"{sport} (no board snapshot today — load its Full Board first)")
+            else:
+                _latest_snap = max(_sport_snaps, key=lambda kv: kv[1].get("timestamp", ""))[1]
+                for sp in _latest_snap.get("props", []):
+                    tier = sp.get("tier", "")
+                    if _BEGINNER_TIER_ORDER.get(tier, 0) < min_rank:
+                        continue
+                    prob = sp.get("prob", 0.5)
+                    ev_2 = calculate_prizepicks_ev(prob, 2)
+                    candidate_props.append({
+                        "Sport": sport, "Player": sp.get("player", ""), "Prop": sp.get("prop", ""),
+                        "Line": sp.get("line", 0), "Side": sp.get("side", "OVER"), "Team": "",
+                        "Edge": sp.get("edge", 0), "EdgePct": f"{sp.get('edge',0):.1%}", "EV_2pick": f"{ev_2:+.1%}",
+                        "Tier": tier, "Avg": None, "Prob": prob,
+                    })
 
             # ── Game lines ─────────────────────────────────────────
             games, is_playoff, home_teams, away_teams = fetch_game_lines(sport)
