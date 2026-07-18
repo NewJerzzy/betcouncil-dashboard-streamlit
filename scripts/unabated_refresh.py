@@ -16,7 +16,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -25,6 +25,13 @@ SPORTS = ["mlb"]   # extend as needed: ["mlb", "nfl", "nba"]
 
 # Source ID labels for reference — subset visible in marketSourceLines keys
 SOURCE_LABELS = {72: "PrizePicks", 73: "Underdog", 84: "Pick6"}
+
+# Hard safety cap as defense-in-depth beyond the time-window filter --
+# a single Gist PATCH failed at 46MB/132k rows (422 "contents are too
+# large"), so even a busy slate shouldn't be allowed to blow past a size
+# that's comfortably under whatever the real limit is. Keep the soonest-
+# starting events first when truncating.
+MAX_ROWS_PER_FILE = 8000
 
 HEADERS = {
     "Accept": "application/json",
@@ -104,10 +111,29 @@ def build_people_map(data) -> dict:
     return result
 
 
+def _event_in_window(event_start: str, past_hours: int = 6, future_hours: int = 72) -> bool:
+    """Keep only events starting within [-past_hours, +future_hours] of now.
+    Without this, the props/odds endpoint returns every scheduled game for
+    the rest of the season, not just near-term ones -- that's what blew
+    the extracted payload up to 132k rows / 46MB, well over Gist's size
+    limit, causing every push to fail with a 422."""
+    if not event_start:
+        return False
+    try:
+        start = datetime.fromisoformat(event_start.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    now = datetime.now(timezone.utc)
+    return (now - timedelta(hours=past_hours)) <= start <= (now + timedelta(hours=future_hours))
+
+
 def flatten_props_odds(data, bettype_map: dict, people_map: dict) -> list:
     """
     Extract compact prop rows from the deeply-nested props/odds response.
     Output: one row per (event, betType, side/player, marketSource).
+    Filtered to near-term events and to the 3 market sources this
+    integration targets (PrizePicks/Underdog/Pick6) -- see
+    _event_in_window and SOURCE_LABELS.
     """
     rows = []
     try:
@@ -125,6 +151,8 @@ def flatten_props_odds(data, bettype_map: dict, people_map: dict) -> list:
                     event_id = record.get("eventId")
                     event_name = record.get("eventName", "")
                     event_start = record.get("eventStart")
+                    if not _event_in_window(event_start):
+                        continue
                     bet_type_id = record.get("betTypeId")
                     bet_type_name = bettype_map.get(bet_type_id, str(bet_type_id))
 
@@ -136,6 +164,8 @@ def flatten_props_odds(data, bettype_map: dict, people_map: dict) -> list:
                                 src_id = int(src_id_str)
                             except ValueError:
                                 src_id = src_id_str
+                            if src_id not in SOURCE_LABELS:
+                                continue
                             rows.append({
                                 "sport": sport_key,
                                 "period": period_name,
@@ -159,6 +189,10 @@ def flatten_straight_odds(data, bettype_map: dict) -> list:
     """
     Extract compact game-line rows from the straight/odds response.
     Output: one row per (event, betType, side, marketSource).
+    Filtered to near-term events (see _event_in_window) -- no source-ID
+    filter here since game lines should include every real sportsbook,
+    unlike props which are scoped to the 3 DFS sources this integration
+    targets.
     """
     rows = []
     try:
@@ -176,6 +210,8 @@ def flatten_straight_odds(data, bettype_map: dict) -> list:
                     event_id = record.get("eventId")
                     event_name = record.get("eventName", "")
                     event_start = record.get("eventStart")
+                    if not _event_in_window(event_start):
+                        continue
                     bet_type_id = record.get("betTypeId")
                     bet_type_name = bettype_map.get(bet_type_id, str(bet_type_id))
 
@@ -261,7 +297,12 @@ def main() -> int:
         )
         if props_raw:
             props_rows = flatten_props_odds(props_raw, bettype_map, people_map)
-            log(f"  {len(props_rows)} prop rows extracted for {sport}")
+            if len(props_rows) > MAX_ROWS_PER_FILE:
+                props_rows.sort(key=lambda r: r.get("event_start") or "9999")
+                log(f"  {len(props_rows)} prop rows extracted for {sport} — capping to {MAX_ROWS_PER_FILE} soonest-starting")
+                props_rows = props_rows[:MAX_ROWS_PER_FILE]
+            else:
+                log(f"  {len(props_rows)} prop rows extracted for {sport}")
             total_props_rows += len(props_rows)
             files_payload[f"betcouncil_unabated_props_{sport}.json"] = {
                 "content": json.dumps(
@@ -285,7 +326,12 @@ def main() -> int:
         )
         if straight_raw:
             straight_rows = flatten_straight_odds(straight_raw, bettype_map)
-            log(f"  {len(straight_rows)} straight rows extracted for {sport}")
+            if len(straight_rows) > MAX_ROWS_PER_FILE:
+                straight_rows.sort(key=lambda r: r.get("event_start") or "9999")
+                log(f"  {len(straight_rows)} straight rows extracted for {sport} — capping to {MAX_ROWS_PER_FILE} soonest-starting")
+                straight_rows = straight_rows[:MAX_ROWS_PER_FILE]
+            else:
+                log(f"  {len(straight_rows)} straight rows extracted for {sport}")
             total_straight_rows += len(straight_rows)
             files_payload[f"betcouncil_unabated_lines_{sport}.json"] = {
                 "content": json.dumps(
