@@ -15272,6 +15272,12 @@ def load_sport_data(sport):
         sav_reg_edge = 0.0
         sav_spd_edge = 0.0
         sav_la_edge  = 0.0
+        sav_ars_edge = 0.0
+        sav_fb_edge  = 0.0
+        today_brl_edge = 0.0
+        preview_platoon_edge = 0.0
+        preview_hr_rate_edge = 0.0
+        brl_edge = 0.0
 
         # ── EV API signal injection (S6 / S7 / S12 / pitcher) ─────────
         _ev_sig = st.session_state.get("ev_signal_lookup", {}).get(
