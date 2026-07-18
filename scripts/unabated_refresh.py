@@ -36,6 +36,9 @@ HEADERS = {
 }
 
 
+DEBUG_LOG: list = []
+
+
 def log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] {msg}", flush=True)
@@ -46,7 +49,9 @@ def fetch_json(url: str, timeout: int = 45):
         r = requests.get(url, headers=HEADERS, timeout=timeout)
     except Exception as e:
         log(f"Request error {url}: {e}")
+        DEBUG_LOG.append({"url": url, "error": str(e)})
         return None
+    DEBUG_LOG.append({"url": url, "status": r.status_code, "body_snippet": r.text[:300]})
     if r.status_code != 200:
         log(f"HTTP {r.status_code} for {url}: {r.text[:200]}")
         return None
@@ -54,6 +59,7 @@ def fetch_json(url: str, timeout: int = 45):
         return r.json()
     except Exception as e:
         log(f"JSON parse error {url}: {e}")
+        DEBUG_LOG.append({"url": url, "note": "json_parse_error", "error": str(e)})
         return None
 
 
@@ -292,7 +298,16 @@ def main() -> int:
             log(f"  No straight data for {sport}")
 
     if not files_payload:
-        log("No data fetched from any sport/endpoint — exiting with error")
+        log("No data fetched from any sport/endpoint — pushing debug log and exiting with error")
+        push_files(
+            {"betcouncil_unabated_debug.json": {
+                "content": json.dumps({
+                    "captured_at": now_iso, "note": "no_data_graceful",
+                    "requests": DEBUG_LOG[:20],
+                }, indent=2, default=str)
+            }},
+            github_token,
+        )
         return 1
 
     log(f"Pushing {len(files_payload)} files to Gist...")

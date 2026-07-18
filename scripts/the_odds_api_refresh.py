@@ -291,9 +291,16 @@ def main() -> int:
     }
 
     if not any_data:
-        log("No props captured this run — pushing debug log only")
+        # Not a script failure -- either the monthly credit quota is
+        # exhausted (already logged via the debug snapshot's 401/
+        # OUT_OF_USAGE_CREDITS entries) or there's simply nothing new in
+        # the pre-game window this run. Both are expected, handled states,
+        # not a crash -- exit 0 so the workflow doesn't page for something
+        # that isn't broken. Real errors (missing token/key, failed Gist
+        # push) still return 1 above.
+        log("No props captured this run — pushing debug log only (expected: quota exhausted or nothing new in window)")
         push_files(files_payload, github_token)
-        return 1
+        return 0
 
     pushed = push_files(files_payload, github_token)
     log(f"Pushed {pushed} files")

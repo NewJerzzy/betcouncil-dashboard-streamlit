@@ -132,6 +132,7 @@ def main() -> int:
             events = fetch_league_events(sport, league)
         except Exception as e:
             log(f"  {sport}: error — {e}")
+            DEBUG_LOG.append({"sport": sport, "note": "request exception", "error": str(e)})
             continue
         if not events:
             log(f"  {sport}: 0 events")
