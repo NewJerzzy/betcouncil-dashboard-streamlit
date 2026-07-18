@@ -2347,5 +2347,56 @@ developers' public GitHub repos (The Odds API) — different category from
 finding a company's own public unauthenticated endpoint. Built the props
 scraper only once the user supplied their own key.
 
+## Session 14 Addendum (July 18, 2026) — WagerBird Added; Snapp Rejected (Stale)
+
+### New data source: WagerBird free MLB picks (`wagerbird.com/picks`)
+Public Next.js page, no auth. Picks are embedded in the page's React Server
+Component payload (`self.__next_f.push([1,"..."])` script blocks) rather
+than a structured JSON API — `scripts/wagerbird_refresh.py` regex-parses
+the decoded RSC strings directly. MLB only. Verified live via two GitHub
+Actions runs (29624366106, 29624427956) before being trusted: 110 real
+picks parsed per run, each with matchup, market (ML/spread/team-total/
+game-total/F5-team-total), pick side, odds, a WagerBird confidence tier +
+score (WB2/WB3/GEMS · 0–100), a written rationale, and a graded Win/Loss
+result for past picks. Cron every 15 min (`5,20,35,50 * * * *`). Pushes to
+`betcouncil_wagerbird_picks.json`.
+
+Wired in two places, both display-only — does not touch
+`compute_multi_signal_edge`, SEM, or any signal weight:
+1. **Game Lines tab** — `get_wagerbird_pick()` in `fetchers.py` matches
+   WagerBird's pick to the current game by team-abbreviation substring
+   (same approach as `get_dimers_match`) and renders a `🐦 WagerBird: ...`
+   caption right after the existing Dimers caption.
+2. **Backtest/calibration pipeline** — `snapshot_wagerbird()` in
+   `scripts/third_party_snapshot.py` parses each pick's short title text
+   (e.g. "San Diego ML", "Arizona +1.5", "Baltimore F5 Team Total Under
+   2.5") into structured market/pick/line via regex, using a hardcoded
+   MLB team-name→abbreviation table since WagerBird's matchup strings only
+   give abbreviations. Team-total picks with no explicit number in the
+   title (number only appears in the prose rationale, e.g. "Houston Team
+   Total Under") are skipped rather than guessed — confirmed live this
+   pulls 48 of 110 picks into gradable records, the rest correctly
+   dropped. Feeds into the same `betcouncil_third_party_calibration.json`
+   rolling hit-rate tracker as Dimers/Covers/BettingPros. Whether
+   WagerBird's calibration numbers ever justify promoting it to a live
+   signal is an explicit human decision later, same as the other sources
+   — not something this pipeline does on its own.
+
+### Rejected: Snapp (`trysnapp.ai`)
+Public ticker API, no auth — looked promising on paper (8-book MLB odds,
+1,040-item injury/news feed) but failed live verification on both fronts:
+`/ticker/mlb/odds` returned `{"error":"Upstream API error"}` on every
+request (their own backend, not an access issue), and `/news` returned
+valid JSON but every entry — earliest and latest alike — was dated
+2026-04-04 to 2026-04-09, frozen for 3+ months despite being marketed as
+real-time. Not built. This is the same live-verify-before-trusting
+standard applied to WagerBird above; the two sources looked identically
+plausible on paper and only differed once actually queried.
+
+### Standing rule (reaffirmed)
+Any change to data sources, model logic, calibration/SEM, or signal
+weights updates this file and `GEM_INSTRUCTIONS_V52_CHATGPT.md` in the
+same session as the change — not deferred, not batched for later.
+
 
 
