@@ -165,10 +165,18 @@ def main() -> int:
     event_ids = [str(e.get("id")) for e in events if e.get("id")]
     event_name_by_id = {str(e.get("id")): e.get("name", "") for e in events}
 
-    markets_resp = fetch_json(f"{BASE_URL}/markets/", params={"event_ids": ",".join(event_ids[:50])})
+    # 2026-07-18 live run #2 fix: /v3/markets/?event_ids=a,b,c 404'd --
+    # bulk query-param form doesn't exist. Smarkets nests markets under
+    # each event instead: /v3/events/{id}/markets/. Fetched per event
+    # (capped at 20 events/run to keep runtime reasonable).
     markets = []
-    if isinstance(markets_resp, dict):
-        markets = markets_resp.get("markets", markets_resp.get("results", []))
+    for eid in event_ids[:20]:
+        mkt_resp = fetch_json(f"{BASE_URL}/events/{eid}/markets/")
+        if isinstance(mkt_resp, dict):
+            for m in mkt_resp.get("markets", mkt_resp.get("results", [])):
+                if isinstance(m, dict):
+                    m.setdefault("event_id", eid)
+                    markets.append(m)
     log(f"markets found: {len(markets)}")
 
     market_ids = [str(m.get("id")) for m in markets if m.get("id")]
