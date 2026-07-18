@@ -19135,6 +19135,33 @@ with tabs[2]:
             else:
                 _row_bg = "transparent"
 
+            # LineTerminal comparison (MLB/WNBA only — matches by stat name)
+            _lt_signal = ""
+            _lt_detail = ""
+            if _sport in ("MLB", "WNBA"):
+                try:
+                    _lt_prop_rows = fetch_lineterminal_player_props(_player, sport=_sport)
+                except Exception:
+                    _lt_prop_rows = []
+                _prop_l = str(_p.get("Prop", "")).lower()
+                for _ltr in _lt_prop_rows:
+                    if str(_ltr.get("stat_label", "")).lower() in _prop_l or _prop_l in str(_ltr.get("stat_label", "")).lower():
+                        _lt_mp = _ltr.get("model_prob_pct")
+                        if isinstance(_lt_mp, (int, float)):
+                            _lt_diff = (_lt_mp / 100.0) - (_model_prob / 100.0)
+                            if _lt_diff >= 0.08:
+                                _lt_signal = "📈 LT+"
+                            elif _lt_diff <= -0.08:
+                                _lt_signal = "📉 LT-"
+                            else:
+                                _lt_signal = "✅ LT="
+                            _lt_detail = (
+                                f'LineTerminal says {_lt_mp}% probability, market says '
+                                f'{_ltr.get("implied_prob_pct","—")}%, edge = {_ltr.get("edge_pct","—")}% '
+                                f'· Your model says {_model_prob}%'
+                            )
+                        break
+
             _rows.append({
                 "_player":     _player,
                 "_team":       _p.get("Team",""),
@@ -19150,6 +19177,8 @@ with tabs[2]:
                 "_kalshi":     _kalshi_prob,
                 "_poly":       _poly_prob,
                 "_mkt_signal": _mkt_signal,
+                "_lt_signal":  _lt_signal,
+                "_lt_detail":  _lt_detail,
                 "_unabated": (
                     ("📈 MODEL+" if _p.get("UnabatedDirection") == "model_higher" else "📉 MKT+")
                     if _p.get("UnabatedFlag") else ("✅ AGREE" if _p.get("UnabatedFairProb") is not None else "")
@@ -19278,6 +19307,29 @@ with tabs[2]:
                 ("G",  "#22c55e" if _r.get("_model_prob", 0) and safe_float(str(_r.get("_model_prob",0)).replace("%",""), 0) >= 60 else "var(--bc-border)"),  # Grade
                 ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "var(--bc-border)"),  # Better line
             ]
+            # LineTerminal dot: tri-state like Unabated (agree/disagree/no
+            # data), not simple boolean, so kept separate from the loop
+            # above for the same reason Unabated is.
+            if _r.get("_lt_signal") == "📈 LT+":
+                _lt_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
+                           f'background:#22c55e;font-size:8px;font-weight:700;color:#ffffff;'
+                           f'text-align:center;line-height:13px;margin-right:2px;" '
+                           f'title="{_r.get("_lt_detail","")}">L</span>')
+            elif _r.get("_lt_signal") == "📉 LT-":
+                _lt_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
+                           f'background:#e04040;font-size:8px;font-weight:700;color:#ffffff;'
+                           f'text-align:center;line-height:13px;margin-right:2px;" '
+                           f'title="{_r.get("_lt_detail","")}">L</span>')
+            elif _r.get("_lt_signal") == "✅ LT=":
+                _lt_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
+                           f'background:var(--bc-border);font-size:8px;font-weight:700;color:#ffffff;'
+                           f'text-align:center;line-height:13px;margin-right:2px;" '
+                           f'title="{_r.get("_lt_detail","")}">L</span>')
+            else:
+                _lt_dot = ('<span style="display:inline-block;width:13px;height:13px;'
+                           'border-radius:50%;border:1.5px solid var(--bc-border);'
+                           'background:transparent;margin-right:2px;" '
+                           'title="L: no LineTerminal data for this row"></span>')
             # Unabated dot handled separately (not in the loop below) because
             # it's tri-state (flagged / agreed / no data) where the other
             # dots are boolean present/absent — "no data" needs to look
@@ -19319,7 +19371,7 @@ with tabs[2]:
                 f'background:{col};font-size:8px;font-weight:700;color:#ffffff;'
                 f'text-align:center;line-height:13px;margin-right:2px;" title="{lbl}">{lbl[0]}</span>'
                 for lbl, col in _cons_sources
-            ]) + _unab_dot + _evs_dot
+            ]) + _unab_dot + _evs_dot + _lt_dot
             # Filled bar count for % display
             _filled = sum(1 for _, c in _cons_sources if c != "var(--bc-border)")
             _cons_pct = int(_filled / len(_cons_sources) * 100)
