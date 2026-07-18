@@ -91,22 +91,29 @@ def fetch_market(league: str, market: str):
 
 def extract_usable_offers(payload: dict) -> list:
     """
-    matchOffers structure not fully confirmed live from this sandbox — parsed
-    defensively. If real shape differs, this under-produces rather than
-    crashes, and the debug log's raw sample makes the mismatch visible on
-    first run rather than silently returning nothing every run after.
+    Real structure confirmed live (2026-07-18, Actions run 29625921231):
+    matchOffers[].match.{id, homeTeam, awayTeam, startDateTimestamp,
+    homeScore, awayScore} + matchOffers[].offer[] (a LIST despite the
+    singular key name), each offer = {player: {id, firstName, lastName,
+    position, teamId, ...}, bet: {sportsbook, market, line, odds},
+    offerType, fallbackLine, referenceBet}. Line/odds live under bet.*,
+    not at the offer's top level — first version of this parser assumed
+    flat top-level fields and silently produced empty/null records every
+    time despite a 200 response; this version was verified against the
+    real captured sample before being trusted.
     """
     offers = []
     match_offers = payload.get("matchOffers", [])
     if not isinstance(match_offers, list):
         return offers
-    for match in match_offers:
-        if not isinstance(match, dict):
+    for match_entry in match_offers:
+        if not isinstance(match_entry, dict):
             continue
-        match_id = match.get("matchId") or match.get("id")
-        # singular "offer" per discovery notes, but check plural too in
-        # case that varies by market/league
-        raw_offers = match.get("offer") or match.get("offers") or []
+        match_meta = match_entry.get("match", {}) or {}
+        match_id = match_meta.get("id")
+        home = match_meta.get("homeTeam", {}) or {}
+        away = match_meta.get("awayTeam", {}) or {}
+        raw_offers = match_entry.get("offer") or match_entry.get("offers") or []
         if isinstance(raw_offers, dict):
             raw_offers = [raw_offers]
         for o in raw_offers:
@@ -114,15 +121,21 @@ def extract_usable_offers(payload: dict) -> list:
                 continue
             if o.get("offerType") != "fallback":
                 continue  # skip locked/noOffer — no real line to use
+            player = o.get("player", {}) or {}
+            bet = o.get("bet", {}) or {}
+            player_name = " ".join(filter(None, [player.get("firstName"), player.get("lastName")])) or None
             offers.append({
                 "match_id": match_id,
-                "player_id": o.get("playerId"),
-                "player_name": o.get("playerName") or o.get("player", {}).get("name")
-                    if isinstance(o.get("player"), dict) else o.get("playerName"),
-                "line": o.get("line"),
-                "over_odds": o.get("overOdds") or o.get("over"),
-                "under_odds": o.get("underOdds") or o.get("under"),
-                "book": o.get("book") or o.get("sportsbook"),
+                "home_team": home.get("nameAbbreviation") or home.get("shortName"),
+                "away_team": away.get("nameAbbreviation") or away.get("shortName"),
+                "start_timestamp": match_meta.get("startDateTimestamp"),
+                "player_id": player.get("id"),
+                "player_name": player_name,
+                "position": player.get("position"),
+                "line": bet.get("line") if bet.get("line") is not None else o.get("fallbackLine"),
+                "odds": bet.get("odds"),
+                "book": bet.get("sportsbook"),
+                "market": (bet.get("market") or {}).get("slug"),
                 "offer_type": o.get("offerType"),
             })
     return offers
