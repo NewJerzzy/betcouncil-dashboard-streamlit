@@ -17936,6 +17936,105 @@ with tabs[0]:
 
     st.markdown("---")
 
+    # ── Cross-Source Check: quick rollup of how many of today's top
+    # plays agree or disagree with the free public comparison sources.
+    # Display only — counts side/direction disagreements, doesn't touch
+    # SEM/tiers/weights. Only checks SOVEREIGN/ELITE plays (keeps it fast
+    # and keeps the count meaningful — LEAN/PASS disagreements aren't
+    # interesting). Props: LineTerminal, FavoredProps. Games: WagerBird,
+    # Dimers. Each source only counted where it actually has comparable
+    # directional data for that pick — silence, not a guess, when absent.
+    try:
+        _xs_top_props = [p for p in _board_all if p.get("Tier") in ("SOVEREIGN", "ELITE")]
+        _xs_games_all = st.session_state.get("game_analysis", []) or []
+        _xs_top_games = []
+        for _g in _xs_games_all:
+            for _market_prefix in ("Spread", "Total", "ML"):
+                _g_tier = _g.get(f"{_market_prefix}Tier")
+                _g_pick = _g.get(f"{_market_prefix}Pick")
+                if _g_tier in ("SOVEREIGN", "ELITE") and _g_pick:
+                    _xs_top_games.append({"Matchup": _g.get("Matchup", ""), "Pick": _g_pick, "Market": _market_prefix})
+
+        _xs_checked = 0
+        _xs_agree = 0
+        _xs_disagree = 0
+        _xs_disagree_list = []
+
+        for _xp in _xs_top_props[:60]:  # cap for render speed
+            _xp_sport = _xp.get("Sport", "")
+            if _xp_sport not in ("MLB", "WNBA"):
+                continue
+            _xp_player = _xp.get("Player", "")
+            _xp_side = str(_xp.get("Side", "OVER")).upper()
+            _xp_prop_l = str(_xp.get("Prop", "")).lower()
+
+            try:
+                _lt_prop_rows = fetch_lineterminal_player_props(_xp_player, sport=_xp_sport)
+            except Exception:
+                _lt_prop_rows = []
+            for _ltr in _lt_prop_rows:
+                if str(_ltr.get("stat_label", "")).lower() in _xp_prop_l or _xp_prop_l in str(_ltr.get("stat_label", "")).lower():
+                    _lt_side = str(_ltr.get("side", "")).upper()
+                    if _lt_side:
+                        _xs_checked += 1
+                        if _lt_side == _xp_side:
+                            _xs_agree += 1
+                        else:
+                            _xs_disagree += 1
+                            _xs_disagree_list.append(f"{_xp_player} {_xp.get('Prop','')}: you have {_xp_side}, LineTerminal has {_lt_side}")
+                    break
+
+            try:
+                _fp_rows = fetch_favoredprops_from_gist("sportsbook", _xp_sport) or []
+                _fp_rows += fetch_favoredprops_from_gist("dfs", _xp_sport) or []
+            except Exception:
+                _fp_rows = []
+            for _fpr in _fp_rows:
+                if str(_fpr.get("player", "")).lower() == _xp_player.lower() and str(_fpr.get("stat_type", "")).lower() in _xp_prop_l:
+                    _fp_bet = str(_fpr.get("bet", "")).upper()
+                    _fp_side = "OVER" if _fp_bet.startswith("O") else ("UNDER" if _fp_bet.startswith("U") else "")
+                    if _fp_side:
+                        _xs_checked += 1
+                        if _fp_side == _xp_side:
+                            _xs_agree += 1
+                        else:
+                            _xs_disagree += 1
+                            _xs_disagree_list.append(f"{_xp_player} {_xp.get('Prop','')}: you have {_xp_side}, FavoredProps has {_fp_side}")
+                    break
+
+        for _xg in _xs_top_games[:30]:
+            _xg_matchup = _xg.get("Matchup", "")
+            _xg_side = str(_xg.get("Pick", "")).upper()
+            if not _xg_matchup or not _xg_side:
+                continue
+            try:
+                _wb_pick = get_wagerbird_pick(_xg_matchup)
+            except Exception:
+                _wb_pick = {}
+            if _wb_pick and _wb_pick.get("pick_text"):
+                _wb_text_u = str(_wb_pick["pick_text"]).upper()
+                _xs_checked += 1
+                if _xg_side in _wb_text_u:
+                    _xs_agree += 1
+                else:
+                    _xs_disagree += 1
+                    _xs_disagree_list.append(f"{_xg_matchup}: you have {_xg_side}, WagerBird has \"{_wb_pick['pick_text']}\"")
+
+        if _xs_checked > 0:
+            _xs_c1, _xs_c2, _xs_c3 = st.columns(3)
+            _xs_c1.metric("Cross-Checked", _xs_checked)
+            _xs_c2.metric("Agree", _xs_agree)
+            _xs_c3.metric("Disagree", _xs_disagree)
+            if _xs_disagree_list:
+                with st.expander(f"⚠️ {_xs_disagree} disagreement(s) with public sources — see details"):
+                    for _line in _xs_disagree_list[:20]:
+                        st.caption(_line)
+            st.caption("Cross-Source Check: SOVEREIGN/ELITE plays only, vs LineTerminal + FavoredProps (props) and WagerBird (games). Display only — doesn't change your model.")
+    except Exception:
+        pass
+
+    st.markdown("---")
+
     col_left, col_right = st.columns([4, 1.2])
 
     with col_left:
