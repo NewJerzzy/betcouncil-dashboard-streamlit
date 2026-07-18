@@ -210,6 +210,9 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
+    test_data_unabated_claim(github_token)
+    log("second-claim test pushed, continuing with the confirmed-working endpoint")
+
     now_iso = datetime.now(timezone.utc).isoformat()
     payload = fetch_json(f"{BASE_URL}/markets/changes/query",
                           params={"full_refresh_ISO": now_iso})
