@@ -102,25 +102,33 @@ def fetch_json(url: str, params: dict = None):
 
 def slim_prop(p: dict) -> dict:
     """
-    Keep the fields verified real and useful; drop anything not seen in
-    the confirmed sample (avoids silently carrying forward a guess about
-    fields that might not actually exist) and drop per-game log arrays
-    the site itself apparently includes elsewhere but that would bloat
-    the file (this parser only ever saw the already-slimmed shape, so
-    there's nothing large to strip here — kept minimal deliberately).
+    Field names confirmed against a live raw sample (2026-07-18, Actions
+    run debug capture) — the top level uses camelCase for several fields
+    (gameContext, lineType, headshotUrl) while analysis.* is snake_case;
+    first version of this parser guessed snake_case everywhere and
+    game_context/line_type/headshot_url all silently came back None on
+    every prop despite a 200 response and correct prop count — a
+    same-shape-as-PropsMadness silent-parse-failure, caught by comparing
+    live output against the manually-captured sample rather than trusting
+    a clean exit code. analysis.last5_values/last10_values/recent_games/
+    streak_visual are real and large (a big part of why the prior
+    session's manual push needed slimming to fit the 10MB Gist limit) —
+    dropped here since analysis already carries the same info as
+    hit_rate_l5/l10/l20 summary fields.
     """
     analysis = p.get("analysis", {}) or {}
     verdict = analysis.get("verdict", {}) or {}
+    game_context = p.get("gameContext") or {}
     return {
         "player_name": p.get("player_name"),
         "player_team": p.get("player_team"),
         "market": p.get("market"),
         "stat_label": p.get("stat_label"),
         "point": p.get("point"),
-        "line_type": p.get("line_type"),
+        "line_type": p.get("lineType"),
         "status": p.get("status"),
         "updated_at": p.get("updated_at"),
-        "game_context": p.get("game_context"),
+        "game_context": game_context if game_context else None,
         "hit_rate_l5": analysis.get("hit_rate_l5"),
         "hit_rate_l10": analysis.get("hit_rate_l10"),
         "hit_rate_l20": analysis.get("hit_rate_l20"),
