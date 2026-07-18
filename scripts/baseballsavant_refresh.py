@@ -132,6 +132,19 @@ def cast_row(row: dict, numeric_fields: dict) -> dict:
         if k is None:
             continue  # guard against a trailing None key from a malformed CSV row
         k = k.strip()
+        # Baseball Savant's CSV export combines the name into one column
+        # literally titled "last_name, first_name" (comma inside the
+        # header itself, a quoted CSV field) -- e.g. value "Wood, James".
+        # First live run (2026-07-18) showed this passing through as one
+        # raw string field instead of the separate last_name/first_name
+        # keys the manually-captured sample had, which must have been
+        # post-processed by whatever produced that sample. Split here so
+        # the output matches the originally documented schema.
+        if k == "last_name, first_name" and v:
+            parts = [p.strip() for p in str(v).split(",", 1)]
+            out["last_name"] = parts[0] if parts else None
+            out["first_name"] = parts[1] if len(parts) > 1 else None
+            continue
         if v is None or v == "":
             out[k] = None
             continue
