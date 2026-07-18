@@ -178,13 +178,21 @@ def main() -> int:
                     m.setdefault("event_id", eid)
                     markets.append(m)
     log(f"markets found: {len(markets)}")
+    DEBUG_LOG.append({
+        "step": "markets_contract_check",
+        "sample_market_keys": list(markets[0].keys()) if markets else [],
+        "sample_market_has_contracts_field": "contracts" in markets[0] if markets else None,
+        "sample_market_contracts_value": markets[0].get("contracts") if markets else None,
+    })
 
     market_ids = [str(m.get("id")) for m in markets if m.get("id")]
     prices_by_contract = {}
+    prices_calls_made = 0
     if market_ids:
         # batch in chunks of 50 market ids per call
         for i in range(0, len(market_ids), 50):
             chunk = market_ids[i:i + 50]
+            prices_calls_made += 1
             prices_resp = fetch_json(f"{BASE_URL}/prices/", params={"market_ids": ",".join(chunk)})
             if isinstance(prices_resp, dict):
                 for mkt_id, contracts in prices_resp.get("prices", prices_resp.get("results", {})).items():
@@ -245,6 +253,10 @@ def main() -> int:
     }
     files_payload["betcouncil_smarkets_debug.json"] = {
         "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15],
+                                "last_requests": DEBUG_LOG[-10:],
+                                "market_ids_count": len(market_ids),
+                                "prices_calls_made": prices_calls_made,
+                                "prices_by_contract_count": len(prices_by_contract),
                                 "games_count": len(games_out), "props_count": len(props_out)},
                                indent=2, default=str)
     }
