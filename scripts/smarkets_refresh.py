@@ -226,19 +226,27 @@ def main() -> int:
     all_contract_ids = [str(c.get("id")) for cs in contracts_by_market.values() for c in cs if c.get("id")]
     log(f"contracts found: {len(all_contract_ids)} across {len(contracts_by_market)} markets")
 
-    prices_by_contract = {}  # intentionally empty -- see note above
+    # 2026-07-18 live run #7: confirmed real via a small-batch test --
+    # GET /v3/markets/{comma-separated market ids}/quotes/ returns real
+    # live order-book data keyed by CONTRACT id: {contract_id: {bids:
+    # [{price, quantity}, ...], offers: [{price, quantity}, ...]}}, both
+    # sorted best-first. Verified the convention makes sense: best bid on
+    # one side + best offer on the complementary side summed to ~9973
+    # (expected ~10000 minus a normal market spread) on a real live
+    # moneyline pair. This is a MARKET-id-batched call, not per-contract,
+    # so it's cheap at full scale unlike the abandoned per-contract idea.
+    prices_by_contract = {}
     prices_calls_made = 0
-
-    # 2026-07-18 live run #7: testing a claimed endpoint from a secondary
-    # session (unverified, same standing-rule caution as every other
-    # source in this repo) -- GET /v3/markets/{ids}/quotes/, comma-
-    # separated market ids, before trusting it. Small batch only until
-    # confirmed real.
-    _test_ids = ",".join(list(contracts_by_market.keys())[:5]) if contracts_by_market else ""
-    if _test_ids:
-        _quotes_test = fetch_json(f"{BASE_URL}/markets/{_test_ids}/quotes/")
-        DEBUG_LOG.append({"step": "quotes_endpoint_test", "market_ids_tested": _test_ids,
-                           "response": _quotes_test})
+    all_market_ids = list(contracts_by_market.keys())
+    for i in range(0, len(all_market_ids), 20):
+        chunk = all_market_ids[i:i + 20]
+        prices_calls_made += 1
+        quotes_resp = fetch_json(f"{BASE_URL}/markets/{','.join(chunk)}/quotes/")
+        if isinstance(quotes_resp, dict):
+            for cid, book in quotes_resp.items():
+                if isinstance(book, dict):
+                    prices_by_contract[str(cid)] = book
+    log(f"quotes resolved: {len(prices_by_contract)} contracts priced")
 
     games_out, props_out = {}, []
     for m in markets:
@@ -252,8 +260,14 @@ def main() -> int:
         contracts_out = []
         for c in contracts_by_market.get(str(m.get("id", "")), []):
             cid = str(c.get("id", ""))
-            price_data = prices_by_contract.get(cid, {})
-            contracts_out.append(build_contract({**c, **price_data}))
+            book = prices_by_contract.get(cid, {})
+            # real quotes shape: {bids: [{price,quantity}, ...], offers: [...]},
+            # both sorted best-first -- flatten to the flat fields build_contract expects
+            best_bid = book.get("bids", [{}])[0].get("price") if book.get("bids") else None
+            best_offer = book.get("offers", [{}])[0].get("price") if book.get("offers") else None
+            contracts_out.append(build_contract({
+                **c, "best_back_price": best_bid, "best_lay_price": best_offer,
+            }))
 
         is_prop = "PLAYER" in market_type_raw.upper() or "player" in str(m.get("name", "")).lower()
         if is_prop and len(contracts_out) >= 2:
@@ -276,11 +290,11 @@ def main() -> int:
                 "volume_pence": m.get("volume", 0), "contracts": contracts_out,
             })
 
-    note = ("Identity/structure only as of 2026-07-18 -- real matchups, markets, and contract "
-            "names/sides, but no live back/lay pricing yet (Smarkets' bulk pricing endpoint "
-            "returns 404 under both market_ids and contract_ids; per-contract fetching isn't "
-            "practical at this scale within a cron job). american_odds/implied_pct/best_back_price "
-            "fields will be null until a working pricing endpoint is found.")
+    note = ("Live back/lay pricing confirmed working as of 2026-07-18 via "
+            "GET /v3/markets/{ids}/quotes/ (market-id-batched, cheap at scale). "
+            "Prices on 0-10000 scale (divide by 100 for %); american_odds derived "
+            "from best bid (best_back_price). Real matchups, markets, contract "
+            "names/sides, and now live pricing.")
     files_payload["betcouncil_smarkets_game_lines_MLB.json"] = {
         "content": json.dumps({
             "source": "smarkets_exchange", "league": LEAGUE, "captured_at": now_iso,
