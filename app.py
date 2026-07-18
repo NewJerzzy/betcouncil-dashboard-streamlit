@@ -24515,6 +24515,28 @@ with tabs[7]:
                 if _de_stat_rows:
                     st.markdown(_bc_df_html(pd.DataFrame(_de_stat_rows)), unsafe_allow_html=True)
 
+            # ── LineTerminal (Inside Edge Inc): model prob vs market prob,
+            # tier, best book/price for every prop on this player. Display only.
+            try:
+                _lt_rows = fetch_lineterminal_player_props(pl_name_d, sport=_pl_sport_used)
+            except Exception:
+                _lt_rows = []
+            if _lt_rows:
+                st.markdown("#### 🎯 LineTerminal — Model vs Market Probability")
+                st.caption("Display only — not a model input. Source: lineterminal.com public API.")
+                _lt_table_rows = []
+                for _ltr in _lt_rows[:12]:
+                    _lt_table_rows.append({
+                        "Stat": _ltr.get("stat_label", ""), "Line": _ltr.get("point", ""),
+                        "Side": _ltr.get("side", ""), "Tier": _ltr.get("tier", ""),
+                        "Model Prob": f'{_ltr.get("model_prob_pct","—")}%',
+                        "Market Implied": f'{_ltr.get("implied_prob_pct","—")}%',
+                        "Edge": f'{_ltr.get("edge_pct","—")}%',
+                        "Best Price": f'{_ltr.get("best_price","—")} @ {_ltr.get("best_book","—")}',
+                        "Confidence": _ltr.get("confidence", ""),
+                    })
+                st.markdown(_bc_df_html(pd.DataFrame(_lt_table_rows)), unsafe_allow_html=True)
+
             # ── RotoGrinders: lineup confirmation + DFS projected points ──
             # Public JSON, no login. Real prop-picks tools are fully
             # paywalled (checked, no free preview) -- this is just lineup

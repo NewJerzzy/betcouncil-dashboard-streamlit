@@ -87,6 +87,27 @@ def gist_write(token: str, filename: str, payload) -> bool:
     return False
 
 
+def snapshot_lineterminal(today: str) -> list:
+    records = []
+    for sport in ("MLB", "WNBA"):
+        data = gist_read(f"betcouncil_lineterminal_props_{sport}.json")
+        if not data:
+            continue
+        for game in data.get("games", []):
+            for p in game.get("props", []):
+                v = p.get("verdict", {}) or {}
+                if not v.get("recommend") or not v.get("side"):
+                    continue
+                if not (p.get("player_name") and p.get("stat_label") and p.get("point") is not None):
+                    continue
+                records.append({
+                    "source": "lineterminal", "sport": sport, "player": p["player_name"],
+                    "prop_type": p["stat_label"], "line": p["point"], "side": v["side"].upper(),
+                    "implied_prob": v.get("model_prob_pct") / 100.0 if v.get("model_prob_pct") is not None else None,
+                })
+    return records
+
+
 def snapshot_favoredprops(today: str) -> list:
     records = []
     for sport in SPORTS:
@@ -419,7 +440,9 @@ def main() -> int:
 
         dk_records = snapshot_dk_most_bet(today, known_players)
         debug_info["steps"].append(f"dk_most_bet: {len(dk_records)}")
-        props_records = fp_de_records + dk_records
+        lt_records = snapshot_lineterminal(today)
+        debug_info["steps"].append(f"lineterminal: {len(lt_records)}")
+        props_records = fp_de_records + dk_records + lt_records
 
         dimers_records = snapshot_dimers(today)
         debug_info["steps"].append(f"dimers: {len(dimers_records)}")

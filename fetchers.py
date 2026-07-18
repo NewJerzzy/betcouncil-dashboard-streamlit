@@ -16739,6 +16739,38 @@ def _parse_dk_harvested(raw: dict, sport: str) -> list:
 # signal_performance.json / calibration path.
 # ═══════════════════════════════════════════════════════════════════════
 
+def fetch_lineterminal_player_props(player: str, sport: str = "MLB") -> list:
+    """
+    LineTerminal (Inside Edge Inc) — all of this player's props for the
+    day, each with model probability vs market-implied probability, tier,
+    best book/price. Display-only comparison source, same category as
+    Dimers/Covers/WagerBird.
+    """
+    data = _read_gist_file(f"betcouncil_lineterminal_props_{sport}.json", cache_minutes=5)
+    if not data or not _is_fresh(data, max_age_minutes=30):
+        return []
+    player_u = normalize_name(player)
+    rows = []
+    for game in data.get("games", []):
+        for p in game.get("props", []):
+            if normalize_name(p.get("player_name", "")) != player_u:
+                continue
+            v = p.get("verdict", {}) or {}
+            if not v.get("side"):
+                continue
+            rows.append({
+                "stat_label": p.get("stat_label"), "point": p.get("point"),
+                "side": v.get("side"), "tier": v.get("tier"),
+                "recommend": v.get("recommend"),
+                "model_prob_pct": v.get("model_prob_pct"),
+                "implied_prob_pct": v.get("implied_prob_pct"),
+                "edge_pct": v.get("edge_pct"),
+                "best_book": v.get("best_book"), "best_price": v.get("best_price"),
+                "confidence": v.get("confidence"),
+            })
+    return rows
+
+
 def fetch_dimers_from_gist(sport: str, max_age_minutes: int = 100) -> list:
     """
     Dimers.com game-line picks (edges, model win probabilities, odds per
