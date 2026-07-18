@@ -2398,6 +2398,66 @@ Any change to data sources, model logic, calibration/SEM, or signal
 weights updates this file and `GEM_INSTRUCTIONS_V52_CHATGPT.md` in the
 same session as the change — not deferred, not batched for later.
 
+## Session 16 Addendum (July 18, 2026) — Baseball Savant Added, Smarkets Pricing Fixed, Unabated Confirmed Dead-End, Full Gist Audit
+
+### New source: Baseball Savant Statcast leaderboards
+Public CSV export (baseballsavant.mlb.com/leaderboard/*?csv=true), no
+auth. `scripts/baseballsavant_refresh.py`, cron every 6h. Replaces an
+uncommitted one-time push from a secondary session (real data, zero
+code — same pattern flagged for WagerBird/PropsMadness/LineTerminal
+last session). 4 datasets confirmed live: batter xStats (xBA/xSLG/
+xwOBA), batter + pitcher Statcast (barrel%/exit velo/launch angle),
+sprint speed. Real quirk caught before it shipped: the CSV combines
+name into one `"last_name, first_name"` column, not two separate
+fields — fixed and verified against the real value ("Wood, James").
+
+### Smarkets exchange — pricing now fully working
+`scripts/smarkets_refresh.py`. Took 8 live-debug rounds total to get
+right: real event/market/contract structure (type=baseball_match, not
+sport+sport_id; markets nested per-event, not bulk; market_type and
+contract side are nested `{name: ...}` dicts, not flat strings) was
+solved in-house across rounds 1-6. Bulk pricing (`/v3/prices/`) was
+confirmed 404 under both `market_ids` and `contract_ids` — genuinely
+doesn't exist under that path. Shipped structure-only for one session,
+honestly labeled. A secondary session (Replit) then claimed a real
+pricing endpoint (`GET /v3/markets/{ids}/quotes/`) — verified rather
+than trusted: tested on a 5-market batch first, confirmed the bid/offer
+math was internally consistent (two complementary contracts summed to
+~9973, matching a normal spread on real live data), then confirmed at
+full scale (1,969 real contracts priced across 8 games / 562 props in
+one run). This is the first of several Replit claims this session that
+turned out to be correct on verification, alongside several that
+weren't (see Unabated below) — the standing rule to verify every claim
+before trusting it applies the same regardless of which way it turns
+out; guessing right doesn't get a pass on the check, and neither does
+assuming a claim is wrong without testing it.
+
+### Unabated — confirmed genuine dead end, not just unverified
+Real, substantial data exists (1,472 Pick6 lines, 624 sportsbook lines)
+and real consuming code already reads it elsewhere in this repo, but no
+server-side path was found despite two separate live-tested attempts:
+(1) the existing browser-harvester's own endpoint
+(`unabated.com/api/lines`), (2) a later claimed base
+(`data.unabated.com/market/{sport}/props/odds`) from the same Replit
+session that correctly found Smarkets' pricing endpoint. Both returned
+the *identical* generic Next.js 404 HTML page server-side, not JSON —
+confirmed via two separate live GitHub Actions runs, not assumed either
+time. This needs the existing browser-side harvester (client-side
+hydration after page load, same wall class as theScore/Caesars/
+OddsShopper) — not a server-side rebuild candidate.
+
+### Full Gist audit (this session)
+Cross-referenced all ~290 files in the shared Gist against committed
+writers in the repo (scripts/, app.py, fetchers.py, bc_utils.py,
+market_microstructure.py — not just scripts/, since some real writers
+live in app.py-imported modules, e.g. originator_history is written by
+market_microstructure.py's `record_odds_snapshot()` on every board
+load, initially misflagged as orphaned before checking there). Real
+findings: Baseball Savant + Smarkets + Unabated (above). A handful of
+tiny (<100 byte) files — `bdl_unified_counter`, `device_fingerprint`,
+`brand_new_test_marker`, `gistfile1.txt` — are leftover counters/test
+artifacts, not real data sources; left alone.
+
 ## Session 15 Addendum (July 18, 2026) — Weight Optimizer Persistence Fix, Harvester Registry Bugs, PropsMadness Added
 
 ### Bug fix: optimized_weights.json ephemeral-reset (real, previously undiscovered)
