@@ -234,7 +234,7 @@ def main() -> int:
     # source in this repo) -- GET /v3/markets/{ids}/quotes/, comma-
     # separated market ids, before trusting it. Small batch only until
     # confirmed real.
-    _test_ids = ",".join(market_ids[:5]) if market_ids else ""
+    _test_ids = ",".join(list(contracts_by_market.keys())[:5]) if contracts_by_market else ""
     if _test_ids:
         _quotes_test = fetch_json(f"{BASE_URL}/markets/{_test_ids}/quotes/")
         DEBUG_LOG.append({"step": "quotes_endpoint_test", "market_ids_tested": _test_ids,
