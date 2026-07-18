@@ -197,7 +197,12 @@ def main() -> int:
     games_out, props_out = {}, []
     for m in markets:
         eid = str(m.get("event_id", ""))
-        market_type_raw = str(m.get("type", m.get("market_type", "")))
+        # 2026-07-18 live run #3 fix: market_type comes back as a nested
+        # dict {"name": "WINNER_2_WAY"}, not a flat string -- stringifying
+        # the raw dict would have made every prop-detection check compare
+        # against "{'name': ...}" instead of the actual type name.
+        _mt_raw = m.get("market_type") or m.get("type") or {}
+        market_type_raw = _mt_raw.get("name", "") if isinstance(_mt_raw, dict) else str(_mt_raw)
         contracts_out = []
         for c in m.get("contracts", []):
             cid = str(c.get("id", ""))
