@@ -15309,6 +15309,48 @@ def load_sport_data(sport):
             # player, different prop type, no shared underlying data.
             sav_ars_edge = _ev_sig.get("sav_ars_edge", 0.0) if "Strikeout" in stat_raw else 0.0
 
+            # sav_fb_edge (batter's own flyball rate, season Statcast) — the
+            # metric statcast_edge tracks for the pitcher side is
+            # pitcher_flyball_pct (how often that pitcher allows flyballs);
+            # this is the batter's own flyball tendency, a different
+            # player's stat entirely. No overlap. Gate matches its actual
+            # computation context (Home Run or Hits props only).
+            sav_fb_edge = _ev_sig.get("sav_fb_edge", 0.0) if ("Home Run" in stat_raw or "Hits" in stat_raw) else 0.0
+
+            # today_brl_edge (TODAY's single-game barrel/hard-hit rate) —
+            # statcast_edge's barrel_pct/hard_hit inputs are season
+            # aggregates; this is a same-day recency read, the same
+            # relationship as existing L10-vs-season signals elsewhere in
+            # this function. Distinct time window, not a restatement.
+            today_brl_edge = _ev_sig.get("today_brl_edge", 0.0) if ("Home Run" in stat_raw or "run" in stat_raw.lower()) else 0.0
+
+            # preview_platoon_edge (batter-hand vs this specific pitcher's
+            # L/R split HR rate) — a handedness-matchup dimension nothing
+            # else in this function captures. No overlap with statcast_edge
+            # (which has no handedness component).
+            preview_platoon_edge = _ev_sig.get("preview_platoon_edge", 0.0) if ("Home Run" in stat_raw or "run" in stat_raw.lower()) else 0.0
+
+            # preview_hr_rate_edge (opposing PITCHER's own HR-allowed
+            # percentile) and brl_edge (ev_barrels-sourced BATTER barrel
+            # percentile, HR props) both carry real thematic overlap with
+            # statcast_edge, which already folds in pitcher_flyball_pct/
+            # pitcher_barrel_rate (opponent quality) and the batter's own
+            # barrel_pct from a different data source. Stacking either
+            # unconditionally on top of an already-active statcast_edge
+            # would double-count the same "is this a good HR matchup"
+            # read twice. Treated as fallback-only: they apply solely when
+            # statcast_edge came back exactly 0.0 (EVSharps had no read at
+            # all for this player, not merely "no threshold hit" — the
+            # common case when statcast_edge is 0.0 is missing EVSharps
+            # coverage, since the threshold ladder starts rewarding at
+            # barrel_pct>=10/hr_pct>=75, a fairly low bar most real
+            # HR-relevant batters clear). This is a conservative choice:
+            # worst case some real signal goes unused when EVSharps
+            # legitimately read a clean zero; that's a smaller error than
+            # silently inflating edge on a double-counted HR read.
+            preview_hr_rate_edge = _ev_sig.get("preview_hr_rate_edge", 0.0) if (statcast_edge == 0.0 and ("Home Run" in stat_raw or "run" in stat_raw.lower())) else 0.0
+            brl_edge = _ev_sig.get("brl_edge", 0.0) if (statcast_edge == 0.0 and ("Home Run" in stat_raw or "run" in stat_raw.lower())) else 0.0
+
             # Pitcher matchup from EV API (live ERA + xwOBA + flyball% + barrel rate)
             if sport == "MLB" and _ev_sig.get("pitcher_era"):
                 pitcher_name   = _ev_sig.get("pitcher", "")
@@ -15758,6 +15800,16 @@ def load_sport_data(sport):
                 final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_la_edge))
             if sav_ars_edge != 0.0 and "Strikeout" in stat_raw:
                 final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_ars_edge))
+            if sav_fb_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + sav_fb_edge))
+            if today_brl_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + today_brl_edge))
+            if preview_platoon_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + preview_platoon_edge))
+            if preview_hr_rate_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + preview_hr_rate_edge))
+            if brl_edge != 0.0:
+                final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge + brl_edge))
 
         # ── EV API S6 — Pinnacle/Circa no-vig override ─────────────────
         # Use Shin method for HR props (longshot market, +200 to +800 odds)
