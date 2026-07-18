@@ -142,7 +142,20 @@ def main() -> int:
     }}, github_token)
     log(f"startup marker push result: {_startup_ok}")
 
+    _pre_fetch_ok = push_files({f"betcouncil_unabated_prefetch_{now_iso.replace(':','-')}.json": {
+        "content": json.dumps({"note": "about to call fetch_json for props"})
+    }}, github_token)
+    log(f"pre-fetch marker push result: {_pre_fetch_ok}")
+
     props_resp = fetch_json(f"{BASE_URL}/market/{LEAGUE}/props/odds")
+    log(f"props fetch returned, type={type(props_resp).__name__}")
+
+    _post_props_ok = push_files({f"betcouncil_unabated_postprops_{now_iso.replace(':','-')}.json": {
+        "content": json.dumps({"note": "fetch_json for props completed",
+                                "props_resp_type": type(props_resp).__name__,
+                                "props_resp_is_none": props_resp is None})
+    }}, github_token)
+    log(f"post-props marker push result: {_post_props_ok}")
     log(f"props response type: {type(props_resp).__name__}, "
         f"{'keys=' + str(list(props_resp.keys())) if isinstance(props_resp, dict) else ''}")
 
