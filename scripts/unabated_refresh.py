@@ -121,6 +121,16 @@ def main() -> int:
     files_payload = {}
     any_data = False
 
+    # Diagnostic: prove push_files itself works before trusting anything
+    # downstream -- the previous run's debug.json was byte-identical to a
+    # much earlier run's content despite a code rewrite in between, which
+    # means either push_files silently failed or the script never reached
+    # it. This marker alone will resolve which.
+    _startup_ok = push_files({"betcouncil_unabated_startup_marker.json": {
+        "content": json.dumps({"started_at": now_iso, "note": "main() reached this line"})
+    }}, github_token)
+    log(f"startup marker push result: {_startup_ok}")
+
     props_resp = fetch_json(f"{BASE_URL}/market/{LEAGUE}/props/odds")
     log(f"props response type: {type(props_resp).__name__}, "
         f"{'keys=' + str(list(props_resp.keys())) if isinstance(props_resp, dict) else ''}")
