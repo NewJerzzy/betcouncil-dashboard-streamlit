@@ -100,14 +100,25 @@ def fetch_json(url: str):
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": files_payload}, timeout=60,
-    )
-    if resp.status_code in (200, 201):
-        return len(files_payload)
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    # 2026-07-18: the startup-marker diagnostic proved the FIRST push_files
+    # call in a run succeeds, but a second call moments later never lands
+    # -- classic Gist API 409 (concurrent-edit conflict) from PATCHing the
+    # same gist twice in quick succession with no retry, same class of
+    # issue other scripts in this repo already handle with backoff.
+    for attempt in range(3):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            json={"files": files_payload}, timeout=60,
+        )
+        if resp.status_code in (200, 201):
+            return len(files_payload)
+        if resp.status_code == 409 and attempt < 2:
+            import time
+            time.sleep((attempt + 1) * 4)
+            continue
+        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        return 0
     return 0
 
 
