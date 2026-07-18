@@ -74,6 +74,9 @@ HEADERS = {
 SPORTS = {
     "MLB": "baseball_mlb",
     "WNBA": "basketball_wnba",
+    "NBA": "basketball_nba",
+    "NFL": "americanfootball_nfl",
+    "NHL": "icehockey_nhl",
 }
 
 DEBUG_LOG: list = []
