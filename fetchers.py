@@ -16739,6 +16739,28 @@ def _parse_dk_harvested(raw: dict, sport: str) -> list:
 # signal_performance.json / calibration path.
 # ═══════════════════════════════════════════════════════════════════════
 
+def fetch_propsmadness_from_gist(sport: str = "MLB", max_age_minutes: int = 30) -> list:
+    """
+    PropsMadness — mostly paywall-locked (only offerType:"fallback" rows
+    are usable, typically ~1 per full slate), but real when present.
+    Aggregates across all market files for the sport since each market
+    (player-strikeouts, player-hits, etc.) is a separate Gist file.
+    """
+    if sport != "MLB":
+        return []
+    league = "mlb"
+    markets = ["player-strikeouts", "player-hits", "player-home-runs",
+               "player-total-bases", "player-rbis", "player-runs",
+               "player-walks", "player-stolen-bases", "player-earned-runs",
+               "player-hits-allowed", "player-pitcher-outs", "player-hits-runs-rbis"]
+    offers = []
+    for market in markets:
+        data = _read_gist_file(f"betcouncil_propsmadness_{league}_{market}.json", cache_minutes=10)
+        if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+            offers.extend(data.get("offers", []))
+    return offers
+
+
 def fetch_lineterminal_player_props(player: str, sport: str = "MLB") -> list:
     """
     LineTerminal (Inside Edge Inc) — all of this player's props for the
