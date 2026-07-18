@@ -1,0 +1,21 @@
+name: WagerBird Picks Refresh
+
+on:
+  schedule:
+    - cron: "5,20,35,50 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh-wagerbird:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run WagerBird picks scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/wagerbird_refresh.py
