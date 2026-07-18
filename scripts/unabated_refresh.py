@@ -220,6 +220,11 @@ def push_files(files_payload: dict, github_token: str) -> int:
             time.sleep((attempt + 1) * 4)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        DEBUG_LOG.append({
+            "note": "gist_push_failed", "status": resp.status_code,
+            "body_snippet": resp.text[:400],
+            "payload_bytes": sum(len(f.get("content", "")) for f in files_payload.values()),
+        })
         return 0
     return 0
 
@@ -311,11 +316,30 @@ def main() -> int:
         return 1
 
     log(f"Pushing {len(files_payload)} files to Gist...")
+    payload_bytes = sum(len(f.get("content", "")) for f in files_payload.values())
+    log(f"  total payload size: {payload_bytes} bytes")
     pushed = push_files(files_payload, github_token)
     log(
         f"Done — {pushed} files pushed | "
         f"{total_props_rows} prop rows | {total_straight_rows} straight rows"
     )
+    if pushed == 0:
+        # The real payload push failed (DEBUG_LOG already has the status/
+        # body from push_files above) -- retry with just a small debug
+        # file on its own, since the failure may be a size issue (422)
+        # that would recur if we tried to push the full payload again.
+        push_files(
+            {"betcouncil_unabated_debug.json": {
+                "content": json.dumps({
+                    "captured_at": now_iso, "note": "main_push_failed",
+                    "payload_bytes": payload_bytes,
+                    "total_props_rows": total_props_rows,
+                    "total_straight_rows": total_straight_rows,
+                    "requests": DEBUG_LOG[-10:],
+                }, indent=2, default=str)
+            }},
+            github_token,
+        )
     return 0 if pushed > 0 else 1
 
 
