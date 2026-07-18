@@ -20151,6 +20151,22 @@ with tabs[3]:
                         _dm_text += f" · win prob {_dm_win:.0%}"
                     st.caption(_dm_text)
 
+            # WagerBird free MLB picks (SSR page, no auth) — independent
+            # third comparison source, display only, same pattern as
+            # Dimers above. MLB only.
+            if _gsport == "MLB":
+                try:
+                    _wb_pick = get_wagerbird_pick(_matchup)
+                except Exception:
+                    _wb_pick = {}
+                if _wb_pick and _wb_pick.get("pick_text"):
+                    _wb_text = f"🐦 WagerBird: {_wb_pick['pick_text']} {_wb_pick.get('odds','')}"
+                    if _wb_pick.get("confidence_score") is not None:
+                        _wb_text += f" · {_wb_pick.get('tier','')} {_wb_pick['confidence_score']}"
+                    if _wb_pick.get("other_picks_count"):
+                        _wb_text += f" (+{_wb_pick['other_picks_count']} more)"
+                    st.caption(_wb_text)
+
             # MyBookie (public SSR HTML) — real-book line comparison, display only.
             try:
                 _mb_match = get_mybookie_match(_matchup, _gsport)

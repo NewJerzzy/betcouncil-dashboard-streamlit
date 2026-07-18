@@ -16797,6 +16797,65 @@ def get_dimers_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_wagerbird_from_gist(max_age_minutes: int = 30) -> list:
+    """
+    WagerBird free MLB picks (wagerbird.com/picks) via scripts/
+    wagerbird_refresh.py — public Next.js RSC page, no auth, parsed via
+    regex (not a structured JSON API on their end). Confirmed live
+    2026-07-18: 110 real picks parsed from a single run, real matchups/
+    odds/graded results. Display-only comparison source, same category
+    as Dimers/Covers/BettingPros — not wired into compute_multi_signal_edge.
+    MLB only (WagerBird's free picks page covers MLB exclusively).
+
+    Returns the raw "picks" list, each with:
+        {sport, matchup, game_time, pick_text, odds, tier, confidence_score,
+         rationale, result, pick_date, prediction_url}
+    """
+    data = _read_gist_file("betcouncil_wagerbird_picks.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("picks", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
+def get_wagerbird_pick(matchup: str) -> dict:
+    """
+    Single-game lookup against WagerBird's picks — matches by team
+    abbreviation substring against a BetCouncil matchup string, same
+    approach as get_dimers_match(). If a game has multiple WagerBird
+    picks (moneyline + total, etc.), returns the highest-confidence one
+    and notes the count so the caller can indicate more exist.
+
+    Returns {} if no match — treat as "no data," not "confirmed absent."
+    """
+    try:
+        picks = fetch_wagerbird_from_gist()
+    except Exception:
+        picks = []
+    if not picks:
+        return {}
+    matchup_u = matchup.upper()
+    game_picks = []
+    for p in picks:
+        wb_matchup = str(p.get("matchup", "")).upper()
+        if not wb_matchup or " @ " not in wb_matchup:
+            continue
+        away_abv, home_abv = [x.strip() for x in wb_matchup.split(" @ ", 1)]
+        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
+            game_picks.append(p)
+    if not game_picks:
+        return {}
+    game_picks.sort(key=lambda p: p.get("confidence_score") or 0, reverse=True)
+    best = game_picks[0]
+    return {
+        "pick_text": best.get("pick_text"), "odds": best.get("odds"),
+        "tier": best.get("tier"), "confidence_score": best.get("confidence_score"),
+        "result": best.get("result"), "prediction_url": best.get("prediction_url"),
+        "other_picks_count": len(game_picks) - 1,
+    }
+
+
 def fetch_draftedge_from_gist(sport: str, max_age_minutes: int = 100) -> list:
     """
     DraftEdge.com's player props/projections — public SSR JSON, no auth
