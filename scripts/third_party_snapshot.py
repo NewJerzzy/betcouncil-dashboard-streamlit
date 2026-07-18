@@ -37,6 +37,7 @@ does on its own.
 
 import json
 import os
+import re
 import sys
 from datetime import date, timedelta
 
@@ -201,6 +202,113 @@ def snapshot_covers(today: str) -> list:
     return records
 
 
+MLB_TEAM_ABBR = {
+    "arizona": "AZ", "atlanta": "ATL", "baltimore": "BAL", "boston": "BOS",
+    "chicago cubs": "CHC", "cubs": "CHC", "chicago white sox": "CWS", "white sox": "CWS",
+    "cincinnati": "CIN", "cleveland": "CLE", "colorado": "COL", "detroit": "DET",
+    "houston": "HOU", "kansas city": "KC", "los angeles angels": "LAA", "angels": "LAA",
+    "los angeles dodgers": "LAD", "dodgers": "LAD", "miami": "MIA", "milwaukee": "MIL",
+    "minnesota": "MIN", "new york yankees": "NYY", "yankees": "NYY",
+    "new york mets": "NYM", "mets": "NYM", "athletics": "ATH", "oakland": "ATH",
+    "philadelphia": "PHI", "pittsburgh": "PIT", "san diego": "SD",
+    "san francisco": "SF", "seattle": "SEA", "st. louis": "STL", "st louis": "STL",
+    "tampa bay": "TB", "texas": "TEX", "toronto": "TOR", "washington": "WSH",
+}
+
+WAGERBIRD_MARKET_PATTERNS = [
+    # (regex, market, group->pick logic)
+    (re.compile(r"^(.+?)\s+ML$"), "MONEYLINE"),
+    (re.compile(r"^(.+?)\s+([+-]\d+(?:\.\d+)?)$"), "RUN_LINE"),
+    (re.compile(r"^(.+?)\s+F5\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "F5_TEAM_TOTAL"),
+    (re.compile(r"^(.+?)\s+First\s+5\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "F5_TEAM_TOTAL"),
+    (re.compile(r"^(.+?)\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "TEAM_TOTAL"),
+    (re.compile(r"^Game\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "GAME_TOTAL"),
+]
+
+
+def _team_to_abbr(name: str):
+    n = name.lower().strip()
+    if n in MLB_TEAM_ABBR:
+        return MLB_TEAM_ABBR[n]
+    for k, v in MLB_TEAM_ABBR.items():
+        if k in n or n in k:
+            return v
+    return None
+
+
+def snapshot_wagerbird(today: str) -> list:
+    """
+    Parses betcouncil_wagerbird_picks.json (written by wagerbird_refresh.py)
+    into the same game-record schema used by dimers/covers/bettingpros above.
+    WagerBird's `pick_text` is a short human title ("San Diego ML", "Arizona
+    +1.5", "Baltimore F5 Team Total Under 2.5", "Game Total Under 10.5") with
+    no separate structured market/side fields, so it's parsed here via
+    regex rather than trusted as already-structured — not verified against
+    resolve_actual_game_result_for_grading before this first deploy, so a
+    100% UNGRADABLE rate on the first backtest run would mean the team-name
+    -> abbreviation mapping or market string doesn't match what that
+    resolver expects, not that WagerBird's data is bad.
+    Team-total lines with no number in the title (e.g. "Houston Team Total
+    Under" with the actual number only in the prose rationale) are skipped
+    rather than guessed — line=None records are dropped, not graded.
+    """
+    data = gist_read("betcouncil_wagerbird_picks.json")
+    if not data:
+        return []
+    records = []
+    for p in data.get("picks", []):
+        matchup = p.get("matchup") or ""
+        pick_text = (p.get("pick_text") or "").strip()
+        if " @ " not in matchup or not pick_text:
+            continue
+        away_abv, home_abv = [x.strip() for x in matchup.split(" @ ", 1)]
+
+        market, pick, line = None, None, None
+
+        m = re.match(r"^(.+?)\s+ML$", pick_text)
+        if m:
+            team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
+            if team_abv in (home_abv, away_abv):
+                market, pick, line = "MONEYLINE", ("HOME" if team_abv == home_abv else "AWAY"), 0
+        if market is None:
+            m = re.match(r"^(.+?)\s+([+-]\d+(?:\.\d+)?)$", pick_text)
+            if m:
+                team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
+                if team_abv in (home_abv, away_abv):
+                    market = "RUN_LINE"
+                    pick = "HOME" if team_abv == home_abv else "AWAY"
+                    line = float(m.group(2))
+        if market is None:
+            m = re.match(r"^(.+?)\s+(?:F5|First\s+5)\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", pick_text, re.I)
+            if m and m.group(3):
+                team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
+                market, pick, line = "F5_TEAM_TOTAL", m.group(2).upper(), float(m.group(3))
+                if team_abv not in (home_abv, away_abv):
+                    market = None
+        if market is None:
+            m = re.match(r"^(.+?)\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", pick_text, re.I)
+            if m and m.group(3):
+                team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
+                market, pick, line = "TEAM_TOTAL", m.group(2).upper(), float(m.group(3))
+                if team_abv not in (home_abv, away_abv):
+                    market = None
+        if market is None:
+            m = re.match(r"^Game\s+Total\s+(Over|Under)\s*([\d.]+)?$", pick_text, re.I)
+            if m and m.group(2):
+                market, pick, line = "GAME_TOTAL", m.group(1).upper(), float(m.group(2))
+
+        if not (market and pick is not None and line is not None):
+            continue  # unparsed title shape or missing line — skip rather than guess
+
+        records.append({
+            "source": "wagerbird", "sport": "MLB", "matchup": matchup,
+            "home": home_abv, "away": away_abv, "market": market, "pick": pick,
+            "line": line, "implied_prob": None,
+            "wagerbird_tier": p.get("tier"), "wagerbird_score": p.get("confidence_score"),
+        })
+    return records
+
+
 def snapshot_bettingpros(today: str) -> list:
     """
     fetch_bettingpros_from_gist(sport) -> (data, source_tag). Exact field
@@ -319,7 +427,9 @@ def main() -> int:
         debug_info["steps"].append(f"covers: {len(covers_records)}")
         bp_records = snapshot_bettingpros(today)
         debug_info["steps"].append(f"bettingpros: {len(bp_records)}")
-        game_records = dimers_records + covers_records + bp_records
+        wb_records = snapshot_wagerbird(today)
+        debug_info["steps"].append(f"wagerbird: {len(wb_records)}")
+        game_records = dimers_records + covers_records + bp_records + wb_records
     except Exception as e:
         import traceback
         debug_info["error"] = f"{e}\n{traceback.format_exc()}"
