@@ -229,6 +229,17 @@ def main() -> int:
     prices_by_contract = {}  # intentionally empty -- see note above
     prices_calls_made = 0
 
+    # 2026-07-18 live run #7: testing a claimed endpoint from a secondary
+    # session (unverified, same standing-rule caution as every other
+    # source in this repo) -- GET /v3/markets/{ids}/quotes/, comma-
+    # separated market ids, before trusting it. Small batch only until
+    # confirmed real.
+    _test_ids = ",".join(market_ids[:5]) if market_ids else ""
+    if _test_ids:
+        _quotes_test = fetch_json(f"{BASE_URL}/markets/{_test_ids}/quotes/")
+        DEBUG_LOG.append({"step": "quotes_endpoint_test", "market_ids_tested": _test_ids,
+                           "response": _quotes_test})
+
     games_out, props_out = {}, []
     for m in markets:
         eid = str(m.get("event_id", ""))
