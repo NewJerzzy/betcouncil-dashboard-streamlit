@@ -507,15 +507,56 @@ def build_summary_markdown(current, diff):
 
 
 def file_github_issue(token, body_md):
-    title = f"Weekly Self-Audit — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    """
+    Update a single persistent audit issue instead of filing a new one every
+    run. Previous behavior opened a new "Weekly Self-Audit — <date>" issue
+    on every run (scheduled or manual) with no follow-through mechanism —
+    confirmed 2026-07-18 that issues #1/#3/#4/#5/#6 had piled up open and
+    unread since 2026-07-11 despite the audit running (and finding real,
+    fixable problems) every time. Now: find the existing open issue labeled
+    "audit"+"automated", edit its body in place (title stays static, GitHub
+    preserves edit history) so there's one persistent, always-current
+    status page instead of an ever-growing unread backlog.
+    """
+    title = "Weekly Self-Audit (persistent — updated in place each run)"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+
+    search = requests.get(
+        f"https://api.github.com/repos/{REPO}/issues",
+        headers=headers,
+        params={"state": "open", "labels": "audit,automated", "per_page": 20},
+        timeout=30,
+    )
+    existing_number = None
+    if search.status_code == 200:
+        for issue in search.json():
+            if issue.get("title", "").startswith("Weekly Self-Audit"):
+                existing_number = issue["number"]
+                break
+
+    stamped_body = f"_Last updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_\n\n{body_md}"
+
+    if existing_number:
+        resp = requests.patch(
+            f"https://api.github.com/repos/{REPO}/issues/{existing_number}",
+            headers=headers,
+            json={"title": title, "body": stamped_body},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            log(f"Updated existing issue #{existing_number}: {resp.json().get('html_url')}")
+            return True
+        log(f"Issue update failed: {resp.status_code} {resp.text[:300]}")
+        return False
+
     resp = requests.post(
         f"https://api.github.com/repos/{REPO}/issues",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"title": title, "body": body_md, "labels": ["audit", "automated"]},
+        headers=headers,
+        json={"title": title, "body": stamped_body, "labels": ["audit", "automated"]},
         timeout=30,
     )
     if resp.status_code == 201:
-        log(f"Filed issue: {resp.json().get('html_url')}")
+        log(f"Filed new persistent issue: {resp.json().get('html_url')}")
         return True
     log(f"Issue creation failed: {resp.status_code} {resp.text[:300]}")
     return False
