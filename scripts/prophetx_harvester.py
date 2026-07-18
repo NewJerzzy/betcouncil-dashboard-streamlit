@@ -310,4 +310,18 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        log("UNHANDLED EXCEPTION:\n" + tb)
+        try:
+            push_to_gist("betcouncil_prophetx_debug.json", {
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "error": "unhandled_exception",
+                "traceback": tb,
+            })
+        except Exception:
+            pass  # don't let debug-push failure mask the real error's exit code
+        sys.exit(1)
