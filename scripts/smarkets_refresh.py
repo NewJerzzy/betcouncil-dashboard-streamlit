@@ -106,11 +106,20 @@ def implied_pct_to_american(price_10000_scale) -> int:
 
 
 def build_contract(c: dict) -> dict:
+    # 2026-07-18 live run #5 fix: side is nested {"contract_type":
+    # {"name": "AWAY"}}, same nested-dict pattern as market_type -- not a
+    # flat "side" field. Real contract identity confirmed live (Twins/
+    # Cubs AWAY/HOME contracts, Over/Under N.N runs contracts); pricing
+    # fields (best_back_price etc) are NOT part of this object -- merged
+    # in separately from the /v3/prices/?contract_ids= lookup, still
+    # unverified live as of this comment.
+    _ct_raw = c.get("contract_type") or {}
+    side = _ct_raw.get("name", "") if isinstance(_ct_raw, dict) else str(c.get("side", ""))
     back = c.get("best_back_price") or c.get("last_executed_price")
     return {
         "contract_id": str(c.get("id") or c.get("contract_id") or ""),
         "name": c.get("name", ""),
-        "side": c.get("side", c.get("name", "")).upper()[:10],
+        "side": side.upper()[:10],
         "best_back_price": c.get("best_back_price"),
         "best_lay_price": c.get("best_lay_price"),
         "implied_pct": round(back / 100.0, 2) if back else None,
@@ -185,29 +194,37 @@ def main() -> int:
         "sample_market_contracts_value": markets[0].get("contracts") if markets else None,
     })
 
-    market_ids = [str(m.get("id")) for m in markets if m.get("id")]
+    # 2026-07-18 live run #5: /v3/markets/{id}/contracts/ confirmed real
+    # (200, correct contract identity: id/name/side/market_id) -- markets
+    # themselves have no inline contracts field, confirmed via a direct
+    # key check. But contracts carry NO pricing fields at all (no
+    # best_back_price etc) -- contracts are just identity, pricing is a
+    # separate lookup keyed by contract_id, not market_id (which explains
+    # why /v3/prices/?market_ids= 404'd on every one of 35 chunks).
+    contracts_by_market = {}
+    for m in markets:
+        mid = str(m.get("id", ""))
+        if not mid:
+            continue
+        resp = fetch_json(f"{BASE_URL}/markets/{mid}/contracts/")
+        if isinstance(resp, dict):
+            contracts_by_market[mid] = resp.get("contracts", resp.get("results", []))
+    all_contract_ids = [str(c.get("id")) for cs in contracts_by_market.values() for c in cs if c.get("id")]
+    log(f"contracts found: {len(all_contract_ids)} across {len(contracts_by_market)} markets")
+
     prices_by_contract = {}
     prices_calls_made = 0
-    contracts_endpoint_sample = None
-    # 2026-07-18 live run #4: bulk /v3/prices/?market_ids= 404'd across
-    # all 35 chunked calls despite 1732 real market_ids found -- same
-    # "bulk query-param endpoint doesn't exist" pattern as the markets
-    # fix earlier. Given the scale here (1700+ markets), a full per-market
-    # nested fetch every 15 min isn't practical even if it's the right
-    # shape -- testing on a 5-market sample first to confirm the real
-    # per-market contracts/prices path before deciding whether to widen it.
-    for mid in market_ids[:5]:
-        resp = fetch_json(f"{BASE_URL}/markets/{mid}/contracts/")
+    for i in range(0, len(all_contract_ids), 50):
+        chunk = all_contract_ids[i:i + 50]
         prices_calls_made += 1
-        if contracts_endpoint_sample is None:
-            contracts_endpoint_sample = resp
-        if isinstance(resp, dict):
-            for c in resp.get("contracts", resp.get("results", [])):
-                if isinstance(c, dict):
-                    cid = str(c.get("id", ""))
+        prices_resp = fetch_json(f"{BASE_URL}/prices/", params={"contract_ids": ",".join(chunk)})
+        if isinstance(prices_resp, dict):
+            for p in prices_resp.get("prices", prices_resp.get("results", [])):
+                if isinstance(p, dict):
+                    cid = str(p.get("contract_id") or p.get("id") or "")
                     if cid:
-                        prices_by_contract[cid] = c
-    DEBUG_LOG.append({"step": "contracts_endpoint_sample", "sample": contracts_endpoint_sample})
+                        prices_by_contract[cid] = p
+    log(f"prices resolved: {len(prices_by_contract)} of {len(all_contract_ids)} contracts")
 
     games_out, props_out = {}, []
     for m in markets:
@@ -219,7 +236,7 @@ def main() -> int:
         _mt_raw = m.get("market_type") or m.get("type") or {}
         market_type_raw = _mt_raw.get("name", "") if isinstance(_mt_raw, dict) else str(_mt_raw)
         contracts_out = []
-        for c in m.get("contracts", []):
+        for c in contracts_by_market.get(str(m.get("id", "")), []):
             cid = str(c.get("id", ""))
             price_data = prices_by_contract.get(cid, {})
             contracts_out.append(build_contract({**c, **price_data}))
@@ -261,7 +278,7 @@ def main() -> int:
     files_payload["betcouncil_smarkets_debug.json"] = {
         "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15],
                                 "last_requests": DEBUG_LOG[-10:],
-                                "market_ids_count": len(market_ids),
+                                "contracts_count": len(all_contract_ids),
                                 "prices_calls_made": prices_calls_made,
                                 "prices_by_contract_count": len(prices_by_contract),
                                 "games_count": len(games_out), "props_count": len(props_out)},
