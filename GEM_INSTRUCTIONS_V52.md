@@ -2398,5 +2398,82 @@ Any change to data sources, model logic, calibration/SEM, or signal
 weights updates this file and `GEM_INSTRUCTIONS_V52_CHATGPT.md` in the
 same session as the change — not deferred, not batched for later.
 
+## Session 15 Addendum (July 18, 2026) — Weight Optimizer Persistence Fix, Harvester Registry Bugs, PropsMadness Added
+
+### Bug fix: optimized_weights.json ephemeral-reset (real, previously undiscovered)
+`compute_optimized_weights()` — the lift-based auto-optimizer that decides
+live signal weights once a sport clears 50 graded bets — was writing its
+output (`optimized_weights.json`) to local `CACHE_DIR` only, unlike
+`signal_performance`/`weight_overrides` which were already Gist-backed for
+this exact class of bug. On Streamlit Cloud, local disk resets on every
+redeploy, silently losing the 30%/70% decay-blend continuity and forcing a
+fallback to hardcoded base weights until the next session re-triggered a
+recompute. Confirmed this wasn't hypothetical: `signal_performance.json`
+already held 92KB of graded history (well past the 50-bet threshold) but
+`optimized_weights` had never once existed in the Gist. Fixed: added
+`optimized_weights` to `_GIST_CRITICAL_KEYS`, added load-time newest-wins
+merge (by `updated` timestamp per sport, same pattern as `weight_overrides`),
+added `save_to_gist("optimized_weights", ...)` at both save points in
+`compute_optimized_weights`. Merge logic functionally tested against 3
+scenarios (post-redeploy recovery, local-newer-wins, disjoint-sport merge)
+before push.
+
+### Bug fix: HARVESTER_REGISTRY filename mismatches (false-stale readings)
+Weekly self-audit's harvester-health check flagged `evsharps_ev` and
+`polymarket` as stale for 13.8+ days despite both harvesters running
+successfully every cycle — the registry was pointing at filenames nothing
+writes anymore:
+- `evsharps_ev` pointed at `betcouncil_evsharps_ev_{sport}.json`; the real
+  live scraper (`evsharps_dingers_harvester.py`) writes
+  `betcouncil_evsharps_dingers_MLB.json`. Fixed.
+- `polymarket` pointed at `betcouncil_polymarket_{sport}.json`; the real
+  live scraper (`sharptrack_harvester.py`, tracks sharp wallet activity on
+  Polymarket) writes `betcouncil_sharptrack_live.json` /
+  `betcouncil_sharptrack_wallets.json`. Fixed to point at the live file.
+  Note: this is sharp-wallet-activity data, NOT raw Polymarket market
+  listings — `polymarket_markets`/`kalshi_markets` session-state keys read
+  by the Game Lines "Public vs Money" badge are still never populated by
+  anything (found, not fixed — no raw-market-listing harvester exists for
+  either Kalshi or Polymarket; would be a from-scratch build).
+- `action_network` expected-freshness threshold recalibrated 15→40 minutes
+  to match its real 30-min cron (`15,45 * * * *`) plus buffer — was a
+  calibration mismatch, not a real staleness bug.
+
+### New data source: PropsMadness (api.propsmadness.com)
+Separate Express backend behind the propsmadness.com Next.js frontend;
+Clerk auth gates premium UI only, the API itself is unauthenticated.
+Discovered via bundle URL-builder extraction. Primary endpoint:
+`GET /api/offer/{leagueCode}/bets/{marketCode}` → full slate in one call
+(`{leagueCode, market, matchOffers, playerInjuryMap}`). 15 MLB markets
+wired (player props + moneyline/run-line/total-runs), cron every 15 min,
+`scripts/propsmadness_refresh.py`.
+
+First version's parser was wrong — assumed flat top-level fields
+(`o.line`, `o.playerName`) and produced 200-status responses with
+all-null records every time, a silent-failure shape distinct from a
+fetch error. Live Actions run exposed it (1 offer, every field null).
+Real structure: `matchOffers[].match.{id, homeTeam, awayTeam,
+startDateTimestamp}` + `matchOffers[].offer[]` (a list despite the
+singular key) where each item is `{player: {id, firstName, lastName,
+position, teamId}, bet: {sportsbook, market, line, odds}, offerType,
+fallbackLine, referenceBet}`. Rewritten parser functionally tested
+against the real captured sample (correctly skips `offerType:"locked"`,
+extracts `fallback` offers' nested `bet.line`/`bet.odds`) before
+re-pushing, then confirmed against a second live run: 1 real usable
+offer (Tarik Skubal 7.5 Ks, FanDuel -178/+138 — correct, verified
+structure).
+
+**Practical yield caveat, stated plainly**: across all 15 markets on the
+full live MLB slate, only 1 offer came back as `offerType:"fallback"`
+(a usable line) — the overwhelming majority are `"locked"` (subscription-
+gated, player/market visible but no line) per the site's own paywall
+design, matching the caveat noted at discovery (Gerrit Cole's strikeout
+line was locked in the sample query too). This is a low-yield source in
+practice despite the API itself being technically fully public and
+correctly parsed — not wired into Game Lines/Player Lookup display yet,
+unlike WagerBird, because there usually won't be enough unlocked offers
+per slate to be worth a UI badge. Revisit if yield looks different over
+more days of cron data, or if a paid PropsMadness tier is ever added.
+
 
 
