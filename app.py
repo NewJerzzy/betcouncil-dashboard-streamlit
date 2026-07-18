@@ -1981,7 +1981,7 @@ def check_daily_risk_limits(sport=None):
 _GIST_BATCH_WINDOW = 5.0  # seconds
 
 # Keys that must be flushed immediately rather than held in the batch window.
-_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status", "weight_overrides", "weight_adjustment_log"})
+_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status", "weight_overrides", "weight_adjustment_log", "optimized_weights"})
 # "locks" added 2026-07: WIN/LOSS/VOID slip buttons remove a lock from
 # st.session_state immediately, then call save_to_gist("locks", ...) — but
 # as a non-critical key that write was only QUEUED, flushed up to 5s later.
@@ -6509,8 +6509,7 @@ def compute_optimized_weights(sport):
         "sample_factor": round(min(1.0, len(sport_data)/200), 3),
     }
     save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
-
-    # ── CLV feedback blend ──────────────────────────────────────────────
+    save_to_gist("optimized_weights", existing)
     # Once CLV data is sufficient, blend CLV-derived adjustments into the
     # W/L-optimized weights (40% CLV / 60% W/L).  CLV is a better
     # predictor of skill; W/L is noisier but covers more bets early on.
@@ -6532,6 +6531,7 @@ def compute_optimized_weights(sport):
         existing[sport]["clv_adjustments"]  = clv_adjs
         existing[sport]["clv_blend_active"] = True
         save_json_data(WEIGHT_OPTIMIZER_PATH, existing)
+        save_to_gist("optimized_weights", existing)
         return clv_blended
 
     return optimized
@@ -17146,6 +17146,28 @@ if "persistence_loaded" not in st.session_state:
     _gist_wt_log = gist_wt_log if isinstance(gist_wt_log, list) else []
     if len(_gist_wt_log) > len(_local_wt_log):
         save_json_data(WEIGHT_ADJUSTMENT_LOG_PATH, _gist_wt_log)
+    # optimized_weights.json (compute_optimized_weights' lift-based output —
+    # a SEPARATE mechanism from weight_overrides above) was local-disk-only
+    # until 2026-07-18, same ephemeral-reset bug already fixed for
+    # signal_performance/weight_overrides. get_active_weights() reads this
+    # file directly to decide live signal weights once a sport has 50+
+    # graded bets — losing it on every Streamlit Cloud redeploy meant a
+    # silent fallback to hardcoded base weights (plus loss of the 30%/70%
+    # decay-blend continuity with the prior computation) until the next
+    # session happened to re-trigger a recompute. Gist-backed now, same
+    # merge-newest pattern as the others.
+    gist_opt_wt = load_from_gist("optimized_weights", None)
+    _local_opt_wt = load_json_data(WEIGHT_OPTIMIZER_PATH, {}, mem_ttl=60)
+    if isinstance(gist_opt_wt, dict):
+        _merged_opt_wt = dict(_local_opt_wt) if isinstance(_local_opt_wt, dict) else {}
+        for _sp, _sp_data in gist_opt_wt.items():
+            _local_sp = _merged_opt_wt.get(_sp, {})
+            _gist_updated = _sp_data.get("updated", "") if isinstance(_sp_data, dict) else ""
+            _local_updated = _local_sp.get("updated", "") if isinstance(_local_sp, dict) else ""
+            if _gist_updated >= _local_updated:
+                _merged_opt_wt[_sp] = _sp_data
+        if _merged_opt_wt != _local_opt_wt:
+            save_json_data(WEIGHT_OPTIMIZER_PATH, _merged_opt_wt)
     # clv_tracking: Gist-backed so CLV data survives Streamlit Cloud restarts.
     # Previously an orphan writer (reset was pushed to Gist but never loaded back).
     gist_clv = load_from_gist("clv_tracking", None)
