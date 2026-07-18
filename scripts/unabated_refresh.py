@@ -1,91 +1,39 @@
 """
-unabated_refresh.py — Unabated sharp-line comparison (real endpoint found via browser capture)
+unabated_refresh.py — Unabated props + straight lines
 ================================================================================
+Confirmed working endpoints (2026-07-18, no auth required):
+  https://data.unabated.com/bettype
+  https://data.unabated.com/market/{sport}/props/odds   (~38MB raw, extracted here)
+  https://data.unabated.com/market/{sport}/props/people
+  https://data.unabated.com/market/{sport}/straight/odds
 
-Two straight URL guesses failed (unabated.com/api/lines and
-data.unabated.com/market/{sport}/props/odds both returned a generic
-Next.js 404 page server-side). The real endpoint was found by actually
-watching a headless Chromium browser load unabated.com and recording
-every real XHR/fetch response — see scripts/unabated_playwright_probe.py
-for that capture script. This is the real, confirmed-live production
-scraper built from what that capture found.
-
-CONFIRMED REAL via live browser capture (2026-07-18):
-    Base: https://api-k.unabated.com/api
-    GET /markets/changes/query?full_refresh_ISO={ISO timestamp}
-        -> full snapshot of current odds. No auth required. Confirmed
-           live with real MLB moneyline/spread/total prices flowing
-           (e.g. -200, +110, -130 on real games).
-
-Required headers (captured from the real browser request, replicated
-here): standard browser User-Agent, Accept: application/json, and
-Referer: https://unabated.com/ — no auth token, no cookie needed.
-
-Response shape (real, captured):
-    {latestTimestamp, resultCode, results: [{
-        latestTimestamp, resultCode, marketSources: [...], events: [...],
-        marketLineChanges: [{
-            gameOdds: {gameOddsEvents: {
-                "{leagueId}:{periodType}:{phase}": [{
-                    eventId, eventStart, statusId,
-                    gameOddsMarketSourcesLines: {
-                        "si{sideIndex}:ms{marketSourceId}:an{altNum}": {
-                            "bt{betTypeId}": {
-                                marketId, points, price, sourcePrice,
-                                sourceFormat, marketSourceId, statusId,
-                                sequenceNumber, modifiedOn, sideKey, ...
-                            }
-                        }
-                    }
-                }]
-            }}
-        }]
-    }]}
-
-This is a deeply nested, key-encoded structure (league/period/phase
-packed into dict keys like "lg5:pt1:pregame", side/book/alt packed into
-keys like "si0:ms20:an0") rather than a flat list — flattened here into
-one row per (event, market source, bet type) for usability. bet_type_id
-and market_source_id -> human names aren't resolved here (would need
-the /bet-types and a market-sources lookup, neither confirmed live yet)
-so both ship as raw IDs; a follow-up pass can map them once those
-lookups are confirmed the same careful way this endpoint was.
-
-Not sport-filtered at the source — the query returns whatever leagues
-have live line changes at request time, so a single poll may return
-MLB, NFL, CFB, etc. all mixed together. Split by leagueId prefix in the
-gameOddsEvents key (lg1=NFL, lg5=MLB, lg7=CFB per real observed data;
-unconfirmed mapping for others, logged to debug for follow-up).
+Required headers: standard User-Agent + Referer: https://unabated.com/
+Source IDs in marketSourceLines: 72=PrizePicks, 73=Underdog, 84=Pick6
+Sports supported: mlb, nfl, nba, wnba, nhl, pga, ufc, cbb, cfb
 """
 
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
-BASE_URL = "https://api-k.unabated.com/api"
+SPORTS = ["mlb"]   # extend as needed: ["mlb", "nfl", "nba"]
+
+# Source ID labels for reference — subset visible in marketSourceLines keys
+SOURCE_LABELS = {72: "PrizePicks", 73: "Underdog", 84: "Pick6"}
 
 HEADERS = {
     "Accept": "application/json",
     "Referer": "https://unabated.com/",
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
 }
-
-# Observed live 2026-07-18 — unconfirmed for leagues not seen in the
-# capture window (logged to debug so a wrong guess here is correctable
-# from real data, not blind).
-LEAGUE_ID_MAP = {
-    "lg1": "NFL", "lg5": "MLB", "lg7": "CFB",
-    # not observed live yet, best-guess only:
-    "lg2": "NBA", "lg3": "NHL", "lg4": "CBB", "lg6": "WNBA",
-    "lg8": "UFC", "lg9": "PGA",
-}
-
-DEBUG_LOG: list = []
 
 
 def log(msg: str) -> None:
@@ -93,96 +41,159 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def fetch_json(url: str, params: dict = None):
+def fetch_json(url: str, timeout: int = 45):
     try:
-        r = requests.get(url, headers=HEADERS, params=params, timeout=25)
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
     except Exception as e:
-        DEBUG_LOG.append({"url": url, "params": params, "error": str(e)})
+        log(f"Request error {url}: {e}")
         return None
-    DEBUG_LOG.append({"url": url, "params": params, "status": r.status_code,
-                       "body_snippet": r.text[:400]})
     if r.status_code != 200:
+        log(f"HTTP {r.status_code} for {url}: {r.text[:200]}")
         return None
     try:
         return r.json()
-    except json.JSONDecodeError:
+    except Exception as e:
+        log(f"JSON parse error {url}: {e}")
         return None
 
 
-def test_data_unabated_claim(github_token: str) -> None:
-    """
-    2026-07-18: testing a newly claimed second endpoint from a secondary
-    session — data.unabated.com/market/{sport}/props/odds, claimed to
-    hold PLAYER PROPS (personId-keyed), which the confirmed-working
-    api-k.unabated.com/markets/changes/query endpoint does NOT capture
-    (that one only had gameOdds, no props). Different domain than either
-    of the two earlier failed guesses on this same "data.unabated.com"
-    host, so worth a real test rather than assuming it shares their fate
-    or trusting it blind — same standard as every claim in this repo.
-    """
-    test_results = {}
-    for label, url in [
-        ("bettype", "https://data.unabated.com/bettype"),
-        ("props_odds", "https://data.unabated.com/market/mlb/props/odds"),
-        ("props_people", "https://data.unabated.com/market/mlb/props/people"),
-        ("straight_odds", "https://data.unabated.com/market/mlb/straight/odds"),
-    ]:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=20)
-            body_sample = None
-            try:
-                parsed = r.json()
-                body_sample = json.dumps(parsed, default=str)[:1000]
-            except Exception:
-                body_sample = r.text[:500]
-            test_results[label] = {"url": url, "status": r.status_code,
-                                     "content_type": r.headers.get("content-type", ""),
-                                     "body_sample": body_sample}
-        except Exception as e:
-            test_results[label] = {"url": url, "error": str(e)}
-    push_files({"betcouncil_unabated_second_claim_test.json": {
-        "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
-                                "results": test_results}, indent=2, default=str)
-    }}, github_token)
+def build_bettype_map(data) -> dict:
+    """betTypeId (int) -> name (str)"""
+    result = {}
+    if not data:
+        return result
+    # handle list or dict responses
+    items = data if isinstance(data, list) else data.get("data", data)
+    if isinstance(items, dict):
+        items = list(items.values())
+    for item in items:
+        if isinstance(item, dict):
+            bt_id = item.get("betTypeId") or item.get("id")
+            name = item.get("name") or item.get("betTypeName") or str(bt_id)
+            if bt_id is not None:
+                result[int(bt_id)] = name
+    return result
 
 
-def flatten_market_changes(payload: dict) -> list:
+def build_people_map(data) -> dict:
+    """personId (int) -> name (str)"""
+    result = {}
+    if not data:
+        return result
+    items = data if isinstance(data, list) else data.get("data", data)
+    if isinstance(items, dict):
+        # may be keyed by personId
+        for k, v in items.items():
+            if isinstance(v, dict):
+                pid = v.get("personId") or v.get("id")
+                name = v.get("name") or v.get("fullName") or v.get("playerName")
+                if pid is not None and name:
+                    result[int(pid)] = name
+    elif isinstance(items, list):
+        for item in items:
+            pid = item.get("personId") or item.get("id")
+            name = item.get("name") or item.get("fullName") or item.get("playerName")
+            if pid is not None and name:
+                result[int(pid)] = name
+    return result
+
+
+def flatten_props_odds(data, bettype_map: dict, people_map: dict) -> list:
+    """
+    Extract compact prop rows from the deeply-nested props/odds response.
+    Output: one row per (event, betType, side/player, marketSource).
+    """
     rows = []
-    unmapped_leagues = set()
-    for result in payload.get("results", []):
-        mlc = result.get("marketLineChanges", [])
-        game_odds_events = (mlc[0].get("gameOdds", {}).get("gameOddsEvents", {}) if mlc else {})
-        for league_period_phase, events in game_odds_events.items():
-            parts = league_period_phase.split(":")
-            league_key = parts[0] if parts else ""
-            period = parts[1] if len(parts) > 1 else ""
-            phase = parts[2] if len(parts) > 2 else ""
-            league = LEAGUE_ID_MAP.get(league_key)
-            if not league:
-                unmapped_leagues.add(league_key)
-                continue
-            for event in events:
-                event_id = event.get("eventId")
-                event_start = event.get("eventStart")
-                status_id = event.get("statusId")
-                for side_book_key, bet_types in event.get("gameOddsMarketSourcesLines", {}).items():
-                    sb_parts = side_book_key.split(":")
-                    side_index = sb_parts[0].replace("si", "") if sb_parts else None
-                    market_source_id = sb_parts[1].replace("ms", "") if len(sb_parts) > 1 else None
-                    for bt_key, line in bet_types.items():
-                        bet_type_id = bt_key.replace("bt", "")
-                        rows.append({
-                            "league": league, "event_id": event_id, "event_start": event_start,
-                            "status_id": status_id, "period": period, "phase": phase,
-                            "side_index": side_index, "market_source_id": market_source_id,
-                            "bet_type_id": bet_type_id, "market_id": line.get("marketId"),
-                            "points": line.get("points"), "price": line.get("price"),
-                            "source_price": line.get("sourcePrice"),
-                            "modified_on": line.get("modifiedOn"),
-                            "side_key": line.get("sideKey"),
-                        })
-    if unmapped_leagues:
-        DEBUG_LOG.append({"unmapped_league_keys_seen": list(unmapped_leagues)})
+    try:
+        leagues = data["data"]["odds"]
+    except (KeyError, TypeError):
+        log("Unexpected props/odds structure — missing data.odds")
+        return rows
+
+    for sport_key, league_obj in leagues.items():
+        period_types = league_obj.get("periodTypes", {})
+        for period_name, period_obj in period_types.items():
+            for phase_name in ("pregame", "live"):
+                phase = period_obj.get(phase_name, {})
+                for composite_key, record in phase.items():
+                    event_id = record.get("eventId")
+                    event_name = record.get("eventName", "")
+                    event_start = record.get("eventStart")
+                    bet_type_id = record.get("betTypeId")
+                    bet_type_name = bettype_map.get(bet_type_id, str(bet_type_id))
+
+                    for side_key, side_obj in record.get("sides", {}).items():
+                        person_id = side_obj.get("personId")
+                        player_name = people_map.get(person_id, "") if person_id else ""
+                        for src_id_str, line in side_obj.get("marketSourceLines", {}).items():
+                            try:
+                                src_id = int(src_id_str)
+                            except ValueError:
+                                src_id = src_id_str
+                            rows.append({
+                                "sport": sport_key,
+                                "period": period_name,
+                                "phase": phase_name,
+                                "event_id": event_id,
+                                "event_name": event_name,
+                                "event_start": event_start,
+                                "bet_type_id": bet_type_id,
+                                "bet_type": bet_type_name,
+                                "person_id": person_id,
+                                "player": player_name,
+                                "source_id": src_id,
+                                "source": SOURCE_LABELS.get(src_id, str(src_id)),
+                                "points": line.get("points"),
+                                "price": line.get("price"),
+                            })
+    return rows
+
+
+def flatten_straight_odds(data, bettype_map: dict) -> list:
+    """
+    Extract compact game-line rows from the straight/odds response.
+    Output: one row per (event, betType, side, marketSource).
+    """
+    rows = []
+    try:
+        leagues = data["data"]["odds"]
+    except (KeyError, TypeError):
+        log("Unexpected straight/odds structure — missing data.odds")
+        return rows
+
+    for sport_key, league_obj in leagues.items():
+        period_types = league_obj.get("periodTypes", {})
+        for period_name, period_obj in period_types.items():
+            for phase_name in ("pregame", "live"):
+                phase = period_obj.get(phase_name, {})
+                for composite_key, record in phase.items():
+                    event_id = record.get("eventId")
+                    event_name = record.get("eventName", "")
+                    event_start = record.get("eventStart")
+                    bet_type_id = record.get("betTypeId")
+                    bet_type_name = bettype_map.get(bet_type_id, str(bet_type_id))
+
+                    for side_key, side_obj in record.get("sides", {}).items():
+                        for src_id_str, line in side_obj.get("marketSourceLines", {}).items():
+                            try:
+                                src_id = int(src_id_str)
+                            except ValueError:
+                                src_id = src_id_str
+                            rows.append({
+                                "sport": sport_key,
+                                "period": period_name,
+                                "phase": phase_name,
+                                "event_id": event_id,
+                                "event_name": event_name,
+                                "event_start": event_start,
+                                "bet_type_id": bet_type_id,
+                                "bet_type": bet_type_name,
+                                "side_key": side_key,
+                                "source_id": src_id,
+                                "source": src_id_str,
+                                "points": line.get("points"),
+                                "price": line.get("price"),
+                            })
     return rows
 
 
@@ -190,13 +201,16 @@ def push_files(files_payload: dict, github_token: str) -> int:
     for attempt in range(3):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": files_payload}, timeout=60,
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"files": files_payload},
+            timeout=60,
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
         if resp.status_code == 409 and attempt < 2:
-            import time
             time.sleep((attempt + 1) * 4)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
@@ -210,53 +224,83 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
-    test_data_unabated_claim(github_token)
-    log("second-claim test pushed, continuing with the confirmed-working endpoint")
-
     now_iso = datetime.now(timezone.utc).isoformat()
-    payload = fetch_json(f"{BASE_URL}/markets/changes/query",
-                          params={"full_refresh_ISO": now_iso})
 
-    files_payload = {
-        "betcouncil_unabated_debug.json": {
-            "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:10]},
-                                   indent=2, default=str)
-        }
-    }
+    # Step 1: fetch lookup tables (small, fast)
+    log("Fetching bettype lookup...")
+    bettype_raw = fetch_json("https://data.unabated.com/bettype")
+    bettype_map = build_bettype_map(bettype_raw)
+    log(f"  {len(bettype_map)} bet types loaded")
 
-    if not payload:
-        log("No data returned — see debug log")
-        push_files(files_payload, github_token)
+    files_payload: dict = {}
+    total_props_rows = 0
+    total_straight_rows = 0
+
+    for sport in SPORTS:
+        # Step 2: player names (per sport)
+        log(f"Fetching {sport} people map...")
+        people_raw = fetch_json(f"https://data.unabated.com/market/{sport}/props/people")
+        people_map = build_people_map(people_raw)
+        log(f"  {len(people_map)} players loaded for {sport}")
+
+        # Step 3: props odds (~38MB, extract only needed fields)
+        log(f"Fetching {sport} props odds (large response)...")
+        props_raw = fetch_json(
+            f"https://data.unabated.com/market/{sport}/props/odds", timeout=90
+        )
+        if props_raw:
+            props_rows = flatten_props_odds(props_raw, bettype_map, people_map)
+            log(f"  {len(props_rows)} prop rows extracted for {sport}")
+            total_props_rows += len(props_rows)
+            files_payload[f"betcouncil_unabated_props_{sport}.json"] = {
+                "content": json.dumps(
+                    {
+                        "source": "unabated",
+                        "sport": sport,
+                        "captured_at": now_iso,
+                        "total": len(props_rows),
+                        "rows": props_rows,
+                    },
+                    default=str,
+                )
+            }
+        else:
+            log(f"  No props data for {sport}")
+
+        # Step 4: straight (game) lines
+        log(f"Fetching {sport} straight odds...")
+        straight_raw = fetch_json(
+            f"https://data.unabated.com/market/{sport}/straight/odds", timeout=60
+        )
+        if straight_raw:
+            straight_rows = flatten_straight_odds(straight_raw, bettype_map)
+            log(f"  {len(straight_rows)} straight rows extracted for {sport}")
+            total_straight_rows += len(straight_rows)
+            files_payload[f"betcouncil_unabated_lines_{sport}.json"] = {
+                "content": json.dumps(
+                    {
+                        "source": "unabated",
+                        "sport": sport,
+                        "captured_at": now_iso,
+                        "total": len(straight_rows),
+                        "rows": straight_rows,
+                    },
+                    default=str,
+                )
+            }
+        else:
+            log(f"  No straight data for {sport}")
+
+    if not files_payload:
+        log("No data fetched from any sport/endpoint — exiting with error")
         return 1
 
-    rows = flatten_market_changes(payload)
-    by_league = {}
-    for r in rows:
-        by_league.setdefault(r["league"], []).append(r)
-
-    log(f"Total rows: {len(rows)} across leagues: "
-        f"{ {k: len(v) for k, v in by_league.items()} }")
-
-    for league, league_rows in by_league.items():
-        files_payload[f"betcouncil_unabated_odds_{league}.json"] = {
-            "content": json.dumps({
-                "source": "unabated", "league": league, "captured_at": now_iso,
-                "total": len(league_rows), "lines": league_rows,
-            }, default=str)
-        }
-
-    files_payload["betcouncil_unabated_debug.json"]["content"] = json.dumps({
-        "captured_at": now_iso, "requests": DEBUG_LOG[:10],
-        "total_rows": len(rows), "by_league_counts": {k: len(v) for k, v in by_league.items()},
-    }, indent=2, default=str)
-
-    if not rows:
-        log("Payload received but zero rows flattened — see debug log")
-        push_files(files_payload, github_token)
-        return 1
-
+    log(f"Pushing {len(files_payload)} files to Gist...")
     pushed = push_files(files_payload, github_token)
-    log(f"Pushed {pushed} files")
+    log(
+        f"Done — {pushed} files pushed | "
+        f"{total_props_rows} prop rows | {total_straight_rows} straight rows"
+    )
     return 0 if pushed > 0 else 1
 
 
@@ -270,10 +314,21 @@ if __name__ == "__main__":
         try:
             token = os.environ.get("GITHUB_TOKEN")
             if token:
-                push_files({"betcouncil_unabated_debug.json": {
-                    "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
-                                            "error": "unhandled_exception", "traceback": tb}, indent=2)
-                }}, token)
+                push_files(
+                    {
+                        "betcouncil_unabated_debug.json": {
+                            "content": json.dumps(
+                                {
+                                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                                    "error": "unhandled_exception",
+                                    "traceback": tb,
+                                },
+                                indent=2,
+                            )
+                        }
+                    },
+                    token,
+                )
         except Exception:
             pass
         sys.exit(1)
