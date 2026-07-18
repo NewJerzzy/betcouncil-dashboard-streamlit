@@ -141,20 +141,13 @@ def main() -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     files_payload = {}
 
-    # Step 1: find MLB's sport_id (dumped to debug regardless, so a wrong
-    # guess here is correctable from one live run instead of guessing blind).
-    sports_resp = fetch_json(f"{BASE_URL}/sports/")
-    DEBUG_LOG.append({"step": "sports_list", "raw": sports_resp})
-    mlb_sport_id = None
-    if isinstance(sports_resp, dict):
-        for s in sports_resp.get("sports", sports_resp.get("results", [])):
-            if isinstance(s, dict) and "baseball" in str(s.get("name", "")).lower():
-                mlb_sport_id = s.get("id")
-                break
-
+    # 2026-07-18 live run #1 fix: /v3/sports/ doesn't exist (404) -- not
+    # needed anyway. /v3/events/?type=sport&sport_ids=X returned 400 with
+    # the API's own valid-value list in the error body: type must be one
+    # of a fixed set of match-type strings, 'baseball_match' among them --
+    # no separate sport_id lookup required at all.
     events_resp = fetch_json(f"{BASE_URL}/events/", params={
-        "type": "sport", "state": "upcoming",
-        **({"sport_ids": mlb_sport_id} if mlb_sport_id else {}),
+        "type": "baseball_match", "state": "upcoming",
     })
     events = []
     if isinstance(events_resp, dict):
