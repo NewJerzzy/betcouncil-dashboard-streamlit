@@ -5349,6 +5349,18 @@ def fetch_paddypower_lines(sport="NBA"):
 
 def fetch_soccer_player_stats(player_name):
     """
+    Confirmed dead end (live-tested): ESPN does not publish individual
+    player stats for soccer via any public API -- every endpoint pattern
+    (site.api.espn.com, site.web.api.espn.com, sports.core.api.espn.com)
+    404s. Returns {} immediately instead of burning a network round-trip
+    per player that always fails; this was a real contributor to slow
+    board-paste analysis times for Soccer props.
+    """
+    return {}
+
+
+def _fetch_soccer_player_stats_DEAD_ENDPOINT(player_name):
+    """
     Fetch soccer player season stats from ESPN (goals, assists, shots).
     Searches MLS, EPL, La Liga, Serie A, Bundesliga, Ligue 1, Champions League.
     Cached 12h per player.
@@ -5517,28 +5529,35 @@ def fetch_nfl_player_stats(player_name: str) -> dict:
             "games_played": 0,
         }
 
-        # Parse stat categories
-        _stat_cats = data.get("stats") or data.get("categories") or data.get("splits", {}).get("categories", [])
+        # Parse stat categories -- real shape (confirmed by live testing,
+        # same as WNBA): {"categories": [{"name": "passing", "names":
+        # [...], "totals": [...]}, ...]}. Values are parallel arrays under
+        # "names"/"totals", not {"name":x,"value":y} pairs.
+        _stat_cats = data.get("categories") or data.get("splits", {}).get("categories", [])
         for cat in _stat_cats:
             cat_name = cat.get("name", "").lower()
-            for stat in cat.get("stats", []):
-                sname = stat.get("name", "").lower().replace(" ", "_")
-                sval  = stat.get("value")
-                if sval is None: continue
+            _names = cat.get("names", [])
+            _totals = cat.get("totals", [])
+            for sname_raw, sval in zip(_names, _totals):
+                sname = str(sname_raw).lower().replace(" ", "_")
+                try:
+                    sval = float(sval)
+                except (TypeError, ValueError):
+                    continue
                 if "passing" in cat_name:
-                    if "yard" in sname: result["passing_yards"] = float(sval)
-                    if "touchdown" in sname: result["passing_touchdowns"] = float(sval)
-                    if "attempt" in sname: result["pass_attempts"] = float(sval)
-                    if "completion" in sname: result["completions"] = float(sval)
+                    if "yard" in sname or sname == "yds": result["passing_yards"] = sval
+                    if "touchdown" in sname or sname == "td": result["passing_touchdowns"] = sval
+                    if "attempt" in sname or sname == "att": result["pass_attempts"] = sval
+                    if "completion" in sname or sname == "cmp": result["completions"] = sval
                 elif "rushing" in cat_name:
-                    if "yard" in sname: result["rushing_yards"] = float(sval)
-                    if "touchdown" in sname: result["rushing_touchdowns"] = float(sval)
+                    if "yard" in sname or sname == "yds": result["rushing_yards"] = sval
+                    if "touchdown" in sname or sname == "td": result["rushing_touchdowns"] = sval
                 elif "receiving" in cat_name:
-                    if "yard" in sname: result["receiving_yards"] = float(sval)
-                    if "reception" in sname or "catch" in sname: result["receptions"] = float(sval)
-                    if "target" in sname: result["targets"] = float(sval)
-                    if "touchdown" in sname: result["receiving_touchdowns"] = float(sval)
-                if "game" in sname and "played" in sname:
+                    if "yard" in sname or sname == "yds": result["receiving_yards"] = sval
+                    if "reception" in sname or "catch" in sname or sname == "rec": result["receptions"] = sval
+                    if "target" in sname or sname == "tgt": result["targets"] = sval
+                    if "touchdown" in sname or sname == "td": result["receiving_touchdowns"] = sval
+                if ("game" in sname and "played" in sname) or sname == "gp":
                     result["games_played"] = int(sval)
 
         # Per-game averages
@@ -5668,6 +5687,59 @@ def fetch_nfl_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, s
     return by_opponent.get(opponent_abbr, [])
 
 
+def _fetch_wnba_roster_via_teams():
+    """
+    WNBA roster lookup, name -> ESPN athlete ID.
+    The /athletes?limit=300&active=true endpoint is confirmed 404 (verified
+    by live testing) -- ESPN doesn't expose a flat WNBA athlete index that
+    way. The working approach is iterating all 15 teams and pulling each
+    team's roster. Cached 24h as one combined dict since this is 16 HTTP
+    calls (1 teams list + 15 rosters); not something to redo per player.
+    """
+    cache_path = os.path.join(CACHE_DIR, "wnba_roster_via_teams.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 24:
+            try:
+                with open(cache_path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                pass
+
+    teams_data = _espn_get(
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/teams",
+        "wnba_teams_list", ttl_hours=24
+    )
+    if not teams_data:
+        return {}
+    team_ids = []
+    for sport in teams_data.get("sports", []):
+        for league in sport.get("leagues", []):
+            for t in league.get("teams", []):
+                tid = t.get("team", {}).get("id")
+                if tid:
+                    team_ids.append(tid)
+
+    roster = {}
+    for tid in team_ids:
+        roster_data = _espn_get(
+            f"https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/teams/{tid}/roster",
+            f"wnba_team_{tid}_roster", ttl_hours=24
+        )
+        if not roster_data:
+            continue
+        for a in roster_data.get("athletes", []):
+            name = a.get("displayName", "")
+            aid = a.get("id")
+            if name and aid:
+                roster[normalize_name(name)] = aid
+
+    if roster:
+        with open(cache_path, "wb") as f:
+            pickle.dump(roster, f)
+    return roster
+
+
 def fetch_wnba_player_stats(player_name):
     """
     Fetch WNBA player season stats from ESPN.
@@ -5697,23 +5769,14 @@ def fetch_wnba_player_stats(player_name):
             except Exception:
                 pass
 
-    roster_data = _espn_get(
-        "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/athletes?limit=300&active=true",
-        "wnba_roster_espn", ttl_hours=24
-    )
-    if not roster_data:
-        _log("roster_fetch", "roster_data was empty/None -- see espn_get log above for the real HTTP reason")
-        return None
     norm = normalize_name(player_name)
-    match = next((a for a in roster_data.get("athletes", [])
-                  if normalize_name(a.get("displayName", "")) == norm), None)
-    if not match:
-        _n_roster = len(roster_data.get("athletes", []))
-        _log("name_match", f"'{player_name}' not found among {_n_roster} roster entries -- name mismatch or player not active")
+    roster_map = _fetch_wnba_roster_via_teams()
+    if not roster_map:
+        _log("roster_fetch", "team-by-team roster lookup returned nothing -- see espn_get log above")
         return None
-    pid = match.get("id")
+    pid = roster_map.get(norm)
     if not pid:
-        _log("pid_missing", f"matched roster entry for '{player_name}' but it has no 'id' field")
+        _log("name_match", f"'{player_name}' not found among {len(roster_map)} team-roster entries -- name mismatch or not active")
         return None
 
     stats_data = _espn_get(
@@ -5721,40 +5784,39 @@ def fetch_wnba_player_stats(player_name):
         f"wnba_{pid}_stats_{_current_wnba_season_year()}", ttl_hours=6
     )
     if not stats_data:
-        # Fallback: sports.core.api.espn.com's athlete-statistics endpoint,
-        # a different documented ESPN host/path family -- try it before
-        # giving up, since I can't verify from this sandbox which pattern
-        # ESPN actually serves right now.
-        stats_data = _espn_get(
-            f"https://sports.core.api.espn.com/v2/sports/basketball/leagues/wnba/seasons/{_current_wnba_season_year()}/types/2/athletes/{pid}/statistics",
-            f"wnba_{pid}_statscore_{_current_wnba_season_year()}", ttl_hours=6
-        )
-    if not stats_data:
-        _log("stats_fetch", f"both stats endpoints failed for pid={pid} -- see espn_get log above for the real HTTP reason")
+        _log("stats_fetch", f"stats endpoint failed for pid={pid} -- see espn_get log above for the real HTTP reason")
         return None
 
+    # Real shape (confirmed by live testing): {"categories": [{"name":
+    # "averages", "names": ["GP","GS","MIN","PTS",...], "totals": ["459",
+    # "430","30.1","16.8",...]}, ...]}. Values are parallel arrays under
+    # "names"/"totals", NOT {"name":x,"value":y} pairs -- zip them per
+    # category, and use the "averages" category specifically (not
+    # "totals"/"ranks", which are season-total and league-rank rows).
     stat_map = {}
-    _cats = (stats_data.get("categories")
-             or stats_data.get("splits", {}).get("categories")
-             or stats_data.get("splits", [])
-             or [])
-    for cat in _cats:
-        for s in cat.get("stats", []):
-            stat_map[s.get("name", "")] = s.get("value", 0)
+    for cat in stats_data.get("categories", []):
+        if str(cat.get("name", "")).lower() != "averages":
+            continue
+        names = cat.get("names", [])
+        totals = cat.get("totals", [])
+        for n, v in zip(names, totals):
+            try:
+                stat_map[n] = float(v)
+            except (TypeError, ValueError):
+                stat_map[n] = 0
 
     if not stat_map:
-        _log("empty_stat_map", f"stats_data returned for pid={pid} but no categories/stats parsed -- response shape mismatch, top-level keys: {list(stats_data.keys())[:10]}")
+        _log("empty_stat_map", f"stats_data returned for pid={pid} but no 'averages' category parsed -- top-level keys: {list(stats_data.keys())[:10]}")
         return None
 
-    pts = round(float(stat_map.get("points", stat_map.get("avgPoints", 0))), 1)
-    reb = round(float(stat_map.get("rebounds", stat_map.get("avgRebounds", 0))), 1)
-    ast = round(float(stat_map.get("assists", stat_map.get("avgAssists", 0))), 1)
-    stl = round(float(stat_map.get("steals", 0)), 1)
-    blk = round(float(stat_map.get("blocks", 0)), 1)
-    tpm = round(float(stat_map.get("threePointFieldGoalsMade",
-                stat_map.get("threePointersMade", stat_map.get("avgThreePointFieldGoalsMade", 0)))), 1)
-    tov = round(float(stat_map.get("turnovers", stat_map.get("avgTurnovers", 0))), 1)
-    games = max(1, int(stat_map.get("gamesPlayed", 20)))
+    pts = round(float(stat_map.get("PTS", 0)), 1)
+    reb = round(float(stat_map.get("REB", 0)), 1)
+    ast = round(float(stat_map.get("AST", 0)), 1)
+    stl = round(float(stat_map.get("STL", 0)), 1)
+    blk = round(float(stat_map.get("BLK", 0)), 1)
+    tpm = round(float(stat_map.get("3PM", stat_map.get("3PTM", 0))), 1)
+    tov = round(float(stat_map.get("TO", stat_map.get("TOV", 0))), 1)
+    games = max(1, int(stat_map.get("GP", 20)))
 
     result = {
         "PTS": pts, "REB": reb, "AST": ast,
@@ -14292,6 +14354,21 @@ def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
 
 def fetch_tennis_player_stats(player_id: str, tour: str = "atp") -> dict:
     """
+    Confirmed dead end (live-tested): ESPN's tennis athlete stats endpoint
+    returns HTTP 200 but only shell metadata (athlete/season/league/news) --
+    zero categories, labels, or stat values. The sports.core.api.espn.com
+    variant returns splits.categories but with empty labels arrays too.
+    Neither is usable. Returns {} immediately instead of burning a network
+    round-trip that always comes back empty; this does mean the specialized
+    Tennis Total Games projection has no real per-player data source right
+    now either, which is a real loss but more honest than pretending a
+    dead endpoint might work.
+    """
+    return {}
+
+
+def _fetch_tennis_player_stats_DEAD_ENDPOINT(player_id: str, tour: str = "atp") -> dict:
+    """
     Fetch tennis player season stats from ESPN by name-to-ID resolution.
 
     player_id: player name string (e.g. "Novak Djokovic").  Parameter name
@@ -14397,6 +14474,16 @@ def fetch_golf_scoreboard(tour: str = "pga") -> dict:
 
 
 def fetch_golf_player_stats(player_id: str, tour: str = "pga") -> dict:
+    """
+    Confirmed dead end (live-tested): no working public ESPN endpoint
+    exists for individual golf player stats -- every pattern 404s. Returns
+    {} immediately instead of burning a network round-trip per player that
+    always fails.
+    """
+    return {}
+
+
+def _fetch_golf_player_stats_DEAD_ENDPOINT(player_id: str, tour: str = "pga") -> dict:
     """
     Fetch golf player season stats from ESPN by name-to-ID resolution.
 
@@ -14510,6 +14597,16 @@ def fetch_ufc_scoreboard() -> dict:
 
 
 def fetch_ufc_fighter_stats(fighter_id: str) -> dict:
+    """
+    Confirmed dead end (live-tested): no working public ESPN endpoint
+    exists for individual UFC/MMA fighter stats -- every pattern 404s.
+    Returns {} immediately instead of burning a network round-trip per
+    fighter that always fails.
+    """
+    return {}
+
+
+def _fetch_ufc_fighter_stats_DEAD_ENDPOINT(fighter_id: str) -> dict:
     """
     Fetch UFC fighter career stats from ESPN by name-to-ID resolution.
 
