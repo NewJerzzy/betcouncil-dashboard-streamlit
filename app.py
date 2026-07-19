@@ -23881,14 +23881,15 @@ with tabs[6]:
     # the paste box above, which expects an already-decided OVER/UNDER pick
     # per line. This one runs each prop through the model and suggests a
     # side (or PASS if there's no real projection backing it yet).
-    with st.expander("🎾 Paste a board list (get Over/Under suggestions)", expanded=False):
+    with st.expander("📋 Paste a board list (get Over/Under suggestions)", expanded=False):
         st.caption(
-            "Paste a raw copy of PrizePicks' prop list — the whole board, before you've "
-            "picked a side on anything. The model checks each one and suggests Over, "
-            "Under, or Pass. Currently backed by a real projection for **Tennis Total "
-            "Games**; other sport/stat combos will show Pass until they're modeled too."
+            "Paste a raw copy of a PrizePicks prop list — the whole board, before you've "
+            "picked a side on anything. Works for any sport in the format shown below; "
+            "the model checks each one using the same logic as the rest of the app and "
+            "suggests Over, Under, or Pass. You don't need to reformat anything per "
+            "sport — just tell it which sport you pasted."
         )
-        _board_sport = st.selectbox("Sport", ["Tennis"], key="_board_paste_sport")
+        _board_sport = st.selectbox("Sport", SPORTS, key="_board_paste_sport")
         _board_text = st.text_area(
             "Paste the board list here", height=200, key="_board_paste_text",
             placeholder="Lanlana Tararudee - Player\nLanlana Tararudee\n@ Hanne Vandewinkel Sun 1:00am\n21.5\nTotal Games\nLessMore\n..."
@@ -23898,60 +23899,107 @@ with tabs[6]:
             if not _board_props:
                 st.warning("Couldn't find any props in that paste. Check the format matches a PrizePicks board copy.")
             else:
-                st.success(f"Found {len(_board_props)} props — analyzing...")
                 _board_rows = []
-                _t_atp = fetch_tennis_scoreboard("atp")
-                _t_wta = fetch_tennis_scoreboard("wta")
-                _t_ctx = fetch_tennis_tournament_context()
+                _t_wta = fetch_tennis_scoreboard("wta") if _board_sport == "Tennis" else {}
+                _t_ctx = fetch_tennis_tournament_context() if _board_sport == "Tennis" else {}
                 for prop in _board_props:
                     player, opponent = prop["player"], prop["opponent"]
                     line_val, stat = prop["line"], prop["stat"]
-                    suggestion, edge_str, detail = "PASS", "", "no model for this stat yet"
+                    suggestion, edge_str, edge_val, avg_val = "PASS", "", 0.0, None
+
                     if _board_sport == "Tennis" and "game" in stat.lower():
+                        # Specialized two-player model (both players + surface +
+                        # format) — more accurate for this stat than the generic
+                        # single-player path below, so it takes priority.
                         _p_norm = normalize_name(player)
                         _tour_key = "wta" if _p_norm in _t_wta else "atp"
                         _ctx = _t_ctx.get(_tour_key, {})
-                        _surface = _ctx.get("surface", "hard")
-                        _is_bo5 = _ctx.get("is_slam", False)
                         _p1_stats = fetch_tennis_player_stats(player, _tour_key)
                         _p2_stats = fetch_tennis_player_stats(opponent, _tour_key)
                         if _p1_stats or _p2_stats:
                             _proj = compute_tennis_games_projection(
                                 _p1_stats or {}, _p2_stats or {},
-                                surface=_surface, is_best_of_5=_is_bo5,
+                                surface=_ctx.get("surface", "hard"),
+                                is_best_of_5=_ctx.get("is_slam", False),
                             )
-                            fair_games = _proj["fair_games"]
-                            edge = fair_games - line_val
-                            detail = f"model {fair_games:.1f} vs line {line_val}"
-                            if abs(edge) < 0.5:
-                                suggestion, edge_str = "PASS", f"({edge:+.1f} games, too thin)"
-                            elif edge > 0:
-                                suggestion, edge_str = "OVER", f"({edge:+.1f} games)"
+                            avg_val = _proj["fair_games"]
+                            edge_val = avg_val - line_val
+                            if abs(edge_val) < 0.5:
+                                suggestion, edge_str = "PASS", f"({edge_val:+.1f} games, too thin)"
+                            elif edge_val > 0:
+                                suggestion, edge_str = "OVER", f"({edge_val:+.1f} games)"
                             else:
-                                suggestion, edge_str = "UNDER", f"({edge:+.1f} games)"
-                        else:
-                            detail = "no stats found for either player — can't project"
+                                suggestion, edge_str = "UNDER", f"({edge_val:+.1f} games)"
+                    else:
+                        # Same model engine used everywhere else in Slip Analyzer
+                        # (board cache -> rolling avgs -> live per-sport fetch ->
+                        # historical table -> league baseline), scored from the
+                        # Over side so edge sign tells us which way it leans.
+                        try:
+                            _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport)
+                            edge_val = _scored.get("edge", 0.0)
+                            avg_val = _scored.get("avg", 0.0)
+                        except Exception:
+                            edge_val, avg_val = 0.0, 0.0
+                        if avg_val:
+                            if edge_val >= 0.04:
+                                suggestion, edge_str = "OVER", f"(edge {edge_val:+.1%})"
+                            elif edge_val <= -0.04:
+                                suggestion, edge_str = "UNDER", f"(edge {edge_val:+.1%})"
+                            else:
+                                suggestion, edge_str = "PASS", f"(edge {edge_val:+.1%}, too thin)"
+
                     _board_rows.append({
                         "player": player, "opponent": opponent, "matchup_type": prop["matchup_type"],
                         "line": line_val, "stat": stat, "suggestion": suggestion,
-                        "edge_str": edge_str, "detail": detail,
+                        "edge_str": edge_str, "edge_val": edge_val, "avg": avg_val,
+                        "sport": _board_sport,
                     })
-                _sugg_color = {"OVER": "#22c55e", "UNDER": "#e04040", "PASS": "#6a7a8a"}
-                for row in _board_rows:
+                st.session_state["_board_paste_results"] = _board_rows
+                st.success(f"Found {len(_board_rows)} props.")
+
+        _board_rows = st.session_state.get("_board_paste_results", [])
+        if _board_rows:
+            _sugg_color = {"OVER": "#22c55e", "UNDER": "#e04040", "PASS": "#6a7a8a"}
+            for _bi, row in enumerate(_board_rows):
+                _rc1, _rc2 = st.columns([5, 1])
+                with _rc1:
                     st.markdown(
-                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
-                        f'border-radius:8px;padding:10px 14px;margin-bottom:6px;">'
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                        f'<span style="font-weight:600;">{row["player"]} {row["matchup_type"]} {row["opponent"]}</span>'
+                        f'<div style="padding:6px 0;">'
+                        f'<b>{row["player"]}</b> · {row["stat"]} {row["line"]} — '
                         f'<span style="color:{_sugg_color[row["suggestion"]]};font-weight:700;">'
-                        f'{row["suggestion"]} {row["line"]} {row["edge_str"]}</span></div>'
-                        f'<div style="font-size:12px;color:#8ab4d4;margin-top:2px;">{row["stat"]} · {row["detail"]}</div>'
+                        f'{row["suggestion"]}</span> '
+                        f'<span style="color:#8ab4d4;font-size:12px;">{row["edge_str"]}</span>'
                         f'</div>', unsafe_allow_html=True,
                     )
-                st.caption(
-                    "PASS means either the edge was too thin to bother with, or there's no real "
-                    "player-stat data to back a projection right now — not a recommendation either way."
-                )
+                with _rc2:
+                    _already_locked = any(
+                        l.get("player") == row["player"] and l.get("prop") == row["stat"]
+                        for l in st.session_state.get("locks", [])
+                    )
+                    if row["suggestion"] == "PASS":
+                        st.caption("—")
+                    elif _already_locked:
+                        st.caption("🔒 Locked")
+                    elif st.button("🔒 Lock", key=f"_board_lock_{_bi}"):
+                        st.session_state.locks.append({
+                            "player": row["player"], "prop": row["stat"],
+                            "line": row["line"], "side": row["suggestion"],
+                            "wager": active_unit(), "prob": 0.5 + abs(row["edge_val"]),
+                            "edge": row["edge_val"], "tier": _get_cal_tier(row["edge_val"], row["sport"]),
+                            "status": "PENDING",
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "sport": row["sport"], "team": "",
+                            "signal_values": {}, "source": "board_paste",
+                        })
+                        save_json_data(LOCKS_PATH, st.session_state.locks)
+                        save_to_gist("locks", st.session_state.locks)
+                        st.rerun()
+            st.caption(
+                "🔒 Lock adds the pick to Locks & Ledger the same as any other pick — it flows into "
+                "your history, calibration (SEM/Brier), and CLV tracking once it settles. "
+                "PASS picks can't be locked."
+            )
 
     st.markdown("---")
     st.markdown("### Add Pick Manually")
