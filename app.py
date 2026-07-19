@@ -24095,15 +24095,16 @@ with tabs[6]:
                 except Exception:
                     edge_val, avg_val = 0.0, 0.0
                 if _no_data:
+                    _all_errs = st.session_state.get("errors", [])
                     _recent_err = next(
-                        (e for e in reversed(st.session_state.get("errors", []))
+                        (e for e in reversed(_all_errs)
                          if e.get("player") == player or player.lower() in str(e.get("player", "")).lower()),
                         None
                     )
                     if _recent_err:
-                        suggestion, edge_str = "PASS", f"no data — {_recent_err.get('source','')}: {_recent_err.get('error','')[:80]}"
+                        suggestion, edge_str = "PASS", f"[v3] no data — {_recent_err.get('source','')}: {_recent_err.get('error','')[:80]}"
                     else:
-                        suggestion, edge_str = "PASS", "no real player data found — can't project"
+                        suggestion, edge_str = "PASS", f"[v3] no real player data found — can't project ({len(_all_errs)} errors logged total)"
                 elif avg_val:
                     if _smart_sig.get("smart_signal"):
                         suggestion = _smart_sig.get("signal_a_direction", "OVER" if edge_val > 0 else "UNDER")
