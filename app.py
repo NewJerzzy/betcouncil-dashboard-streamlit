@@ -24180,6 +24180,11 @@ with tabs[6]:
 
         _board_rows = st.session_state.get("_board_paste_results", [])
         if _board_rows:
+            if any(r.get("suggestion") == "PASS" for r in _board_rows):
+                st.caption(
+                    "PASS means both Over and Under are too thin to call — not just the side shown. "
+                    "Manually picking the other side won't turn a PASS into a stronger tier."
+                )
             _sugg_color = {"OVER": "#22c55e", "UNDER": "#e04040", "PASS": "#6a7a8a"}
             for _bi, row in enumerate(_board_rows):
                 _rc1, _rc2 = st.columns([5, 1])
