@@ -24124,7 +24124,8 @@ with tabs[6]:
                     elif edge_val <= -0.04:
                         suggestion, edge_str = "UNDER", f"(edge {edge_val:+.1%})"
                     else:
-                        suggestion, edge_str = "PASS", f"(edge {edge_val:+.1%}, too thin)"
+                        _lean = "Over" if edge_val >= 0 else "Under"
+                        suggestion, edge_str = "PASS", f"(leans {_lean} {edge_val:+.1%}, too thin either way)"
 
             return {
                 "player": player, "opponent": opponent, "matchup_type": prop["matchup_type"],
