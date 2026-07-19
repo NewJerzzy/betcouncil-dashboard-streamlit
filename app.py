@@ -11181,14 +11181,36 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
                 _live = fetch_nfl_player_stats(player)
                 if _live:
                     data_source_label = "🏈 NFL ESPN 2025"
-                    confidence_label = f"{_live.get('n_games','?')} games"
+                    confidence_label = f"{_live.get('games_played','?')} games"
+                # Real keys fetch_nfl_player_stats returns are lowercase,
+                # underscore-separated, and per-game averages carry a
+                # '_per_game' suffix (e.g. 'passing_yards_per_game') --
+                # the previous uppercase 'PASS_YDS'-style keys never
+                # existed in the live payload, so every NFL prop silently
+                # fell through to the league baseline or PASS regardless
+                # of whether real data was actually available.
                 _stat_lookup = {
-                    "PASS_YDS": "PASS_YDS", "Passing Yards": "PASS_YDS",
-                    "RUSH_YDS": "RUSH_YDS", "Rushing Yards": "RUSH_YDS",
-                    "REC_YDS": "REC_YDS", "Receiving Yards": "REC_YDS",
-                    "REC": "REC", "Receptions": "REC",
-                    "TD": "TD", "Touchdowns": "TD",
-                    "PASS_ATT": "PASS_ATT", "PASS_CMP": "PASS_CMP",
+                    "PASS_YDS": "passing_yards_per_game", "Passing Yards": "passing_yards_per_game",
+                    "RUSH_YDS": "rushing_yards_per_game", "Rushing Yards": "rushing_yards_per_game",
+                    "REC_YDS": "receiving_yards_per_game", "Receiving Yards": "receiving_yards_per_game",
+                    "REC": "receptions_per_game", "Receptions": "receptions_per_game",
+                    "PASS_ATT": "pass_attempts_per_game", "Pass Attempts": "pass_attempts_per_game",
+                    "PASS_CMP": "completions_per_game", "Completions": "completions_per_game",
+                    "Passing Touchdowns": "passing_touchdowns_per_game",
+                    "Rushing Touchdowns": "rushing_touchdowns_per_game",
+                    "Receiving Touchdowns": "receiving_touchdowns_per_game",
+                }
+
+            elif sport == "NHL":
+                _live = fetch_nhl_player_stats(player)
+                if _live:
+                    data_source_label = "🏒 NHL API rolling avg"
+                    confidence_label = f"L{_live.get('n_games','?')} games"
+                _stat_lookup = {
+                    "PTS": "PTS", "Points": "PTS",
+                    "GOALS": "GOALS", "Goals": "GOALS",
+                    "ASSISTS": "ASSISTS", "Assists": "ASSISTS",
+                    "SOG": "SOG", "Shots on Goal": "SOG", "Shots On Goal": "SOG",
                 }
 
             if _live:

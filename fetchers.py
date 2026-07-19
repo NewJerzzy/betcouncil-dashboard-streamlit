@@ -20078,6 +20078,31 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
         return []
 
 
+def fetch_nhl_player_stats(player_name):
+    """
+    NHL player rolling averages, built from fetch_nhl_player_game_logs --
+    there's no dedicated NHL season-average endpoint the way WNBA/NFL/etc.
+    have, so this averages the last 20 games into per-game stats. Matches
+    the fetch_X_player_stats(player) -> dict pattern every other sport uses
+    so it plugs into score_pick_standalone's live-fetch dispatch, which
+    previously had no NHL branch at all -- every NHL board-paste prop fell
+    straight to the flat league baseline or a forced PASS regardless of
+    which player it actually was.
+    """
+    logs = fetch_nhl_player_game_logs(player_name, last_n=20)
+    if not logs:
+        return {}
+    n = len(logs)
+    pts = sum(g.get("PTS", 0) or 0 for g in logs) / n
+    goals = sum(g.get("G", 0) or 0 for g in logs) / n
+    assists = sum(g.get("A", 0) or 0 for g in logs) / n
+    sog = sum(g.get("SOG", 0) or 0 for g in logs) / n
+    return {
+        "PTS": round(pts, 2), "GOALS": round(goals, 2), "ASSISTS": round(assists, 2),
+        "SOG": round(sog, 2), "n_games": n, "_source": "NHL API",
+    }
+
+
 def fetch_nhl_player_game_logs(player_name, last_n=15):
     """Fetch NHL player recent game logs via NHL API."""
     try:
