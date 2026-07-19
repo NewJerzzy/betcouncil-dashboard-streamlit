@@ -17309,6 +17309,47 @@ with st.sidebar:
         save_json_data(BANKROLL_PATH, st.session_state.bankroll)
         save_to_gist("bankroll", st.session_state.bankroll)
         st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+
+    # Deposit / Withdraw — separate from the manual number box above.
+    # Editing the Bankroll box directly changes the number but NOT
+    # day_start_br, so a withdrawal (e.g. moving $400 to savings) reads as
+    # a $400 loss in the daily P&L tile below and can even falsely trip the
+    # stop-loss circuit breaker, since both are computed purely as
+    # (bankroll - day_start_br). These buttons move the same delta through
+    # both numbers, so cash in/out of the account never gets counted as a
+    # win or loss.
+    with st.expander("💵 Deposit / Withdraw"):
+        _dw_amount = st.number_input("Amount ($)", min_value=0.0, step=10.0, key="_dw_amount")
+        _dw_col1, _dw_col2 = st.columns(2)
+        if _dw_col1.button("➕ Deposit", key="_dw_deposit_btn", use_container_width=True) and _dw_amount > 0:
+            st.session_state.bankroll += _dw_amount
+            st.session_state["day_start_br"] = st.session_state.get("day_start_br", st.session_state.bankroll) + _dw_amount
+            save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+            save_to_gist("bankroll", st.session_state.bankroll)
+            st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+            _txn_log = load_from_gist("bankroll_transactions", [])
+            if not isinstance(_txn_log, list):
+                _txn_log = []
+            _txn_log.append({"type": "deposit", "amount": _dw_amount,
+                              "timestamp": datetime.now().isoformat()})
+            save_to_gist("bankroll_transactions", _txn_log[-200:])
+            st.success(f"Deposited ${_dw_amount:,.2f} — bankroll and day-start baseline both updated.")
+            st.rerun()
+        if _dw_col2.button("➖ Withdraw", key="_dw_withdraw_btn", use_container_width=True) and _dw_amount > 0:
+            st.session_state.bankroll -= _dw_amount
+            st.session_state["day_start_br"] = st.session_state.get("day_start_br", st.session_state.bankroll) - _dw_amount
+            save_json_data(BANKROLL_PATH, st.session_state.bankroll)
+            save_to_gist("bankroll", st.session_state.bankroll)
+            st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+            _txn_log = load_from_gist("bankroll_transactions", [])
+            if not isinstance(_txn_log, list):
+                _txn_log = []
+            _txn_log.append({"type": "withdraw", "amount": _dw_amount,
+                              "timestamp": datetime.now().isoformat()})
+            save_to_gist("bankroll_transactions", _txn_log[-200:])
+            st.success(f"Withdrew ${_dw_amount:,.2f} — bankroll and day-start baseline both updated.")
+            st.rerun()
+        st.caption("Use these (not the Bankroll box above) when moving money in or out of the account, so it isn't counted as a betting win/loss.")
     _today_str    = date.today().strftime("%Y-%m-%d")
     _bankroll_now = float(st.session_state.get("bankroll", DEFAULT_BANKROLL))
     _day_start    = float(st.session_state.get("day_start_br", _bankroll_now) or _bankroll_now)
