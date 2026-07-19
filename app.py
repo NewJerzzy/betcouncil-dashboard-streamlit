@@ -23988,7 +23988,18 @@ with tabs[6]:
             "Paste the board list here", height=200, key="_board_paste_text",
             placeholder="Lanlana Tararudee - Player\nLanlana Tararudee\n@ Hanne Vandewinkel Sun 1:00am\n21.5\nTotal Games\nLessMore\n..."
         )
-        if st.button("🔍 Analyze Board", key="_board_paste_analyze_btn"):
+
+        def _clear_board_paste():
+            st.session_state["_board_paste_text"] = ""
+            st.session_state["_board_paste_results"] = []
+
+        _bpc1, _bpc2 = st.columns([1, 1])
+        with _bpc1:
+            _board_analyze_clicked = st.button("🔍 Analyze Board", key="_board_paste_analyze_btn")
+        with _bpc2:
+            st.button("🗑️ Clear", key="_board_paste_clear_btn", on_click=_clear_board_paste)
+
+        if _board_analyze_clicked:
             _board_props = parse_pp_board_paste(_board_text)
             if not _board_props:
                 st.warning("Couldn't find any props in that paste. Check the format matches a PrizePicks board copy.")
