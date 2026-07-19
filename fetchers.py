@@ -5695,14 +5695,30 @@ def _fetch_wnba_roster_via_teams():
     way. The working approach is iterating all 15 teams and pulling each
     team's roster. Cached 24h as one combined dict since this is 16 HTTP
     calls (1 teams list + 15 rosters); not something to redo per player.
+
+    Also cached at the session level (regardless of success/failure) so a
+    failed attempt within one board-paste run doesn't retry this same
+    16-call sequence for every subsequent player that needs the fallback --
+    that repeat was a real contributor to very slow analysis times.
     """
+    try:
+        if "_wnba_roster_via_teams_session" in st.session_state:
+            return st.session_state["_wnba_roster_via_teams_session"]
+    except Exception:
+        pass
+
     cache_path = os.path.join(CACHE_DIR, "wnba_roster_via_teams.pkl")
     if os.path.exists(cache_path):
         age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_h < 24:
             try:
                 with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                    _cached = pickle.load(f)
+                try:
+                    st.session_state["_wnba_roster_via_teams_session"] = _cached
+                except Exception:
+                    pass
+                return _cached
             except Exception:
                 pass
 
@@ -5711,6 +5727,10 @@ def _fetch_wnba_roster_via_teams():
         "wnba_teams_list", ttl_hours=24
     )
     if not teams_data:
+        try:
+            st.session_state["_wnba_roster_via_teams_session"] = {}
+        except Exception:
+            pass
         return {}
     team_ids = []
     for sport in teams_data.get("sports", []):
@@ -5737,6 +5757,10 @@ def _fetch_wnba_roster_via_teams():
     if roster:
         with open(cache_path, "wb") as f:
             pickle.dump(roster, f)
+    try:
+        st.session_state["_wnba_roster_via_teams_session"] = roster
+    except Exception:
+        pass
     return roster
 
 

@@ -11091,8 +11091,8 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
                 # failing. Now calls the confirmed-working stats.wnba.com
                 # source directly (same one whose season-year bug was fixed
                 # earlier) when the cache is empty, once per run.
-                _wnba_rolling = st.session_state.get("wnba_rolling_avgs", {})
-                if not _wnba_rolling:
+                _wnba_rolling = st.session_state.get("wnba_rolling_avgs")
+                if _wnba_rolling is None:
                     _wnba_rolling = fetch_wnba_rolling_averages() or {}
                     st.session_state["wnba_rolling_avgs"] = _wnba_rolling
                 _norm = normalize_name(player)
