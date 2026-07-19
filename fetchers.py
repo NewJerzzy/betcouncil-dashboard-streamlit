@@ -19701,7 +19701,19 @@ def fetch_mlb_player_season_avg(player_name, player_id=None):
 
     # Resolve player ID
     if not player_id:
-        all_ids = st.session_state.get("mlb_roster_ids", {}) or MLB_PLAYER_IDS
+        all_ids = st.session_state.get("mlb_roster_ids")
+        if all_ids is None:
+            # Free source (statsapi.mlb.com, all 30 teams, already built) --
+            # previously this only ever came from the main board's session
+            # cache, so board-paste always saw it empty and silently fell
+            # back to the small hardcoded MLB_PLAYER_IDS subset (famous
+            # players only) -- anyone not in that subset (rookies, less
+            # mainstream players, most hitters) got "no data" even though
+            # a free full-roster lookup already existed and just wasn't
+            # being called here. Same bug pattern as WNBA/NBA, one layer
+            # deeper (ID resolution, not the stats fetch itself).
+            all_ids = fetch_mlb_full_roster_ids() or dict(MLB_PLAYER_IDS)
+            st.session_state["mlb_roster_ids"] = all_ids
         player_id = all_ids.get(player_name)
         if not player_id:
             # Try normalized name match
