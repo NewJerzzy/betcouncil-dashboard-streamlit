@@ -11101,7 +11101,11 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
                 _stat_lookup = {"PTS": "PTS", "REB": "REB", "AST": "AST",
                                 "PRA": "PRA", "STL": "STL", "BLK": "BLK",
                                 "Pts+Rebs+Asts": "PRA", "Points": "PTS",
-                                "Rebounds": "REB", "Assists": "AST"}
+                                "Rebounds": "REB", "Assists": "AST",
+                                "3PTM": "3PM", "3-PT Made": "3PM", "3PM": "3PM",
+                                "Rebs+Asts": "REB_AST", "Reb+Ast": "REB_AST",
+                                "Pts+Reb": "PTS_REB", "Pts+Ast": "PTS_AST",
+                                "Fantasy Score": "FANTASY", "Turnovers": "TO"}
 
             elif sport in ("Tennis",):
                 _live = fetch_tennis_player_stats(player)

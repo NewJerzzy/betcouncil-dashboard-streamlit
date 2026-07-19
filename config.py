@@ -615,11 +615,20 @@ STAT_NORMALIZE = {
     ("WNBA", "Assists"): "AST", ("WNBA", "Pts+Reb+Ast"): "PRA",
     ("MLB", "Earned Runs"): "ER", ("MLB", "Hits Allowed"): "H", ("MLB", "Total Bases"): "TB",
     ("NHL", "Shots on Goal"): "SOG", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",
-    ("NBA", "Pts+Rebs+Asts"): "PRA", ("NBA", "Pts+Reb"): "PRA", ("NBA", "Pts+Ast"): "PRA",
-    ("NBA", "3-PT Made"): "THREE_PT", ("NBA", "Blocked Shots"): "BLK",
+    ("NBA", "Pts+Rebs+Asts"): "PRA",
+    # Pts+Reb / Pts+Ast are 2-stat combos, NOT the same as PRA (3-stat) --
+    # aliasing them to PRA systematically inflated the average for a 2-stat
+    # line (PRA always >= Pts+Reb, since AST >= 0), which always made the
+    # model think there was a large positive edge regardless of the real
+    # player/line. Dedicated keys below, computed by the fetch functions.
+    ("NBA", "Pts+Reb"): "PTS_REB", ("NBA", "Pts+Ast"): "PTS_AST",
+    ("NBA", "3-PT Made"): "3PM", ("NBA", "Blocked Shots"): "BLK",
     ("NBA", "Steals"): "STL", ("NBA", "Turnovers"): "TOV",
-    ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PRA",
-    ("WNBA", "Pts+Ast"): "PRA",
+    ("NBA", "Reb+Ast"): "REB_AST", ("NBA", "Fantasy Score"): "FANTASY",
+    ("WNBA", "Pts+Reb+Ast"): "PRA", ("WNBA", "Pts+Reb"): "PTS_REB",
+    ("WNBA", "Pts+Ast"): "PTS_AST", ("WNBA", "Reb+Ast"): "REB_AST",
+    ("WNBA", "Rebs+Asts"): "REB_AST", ("WNBA", "3PTM"): "3PM",
+    ("WNBA", "3-PT Made"): "3PM", ("WNBA", "Fantasy Score"): "FANTASY",
     ("NBA", "pts"): "PTS", ("NBA", "reb"): "REB", ("NBA", "ast"): "AST",
     ("NBA", "points"): "PTS", ("NBA", "rebounds"): "REB", ("NBA", "assists"): "AST",
     ("MLB", "Strikeouts"): "SO", ("MLB", "Hits"): "H", ("MLB", "Home Runs"): "HR",

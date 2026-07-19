@@ -5707,12 +5707,24 @@ def fetch_wnba_player_stats(player_name):
     ast = round(float(stat_map.get("assists", stat_map.get("avgAssists", 0))), 1)
     stl = round(float(stat_map.get("steals", 0)), 1)
     blk = round(float(stat_map.get("blocks", 0)), 1)
+    tpm = round(float(stat_map.get("threePointFieldGoalsMade",
+                stat_map.get("threePointersMade", stat_map.get("avgThreePointFieldGoalsMade", 0)))), 1)
+    tov = round(float(stat_map.get("turnovers", stat_map.get("avgTurnovers", 0))), 1)
     games = max(1, int(stat_map.get("gamesPlayed", 20)))
 
     result = {
         "PTS": pts, "REB": reb, "AST": ast,
         "STL": stl, "BLK": blk,
         "PRA": round(pts + reb + ast, 1),
+        "PTS_REB": round(pts + reb, 1),
+        "PTS_AST": round(pts + ast, 1),
+        "REB_AST": round(reb + ast, 1),
+        "3PM": tpm,
+        "TO": tov,
+        # Standard DraftKings-style basketball classic scoring, used as a
+        # reasonable approximation since PrizePicks doesn't publish their
+        # exact "Fantasy Score" formula.
+        "FANTASY": round(pts * 1.0 + reb * 1.2 + ast * 1.5 + stl * 3.0 + blk * 3.0 - tov * 1.0, 1),
         "n_games": games,
         "_source": "ESPN",
     }
@@ -6228,13 +6240,23 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=None):
         pts = round(float(a.get("pts", 0)), 1)
         reb = round(float(a.get("reb", 0)), 1)
         ast = round(float(a.get("ast", 0)), 1)
+        stl = round(float(a.get("stl", 0)), 1)
+        blk = round(float(a.get("blk", 0)), 1)
+        tov = round(float(a.get("turnover", 0)), 1)
         result = {
             "PTS": pts, "REB": reb, "AST": ast,
             "PRA": round(pts + reb + ast, 1),
+            "PTS_REB": round(pts + reb, 1),
+            "PTS_AST": round(pts + ast, 1),
+            "REB_AST": round(reb + ast, 1),
             "3PM": round(float(a.get("fg3m", 0)), 1),
-            "STL": round(float(a.get("stl", 0)), 1),
-            "BLK": round(float(a.get("blk", 0)), 1),
-            "TO": round(float(a.get("turnover", 0)), 1),
+            "STL": stl,
+            "BLK": blk,
+            "TO": tov,
+            # Standard DraftKings-style NBA classic scoring, used as a
+            # reasonable approximation for "Fantasy Score" props since
+            # PrizePicks doesn't publish their exact formula.
+            "FANTASY": round(pts * 1.0 + reb * 1.2 + ast * 1.5 + stl * 3.0 + blk * 3.0 - tov * 1.0, 1),
         }
         with open(cache_path, "wb") as f:
             pickle.dump(result, f)
