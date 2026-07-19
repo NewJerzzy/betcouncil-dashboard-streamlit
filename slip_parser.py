@@ -453,7 +453,9 @@ def parse_pp_board_paste(text: str) -> list:
     before a side is picked) — distinct from parse_slip_auto/parse_pp_ocr,
     which expect an already-decided pick with OVER/UNDER stated.
 
-    Expected repeating block, one prop per block, in any of these shapes:
+    Two header shapes, both handled:
+
+    Individual sports (tennis, golf, UFC — header names the player):
         Lanlana Tararudee - Player
         Lanlana Tararudee
         @ Hanne Vandewinkel Sun 1:00am
@@ -461,10 +463,20 @@ def parse_pp_board_paste(text: str) -> list:
         Total Games
         LessMore
 
-    Fields captured per prop: player, opponent, matchup_type ('@' or 'vs'),
-    line, stat. No side/sport is set here — sport is unknown from this text
-    alone (caller supplies it, since the whole pasted board is one sport)
-    and side is left blank for the caller to fill in via a real projection.
+    Team sports (NBA, WNBA, NFL, MLB, NHL — header is "TEAM - POSITION",
+    player name is the very next line instead of being in the header):
+        LAS - F
+        Nneka Ogwumike
+        @ DAL Sun 10:00am
+        17.5
+        Points
+        LessMore
+
+    Fields captured per prop: player, team, position, opponent,
+    matchup_type ('@' or 'vs'), line, stat. No side/sport is set here —
+    sport is unknown from this text alone (caller supplies it, since the
+    whole pasted board is one sport) and side is left blank for the caller
+    to fill in via a real projection.
     """
     if not text or not text.strip():
         return []
@@ -486,20 +498,36 @@ def parse_pp_board_paste(text: str) -> list:
             continue
         cleaned.append(l)
 
+    _PLAYER_HEADER_RE = re.compile(r"^(.+?)\s*-\s*Player$", re.IGNORECASE)
+    _TEAM_HEADER_RE = re.compile(r"^([A-Z]{2,4})\s*-\s*([A-Z](?:-[A-Z])?)$")
+
     props = []
     i = 0
     n = len(cleaned)
     while i < n:
-        # Header line: "Name - Player"
-        header_m = re.match(r"^(.+?)\s*-\s*Player$", cleaned[i], re.IGNORECASE)
-        if not header_m:
+        player, team, position = "", "", ""
+
+        header_m = _PLAYER_HEADER_RE.match(cleaned[i])
+        team_m = _TEAM_HEADER_RE.match(cleaned[i])
+
+        if header_m:
+            player = header_m.group(1).strip()
+            j = i + 1
+            # Next line often repeats the bare player name — skip it if so.
+            if j < n and cleaned[j].strip().lower() == player.lower():
+                j += 1
+        elif team_m:
+            team, position = team_m.group(1), team_m.group(2)
+            j = i + 1
+            if j >= n:
+                i += 1
+                continue
+            player = cleaned[j].strip()
+            j += 1
+        else:
             i += 1
             continue
-        player = header_m.group(1).strip()
-        j = i + 1
-        # Next line often repeats the bare player name — skip it if so.
-        if j < n and cleaned[j].strip().lower() == player.lower():
-            j += 1
+
         # Matchup line: "@ Opponent Day H:MMam/pm" or "vs Opponent Day H:MMam/pm"
         opponent, matchup_type = "", ""
         if j < n:
@@ -517,13 +545,15 @@ def parse_pp_board_paste(text: str) -> list:
                 j += 1
         # Stat name: next non-empty line before the block repeats
         stat = ""
-        if j < n and not re.match(r"^(.+?)\s*-\s*Player$", cleaned[j], re.IGNORECASE):
+        if j < n and not _PLAYER_HEADER_RE.match(cleaned[j]) and not _TEAM_HEADER_RE.match(cleaned[j]):
             stat = cleaned[j].strip()
             j += 1
 
         if player and line_val is not None:
             props.append({
                 "player": player,
+                "team": team,
+                "position": position,
                 "opponent": opponent,
                 "matchup_type": matchup_type,
                 "line": line_val,
