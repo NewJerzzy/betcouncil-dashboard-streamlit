@@ -11082,10 +11082,19 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
             _live = None
             _stat_lookup = {}
             if sport == "WNBA":
-                # Try rolling cache first (stats.wnba.com covers all players)
+                # Try rolling cache first (stats.wnba.com covers all players).
+                # Previously this only checked the session cache and never
+                # called the live fetch itself ("board loads it") -- but
+                # board-paste never loads the main board, so this was
+                # ALWAYS empty there, forcing every single WNBA prop through
+                # the unverified ESPN fallback below, which was consistently
+                # failing. Now calls the confirmed-working stats.wnba.com
+                # source directly (same one whose season-year bug was fixed
+                # earlier) when the cache is empty, once per run.
                 _wnba_rolling = st.session_state.get("wnba_rolling_avgs", {})
                 if not _wnba_rolling:
-                    _wnba_rolling = {}  # don't call fetch here — board loads it
+                    _wnba_rolling = fetch_wnba_rolling_averages() or {}
+                    st.session_state["wnba_rolling_avgs"] = _wnba_rolling
                 _norm = normalize_name(player)
                 _match = next((v for k, v in _wnba_rolling.items()
                                if normalize_name(k) == _norm), None)
