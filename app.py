@@ -35,6 +35,8 @@ import streamlit.components.v1 as components
 from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+import threading
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 try:
     from curl_cffi import requests as cf
 except ImportError:
@@ -24142,12 +24144,25 @@ with tabs[6]:
                 # main remaining source of slow analysis on boards with
                 # many different players. Running them concurrently cuts
                 # wall-clock time roughly in proportion to worker count.
+                #
+                # IMPORTANT: st.session_state (read/written internally by
+                # score_pick_standalone, fetch_wnba_player_stats's
+                # diagnostic logging, and the WNBA rolling-avg/roster
+                # caches) is bound to Streamlit's per-thread script-run
+                # context, which worker threads don't have by default --
+                # session_state calls on a thread without it silently
+                # no-op instead of raising, so this must be attached to
+                # every worker thread explicitly or all of that state
+                # access quietly does nothing.
+                _script_ctx = get_script_run_ctx()
+
+                def _analyze_with_ctx(p):
+                    add_script_run_ctx(threading.current_thread(), _script_ctx)
+                    return _analyze_one_board_prop(p, _board_sport, _t_wta, _t_ctx)
+
                 with st.spinner(f"Analyzing {len(_board_props)} props..."):
                     with ThreadPoolExecutor(max_workers=8) as _ex:
-                        _board_rows = list(_ex.map(
-                            lambda p: _analyze_one_board_prop(p, _board_sport, _t_wta, _t_ctx),
-                            _board_props
-                        ))
+                        _board_rows = list(_ex.map(_analyze_with_ctx, _board_props))
                 st.session_state["_board_paste_results"] = _board_rows
                 st.success(f"Found {len(_board_rows)} props.")
 
