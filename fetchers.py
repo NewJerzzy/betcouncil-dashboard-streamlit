@@ -5821,11 +5821,26 @@ def fetch_wnba_player_stats(player_name):
     for cat in stats_data.get("categories", []):
         if str(cat.get("name", "")).lower() != "averages":
             continue
-        names = cat.get("names", [])
+        # BUG FIX: ESPN returns two name arrays per category:
+        #   "labels"  = short codes  -> ["GP","GS","MIN","PTS","OR","DR","REB","AST","STL","BLK","TO","FG","3PT","FT",...]
+        #   "names"   = verbose keys -> ["gamesPlayed","gamesStarted","avgMinutes","avgPoints",...]
+        # The stat lookups below all use short codes (PTS, REB, AST, TO, GP), so
+        # we MUST zip against "labels", not "names". Using "names" here was the
+        # root cause of every WNBA prop showing "no real player data found":
+        # stat_map was non-empty (had verbose keys) so the empty-check passed,
+        # but every subsequent .get("PTS") call returned 0, producing an all-zero
+        # result dict that score_pick_standalone correctly flagged as no real data.
+        labels = cat.get("labels", [])
         totals = cat.get("totals", [])
-        for n, v in zip(names, totals):
+        for n, v in zip(labels, totals):
             try:
-                stat_map[n] = float(v)
+                # FG / 3PT / FT labels carry "makes-attempts" strings like "0.6-1.6".
+                # Parse just the makes (first token) as a float; drop the attempts.
+                v_str = str(v)
+                if "-" in v_str and n in ("FG", "3PT", "FT"):
+                    stat_map[n] = float(v_str.split("-")[0])
+                else:
+                    stat_map[n] = float(v_str)
             except (TypeError, ValueError):
                 stat_map[n] = 0
 
@@ -5838,7 +5853,8 @@ def fetch_wnba_player_stats(player_name):
     ast = round(float(stat_map.get("AST", 0)), 1)
     stl = round(float(stat_map.get("STL", 0)), 1)
     blk = round(float(stat_map.get("BLK", 0)), 1)
-    tpm = round(float(stat_map.get("3PM", stat_map.get("3PTM", 0))), 1)
+    # 3PT label (confirmed key in "labels" array) carries the 3-pointers-made avg.
+    tpm = round(float(stat_map.get("3PT", stat_map.get("3PM", stat_map.get("3PTM", 0)))), 1)
     tov = round(float(stat_map.get("TO", stat_map.get("TOV", 0))), 1)
     games = max(1, int(stat_map.get("GP", 20)))
 
