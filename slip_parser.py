@@ -447,6 +447,93 @@ def _parse_pp_ocr_inline(raw_text):
     return out
 
 
+def parse_pp_board_paste(text: str) -> list:
+    """
+    Parse a raw copy-paste of PrizePicks' board (the list of available props
+    before a side is picked) — distinct from parse_slip_auto/parse_pp_ocr,
+    which expect an already-decided pick with OVER/UNDER stated.
+
+    Expected repeating block, one prop per block, in any of these shapes:
+        Lanlana Tararudee - Player
+        Lanlana Tararudee
+        @ Hanne Vandewinkel Sun 1:00am
+        21.5
+        Total Games
+        LessMore
+
+    Fields captured per prop: player, opponent, matchup_type ('@' or 'vs'),
+    line, stat. No side/sport is set here — sport is unknown from this text
+    alone (caller supplies it, since the whole pasted board is one sport)
+    and side is left blank for the caller to fill in via a real projection.
+    """
+    if not text or not text.strip():
+        return []
+
+    lines = [l.strip() for l in text.strip().split("\n")]
+    # Drop pure noise lines: volume badges ("3.0K") and the trailing
+    # "More"/"LessMore" button text. Strip any leading bullet marker from
+    # every line first -- some entries have it glued directly onto the
+    # header line ("* Name - Player") rather than on its own line, which
+    # would otherwise corrupt the captured player name.
+    cleaned = []
+    for l in lines:
+        l = re.sub(r"^[\*\-•]+\s*", "", l).strip()
+        if not l:
+            continue
+        if re.fullmatch(r"\d+(\.\d+)?K", l, re.IGNORECASE):
+            continue
+        if re.fullmatch(r"(Less)?More", l, re.IGNORECASE):
+            continue
+        cleaned.append(l)
+
+    props = []
+    i = 0
+    n = len(cleaned)
+    while i < n:
+        # Header line: "Name - Player"
+        header_m = re.match(r"^(.+?)\s*-\s*Player$", cleaned[i], re.IGNORECASE)
+        if not header_m:
+            i += 1
+            continue
+        player = header_m.group(1).strip()
+        j = i + 1
+        # Next line often repeats the bare player name — skip it if so.
+        if j < n and cleaned[j].strip().lower() == player.lower():
+            j += 1
+        # Matchup line: "@ Opponent Day H:MMam/pm" or "vs Opponent Day H:MMam/pm"
+        opponent, matchup_type = "", ""
+        if j < n:
+            mm = re.match(r"^(@|vs)\s+(.+?)\s+(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\b", cleaned[j], re.IGNORECASE)
+            if mm:
+                matchup_type = mm.group(1)
+                opponent = mm.group(2).strip()
+                j += 1
+        # Line value: a bare number
+        line_val = None
+        if j < n:
+            lm = re.match(r"^(\d+(?:\.\d+)?)$", cleaned[j])
+            if lm:
+                line_val = float(lm.group(1))
+                j += 1
+        # Stat name: next non-empty line before the block repeats
+        stat = ""
+        if j < n and not re.match(r"^(.+?)\s*-\s*Player$", cleaned[j], re.IGNORECASE):
+            stat = cleaned[j].strip()
+            j += 1
+
+        if player and line_val is not None:
+            props.append({
+                "player": player,
+                "opponent": opponent,
+                "matchup_type": matchup_type,
+                "line": line_val,
+                "stat": stat,
+            })
+        i = j if j > i else i + 1
+
+    return props
+
+
 def parse_bovada_slip_text(text: str) -> list:
     """Parse Bovada text slip into bet records.
 

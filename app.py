@@ -72,7 +72,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     build_game_line_consensus, classify_book_role,
     compute_market_anchored_fair_line, recalibrate_pricer_bias, PRICER_COMPONENT_BIAS,
     )
-from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text
+from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text, parse_pp_board_paste
 from styles import TIER_COLORS
 from app_fixes import fetch_vsin_intelligence
 try:
@@ -23876,9 +23876,87 @@ with tabs[6]:
                 else:
                     st.error("Could not parse. Format: Player Name OVER/UNDER Line Stat")
 
+    # Board paste — for pasting a whole list of AVAILABLE props (no side
+    # picked yet), like copying PrizePicks' board directly. Different from
+    # the paste box above, which expects an already-decided OVER/UNDER pick
+    # per line. This one runs each prop through the model and suggests a
+    # side (or PASS if there's no real projection backing it yet).
+    with st.expander("🎾 Paste a board list (get Over/Under suggestions)", expanded=False):
+        st.caption(
+            "Paste a raw copy of PrizePicks' prop list — the whole board, before you've "
+            "picked a side on anything. The model checks each one and suggests Over, "
+            "Under, or Pass. Currently backed by a real projection for **Tennis Total "
+            "Games**; other sport/stat combos will show Pass until they're modeled too."
+        )
+        _board_sport = st.selectbox("Sport", ["Tennis"], key="_board_paste_sport")
+        _board_text = st.text_area(
+            "Paste the board list here", height=200, key="_board_paste_text",
+            placeholder="Lanlana Tararudee - Player\nLanlana Tararudee\n@ Hanne Vandewinkel Sun 1:00am\n21.5\nTotal Games\nLessMore\n..."
+        )
+        if st.button("🔍 Analyze Board", key="_board_paste_analyze_btn"):
+            _board_props = parse_pp_board_paste(_board_text)
+            if not _board_props:
+                st.warning("Couldn't find any props in that paste. Check the format matches a PrizePicks board copy.")
+            else:
+                st.success(f"Found {len(_board_props)} props — analyzing...")
+                _board_rows = []
+                _t_atp = fetch_tennis_scoreboard("atp")
+                _t_wta = fetch_tennis_scoreboard("wta")
+                _t_ctx = fetch_tennis_tournament_context()
+                for prop in _board_props:
+                    player, opponent = prop["player"], prop["opponent"]
+                    line_val, stat = prop["line"], prop["stat"]
+                    suggestion, edge_str, detail = "PASS", "", "no model for this stat yet"
+                    if _board_sport == "Tennis" and "game" in stat.lower():
+                        _p_norm = normalize_name(player)
+                        _tour_key = "wta" if _p_norm in _t_wta else "atp"
+                        _ctx = _t_ctx.get(_tour_key, {})
+                        _surface = _ctx.get("surface", "hard")
+                        _is_bo5 = _ctx.get("is_slam", False)
+                        _p1_stats = fetch_tennis_player_stats(player, _tour_key)
+                        _p2_stats = fetch_tennis_player_stats(opponent, _tour_key)
+                        if _p1_stats or _p2_stats:
+                            _proj = compute_tennis_games_projection(
+                                _p1_stats or {}, _p2_stats or {},
+                                surface=_surface, is_best_of_5=_is_bo5,
+                            )
+                            fair_games = _proj["fair_games"]
+                            edge = fair_games - line_val
+                            detail = f"model {fair_games:.1f} vs line {line_val}"
+                            if abs(edge) < 0.5:
+                                suggestion, edge_str = "PASS", f"({edge:+.1f} games, too thin)"
+                            elif edge > 0:
+                                suggestion, edge_str = "OVER", f"({edge:+.1f} games)"
+                            else:
+                                suggestion, edge_str = "UNDER", f"({edge:+.1f} games)"
+                        else:
+                            detail = "no stats found for either player — can't project"
+                    _board_rows.append({
+                        "player": player, "opponent": opponent, "matchup_type": prop["matchup_type"],
+                        "line": line_val, "stat": stat, "suggestion": suggestion,
+                        "edge_str": edge_str, "detail": detail,
+                    })
+                _sugg_color = {"OVER": "#22c55e", "UNDER": "#e04040", "PASS": "#6a7a8a"}
+                for row in _board_rows:
+                    st.markdown(
+                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+                        f'border-radius:8px;padding:10px 14px;margin-bottom:6px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span style="font-weight:600;">{row["player"]} {row["matchup_type"]} {row["opponent"]}</span>'
+                        f'<span style="color:{_sugg_color[row["suggestion"]]};font-weight:700;">'
+                        f'{row["suggestion"]} {row["line"]} {row["edge_str"]}</span></div>'
+                        f'<div style="font-size:12px;color:#8ab4d4;margin-top:2px;">{row["stat"]} · {row["detail"]}</div>'
+                        f'</div>', unsafe_allow_html=True,
+                    )
+                st.caption(
+                    "PASS means either the edge was too thin to bother with, or there's no real "
+                    "player-stat data to back a projection right now — not a recommendation either way."
+                )
+
     st.markdown("---")
     st.markdown("### Add Pick Manually")
     st.caption("Use this to add picks that weren't on the screenshot or to build a custom slip.")
+
 
     col_sa1, col_sa2 = st.columns(2)
     with col_sa1:
