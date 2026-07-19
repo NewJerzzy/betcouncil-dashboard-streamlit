@@ -11002,7 +11002,17 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
     confidence_label = "Static table"
 
     # ── 2. Session rolling avgs (loaded when board was last run) ─────────────
-    _rolling = st.session_state.get("rolling_avgs", {})
+    _rolling = st.session_state.get("rolling_avgs")
+    if _rolling is None and sport == "NBA":
+        # Free source (stats.nba.com, no API key) -- previously only ever
+        # populated by loading the main board, so board-paste always saw
+        # this empty and fell straight to the metered BDL fallback below
+        # for every single player, even though this free source already
+        # existed and already works. Same bug pattern as WNBA, fixed the
+        # same way: call it directly, once per run, when the cache is empty.
+        _rolling = fetch_nba_rolling_averages() or {}
+        st.session_state["rolling_avgs"] = _rolling
+    _rolling = _rolling or {}
     _season  = st.session_state.get("season_avgs_cache", {})
     if player in _rolling or normalize_name(player) in {normalize_name(k) for k in _rolling}:
         _rp = _rolling.get(player) or next((v for k, v in _rolling.items() if normalize_name(k) == normalize_name(player)), None)
