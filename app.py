@@ -119,6 +119,7 @@ from config import (
 import time as _time_mod
 from contextlib import contextmanager as _ctx
 from fetchers import *  # extracted fetch_/compute_ functions
+from fetchers import _fetch_wnba_roster_via_teams  # leading underscore -> not covered by the star import above
 from fetchers import _map_prop_to_stat_key  # wildcard import excludes underscore-prefixed names
 from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
 
@@ -24034,96 +24035,119 @@ with tabs[6]:
         with _bpc2:
             st.button("🗑️ Clear", key="_board_paste_clear_btn", on_click=_clear_board_paste)
 
+        def _analyze_one_board_prop(prop, _board_sport, _t_wta, _t_ctx):
+            """Runs on a worker thread -- no st.* rendering calls here, only
+            data fetching/computation. Returns the row dict for later
+            (main-thread) rendering."""
+            player, opponent = prop["player"], prop["opponent"]
+            line_val, stat = prop["line"], prop["stat"]
+            suggestion, edge_str, edge_val, avg_val = "PASS", "", 0.0, None
+            _smart_sig, _tier, _no_data = {}, "PASS", False
+
+            if _board_sport == "Tennis" and "game" in stat.lower():
+                # Specialized two-player model (both players + surface +
+                # format) — more accurate for this stat than the generic
+                # single-player path below, so it takes priority.
+                _p_norm = normalize_name(player)
+                _tour_key = "wta" if _p_norm in _t_wta else "atp"
+                _ctx = _t_ctx.get(_tour_key, {})
+                _p1_stats = fetch_tennis_player_stats(player, _tour_key)
+                _p2_stats = fetch_tennis_player_stats(opponent, _tour_key)
+                if _p1_stats or _p2_stats:
+                    _proj = compute_tennis_games_projection(
+                        _p1_stats or {}, _p2_stats or {},
+                        surface=_ctx.get("surface", "hard"),
+                        is_best_of_5=_ctx.get("is_slam", False),
+                    )
+                    avg_val = _proj["fair_games"]
+                    edge_val = avg_val - line_val
+                    _abs_edge = abs(edge_val)
+                    if _abs_edge < 0.5:
+                        suggestion, edge_str, _tier = "PASS", f"({edge_val:+.1f} games, too thin)", "PASS"
+                    else:
+                        suggestion = "OVER" if edge_val > 0 else "UNDER"
+                        edge_str = f"({edge_val:+.1f} games)"
+                        # Games-differential bucketed to the same tier
+                        # labels used elsewhere, on a scale appropriate
+                        # for a games-count edge rather than a % edge.
+                        _tier = ("SOVEREIGN" if _abs_edge >= 2.5 else
+                                 "ELITE" if _abs_edge >= 1.75 else
+                                 "APPROVED" if _abs_edge >= 1.0 else "LEAN")
+                else:
+                    _no_data = True
+                    suggestion, edge_str = "PASS", "no player stats found — can't project"
+            else:
+                # Same model engine used everywhere else in Slip Analyzer
+                # (board cache -> rolling avgs -> live per-sport fetch ->
+                # historical table -> league baseline), scored from the
+                # Over side so edge sign tells us which way it leans.
+                _smart_sig, _tier, _no_data = {}, "PASS", False
+                try:
+                    _is_home = (prop["matchup_type"] == "vs")
+                    _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport, is_home=_is_home)
+                    edge_val = _scored.get("edge", 0.0)
+                    avg_val = _scored.get("avg", 0.0)
+                    _smart_sig = _scored.get("smart_signal_data", {})
+                    _tier = _scored.get("tier", "PASS")
+                    _no_data = _scored.get("no_real_data", False)
+                except Exception:
+                    edge_val, avg_val = 0.0, 0.0
+                if _no_data:
+                    _recent_err = next(
+                        (e for e in reversed(st.session_state.get("errors", []))
+                         if e.get("player") == player or player.lower() in str(e.get("player", "")).lower()),
+                        None
+                    )
+                    if _recent_err:
+                        suggestion, edge_str = "PASS", f"no data — {_recent_err.get('source','')}: {_recent_err.get('error','')[:80]}"
+                    else:
+                        suggestion, edge_str = "PASS", "no real player data found — can't project"
+                elif avg_val:
+                    if _smart_sig.get("smart_signal"):
+                        suggestion = _smart_sig.get("signal_a_direction", "OVER" if edge_val > 0 else "UNDER")
+                        edge_str = f"⚡ Smart Signal — {_smart_sig['signal_a_hit_rate']:.0%} historical ({_smart_sig['signal_a_n']} picks) + edge {edge_val:+.1%}"
+                    elif edge_val >= 0.04:
+                        suggestion, edge_str = "OVER", f"(edge {edge_val:+.1%})"
+                    elif edge_val <= -0.04:
+                        suggestion, edge_str = "UNDER", f"(edge {edge_val:+.1%})"
+                    else:
+                        suggestion, edge_str = "PASS", f"(edge {edge_val:+.1%}, too thin)"
+
+            return {
+                "player": player, "opponent": opponent, "matchup_type": prop["matchup_type"],
+                "line": line_val, "stat": stat, "suggestion": suggestion,
+                "edge_str": edge_str, "edge_val": edge_val, "avg": avg_val,
+                "sport": _board_sport, "smart_signal": bool(_smart_sig.get("smart_signal")),
+                "tier": _tier, "no_real_data": _no_data,
+            }
+
         if _board_analyze_clicked:
             _board_props = parse_pp_board_paste(_board_text)
             if not _board_props:
                 st.warning("Couldn't find any props in that paste. Check the format matches a PrizePicks board copy.")
             else:
-                _board_rows = []
                 _t_wta = fetch_tennis_scoreboard("wta") if _board_sport == "Tennis" else {}
                 _t_ctx = fetch_tennis_tournament_context() if _board_sport == "Tennis" else {}
-                for prop in _board_props:
-                    player, opponent = prop["player"], prop["opponent"]
-                    line_val, stat = prop["line"], prop["stat"]
-                    suggestion, edge_str, edge_val, avg_val = "PASS", "", 0.0, None
-                    _smart_sig, _tier, _no_data = {}, "PASS", False
+                # Pre-warm shared caches ONCE, sequentially, before
+                # parallelizing -- avoids worker threads racing to
+                # populate the same session_state key simultaneously.
+                if _board_sport == "WNBA":
+                    if st.session_state.get("wnba_rolling_avgs") is None:
+                        st.session_state["wnba_rolling_avgs"] = fetch_wnba_rolling_averages() or {}
+                    _fetch_wnba_roster_via_teams()
 
-                    if _board_sport == "Tennis" and "game" in stat.lower():
-                        # Specialized two-player model (both players + surface +
-                        # format) — more accurate for this stat than the generic
-                        # single-player path below, so it takes priority.
-                        _p_norm = normalize_name(player)
-                        _tour_key = "wta" if _p_norm in _t_wta else "atp"
-                        _ctx = _t_ctx.get(_tour_key, {})
-                        _p1_stats = fetch_tennis_player_stats(player, _tour_key)
-                        _p2_stats = fetch_tennis_player_stats(opponent, _tour_key)
-                        if _p1_stats or _p2_stats:
-                            _proj = compute_tennis_games_projection(
-                                _p1_stats or {}, _p2_stats or {},
-                                surface=_ctx.get("surface", "hard"),
-                                is_best_of_5=_ctx.get("is_slam", False),
-                            )
-                            avg_val = _proj["fair_games"]
-                            edge_val = avg_val - line_val
-                            _abs_edge = abs(edge_val)
-                            if _abs_edge < 0.5:
-                                suggestion, edge_str, _tier = "PASS", f"({edge_val:+.1f} games, too thin)", "PASS"
-                            else:
-                                suggestion = "OVER" if edge_val > 0 else "UNDER"
-                                edge_str = f"({edge_val:+.1f} games)"
-                                # Games-differential bucketed to the same tier
-                                # labels used elsewhere, on a scale appropriate
-                                # for a games-count edge rather than a % edge.
-                                _tier = ("SOVEREIGN" if _abs_edge >= 2.5 else
-                                         "ELITE" if _abs_edge >= 1.75 else
-                                         "APPROVED" if _abs_edge >= 1.0 else "LEAN")
-                        else:
-                            _no_data = True
-                            suggestion, edge_str = "PASS", "no player stats found — can't project"
-                    else:
-                        # Same model engine used everywhere else in Slip Analyzer
-                        # (board cache -> rolling avgs -> live per-sport fetch ->
-                        # historical table -> league baseline), scored from the
-                        # Over side so edge sign tells us which way it leans.
-                        _smart_sig, _tier, _no_data = {}, "PASS", False
-                        try:
-                            _is_home = (prop["matchup_type"] == "vs")
-                            _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport, is_home=_is_home)
-                            edge_val = _scored.get("edge", 0.0)
-                            avg_val = _scored.get("avg", 0.0)
-                            _smart_sig = _scored.get("smart_signal_data", {})
-                            _tier = _scored.get("tier", "PASS")
-                            _no_data = _scored.get("no_real_data", False)
-                        except Exception:
-                            edge_val, avg_val = 0.0, 0.0
-                        if _no_data:
-                            _recent_err = next(
-                                (e for e in reversed(st.session_state.get("errors", []))
-                                 if e.get("player") == player or player.lower() in str(e.get("player", "")).lower()),
-                                None
-                            )
-                            if _recent_err:
-                                suggestion, edge_str = "PASS", f"no data — {_recent_err.get('source','')}: {_recent_err.get('error','')[:80]}"
-                            else:
-                                suggestion, edge_str = "PASS", "no real player data found — can't project"
-                        elif avg_val:
-                            if _smart_sig.get("smart_signal"):
-                                suggestion = _smart_sig.get("signal_a_direction", "OVER" if edge_val > 0 else "UNDER")
-                                edge_str = f"⚡ Smart Signal — {_smart_sig['signal_a_hit_rate']:.0%} historical ({_smart_sig['signal_a_n']} picks) + edge {edge_val:+.1%}"
-                            elif edge_val >= 0.04:
-                                suggestion, edge_str = "OVER", f"(edge {edge_val:+.1%})"
-                            elif edge_val <= -0.04:
-                                suggestion, edge_str = "UNDER", f"(edge {edge_val:+.1%})"
-                            else:
-                                suggestion, edge_str = "PASS", f"(edge {edge_val:+.1%}, too thin)"
-
-                    _board_rows.append({
-                        "player": player, "opponent": opponent, "matchup_type": prop["matchup_type"],
-                        "line": line_val, "stat": stat, "suggestion": suggestion,
-                        "edge_str": edge_str, "edge_val": edge_val, "avg": avg_val,
-                        "sport": _board_sport, "smart_signal": bool(_smart_sig.get("smart_signal")),
-                        "tier": _tier, "no_real_data": _no_data,
-                    })
+                # Each prop needs its own independent network call for
+                # player stats -- these were previously running strictly
+                # serially (one 5-12s call after another), which is the
+                # main remaining source of slow analysis on boards with
+                # many different players. Running them concurrently cuts
+                # wall-clock time roughly in proportion to worker count.
+                with st.spinner(f"Analyzing {len(_board_props)} props..."):
+                    with ThreadPoolExecutor(max_workers=8) as _ex:
+                        _board_rows = list(_ex.map(
+                            lambda p: _analyze_one_board_prop(p, _board_sport, _t_wta, _t_ctx),
+                            _board_props
+                        ))
                 st.session_state["_board_paste_results"] = _board_rows
                 st.success(f"Found {len(_board_rows)} props.")
 
