@@ -3410,6 +3410,15 @@ def _espn_get(url, cache_key, ttl_hours=12):
     try:
         resp = _http.get(url, headers=HEADERS, timeout=12)
         if resp.status_code != 200:
+            # Previously silent -- a 404/403/etc from ESPN left zero
+            # diagnostic trail, making live-data failures indistinguishable
+            # from "no data exists". Log it so it's actually visible.
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": f"espn_get:{cache_key}",
+                "error": f"HTTP {resp.status_code}: {resp.text[:150]}",
+                "url": url,
+            })
             return None
         data = resp.json()
         with open(cache_path, "wb") as f:
@@ -3418,7 +3427,8 @@ def _espn_get(url, cache_key, ttl_hours=12):
     except Exception as e:
         st.session_state.setdefault("errors", []).append({
             "time": datetime.now().strftime("%H:%M:%S"),
-            "source": f"espn_get:{cache_key}", "error": str(e)[:80]
+            "source": f"espn_get:{cache_key}", "error": str(e)[:150],
+            "url": url,
         })
         return None
 
@@ -5660,10 +5670,23 @@ def fetch_nfl_player_gamelog_vs_opponent(player_name: str, opponent_abbr: str, s
 
 def fetch_wnba_player_stats(player_name):
     """
-    Fetch WNBA player 2025 season stats from ESPN.
+    Fetch WNBA player season stats from ESPN.
     Fallback for players not in stats.wnba.com rolling avg cache.
-    Cached 6h.
+    Cached 6h. Logs the specific failure point to st.session_state["errors"]
+    instead of silently returning None, since a silent failure here was
+    previously indistinguishable from "no data exists" -- every WNBA prop
+    was showing as unresolvable with zero way to tell why.
     """
+    def _log(step, detail):
+        try:
+            st.session_state.setdefault("errors", []).append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "source": f"fetch_wnba_player_stats:{step}",
+                "error": detail, "player": player_name,
+            })
+        except Exception:
+            pass
+
     cache_key = f"wnba_player_{normalize_name(player_name)}"
     cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
     if os.path.exists(cache_path):
@@ -5679,14 +5702,18 @@ def fetch_wnba_player_stats(player_name):
         "wnba_roster_espn", ttl_hours=24
     )
     if not roster_data:
+        _log("roster_fetch", "roster_data was empty/None -- see espn_get log above for the real HTTP reason")
         return None
     norm = normalize_name(player_name)
     match = next((a for a in roster_data.get("athletes", [])
                   if normalize_name(a.get("displayName", "")) == norm), None)
     if not match:
+        _n_roster = len(roster_data.get("athletes", []))
+        _log("name_match", f"'{player_name}' not found among {_n_roster} roster entries -- name mismatch or player not active")
         return None
     pid = match.get("id")
     if not pid:
+        _log("pid_missing", f"matched roster entry for '{player_name}' but it has no 'id' field")
         return None
 
     stats_data = _espn_get(
@@ -5694,15 +5721,29 @@ def fetch_wnba_player_stats(player_name):
         f"wnba_{pid}_stats_{_current_wnba_season_year()}", ttl_hours=6
     )
     if not stats_data:
+        # Fallback: sports.core.api.espn.com's athlete-statistics endpoint,
+        # a different documented ESPN host/path family -- try it before
+        # giving up, since I can't verify from this sandbox which pattern
+        # ESPN actually serves right now.
+        stats_data = _espn_get(
+            f"https://sports.core.api.espn.com/v2/sports/basketball/leagues/wnba/seasons/{_current_wnba_season_year()}/types/2/athletes/{pid}/statistics",
+            f"wnba_{pid}_statscore_{_current_wnba_season_year()}", ttl_hours=6
+        )
+    if not stats_data:
+        _log("stats_fetch", f"both stats endpoints failed for pid={pid} -- see espn_get log above for the real HTTP reason")
         return None
 
     stat_map = {}
-    _cats = stats_data.get("categories") or stats_data.get("splits", {}).get("categories", [])
+    _cats = (stats_data.get("categories")
+             or stats_data.get("splits", {}).get("categories")
+             or stats_data.get("splits", [])
+             or [])
     for cat in _cats:
         for s in cat.get("stats", []):
             stat_map[s.get("name", "")] = s.get("value", 0)
 
     if not stat_map:
+        _log("empty_stat_map", f"stats_data returned for pid={pid} but no categories/stats parsed -- response shape mismatch, top-level keys: {list(stats_data.keys())[:10]}")
         return None
 
     pts = round(float(stat_map.get("points", stat_map.get("avgPoints", 0))), 1)
