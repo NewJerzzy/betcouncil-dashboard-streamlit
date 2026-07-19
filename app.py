@@ -24180,36 +24180,6 @@ with tabs[6]:
             )
 
     st.markdown("---")
-    st.markdown("### Add Pick Manually")
-    st.caption("Use this to add picks that weren't on the screenshot or to build a custom slip.")
-
-
-    col_sa1, col_sa2 = st.columns(2)
-    with col_sa1:
-        sa_player = st.text_input("Player Name", placeholder="Nikola Jokic", key="sa_player")
-        sa_stat = st.selectbox("Stat", [
-            "Points", "Rebounds", "Assists", "3-PT Made", "Steals",
-            "Blocked Shots", "Turnovers", "Pts+Reb+Ast", "Pts+Reb",
-            "Pts+Ast", "Reb+Ast", "Fantasy Score", "Double-Double",
-            "Hits", "Home Runs", "Strikeouts", "Total Bases",
-            "Goals", "Shots On Goal", "Passing Yards", "Rushing Yards",
-            "Receiving Yards", "Receptions", "Touchdowns"
-        ], key="sa_stat")
-    with col_sa2:
-        sa_line = st.number_input("Line", min_value=0.0, value=0.0, step=0.5, key="sa_line")
-        sa_side = st.radio("Side", ["OVER", "UNDER"], horizontal=True, key="sa_side")
-        sa_sport = st.selectbox("Sport", SPORTS, key="sa_sport")
-
-    if st.button("➕ Add to Slip", key="sa_add_pick"):
-        if sa_player and sa_line > 0:
-            st.session_state["analyzer_picks"].append({
-                "player": sa_player, "stat": sa_stat,
-                "line": sa_line, "side": sa_side, "sport": sa_sport
-            })
-            st.rerun()
-        else:
-            st.error("Enter player name and line.")
-
     # Show current slip
     if st.session_state["analyzer_picks"]:
         st.markdown("---")
