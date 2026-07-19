@@ -33,6 +33,7 @@ import re
 import sys
 import time
 import urllib.request
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -198,8 +199,12 @@ def run_sport(sport, cfg, captured_at):
     return files
 
 
-def push_gist(files, token):
+def push_gist(files, token, label=""):
+    """Returns True on success, False on failure -- never raises, so one
+    bad push (oversized payload, transient network error, etc.) can't take
+    down the rest of the harvester run."""
     payload = json.dumps({"files": {k: {"content": v} for k, v in files.items()}}).encode()
+    log(f"  pushing {label or 'batch'}: {len(files)} files, {len(payload):,} bytes")
     req = urllib.request.Request(
         f"https://api.github.com/gists/{GIST_ID}",
         data=payload, method="PATCH",
@@ -210,9 +215,18 @@ def push_gist(files, token):
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        resp = json.loads(r.read())
-    log(f"  Gist updated -- {len(resp.get('files', {}))} files")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+        log(f"  Gist updated -- {len(resp.get('files', {}))} files")
+        return True
+    except urllib.error.HTTPError as exc:
+        body = exc.read()[:500]
+        log(f"  [error] Gist push failed for {label or 'batch'}: HTTP {exc.code} {body}")
+        return False
+    except Exception as exc:
+        log(f"  [error] Gist push failed for {label or 'batch'}: {exc}")
+        return False
 
 
 def main():
@@ -223,20 +237,28 @@ def main():
     captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     log(f"LineStar harvester started -- {captured_at}")
 
-    all_files = {}
+    any_pushed = False
+    any_attempted = False
     for sport, cfg in SPORTS.items():
         result = run_sport(sport, cfg, captured_at)
-        if result:
-            all_files.update(result)
+        if not result:
+            continue
+        any_attempted = True
+        total_bytes = sum(len(v) for v in result.values())
+        log(f"  {sport}: {len(result)} files, {total_bytes:,} bytes total")
+        for f in sorted(result):
+            log(f"    {f}  ({len(result[f]):,} bytes)")
+        ok = push_gist(result, token, label=sport)
+        any_pushed = any_pushed or ok
 
-    log(f"\nStaged {len(all_files)} files -- pushing to Gist ...")
-    for f in sorted(all_files):
-        log(f"  {f}  ({len(all_files[f]):,} bytes)")
-
-    if all_files:
-        push_gist(all_files, token)
-    else:
+    if not any_attempted:
         log("[warn] Nothing to push -- all sports had empty slates")
+    elif not any_pushed:
+        # Every sport that had data still failed to push -- a real failure,
+        # not just an empty-slate day. Exit non-zero so the workflow
+        # actually reflects that, instead of silently succeeding with
+        # nothing saved.
+        sys.exit("All Gist pushes failed -- see [error] lines above")
 
 
 if __name__ == "__main__":
