@@ -5377,14 +5377,15 @@ def fetch_soccer_player_stats(player_name):
             continue
 
         stats_data = _espn_get(
-            f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_key}/athletes/{pid}/stats",
+            f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{league_key}/athletes/{pid}/stats",
             f"soccer_{league_key}_{pid}_stats", ttl_hours=6
         )
         if not stats_data:
             continue
 
         stat_map = {}
-        for cat in stats_data.get("categories", []):
+        _cats = stats_data.get("categories") or stats_data.get("splits", {}).get("categories", [])
+        for cat in _cats:
             for s in cat.get("stats", []):
                 stat_map[s.get("name", "")] = s.get("value", 0)
 
@@ -5492,7 +5493,7 @@ def fetch_nfl_player_stats(player_name: str) -> dict:
             return {}
 
         # Step 2: Get stats
-        stats_url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/athletes/{athlete_id}/stats"
+        stats_url = f"https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{athlete_id}/stats"
         r2 = _http.get(stats_url, timeout=10)
         if r2.status_code != 200:
             return {}
@@ -5507,7 +5508,8 @@ def fetch_nfl_player_stats(player_name: str) -> dict:
         }
 
         # Parse stat categories
-        for cat in data.get("stats", []):
+        _stat_cats = data.get("stats") or data.get("categories") or data.get("splits", {}).get("categories", [])
+        for cat in _stat_cats:
             cat_name = cat.get("name", "").lower()
             for stat in cat.get("stats", []):
                 sname = stat.get("name", "").lower().replace(" ", "_")
@@ -5688,14 +5690,15 @@ def fetch_wnba_player_stats(player_name):
         return None
 
     stats_data = _espn_get(
-        f"https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/athletes/{pid}/stats?season={_current_wnba_season_year()}",
+        f"https://site.web.api.espn.com/apis/common/v3/sports/basketball/wnba/athletes/{pid}/stats",
         f"wnba_{pid}_stats_{_current_wnba_season_year()}", ttl_hours=6
     )
     if not stats_data:
         return None
 
     stat_map = {}
-    for cat in stats_data.get("categories", []):
+    _cats = stats_data.get("categories") or stats_data.get("splits", {}).get("categories", [])
+    for cat in _cats:
         for s in cat.get("stats", []):
             stat_map[s.get("name", "")] = s.get("value", 0)
 
@@ -14286,14 +14289,15 @@ def fetch_tennis_player_stats(player_id: str, tour: str = "atp") -> dict:
         return {}
 
     stats_data = _espn_get(
-        f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/athletes/{pid}/statistics",
+        f"https://site.web.api.espn.com/apis/common/v3/sports/tennis/{tour}/athletes/{pid}/stats",
         f"tennis_{tour}_{pid}_stats", ttl_hours=6
     )
     if not stats_data:
         return {}
 
     stat_map = {}
-    for cat in stats_data.get("categories", []):
+    _cats = stats_data.get("categories") or stats_data.get("splits", {}).get("categories", [])
+    for cat in _cats:
         for s in cat.get("stats", []):
             stat_map[s.get("name", "")] = s.get("value", 0)
 
@@ -14390,14 +14394,15 @@ def fetch_golf_player_stats(player_id: str, tour: str = "pga") -> dict:
         return {}
 
     stats_data = _espn_get(
-        f"https://site.api.espn.com/apis/site/v2/sports/golf/{tour}/athletes/{pid}/statistics",
+        f"https://site.web.api.espn.com/apis/common/v3/sports/golf/{tour}/athletes/{pid}/stats",
         f"golf_{tour}_{pid}_stats", ttl_hours=6
     )
     if not stats_data:
         return {}
 
     stat_map = {}
-    for cat in stats_data.get("categories", []):
+    _cats = stats_data.get("categories") or stats_data.get("splits", {}).get("categories", [])
+    for cat in _cats:
         for s in cat.get("stats", []):
             stat_map[s.get("name", "")] = s.get("value", 0)
 
@@ -14501,14 +14506,15 @@ def fetch_ufc_fighter_stats(fighter_id: str) -> dict:
         return {}
 
     stats_data = _espn_get(
-        f"https://site.api.espn.com/apis/site/v2/sports/mma/ufc/athletes/{pid}/statistics",
+        f"https://site.web.api.espn.com/apis/common/v3/sports/mma/ufc/athletes/{pid}/stats",
         f"ufc_{pid}_stats", ttl_hours=6
     )
     if not stats_data:
         return {}
 
     stat_map = {}
-    for cat in stats_data.get("categories", []):
+    _cats = stats_data.get("categories") or stats_data.get("splits", {}).get("categories", [])
+    for cat in _cats:
         for s in cat.get("stats", []):
             stat_map[s.get("name", "")] = s.get("value", 0)
 
