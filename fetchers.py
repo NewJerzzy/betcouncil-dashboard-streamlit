@@ -6342,6 +6342,20 @@ def fetch_player_season_avg_bdl(player_name, sport="NBA", season=None):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 24:
             return _safe_load_pkl(cache_path)
+
+    # Budget guard: this is a metered/rate-limited key, and board-paste's
+    # parallel analysis can otherwise fire a burst of live calls for every
+    # new player in one click. Cap genuinely NEW live calls per session
+    # (cache hits above don't count) rather than letting usage scale
+    # unbounded with however many players get pasted.
+    try:
+        _calls = st.session_state.get("_bdl_live_calls_this_session", 0)
+        if _calls >= 20:
+            return None
+        st.session_state["_bdl_live_calls_this_session"] = _calls + 1
+    except Exception:
+        pass
+
     try:
         r = _http.get(
             "https://api.balldontlie.io/v1/players",
