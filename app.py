@@ -11218,10 +11218,35 @@ def score_pick_standalone(player, stat, line, side, sport):
             confidence_label = "League avg only"
 
     # ── 8. Last resort: anchor to line ───────────────────────────────────────
+    _no_real_data = (avg == 0.0)
     if avg == 0.0:
         avg = float(line) if float(line) > 0 else 1.0
         data_source_label = "⚠️ Line-anchored (no avg found)"
         confidence_label = "No data"
+
+    if _no_real_data:
+        # avg == line here, so any "edge" the model below would compute is
+        # purely an artifact of fixed neutral context (opp_def=112.0,
+        # is_home=False, etc.) -- NOT a real per-player signal. Reporting
+        # that as a confident edge is actively misleading (it was producing
+        # near-identical edges across completely different players/lines,
+        # making every pick look equally playable when none of them had
+        # real data backing them). Force an honest no-signal result.
+        return {
+            "edge": 0.0,
+            "prob": 0.5,
+            "avg": round(avg, 1),
+            "tier": "PASS",
+            "ev_2": "+0.0%",
+            "confidence": "No data",
+            "data_source": data_source_label,
+            "board_matched": False,
+            "no_real_data": True,
+            "smart_signal_data": {"smart_signal": False, "signal_a_reliable": False,
+                                   "signal_a_n": 0, "signal_a_hit_rate": None,
+                                   "signal_a_direction": None, "signal_b_edge": 0.0,
+                                   "direction_agrees": False},
+        }
 
     # ── Run CLARITY edge model ───────────────────────────────────────────────
     try:
@@ -23975,7 +24000,7 @@ with tabs[6]:
                     player, opponent = prop["player"], prop["opponent"]
                     line_val, stat = prop["line"], prop["stat"]
                     suggestion, edge_str, edge_val, avg_val = "PASS", "", 0.0, None
-                    _smart_sig = {}
+                    _smart_sig, _tier, _no_data = {}, "PASS", False
 
                     if _board_sport == "Tennis" and "game" in stat.lower():
                         # Specialized two-player model (both players + surface +
@@ -23994,26 +24019,39 @@ with tabs[6]:
                             )
                             avg_val = _proj["fair_games"]
                             edge_val = avg_val - line_val
-                            if abs(edge_val) < 0.5:
-                                suggestion, edge_str = "PASS", f"({edge_val:+.1f} games, too thin)"
-                            elif edge_val > 0:
-                                suggestion, edge_str = "OVER", f"({edge_val:+.1f} games)"
+                            _abs_edge = abs(edge_val)
+                            if _abs_edge < 0.5:
+                                suggestion, edge_str, _tier = "PASS", f"({edge_val:+.1f} games, too thin)", "PASS"
                             else:
-                                suggestion, edge_str = "UNDER", f"({edge_val:+.1f} games)"
+                                suggestion = "OVER" if edge_val > 0 else "UNDER"
+                                edge_str = f"({edge_val:+.1f} games)"
+                                # Games-differential bucketed to the same tier
+                                # labels used elsewhere, on a scale appropriate
+                                # for a games-count edge rather than a % edge.
+                                _tier = ("SOVEREIGN" if _abs_edge >= 2.5 else
+                                         "ELITE" if _abs_edge >= 1.75 else
+                                         "APPROVED" if _abs_edge >= 1.0 else "LEAN")
+                        else:
+                            _no_data = True
+                            suggestion, edge_str = "PASS", "no player stats found — can't project"
                     else:
                         # Same model engine used everywhere else in Slip Analyzer
                         # (board cache -> rolling avgs -> live per-sport fetch ->
                         # historical table -> league baseline), scored from the
                         # Over side so edge sign tells us which way it leans.
-                        _smart_sig = {}
+                        _smart_sig, _tier, _no_data = {}, "PASS", False
                         try:
                             _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport)
                             edge_val = _scored.get("edge", 0.0)
                             avg_val = _scored.get("avg", 0.0)
                             _smart_sig = _scored.get("smart_signal_data", {})
+                            _tier = _scored.get("tier", "PASS")
+                            _no_data = _scored.get("no_real_data", False)
                         except Exception:
                             edge_val, avg_val = 0.0, 0.0
-                        if avg_val:
+                        if _no_data:
+                            suggestion, edge_str = "PASS", "no real player data found — can't project"
+                        elif avg_val:
                             if _smart_sig.get("smart_signal"):
                                 suggestion = _smart_sig.get("signal_a_direction", "OVER" if edge_val > 0 else "UNDER")
                                 edge_str = f"⚡ Smart Signal — {_smart_sig['signal_a_hit_rate']:.0%} historical ({_smart_sig['signal_a_n']} picks) + edge {edge_val:+.1%}"
@@ -24029,6 +24067,7 @@ with tabs[6]:
                         "line": line_val, "stat": stat, "suggestion": suggestion,
                         "edge_str": edge_str, "edge_val": edge_val, "avg": avg_val,
                         "sport": _board_sport, "smart_signal": bool(_smart_sig.get("smart_signal")),
+                        "tier": _tier, "no_real_data": _no_data,
                     })
                 st.session_state["_board_paste_results"] = _board_rows
                 st.success(f"Found {len(_board_rows)} props.")
@@ -24040,9 +24079,16 @@ with tabs[6]:
                 _rc1, _rc2 = st.columns([5, 1])
                 with _rc1:
                     _sig_prefix = '<span style="color:#a855f7;font-weight:700;">⚡ </span>' if row.get("smart_signal") else ""
+                    _tier_val = row.get("tier", "PASS")
+                    _tier_color = TIER_COLORS.get(_tier_val, "#6a7a8a")
+                    _tier_badge = (
+                        f'<span style="background:{_tier_color}22;color:{_tier_color};'
+                        f'border:1px solid {_tier_color};border-radius:4px;padding:1px 6px;'
+                        f'font-size:11px;font-weight:700;margin-right:6px;">{_tier_val}</span>'
+                    )
                     st.markdown(
                         f'<div style="padding:6px 0;">'
-                        f'{_sig_prefix}<b>{row["player"]}</b> · {row["stat"]} {row["line"]} — '
+                        f'{_tier_badge}{_sig_prefix}<b>{row["player"]}</b> · {row["stat"]} {row["line"]} — '
                         f'<span style="color:{_sugg_color[row["suggestion"]]};font-weight:700;">'
                         f'{row["suggestion"]}</span> '
                         f'<span style="color:#8ab4d4;font-size:12px;">{row["edge_str"]}</span>'
