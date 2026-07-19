@@ -10889,6 +10889,73 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
 #   5. PLAYER_AVERAGES dict  → hardcoded star table
 #   6. Line-anchored fallback→ avg = line, z=0, prob from context
 # ═══════════════════════════════════════════════════════════
+def compute_player_prop_smart_signal(player: str, prop: str, sport: str, current_edge: float,
+                                      min_samples: int = 8) -> dict:
+    """
+    Double-confirmation signal, modeled on Rithmm's "Smart Signal" pattern
+    but built entirely from data BetCouncil already collects -- no new
+    scraper needed:
+
+      Signal A (historical) — has THIS specific player+prop, across past
+        locked picks, consistently beaten the closing line more often than
+        not? Sourced from CLV_PATH (locked_line vs closing_line, captured
+        automatically at lock time by _capture_clv_closing_lines).
+      Signal B (live) — does the CURRENT computed edge for this pick clear
+        a real threshold, in the SAME direction Signal A favors?
+
+    smart_signal only fires when both agree. Gated by min_samples so a
+    hot/cold streak on 2-3 historical picks can't masquerade as a reliable
+    pattern (the exact failure mode Replit's proposal didn't guard against) --
+    across many players x prop types, some will show a fake streak by pure
+    chance if this isn't gated.
+    """
+    try:
+        clv_data = load_json_data(CLV_PATH, [])
+    except Exception:
+        clv_data = []
+    norm_p = normalize_name(player)
+    matches = [
+        c for c in clv_data
+        if normalize_name(c.get("player", "")) == norm_p
+        and str(c.get("prop", "")).lower() == str(prop).lower()
+        and c.get("sport", "") == sport
+        and c.get("clv") is not None
+    ]
+    n = len(matches)
+    if n < min_samples:
+        return {
+            "smart_signal": False, "signal_a_reliable": False, "signal_a_n": n,
+            "signal_a_hit_rate": None, "signal_a_direction": None,
+            "signal_b_edge": current_edge, "direction_agrees": False,
+        }
+
+    over_matches = [c for c in matches if str(c.get("side", "")).upper() == "OVER"]
+    under_matches = [c for c in matches if str(c.get("side", "")).upper() == "UNDER"]
+    over_hit = (sum(1 for c in over_matches if c.get("clv", 0) > 0) / len(over_matches)) if over_matches else None
+    under_hit = (sum(1 for c in under_matches if c.get("clv", 0) > 0) / len(under_matches)) if under_matches else None
+
+    direction, hit_rate = None, None
+    if over_hit is not None and (under_hit is None or over_hit >= under_hit):
+        direction, hit_rate = "OVER", over_hit
+    elif under_hit is not None:
+        direction, hit_rate = "UNDER", under_hit
+
+    signal_a_reliable = bool(direction) and hit_rate is not None and hit_rate >= 0.65
+    direction_agrees = (
+        (direction == "OVER" and current_edge >= 0.05) or
+        (direction == "UNDER" and current_edge <= -0.05)
+    )
+    return {
+        "smart_signal": signal_a_reliable and direction_agrees,
+        "signal_a_reliable": signal_a_reliable,
+        "signal_a_n": n,
+        "signal_a_hit_rate": round(hit_rate, 3) if hit_rate is not None else None,
+        "signal_a_direction": direction,
+        "signal_b_edge": current_edge,
+        "direction_agrees": direction_agrees,
+    }
+
+
 def score_pick_standalone(player, stat, line, side, sport):
     """
     Score a single pick using the full CLARITY pipeline, no board required.
@@ -10923,6 +10990,7 @@ def score_pick_standalone(player, stat, line, side, sport):
                     "confidence": b.get("SEM", "Full model"),
                     "data_source": "📊 Full model (board)",
                     "board_matched": True,
+                    "smart_signal_data": compute_player_prop_smart_signal(player, stat, sport, edge),
                 }
 
     # ── Resolve player average from best available source ───────────────────
@@ -11199,6 +11267,7 @@ def score_pick_standalone(player, stat, line, side, sport):
         "confidence": confidence_label,
         "data_source": data_source_label,
         "board_matched": False,
+        "smart_signal_data": compute_player_prop_smart_signal(player, stat, sport, edge),
     }
 
 
@@ -23906,6 +23975,7 @@ with tabs[6]:
                     player, opponent = prop["player"], prop["opponent"]
                     line_val, stat = prop["line"], prop["stat"]
                     suggestion, edge_str, edge_val, avg_val = "PASS", "", 0.0, None
+                    _smart_sig = {}
 
                     if _board_sport == "Tennis" and "game" in stat.lower():
                         # Specialized two-player model (both players + surface +
@@ -23935,14 +24005,19 @@ with tabs[6]:
                         # (board cache -> rolling avgs -> live per-sport fetch ->
                         # historical table -> league baseline), scored from the
                         # Over side so edge sign tells us which way it leans.
+                        _smart_sig = {}
                         try:
                             _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport)
                             edge_val = _scored.get("edge", 0.0)
                             avg_val = _scored.get("avg", 0.0)
+                            _smart_sig = _scored.get("smart_signal_data", {})
                         except Exception:
                             edge_val, avg_val = 0.0, 0.0
                         if avg_val:
-                            if edge_val >= 0.04:
+                            if _smart_sig.get("smart_signal"):
+                                suggestion = _smart_sig.get("signal_a_direction", "OVER" if edge_val > 0 else "UNDER")
+                                edge_str = f"⚡ Smart Signal — {_smart_sig['signal_a_hit_rate']:.0%} historical ({_smart_sig['signal_a_n']} picks) + edge {edge_val:+.1%}"
+                            elif edge_val >= 0.04:
                                 suggestion, edge_str = "OVER", f"(edge {edge_val:+.1%})"
                             elif edge_val <= -0.04:
                                 suggestion, edge_str = "UNDER", f"(edge {edge_val:+.1%})"
@@ -23953,7 +24028,7 @@ with tabs[6]:
                         "player": player, "opponent": opponent, "matchup_type": prop["matchup_type"],
                         "line": line_val, "stat": stat, "suggestion": suggestion,
                         "edge_str": edge_str, "edge_val": edge_val, "avg": avg_val,
-                        "sport": _board_sport,
+                        "sport": _board_sport, "smart_signal": bool(_smart_sig.get("smart_signal")),
                     })
                 st.session_state["_board_paste_results"] = _board_rows
                 st.success(f"Found {len(_board_rows)} props.")
@@ -23964,9 +24039,10 @@ with tabs[6]:
             for _bi, row in enumerate(_board_rows):
                 _rc1, _rc2 = st.columns([5, 1])
                 with _rc1:
+                    _sig_prefix = '<span style="color:#a855f7;font-weight:700;">⚡ </span>' if row.get("smart_signal") else ""
                     st.markdown(
                         f'<div style="padding:6px 0;">'
-                        f'<b>{row["player"]}</b> · {row["stat"]} {row["line"]} — '
+                        f'{_sig_prefix}<b>{row["player"]}</b> · {row["stat"]} {row["line"]} — '
                         f'<span style="color:{_sugg_color[row["suggestion"]]};font-weight:700;">'
                         f'{row["suggestion"]}</span> '
                         f'<span style="color:#8ab4d4;font-size:12px;">{row["edge_str"]}</span>'
@@ -23991,6 +24067,7 @@ with tabs[6]:
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "sport": row["sport"], "team": "",
                             "signal_values": {}, "source": "board_paste",
+                            "smart_signal": row.get("smart_signal", False),
                         })
                         save_json_data(LOCKS_PATH, st.session_state.locks)
                         save_to_gist("locks", st.session_state.locks)
@@ -24098,7 +24175,11 @@ with tabs[6]:
                         line_note = f"⚠️ Your line ({line}) is {abs(line_diff)} {direction} than board ({board_line})"
 
                 # Determine recommendation
-                if edge >= 0.08:
+                _smart_sig = scored.get("smart_signal_data", {})
+                if _smart_sig.get("smart_signal"):
+                    rec = "⚡ SMART SIGNAL"
+                    rec_color = "#a855f7"
+                elif edge >= 0.08:
                     rec = "✅ STRONG PLAY"
                     rec_color = "#22c55e"
                 elif edge >= 0.04:
@@ -24128,6 +24209,7 @@ with tabs[6]:
                     "confidence": confidence,
                     "data_source": data_source,
                     "board_matched": board_match is not None,
+                    "smart_signal_data": _smart_sig,
                 })
 
             st.session_state["analyzer_results"] = results
@@ -24241,7 +24323,7 @@ with tabs[6]:
             )
 
         # Lock all good picks button
-        good_picks = [r for r in results if r["edge"] >= 0.04]
+        good_picks = [r for r in results if r["edge"] >= 0.04 or r.get("smart_signal_data", {}).get("smart_signal")]
         if good_picks and board:
             st.markdown("---")
             if st.button(f"🔒 Lock all {len(good_picks)} good picks from this slip", key="lock_slip_picks"):
@@ -24260,6 +24342,7 @@ with tabs[6]:
                                 "status": "PENDING",
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 "sport": r["sport"],
+                                "smart_signal": r.get("smart_signal_data", {}).get("smart_signal", False),
                                 "team": board_match.get("Team",""),
                                 "signal_values": _board_prop_signal_values(board_match),
                                 "clv_capture": _capture_clv_placement(r["player"], r["stat"], r.get("prob", 0.5)),
