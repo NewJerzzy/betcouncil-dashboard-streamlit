@@ -20299,14 +20299,15 @@ def fetch_nhl_player_game_logs(player_name, last_n=15):
         cache_key = f"nhl_logs_{normalize_name(player_name)}"
         if cache_key in st.session_state:
             return st.session_state[cache_key]
-        # Search player
-        search_url = f"https://search.d3.nhle.com/api/v1/search?q={player_name.replace(' ','+')}&type=player&active=true"
-        r = _http.get(search_url, timeout=8)
-        if r.status_code != 200: return []
-        results = r.json()
-        if not results: return []
-        player_id = results[0].get("playerId") or results[0].get("id")
-        if not player_id: return []
+        # Player ID lookup: search.d3.nhle.com is confirmed dead (404 from
+        # datacenter IPs, live-tested) -- use the team-roster-iteration
+        # lookup instead (same working approach as WNBA's roster fix).
+        roster_ids = fetch_nhl_full_roster_ids()
+        norm = normalize_name(player_name)
+        player_id = next((pid for name, pid in roster_ids.items()
+                           if normalize_name(name) == norm), None)
+        if not player_id:
+            return []
         # Get game log
         log_url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/now"
         r2 = _http.get(log_url, timeout=8)
