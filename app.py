@@ -10956,7 +10956,7 @@ def compute_player_prop_smart_signal(player: str, prop: str, sport: str, current
     }
 
 
-def score_pick_standalone(player, stat, line, side, sport):
+def score_pick_standalone(player, stat, line, side, sport, is_home=False):
     """
     Score a single pick using the full CLARITY pipeline, no board required.
     Returns a dict with edge, prob, avg, tier, ev_2, confidence, data_source.
@@ -11255,7 +11255,7 @@ def score_pick_standalone(player, stat, line, side, sport):
             line=float(line),
             player_avg=avg,
             opp_def_rating=112.0,   # neutral — no opponent context without board
-            is_home=False,
+            is_home=is_home,
             teammate_out_boost=0.0,
             side=side,
             stat_key=stat_norm,
@@ -24052,7 +24052,8 @@ with tabs[6]:
                         # Over side so edge sign tells us which way it leans.
                         _smart_sig, _tier, _no_data = {}, "PASS", False
                         try:
-                            _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport)
+                            _is_home = (prop["matchup_type"] == "vs")
+                            _scored = score_pick_standalone(player, stat, line_val, "OVER", _board_sport, is_home=_is_home)
                             edge_val = _scored.get("edge", 0.0)
                             avg_val = _scored.get("avg", 0.0)
                             _smart_sig = _scored.get("smart_signal_data", {})
