@@ -21,6 +21,12 @@ except ImportError:
 
 from prop_normalizer import match_props_across_books, normalize_player_name, normalize_stat_name
 
+try:
+    from book_quality import counterparty_quality
+except ImportError:
+    def counterparty_quality(book_name):
+        return {"book": book_name, "role": "market", "weight": 1.0}
+
 
 # ── Odds helpers ──────────────────────────────────────────────────────────────
 
@@ -96,12 +102,23 @@ def compute_consensus(prop_group: dict) -> dict:
     if n < PROP_CROSS_BOOK_MIN_BOOKS:
         return {}
 
-    probs = sorted(book_probs.values())
+    # Weight each book's probability by its counterparty quality (sharp
+    # books like Pinnacle count ~3x a soft book like MyBookie) instead of
+    # treating every book identically -- same weighting already used for
+    # game-line consensus, previously missing here for props.
+    weighted = sorted(
+        ((prob, counterparty_quality(book)["weight"]) for book, prob in book_probs.items()),
+        key=lambda pw: pw[0],
+    )
     if n >= 5:
-        trimmed = probs[1:-1]
+        trimmed = weighted[1:-1]
     else:
-        trimmed = probs
-    consensus_prob = round(sum(trimmed) / len(trimmed), 6)
+        trimmed = weighted
+    total_weight = sum(w for _, w in trimmed)
+    if total_weight > 0:
+        consensus_prob = round(sum(p * w for p, w in trimmed) / total_weight, 6)
+    else:
+        consensus_prob = round(sum(p for p, _ in trimmed) / len(trimmed), 6)
     return {
         "consensus_prob":      consensus_prob,
         "consensus_fair_odds": implied_prob_to_american(consensus_prob),

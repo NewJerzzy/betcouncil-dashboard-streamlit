@@ -4092,6 +4092,94 @@ def _capture_clv_closing_lines():
         pass
 
 
+def _capture_clv_closing_lines_game():
+    """
+    Game-line counterpart to _capture_clv_closing_lines() -- fills in
+    closing_line_pinnacle/clv_points for game-line locks, which
+    _capture_clv_placement_game() always left as None (placement side was
+    built, closing side never was -- CLV for game lines was structurally
+    incomplete despite the infrastructure existing). Points-based CLV
+    (spread/total), not a probability, per the same reasoning documented
+    in _capture_clv_placement_game.
+    """
+    try:
+        history = load_json_data(HISTORY_PATH, [])
+        clv_data = load_json_data(CLV_PATH, [])
+        pinnacle_lines = st.session_state.get("pinnacle_game_lines", [])
+        if not pinnacle_lines:
+            return
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        pending_games = [
+            b for b in history
+            if b.get("bet_type") == "game"
+            and b.get("outcome") == "PENDING"
+            and b.get("timestamp", "")[:10] == today_str
+            and not b.get("clv_capture", {}).get("clv_resolved")
+            and b.get("clv_capture", {}).get("placement_line_pinnacle") is not None
+            and b.get("clv_capture", {}).get("closing_line_pinnacle") is None
+        ]
+        if not pending_games:
+            return
+
+        _game_clv_index = {
+            (c.get("matchup", ""), c.get("market", ""), c.get("timestamp", "")[:10]): i
+            for i, c in enumerate(clv_data) if c.get("bet_type") == "game"
+        }
+        updated = False
+        for bet in pending_games:
+            matchup   = bet.get("player", "")   # matchup stored under "player" key, same schema as props
+            market    = bet.get("prop", "")
+            side      = bet.get("side", "")
+            sport     = bet.get("sport", "")
+            timestamp = bet.get("timestamp", "")[:10]
+            placement = bet["clv_capture"]["placement_line_pinnacle"]
+
+            pin_game = next(
+                (g for g in pinnacle_lines
+                 if normalize_name(g.get("Matchup", "")) == normalize_name(matchup)
+                 or normalize_name(matchup) in normalize_name(g.get("Matchup", ""))),
+                None
+            )
+            if not pin_game:
+                continue
+            closing_line = pin_game.get("Spread") if market == "SPREAD" else (
+                pin_game.get("Total") if market in ("TOTAL", "ALT LINE") else None
+            )
+            if closing_line is None:
+                continue
+            closing_line = float(closing_line)
+
+            # Standard CLV convention: beating the close (line moved toward
+            # your locked side after you bet it) is a positive number.
+            clv_points = round(placement - closing_line, 2) if side.upper() in ("OVER", "HOME") \
+                else round(closing_line - placement, 2)
+
+            gkey = (matchup, market, timestamp)
+            if gkey in _game_clv_index:
+                idx = _game_clv_index[gkey]
+                clv_data[idx]["closing_line_pinnacle"] = closing_line
+                clv_data[idx]["clv_points"] = clv_points
+                clv_data[idx]["clv_pre_close"] = True
+            else:
+                clv_data.append({
+                    "bet_type": "game", "matchup": matchup, "market": market,
+                    "placement_line_pinnacle": placement,
+                    "closing_line_pinnacle": closing_line,
+                    "clv_points": clv_points,
+                    "side": side, "outcome": "PENDING",
+                    "timestamp": timestamp, "sport": sport,
+                    "tier": bet.get("tier", ""), "edge": bet.get("edge", 0),
+                    "clv_pre_close": True,
+                })
+            updated = True
+
+        if updated:
+            save_json_data(CLV_PATH, clv_data)
+    except Exception:
+        pass
+
+
 def resolve_clv_records(history):
     """
     Auto-resolve CLV for settled bets by comparing the placement snapshot
@@ -4881,7 +4969,7 @@ def compute_ev_line_movement(current_data, previous_snapshot):
                 "sharp_flag":         sharp_moved,
                 "moved_books":        moved_books,
                 "sharp_moved":        sharp_moved,
-                "book_roles":         {b[0]: classify_book_role(b[0])["role"] for b in moved_books},
+                "book_roles":         {b[0]: classify_book_role(b[0]) for b in moved_books},
                 "move_direction":     moved_books[-1][3] if moved_books else None,
                 "open_line":          None,
                 "curr_line":          item.get("handicap"),
@@ -5155,7 +5243,7 @@ def parse_ev_movement(movement_data):
                 "move_direction": move_direction,
                 "moved_books":  moved_books,
                 "sharp_moved":  sharp_moved,
-                "book_roles":   {b[0]: classify_book_role(b[0])["role"] for b in moved_books},
+                "book_roles":   {b[0]: classify_book_role(b[0]) for b in moved_books},
                 "open_line":    open_line,
                 "curr_line":    curr_line,
                 "tickets_pct":  tickets_pct,
@@ -8888,6 +8976,8 @@ def build_market_comparison(shortlist):
                     break
 
     # ── Dimers (via Stats Insider backend): match against shortlist games ──
+    from consensus_engine import american_to_implied_prob
+    _pin_lines_for_dimers = st.session_state.get("pinnacle_game_lines", [])
     for sport in sports_needed:
         try:
             dimers_matches = fetch_dimers_from_gist(sport)
@@ -8902,12 +8992,40 @@ def build_market_comparison(shortlist):
             for matchup in shortlist_matchups:
                 if home_abv in matchup.upper() and away_abv in matchup.upper():
                     tab = dm.get("betting", {}).get("tab", {})
+                    _dimers_home_wp = tab.get("HomeLineWinPct")
+                    _dimers_away_wp = tab.get("AwayLineWinPct")
+
+                    # Diff against Pinnacle's own devigged moneyline-implied
+                    # probability for the same matchup -- the value-gap
+                    # comparison that was previously never made despite both
+                    # numbers already being fetched.
+                    _pin_edge_home = _pin_edge_away = None
+                    _pin_game = next(
+                        (g for g in _pin_lines_for_dimers
+                         if normalize_name(g.get("Matchup", "")) == normalize_name(matchup)
+                         or normalize_name(matchup) in normalize_name(g.get("Matchup", ""))),
+                        None
+                    )
+                    if _pin_game:
+                        _pin_home_p = american_to_implied_prob(_pin_game.get("HomeML"))
+                        _pin_away_p = american_to_implied_prob(_pin_game.get("AwayML"))
+                        if _pin_home_p is not None and _pin_away_p is not None:
+                            _vig_total = _pin_home_p + _pin_away_p
+                            if _vig_total > 0:
+                                _pin_home_p, _pin_away_p = _pin_home_p / _vig_total, _pin_away_p / _vig_total
+                                if isinstance(_dimers_home_wp, (int, float)):
+                                    _pin_edge_home = round((_dimers_home_wp / 100.0 if _dimers_home_wp > 1 else _dimers_home_wp) - _pin_home_p, 4)
+                                if isinstance(_dimers_away_wp, (int, float)):
+                                    _pin_edge_away = round((_dimers_away_wp / 100.0 if _dimers_away_wp > 1 else _dimers_away_wp) - _pin_away_p, 4)
+
                     result["dimers"].append({
                         "matchup": matchup, "sport": sport,
                         "home_edge": tab.get("HomeH2HEdge"), "away_edge": tab.get("AwayH2HEdge"),
-                        "home_win_pct": tab.get("HomeLineWinPct"), "away_win_pct": tab.get("AwayLineWinPct"),
+                        "home_win_pct": _dimers_home_wp, "away_win_pct": _dimers_away_wp,
                         "home_odds": tab.get("HomeOdds"), "away_odds": tab.get("AwayOdds"),
                         "total_line": tab.get("TotalLine"), "over_win_pct": tab.get("OverWinPct"),
+                        "vs_pinnacle_edge_home": _pin_edge_home,
+                        "vs_pinnacle_edge_away": _pin_edge_away,
                     })
                     break
 
@@ -17302,6 +17420,10 @@ if "persistence_loaded" not in st.session_state:
         except Exception:
             _logger.debug("Silent except at line 13601")
             pass
+        try:
+            _capture_clv_closing_lines_game()
+        except Exception:
+            pass
         # FIX #6: resolve_clv_records was only called on History tab load.
         # Now runs on the 10-min timer so CLV resolves automatically post-game
         # even if the user never opens the History tab.
@@ -20256,6 +20378,12 @@ with tabs[3]:
 
     if _orig_scores:
         with st.expander(f"⏱️ Originator-Follower Scores — {len(_orig_scores)} books tracked", expanded=False):
+            st.caption(
+                "⚠️ Coarse signal: snapshots are taken every 15 minutes, so if multiple books "
+                "moved within the same window, whichever happens to be recorded first gets credited "
+                "as the 'originator' — not a true sub-minute leader/follower read. Directionally "
+                "suggestive over many samples, not something to trust on any single game."
+            )
             for _book, _score in sorted(_orig_scores.items(), key=lambda kv: kv[1], reverse=True):
                 st.markdown(f"**{_book}**: {_score*100:.0f}% of moves led")
 

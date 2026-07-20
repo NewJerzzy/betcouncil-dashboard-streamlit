@@ -24,6 +24,7 @@ from fetchers import fetch_scanbet_drops_from_gist, fetch_public_betting
 from team_canon import canon_game_key, canon
 from book_quality import counterparty_quality, weight_signal_by_counterparty
 from bayesian_line_updater import bayesian_posterior
+from bc_utils import score_rlm
 
 try:
     from nfl_key_numbers import spread_crossing_value, total_crossing_value
@@ -53,6 +54,21 @@ def _tier(score: float) -> str:
     return "WEAK"
 
 
+def _market_bucket(raw_market) -> str:
+    """Normalize varied raw market-name strings (SpreadValue, TotalValue,
+    moneyline, ML, etc.) into a canonical spread/total/moneyline bucket, so
+    signals from different sources can be checked for genuine multi-market
+    agreement rather than just summed as if they were independent."""
+    m = str(raw_market or "").lower()
+    if "spread" in m:
+        return "spread"
+    if "total" in m or m in ("over", "under", "o/u"):
+        return "total"
+    if "moneyline" in m or m in ("ml", "h2h"):
+        return "moneyline"
+    return "other"
+
+
 def build_unified_sharp_board(sport: str) -> list:
     """
     Aggregate Scanbet (CLV/steam) + Action Network (RLM/sharp) signals into
@@ -65,6 +81,7 @@ def build_unified_sharp_board(sport: str) -> list:
         "rlm_signals": [],
         "total_score": 0.0,
         "direction_votes": defaultdict(float),
+        "market_direction_votes": defaultdict(lambda: defaultdict(float)),
     })
 
     # ── Scanbet: CLV + steam (already correct implied-probability math) ──
@@ -107,6 +124,7 @@ def build_unified_sharp_board(sport: str) -> list:
         ev["total_score"] += sig_score
         if direction:
             ev["direction_votes"][direction] += sig_score
+            ev["market_direction_votes"][_market_bucket(row.get("market"))][direction] += sig_score
 
         if row.get("is_steam") and abs(drop_pct) >= 0.03:
             steam_entry = dict(clv_entry)
@@ -169,8 +187,25 @@ def build_unified_sharp_board(sport: str) -> list:
             ev["game_label"] = f"{teams[1]} @ {teams[0]}"
 
         for rlm in data.get("rlm_signals", []):
+            public_pct = rlm.get("public_pct")
+            public_side = rlm.get("public_side")
+            sharp_side = rlm.get("sharp_side")
             strength = rlm.get("strength", 1)
-            raw_score = min(strength * 2.5, 10)
+            if public_pct is not None and public_side and sharp_side:
+                try:
+                    _rlm_result = score_rlm(
+                        public_pct=float(public_pct) / 100.0 if float(public_pct) > 1 else float(public_pct),
+                        line_move_direction=sharp_side,
+                        public_side=public_side,
+                        move_magnitude=float(strength) if strength else 0.5,
+                    )
+                    raw_score = min(_rlm_result.get("rlm_score", strength * 2.5), 10)
+                except (TypeError, ValueError):
+                    raw_score = min(strength * 2.5, 10)
+            else:
+                # Not enough real fields to run score_rlm (missing side/pct
+                # data) -- fall back to the simple scalar rather than fail.
+                raw_score = min(strength * 2.5, 10)
             # RLM comes from Action Network's aggregated public-book money%,
             # a mixed retail/sharp pool rather than a single sharp book —
             # weight at a fixed mid-tier quality rather than assuming full trust.
@@ -188,6 +223,7 @@ def build_unified_sharp_board(sport: str) -> list:
             ev["total_score"] += sig_score
             if rlm.get("sharp_side"):
                 ev["direction_votes"][rlm["sharp_side"]] += sig_score
+                ev["market_direction_votes"][_market_bucket(rlm.get("type"))][rlm["sharp_side"]] += sig_score
 
     # ── Finalize ──
     board = []
@@ -197,15 +233,32 @@ def build_unified_sharp_board(sport: str) -> list:
         consensus_direction = None
         if ev["direction_votes"]:
             consensus_direction = max(ev["direction_votes"].items(), key=lambda kv: kv[1])[0]
+
+        # Multi-market confirmation bonus: if spread AND total AND/or
+        # moneyline all independently point the same direction, that's a
+        # qualitatively stronger signal than one market moving alone --
+        # previously just summed linearly with no bonus at all. Only
+        # counts markets where that direction was actually the LEADING
+        # vote within that market (not just present at all).
+        confirming_markets = 0
+        if consensus_direction:
+            for _mkt, _votes in ev["market_direction_votes"].items():
+                if _votes and max(_votes.items(), key=lambda kv: kv[1])[0] == consensus_direction:
+                    confirming_markets += 1
+        confirmation_multiplier = 1.0 + (0.15 * max(confirming_markets - 1, 0))  # +15% per additional confirming market
+        adjusted_score = round(ev["total_score"] * confirmation_multiplier, 2)
+
         entry = {
             "game_key": gk,
             "game_label": ev["game_label"],
-            "total_score": round(ev["total_score"], 2),
+            "total_score": adjusted_score,
+            "raw_score": round(ev["total_score"], 2),
+            "confirming_markets": confirming_markets,
             "clv_signals": ev["clv_signals"],
             "steam_signals": ev["steam_signals"],
             "rlm_signals": ev["rlm_signals"],
             "consensus_direction": consensus_direction,
-            "tier": _tier(ev["total_score"]),
+            "tier": _tier(adjusted_score),
         }
         entry["movement_cause"] = classify_event_movement(entry)
 
