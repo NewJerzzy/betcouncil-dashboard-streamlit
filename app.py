@@ -18629,7 +18629,7 @@ with tabs[0]:
                 _tpick  = _tbb.get("pick","")
                 _tnote  = _tbb.get("note","")[:70]
                 _ttier  = _tg.get("tier","LEAN") if _tg.get("tier") else ("SOVEREIGN" if _tge>=0.06 else "ELITE" if _tge>=0.03 else "APPROVED")
-                _tc     = {"SOVEREIGN":"#f5c518","ELITE":"#378add","APPROVED":"#e8a020"}.get(_ttier,"#6a7a8a")
+                _tc     = TIER_COLORS.get(_ttier,"#6a7a8a")
                 st.markdown(f'''
                 <div style="background:var(--bc-bg-card);border:0.5px solid var(--bc-border);border-left:3px solid {_tc};border-radius:8px;padding:0.9rem 1rem;margin-bottom:0.5rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -18721,7 +18721,7 @@ with tabs[0]:
             # Only show if positive EV — otherwise show warning
             if ev > 0:
                 ev_color = "#22c55e"
-                tier_dot = {"SOVEREIGN":"#f5c518","ELITE":"#378add","APPROVED":"#e8a020"}
+                tier_dot = TIER_COLORS
                 legs_html = ""
                 for p in parlay_props:
                     dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
@@ -19532,7 +19532,7 @@ with tabs[2]:
 
         # ── Render table ────────────────────────────────────────
         # Header
-        _tier_colors = {"SOVEREIGN":"#f5c518","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a"}
+        _tier_colors = TIER_COLORS
 
         _header = (
             '<div style="display:grid;grid-template-columns:'
@@ -19568,8 +19568,9 @@ with tabs[2]:
             _bg    = _r["_row_bg"]
             _e_str = f"+{_r['_edge_pct']}%" if _r["_edge_pct"] > 0 else f"{_r['_edge_pct']}%"
             # Tier badge + left accent bar
-            _tier_bg_map = {"SOVEREIGN":"rgba(245,197,24,0.15)","ELITE":"rgba(30,144,255,0.12)","APPROVED":"rgba(34,197,94,0.12022","LEAN":"#6a7a8a22"}
-            _tier_bg   = _tier_bg_map.get(_r["_tier"],"#6a7a8a22")
+            _tc_hex = TIER_COLORS.get(_r["_tier"], "#6a7a8a").lstrip("#")
+            _tc_rgb = tuple(int(_tc_hex[i:i+2], 16) for i in (0, 2, 4)) if len(_tc_hex) == 6 else (106, 122, 138)
+            _tier_bg   = f"rgba({_tc_rgb[0]},{_tc_rgb[1]},{_tc_rgb[2]},0.14)"
             _tier_str  = _r["_tier"][:3]
             _conf_color = "#22c55e" if _r.get("_conflict")=="ALIGNED" else "#e04040" if _r.get("_conflict")=="CONFLICTED" else "#e8a020"
             _rely_color = "#22c55e" if _r["_rel"] in ("4/4","3/4") else "var(--bc-dim)"
@@ -20387,7 +20388,7 @@ with tabs[3]:
         _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
         _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
         _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
-        _tc2 = {"SOVEREIGN":"#f5c518","ELITE":"#378add","APPROVED":"#e8a020","LEAN":"#6a7a8a","PASS":"#e04040"}
+        _tc2 = TIER_COLORS
 
         for _gi, _g in enumerate(_fgames):
             _matchup = _g.get("matchup", _g.get("Matchup","—"))
@@ -20581,11 +20582,15 @@ with tabs[3]:
             # replaces the old dead "oddsportal" write that nothing ever read.
             _ol = st.session_state.get("opening_lines_lookup", {}).get(_matchup, {})
             if _ol and (_ol.get("opening_home_ml") is not None or _ol.get("opening_away_ml") is not None):
+                _cur_total = (_g.get("total") or {}).get("points")
+                _move_html = line_movement_html(_ol.get("opening_total"), _cur_total) if _cur_total is not None else ""
                 st.caption(
                     f"📌 Opening: {_g.get('away','Away')} {_ol.get('opening_away_ml','—')} / "
                     f"{_g.get('home','Home')} {_ol.get('opening_home_ml','—')}"
                     + (f" · O/U {_ol['opening_total']}" if _ol.get("opening_total") is not None else "")
                 )
+                if _move_html:
+                    st.markdown(f'<div style="margin-top:-8px;margin-bottom:4px;">Total move: {_move_html}</div>', unsafe_allow_html=True)
 
             # Dimers model edge/win probability (via Stats Insider backend) —
             # independent second-source comparison, display only.
@@ -23358,7 +23363,7 @@ with tabs[5]:
                                                ("ELITE",_ra.get("ELITE",0)),
                                                ("APPROVED",_ra.get("APPROVED",0)),
                                                ("LEAN",_ra.get("LEAN",0))]):
-                _tc = {"SOVEREIGN":"#a855f7","ELITE":"#22c55e","APPROVED":"#3b82f6","LEAN":"#f59e0b"}[_tier]
+                _tc = TIER_COLORS[_tier]
                 _ra_cols[ci].markdown(
                     f'<div style="background:var(--bc-bg-card);border:1px solid {_tc}44;border-radius:8px;padding:10px;text-align:center">'
                     f'<div style="color:{_tc};font-size:11px;font-weight:700">{_tier}</div>'
@@ -23755,12 +23760,7 @@ with tabs[5]:
                     _tier_cal[_t]["prob_sum"] += float(_r.get("prob",0.5) or 0.5)
 
                 _tier_order = ["SOVEREIGN","ELITE","APPROVED","LEAN"]
-                _tier_colors = {
-                    "SOVEREIGN": "#a855f7",
-                    "ELITE":     "#22c55e",
-                    "APPROVED":  "#3b82f6",
-                    "LEAN":      "#f59e0b",
-                }
+                _tier_colors = TIER_COLORS
 
                 if _tier_cal:
                     _cal_cols = st.columns(len(_tier_cal))
