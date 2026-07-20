@@ -20583,14 +20583,21 @@ with tabs[3]:
             _ol = st.session_state.get("opening_lines_lookup", {}).get(_matchup, {})
             if _ol and (_ol.get("opening_home_ml") is not None or _ol.get("opening_away_ml") is not None):
                 _cur_total = (_g.get("total") or {}).get("points")
-                _move_html = line_movement_html(_ol.get("opening_total"), _cur_total) if _cur_total is not None else ""
+                _cur_spread = (_g.get("home_spread") or {}).get("points")
+                _move_total_html = line_movement_html(_ol.get("opening_total"), _cur_total) if _cur_total is not None else ""
+                _move_spread_html = line_movement_html(_ol.get("opening_spread"), _cur_spread) if _cur_spread is not None else ""
                 st.caption(
                     f"📌 Opening: {_g.get('away','Away')} {_ol.get('opening_away_ml','—')} / "
                     f"{_g.get('home','Home')} {_ol.get('opening_home_ml','—')}"
                     + (f" · O/U {_ol['opening_total']}" if _ol.get("opening_total") is not None else "")
                 )
-                if _move_html:
-                    st.markdown(f'<div style="margin-top:-8px;margin-bottom:4px;">Total move: {_move_html}</div>', unsafe_allow_html=True)
+                _move_parts = []
+                if _move_total_html:
+                    _move_parts.append(f"Total {_move_total_html}")
+                if _move_spread_html:
+                    _move_parts.append(f"Spread {_move_spread_html}")
+                if _move_parts:
+                    st.markdown(f'<div style="margin-top:-8px;margin-bottom:4px;">{" · ".join(_move_parts)}</div>', unsafe_allow_html=True)
 
             # Dimers model edge/win probability (via Stats Insider backend) —
             # independent second-source comparison, display only.
@@ -21865,7 +21872,9 @@ with tabs[4]:
             unsafe_allow_html=True
         )
     else:
-        st.info("No bet history yet.")
+        st.markdown(empty_state_html("📈", "No bet history yet",
+                     "Log a bet or lock a pick to start building your track record here."),
+                     unsafe_allow_html=True)
 
     # ROI by Tier + Sport
     if st.session_state.get("history", []):
@@ -23505,7 +23514,9 @@ with tabs[5]:
                                key=lambda x: -x[1].get("count",0) if isinstance(x[1],dict) else -float(x[1] or 0))]
                 st.markdown(_bc_df_html(pd.DataFrame(_sport_rows)), unsafe_allow_html=True)
         else:
-            st.info("Load the board and lock picks to see portfolio exposure.")
+            st.markdown(empty_state_html("📊", "No portfolio exposure yet",
+                         "Load the board and lock a few picks to see how your risk is spread across sports and games."),
+                         unsafe_allow_html=True)
 
         # ── Model Drift Detection ────────────────────────────────
         st.markdown("---")
@@ -25883,19 +25894,54 @@ with tabs[9]:
             if better_ls:
                 st.markdown("### \U0001f525 Better Lines Available Elsewhere")
                 st.caption(f"{len(better_ls)} props where another platform has a more favorable line (≥0.5)")
-                bc = ["Player","Prop","Side","Tier","PrizePicks","Best Book","Best Line","Edge Gain"]
-                st.table(pd.DataFrame(better_ls)[[c for c in bc if c in better_ls[0]]].reset_index(drop=True))
+                for _bl in better_ls:
+                    _bl_tier_c = TIER_COLORS.get(_bl.get("Tier", ""), "#6a7a8a")
+                    st.markdown(
+                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+                        f'border-left:3px solid {_bl_tier_c};border-radius:8px;padding:10px 14px;margin-bottom:6px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span style="font-weight:600;">{_bl.get("Player","")} · {_bl.get("Prop","")} '
+                        f'({_bl.get("Side","")})</span>'
+                        f'<span style="background:{_bl_tier_c}22;color:{_bl_tier_c};border:0.5px solid {_bl_tier_c}44;'
+                        f'border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;">{_bl.get("Tier","")}</span>'
+                        f'</div>'
+                        f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
+                        f'PrizePicks {_bl.get("PrizePicks","")} → <b style="color:#22c55e;">{_bl.get("Best Book","")} '
+                        f'{_bl.get("Best Line","")}</b> · edge gain +{_bl.get("Edge Gain","")}</div>'
+                        f'</div>', unsafe_allow_html=True,
+                    )
             else:
                 st.success("✅ PrizePicks has the best available line on all loaded props.")
         disc_ls = st.session_state.get("multibook_discrepancies", [])
         if disc_ls:
             st.markdown("### \U0001f4ca Cross-Book Discrepancies")
             st.caption("Large gaps between books signal sharp money or line errors")
-            st.table(pd.DataFrame(disc_ls[:10]).reset_index(drop=True))
+            for _dl in disc_ls[:10]:
+                st.markdown(
+                    f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
+                    f'border-radius:8px;padding:10px 14px;margin-bottom:6px;">'
+                    f'<span style="font-weight:600;">{_dl.get("Player","")} · {_dl.get("Prop","")}</span>'
+                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
+                    f'PrizePicks {_dl.get("PrizePicks","")} vs {_dl.get("Book","")} {_dl.get("BookLine","")} '
+                    f'· diff {_dl.get("Diff","")} · favors {_dl.get("Favor","")}</div>'
+                    f'</div>', unsafe_allow_html=True,
+                )
         arb_ls = st.session_state.get("arb_opportunities", [])
         if arb_ls:
             st.markdown("### \u26a1 Arbitrage Opportunities")
-            st.table(pd.DataFrame(arb_ls[:10]).reset_index(drop=True))
+            for _al in arb_ls[:10]:
+                st.markdown(
+                    f'<div style="background:var(--bc-bg-card);border:1px solid #a855f744;'
+                    f'border-radius:8px;padding:10px 14px;margin-bottom:6px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<span style="font-weight:600;">{_al.get("Player","")} · {_al.get("Stat","")} {_al.get("Line","")}</span>'
+                    f'<span style="color:#a855f7;font-weight:700;">{_al.get("Arb Profit","")}</span>'
+                    f'</div>'
+                    f'<div style="color:#8ab4d4;font-size:12px;margin-top:4px;">'
+                    f'OVER {_al.get("OVER Book","")} {_al.get("OVER Odds","")} ({_al.get("OVER Stake","")}) · '
+                    f'UNDER {_al.get("UNDER Book","")} {_al.get("UNDER Odds","")} ({_al.get("UNDER Stake","")})</div>'
+                    f'</div>', unsafe_allow_html=True,
+                )
 
         # ── StatsHub — Statcast + Hit Rates from EV API ──────────────────────
         st.markdown("---")
@@ -26009,7 +26055,9 @@ with tabs[10]:
         st.caption(f"{len(_preview_games)} games found for tomorrow — {_preview_games[0].get('Game Time','')[:10]}")
         st.markdown(_bc_df_html(_preview_games, columns=["Matchup", "Spread", "Total", "Home ML", "Away ML", "Odds Source", "Game Time"]), unsafe_allow_html=True)
     else:
-        st.info("No preview data loaded yet — click **Load Preview** above. If empty after loading, tomorrow's lines may not be posted yet for this sport.")
+        st.markdown(empty_state_html("📅", "No preview data loaded yet",
+                     "Click Load Preview above. If it's still empty afterward, tomorrow's lines may not be posted yet for this sport."),
+                     unsafe_allow_html=True)
 
 with tabs[11]:
     st.markdown("## ⚙️ System Info")

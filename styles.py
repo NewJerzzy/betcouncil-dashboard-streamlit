@@ -71,17 +71,31 @@ def tier_badge_html(tier: str) -> str:
 # === GLOBAL DARK-THEME POLISH ===
 def global_css() -> str:
     """Additive dark-theme polish: skeleton-loader shimmer, empty-state
-    styling, card hover lift. Deliberately does NOT redeclare :root --
-    app.py already defines --bc-blue/--bc-muted/--bc-dim/--bc-border/etc.
-    and hundreds of existing elements depend on those exact values; this
-    only adds new rules on top, using the same variable names."""
+    styling, card hover lift, button/scrollbar/focus polish. Deliberately
+    does NOT redeclare :root -- app.py already defines --bc-blue/--bc-muted/
+    --bc-dim/--bc-border/etc. and hundreds of existing elements depend on
+    those exact values; this only adds new rules on top, using the same
+    variable names."""
     return """<style>
-    /* Card hover lift — applies to any element carrying .bc-card */
+    /* Card hover lift. .bc-card is defined (here and in app.py's own CSS
+       block) but has zero real usage -- almost every card in this app is
+       built via inline styles in an f-string, not a class attribute. The
+       attribute selector below catches that existing pattern directly
+       (virtually every card container already uses border-radius:8px
+       inline) so the hover effect actually applies across the app without
+       needing to touch hundreds of scattered markdown call sites. */
     .bc-card {
         transition: border-color 0.15s ease;
     }
     .bc-card:hover {
         border-color: var(--bc-blue) !important;
+    }
+    div[style*="border-radius:8px"] {
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    div[style*="border-radius:8px"]:hover {
+        border-color: var(--bc-blue) !important;
+        box-shadow: 0 0 10px rgba(30,144,255,0.15);
     }
     /* Skeleton loader shimmer */
     @keyframes bc-shimmer {
@@ -104,6 +118,27 @@ def global_css() -> str:
     .bc-empty-state .bc-empty-icon { font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.7; }
     .bc-empty-state .bc-empty-title { color: var(--bc-muted); font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem; }
     .bc-empty-state .bc-empty-subtitle { font-size: 0.85rem; }
+    /* Button polish -- smoother state transitions on Streamlit's native buttons */
+    .stButton > button {
+        transition: transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(30,144,255,0.25);
+    }
+    .stButton > button:active {
+        transform: translateY(0);
+    }
+    /* Scrollbar polish -- thin, dark-theme-matched instead of the default */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bc-border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--bc-blue); }
+    /* Focus states -- visible, on-brand outline instead of the browser default */
+    input:focus, textarea:focus, select:focus, .stTextInput input:focus {
+        outline: 1px solid var(--bc-blue) !important;
+        box-shadow: 0 0 0 2px rgba(30,144,255,0.15) !important;
+    }
     </style>"""
 
 
