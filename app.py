@@ -21322,12 +21322,16 @@ with tabs[4]:
                 "rebounds": "REB", "reb": "REB",
                 "assists": "AST", "ast": "AST",
                 "pra": "PRA", "pts+reb+ast": "PRA",
-                "3-pt made": "3PM", "3pm": "3PM", "threes": "3PM",
-                "steals": "STL", "blocks": "BLK",
-                "strikeouts": "SO", "strikeout": "SO",
+                "pts+reb": "PTS_REB", "pts+ast": "PTS_AST",
+                "reb+ast": "REB_AST", "rebs+asts": "REB_AST",
+                "fantasy score": "FANTASY",
+                "3-pt made": "3PM", "3pm": "3PM", "3ptm": "3PM", "threes": "3PM",
+                "steals": "STL", "blocks": "BLK", "turnovers": "TO",
+                "walks": "BB",  # must be checked before 'ks' below -- 'ks' is a substring of 'walks'
+                "strikeouts": "SO", "strikeout": "SO", "ks": "SO", "k's": "SO",
                 "hits": "H", "home runs": "HR", "home run": "HR",
                 "pitches thrown": "PC", "pitches": "PC",
-                "innings pitched": "IP", "walks": "BB",
+                "innings pitched": "IP",
                 "goals": "G", "shots on goal": "SOG", "saves": "SV",
                 "receptions": "REC", "pass yards": "PYDS",
                 "rush yards": "RYDS", "receiving yards": "RECYDS",
@@ -21444,9 +21448,13 @@ with tabs[4]:
                                     skipped.append(f"{player} (not found in box score)")
                                     continue
 
-                                # Find stat key
+                                # Find stat key -- check longest/most specific
+                                # keys first (e.g. 'pts+reb+ast' before 'pts'),
+                                # otherwise a short prefix key matches first by
+                                # insertion order and a combo-stat prop like
+                                # PRA never reaches its real mapping.
                                 stat_key = None
-                                for k, v in prop_stat_map.items():
+                                for k, v in sorted(prop_stat_map.items(), key=lambda kv: -len(kv[0])):
                                     if k in prop:
                                         stat_key = v
                                         break
@@ -21455,6 +21463,18 @@ with tabs[4]:
 
                                 if stat_key == "PRA":
                                     actual = pstats.get("PTS",0) + pstats.get("REB",0) + pstats.get("AST",0)
+                                elif stat_key == "PTS_REB":
+                                    actual = pstats.get("PTS",0) + pstats.get("REB",0)
+                                elif stat_key == "PTS_AST":
+                                    actual = pstats.get("PTS",0) + pstats.get("AST",0)
+                                elif stat_key == "REB_AST":
+                                    actual = pstats.get("REB",0) + pstats.get("AST",0)
+                                elif stat_key == "FANTASY":
+                                    # Same DraftKings-style formula used elsewhere for
+                                    # this stat (fetch_wnba_player_stats / BDL fetch).
+                                    actual = (pstats.get("PTS",0) * 1.0 + pstats.get("REB",0) * 1.2 +
+                                              pstats.get("AST",0) * 1.5 + pstats.get("STL",0) * 3.0 +
+                                              pstats.get("BLK",0) * 3.0 - pstats.get("TO",0) * 1.0)
                                 elif stat_key and stat_key in pstats:
                                     actual = pstats[stat_key]
                                 else:
