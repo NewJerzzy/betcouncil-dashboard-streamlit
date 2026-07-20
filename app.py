@@ -24132,9 +24132,9 @@ with tabs[6]:
                         None
                     )
                     if _recent_err:
-                        suggestion, edge_str = "PASS", f"[v3] no data — {_recent_err.get('source','')}: {_recent_err.get('error','')[:80]}"
+                        suggestion, edge_str = "PASS", f"[v4-cache-expiry] no data — {_recent_err.get('source','')}: {_recent_err.get('error','')[:80]}"
                     else:
-                        suggestion, edge_str = "PASS", f"[v3] no real player data found — can't project ({len(_all_errs)} errors logged total)"
+                        suggestion, edge_str = "PASS", f"[v4-cache-expiry] no real player data found — can't project ({len(_all_errs)} errors logged total)"
                 elif avg_val:
                     if _smart_sig.get("smart_signal"):
                         suggestion = _smart_sig.get("signal_a_direction", "OVER" if edge_val > 0 else "UNDER")
