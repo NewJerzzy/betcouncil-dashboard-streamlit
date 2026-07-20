@@ -66,3 +66,81 @@ def tier_badge_html(tier: str) -> str:
     colors = TIER_COLORS
     c = colors.get(tier, "#ffffff")
     return f'<span style="{badge_css(c)}">{tier}</span>'
+
+
+# === GLOBAL DARK-THEME POLISH ===
+def global_css() -> str:
+    """Additive dark-theme polish: skeleton-loader shimmer, empty-state
+    styling, card hover lift. Deliberately does NOT redeclare :root --
+    app.py already defines --bc-blue/--bc-muted/--bc-dim/--bc-border/etc.
+    and hundreds of existing elements depend on those exact values; this
+    only adds new rules on top, using the same variable names."""
+    return """<style>
+    /* Card hover lift — applies to any element carrying .bc-card */
+    .bc-card {
+        transition: border-color 0.15s ease;
+    }
+    .bc-card:hover {
+        border-color: var(--bc-blue) !important;
+    }
+    /* Skeleton loader shimmer */
+    @keyframes bc-shimmer {
+        0% { background-position: -400px 0; }
+        100% { background-position: 400px 0; }
+    }
+    .bc-skeleton {
+        background: linear-gradient(90deg, var(--bc-bg-card) 25%, #14263d 37%, var(--bc-bg-card) 63%);
+        background-size: 800px 100%;
+        animation: bc-shimmer 1.4s ease infinite;
+        border-radius: 6px;
+        border: 1px solid var(--bc-border);
+    }
+    /* Empty state */
+    .bc-empty-state {
+        text-align: center;
+        padding: 2.5rem 1rem;
+        color: var(--bc-dim);
+    }
+    .bc-empty-state .bc-empty-icon { font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.7; }
+    .bc-empty-state .bc-empty-title { color: var(--bc-muted); font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .bc-empty-state .bc-empty-subtitle { font-size: 0.85rem; }
+    </style>"""
+
+
+def skeleton_rows_html(n: int = 3, height_px: int = 54) -> str:
+    """n shimmering placeholder rows, same shape as a .bc-card row, shown
+    while data is loading instead of a bare spinner."""
+    rows = "".join(
+        f'<div class="bc-skeleton" style="height:{height_px}px;margin-bottom:6px;"></div>'
+        for _ in range(n)
+    )
+    return rows
+
+
+def empty_state_html(icon: str, title: str, subtitle: str = "") -> str:
+    sub = f'<div class="bc-empty-subtitle">{subtitle}</div>' if subtitle else ""
+    return (f'<div class="bc-empty-state">'
+            f'<div class="bc-empty-icon">{icon}</div>'
+            f'<div class="bc-empty-title">{title}</div>'
+            f'{sub}</div>')
+
+
+def line_movement_html(opening, current, higher_is_worse_for_bettor=True) -> str:
+    """Small inline movement indicator built from real opening-vs-current
+    line data (BetCouncil captures opening lines once/day already) --
+    not a fabricated multi-point sparkline the data can't actually support.
+    Returns '' if either value is missing (no fake movement shown)."""
+    try:
+        opening_f = float(opening)
+        current_f = float(current)
+    except (TypeError, ValueError):
+        return ""
+    delta = round(current_f - opening_f, 1)
+    if delta == 0:
+        return '<span style="color:var(--bc-muted);font-size:11px;">→ unmoved</span>'
+    moved_against = (delta > 0) == higher_is_worse_for_bettor
+    color = "#e04040" if moved_against else "#22c55e"
+    arrow = "↑" if delta > 0 else "↓"
+    return (f'<span style="color:{color};font-size:11px;font-weight:600;" '
+            f'title="Opened {opening_f}, now {current_f}">{arrow} {abs(delta)}</span>')
+

@@ -75,7 +75,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     compute_market_anchored_fair_line, recalibrate_pricer_bias, PRICER_COMPONENT_BIAS,
     )
 from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text, parse_pp_board_paste
-from styles import TIER_COLORS
+from styles import TIER_COLORS, global_css, skeleton_rows_html, empty_state_html, line_movement_html
 from app_fixes import fetch_vsin_intelligence
 try:
     from sharptrack import render_sharptrack_tab
@@ -647,6 +647,8 @@ st.markdown("""<style>
     animation: sovereign-pulse 2s ease-in-out infinite;
 }
 </style>""", unsafe_allow_html=True)
+
+st.markdown(global_css(), unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -17653,9 +17655,12 @@ with st.sidebar:
                 "props may be unavailable or stale. Board load continues; "
                 "no error will be raised if nothing is returned."
             )
+        _skeleton_ph = st.empty()
+        _skeleton_ph.markdown(skeleton_rows_html(5, height_px=58), unsafe_allow_html=True)
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             _enrich_t0 = _time_mod.perf_counter()
             board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
+            _skeleton_ph.empty()
             _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
                       {"props": len(board), "sport": sport_sel})
             st.session_state.board_data = board
@@ -19245,7 +19250,9 @@ with tabs[2]:
     st.markdown(f'<div class="bc-section-header">📊 EV Optimizer <span style="opacity:0.6;font-weight:400;">— {_sport}</span></div>', unsafe_allow_html=True)
 
     if not _board:
-        st.info("Load the board first to populate the EV Optimizer.")
+        st.markdown(empty_state_html("📊", "No board loaded yet",
+                                      "Pick a sport and load the board to populate the EV Optimizer."),
+                    unsafe_allow_html=True)
     else:
         # ── Filter bar ──────────────────────────────────────────
         _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns([3,2,2,2,2])
@@ -21159,7 +21166,9 @@ with tabs[3]:
                         _mkt_name = _gk.replace("_opener_gap", "").title()
                         st.caption(f"📈 {_mkt_name} moved {_gv.get('gap',0):+.1f} pts from open — real sharp-driven movement, not a survey.")
     else:
-        st.info("No games found. Load the board first.")
+        st.markdown(empty_state_html("🏟️", "No games loaded yet",
+                                      "Pick a sport and load the board to see game lines."),
+                    unsafe_allow_html=True)
 
 # ----- TAB 3: LOCKS & LEDGER -----
 with tabs[4]:
@@ -25501,7 +25510,9 @@ with tabs[9]:
     st.caption("Compares lines across all loaded sources — DFS platforms + sportsbooks. Load the board first to populate.")
     board_ls = st.session_state.board_data
     if not board_ls:
-        st.info("Load the board first.")
+        st.markdown(empty_state_html("🛒", "No board loaded yet",
+                                      "Pick a sport and load the board to compare lines across books."),
+                    unsafe_allow_html=True)
     else:
         # ── Build multi-source lookup from everything already in session (zero new API calls) ──
         ls_sources = {}
