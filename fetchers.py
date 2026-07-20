@@ -12334,6 +12334,13 @@ def fetch_kalshi_markets(sport: str) -> list:
     """
     Fetch Kalshi prediction market contracts for sports props.
     Public API — no auth needed. Cached 30 min.
+
+    Filters by keyword match on market title/subtitle rather than the
+    series_ticker param -- Kalshi's real series tickers are internal
+    prefixed codes (e.g. a confirmed real example: 'KX1HALVING'), not
+    plain sport names, so filtering server-side by an uppercased sport
+    word like 'MLB' or 'BASKETBALL' almost certainly matched zero real
+    series and silently returned nothing every time.
     """
     cache_path = os.path.join(CACHE_DIR, f"kalshi_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -12342,28 +12349,34 @@ def fetch_kalshi_markets(sport: str) -> list:
             if cached is not None: return cached
     try:
         sport_keywords = {
-            "MLB": ["baseball", "mlb", "runs", "strikeouts", "hits"],
-            "NBA": ["basketball", "nba", "points", "rebounds", "assists"],
-            "NFL": ["football", "nfl", "touchdowns", "yards"],
-            "NHL": ["hockey", "nhl", "goals"],
+            "MLB": ["baseball", "mlb"],
+            "NBA": ["basketball", "nba"],
+            "WNBA": ["wnba"],
+            "NFL": ["football", "nfl"],
+            "NHL": ["hockey", "nhl"],
         }
         keywords = sport_keywords.get(sport, [sport.lower()])
         results = []
-        for kw in keywords[:2]:  # limit to 2 keywords to save calls
+        cursor = None
+        for _ in range(3):  # a few pages of open markets, bounded
+            params = {"status": "open", "limit": 200}
+            if cursor:
+                params["cursor"] = cursor
             r = _http.get(
                 "https://api.elections.kalshi.com/trade-api/v2/markets",
-                params={"status": "open", "series_ticker": kw.upper(), "limit": 100},
+                params=params,
                 headers={"Accept": "application/json"},
                 timeout=12,
             )
             if r.status_code != 200:
-                continue
-            for mkt in r.json().get("markets", []):
+                break
+            data = r.json()
+            for mkt in data.get("markets", []):
+                _title = (mkt.get("title", "") + " " + mkt.get("subtitle", "")).lower()
+                if not any(kw in _title for kw in keywords):
+                    continue
                 _yes_bid = mkt.get("yes_bid")
-                _no_bid  = mkt.get("no_bid")
                 try:
-                    # Kalshi prices are in cents (0-100); implied prob from
-                    # mid of yes_bid/no_ask when available, else yes_bid alone.
                     _implied_prob = float(_yes_bid) / 100.0 if _yes_bid is not None else 0.5
                 except (TypeError, ValueError):
                     _implied_prob = 0.5
@@ -12376,12 +12389,15 @@ def fetch_kalshi_markets(sport: str) -> list:
                     "event":        mkt.get("title", ""),
                     "ticker":       mkt.get("ticker", ""),
                     "yes_bid":      _yes_bid,
-                    "no_bid":       _no_bid,
+                    "no_bid":       mkt.get("no_bid"),
                     "implied_prob": _implied_prob,
                     "volume":       _volume,
                     "sport":        sport,
                     "source":       "kalshi",
                 })
+            cursor = data.get("cursor")
+            if not cursor:
+                break
             time.sleep(0.2)
         if results:
             _safe_save_pkl(cache_path, results)
@@ -12395,6 +12411,13 @@ def fetch_polymarket_markets(sport: str) -> list:
     """
     Fetch Polymarket prediction markets for sports.
     Public API — no auth needed. Cached 30 min.
+
+    Uses numeric tag_id (confirmed live-verified in SharpTrack's harvester
+    this same session) via /events, not text-based tag= filtering on
+    /markets -- Polymarket's tag_slug/tag text filtering is confirmed
+    broken (tag_slug=nba returned unrelated politics/election events, zero
+    NBA content, live-tested), so the same unreliable pattern isn't reused
+    here even though it's a different endpoint/param.
     """
     cache_path = os.path.join(CACHE_DIR, f"polymarket_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -12402,41 +12425,48 @@ def fetch_polymarket_markets(sport: str) -> list:
             cached = _safe_load_pkl(cache_path)
             if cached is not None: return cached
     try:
-        sport_tags = {
-            "MLB": "Baseball", "NBA": "Basketball",
-            "NFL": "Football", "NHL": "Hockey",
+        sport_tag_ids = {
+            "NFL": 450, "NBA": 745, "WNBA": 100254, "MLB": 100381, "NHL": 899,
         }
-        tag = sport_tags.get(sport)
-        if not tag:
+        tag_id = sport_tag_ids.get(sport)
+        if not tag_id:
             return []
         r = _http.get(
-            "https://gamma-api.polymarket.com/markets",
-            params={"tag": tag, "active": "true", "closed": "false", "limit": 100},
+            "https://gamma-api.polymarket.com/events",
+            params={"tag_id": tag_id, "active": "true", "closed": "false",
+                    "order": "volume24hr", "ascending": "false", "limit": 50},
             headers={"Accept": "application/json"},
             timeout=12,
         )
         if r.status_code != 200:
             return []
         results = []
-        for mkt in r.json():
-            _yes_price = mkt.get("outcomePrices", [""])[0] if mkt.get("outcomePrices") else None
-            try:
-                _implied_prob = float(_yes_price) if _yes_price not in (None, "") else 0.5
-            except (TypeError, ValueError):
-                _implied_prob = 0.5
-            try:
-                _volume = float(mkt.get("volume") or 0)
-            except (TypeError, ValueError):
-                _volume = 0.0
-            results.append({
-                "question":     mkt.get("question", ""),
-                "slug":         mkt.get("slug", ""),
-                "yes_price":    _yes_price,
-                "implied_prob": _implied_prob,
-                "volume":       _volume,
-                "sport":        sport,
-                "source":       "polymarket",
-            })
+        for event in r.json():
+            for mkt in event.get("markets", []) or []:
+                _outcome_prices = mkt.get("outcomePrices")
+                if isinstance(_outcome_prices, str):
+                    try:
+                        _outcome_prices = json.loads(_outcome_prices)
+                    except (TypeError, ValueError):
+                        _outcome_prices = None
+                _yes_price = _outcome_prices[0] if _outcome_prices else None
+                try:
+                    _implied_prob = float(_yes_price) if _yes_price not in (None, "") else 0.5
+                except (TypeError, ValueError):
+                    _implied_prob = 0.5
+                try:
+                    _volume = float(mkt.get("volume") or 0)
+                except (TypeError, ValueError):
+                    _volume = 0.0
+                results.append({
+                    "question":     mkt.get("question", ""),
+                    "slug":         mkt.get("slug", ""),
+                    "yes_price":    _yes_price,
+                    "implied_prob": _implied_prob,
+                    "volume":       _volume,
+                    "sport":        sport,
+                    "source":       "polymarket",
+                })
         if results:
             _safe_save_pkl(cache_path, results)
         return results
