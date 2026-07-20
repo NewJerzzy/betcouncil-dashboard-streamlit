@@ -5699,11 +5699,20 @@ def _fetch_wnba_roster_via_teams():
     Also cached at the session level (regardless of success/failure) so a
     failed attempt within one board-paste run doesn't retry this same
     16-call sequence for every subsequent player that needs the fallback --
-    that repeat was a real contributor to very slow analysis times.
+    that repeat was a real contributor to very slow analysis times. An
+    EMPTY session-cached result expires after 5 min rather than sticking
+    for the whole browser session, so a transient failure self-heals on
+    the next analysis run instead of silently blocking every player until
+    a full page reload.
     """
     try:
-        if "_wnba_roster_via_teams_session" in st.session_state:
-            return st.session_state["_wnba_roster_via_teams_session"]
+        _cached_session = st.session_state.get("_wnba_roster_via_teams_session")
+        _cached_ts = st.session_state.get("_wnba_roster_via_teams_session_ts", 0)
+        if _cached_session:
+            return _cached_session
+        if _cached_session is not None and (time.time() - _cached_ts <= 300):
+            # Empty result, but still fresh -- don't retry yet.
+            return _cached_session
     except Exception:
         pass
 
@@ -5716,6 +5725,7 @@ def _fetch_wnba_roster_via_teams():
                     _cached = pickle.load(f)
                 try:
                     st.session_state["_wnba_roster_via_teams_session"] = _cached
+                    st.session_state["_wnba_roster_via_teams_session_ts"] = time.time()
                 except Exception:
                     pass
                 return _cached
@@ -5729,6 +5739,7 @@ def _fetch_wnba_roster_via_teams():
     if not teams_data:
         try:
             st.session_state["_wnba_roster_via_teams_session"] = {}
+            st.session_state["_wnba_roster_via_teams_session_ts"] = time.time()
         except Exception:
             pass
         return {}
@@ -5759,6 +5770,7 @@ def _fetch_wnba_roster_via_teams():
             pickle.dump(roster, f)
     try:
         st.session_state["_wnba_roster_via_teams_session"] = roster
+        st.session_state["_wnba_roster_via_teams_session_ts"] = time.time()
     except Exception:
         pass
     return roster

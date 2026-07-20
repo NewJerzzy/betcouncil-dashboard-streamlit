@@ -24165,9 +24165,17 @@ with tabs[6]:
                 # Pre-warm shared caches ONCE, sequentially, before
                 # parallelizing -- avoids worker threads racing to
                 # populate the same session_state key simultaneously.
+                # An EMPTY cached result expires after 5 min instead of
+                # sticking for the whole session -- otherwise a single
+                # transient failure (or a fix landing mid-session) would
+                # silently block every retry until a full page reload.
                 if _board_sport == "WNBA":
-                    if st.session_state.get("wnba_rolling_avgs") is None:
+                    _rolling_cached = st.session_state.get("wnba_rolling_avgs")
+                    _rolling_ts = st.session_state.get("wnba_rolling_avgs_ts", 0)
+                    _rolling_stale = (not _rolling_cached) and (time.time() - _rolling_ts > 300)
+                    if _rolling_cached is None or _rolling_stale:
                         st.session_state["wnba_rolling_avgs"] = fetch_wnba_rolling_averages() or {}
+                        st.session_state["wnba_rolling_avgs_ts"] = time.time()
                     _fetch_wnba_roster_via_teams()
 
                 # Each prop needs its own independent network call for
