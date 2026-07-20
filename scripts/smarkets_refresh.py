@@ -61,6 +61,7 @@ from datetime import datetime, timezone
 
 import requests
 import time
+import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://api.smarkets.com/v3"
@@ -139,9 +140,10 @@ def push_files(files_payload: dict, github_token: str) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code in (403, 429) and attempt < 2:
-            wait = 10 * (attempt + 1)
-            log(f"Gist push got {resp.status_code} (likely rate limit) -- retrying in {wait}s")
+        if resp.status_code in (403, 429, 409) and attempt < 2:
+            base_wait = 10 * (2 ** attempt)  # 10, 20
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")

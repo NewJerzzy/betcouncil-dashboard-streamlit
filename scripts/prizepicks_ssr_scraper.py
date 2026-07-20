@@ -103,6 +103,7 @@ def split_by_league(payload: dict) -> dict:
 
 def push_league_files(by_league: dict) -> int:
     import time
+    import random
     github_token = os.environ["GITHUB_TOKEN"]
     files_payload = {}
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -130,8 +131,9 @@ def push_league_files(by_league: dict) -> int:
         if resp.status_code in (200, 201):
             return len(files_payload)
         if resp.status_code == 409 and attempt < 3:
-            wait = (attempt + 1) * 8
-            log(f"Gist 409 conflict (concurrent write) — retrying in {wait}s (attempt {attempt+1}/4)")
+            base_wait = (attempt + 1) * 8
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist 409 conflict (concurrent write) — retrying in {wait:.1f}s (attempt {attempt+1}/4)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")

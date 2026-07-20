@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 SPORTS = ["mlb"]   # extend as needed: ["mlb", "nfl", "nba"]
@@ -252,8 +253,11 @@ def push_files(files_payload: dict, github_token: str) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code == 409 and attempt < 2:
-            time.sleep((attempt + 1) * 4)
+        if resp.status_code in (409, 403, 429) and attempt < 2:
+            base_wait = 4 * (2 ** attempt)
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+            time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
         DEBUG_LOG.append({

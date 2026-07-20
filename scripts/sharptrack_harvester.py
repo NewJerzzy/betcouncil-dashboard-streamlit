@@ -37,6 +37,7 @@ import urllib.error
 import urllib.parse
 from datetime import datetime, timezone
 from collections import defaultdict
+import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -381,9 +382,10 @@ def push_to_gist(key: str, payload: dict) -> bool:
             with urllib.request.urlopen(req, timeout=25) as r:
                 return r.status == 200
         except urllib.error.HTTPError as e:
-            if e.code in (403, 429) and attempt < 2:
-                wait = 10 * (attempt + 1)
-                log(f"  Gist push got HTTP {e.code} (likely rate limit) -- retrying in {wait}s")
+            if e.code in (403, 429, 409) and attempt < 2:
+                base_wait = 10 * (2 ** attempt)
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"  Gist push got HTTP {e.code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
                 time.sleep(wait)
                 continue
             log(f"  Gist push failed: HTTP {e.code} {e.read()[:300]}")

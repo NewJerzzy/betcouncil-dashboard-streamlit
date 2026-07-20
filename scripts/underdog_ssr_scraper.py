@@ -22,6 +22,7 @@ import sys
 from datetime import datetime, timezone
 
 import requests
+import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 API_URL = "https://api.underdogfantasy.com/beta/v6/over_under_lines"
@@ -137,8 +138,9 @@ def push_sport_files(by_sport: dict) -> int:
         if resp.status_code in (200, 201):
             return len(files_payload)
         if resp.status_code in (409, 403, 429) and attempt < 3:
-            wait = (attempt + 1) * 8
-            log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait}s (attempt {attempt+1}/4)")
+            base_wait = (attempt + 1) * 8
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait:.1f}s (attempt {attempt+1}/4)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")

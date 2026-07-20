@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 
 import requests
 import time
+import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://levy-edge.statsinsider.com.au"
@@ -111,16 +112,19 @@ def push_files(files_payload: dict, github_token: str) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code in (403, 429) and attempt < 2:
-            # Secondary rate limit -- many workflows sharing one GITHUB_TOKEN
-            # can burst-trigger this when GitHub bunches scheduled cron runs
-            # near the top of the hour (confirmed real: 15 unrelated scripts
-            # all failed in the same ~10min window on 2026-07-20, every one
-            # with a successful underlying data fetch, pointing at the shared
-            # Gist push as the actual failure point). Back off and retry
-            # instead of failing the whole job over a transient limit.
-            wait = 10 * (attempt + 1)
-            log(f"Gist push got {resp.status_code} (likely rate limit) -- retrying in {wait}s")
+        if resp.status_code in (403, 429, 409) and attempt < 2:
+            # 403/429 = secondary rate limit (many workflows sharing one
+            # GITHUB_TOKEN can burst-trigger this when GitHub bunches
+            # scheduled cron runs near the top of the hour). 409 = another
+            # workflow wrote to this same shared Gist at the same instant
+            # (confirmed real: multiple unrelated scripts on tight cron
+            # schedules collide on this exact shared resource). True
+            # exponential backoff + random jitter -- without jitter, every
+            # script that collided at T+0 would all retry at the identical
+            # T+10 and just collide again.
+            base_wait = 10 * (2 ** attempt)  # 10, 20
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
