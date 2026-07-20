@@ -53,7 +53,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GAME_SNAPSHOT_FILE = "betcouncil_game_board_snapshots.json"
-DEBUG_LOG_FILE = "betcouncil_scraper_debug_log.txt"
+# Dedicated debug log, not the shared betcouncil_scraper_debug_log.txt --
+# confirmed via live Gist inspection that auto_scraper's every-15-min
+# writes (verbose, hundreds of lines per run) completely crowd out this
+# script's twice-daily entries within the shared file's 400-line
+# retention window, making it impossible to diagnose a real failure here.
+DEBUG_LOG_FILE = "betcouncil_game_board_snapshot_debug.txt"
 
 SEASON_ACTIVE_MONTHS = {
     "NBA":  [10, 11, 12, 1, 2, 3, 4, 5, 6],

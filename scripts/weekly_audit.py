@@ -307,7 +307,14 @@ def audit_missing_imports():
     repo_files = {f for f in os.listdir(".") if f.endswith(".py")}
     local_modules = {f[:-3] for f in repo_files}  # "team_canon.py" -> "team_canon"
 
-    for filename in CORE_FILES:
+    # scripts/*.py (harvesters, scheduled jobs) had the exact same blind
+    # spot as CORE_FILES until this line -- found immediately after
+    # building this check, while manually verifying an unrelated feature
+    # (game_board_snapshot_headless.py) that lives there, not in CORE_FILES.
+    script_files = [f"scripts/{f}" for f in os.listdir("scripts") if f.endswith(".py")] if os.path.isdir("scripts") else []
+    files_to_check = CORE_FILES + script_files
+
+    for filename in files_to_check:
         try:
             src = _read(filename)
         except Exception:
