@@ -20,13 +20,13 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           pip install requests
-          python -c '
+          python3 << 'EOF'
 import requests
 import json
 import os
 from datetime import datetime
 
-url = "https://ardonyjjtwljfzs zhcko.supabase.co/rest/v1/"
+url = "https://ardonyjjtwljfzszhcko.supabase.co/rest/v1/"
 key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 headers = {"apikey": key, "Authorization": f"Bearer {key}"}
 
@@ -42,4 +42,4 @@ with open("rotobot_data.json", "w") as f:
     json.dump(data, f, indent=2)
 
 print("RotoBot refresh completed")
-'
+EOF
