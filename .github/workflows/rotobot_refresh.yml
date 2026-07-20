@@ -18,7 +18,7 @@ jobs:
       - name: Run RotoBot Scraper
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PICK6_GIST_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
         run: |
           pip install requests
           python3 .github/scripts/rotobot_scraper.py

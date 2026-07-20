@@ -11,7 +11,7 @@ GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GIST_FILENAME = "rotobot_data.json"
 
 
-def push_gist(content: str, github_token: str) -> None:
+def push_gist(content: str, gist_token: str) -> None:
     payload = json.dumps({"files": {GIST_FILENAME: {"content": content}}}).encode()
     for attempt in range(1, 5):
         req = urllib.request.Request(
@@ -19,7 +19,7 @@ def push_gist(content: str, github_token: str) -> None:
             data=payload,
             method="PATCH",
             headers={
-                "Authorization":        f"Bearer {github_token}",
+                "Authorization":        f"Bearer {gist_token}",
                 "Accept":               "application/vnd.github+json",
                 "Content-Type":         "application/json",
                 "X-GitHub-Api-Version": "2022-11-28",
@@ -43,15 +43,15 @@ def push_gist(content: str, github_token: str) -> None:
 
 supabase_url = "https://ardonyjjtwljfzszhcko.supabase.co/rest/v1/"
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-github_token = os.getenv("GITHUB_TOKEN")
+gist_token   = os.getenv("PICK6_GIST_TOKEN")
 
-headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
+supabase_headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
 
 data = {"metadata": {"updated": datetime.utcnow().isoformat()}}
 
 tables = ["props", "model_edges", "model_predictions"]
 for t in tables:
-    r = requests.get(supabase_url + t, headers=headers, params={"limit": 300})
+    r = requests.get(supabase_url + t, headers=supabase_headers, params={"limit": 300})
     if r.ok:
         data[t] = r.json()
         print(f"Fetched {len(data[t])} rows from {t}")
@@ -59,5 +59,5 @@ for t in tables:
         print(f"Warning: {t} returned HTTP {r.status_code}")
 
 content = json.dumps(data, separators=(",", ":"))
-push_gist(content, github_token)
+push_gist(content, gist_token)
 print("RotoBot refresh completed")
