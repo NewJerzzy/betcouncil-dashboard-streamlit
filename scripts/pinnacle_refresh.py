@@ -31,6 +31,7 @@ import sys
 from datetime import datetime, timezone
 
 import requests
+import time
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://guest.api.arcadia.pinnacle.com/0.1"
@@ -137,14 +138,28 @@ def normalize(sport: str, league_id: int) -> list:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": files_payload}, timeout=30,
-    )
-    if resp.status_code in (200, 201):
-        return len(files_payload)
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    for attempt in range(3):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            json={"files": files_payload}, timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            return len(files_payload)
+        if resp.status_code in (403, 429) and attempt < 2:
+            # Secondary rate limit -- many workflows sharing one GITHUB_TOKEN
+            # can burst-trigger this when GitHub bunches scheduled cron runs
+            # near the top of the hour (confirmed real: 15 unrelated scripts
+            # all failed in the same ~10min window on 2026-07-20, every one
+            # with a successful underlying data fetch, pointing at the shared
+            # Gist push as the actual failure point). Back off and retry
+            # instead of failing the whole job over a transient limit.
+            wait = 10 * (attempt + 1)
+            log(f"Gist push got {resp.status_code} (likely rate limit) -- retrying in {wait}s")
+            time.sleep(wait)
+            continue
+        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        return 0
     return 0
 
 

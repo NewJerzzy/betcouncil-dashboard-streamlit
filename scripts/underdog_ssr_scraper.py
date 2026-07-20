@@ -136,9 +136,9 @@ def push_sport_files(by_sport: dict) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code == 409 and attempt < 3:
+        if resp.status_code in (409, 403, 429) and attempt < 3:
             wait = (attempt + 1) * 8
-            log(f"Gist 409 conflict (concurrent write) — retrying in {wait}s (attempt {attempt+1}/4)")
+            log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait}s (attempt {attempt+1}/4)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")

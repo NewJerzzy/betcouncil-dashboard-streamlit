@@ -366,22 +366,29 @@ def push_to_gist(key: str, payload: dict) -> bool:
         log("ERROR: GITHUB_TOKEN not set")
         return False
     body = json.dumps({"files": {key: {"content": json.dumps(payload, indent=2, default=str)}}}).encode()
-    req = urllib.request.Request(
-        f"https://api.github.com/gists/{GIST_ID}",
-        data=body,
-        method="PATCH",
-        headers={
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-        }
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=25) as r:
-            return r.status == 200
-    except urllib.error.HTTPError as e:
-        log(f"  Gist push failed: HTTP {e.code} {e.read()[:300]}")
-        return False
+    for attempt in range(3):
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}",
+            data=body,
+            method="PATCH",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json",
+            }
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=25) as r:
+                return r.status == 200
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429) and attempt < 2:
+                wait = 10 * (attempt + 1)
+                log(f"  Gist push got HTTP {e.code} (likely rate limit) -- retrying in {wait}s")
+                time.sleep(wait)
+                continue
+            log(f"  Gist push failed: HTTP {e.code} {e.read()[:300]}")
+            return False
+    return False
 
 
 def run():
