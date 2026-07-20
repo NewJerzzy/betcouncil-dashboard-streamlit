@@ -292,6 +292,113 @@ def audit_harvester_health():
         return {"error": f"could not import fetchers.py: {str(e)[:200]}"}
 
 
+# ── 1d. Missing/broken local imports ──────────────────────────────────
+# The exact check that would have caught unified_sharp_score.py importing
+# 5 modules (team_canon, book_quality, bayesian_line_updater,
+# movement_classifier, bet_decision_layer) that didn't exist anywhere in
+# the repo -- the whole Sharp Board was silently dead because of it, and
+# none of the existing audits checked this basic thing: does every local
+# import actually resolve to a real file with the name actually defined
+# in it. Found by an external audit (Replit) instead of catching it here
+# first, which is the whole reason this check exists now.
+def audit_missing_imports():
+    import re as _re
+    results = []
+    repo_files = {f for f in os.listdir(".") if f.endswith(".py")}
+    local_modules = {f[:-3] for f in repo_files}  # "team_canon.py" -> "team_canon"
+
+    for filename in CORE_FILES:
+        try:
+            src = _read(filename)
+        except Exception:
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError as e:
+            results.append({"file": filename, "import": "(file itself)",
+                             "issue": f"SYNTAX ERROR: {e}"})
+            continue
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                mod = node.module.split(".")[0]
+                if mod not in local_modules:
+                    continue  # not a local module (stdlib/third-party) -- not our concern here
+                mod_path = f"{mod}.py"
+                if mod_path not in repo_files:
+                    results.append({"file": filename, "import": f"from {node.module} import ...",
+                                     "issue": f"MODULE MISSING: {mod_path} does not exist in the repo"})
+                    continue
+                # Module exists -- verify each imported name is actually
+                # defined there (function/class/module-level assignment).
+                try:
+                    mod_src = _read(mod_path)
+                    mod_tree = ast.parse(mod_src)
+                except Exception:
+                    continue
+                defined_names = set()
+                for n in ast.walk(mod_tree):
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        defined_names.add(n.name)
+                    elif isinstance(n, ast.Assign):
+                        for t in n.targets:
+                            if isinstance(t, ast.Name):
+                                defined_names.add(t.id)
+                # Star imports and wildcard re-exports can't be statically
+                # verified this way -- skip rather than false-flag.
+                if any(a.name == "*" for a in node.names):
+                    continue
+                for alias in node.names:
+                    if alias.name not in defined_names:
+                        results.append({"file": filename, "import": f"from {node.module} import {alias.name}",
+                                         "issue": f"NAME NOT FOUND: '{alias.name}' is not defined anywhere in {mod_path}"})
+
+    return results
+
+
+# ── 1e. Broad exception blocks that swallow everything silently ────────
+# A different, real bug class than a missing import: classify_book_role()
+# was called as classify_book_role(x)["role"] -- a guaranteed TypeError
+# every time it ran with real data -- but a wrapping `except Exception:
+# pass` (no logging, no re-raise) hid it completely; it never showed up
+# anywhere, not in logs, not in the UI. This doesn't try to prove a given
+# except block IS hiding a bug (too many legitimate defensive ones exist
+# to do that reliably) -- it just enumerates the highest-risk shape (bare
+# except / except Exception, body is ONLY `pass` or `continue`, zero
+# logging) so they're periodically reviewable instead of invisible.
+def audit_silent_except_blocks():
+    results = []
+    for filename in CORE_FILES:
+        try:
+            src = _read(filename)
+            tree = ast.parse(src)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            for handler in node.handlers:
+                is_broad = (
+                    handler.type is None or
+                    (isinstance(handler.type, ast.Name) and handler.type.id == "Exception") or
+                    (isinstance(handler.type, ast.Attribute) and handler.type.attr == "Exception")
+                )
+                if not is_broad:
+                    continue
+                body = handler.body
+                is_silent = len(body) >= 1 and all(
+                    isinstance(s, (ast.Pass, ast.Continue)) or
+                    (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))  # a bare string/comment-like expr
+                    for s in body
+                )
+                if is_silent:
+                    results.append({
+                        "file": filename, "line": handler.lineno,
+                        "note": "bare/Exception except with no logging -- any real bug here is invisible",
+                    })
+    return results
+
+
 # ── 3. File size watch ──────────────────────────────────────────────────
 
 def audit_file_sizes():
@@ -397,6 +504,8 @@ def build_summary_markdown(current, diff):
     wired_sig_count = len(current.get("dead_signal_fields", [])) - len(dead_sig)
 
     stubs = current.get("stub_functions", [])
+    missing_imports = current.get("missing_imports", [])
+    silent_excepts = current.get("silent_excepts", [])
 
     lines = [f"## BetCouncil Weekly Self-Audit — {current['run_date']}", ""]
     lines.append(f"**Fetch functions:** {wired_count} wired in / {len(dead)} orphaned (defined, never referenced)")
@@ -406,6 +515,25 @@ def build_summary_markdown(current, diff):
                   f"body is a docstring + a constant return that ignores every argument (see "
                   f"build_game_line_consensus, fixed 2026-07 — 18 books' real data fed a function "
                   f"that silently returned {{}} regardless)")
+    lines.append(f"**Broken local imports:** {len(missing_imports)} — a module imported by a CORE_FILES "
+                  f"file that either doesn't exist in the repo, or doesn't define the specific name being "
+                  f"imported (see unified_sharp_score.py importing 5 nonexistent modules, found by an "
+                  f"external audit rather than this one, fixed 2026-07 — this check exists because of that miss)")
+    lines.append(f"**Silent exception blocks:** {len(silent_excepts)} — bare/`except Exception:` blocks "
+                  f"whose entire body is `pass`/`continue` with zero logging, the highest-risk shape for "
+                  f"hiding a real bug completely (see classify_book_role() called as a dict when it "
+                  f"returns a string, a guaranteed TypeError every run, invisible because of exactly "
+                  f"this pattern, fixed 2026-07)")
+    if missing_imports:
+        lines.append("")
+        lines.append("#### 🔴 Broken imports (fix immediately — these modules/names don't exist)")
+        for r in missing_imports[:20]:
+            lines.append(f"- `{r['file']}`: `{r['import']}` — {r['issue']}")
+    if silent_excepts:
+        lines.append("")
+        lines.append("#### 🟡 Silent except blocks (review — may be hiding a real bug)")
+        for r in silent_excepts[:20]:
+            lines.append(f"- `{r['file']}:{r['line']}` — {r['note']}")
     lines.append("")
     lines.append("### Changes since last audit")
     for c in diff:
@@ -583,6 +711,14 @@ def main():
     log("Checking file sizes...")
     file_sizes = audit_file_sizes()
 
+    log("Checking local imports resolve...")
+    missing_imports = audit_missing_imports()
+    log(f"  {len(missing_imports)} broken import(s) found")
+
+    log("Scanning for silent exception blocks...")
+    silent_excepts = audit_silent_except_blocks()
+    log(f"  {len(silent_excepts)} bare/silent except block(s) found")
+
     current = {
         "run_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "run_ts": datetime.now(timezone.utc).isoformat(),
@@ -591,6 +727,8 @@ def main():
         "stub_functions": stub_functions,
         "harvester_health": harvester_health,
         "file_sizes": file_sizes,
+        "missing_imports": missing_imports,
+        "silent_excepts": silent_excepts,
     }
 
     log("Reading previous audit for diff...")

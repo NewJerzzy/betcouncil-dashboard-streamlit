@@ -16755,7 +16755,7 @@ def fetch_betmgm_props_from_gist(sport: str) -> list:
 
     # Secondary: existing scraper
     try:
-        from fetchers import fetch_betmgm_props as _fetch_mgm
+        from fetchers import fetch_betmgm_direct as _fetch_mgm
         secondary = _fetch_mgm(sport)
         if secondary:
             print(f"[BetMGM] SECONDARY: {len(secondary)} props from scraper")
@@ -16864,7 +16864,7 @@ def fetch_draftkings_props_from_gist(sport: str) -> tuple:
             print(f"[DraftKings] SECONDARY: {len(props)} props from LineStar GetPropBets")
             return props, "linestar_fallback"
     try:
-        from fetchers import fetch_draftkings_props as _fdk
+        from fetchers import fetch_draftkings_direct as _fdk
         s = _fdk(sport)
         if s: return s, "scraper_fallback"
     except Exception: pass
