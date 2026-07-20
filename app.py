@@ -8582,7 +8582,7 @@ def scan_all_sports_best_plays():
 
 _BEGINNER_TIER_ORDER = {"SOVEREIGN": 4, "ELITE": 3, "APPROVED": 2, "LEAN": 1, "PASS": 0}
 _BEGINNER_TIER_SCORE = {"SOVEREIGN": 1.0, "ELITE": 0.8, "APPROVED": 0.6, "LEAN": 0.3, "PASS": 0.1}
-_BEGINNER_ELIGIBLE_SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL"]  # sports with reliable board scans
+_BEGINNER_ELIGIBLE_SPORTS = ["NBA", "MLB", "NHL", "WNBA", "NFL", "Tennis", "Golf", "Soccer", "UFC"]
 
 
 def build_new_bettor_shortlist(max_props=6, max_games=6, min_tier="ELITE"):
@@ -15202,14 +15202,17 @@ def load_sport_data(sport):
             if _ud:
                 _needs_bdl_avg.add(_pl)
         if _needs_bdl_avg:
-            with ThreadPoolExecutor(max_workers=8) as _ex:
-                _futs = {_ex.submit(fetch_player_season_avg_bdl, _pl, sport): _pl for _pl in _needs_bdl_avg}
-                for _fut in _futs:
-                    try:
-                        _bdl_avg_prefetch[_futs[_fut]] = _fut.result()
-                    except Exception as _ex:
-                        _bdl_avg_prefetch[_futs[_fut]] = None
-                        _logger.warning("BDL avg prefetch for %s failed: %s", _futs[_fut], _ex)
+            # Was a bare ThreadPoolExecutor + .result() with NO timeout at
+            # all -- worse than the bug already found/fixed in
+            # _fetch_parallel (which at least attempted a 25s ceiling): a
+            # single slow/hanging player lookup here could block this
+            # whole board load indefinitely, with no cap whatsoever.
+            # Reusing _fetch_parallel gives it the same real 25s ceiling.
+            _bdl_players = list(_needs_bdl_avg)
+            _bdl_fns = [(lambda _pl=_pl: fetch_player_season_avg_bdl(_pl, sport)) for _pl in _bdl_players]
+            _bdl_results = _fetch_parallel(_bdl_fns, show_progress=False)
+            for _pl, _res in zip(_bdl_players, _bdl_results):
+                _bdl_avg_prefetch[_pl] = _res
     if BDL_API_KEY:
         _needs_logs = set()
         for _p in props:
@@ -15220,14 +15223,11 @@ def load_sport_data(sport):
             if _pteam and any(_pteam in _g.get("Matchup","") for _g in games):
                 _needs_logs.add(_pl)
         if _needs_logs:
-            with ThreadPoolExecutor(max_workers=8) as _ex:
-                _futs = {_ex.submit(fetch_player_game_logs, _pl, sport, 20): _pl for _pl in _needs_logs}
-                for _fut in _futs:
-                    try:
-                        _bdl_logs_prefetch[_futs[_fut]] = _fut.result()
-                    except Exception as _ex:
-                        _bdl_logs_prefetch[_futs[_fut]] = []
-                        _logger.warning("BDL logs prefetch for %s failed: %s", _futs[_fut], _ex)
+            _log_players = list(_needs_logs)
+            _log_fns = [(lambda _pl=_pl: fetch_player_game_logs(_pl, sport, 20)) for _pl in _log_players]
+            _log_results = _fetch_parallel(_log_fns, show_progress=False)
+            for _pl, _res in zip(_log_players, _log_results):
+                _bdl_logs_prefetch[_pl] = _res if _res is not None else []
     if sport == "NBA":
         _unique_teams = set()
         for _g in games:
@@ -15235,14 +15235,11 @@ def load_sport_data(sport):
                 if _tok != "vs" and len(_tok) <= 3 and _tok.isalpha():
                     _unique_teams.add(_tok)
         if _unique_teams:
-            with ThreadPoolExecutor(max_workers=8) as _ex:
-                _futs = {_ex.submit(fetch_team_recent_defense, sport, _t, 10): _t for _t in _unique_teams}
-                for _fut in _futs:
-                    try:
-                        _team_def_prefetch[_futs[_fut]] = _fut.result()
-                    except Exception as _ex:
-                        _team_def_prefetch[_futs[_fut]] = None
-                        _logger.warning("Team defense prefetch for %s failed: %s", _futs[_fut], _ex)
+            _def_teams = list(_unique_teams)
+            _def_fns = [(lambda _t=_t: fetch_team_recent_defense(sport, _t, 10)) for _t in _def_teams]
+            _def_results = _fetch_parallel(_def_fns, show_progress=False)
+            for _t, _res in zip(_def_teams, _def_results):
+                _team_def_prefetch[_t] = _res
 
     for p in props:
         stat_raw = p["Prop"]
