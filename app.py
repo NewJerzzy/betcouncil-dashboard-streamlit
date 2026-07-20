@@ -24160,6 +24160,41 @@ with tabs[6]:
             if not _board_props:
                 st.warning("Couldn't find any props in that paste. Check the format matches a PrizePicks board copy.")
             else:
+                # Sport-mismatch check: team abbreviations that only exist
+                # in one league or the other (no cross-league ambiguity),
+                # so we can catch e.g. WNBA props pasted while NBA is
+                # selected in the dropdown -- exactly the mix-up that
+                # caused a long, confusing "no data" debugging chase.
+                _league_exclusive_teams = {
+                    # Verified against real WNBA team abbreviations pulled
+                    # live earlier this session, cross-checked against
+                    # standard NBA abbreviations -- teams that exist in
+                    # BOTH leagues (ATL, CHI, DAL, IND, MIN, PHX, POR, TOR)
+                    # are deliberately excluded from both sets since they
+                    # give no signal either way. 'LAS' included alongside
+                    # ESPN's 'LA' since PrizePicks' own board uses 'LAS'
+                    # for the Sparks, confirmed from a real pasted board.
+                    "WNBA": {"SEA", "GS", "LA", "LAS", "CON", "NY", "LV", "WSH"},
+                    "NBA": {"OKC", "HOU", "ORL", "WAS", "BKN", "UTA", "MEM", "NOP",
+                             "MIA", "NYK", "MIL", "PHI", "GSW", "BOS", "SAC", "CLE",
+                             "LAL", "LAC", "SAS", "DET", "CHA", "DEN"},
+                }
+                _pasted_teams = {p.get("team", "").upper() for p in _board_props if p.get("team")}
+                _other_sport_hits = {}
+                for _lg, _teams in _league_exclusive_teams.items():
+                    if _lg == _board_sport:
+                        continue
+                    _hit = _pasted_teams & _teams
+                    if _hit:
+                        _other_sport_hits[_lg] = _hit
+                if _other_sport_hits and _board_sport in ("NBA", "WNBA"):
+                    _hit_lg, _hit_teams = next(iter(_other_sport_hits.items()))
+                    st.warning(
+                        f"⚠️ This looks like **{_hit_lg}** data (team codes: {', '.join(sorted(_hit_teams))}), "
+                        f"but **{_board_sport}** is selected above. Switch the Sport dropdown to {_hit_lg} and "
+                        f"re-analyze, or these props will show as 'no data' even though they're valid."
+                    )
+
                 _t_wta = fetch_tennis_scoreboard("wta") if _board_sport == "Tennis" else {}
                 _t_ctx = fetch_tennis_tournament_context() if _board_sport == "Tennis" else {}
                 # Pre-warm shared caches ONCE, sequentially, before
