@@ -75,28 +75,43 @@ def log(msg: str) -> None:
 def fetch_csv_rows(tour: str, year: int):
     repo = TOURS[tour]["repo"]
     prefix = TOURS[tour]["prefix"]
-    url = f"{BASE_URL}/{repo}/master/{prefix}_{year}.csv"
-    for attempt in range(3):
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=25)
-        except Exception as e:
-            DEBUG_LOG.append({"tour": tour, "year": year, "url": url, "attempt": attempt + 1, "error": str(e)})
-            if attempt < 2:
-                time.sleep(3 * (attempt + 1))
-                continue
-            return None
-        DEBUG_LOG.append({"tour": tour, "year": year, "url": url, "status": r.status_code, "bytes": len(r.content)})
-        if r.status_code == 404:
-            # Expected for a not-yet-started season or a not-yet-posted
-            # file -- not an error, just nothing to aggregate this year.
-            return None
-        if r.status_code != 200:
-            return None
-        try:
-            return list(csv.DictReader(io.StringIO(r.text)))
-        except Exception as e:
-            DEBUG_LOG.append({"tour": tour, "year": year, "parse_error": str(e)})
-            return None
+    path = f"{prefix}_{year}.csv"
+    raw_url = f"{BASE_URL}/{repo}/master/{path}"
+    # Primary: GitHub's REST contents API, requesting the raw media type --
+    # GitHub Actions runners already talk to api.github.com constantly for
+    # their own operations, so this is far less likely to hit whatever
+    # environment-specific block made raw.githubusercontent.com 404
+    # (confirmed 404 from Actions runners on every one of 4 files that are
+    # confirmed to genuinely exist and be substantial via a different client).
+    api_url = f"https://api.github.com/repos/JeffSackmann/{repo}/contents/{path}"
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    api_headers = dict(HEADERS)
+    api_headers["Accept"] = "application/vnd.github.raw"
+    if github_token:
+        api_headers["Authorization"] = f"Bearer {github_token}"
+
+    for label, url, hdrs in (("api", api_url, api_headers), ("raw", raw_url, HEADERS)):
+        for attempt in range(2):
+            try:
+                r = requests.get(url, headers=hdrs, timeout=25)
+            except Exception as e:
+                DEBUG_LOG.append({"tour": tour, "year": year, "path": label, "url": url,
+                                   "attempt": attempt + 1, "error": str(e)})
+                if attempt < 1:
+                    time.sleep(3)
+                    continue
+                break
+            DEBUG_LOG.append({"tour": tour, "year": year, "path": label, "url": url,
+                               "status": r.status_code, "bytes": len(r.content)})
+            if r.status_code == 404:
+                break  # try the other path/URL, not a retry-worthy transient error
+            if r.status_code != 200:
+                break
+            try:
+                return list(csv.DictReader(io.StringIO(r.text)))
+            except Exception as e:
+                DEBUG_LOG.append({"tour": tour, "year": year, "path": label, "parse_error": str(e)})
+                break
     return None
 
 
