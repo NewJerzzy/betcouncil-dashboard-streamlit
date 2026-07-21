@@ -84,13 +84,20 @@ def fetch_csv_rows(tour: str, year: int):
     # (confirmed 404 from Actions runners on every one of 4 files that are
     # confirmed to genuinely exist and be substantial via a different client).
     api_url = f"https://api.github.com/repos/JeffSackmann/{repo}/contents/{path}"
-    github_token = os.environ.get("GITHUB_TOKEN", "")
+    # Deliberately unauthenticated -- this is a public THIRD-PARTY repo, not
+    # our own. If PICK6_GIST_TOKEN is a fine-grained PAT scoped to specific
+    # repos (likely, since it exists only for this project's own Gist),
+    # attaching it here makes GitHub's API return 404 for anything outside
+    # that scope, even genuinely public content -- confirmed via a live
+    # debug log showing a real, well-formed 404 JSON body (127 bytes,
+    # matching GitHub's standard error shape) once the token was attached.
     api_headers = dict(HEADERS)
     api_headers["Accept"] = "application/vnd.github.raw"
-    if github_token:
-        api_headers["Authorization"] = f"Bearer {github_token}"
 
-    for label, url, hdrs in (("api", api_url, api_headers), ("raw", raw_url, HEADERS)):
+    jsdelivr_url = f"https://cdn.jsdelivr.net/gh/JeffSackmann/{repo}@master/{path}"
+
+    for label, url, hdrs in (("api", api_url, api_headers), ("raw", raw_url, HEADERS),
+                              ("jsdelivr", jsdelivr_url, HEADERS)):
         for attempt in range(2):
             try:
                 r = requests.get(url, headers=hdrs, timeout=25)
