@@ -67,19 +67,24 @@ def log(msg: str) -> None:
 
 
 def fetch_json(url: str, label: str):
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-    except Exception as e:
-        DEBUG_LOG.append({"label": label, "url": url, "error": str(e)})
-        return None
-    DEBUG_LOG.append({"label": label, "url": url, "status": r.status_code,
-                       "body_snippet": r.text[:400]})
-    if r.status_code != 200:
-        return None
-    try:
-        return r.json()
-    except json.JSONDecodeError:
-        return None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+        except Exception as e:
+            DEBUG_LOG.append({"label": label, "url": url, "attempt": attempt + 1, "error": str(e)})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return None
+        DEBUG_LOG.append({"label": label, "url": url, "attempt": attempt + 1, "status": r.status_code,
+                           "body_snippet": r.text[:400]})
+        if r.status_code != 200:
+            return None
+        try:
+            return r.json()
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 def fetch_todays_events() -> list:
