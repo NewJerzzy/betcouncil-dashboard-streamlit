@@ -14450,17 +14450,56 @@ def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
 
 def fetch_tennis_player_stats(player_id: str, tour: str = "atp") -> dict:
     """
-    Confirmed dead end (live-tested): ESPN's tennis athlete stats endpoint
-    returns HTTP 200 but only shell metadata (athlete/season/league/news) --
-    zero categories, labels, or stat values. The sports.core.api.espn.com
-    variant returns splits.categories but with empty labels arrays too.
-    Neither is usable. Returns {} immediately instead of burning a network
-    round-trip that always comes back empty; this does mean the specialized
-    Tennis Total Games projection has no real per-player data source right
-    now either, which is a real loss but more honest than pretending a
-    dead endpoint might work.
+    Fetch tennis player season stats -- real source, confirmed live this
+    session: Jeff Sackmann / Tennis Abstract's tennis_atp / tennis_wta
+    GitHub repos (CC BY-NC-SA 4.0, personal research use). Replaces the
+    ESPN endpoint below, confirmed dead (200 but shell-metadata-only, zero
+    real stat values on either endpoint variant tested).
+
+    player_id: player name string (e.g. "Novak Djokovic"). Parameter name
+               kept for caller compatibility -- looked up directly by name
+               against the pre-aggregated season-stats Gist (no ID
+               resolution needed, unlike the old ESPN path).
+    tour:      "atp" or "wta" (default "atp").
+    Cached 6h. Maps to the exact field names compute_tennis_games_projection
+    already expects ("1st Serve %", "Aces", "Break Points Won").
     """
-    return {}
+    cache_key = f"tennis_sackmann_{normalize_name(player_id)}_{tour}"
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 6:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    gist_file = f"betcouncil_tennis_sackmann_{tour.upper()}.json"
+    try:
+        data = _read_gist_file(gist_file, cache_minutes=360)
+    except Exception:
+        data = None
+    if not data:
+        return {}
+
+    players = data.get("players", {})
+    norm = normalize_name(player_id)
+    match = players.get(player_id) or next(
+        (v for k, v in players.items() if normalize_name(k) == norm), None
+    )
+    if not match:
+        return {}
+
+    result = {
+        "1st Serve %": match.get("first_in_pct", 0),
+        "Aces": match.get("ace_avg", 0),
+        "Break Points Won": match.get("bp_won_avg", 0),
+        "Double Faults": match.get("df_avg", 0),
+        "n_games": match.get("matches", 0),
+        "_source": "Sackmann/TennisAbstract (CC BY-NC-SA 4.0)",
+    }
+    if result["n_games"]:
+        _safe_save_pkl(cache_path, result)
+    return result
 
 
 def _fetch_tennis_player_stats_DEAD_ENDPOINT(player_id: str, tour: str = "atp") -> dict:
