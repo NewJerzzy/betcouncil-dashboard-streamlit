@@ -1,37 +1,36 @@
 """
-sackmann_tennis_refresh.py — ATP + WTA per-player season stats.
+sackmann_tennis_refresh.py — ATP per-player season stats.
 
 ================================================================================
-Source: Jeff Sackmann / Tennis Abstract's tennis_atp and tennis_wta GitHub
-repos (github.com/JeffSackmann/tennis_atp, github.com/JeffSackmann/tennis_wta).
-Confirmed live this session (not assumed from documentation):
-  - atp_matches_2025.csv exists, 2,945 lines / 603 KB of real match data
-  - atp_matches_2026.csv also exists (current season, in progress)
-  - WTA repo uses an identical column schema (confirmed directly from
-    wta_matches_2023.csv's real header + data rows)
-  - raw.githubusercontent.com serves these files with ZERO authentication
-    required, for any public repo -- no GitHub token needed at all,
-    regardless of that token's scopes. An earlier investigation assumed a
-    repo-scoped PAT was required and that the 2025 file didn't exist yet;
-    both of those were checked directly and found incorrect.
+Source: TennisMyLife (stats.tennismylife.org), confirmed live this session:
+  - 2025.csv and 2026.csv exist and are actively updated in real-time
+    during live tournaments (their own site showed an in-progress
+    tournament being updated as it was checked)
+  - Identical column schema to Sackmann's ATP data (w_ace, w_df, w_svpt,
+    w_1stIn, w_1stWon, w_2ndWon, w_SvGms, w_bpSaved, w_bpFaced, plus
+    loser-side equivalents) -- confirmed directly from their own
+    documented column list
+  - MIT licensed, "Access: Free to use" -- no non-commercial restriction
 
-LICENSE: Creative Commons Attribution-NonCommercial-ShareAlike 4.0
-International (CC BY-NC-SA 4.0). Attribution required, non-commercial use
-only. Per the repo's own README: "I'm serious about the license... if
-violations continue, I may stop updating the repo entirely." This script
-is used for personal betting research (BetCouncil), not resale of the
-underlying data -- keep it that way. Attribution: Jeff Sackmann /
-Tennis Abstract (http://www.tennisabstract.com/), based on a work at
-https://github.com/JeffSackmann.
+Replaces Jeff Sackmann's GitHub repos (tennis_atp / tennis_wta), which
+were confirmed inaccessible this session -- 404 across three independent
+fetch paths (raw.githubusercontent.com, api.github.com contents API,
+jsDelivr's mirror), consistent with the repos having gone private at some
+point after being publicly forked/starred.
 
-WHAT THIS BUILDS: per-player, per-tour SEASON AVERAGES (aces, double
-faults, first-serve %, break points saved %, etc.) aggregated across all
-of that player's matches this season, from both the winner_* and loser_*
+WTA: TennisMyLife is ATP-only (confirmed via their own site -- only ATP
+Tour/Challenger/Qualifying tables exist, no WTA section). No working WTA
+source as of this fix; not pointed at anything rather than silently
+pointed at something confirmed dead.
+
+WHAT THIS BUILDS: per-player SEASON AVERAGES (aces, double faults,
+first-serve %, break points saved/won, etc.) aggregated across all of
+that player's matches this season, from both the winner_* and loser_*
 columns of every match row they appear in. Match-level data, not live
 in-tournament data -- updates once a match result is posted, not
 mid-match.
 
-Pushes to betcouncil_tennis_sackmann_ATP.json / _WTA.json.
+Pushes to betcouncil_tennis_sackmann_ATP.json.
 """
 
 import csv
@@ -47,15 +46,22 @@ from datetime import datetime, timezone
 import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
-BASE_URL = "https://raw.githubusercontent.com/JeffSackmann"
+BASE_URL = "https://stats.tennismylife.org/data"
 
-# Both current-season files -- 2026 may 404 early in the year before
-# Sackmann has posted it yet; handled gracefully, not fatal.
 YEARS = [2025, 2026]
 
+# TennisMyLife (stats.tennismylife.org) confirmed live this session: real
+# 2025/2026 CSVs, actively updated in real-time during live tournaments,
+# MIT licensed, identical column schema to Sackmann's data. Replaces the
+# Sackmann repos after those were confirmed inaccessible (private/404
+# across three independent fetch paths). TennisMyLife is ATP-only --
+# confirmed via their own site (only ATP Tour / ATP Challenger / ATP
+# Qualifying tables exist, no WTA section anywhere) and their GitHub
+# description ("ATP tournaments matches"). WTA has no working source as
+# of this fix -- not pointed at anything rather than silently pointed at
+# something confirmed not to work.
 TOURS = {
-    "ATP": {"repo": "tennis_atp", "prefix": "atp_matches"},
-    "WTA": {"repo": "tennis_wta", "prefix": "wta_matches"},
+    "ATP": {"prefix": ""},
 }
 
 # Stat columns to aggregate, per side (w_ / l_ prefix in the source data).
@@ -73,52 +79,28 @@ def log(msg: str) -> None:
 
 
 def fetch_csv_rows(tour: str, year: int):
-    repo = TOURS[tour]["repo"]
-    prefix = TOURS[tour]["prefix"]
-    path = f"{prefix}_{year}.csv"
-    raw_url = f"{BASE_URL}/{repo}/master/{path}"
-    # Primary: GitHub's REST contents API, requesting the raw media type --
-    # GitHub Actions runners already talk to api.github.com constantly for
-    # their own operations, so this is far less likely to hit whatever
-    # environment-specific block made raw.githubusercontent.com 404
-    # (confirmed 404 from Actions runners on every one of 4 files that are
-    # confirmed to genuinely exist and be substantial via a different client).
-    api_url = f"https://api.github.com/repos/JeffSackmann/{repo}/contents/{path}"
-    # Deliberately unauthenticated -- this is a public THIRD-PARTY repo, not
-    # our own. If PICK6_GIST_TOKEN is a fine-grained PAT scoped to specific
-    # repos (likely, since it exists only for this project's own Gist),
-    # attaching it here makes GitHub's API return 404 for anything outside
-    # that scope, even genuinely public content -- confirmed via a live
-    # debug log showing a real, well-formed 404 JSON body (127 bytes,
-    # matching GitHub's standard error shape) once the token was attached.
-    api_headers = dict(HEADERS)
-    api_headers["Accept"] = "application/vnd.github.raw"
-
-    jsdelivr_url = f"https://cdn.jsdelivr.net/gh/JeffSackmann/{repo}@master/{path}"
-
-    for label, url, hdrs in (("api", api_url, api_headers), ("raw", raw_url, HEADERS),
-                              ("jsdelivr", jsdelivr_url, HEADERS)):
-        for attempt in range(2):
-            try:
-                r = requests.get(url, headers=hdrs, timeout=25)
-            except Exception as e:
-                DEBUG_LOG.append({"tour": tour, "year": year, "path": label, "url": url,
-                                   "attempt": attempt + 1, "error": str(e)})
-                if attempt < 1:
-                    time.sleep(3)
-                    continue
-                break
-            DEBUG_LOG.append({"tour": tour, "year": year, "path": label, "url": url,
-                               "status": r.status_code, "bytes": len(r.content)})
-            if r.status_code == 404:
-                break  # try the other path/URL, not a retry-worthy transient error
-            if r.status_code != 200:
-                break
-            try:
-                return list(csv.DictReader(io.StringIO(r.text)))
-            except Exception as e:
-                DEBUG_LOG.append({"tour": tour, "year": year, "path": label, "parse_error": str(e)})
-                break
+    url = f"{BASE_URL}/{year}.csv"
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=25)
+        except Exception as e:
+            DEBUG_LOG.append({"tour": tour, "year": year, "url": url,
+                               "attempt": attempt + 1, "error": str(e)})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return None
+        DEBUG_LOG.append({"tour": tour, "year": year, "url": url,
+                           "status": r.status_code, "bytes": len(r.content)})
+        if r.status_code == 404:
+            return None  # not yet posted for this year -- not an error
+        if r.status_code != 200:
+            return None
+        try:
+            return list(csv.DictReader(io.StringIO(r.text)))
+        except Exception as e:
+            DEBUG_LOG.append({"tour": tour, "year": year, "parse_error": str(e)})
+            return None
     return None
 
 
