@@ -19849,8 +19849,21 @@ def fetch_mlb_player_season_avg(player_name, player_id=None):
                     "n_games": g,
                     "_type": "pitcher",
                 })
-                # Pitcher FS: SO*3 - ER*2 + IP*1 (simplified)
-                ip = round(float(s.get("inningsPitched", 0) or 0) / g, 2)
+                # MLB's inningsPitched field uses out-based notation, not
+                # decimal -- "6.2" means 6 full innings + 2 outs (6.667
+                # innings), NOT 6.2 innings. A plain float() parse was
+                # silently wrong (affected Pitcher FS too, not just Outs).
+                ip_raw = str(s.get("inningsPitched", "0") or "0")
+                if "." in ip_raw:
+                    _whole, _frac = ip_raw.split(".", 1)
+                    _whole_i = int(_whole or 0)
+                    _partial_outs = int(_frac[:1] or 0)  # only 0/1/2 valid in MLB's notation
+                else:
+                    _whole_i, _partial_outs = int(ip_raw or 0), 0
+                total_outs_szn = _whole_i * 3 + _partial_outs
+                ip = round(total_outs_szn / 3 / g, 2)
+                result["Outs"] = round(total_outs_szn / g, 2)
+                result["Pitcher Outs"] = result["Outs"]
                 result["Pitcher FS"] = round(result["SO"] * 3 - result["ER"] * 2 + ip, 1)
         except Exception:
             continue
