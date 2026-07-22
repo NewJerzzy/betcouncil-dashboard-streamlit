@@ -24118,7 +24118,37 @@ with tabs[6]:
             else:
                 st.caption("Upload a screenshot to see extracted text.")
 
-    # Quick paste section
+    def _guess_sport_from_stat(stat_text: str) -> str:
+        """Infers sport from the stat name itself, so a pasted mixed-sport
+        slip doesn't need a manual per-pick sport selection. Checks the
+        most distinctive (least ambiguous) phrases first -- a multi-word
+        combo like 'Hits+Runs+RBIs' or 'Passing Yards' is far more sport-
+        specific than a single generic word like 'Points' or 'Assists',
+        which several sports share. Falls back to MLB (previous hardcoded
+        default) only when nothing distinctive matches, rather than
+        guessing wildly on an ambiguous single word."""
+        s = stat_text.lower()
+        # Ordered most-distinctive-first; first match wins.
+        checks = [
+            ("MLB",    ["strikeout", "hits+runs+rbi", "total bases", "earned run",
+                        "pitcher outs", "pitching outs", "hitter fs", "pitcher fs",
+                        "home run", "rbi", "walks allowed", "hits allowed"]),
+            ("NFL",     ["passing yard", "rushing yard", "receiving yard", "reception",
+                        "passing td", "interception", "completion", "sack", "field goal"]),
+            ("NHL",     ["shots on goal", "power play point", "save", "blocked shot",
+                        "goal+assist", "shorthanded"]),
+            ("Tennis",  ["ace", "double fault", "total games", "total sets", "break point"]),
+            ("Golf",    ["stroke", "birdie", "bogey", "eagle"]),
+            ("UFC",     ["significant strike", "takedown", "submission attempt"]),
+            ("Soccer",  ["shots on target", "tackle", "clean sheet", "yellow card"]),
+            ("NBA",     ["pts+reb", "pts+ast", "reb+ast", "3-pt made", "3pt made",
+                        "point", "rebound", "assist", "turnover", "block", "steal"]),
+        ]
+        for sport, phrases in checks:
+            if any(p in s for p in phrases):
+                return sport
+        return "MLB"
+
     # Manual entry in slip analyzer kept minimal - screenshot/text only
     with st.expander("📋 Paste slip text or screenshot", expanded=False):
         paste_text = st.text_area(
@@ -24150,7 +24180,7 @@ with tabs[6]:
                         parsed_picks.append({
                             "player": player, "stat": stat,
                             "line": line_val, "side": side,
-                            "sport": "MLB"
+                            "sport": _guess_sport_from_stat(stat)
                         })
                         continue
                     # Pattern 2: PrizePicks raw — "James Wood ↑ 6.5 Hitter FS"
@@ -24173,7 +24203,7 @@ with tabs[6]:
                         parsed_picks.append({
                             "player": player, "stat": stat,
                             "line": line_val, "side": side,
-                            "sport": "MLB"
+                            "sport": _guess_sport_from_stat(stat)
                         })
                         continue
                 if parsed_picks:
