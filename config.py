@@ -608,6 +608,7 @@ STAT_NORMALIZE = {
     ("NBA", "Points"): "PTS", ("NBA", "Rebounds"): "REB", ("NBA", "Assists"): "AST",
     ("NBA", "Pts+Reb+Ast"): "PRA", ("MLB", "Home Runs"): "HR", ("MLB", "Hits"): "H",
     ("MLB", "RBIs"): "RBI", ("MLB", "Runs"): "R", ("MLB", "Strikeouts"): "SO",
+    ("MLB", "PO"): "Outs", ("MLB", "Pitcher Outs"): "Outs", ("MLB", "Pitching Outs"): "Outs",
     ("NFL", "Passing Yards"): "PASS_YDS", ("NFL", "Rushing Yards"): "RUSH_YDS",
     ("NFL", "Receiving Yards"): "REC_YDS", ("NFL", "Touchdowns"): "TD",
     ("NHL", "Points"): "PTS", ("NHL", "Goals"): "GOALS", ("NHL", "Assists"): "ASSISTS",

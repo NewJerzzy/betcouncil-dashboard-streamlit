@@ -11173,7 +11173,7 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
                     "Hits+Runs+RBls": "H+R+RBI",
                     "1st Inning Runs Allowed": "ER",
                     "Total Bases": "TB",
-                    "Pitcher Outs": "Outs", "Pitching Outs": "Outs", "Outs": "Outs",
+                    "Pitcher Outs": "Outs", "Pitching Outs": "Outs", "Outs": "Outs", "PO": "Outs",
                 }
                 _key = _stat_map.get(stat_norm) or _stat_map.get(stat) or stat_norm
                 _val = mlb_stats.get(_key, 0)
