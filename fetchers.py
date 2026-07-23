@@ -13136,6 +13136,28 @@ def fetch_bovada_game_lines(sport: str) -> list:
 
 def fetch_bovada_props(sport: str) -> list:
     """
+    PRIMARY (Jul 2026): Odds-API.io -- confirmed live this session (18/18
+    MLB games, 50-51 real Bovada prop entries per game), using its own
+    separate account/key (ODDS_API_IO_KEY_BOVADA) since the free tier
+    caps at 2 bookmakers per key (Bet365+FanDuel already use the other
+    key's 2 slots). Identical "Player (Stat)" label format to FanDuel,
+    confirmed via live test.
+
+    SECONDARY (previous primary): direct public Bovada props API, kept
+    as a real fallback rather than removed.
+    Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source}
+    """
+    try:
+        oddsapiio_data = _read_gist_file(f"betcouncil_oddsapiio_bovada_props_{sport.upper()}.json", cache_minutes=15)
+    except Exception:
+        oddsapiio_data = None
+    if oddsapiio_data and oddsapiio_data.get("props"):
+        return oddsapiio_data["props"]
+    return _fetch_bovada_props_direct(sport)
+
+
+def _fetch_bovada_props_direct(sport: str) -> list:
+    """
     Fetch Bovada player props via public props API — no auth required.
     Endpoint: /services/sports/event/coupon/events/A/description/{sport}-season-props
     Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source}
