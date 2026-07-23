@@ -16714,9 +16714,18 @@ def fetch_caesars_waf_from_gist() -> str:
 
 def fetch_fanduel_props_from_gist(sport: str) -> list:
     """
-    PRIMARY:   Read FanDuel props from Gist (pushed by browser harvester).
-    SECONDARY: fetch_fanduel_props_sharpapi() if stale.
-    TERTIARY (2026-07): LineStar's GetPropBets already includes FanDuel as
+    PRIMARY (Jul 2026): Odds-API.io -- confirmed live this session against
+    a real pending MLB game (307 real FanDuel prop entries across 10 stat
+    categories), independently cross-checked against the vendor's own
+    official docs before wiring in. No PerimeterX token, no browser tab,
+    no expiring session -- one clean REST call. Shares a 100/hr free-tier
+    budget with the Bet365 game-lines source on the same account/key.
+
+    SECONDARY: browser harvester Gist (previous primary) -- kept as a
+    real fallback, not removed, in case the odds-api.io source is ever
+    unavailable or its free-tier budget is exhausted for the hour.
+    TERTIARY: fetch_fanduel_props_sharpapi() if stale.
+    QUATERNARY (2026-07): LineStar's GetPropBets already includes FanDuel as
     one of its books (Source=2), server-side, already proven live this
     session (wired into Line Shop as "FanDuel (LineStar)"). Cheap, real,
     zero additional infra risk.
@@ -16731,6 +16740,14 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
     process (not a thread) first.
     Returns (props_list, source_label)
     """
+    try:
+        oddsapiio_data = _read_gist_file(f"betcouncil_oddsapiio_fanduel_props_{sport.upper()}.json", cache_minutes=15)
+    except Exception:
+        oddsapiio_data = None
+    if oddsapiio_data and oddsapiio_data.get("props"):
+        print(f"[FanDuel] PRIMARY: {len(oddsapiio_data['props'])} props from odds-api.io")
+        return oddsapiio_data["props"], "oddsapiio"
+
     data = _read_gist_file(f"betcouncil_fd_props_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=28):
         raw = data.get("props", data.get("data",[]))
@@ -16738,26 +16755,26 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
             # Parse FanDuel API format
             results = _parse_fanduel_harvested(raw, sport)
             if results:
-                print(f"[FanDuel] PRIMARY: {len(results)} props from browser harvester")
+                print(f"[FanDuel] SECONDARY: {len(results)} props from browser harvester")
                 return results, "browser_harvester"
 
-    # Secondary fallback
+    # Tertiary fallback
     try:
         secondary = fetch_fanduel_props_sharpapi(sport)
         if secondary:
-            print(f"[FanDuel] SECONDARY: {len(secondary)} props from SharpAPI")
+            print(f"[FanDuel] TERTIARY: {len(secondary)} props from SharpAPI")
             return secondary, "sharpapi_fallback"
     except Exception:
         pass
 
-    # Tertiary fallback: LineStar GetPropBets, FanDuel book (Source=2)
+    # Quaternary fallback: LineStar GetPropBets, FanDuel book (Source=2)
     try:
         ls_data, _ = fetch_linestar_props_from_gist(sport)
         if ls_data:
             ls_by_book = parse_linestar_props_all_books(ls_data, sport)
             fd_list = ls_by_book.get("FanDuel") or ls_by_book.get("Fanduel") or []
             if fd_list:
-                print(f"[FanDuel] TERTIARY: {len(fd_list)} props from LineStar")
+                print(f"[FanDuel] QUATERNARY: {len(fd_list)} props from LineStar")
                 return fd_list, "linestar_fallback"
     except Exception:
         pass
