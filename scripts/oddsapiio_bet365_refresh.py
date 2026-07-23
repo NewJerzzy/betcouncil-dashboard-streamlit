@@ -140,16 +140,27 @@ def fetch_sport(sport: str, api_key: str) -> list:
             continue
         odds_list = odds_resp if isinstance(odds_resp, list) else odds_resp.get("data", [])
         for game_odds in odds_list:
-            bm = (game_odds.get("bookmakers") or {}).get(BOOKMAKER, {})
-            if not bm:
+            bet365_markets = (game_odds.get("bookmakers") or {}).get(BOOKMAKER, [])
+            if not bet365_markets:
                 continue
-            ml = bm.get("ML", {})
-            spread = bm.get("Spread", {})
-            totals = bm.get("Totals", {})
+            # Real confirmed shape: a LIST of {"name": "ML"|"Spread"|"Totals"|...,
+            # "odds": [{...}]} -- not a flat dict as first assumed.
+            by_market = {}
+            for m in bet365_markets:
+                name = m.get("name")
+                odds_entries = m.get("odds") or []
+                if name and odds_entries:
+                    by_market[name] = odds_entries[0]
+
+            ml = by_market.get("ML", {})
+            spread = by_market.get("Spread", {})
+            totals = by_market.get("Totals", {})
+            if not (ml or spread or totals):
+                continue
             games.append({
-                "event_id": game_odds.get("eventId") or game_odds.get("id"),
-                "home_team": game_odds.get("home") or game_odds.get("home_team"),
-                "away_team": game_odds.get("away") or game_odds.get("away_team"),
+                "event_id": game_odds.get("id"),
+                "home_team": game_odds.get("home"),
+                "away_team": game_odds.get("away"),
                 "home_ml": _decimal_to_american(ml.get("home")) if ml else None,
                 "away_ml": _decimal_to_american(ml.get("away")) if ml else None,
                 "spread_hdp": spread.get("hdp") if spread else None,
