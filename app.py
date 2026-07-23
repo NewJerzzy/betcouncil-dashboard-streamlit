@@ -13178,25 +13178,26 @@ def load_sport_data(sport):
         if "mlb_roster_ids" not in st.session_state or not st.session_state["mlb_roster_ids"]:
             with st.spinner("Loading MLB roster IDs..."):
                 st.session_state["mlb_roster_ids"] = fetch_mlb_full_roster_ids()
-        # Run remaining MLB pre-pool fetches in parallel instead of sequentially
-        from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
-        import time as _t0
-        _mlb_pre_fns = {
-            "rolling":  fetch_mlb_rolling_averages,
-            "pitchers": fetch_mlb_probable_pitchers,
-            "woba":     _fetch_live_team_woba_splits,
-            "lineups":  fetch_mlb_confirmed_lineups_with_fallback,
-            "fl":       lambda: fetch_fantasylabs_lineups(sport),
-        }
-        _mlb_pre = {}
-        with _TPE(max_workers=5) as _pre_ex:
-            _pre_futs = {_pre_ex.submit(fn): name for name, fn in _mlb_pre_fns.items()}
-            for _fut in _ac(_pre_futs):
-                _name = _pre_futs[_fut]
-                try:
-                    _mlb_pre[_name] = _fut.result(timeout=15)
-                except Exception:
-                    _mlb_pre[_name] = None
+        # Run remaining MLB pre-pool fetches in parallel instead of sequentially.
+        # Was as_completed()+per-future .result(timeout=15) inside a
+        # `with ThreadPoolExecutor(...) as ex:` block -- the exact bug
+        # pattern already diagnosed and fixed elsewhere this session: the
+        # per-future timeout looks like protection but as_completed()
+        # itself has no overall ceiling, and the with-block's __exit__
+        # still calls shutdown(wait=True), blocking indefinitely on
+        # whichever future hasn't finished regardless of any per-future
+        # timeout. Reusing the same proven _fetch_parallel helper (real
+        # 25s ceiling) instead of the ad-hoc pattern.
+        _mlb_pre_names = ["rolling", "pitchers", "woba", "lineups", "fl"]
+        _mlb_pre_fns = [
+            fetch_mlb_rolling_averages,
+            fetch_mlb_probable_pitchers,
+            _fetch_live_team_woba_splits,
+            fetch_mlb_confirmed_lineups_with_fallback,
+            (lambda: fetch_fantasylabs_lineups(sport)),
+        ]
+        _mlb_pre_results = _fetch_parallel(_mlb_pre_fns, show_progress=False)
+        _mlb_pre = dict(zip(_mlb_pre_names, _mlb_pre_results))
         mlb_rolling = _mlb_pre.get("rolling") or {}
         season_avgs = dict(PLAYER_AVERAGES.get("MLB", {}))
         _merge_rolling(season_avgs, mlb_rolling)
