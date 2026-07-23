@@ -1,8 +1,9 @@
 name: RotoBot Refresh
 
+# DISABLED: RotoBot sports picks are auth-gated; Supabase key points to SaaS
+# billing DB only. Re-enable by restoring the schedule trigger below.
+# Original schedule: "0 */4 * * *"
 on:
-  schedule:
-    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 jobs:
