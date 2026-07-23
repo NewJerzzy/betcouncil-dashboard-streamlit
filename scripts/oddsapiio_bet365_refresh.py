@@ -111,7 +111,27 @@ def _decimal_to_american(dec_str) -> int:
     return round(-100 / (dec - 1))
 
 
-def fetch_sport(sport: str, api_key: str) -> list:
+_GAME_LINE_MARKETS = {"ML", "Spread", "Totals"}
+
+
+def _parse_bet365_prop_player(label: str) -> str:
+    """Bet365's prop label format is 'Player (AltLineNum) (Line)' --
+    different from FanDuel's cleaner 'Player (Stat)' (confirmed via live
+    test: 'Nolan Arenado (1) (0.5)'). The stat comes from the market name
+    instead (e.g. 'Home Runs O/U'), not the label -- only the player name
+    is extracted here, everything before the first '('."""
+    if not label:
+        return ""
+    idx = label.find("(")
+    return (label[:idx] if idx != -1 else label).strip()
+
+
+def _market_name_to_stat(market_name: str) -> str:
+    """'Home Runs O/U' -> 'Home Runs', 'Pitcher Strikeouts O/U' -> 'Pitcher Strikeouts'."""
+    return market_name.replace(" O/U", "").strip()
+
+
+def fetch_sport(sport: str, api_key: str) -> tuple:
     slug, league = SPORT_LEAGUES[sport]
     # Only fetch events that already have Bet365 odds -- vendor's own
     # documented best practice, avoids spending quota on events Bet365
@@ -121,12 +141,13 @@ def fetch_sport(sport: str, api_key: str) -> list:
         "status": "pending,live",
     })
     if not events:
-        return []
+        return [], []
     event_list = events if isinstance(events, list) else events.get("data", [])
     if not event_list:
-        return []
+        return [], []
 
     games = []
+    props = []
     # Batch up to 10 events per /odds/multi call -- confirmed live this
     # session (3 events = 1 request), matches the vendor's own
     # best-practices example exactly.
@@ -151,6 +172,22 @@ def fetch_sport(sport: str, api_key: str) -> list:
                 odds_entries = m.get("odds") or []
                 if name and odds_entries:
                     by_market[name] = odds_entries[0]
+                    # Props markets (anything not a known game-line market)
+                    # have MANY odds entries -- one per player -- not just
+                    # the first. Confirmed live: 'Home Runs O/U' returned
+                    # 53 entries, 'Pitcher Strikeouts O/U' returned 18.
+                    if name not in _GAME_LINE_MARKETS and len(odds_entries) > 0:
+                        stat = _market_name_to_stat(name)
+                        for entry in odds_entries:
+                            player = _parse_bet365_prop_player(entry.get("label", ""))
+                            if not player:
+                                continue
+                            props.append({
+                                "Player": player, "Prop": stat, "Line": entry.get("hdp"),
+                                "OverOdds": _decimal_to_american(entry.get("over")) if entry.get("over") not in (None, "N/A") else None,
+                                "UnderOdds": _decimal_to_american(entry.get("under")) if entry.get("under") not in (None, "N/A") else None,
+                                "Book": "Bet365", "Sport": sport, "source": "odds-api.io",
+                            })
 
             ml = by_market.get("ML", {})
             spread = by_market.get("Spread", {})
@@ -170,7 +207,7 @@ def fetch_sport(sport: str, api_key: str) -> list:
                 "over_odds": _decimal_to_american(totals.get("over")) if totals else None,
                 "under_odds": _decimal_to_american(totals.get("under")) if totals else None,
             })
-    return games
+    return games, props
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
@@ -209,17 +246,25 @@ def main() -> int:
             log(f"Budget cap ({MAX_REQUESTS_PER_RUN} requests) reached, skipping remaining sports")
             break
         try:
-            games = fetch_sport(sport, api_key)
+            games, props = fetch_sport(sport, api_key)
         except Exception as e:
             log(f"{sport}: error — {e}")
-            games = []
-        log(f"{sport}: {len(games)} Bet365 games, {_request_count[0]} requests used so far")
+            games, props = [], []
+        log(f"{sport}: {len(games)} Bet365 games, {len(props)} Bet365 props, {_request_count[0]} requests used so far")
         if games:
             any_data = True
             files_payload[f"betcouncil_oddsapiio_bet365_{sport}.json"] = {
                 "content": json.dumps({
                     "source": "odds-api.io", "bookmaker": "Bet365",
                     "sport": sport, "captured_at": now_iso, "games": games,
+                })
+            }
+        if props:
+            any_data = True
+            files_payload[f"betcouncil_oddsapiio_bet365_props_{sport}.json"] = {
+                "content": json.dumps({
+                    "source": "odds-api.io", "bookmaker": "Bet365",
+                    "sport": sport, "captured_at": now_iso, "props": props,
                 })
             }
 

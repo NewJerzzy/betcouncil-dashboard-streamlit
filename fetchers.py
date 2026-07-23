@@ -13388,8 +13388,21 @@ def _fetch_betmgm_widgetdata(sport: str) -> list:
         return []
 
 def fetch_espnbet_game_lines(sport: str) -> list:
-    """ESPN BET game lines via Kambi (offering_id='espnbet'). Cached 60 min."""
-    return _fetch_kambi_game_lines("espnbet", sport, "ESPN BET")
+    """
+    ESPN Bet no longer exists as a sportsbook -- confirmed via independent
+    news search, not just a guess: ESPN Bet fully shut down and was
+    replaced by theScore Bet on December 1, 2025 (PENN Entertainment and
+    ESPN ended their sportsbook partnership; the app itself was updated
+    in-place to theScore Bet's branding that day, with no ESPN Bet
+    product remaining in any form). This isn't a transient outage to
+    retry -- there is no "espnbet" Kambi offering to ever succeed again.
+    theScore Bet's own data is already covered properly and separately by
+    fetch_thescore_game_lines() (Unabated primary, browser-harvester
+    fallback) -- that's the real, live successor to what this function
+    used to represent. Returns [] immediately rather than wasting a
+    network call on a permanently defunct endpoint.
+    """
+    return []
 
 
 def fetch_fanatics_game_lines(sport: str) -> list:
