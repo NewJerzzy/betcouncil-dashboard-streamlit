@@ -8,7 +8,9 @@ Handles Cloudflare automatically on all regulated US books.
 BOOKS COVERED:
   DFS:        PrizePicks, Underdog, Sleeper
   US Sharp:   DraftKings, FanDuel, BetMGM, Caesars
-  Offshore:   Bovada, MyBookie, BetOnline (no login needed)
+  Offshore:   BetOnline (no login needed)
+  (Bovada and MyBookie removed Jul 2026 -- both now covered server-side
+  via odds-api.io / the-odds-api.com, no local browser/scraping needed.)
 
 SETUP (one time):
   pip install requests curl_cffi playwright
@@ -22,14 +24,12 @@ CREATE config.json (same folder as this script):
   "underdog":     {"enabled": true},
   "sleeper":      {"enabled": true},
   "betonline":    {"enabled": true},
-  "bovada":       {"enabled": true},
   "parlayplay":   {"session_cookie": "YOUR_PARLAYPLAY_SESSIONID"},
   "draftkings":   {"username": "YOUR_DK_EMAIL",    "password": "YOUR_DK_PASSWORD"},
   "dk_pick6":     {"enabled": true},  # uses same DK credentials as above
   "fanduel":      {"username": "YOUR_FD_EMAIL",    "password": "YOUR_FD_PASSWORD"},
   "betmgm":       {"username": "YOUR_MGM_EMAIL",   "password": "YOUR_MGM_PASSWORD"},
-  "caesars":      {"username": "YOUR_CZR_EMAIL",   "password": "YOUR_CZR_PASSWORD"},
-  "mybookie":     {"username": "YOUR_MB_USERNAME", "password": "YOUR_MB_PASSWORD"}
+  "caesars":      {"username": "YOUR_CZR_EMAIL",   "password": "YOUR_CZR_PASSWORD"}
 }
 
 USAGE:
@@ -387,95 +387,6 @@ def login_caesars(cfg):
         print(f"  ❌ caesars login error: {e}")
     return None
 
-def login_mybookie(cfg):
-    cached = load_session("mybookie")
-    if cached:
-        print("  Using cached mybookie session")
-        return cached
-    print("\n  Logging into mybookie (browser)...")
-    try:
-        from playwright.sync_api import sync_playwright
-        import time as _t
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=False,
-                args=["--disable-blink-features=AutomationControlled"]
-            )
-            ctx = browser.new_context(user_agent=UA, viewport={"width":1280,"height":800})
-            ctx.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
-            page = ctx.new_page()
-            page.goto("https://mybookie.ag/login", wait_until="domcontentloaded", timeout=45000)
-            _t.sleep(3)
-            # Use confirmed selectors from diagnostic
-            # Clear fields first then fill
-            page.click("#user")
-            page.fill("#user", "")
-            page.type("#user", cfg["username"], delay=50)
-            _t.sleep(0.5)
-            page.click("#pass")
-            page.fill("#pass", "")
-            page.type("#pass", cfg["password"], delay=50)
-            _t.sleep(0.5)
-            # Click the Login submit button
-            page.click('button[type="submit"]:has-text("Login")')
-            _t.sleep(3)
-            # Handle "confirm I'm human" popup
-            _t.sleep(2)
-            human_selectors = [
-                'button:has-text("Human")',
-                'button:has-text("Human")',
-                'button:has-text("Confirm")',
-                'button:has-text("Continue")',
-                'button:has-text("Verify")',
-                'button:has-text("I Agree")',
-                'button:has-text("OK")',
-                'input[type="submit"]',
-                '[class*="human"]',
-                '[class*="verify"]',
-                '[class*="confirm"]',
-                '[id*="human"]',
-                '[id*="verify"]',
-            ]
-            for sel in human_selectors:
-                try:
-                    if page.is_visible(sel, timeout=1500):
-                        page.click(sel)
-                        print(f"  ✅ Clicked human verification: {sel}")
-                        _t.sleep(2)
-                        break
-                except Exception:
-                    continue
-
-            # If still on login page try clicking any visible button
-            if "login" in page.url.lower():
-                try:
-                    # Find all buttons and click first non-nav one
-                    btns = page.query_selector_all("button:visible")
-                    for btn in btns:
-                        txt = (btn.inner_text() or "").strip().lower()
-                        if any(w in txt for w in ["human","confirm","verify","continue","ok","agree"]):
-                            btn.click()
-                            print(f"  ✅ Clicked: {txt}")
-                            _t.sleep(2)
-                            break
-                except Exception as _e:
-                    pass  # TODO: log _e
-            _t.sleep(3)
-            print(f"  Post-login URL: {page.url}")
-            cookies = {c["name"]:c["value"] for c in ctx.cookies()}
-            browser.close()
-            # Check if login succeeded — URL should change away from /login
-            if "login" not in page.url or any(k in cookies for k in ["cust_s_a","gamingstation_session"]):
-                save_session("mybookie", cookies)
-                print(f"  ✅ MyBookie login successful")
-                return cookies
-            else:
-                print(f"  ❌ MyBookie login failed — still on login page")
-                return None
-    except Exception as e:
-        print(f"  ❌ mybookie login error: {e}")
-        return None
-
 def login_underdog(cfg):
     return playwright_login(
         book="underdog",
@@ -716,50 +627,6 @@ def scrape_sleeper(sport):
         print(f"    Error: {e}")
     return props
 
-def scrape_bovada_lines(sport):
-    """Bovada game lines — direct, no login."""
-    print(f"\n  Bovada {sport} (game lines):")
-    sport_map = {"NBA":"basketball/nba","MLB":"baseball/mlb",
-                 "NHL":"hockey/nhl","NFL":"football/nfl","WNBA":"basketball/wnba"}
-    sp = sport_map.get(sport,"basketball/nba")
-    lines = []
-    try:
-        from curl_cffi import requests as cf
-        _bov_session = cf.Session(impersonate="chrome124")
-        r = _bov_session.get(
-            f"https://www.bovada.lv/services/sports/event/coupon/events/A/description/{sp}",
-            params={"lang":"en","eventsLimit":"50","preMatchOnly":"true"},
-            headers={"User-Agent": UA, "Referer": "https://www.bovada.lv/"},
-            timeout=15
-        )
-        print(f"    Status: {r.status_code}")
-        if r.status_code == 200:
-            data = r.json()
-            for event in data:
-                for ev in event.get("events",[]):
-                    matchup = ev.get("description","")
-                    for comp in ev.get("displayGroups",[]):
-                        for mkt in comp.get("markets",[]):
-                            desc = mkt.get("description","").lower()
-                            if not any(x in desc for x in ["moneyline","spread","total"]):
-                                continue
-                            for out in mkt.get("outcomes",[]):
-                                price = out.get("price",{})
-                                lines.append({
-                                    "matchup":  matchup,
-                                    "market":   mkt.get("description",""),
-                                    "outcome":  out.get("description",""),
-                                    "american": price.get("american",""),
-                                    "handicap": price.get("handicap",""),
-                                    "Book":     "Bovada",
-                                    "Sport":    sport,
-                                    "source":   "bovada_auto",
-                                })
-            print(f"    Lines: {len(lines)}")
-    except Exception as e:
-        print(f"    Error: {e}")
-    return lines
-
 def scrape_betonline(sport):
     """BetOnline — no login needed."""
     print(f"\n  BetOnline {sport}:")
@@ -847,115 +714,6 @@ def scrape_betonline(sport):
         print(f"    Error: {e}")
     print(f"    Props: {len(props)}")
     return props
-
-def scrape_mybookie(sport, cookies):
-    """MyBookie props using session cookies. Uses curl_cffi (Chrome TLS
-    impersonation) rather than plain requests — confirmed 2026-06-21 that a
-    genuinely fresh, valid session cookie (including cf_clearance) still got
-    403'd via plain requests. Cloudflare binds cf_clearance validity to the
-    TLS fingerprint it was issued under; plain Python requests has a
-    different handshake signature than a real browser, so even a correct
-    cookie value gets rejected. Same fix already proven working elsewhere in
-    this file for Caesars/BetRivers."""
-    print(f"\n  MyBookie {sport}:")
-    cfg_s  = SPORT_MAP.get(sport, SPORT_MAP["NBA"])
-    props  = []
-    cookie_str = "; ".join(f"{k}={v}" for k,v in cookies.items())
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Cookie": cookie_str,
-        "Referer":  "https://engine.mybookie.ag/sports/nba",
-        "Origin":   "https://engine.mybookie.ag",
-        "Accept":   "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        # CSRF tokens from session
-        "X-CSRF-TOKEN":  cookies.get("XSRF-TOKEN",""),
-        "X-XSRF-TOKEN":  cookies.get("XSRF-TOKEN",""),
-    }
-    try:
-        from curl_cffi import requests as cf
-        r = cf.get(
-            "https://engine.mybookie.ag/sports_api/leagues-lines",
-            params={"sport":cfg_s["sport"],"league":cfg_s["league"]},
-            headers=headers, impersonate="chrome124", timeout=15
-        )
-        print(f"    leagues-lines: {r.status_code}")
-        if r.status_code in (401, 403):
-            SESSION_DIR.joinpath("mybookie_session.json").unlink(missing_ok=True)
-            print(f"    Session expired (403) — attempting auto-refresh via browser...")
-            _mb_cfg = load_config().get("mybookie", {})
-            new_cookies = login_mybookie(_mb_cfg)
-            if new_cookies:
-                # Update config.json session_cookie with fresh values
-                try:
-                    _cfg_path = Path(__file__).parent / "config.json"
-                    if _cfg_path.exists():
-                        import json as _json
-                        _full_cfg = _json.loads(_cfg_path.read_text())
-                        _full_cfg.setdefault("mybookie", {})["session_cookie"] = "; ".join(
-                            f"{k}={v}" for k,v in new_cookies.items()
-                        )
-                        _cfg_path.write_text(_json.dumps(_full_cfg, indent=2))
-                        print(f"    ✅ config.json updated with fresh MyBookie cookies")
-                except Exception as _ce:
-                    print(f"    ⚠️  Could not update config.json: {_ce}")
-                # Retry with new cookies
-                new_cookie_str = "; ".join(f"{k}={v}" for k,v in new_cookies.items())
-                headers["Cookie"] = new_cookie_str
-                r = cf.get(
-                    "https://engine.mybookie.ag/sports_api/leagues-lines",
-                    params={"sport":cfg_s["sport"],"league":cfg_s["league"]},
-                    headers=headers, impersonate="chrome124", timeout=15
-                )
-                if r.status_code in (401, 403):
-                    print(f"    ❌ Still 403 after re-login — cf_clearance may need manual refresh")
-                    print(f"    👉 Re-run the DevTools cookie grab from mybookie.ag and update config.json")
-                    return props, True
-                cookies = new_cookies
-            else:
-                print(f"    ❌ Auto re-login failed — manual cookie refresh required")
-                print(f"    👉 Open mybookie.ag in Chrome → DevTools → Application → Cookies → copy cf_clearance + gamingstation_session into config.json")
-                return props, True
-        if r.status_code != 200:
-            return props, False
-        today = date.today().isoformat()
-        data  = r.json()
-        items = data if isinstance(data,list) else data.get("data",data.get("games",[]))
-        games = [item.get("gameID") or item.get("id") for item in items
-                 if today in str(item.get("date","") or item.get("startDate","") or "")]
-        games = [g for g in games if g]
-        print(f"    Games: {len(games)}")
-        for gid in games[:10]:
-            rp = cf.get(
-                "https://engine.mybookie.ag/sports_api/props-market-list",
-                params={"gameID":gid,"isLive":"false"},
-                headers=headers, impersonate="chrome124", timeout=15
-            )
-            if rp.status_code == 200:
-                data2  = rp.json()
-                mkts   = data2 if isinstance(data2,list) else data2.get("data",data2.get("markets",[data2]))
-                for mkt in mkts:
-                    mname = (mkt.get("name","") or mkt.get("marketName","")).strip()
-                    sels  = mkt.get("selections","") or mkt.get("outcomes","") or []
-                    if isinstance(sels,dict): sels=list(sels.values())
-                    for sel in sels:
-                        player = (sel.get("name","") or sel.get("player","") or sel.get("playerName","")).strip()
-                        line   = sel.get("line") or sel.get("handicap") or sel.get("points")
-                        over   = sel.get("overOdds") or sel.get("over")
-                        under  = sel.get("underOdds") or sel.get("under")
-                        side   = str(sel.get("side","OVER")).upper()
-                        if not player or line is None: continue
-                        if mname.lower() in ALWAYS_OVER and side=="UNDER": continue
-                        props.append({"Player":player,"Prop":mname,
-                            "Line":float(str(line).replace("+","")),
-                            "Side":side or "OVER","OverOdds":str(over) if over else "—",
-                            "UnderOdds":str(under) if under else "—",
-                            "Book":"MyBookie","Sport":sport,"source":"mybookie_auto"})
-            time.sleep(0.4)
-    except Exception as e:
-        print(f"    Error: {e}")
-    print(f"    Props: {len(props)}")
-    return props, False
 
 def scrape_with_playwright(book, sport, cookies, prop_url, prop_selector_fn):
     """
@@ -3873,20 +3631,8 @@ def main():
         # "fanduel":    ("fd",  login_fanduel),  # WAF blocks curl_cffi anyway
         # "betmgm":     ("mgm", login_betmgm),  # curl_cffi works without auth
         # "caesars":    ("czr", login_caesars),  # WAF blocks anyway
-        "mybookie":   ("mb",  login_mybookie),
     }
     for book, (short, login_fn) in login_map.items():
-        # Skip MyBookie Playwright login if session_cookie provided
-        if book == "mybookie" and cfg.get("mybookie", {}).get("session_cookie"):
-            print(f"\nUsing MyBookie session cookie from config (skipping browser login)")
-            mb_cookie_str = cfg["mybookie"]["session_cookie"]
-            mb_cookies = {}
-            for part in mb_cookie_str.split(";"):
-                if "=" in part:
-                    k, v = part.strip().split("=", 1)
-                    mb_cookies[k.strip()] = v.strip()
-            sessions["mybookie"] = mb_cookies
-            continue
         book_cfg = cfg.get(book,{})
         if book_cfg.get("username") and (use(short) or use(book)):
             print(f"\nAuthenticating {book}...")
@@ -3959,28 +3705,11 @@ def main():
             br_props = scrape_betrivers_curlffi(sport)
             all_props += br_props
 
-        if (use("mb") or use("mybookie")):
-            mb_cfg = cfg.get("mybookie", {})
-            # Use manual cookie if provided (most reliable)
-            manual_cookie = mb_cfg.get("session_cookie","")
-            if manual_cookie:
-                mb_cookies = {"manual": manual_cookie}
-                # Convert string cookie to dict
-                mb_cookies = {}
-                for part in manual_cookie.split(";"):
-                    if "=" in part:
-                        k, v = part.strip().split("=", 1)
-                        mb_cookies[k.strip()] = v.strip()
-                mb_props, _ = scrape_mybookie(sport, mb_cookies)
-                all_props += mb_props
-            elif "mybookie" in sessions:
-                mb_props, needs_relogin = scrape_mybookie(sport, sessions["mybookie"])
-                if needs_relogin:
-                    new_cookies = login_mybookie(mb_cfg)
-                    if new_cookies:
-                        sessions["mybookie"] = new_cookies
-                        mb_props, _ = scrape_mybookie(sport, new_cookies)
-                all_props += mb_props
+        # MyBookie removed (Jul 2026): the-odds-api.com now covers MyBookie
+        # game lines server-side (scripts/theoddsapi_mybookie_refresh.py),
+        # confirmed live. This block previously opened a real Playwright
+        # browser window to log into mybookie.ag on every single local run
+        # -- that's gone now that a clean, credential-free source exists.
 
         # BetOnline props + lines — Playwright headed browser (Cloudflare bypass)
         # Opt-in only: requires --books bo or --books bol or --books betonline
