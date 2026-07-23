@@ -21414,18 +21414,3 @@ def get_fetch_health_report():
 
     report.sort(key=lambda r: _sev.get(r["status"], 9))
     return report
-
-
-def fetch_rotobot_from_gist() -> dict:
-    """Read RotoBot AI model data from the Gist (pushed by rotobot_refresh.yml every 4h).
-
-    Gist file: betcouncil_rotobot_data.json
-    Keys: props, model_edges, model_predictions, source, captured_at
-
-    Returns empty dict when Gist file is absent or stale.
-    """
-    data = _read_gist_file("betcouncil_rotobot_data.json", cache_minutes=30)
-    if not isinstance(data, dict):
-        return {}
-    return data
-
