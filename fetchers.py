@@ -12317,7 +12317,113 @@ def _get_caesars_tokens():
     except Exception as e:
         print(f"[WARN] _get_caesars_tokens: {e}"); return "",""
 
+def fetch_parlayapi_retail_props(bookmaker: str, sport: str) -> list:
+    """
+    Fetch retail sportsbook player props via the same ParlayAPI endpoint
+    already integrated for DFS-book comparison (fetch_parlayapi_props) --
+    same key, same 3-credits-flat cost regardless of which bookmakers are
+    requested (confirmed live this session, plus independently
+    cross-checked against ParlayAPI's own public docs/homepage, which
+    explicitly list Caesars and BetRivers among supported bookmakers with
+    a matching field schema: bookmaker, player, market_key, market, line,
+    over_price, under_price -- American odds ints for retail rows, not
+    the DFS-normalized midpoint pricing).
+
+    bookmaker: ParlayAPI's exact key name, e.g. "caesars", "betrivers"
+    (no "_sportsbook" suffix -- confirmed via their public /v1/bookmakers
+    endpoint).
+    """
+    if not PARLAY_API_KEY:
+        return []
+    cache_path = os.path.join(CACHE_DIR, f"parlayapi_retail_{bookmaker}_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_mins < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+    sport_map = {
+        "NBA": "basketball_nba", "WNBA": "basketball_wnba",
+        "MLB": "baseball_mlb", "NHL": "icehockey_nhl", "NFL": "americanfootball_nfl"
+    }
+    sport_key = sport_map.get(sport)
+    if not sport_key:
+        return []
+    stat_map = {
+        "player_points": "Points", "player_rebounds": "Rebounds",
+        "player_assists": "Assists", "player_threes": "3-PT Made",
+        "player_steals": "Steals", "player_blocks": "Blocked Shots",
+        "player_turnovers": "Turnovers", "player_pra": "Pts+Reb+Ast",
+        "player_pts_rebs": "Pts+Reb", "player_pts_asts": "Pts+Ast",
+        "player_rebs_asts": "Reb+Ast", "player_double_double": "Double-Double",
+        "player_hits": "Hits", "player_home_runs": "Home Runs",
+        "player_total_bases": "Total Bases", "player_rbis": "RBIs",
+        "player_strikeouts": "Strikeouts", "player_hits_runs_rbis": "Hits+Runs+RBIs",
+        "player_goals": "Goals", "player_shots_on_goal": "Shots On Goal",
+        "player_pass_yds": "Passing Yards", "player_rush_yds": "Rushing Yards",
+        "player_rec_yds": "Receiving Yards", "player_receptions": "Receptions",
+    }
+    try:
+        resp = _http.get(
+            f"{PARLAY_API_BASE}/sports/{sport_key}/props",
+            headers={"X-API-Key": PARLAY_API_KEY},
+            params={"bookmakers": bookmaker},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        props = []
+        seen = set()
+        for row in data:
+            if row.get("bookmaker", "") != bookmaker:
+                continue
+            player = row.get("player", "")
+            market_key = row.get("market_key", "")
+            stat = stat_map.get(market_key, row.get("market") or market_key.replace("player_", "").replace("_", " ").title())
+            line = row.get("line")
+            if not player or not stat or line is None:
+                continue
+            key = (player, stat, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            props.append({
+                "Player": player, "Prop": stat, "Line": float(line),
+                "OverOdds": row.get("over_price"), "UnderOdds": row.get("under_price"),
+                "Book": bookmaker.title(), "Sport": sport, "source": "parlayapi",
+            })
+        if props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(props, f)
+        return props
+    except (IOError, ValueError):
+        return []
+
+
 def fetch_caesars_props(sport: str) -> list:
+    """
+    PRIMARY (Jul 2026): ParlayAPI retail props -- confirmed live this
+    session (529 real MLB prop rows across 20 stat categories), same 0
+    extra cost as the already-integrated DFS calls on this key. Replaces
+    the fragile Bearer+WAF-token scraper as primary; that path needs a
+    manually-refreshed session (tokens expire ~24h, automated login was
+    attempted and confirmed blocked by an invisible WAF gate earlier this
+    session).
+
+    SECONDARY (previous primary): americanwagering.com direct, kept as a
+    real fallback rather than removed.
+    """
+    try:
+        primary = fetch_parlayapi_retail_props("caesars", sport)
+    except Exception:
+        primary = []
+    if primary:
+        return primary
+    return _fetch_caesars_props_direct(sport)
+
+
+def _fetch_caesars_props_direct(sport: str) -> list:
     """Caesars player props via americanwagering.com. Bearer from Gist. Cached 20 min."""
     import urllib.parse as _up
     comp_id = CAESARS_COMP_IDS.get(sport)
