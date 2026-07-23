@@ -1,0 +1,24 @@
+name: TheOddsAPI MyBookie Refresh
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh-theoddsapi-mybookie:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run MyBookie the-odds-api.com scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          ODDS_API_KEY_MYBOOKIE: ${{ secrets.ODDS_API_KEY_MYBOOKIE }}
+        run: python scripts/theoddsapi_mybookie_refresh.py

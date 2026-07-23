@@ -13448,6 +13448,26 @@ def load_sport_data(sport):
                         return _out
         except Exception:
             pass
+        # Fallback 1b (Jul 2026): the-odds-api.com's dedicated MyBookie
+        # testing account -- confirmed live this session (18/18 MLB games,
+        # real American odds, 3 credits for the whole slate). Checked
+        # before Action Network since it's a real, verified, direct
+        # sportsbook feed rather than a third-party relay. Currently
+        # MLB-only (that's what's confirmed); other sports fall through.
+        try:
+            _oddsapi_mb_data = _read_gist_file(f"betcouncil_theoddsapi_mybookie_{sport.upper()}.json", cache_minutes=180)
+        except Exception:
+            _oddsapi_mb_data = None
+        if _oddsapi_mb_data and _oddsapi_mb_data.get("games"):
+            _out2 = []
+            for _g in _oddsapi_mb_data["games"]:
+                _out2.append({
+                    "Home": _g.get("home_team", ""), "Away": _g.get("away_team", ""),
+                    "HomeML": _g.get("home_ml"), "AwayML": _g.get("away_ml"),
+                    "Spread": _g.get("spread_hdp"), "Total": _g.get("total_hdp"),
+                })
+            if _out2:
+                return _out2
         # Fallback 2: Action Network public scoreboard API (book_id=8).
         # No auth required — confirmed 200 public endpoint. Covers Soccer/
         # UFC/Golf/Tennis (and anything else) that the HTML scraper above
