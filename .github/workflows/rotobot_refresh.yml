@@ -15,37 +15,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run RotoBot Scraper
+
+      - name: Run RotoBot Scraper + Push to Gist
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
           pip install requests
-          python - <<'EOF'
-import requests, json, os, sys
-key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-if not key:
-    print("ERROR: SUPABASE_SERVICE_ROLE_KEY secret is not set", file=sys.stderr)
-    sys.exit(1)
-BASE_URL = "https://ardonyjjtwljfzszhcko.supabase.co/rest/v1/"
-HEADERS = {
-    "apikey": key,
-    "Authorization": "Bearer " + key,
-}
-TABLES = ["props", "model_edges", "model_predictions"]
-data = {}
-for table in TABLES:
-    resp = requests.get(BASE_URL + table, headers=HEADERS, params={"limit": 300}, timeout=30)
-    if resp.ok:
-        data[table] = resp.json()
-        print(f"✅ {table}: {len(data[table])} rows")
-    else:
-        print(f"ERROR: {table} returned HTTP {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
-        sys.exit(1)
-with open("rotobot_data.json", "w") as f:
-    json.dump(data, f, indent=2)
-print("rotobot_data.json written successfully")
-EOF
-      - name: Commit and push changes
+          python scripts/rotobot_scraper.py
+
+      - name: Commit and push rotobot_data.json
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
