@@ -13224,11 +13224,16 @@ def load_sport_data(sport):
     elif sport == "NFL":
         nfl_rolling = fetch_nfl_rolling_averages()
         if not nfl_rolling:
-            nfl_rolling = {}
-            for player_name in ESPN_ATHLETE_IDS.get("NFL", {}):
-                avg = fetch_espn_player_gamelogs("NFL", player_name)
-                if avg:
-                    nfl_rolling[player_name] = avg
+            # Was a sequential loop -- one ESPN network call per player, one
+            # at a time. Confirmed real: 13 NFL players tracked, and this
+            # fallback fires every time during preseason (rolling averages
+            # legitimately empty with no games played yet), meaning this
+            # ran on every single NFL board load. Parallelized with the
+            # same proven _fetch_parallel helper.
+            _nfl_players = list(ESPN_ATHLETE_IDS.get("NFL", {}))
+            _nfl_fns = [(lambda _p=_p: fetch_espn_player_gamelogs("NFL", _p)) for _p in _nfl_players]
+            _nfl_results = _fetch_parallel(_nfl_fns, show_progress=False)
+            nfl_rolling = {p: r for p, r in zip(_nfl_players, _nfl_results) if r}
         season_avgs = dict(PLAYER_AVERAGES.get("NFL", {}))
         _merge_rolling(season_avgs, nfl_rolling)
     elif sport == "Soccer":
