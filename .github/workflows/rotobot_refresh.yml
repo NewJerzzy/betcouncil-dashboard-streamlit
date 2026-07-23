@@ -10,39 +10,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: actions/checkout@v4
-
+      
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
+          
       - name: Run RotoBot Scraper
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           pip install requests
-          python -c "
-import requests, json, os
-from datetime import datetime
-url = 'https://ardonyjjtwljfzs zhcko.supabase.co/rest/v1/'
-key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-headers = {'apikey': key, 'Authorization': f'Bearer {key}'}
-data = {'metadata': {'updated': datetime.utcnow().isoformat()}}
-tables = ['props', 'model_edges', 'model_predictions']
-for t in tables:
-    r = requests.get(url + t, headers=headers, params={'limit': 300})
-    if r.ok:
-        data[t] = r.json()
-with open('rotobot_data.json', 'w') as f:
-    json.dump(data, f, indent=2)
-print('RotoBot refresh completed')
-"
+          python -c "import requests, json, os; url = 'https://ardonyjjtwljfzs zhcko.supabase.co/rest/v1/'; key = os.getenv('SUPABASE_SERVICE_ROLE_KEY'); h = {'apikey':key,'Authorization':'Bearer '+key}; data = {}; [data.update({t: requests.get(url+t, headers=h, params={'limit':300}).json()}) for t in ['props','model_edges','model_predictions'] if requests.get(url+t, headers=h, params={'limit':300}).ok]; open('rotobot_data.json','w').write(json.dumps(data))"
 
-      - name: Commit and push data
+      - name: Commit and push changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add rotobot_data.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m 'Update RotoBot data [automated]' && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m 'Update RotoBot data' && git push)
