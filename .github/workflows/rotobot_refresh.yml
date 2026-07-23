@@ -26,7 +26,7 @@ key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 if not key:
     print("ERROR: SUPABASE_SERVICE_ROLE_KEY secret is not set", file=sys.stderr)
     sys.exit(1)
-BASE_URL = "https://ardonyjjtwljfszhcko.supabase.co/rest/v1/"
+BASE_URL = "https://ardonyjjtwljfzszhcko.supabase.co/rest/v1/"
 HEADERS = {
     "apikey": key,
     "Authorization": "Bearer " + key,
