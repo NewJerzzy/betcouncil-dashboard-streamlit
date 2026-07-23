@@ -12,8 +12,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Debugging - Show file content
-        run: cat .github/workflows/rotobot_refresh.yml
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -22,7 +20,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           pip install requests
-          python -c "import requests, json, os; url = 'https://ardonyjjtwljfzs.supabase.co/rest/v1/'; key = os.getenv('SUPABASE_SERVICE_ROLE_KEY'); h = {'apikey': key, 'Authorization': 'Bearer ' + key}; data = {}; [data.update({t: requests.get(url+t, headers=h, params={'limit':300}).json()}) for t in ['props','model_edges','model_predictions']]; open('rotobot_data.json','w').write(json.dumps(data))"
+          python -c "import requests, json, os; url = 'https://ardonyjjtwljfzs zhcko.supabase.co/rest/v1/'; key = os.getenv('SUPABASE_SERVICE_ROLE_KEY'); h = {'apikey': key, 'Authorization': 'Bearer ' + key}; data = {}; [data.update({t: requests.get(url+t, headers=h, params={'limit':300}).json()}) for t in ['props','model_edges','model_predictions'] if requests.get(url+t, headers=h, params={'limit':300}).ok]; open('rotobot_data.json','w').write(json.dumps(data))"
       - name: Commit and push changes
         run: |
           git config --global user.name 'github-actions[bot]'
