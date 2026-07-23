@@ -89,7 +89,8 @@ def _get(path: str, api_key: str, params: dict):
         DEBUG_LOG.append({"path": path, "params": {k: v for k, v in params.items()}, "error": str(e)})
         return None
     DEBUG_LOG.append({"path": path, "params": {k: v for k, v in params.items()},
-                       "status": r.status_code, "bytes": len(r.content)})
+                       "status": r.status_code, "bytes": len(r.content),
+                       "body_snippet": r.text[:600]})
     if r.status_code != 200:
         return None
     try:
