@@ -12674,16 +12674,33 @@ def fetch_mlb_rolling_averages():
     ewma_average = getattr(_sys.modules.get("app"), "ewma_average", None) or (lambda vals, decay=0.85, sport=None: round(sum(vals)/len(vals), 2) if vals else 0.0)
     PLAYER_AVERAGES = getattr(_sys.modules.get("app"), "PLAYER_AVERAGES", None) or {}
     cache_path = os.path.join(CACHE_DIR, "mlb_rolling_avgs.pkl")
-    rolling = {}
-    # Use full active roster IDs (all 30 teams) instead of hardcoded 29-player list
+
+    # Was write-only -- this cache file got saved on every successful run
+    # but was NEVER checked before doing the full expensive per-player
+    # fetch again. Confirmed real root cause of multi-minute board loads
+    # (live Streamlit logs showed this function timing out at the full
+    # 25s ceiling): a fully SEQUENTIAL loop over the entire MLB roster
+    # (potentially 750+ players across 30 teams), one HTTP call at a
+    # time, plus an explicit time.sleep(0.3) after every successful call.
+    # 20-minute freshness window -- rolling averages don't need to be
+    # any fresher than that within a single browsing session.
+    if os.path.exists(cache_path):
+        age_min = (time.time() - os.path.getmtime(cache_path)) / 60
+        if age_min < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached:
+                return cached
+
     all_roster_ids = st.session_state.get("mlb_roster_ids") or MLB_PLAYER_IDS
-    for player_name, player_id in all_roster_ids.items():
+    _errors = []
+
+    def _fetch_one(player_name, player_id):
         player_avgs = PLAYER_AVERAGES.get("MLB", {}).get(player_name, {})
         is_pitcher = "SO" in player_avgs or "ER" in player_avgs
         group = "pitching" if is_pitcher else "hitting"
         url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=gameLog&group={group}&season={_current_mlb_season_year()}&gameType=R")
         resp = None
-        for _attempt in range(2):  # one retry on transient connection failures
+        for _attempt in range(2):
             try:
                 resp = _http.get(url, headers=HEADERS, timeout=10)
                 break
@@ -12692,26 +12709,27 @@ def fetch_mlb_rolling_averages():
                 if _attempt == 0:
                     time.sleep(1.0)
                     continue
-                st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": f"statsapi unreachable after retry: {str(_conn_e)[:80]}"})
+                _errors.append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages",
+                                 "error": f"statsapi unreachable after retry: {str(_conn_e)[:80]}"})
                 resp = None
         if resp is None:
-            continue
+            return None
         try:
             if resp.status_code != 200:
-                continue
+                return None
             data = resp.json()
             stats_list = data.get("stats", [])
             if not stats_list:
-                continue
+                return None
             splits = stats_list[0].get("splits", [])
             last10 = splits[-10:] if len(splits) >= 10 else splits
             if len(last10) < 3:
-                continue
+                return None
             if is_pitcher:
                 so_vals = [g["stat"].get("strikeOuts",0) for g in last10]
                 er_vals = [g["stat"].get("earnedRuns",0) for g in last10]
                 h_vals = [g["stat"].get("hits",0) for g in last10]
-                rolling[player_name] = {
+                return {
                     "SO": ewma_average(so_vals, sport="MLB"),
                     "ER": ewma_average(er_vals, sport="MLB"),
                     "H": ewma_average(h_vals, sport="MLB"),
@@ -12725,7 +12743,7 @@ def fetch_mlb_rolling_averages():
                 hr_vals = [g["stat"].get("homeRuns",0) for g in last10]
                 rbi_vals = [g["stat"].get("rbi",0) for g in last10]
                 r_vals = [g["stat"].get("runs",0) for g in last10]
-                rolling[player_name] = {
+                return {
                     "H": ewma_average(h_vals, sport="MLB"),
                     "HR": ewma_average(hr_vals, sport="MLB"),
                     "RBI": ewma_average(rbi_vals, sport="MLB"),
@@ -12736,10 +12754,38 @@ def fetch_mlb_rolling_averages():
                     "R_std": compute_std_dev(r_vals, sport="MLB") or 0.4,
                     "n_games": len(last10)
                 }
-            time.sleep(0.3)
         except Exception as e:
-            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": str(e)[:100]})
-            continue
+            _errors.append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_mlb_rolling_averages", "error": str(e)[:100]})
+            return None
+
+    # Parallelized (was fully sequential + a mandatory 0.3s sleep per
+    # player) -- real wait(timeout=...) ceiling, not the buggy
+    # as_completed()+per-future-timeout pattern, and not a `with...as ex:`
+    # block (that pattern's __exit__ blocks until every thread finishes
+    # regardless of the timeout, already diagnosed and fixed elsewhere
+    # this session). No st.session_state access needed inside workers --
+    # roster data resolved once up front, errors collected in a plain
+    # list and flushed to session_state after the parallel section ends.
+    from concurrent.futures import ThreadPoolExecutor, wait as _cf_wait
+    players = list(all_roster_ids.items())
+    rolling = {}
+    if players:
+        ex = ThreadPoolExecutor(max_workers=min(len(players), 30))
+        futures = {ex.submit(_fetch_one, name, pid): name for name, pid in players}
+        done, not_done = _cf_wait(futures.keys(), timeout=25)
+        for fut in done:
+            name = futures[fut]
+            try:
+                result = fut.result()
+            except Exception:
+                result = None
+            if result:
+                rolling[name] = result
+        ex.shutdown(wait=False)
+
+    if _errors:
+        st.session_state.setdefault("errors", []).extend(_errors[:20])
+
     try:
         if rolling:
             with open(cache_path, "wb") as f:
