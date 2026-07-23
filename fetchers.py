@@ -7416,8 +7416,18 @@ def fetch_rotowire_injuries(sport):
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
             "Accept": "application/rss+xml, application/xml, text/xml, */*",
         }
-        # Direct request — RotoWire blocks proxies too, so no point routing through proxy
-        r = _http.get(url, headers=headers, timeout=10)
+        # Was using the shared _http retry session -- confirmed real root
+        # cause of this consistently hitting the full 25s _fetch_parallel
+        # ceiling: urllib3's Retry(total=2) also retries on read timeouts
+        # by default, so one slow/tarpitted response (RotoWire likely
+        # blocks datacenter IPs, same pattern as several other sources
+        # confirmed this session) meant up to ~3 attempts x 10s each plus
+        # backoff sleeps -- ~33s worst case, exceeding the 25s ceiling.
+        # A plain one-shot request with a short timeout fails fast instead
+        # of compounding the wait against a source unlikely to succeed on
+        # retry anyway. Direct request — RotoWire blocks proxies too, so
+        # no point routing through proxy.
+        r = requests.get(url, headers=headers, timeout=6)
         if r.status_code != 200:
             return []
 
