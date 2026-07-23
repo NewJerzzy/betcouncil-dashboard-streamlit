@@ -12474,11 +12474,23 @@ def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
 
     # Write timing summary to session state under a lock to prevent partial writes
     # if _fetch_parallel is ever called concurrently (rare but possible).
+    # MERGED, not overwritten -- load_sport_data can call _fetch_parallel more
+    # than once per board load (e.g. MLB's pre-pool step, then the main
+    # ~78-source batch), and a full overwrite silently erased whichever
+    # stage ran first, hiding it completely from the System tab's Source
+    # Performance Profiler. This was a real blind spot: if the FIRST stage
+    # is where a hang actually happens, the profiler only ever showed the
+    # LAST stage's fast timings, making the board look fine while it was
+    # still actually stuck earlier in the pipeline.
     try:
         with _lock:
-            st.session_state["fetch_timings"] = {
+            _new_timings = {
                 t["name"]: {"time": t["time"], "status": t["status"]}
                 for t in timings if t is not None
+            }
+            st.session_state["fetch_timings"] = {
+                **st.session_state.get("fetch_timings", {}),
+                **_new_timings,
             }
     except Exception:
         _logger.debug("Silent except at line 10021")
