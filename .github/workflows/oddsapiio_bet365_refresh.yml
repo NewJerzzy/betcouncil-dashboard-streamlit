@@ -1,0 +1,24 @@
+name: OddsAPI.io Bet365 Refresh
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh-oddsapiio-bet365:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run Bet365 odds-api.io scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          ODDS_API_IO_KEY: ${{ secrets.ODDS_API_IO_KEY }}
+        run: python scripts/oddsapiio_bet365_refresh.py

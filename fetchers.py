@@ -13379,23 +13379,41 @@ def fetch_bet365_game_lines(sport: str) -> list:
     """
     Bet365 game lines.
 
-    PRIMARY (Jul 10 2026): Unabated `straight` market data (source_id=78),
-    via the free scheduled Unabated refresher — no browser, no Cloudflare
-    wall, no WebSocket needed (Bet365's own site is a confirmed dead end
-    for direct scraping — see the Bet365 investigation in memory).
+    PRIMARY (Jul 2026): Odds-API.io, confirmed live this session against a
+    real MLB game -- full moneyline + spread + totals coverage, not just
+    match-result. Independently cross-checked against the vendor's own
+    official SDK repos and best-practices docs before wiring in, not just
+    a single live-test report.
 
-    FALLBACK: the old Kambi-based call. NOTE: this fallback is very likely
-    non-functional — Bet365 is not a known Kambi platform customer (unlike
-    BetRivers/Fanatics/ESPN Bet, which genuinely are), so offering_id=
-    "bet365" almost certainly doesn't correspond to a real Kambi tenant.
-    Kept as a no-cost fallback rather than removed outright, but don't
-    expect it to ever actually return data — the Unabated path above is
-    the real source now.
+    SECONDARY: Unabated `straight` market data (source_id=78) -- kept as
+    a real, working fallback for whatever the primary above might be
+    missing on a given day, rather than removed. Previously the only
+    source, but only ever provided partial (moneyline/match-result)
+    coverage -- spread/totals were always empty via this path alone.
+
+    REMOVED: the old Kambi-based fallback, which this function's own
+    docstring already flagged as very likely non-functional (Bet365 isn't
+    a known Kambi platform customer) -- dead weight, not a real fallback.
     """
-    primary = fetch_unabated_straight_from_gist(sport, 78, "Bet365")
-    if primary:
-        return primary
-    return _fetch_kambi_game_lines("bet365", sport, "Bet365")
+    try:
+        data = _read_gist_file(f"betcouncil_oddsapiio_bet365_{sport.upper()}.json", cache_minutes=15)
+    except Exception:
+        data = None
+    if data and data.get("games"):
+        primary = [
+            {
+                "home_team": g.get("home_team"), "away_team": g.get("away_team"),
+                "home_ml": g.get("home_ml"), "away_ml": g.get("away_ml"),
+                "spread": g.get("spread_hdp"),
+                "spread_home_odds": g.get("spread_home_odds"), "spread_away_odds": g.get("spread_away_odds"),
+                "total": g.get("total_hdp"),
+                "over_odds": g.get("over_odds"), "under_odds": g.get("under_odds"),
+            }
+            for g in data["games"]
+        ]
+        if primary:
+            return primary
+    return fetch_unabated_straight_from_gist(sport, 78, "Bet365")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
