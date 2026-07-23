@@ -11892,7 +11892,7 @@ def fetch_openmeteo_weather(date=None):
         result[abbr] = {"is_dome": True, "wind_speed_mph": None, "wind_dir_deg": None,
                         "wind_cardinal": "—", "temp_f": None, "precip_pct": None}
 
-    for abbr, (lat, lon, tz) in _MLB_STADIUM_COORDS.items():
+    def _fetch_one_stadium(abbr, lat, lon, tz):
         try:
             url = (
                 f"https://api.open-meteo.com/v1/forecast"
@@ -11901,10 +11901,15 @@ def fetch_openmeteo_weather(date=None):
                 f"&wind_speed_unit=mph&temperature_unit=fahrenheit"
                 f"&timezone={tz.replace('/', '%2F')}&forecast_days=1"
             )
-            r = _http.get(url, timeout=8)
+            # Plain one-shot request, not the shared retry session -- avoids
+            # the same compounding-timeout risk already found and fixed for
+            # RotoWire this session (a retry session's Retry(total=N) also
+            # retries on read timeouts, not just error codes, so a slow
+            # response can multiply a short per-attempt timeout well past
+            # what it looks like on paper).
+            r = requests.get(url, timeout=8)
             if r.status_code != 200:
-                result[abbr] = {"is_dome": False, "error": r.status_code}
-                continue
+                return abbr, {"is_dome": False, "error": r.status_code}
             data = r.json()
             hourly = data.get("hourly", {})
             times  = hourly.get("time", [])
@@ -11912,7 +11917,6 @@ def fetch_openmeteo_weather(date=None):
             dirs   = hourly.get("wind_direction_10m", [])
             temps  = hourly.get("temperature_2m", [])
             precip = hourly.get("precipitation_probability", [])
-            # Use hour 19 (7 PM local) as representative game time; fall back to 13 (1 PM)
             game_hr = next(
                 (i for i, t in enumerate(times) if t.endswith("T19:00") or t.endswith("T18:00")),
                 next((i for i, t in enumerate(times) if t.endswith("T13:00")), 12)
@@ -11922,7 +11926,7 @@ def fetch_openmeteo_weather(date=None):
                 except: return None
             spd = _get(winds, game_hr)
             deg = _get(dirs,  game_hr)
-            result[abbr] = {
+            return abbr, {
                 "is_dome":        False,
                 "wind_speed_mph": round(spd, 1) if spd is not None else None,
                 "wind_dir_deg":   int(deg) if deg is not None else None,
@@ -11930,9 +11934,22 @@ def fetch_openmeteo_weather(date=None):
                 "temp_f":         round(_get(temps,  game_hr), 1) if _get(temps, game_hr) is not None else None,
                 "precip_pct":     int(_get(precip, game_hr)) if _get(precip, game_hr) is not None else None,
             }
-            time.sleep(0.1)
         except Exception as _we:
-            result[abbr] = {"is_dome": False, "error": str(_we)[:50]}
+            return abbr, {"is_dome": False, "error": str(_we)[:50]}
+
+    from concurrent.futures import ThreadPoolExecutor, wait as _cf_wait
+    stadiums = list(_MLB_STADIUM_COORDS.items())
+    if stadiums:
+        ex = ThreadPoolExecutor(max_workers=min(len(stadiums), 20))
+        futures = {ex.submit(_fetch_one_stadium, abbr, lat, lon, tz): abbr for abbr, (lat, lon, tz) in stadiums}
+        done, not_done = _cf_wait(futures.keys(), timeout=20)
+        for fut in done:
+            try:
+                abbr, info = fut.result()
+                result[abbr] = info
+            except Exception:
+                pass
+        ex.shutdown(wait=False)
 
     if result: _safe_save_pkl(cache_path, result)
     return result

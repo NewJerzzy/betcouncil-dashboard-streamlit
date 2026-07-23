@@ -13579,15 +13579,15 @@ def load_sport_data(sport):
         except Exception:
             return []
     def _pf_sharpapi_props():  return fetch_sharpapi_props(sport)
-    def _pf_savant_xstats():   return fetch_savant_statcast()
-    def _pf_savant_sprint():   return fetch_savant_sprint_speed()
-    def _pf_savant_expected(): return fetch_savant_expected_stats()
-    def _pf_savant_arsenal():  return fetch_savant_pitch_arsenal()
-    def _pf_savant_batted():   return fetch_savant_batted_ball()
-    def _pf_mlb_lineups():     return fetch_mlb_lineups()
-    def _pf_openmeteo():       return fetch_openmeteo_weather()
-    def _pf_ump_scorecards():  return fetch_ump_scorecards()
-    def _pf_nba_advanced():    return fetch_nba_advanced_stats()
+    def _pf_savant_xstats():   return fetch_savant_statcast() if sport == "MLB" else {}
+    def _pf_savant_sprint():   return fetch_savant_sprint_speed() if sport == "MLB" else {}
+    def _pf_savant_expected(): return fetch_savant_expected_stats() if sport == "MLB" else {}
+    def _pf_savant_arsenal():  return fetch_savant_pitch_arsenal() if sport == "MLB" else {}
+    def _pf_savant_batted():   return fetch_savant_batted_ball() if sport == "MLB" else {}
+    def _pf_mlb_lineups():     return fetch_mlb_lineups() if sport == "MLB" else {}
+    def _pf_openmeteo():       return fetch_openmeteo_weather() if sport == "MLB" else {}
+    def _pf_ump_scorecards():  return fetch_ump_scorecards() if sport == "MLB" else {}
+    def _pf_nba_advanced():    return fetch_nba_advanced_stats() if sport == "NBA" else {}
     def _pf_pinnacle_lines():
         # DNS pre-check — skips silently on Streamlit Cloud, works self-hosted
         import socket as _sock
