@@ -12375,6 +12375,8 @@ def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
     from concurrent.futures import ThreadPoolExecutor, wait as _cf_wait
     import time as _time
     import threading
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+    _ctx = get_script_run_ctx()
     n = len(fns)
     results  = [None] * n
     timings  = [None] * n
@@ -12385,6 +12387,16 @@ def _fetch_parallel(fns: list, show_progress: bool = False) -> list:
     _prog_text = st.empty() if show_progress else None
 
     def _timed(fn, idx):
+        # Attach the main thread's ScriptRunContext to this worker thread
+        # FIRST -- confirmed via live Streamlit logs that this was missing
+        # entirely ('missing ScriptRunContext' warnings). Without it, any
+        # st.session_state read/write inside fn() (several fetch_ functions
+        # use session-level caching) silently fails, forcing a full live
+        # re-fetch on every call instead of a cache hit -- same root cause
+        # already found and fixed for WNBA/NBA/MLB's board-paste path
+        # earlier this session, but never applied here.
+        if _ctx is not None:
+            add_script_run_ctx(threading.current_thread(), _ctx)
         name = getattr(fn, '__name__', f'fn_{idx}').replace('_pf_','').replace('fetch_','')
         t0 = _time.perf_counter()
         try:
