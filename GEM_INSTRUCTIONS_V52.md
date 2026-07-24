@@ -2537,3 +2537,141 @@ more days of cron data, or if a paid PropsMadness tier is ever added.
 
 
 
+## Session 13 Addendum (July 2026) — Book Coverage Overhaul, Tennis Source Swap, MLB Perf Fix
+
+### New book coverage via legitimate paid APIs — replaces fragile Tampermonkey/token paths
+Confirmed live (real MLB games, real field shapes, cross-checked against each
+vendor's own docs before wiring in — not built from a single report):
+- **Bet365** — game lines (ML/Spread/Totals) AND player props (named per-stat
+  markets like "Home Runs O/U", "Pitcher Strikeouts O/U") via odds-api.io.
+  scripts/oddsapiio_bet365_refresh.py. Label per market as usual; source now
+  `oddsapiio` not `tampermonkey_harvester`.
+- **FanDuel props** — via odds-api.io, same account, catch-all "Player Props"
+  market, `"Player (Stat)"` label format. scripts/oddsapiio_fanduel_props_refresh.py.
+- **Bovada props** — via odds-api.io, separate account (free tier caps at 2
+  bookmakers/key — Bet365+FanDuel already use the other key's slots).
+  Identical label format to FanDuel, same parser reused.
+  scripts/oddsapiio_bovada_props_refresh.py.
+- **MyBookie** — game lines only via The Odds API (the-odds-api.com — a
+  *different* company from odds-api.io despite the similar name), own
+  dedicated account key. **Props confirmed NOT available for MyBookie on
+  this provider** (checked directly against real pending games — the 6
+  books that do return props there are fanduel/draftkings/bovada/betmgm/
+  betonlineag/betrivers). scripts/theoddsapi_mybookie_refresh.py.
+- **Caesars props** — via ParlayAPI (parlay-api.com), the SAME account/key
+  already used for the DFS-book comparison feature — zero extra cost (flat
+  3 credits/call regardless of which bookmakers requested). Field schema
+  identical to the existing DFS rows (`bookmaker`, `player`, `market_key`,
+  `over_price`/`under_price` as real American odds ints). Wired into
+  `fetch_caesars_props()` as primary in both app.py's fetchers.py AND the
+  local `betcouncil_auto_scraper.py` cmd tool.
+
+**Net effect on Tampermonkey dependency**: FanDuel, FanDuel base props, and
+Caesars can all be disabled in Tampermonkey now — server-side coverage is
+live and verified for both. **FanDuel Parlay Hub cannot be replaced by any
+of these APIs** — it's a specialized same-game-parlay/correlation pricing
+feature specific to FanDuel's own app, not standard odds data; none of
+odds-api.io/ParlayAPI/The Odds API expose anything like it. TheScore Bet's
+own Tampermonkey harvester was already confirmed stale/non-functional
+independent of today's work (Unabated remains its real primary, unaffected).
+
+### Tennis stats source swapped mid-session: Sackmann GitHub → TennisMyLife
+Sackmann's tennis_atp/tennis_wta GitHub repos (previously wired) were
+confirmed inaccessible — 404 across three independent fetch paths
+(raw.githubusercontent.com, GitHub's own contents API, jsDelivr's mirror),
+consistent with the repos having gone private. Replaced with
+**stats.tennismylife.org**, confirmed live: real, actively-updated ATP
+match CSVs (2025/2026), identical column schema to what was already built
+against, MIT licensed. **ATP only — no WTA coverage on this source.**
+scripts/sackmann_tennis_refresh.py (kept the old filename, logic replaced).
+fetch_tennis_player_stats() maps to `"1st Serve %"`/`"Aces"`/
+`"Break Points Won"` for `compute_tennis_games_projection`.
+
+### ESPN Bet permanently retired (not a bug fix — the brand doesn't exist)
+Confirmed via independent news search: ESPN Bet fully shut down and was
+replaced by theScore Bet on December 1, 2025 — PENN Entertainment/ESPN
+ended their partnership, the app itself was updated in place that day.
+`fetch_espnbet_game_lines()` now returns `[]` immediately instead of
+querying a permanently-defunct Kambi `offering_id="espnbet"` on every
+board load. theScore Bet's own data is unaffected (separate, working
+Unabated-primary path).
+
+### MLB rolling averages — critical performance bug, likely primary cause
+### of multi-minute board loads
+`fetch_mlb_rolling_averages()` looped **sequentially** over the entire
+30-team MLB roster (750+ players), one HTTP call at a time, plus a
+mandatory `time.sleep(0.3)` after every successful call — and it was
+**write-only** on its own cache file (saved on success, never once
+checked before re-running the full expensive fetch). Fixed: real
+20-minute cache-read added, per-player fetches parallelized with a
+25-second ceiling. Same root cause found and fixed in
+`fetch_openmeteo_weather()` (MLB stadium weather) and NFL's fallback
+ESPN gamelog loop, plus a 4-source pre-pool block that used the
+`as_completed()+per-future-timeout` pattern already known to not
+actually enforce a timeout (the surrounding `with...as ex:` block still
+blocks on `__exit__` regardless).
+
+### `_fetch_parallel`'s own ScriptRunContext bug (separate from the
+### board-paste ctx fix already documented above)
+The MAIN board-load parallel batch (`_fetch_parallel`, ~78 sources) never
+attached Streamlit's ScriptRunContext to its worker threads at all —
+confirmed via live "missing ScriptRunContext" warnings in the user's own
+Streamlit logs. Any `fetch_*` function with internal `st.session_state`
+caching silently failed its cache checks inside these threads, forcing a
+full live re-fetch on every single call across up to 40 concurrent
+workers instead of a cache hit. Fixed the same way as the board-paste fix.
+Also found and fixed: `fetch_timings` (System tab's Source Performance
+Profiler) was fully overwritten, not merged, on every `_fetch_parallel()`
+call — since `load_sport_data` can call it more than once per board load
+(MLB's pre-pool step, then the main batch), the profiler could only ever
+show the LAST stage, silently hiding an earlier stage's hang. Fixed to merge.
+
+### Analytical gap audit (external report, independently verified before
+### fixing) — unified_sharp_score.py restored from fully dead
+Confirmed `unified_sharp_score.py` imported 5 modules that didn't exist
+anywhere (`team_canon`, `book_quality`, `bayesian_line_updater`,
+`movement_classifier`, `bet_decision_layer`) — the whole Sharp Board
+silently returned nothing, always. Built all 5 for real (reusing existing
+data/logic where possible — team_canon reuses config.py's real team-abbrev
+map, book_quality reuses classify_book_role() and the same weights already
+live in build_game_line_consensus). Also fixed in the same pass:
+`classify_book_role()` TypeError (returns a string, was called as a dict —
+silently swallowed by a broad except every run), prop consensus now
+book-quality-weighted (was equal-weighted, Pinnacle counted same as
+MyBookie), a real multi-market confirmation bonus (spread+total+ML
+independently agreeing now scores higher, previously just summed
+linearly), Dimers win% diffed against Pinnacle's own devigged probability
+(previously fetched, never compared to anything), and game-line CLV
+closing-line capture (placement side existed, closing side was always
+None — nothing ever filled it in).
+
+### Mixed-sport slip support (Slip Analyzer)
+Screenshot/OCR-based slip parsing already tagged each pick with its own
+sport correctly (`score_pick_standalone` already scored per-pick sport).
+Plain-text paste, though, hardcoded every pick to `"MLB"` regardless of
+what was actually typed — a real bug, not a design limit. Added
+`_guess_sport_from_stat()`, inferring sport from the stat name's own
+vocabulary (checks distinctive multi-word phrases like "Passing Yards"
+or "Pitcher Outs" before generic single words several sports share).
+
+### Weekly audit expanded (scripts/weekly_audit.py)
+Two new checks added after an external audit caught issues ours didn't:
+`audit_missing_imports()` (verifies every local import across CORE_FILES
++ scripts/ actually resolves to a real file with the name defined in it
+— the exact check that would have caught unified_sharp_score.py's 5 dead
+imports) and `audit_silent_except_blocks()` (surfaces bare/`except
+Exception` blocks whose entire body is `pass`/`continue` with zero
+logging — the shape that hid the classify_book_role() bug above).
+
+### Shared-Gist 409/403/429 retry logic — now on essentially every script
+Found the same zero-retry-logic gap repeatedly this session, in batches:
+first ~16 scripts, then Action Network + theScore Public API (confirmed
+root cause via live debug logs of 2 real workflow failures — a single
+transient Gist conflict failed the whole run with zero retry), then a
+proactive full sweep found 11 more with the identical gap
+(areyouwatchingthis, baseballsavant, draftedge, edgeterminal,
+espn_opening_lines, mybookie, propsmadness, scoresandodds, the_odds_api,
+linestar_harvester, vegasinsider). All fixed with the same exponential-
+backoff+jitter pattern. `vegasinsider_refresh.py` specifically had ZERO
+error handling of any kind before this — a transient failure would have
+crashed the whole script outright, not just failed gracefully.
