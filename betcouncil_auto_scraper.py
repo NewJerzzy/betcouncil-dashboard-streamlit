@@ -1403,76 +1403,6 @@ def scrape_novig(sport):
     return props
 
 
-def scrape_betrivers_curlffi(sport):
-    """BetRivers props via Kambi API — no auth needed."""
-    print(f"\n  BetRivers {sport} (curl_cffi):")
-    props = []
-    try:
-        from curl_cffi import requests as cf
-        session = cf.Session(impersonate="chrome124")
-    except ImportError:
-        print("    curl_cffi not installed")
-        return props
-
-    headers = {"User-Agent": UA, "Accept": "application/json",
-               "Origin": "https://az.betrivers.com", "Referer": "https://az.betrivers.com/"}
-    sport_map = {"NBA": "basketball/nba", "MLB": "baseball/mlb", "NHL": "ice_hockey/nhl",
-                 "WNBA": "basketball/wnba", "NFL": "american_football/nfl"}
-    kambi_sport = sport_map.get(sport, "basketball/nba")
-
-    try:
-        import random as _rand
-        for _br_attempt in range(3):
-            r1 = session.get(
-                f"https://eu-offering-api.kambicdn.com/offering/v2/rvn/listView/{kambi_sport}/all/all.json",
-                params={"lang": "en_US", "market": "US-AZ"},
-                headers=headers, timeout=15)
-            print(f"    Events: {r1.status_code}")
-            if r1.status_code == 429:
-                _wait = ((_br_attempt + 1) * 8) + _rand.uniform(2, 5)
-                print(f"    Rate limited — waiting {_wait:.0f}s...")
-                time.sleep(_wait)
-                continue
-            break
-        if r1.status_code != 200: return props
-
-        events = r1.json().get("events", [])
-        print(f"    Found {len(events)} events")
-
-        for ev in events[:10]:
-            ev_id = ev.get("event", {}).get("id")
-            if not ev_id: continue
-
-            r2 = session.get("https://az.betrivers.com/api/service/sportsbook/offering/playerprops",
-                params={"groupId": ev_id, "pageNr": 1, "pageSize": 200, "cageCode": 602},
-                headers=headers, timeout=10)
-            if r2.status_code != 200: continue
-
-            items = r2.json().get("items", r2.json().get("offerings", []))
-            if isinstance(items, dict): items = list(items.values())
-
-            for item in items:
-                criterion = item.get("criterion", {})
-                prop_label = criterion.get("label", "")
-                for oc in item.get("outcomes", []):
-                    player = oc.get("participantName", "") or oc.get("label", "")
-                    odds_am = oc.get("americanOdds") or oc.get("oddsAmerican")
-                    line = oc.get("line") or oc.get("handicap") or oc.get("overUnder")
-                    sd = "UNDER" if "UNDER" in (oc.get("type","") or "").upper() else "OVER"
-                    if not player or line is None: continue
-                    try: lf = float(str(line).replace("+",""))
-                    except Exception: continue
-                    od = f"{'+' if float(odds_am)>0 else ''}{int(float(odds_am))}" if odds_am else "—"
-                    props.append({"Player": player, "Prop": prop_label, "Line": lf, "Side": sd,
-                        "OverOdds": od if sd=="OVER" else "—", "UnderOdds": od if sd=="UNDER" else "—",
-                        "Book": "BetRivers", "Sport": sport, "source": "betrivers_curlffi"})
-            time.sleep(random.uniform(8, 15))
-        print(f"    Props: {len(props)}")
-    except Exception as e:
-        print(f"    Error: {e}")
-    return props
-
-
 def scrape_draftkings_curlffi(sport):
     """DraftKings props via curl_cffi — bypasses SSL fingerprinting."""
     print(f"\n  DraftKings {sport} (curl_cffi):")
@@ -1628,8 +1558,51 @@ def load_caesars_tokens_from_gist(token, gist_id):
         return None
 
 
-def scrape_caesars_curlffi(sport, token="", gist_id=""):
-    """Caesars props via curl_cffi + api.americanwagering.com."""
+def scrape_caesars_curlffi(sport, token="", gist_id="", parlay_api_key=""):
+    """Caesars props via ParlayAPI (primary, no token needed) or curl_cffi + api.americanwagering.com (fallback)."""
+    print(f"\n  Caesars {sport} (ParlayAPI primary):")
+    props = []
+    if parlay_api_key:
+        sport_map_pa = {"NBA": "basketball_nba", "WNBA": "basketball_wnba",
+                        "MLB": "baseball_mlb", "NHL": "icehockey_nhl", "NFL": "americanfootball_nfl"}
+        sport_key = sport_map_pa.get(sport)
+        if sport_key:
+            try:
+                import requests as _rq
+                resp = _rq.get(
+                    f"https://parlay-api.com/v1/sports/{sport_key}/props",
+                    headers={"X-API-Key": parlay_api_key},
+                    params={"bookmakers": "caesars"}, timeout=15,
+                )
+                print(f"    ParlayAPI: {resp.status_code}")
+                if resp.status_code == 200:
+                    for row in resp.json():
+                        if row.get("bookmaker") != "caesars":
+                            continue
+                        player = row.get("player", "")
+                        line = row.get("line")
+                        if not player or line is None:
+                            continue
+                        over_p, under_p = row.get("over_price"), row.get("under_price")
+                        props.append({
+                            "Player": player,
+                            "Prop": row.get("market") or row.get("market_key", "").replace("player_", "").replace("_", " ").title(),
+                            "Line": float(line), "Side": "OVER",
+                            "OverOdds": f"{'+' if over_p and over_p > 0 else ''}{over_p}" if over_p is not None else "—",
+                            "UnderOdds": f"{'+' if under_p and under_p > 0 else ''}{under_p}" if under_p is not None else "—",
+                            "Book": "Caesars", "Sport": sport, "source": "parlayapi",
+                        })
+                    print(f"    Props: {len(props)}")
+                    if props:
+                        return props
+            except Exception as e:
+                print(f"    ParlayAPI error: {e}")
+    print(f"    Falling back to curl_cffi + americanwagering.com")
+    return _scrape_caesars_curlffi_direct(sport, token, gist_id)
+
+
+def _scrape_caesars_curlffi_direct(sport, token="", gist_id=""):
+    """Caesars props via curl_cffi + api.americanwagering.com (fallback, requires harvested token)."""
     print(f"\n  Caesars {sport} (curl_cffi):")
     props = []
     try:
@@ -1748,7 +1721,7 @@ def scrape_betrivers_curlffi(sport):
             # with backoff is more robust than reordering sports or adding a
             # blind static delay, since it self-corrects regardless of which
             # sport happens to be last or how many books run before it.
-            wait_s = 5 * (attempt + 1)
+            wait_s = 15 * (attempt + 1)
             print(f"    Events: 429, retrying in {wait_s}s (attempt {attempt + 1}/3)...")
             time.sleep(wait_s)
         print(f"    Events: {r1.status_code}")
@@ -2015,6 +1988,28 @@ def _thescore_save_lines_hash(sha256_hash):
 
 
 def scrape_thescore_curlffi(sport):
+    """
+    theScore Bet game lines via direct curl_cffi -- CONFIRMED DEAD (Jul
+    2026), not a stale-hash problem: the self-heal hash-discovery
+    mechanism correctly finds the CURRENT hash (verified identical to
+    what's already stored), yet the query still fails with "cannot query
+    field" schema errors regardless. Root cause already diagnosed earlier
+    this session: the hardcoded sportsbook.us-ia.thescore.bet host serves
+    a permanently stale/deprecated GraphQL schema independent of hash
+    freshness -- every other regional host either 302-redirects or
+    requires a GeoComply-verified real device location this session
+    already confirmed can't be obtained from a datacenter/server context.
+
+    Unabated remains PRIMARY for theScore Bet game lines and is
+    unaffected by this. Returns None immediately instead of burning a
+    network round-trip (plus a hash-discovery retry) on something
+    already confirmed structurally broken.
+    """
+    print(f"\n  theScore Bet {sport}: skipped (confirmed dead regional schema, Unabated primary unaffected)")
+    return None
+
+
+def _scrape_thescore_curlffi_DEAD_REGIONAL_SCHEMA(sport):
     """theScore Bet game lines via direct curl_cffi -- no browser/Tampermonkey
     needed. Mints its own anonymous token each run (see _thescore_mint_token),
     so there's nothing to refresh/expire between runs.
@@ -3696,7 +3691,7 @@ def main():
 
         if use("czr") or use("caesars"):
             try:
-                czr_props = scrape_caesars_curlffi(sport, token, gist)
+                czr_props = scrape_caesars_curlffi(sport, token, gist, cfg.get("parlay_api_key", ""))
                 all_props += czr_props
             except Exception:
                 print("    Caesars: WAF blocked, skipping")
