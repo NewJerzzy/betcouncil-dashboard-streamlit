@@ -176,9 +176,24 @@ def push_gist(payload: dict) -> None:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        resp = json.loads(r.read())
-    log(f"Gist updated: {resp['html_url']}")
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                resp = json.loads(r.read())
+            log(f"Gist updated: {resp['html_url']}")
+            return
+        except urllib.error.HTTPError as exc:
+            if exc.code in (403, 429, 409) and attempt < 2:
+                base_wait = 10 * (2 ** attempt)
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"Gist push got HTTP {exc.code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+                time.sleep(wait)
+                continue
+            log(f"Gist push failed: HTTP {exc.code} {exc.read()[:300]}")
+            return
+        except Exception as exc:
+            log(f"Gist push failed: {exc}")
+            return
 
 
 def main() -> None:

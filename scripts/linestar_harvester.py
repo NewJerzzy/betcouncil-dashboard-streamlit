@@ -29,6 +29,7 @@ Env vars required:
 
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -202,31 +203,41 @@ def run_sport(sport, cfg, captured_at):
 def push_gist(files, token, label=""):
     """Returns True on success, False on failure -- never raises, so one
     bad push (oversized payload, transient network error, etc.) can't take
-    down the rest of the harvester run."""
+    down the rest of the harvester run. Retries on 403/429/409 (shared-Gist
+    write conflicts, confirmed real elsewhere this session) with real
+    exponential backoff + jitter."""
     payload = json.dumps({"files": {k: {"content": v} for k, v in files.items()}}).encode()
     log(f"  pushing {label or 'batch'}: {len(files)} files, {len(payload):,} bytes")
-    req = urllib.request.Request(
-        f"https://api.github.com/gists/{GIST_ID}",
-        data=payload, method="PATCH",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            resp = json.loads(r.read())
-        log(f"  Gist updated -- {len(resp.get('files', {}))} files")
-        return True
-    except urllib.error.HTTPError as exc:
-        body = exc.read()[:500]
-        log(f"  [error] Gist push failed for {label or 'batch'}: HTTP {exc.code} {body}")
-        return False
-    except Exception as exc:
-        log(f"  [error] Gist push failed for {label or 'batch'}: {exc}")
-        return False
+    for attempt in range(3):
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}",
+            data=payload, method="PATCH",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                resp = json.loads(r.read())
+            log(f"  Gist updated -- {len(resp.get('files', {}))} files")
+            return True
+        except urllib.error.HTTPError as exc:
+            if exc.code in (403, 429, 409) and attempt < 2:
+                base_wait = 10 * (2 ** attempt)
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"  Gist push got HTTP {exc.code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+                time.sleep(wait)
+                continue
+            body = exc.read()[:500]
+            log(f"  [error] Gist push failed for {label or 'batch'}: HTTP {exc.code} {body}")
+            return False
+        except Exception as exc:
+            log(f"  [error] Gist push failed for {label or 'batch'}: {exc}")
+            return False
+    return False
 
 
 def main():

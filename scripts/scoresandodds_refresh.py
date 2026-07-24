@@ -43,6 +43,8 @@ import sys
 from datetime import datetime, timezone
 
 import requests
+import random
+import time
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 ODDS_PAGE_URL = "https://www.scoresandodds.com/{sport_path}/odds"
@@ -137,14 +139,22 @@ def fetch_sport_games(sport: str, sport_path: str) -> list:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": files_payload}, timeout=30,
-    )
-    if resp.status_code in (200, 201):
-        return len(files_payload)
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    for attempt in range(3):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            json={"files": files_payload}, timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            return len(files_payload)
+        if resp.status_code in (403, 429, 409) and attempt < 2:
+            base_wait = 10 * (2 ** attempt)
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+            time.sleep(wait)
+            continue
+        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        return 0
     return 0
 
 
