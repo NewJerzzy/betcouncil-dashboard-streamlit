@@ -49,6 +49,14 @@ BOOKMAKER = "mybookieag"
 
 SPORT_KEYS = {
     "MLB": "baseball_mlb",
+    # NFL/NBA/NHL use The Odds API's standard documented sport keys --
+    # only MLB has been live-verified on this specific account so far.
+    # Not expected to be risky if wrong (a bad key just 404s/returns
+    # empty for that sport, not a crash), but worth live-testing before
+    # assuming these are definitely populated with real MyBookie data.
+    "NFL": "americanfootball_nfl",
+    "NBA": "basketball_nba",
+    "NHL": "icehockey_nhl",
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; BetCouncilResearch/1.0)"}

@@ -49,6 +49,9 @@ BOOKMAKER = "Bovada"
 
 SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
+    "NFL": ("american-football", "usa-nfl"),
+    "NBA": ("basketball", "usa-nba"),
+    "NHL": ("hockey", "usa-nhl"),
 }
 
 MAX_REQUESTS_PER_RUN = 10

@@ -52,6 +52,9 @@ BOOKMAKER = "FanDuel"
 
 SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
+    "NFL": ("american-football", "usa-nfl"),
+    "NBA": ("basketball", "usa-nba"),
+    "NHL": ("hockey", "usa-nhl"),
 }
 
 # Conservative -- shares the same account/key and 100/hr free-tier limit
