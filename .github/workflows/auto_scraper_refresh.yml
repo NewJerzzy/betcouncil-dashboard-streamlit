@@ -17,13 +17,13 @@ jobs:
         run: pip install -r requirements.txt
       - name: Write config.json (no-login books only, no credentials needed)
         env:
-          GIST_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          GIST_TOKEN: ${{ secrets.PICK6_GIST_TOKEN_2 }}
         run: python scripts/write_ci_config.py
 
       - name: Run scraper (no-auth books only — PrizePicks/Underdog already covered by their own workflows)
         id: run_scraper
         env:
-          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN_2 }}
           PYTHONUNBUFFERED: "1"
         run: |
           set +e
@@ -36,7 +36,7 @@ jobs:
       - name: Push debug log to Gist
         if: always()
         env:
-          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN_2 }}
         run: python scripts/push_scraper_debug_log.py /tmp/scraper_output.log
 
       - name: Fail job if scraper failed
