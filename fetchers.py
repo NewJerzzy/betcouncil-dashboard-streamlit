@@ -16057,6 +16057,32 @@ def fetch_betslib_models() -> list:
         print(f"[WARN] fetch_betslib_models: {e}"); return []
 
 
+def fetch_signalodds_arbitrage_from_gist(max_age_minutes: int = 100) -> list:
+    """
+    Signal Odds cross-book arbitrage (real guaranteed-profit spreads across
+    60+ bookmakers -- confirmed live 2026-07-25: real entries seen include
+    Betfair/Coolbet/BetOnline.ag/Smarkets with actual computed stake sizing).
+
+    Distinct from fetch_betslib_predictions() above -- that one calls
+    api.betslib.com live from inside this app using SIGNAL_ODDS_JWT in
+    Streamlit secrets. This one instead reads scripts/signalodds_refresh.py's
+    output from the Gist (GitHub Actions, cron 10,40 * * * *, its own
+    SIGNAL_ODDS_JWT copy in repo secrets) -- game-level arbitrage has no
+    other consumer in this app, unlike predictions which already has the
+    live path above.
+
+    Each item: {sport, league, home_team, away_team, commence_time,
+    market_key, market_name, margin_percent, freshness_status, expires_at,
+    legs: [{bookmaker, outcome, odds, stake_pct}], locked}
+    """
+    data = _read_gist_file("betcouncil_signalodds_opportunities.json", cache_minutes=10)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("opportunities", [])
+        if isinstance(raw, list):
+            return raw
+    return []
+
+
 
 def fetch_betslib_events(sport: str = None, category: str = "upcoming", limit: int = 50) -> list:
     """

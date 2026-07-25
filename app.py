@@ -13863,6 +13863,10 @@ def load_sport_data(sport):
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
+    try:
+        st.session_state["signalodds_arbitrage"] = fetch_signalodds_arbitrage_from_gist()
+    except Exception:
+        st.session_state["signalodds_arbitrage"] = []
     st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
     st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
@@ -19315,6 +19319,25 @@ with tabs[0]:
             st.markdown("".join(_arb2_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;">No arbitrage opportunities found today.</div>', unsafe_allow_html=True)
+
+        # ── SIGNAL ODDS ARBITRAGE (cross-book, real bookmaker legs) ──────
+        # Game-level (not per-player) -- separate section since it's a
+        # different shape than the player-prop arb blocks above.
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Signal Odds — Cross-Book Arbitrage</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
+        _so_arb = [a for a in st.session_state.get("signalodds_arbitrage", []) if not a.get("locked")]
+        if _so_arb:
+            _so_arb_html = []
+            for a in sorted(_so_arb, key=lambda x: float(x.get("margin_percent") or 0), reverse=True)[:5]:
+                _matchup = f'{a.get("away_team","")} @ {a.get("home_team","")}'
+                _legs = a.get("legs") or []
+                _legs_str = " vs ".join(
+                    f'{l.get("bookmaker","")} {l.get("outcome","")} ({l.get("odds","")})' for l in _legs
+                )
+                _margin = float(a.get("margin_percent") or 0)
+                _so_arb_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="display:flex;justify-content:space-between;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{_matchup}</span><span style="color:#22c55e;font-weight:700;">+{_margin:.2f}%</span></div><div style="font-size:0.95rem;color:var(--bc-muted);">{a.get("market_name","")} — {_legs_str}</div></div>')
+            st.markdown("".join(_so_arb_html), unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;">No Signal Odds arbitrage opportunities found today.</div>', unsafe_allow_html=True)
 
         # ── BEST OF ALL SPORTS ─────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
