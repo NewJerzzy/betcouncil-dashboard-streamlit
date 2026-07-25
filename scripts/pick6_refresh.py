@@ -91,56 +91,80 @@ def _extract_stream_payload(html: str) -> list:
         return []
 
 
-def _resolve_refs(obj, array: list, depth=0, max_depth=20):
+def _build_idx_to_name(array: list) -> dict:
+    """_N key -> real field name, built once from the flat array. Safe
+    by construction: a '_N' key literally means 'the field name is
+    arr[N]', so this direct mapping is always correct regardless of
+    what else arr[N] might also represent as data elsewhere."""
+    return {i: v for i, v in enumerate(array) if isinstance(v, str)}
+
+
+def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
     """
-    Recursively resolve "_N"-style reference dicts (single key matching
-    `_\\d+`) into the value at that index of the flat array. Exact
-    reference format wasn't independently verified before this first
-    deploy — this handles the single-key `{"_N": true/anything}` shape
-    Replit described; if the real shape differs, resolution will just
-    no-op on unmatched dicts rather than crash, and self-diagnostics
-    will show a low apply rate so the mismatch is visible.
+    DK's compression scheme changed fundamentally (confirmed via live
+    re-test 2026-07-25, previous version of this function assumed
+    literal string keys like "dkId" and a single-key {"_N": val}
+    reference-marker pattern -- both wrong now). Current real format:
+    EVERY dict key is a "_N" reference where array[N] is the real field
+    name, and EVERY dict value is an index into array needing exactly
+    one dereference. Only recurses further into the dereferenced result
+    if it's itself a container (dict/list) -- a literal scalar found
+    nested inside an already-resolved list (e.g. a real comp-ID number)
+    is left alone, not treated as a further reference to chase.
     """
     if depth > max_depth:
         return obj
     if isinstance(obj, dict):
-        if len(obj) == 1:
-            (k, _v), = obj.items()
-            if isinstance(k, str) and re.fullmatch(r"_\d+", k):
-                idx = int(k[1:])
-                if 0 <= idx < len(array):
-                    return _resolve_refs(array[idx], array, depth + 1, max_depth)
-        return {k: _resolve_refs(v, array, depth + 1, max_depth) for k, v in obj.items()}
+        out = {}
+        for k, v in obj.items():
+            if isinstance(k, str) and k.startswith("_") and k[1:].isdigit():
+                real_key = idx_to_name.get(int(k[1:]), k)
+            else:
+                real_key = k
+            deref = array[v] if isinstance(v, int) and 0 <= v < len(array) else v
+            if isinstance(deref, (dict, list)):
+                out[real_key] = _resolve_refs(deref, array, idx_to_name, depth + 1, max_depth)
+            else:
+                out[real_key] = deref
+        return out
     if isinstance(obj, list):
-        return [_resolve_refs(v, array, depth + 1, max_depth) for v in obj]
+        return [_resolve_refs(v, array, idx_to_name, depth + 1, max_depth) if isinstance(v, dict) else v
+                for v in obj]
     return obj
 
 
-def _build_lookup_tables(array: list) -> tuple:
+def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     """
-    Scan the flat array for player-profile dicts (has dkId + a name-like
-    field) and stat-type dicts (has an id matching a market's
-    pickSixMarketId + a name/label field), building dkId->name and
-    marketId->stat_name lookups. Exact field names for these two
-    weren't given directly — best-effort scan, logged via debug if
-    either lookup ends up empty so a schema mismatch is visible rather
-    than silently producing "Unknown Player" for everything.
+    Scan the flat array for player-ID dicts (Shape B: has the compressed
+    key for "dkId") and market-type dicts (Shape D: has the compressed
+    key for "pickSixMarketId" + "name"), building dkId->name and
+    marketId->stat_name lookups. Player names (Shape A) and player IDs
+    (Shape B) are confirmed to be SEPARATE dict shapes in the real data
+    -- this builds a dkId->name correlation from whatever fields are
+    actually present once each candidate dict is fully resolved, logging
+    via debug if either lookup ends up empty so a further schema
+    mismatch is visible rather than silently producing "Unknown Player".
     """
+    dkid_key = idx_to_name and next((k for k, v in idx_to_name.items() if v == "dkId"), None)
+    market_id_key = next((k for k, v in idx_to_name.items() if v == "pickSixMarketId"), None)
+    name_key = next((k for k, v in idx_to_name.items() if v == "name"), None)
+    fullname_key = next((k for k, v in idx_to_name.items() if v == "fullName"), None)
+
     player_names, stat_names = {}, {}
     for item in array:
         if not isinstance(item, dict):
             continue
-        if "dkId" in item:
-            name = (item.get("displayName") or item.get("fullName") or
-                    item.get("name") or
-                    (f"{item.get('firstName','')} {item.get('lastName','')}".strip()))
-            if name:
-                player_names[item["dkId"]] = name
-        for id_key in ("pickSixMarketId", "marketId", "id"):
-            if id_key in item and isinstance(item.get(id_key), int):
-                label = item.get("marketName") or item.get("statName") or item.get("name") or item.get("label")
-                if label and id_key != "id":  # "id" is too generic/ambiguous to trust alone
-                    stat_names[item[id_key]] = label
+        if dkid_key is not None and f"_{dkid_key}" in item:
+            resolved = _resolve_refs(item, array, idx_to_name)
+            dk_id = resolved.get("dkId")
+            name = resolved.get("fullName") or resolved.get("name")
+            if dk_id and name:
+                player_names[dk_id] = name
+        if market_id_key is not None and f"_{market_id_key}" in item:
+            resolved = _resolve_refs(item, array, idx_to_name)
+            mkt_id, label = resolved.get("pickSixMarketId"), resolved.get("name")
+            if mkt_id and label:
+                stat_names[mkt_id] = label
     return player_names, stat_names
 
 
@@ -157,29 +181,35 @@ def fetch_sport_props(sport: str) -> list:
         DEBUG_LOG.append({"sport": sport, "note": "no streamController.enqueue payload found or failed to parse"})
         return []
 
-    player_names, stat_names = _build_lookup_tables(array)
+    idx_to_name = _build_idx_to_name(array)
+    player_names, stat_names = _build_lookup_tables(array, idx_to_name)
+    pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
+
     if sport == "MLB":
         DEBUG_LOG.append({"sport": sport, "array_len": len(array),
-                           "player_names_found": len(player_names), "stat_names_found": len(stat_names)})
-        if not player_names or not stat_names:
+                           "player_names_found": len(player_names), "stat_names_found": len(stat_names),
+                           "pickable_id_key_found": pickable_id_key is not None})
+        if not player_names or not stat_names or pickable_id_key is None:
             # Capture real samples to fix field names precisely instead of
-            # guessing again — first few dicts containing "dkId" (should be
-            # player-profile-like), and first few small dicts with an
-            # integer id-ish field (candidate stat-type lookups).
-            dkid_samples = [item for item in array if isinstance(item, dict) and "dkId" in item][:3]
-            small_int_id_samples = [
-                item for item in array
-                if isinstance(item, dict) and 1 <= len(item) <= 4
-                and any(isinstance(v, int) for v in item.values())
-            ][:5]
-            DEBUG_LOG.append({"sport": sport, "dkid_samples": dkid_samples,
-                               "small_int_id_samples": small_int_id_samples})
+            # guessing again -- using the confirmed-correct compressed-key
+            # detection this time, not a literal string check.
+            dkid_key = next((k for k, v in idx_to_name.items() if v == "dkId"), None)
+            dkid_samples = ([item for item in array if isinstance(item, dict) and f"_{dkid_key}" in item][:3]
+                             if dkid_key is not None else [])
+            DEBUG_LOG.append({"sport": sport, "dkid_key": dkid_key, "dkid_samples": dkid_samples,
+                               "pickable_id_key": pickable_id_key,
+                               "note": "player_names may still be empty if names truly aren't co-located "
+                                       "with dkId in any single dict -- see dkid_samples for what's actually there"})
+
+    if pickable_id_key is None:
+        return []
 
     normalized = []
+    pickable_key_str = f"_{pickable_id_key}"
     for item in array:
-        if not isinstance(item, dict) or "pickableId" not in item:
+        if not isinstance(item, dict) or pickable_key_str not in item:
             continue
-        resolved = _resolve_refs(item, array)
+        resolved = _resolve_refs(item, array, idx_to_name)
         entities = resolved.get("entities", [])
         dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
         player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
