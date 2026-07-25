@@ -1,6 +1,8 @@
 name: Signal Odds Refresh
 
 on:
+  schedule:
+    - cron: "10,40 * * * *"
   workflow_dispatch: {}
 
 jobs:
