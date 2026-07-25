@@ -162,7 +162,7 @@ def slim_prop(p: dict) -> dict:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    for attempt in range(3):
+    for attempt in range(5):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
@@ -170,15 +170,15 @@ def push_files(files_payload: dict, github_token: str) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code in (403, 429, 409) and attempt < 2:
+        if resp.status_code in (403, 429, 409) and attempt < 4:
             # 409 = another workflow on this same shared Gist collided at
             # the same instant (confirmed real, multiple scripts on tight
             # cron schedules). True exponential backoff + random jitter --
             # without jitter, colliding scripts would all retry at the
             # same instant again.
-            base_wait = 10 * (2 ** attempt)  # 10, 20
+            base_wait = min(10 * (2 ** attempt), 90)  # 10, 20
             wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
