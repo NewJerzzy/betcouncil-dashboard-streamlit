@@ -104,7 +104,7 @@ def fetch_match_data(sim_match_id: str) -> dict | None:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    for attempt in range(3):
+    for attempt in range(5):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
@@ -112,7 +112,7 @@ def push_files(files_payload: dict, github_token: str) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code in (403, 429, 409) and attempt < 2:
+        if resp.status_code in (403, 429, 409) and attempt < 4:
             # 403/429 = secondary rate limit (many workflows sharing one
             # GITHUB_TOKEN can burst-trigger this when GitHub bunches
             # scheduled cron runs near the top of the hour). 409 = another
@@ -122,9 +122,9 @@ def push_files(files_payload: dict, github_token: str) -> int:
             # exponential backoff + random jitter -- without jitter, every
             # script that collided at T+0 would all retry at the identical
             # T+10 and just collide again.
-            base_wait = 10 * (2 ** attempt)  # 10, 20
+            base_wait = min(10 * (2 ** attempt), 90)  # 10, 20
             wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
