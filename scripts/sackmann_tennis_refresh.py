@@ -80,13 +80,13 @@ def log(msg: str) -> None:
 
 def fetch_csv_rows(tour: str, year: int):
     url = f"{BASE_URL}/{year}.csv"
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             r = requests.get(url, headers=HEADERS, timeout=25)
         except Exception as e:
             DEBUG_LOG.append({"tour": tour, "year": year, "url": url,
                                "attempt": attempt + 1, "error": str(e)})
-            if attempt < 2:
+            if attempt < 4:
                 time.sleep(3 * (attempt + 1))
                 continue
             return None
@@ -166,7 +166,7 @@ def aggregate_player_stats(tour: str) -> dict:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    for attempt in range(3):
+    for attempt in range(5):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
@@ -174,10 +174,10 @@ def push_files(files_payload: dict, github_token: str) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code in (403, 429, 409) and attempt < 2:
-            base_wait = 10 * (2 ** attempt)
+        if resp.status_code in (403, 429, 409) and attempt < 4:
+            base_wait = min(10 * (2 ** attempt), 90)
             wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
