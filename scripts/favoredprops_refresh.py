@@ -154,7 +154,7 @@ def fetch_sportsbook(league: str) -> dict | None:
 
 def push_files(files_payload: dict) -> int:
     github_token = os.environ["GITHUB_TOKEN"]
-    for attempt in range(4):
+    for attempt in range(6):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={
@@ -166,10 +166,10 @@ def push_files(files_payload: dict) -> int:
         )
         if resp.status_code in (200, 201):
             return len(files_payload)
-        if resp.status_code in (409, 403, 429) and attempt < 3:
-            base_wait = (attempt + 1) * 8
+        if resp.status_code in (409, 403, 429) and attempt < 5:
+            base_wait = min((attempt + 1) * 8, 60)
             wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait:.1f}s (attempt {attempt+1}/4)")
+            log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait:.1f}s (attempt {attempt+1}/6)")
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
