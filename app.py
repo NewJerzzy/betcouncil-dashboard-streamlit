@@ -17716,15 +17716,23 @@ with st.sidebar:
     # answers "why is it low" without the user having to open History.
     _per_sport_cal = _brier_data.get("per_sport", {}) or {}
     _cal_explainer = ""
+    _grade_plain = {
+        "NEEDS WORK": "predicted win probabilities haven't matched what actually happened",
+        "FAIR":       "predicted win probabilities have drifted somewhat from actual results",
+    }
     if not _thin_sample and _per_sport_cal:
         _ranked = sorted(_per_sport_cal.items(), key=lambda x: x[1]["brier_score"])
         _best   = _ranked[0]
         _worst  = _ranked[-1]
         if _worst[1]["grade"] in ("FAIR", "NEEDS WORK") and _worst[0] != _best[0]:
-            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is the main drag on this number. "
+            _plain = _grade_plain.get(_worst[1]["grade"], "")
+            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is the main drag on this number — "
+                               f"its {_plain}. Bet sizing for {_worst[0]} is already reduced automatically until it improves. "
                                f"{_best[0]} is grading {_best[1]['grade']}.")
         elif _worst[1]["grade"] in ("FAIR", "NEEDS WORK"):
-            _cal_explainer = f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far."
+            _plain = _grade_plain.get(_worst[1]["grade"], "")
+            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far — "
+                               f"its {_plain}. Bet sizing for {_worst[0]} is already reduced automatically until it improves.")
         else:
             _cal_explainer = f"All tracked sports are grading GOOD or better — {_best[0]} leads at {_best[1]['grade']}."
     if not _cal_explainer:
