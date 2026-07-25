@@ -111,7 +111,7 @@ def _fetch_all_pages(endpoint: str, jwt: str, max_pages: int = 20) -> list | Non
         # tolerate a couple of plausible shapes rather than hard-assuming one.
         rows = None
         if isinstance(data, dict):
-            for key_path in (("data", "data"), ("data",), ("results",), ("predictions",), ("opportunities",)):
+            for key_path in (("data", "items"), ("data", "data"), ("data",), ("results",), ("predictions",), ("opportunities",)):
                 node = data
                 ok = True
                 for k in key_path:
@@ -131,6 +131,11 @@ def _fetch_all_pages(endpoint: str, jwt: str, max_pages: int = 20) -> list | Non
                                "top_level_keys": list(data.keys()) if isinstance(data, dict) else str(type(data))})
             log(f"  {endpoint} page {page}: unrecognized response shape, stopping")
             return all_rows if all_rows else None
+
+        if page == 1 and rows:
+            DEBUG_LOG.append({"endpoint": endpoint, "note": "sample_item_full",
+                               "sample": json.dumps(rows[0], indent=2)[:6000],
+                               "total_rows_this_page": len(rows)})
 
         all_rows.extend(rows)
 
@@ -235,7 +240,7 @@ def main() -> int:
 
     log("Fetching opportunities (arbitrage)...")
     raw_opportunities = None
-    for candidate in ("/opportunities", "/sure-bets", "/surebets", "/sure_bets", "/arbitrage", "/arbs"):
+    for candidate in ("/arbitrage", "/opportunities", "/sure-bets", "/surebets", "/sure_bets", "/arbs"):
         raw_opportunities = _fetch_all_pages(candidate, jwt)
         if raw_opportunities is not None:
             log(f"  arbitrage endpoint found: {candidate}")
