@@ -13302,7 +13302,6 @@ def load_sport_data(sport):
             st.session_state[_oddspapi_key] = result
         return result
     def _pf_bdl():          return fetch_player_season_avg_bdl(sport) if sport == 'NBA' else []
-    def _pf_injuries():     return fetch_injury_news(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else {}
     def _pf_rw_injuries():
         try:
             result = fetch_rotowire_injuries(sport) if sport in ["NBA","MLB","NFL","NHL","WNBA"] else []
@@ -13651,7 +13650,7 @@ def load_sport_data(sport):
     _parallel_fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
-        _pf_bdl, _pf_injuries, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
+        _pf_bdl, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
@@ -13667,7 +13666,7 @@ def load_sport_data(sport):
     _results = _fetch_parallel(_parallel_fns, show_progress=False)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
-     bdl_props_raw, injuries, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
+     bdl_props_raw, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
@@ -13950,9 +13949,16 @@ def load_sport_data(sport):
     rw_injuries = rw_injuries_raw or []
     cbs_injuries = cbs_injuries_raw or []
     espn_injuries = espn_injuries_raw or []
+    # ESPN direct is now the base dict (was: Underdog-wrapped ESPN as base,
+    # with direct ESPN merged in as a 4th, near-duplicate source -- removed,
+    # both were ultimately the same ESPN injury data via two paths).
+    injuries = {}
+    for item in espn_injuries:
+        pname = normalize_name(item.get("player", ""))
+        if pname and item.get("status") in ("OUT", "DOUBTFUL", "QUESTIONABLE"):
+            injuries[pname] = {"status": item["status"], "note": item.get("note", ""), "source": "ESPN"}
     _merge_injury_source(injuries, rw_injuries,   "RotoWire")
     _merge_injury_source(injuries, cbs_injuries,  "CBS Sports")
-    _merge_injury_source(injuries, espn_injuries, "ESPN")
     st.session_state["espn_injuries"] = espn_injuries
     # Market intelligence data
     if kalshi_raw:
