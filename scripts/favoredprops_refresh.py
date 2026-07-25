@@ -154,6 +154,8 @@ def fetch_sportsbook(league: str) -> dict | None:
 
 def push_files(files_payload: dict) -> int:
     github_token = os.environ["GITHUB_TOKEN"]
+    if not _rate_limit_ok(github_token):
+        return 0
     for attempt in range(6):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
@@ -175,6 +177,30 @@ def push_files(files_payload: dict) -> int:
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
         return 0
     return 0
+
+
+def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
+    """Check GitHub's remaining request budget for this shared token before
+    doing any writes. With ~30 scripts sharing one token/Gist, the hourly
+    5000-request budget can run dry during a busy stretch (confirmed real:
+    2026-07-25 06:17-06:40 UTC, 403 'API rate limit exceeded for user ID').
+    When that happens, skip this run cleanly (exit 0) instead of burning
+    retries against an already-exhausted budget and getting flagged as a
+    failure -- the next scheduled run picks the data back up once the
+    hourly window resets."""
+    try:
+        r = requests.get(
+            "https://api.github.com/rate_limit",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            timeout=15,
+        )
+        remaining = r.json().get("resources", {}).get("core", {}).get("remaining")
+        if remaining is not None and remaining < min_remaining:
+            log(f"Shared GitHub token budget low ({remaining} requests left this hour) -- skipping this run cleanly, next scheduled run will pick it up")
+            return False
+    except Exception as e:
+        log(f"Rate-limit pre-check failed ({e}) -- proceeding anyway")
+    return True
 
 
 def main() -> int:
