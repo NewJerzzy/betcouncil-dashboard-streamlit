@@ -90,11 +90,13 @@ def _fetch_all_pages(endpoint: str, jwt: str, max_pages: int = 20) -> list | Non
             return all_rows if all_rows else None
 
         DEBUG_LOG.append({"endpoint": endpoint, "page": page, "status": r.status_code,
-                           "body_snippet": r.text[:400]})
+                           "body_snippet": r.text[:4000]})
 
         if r.status_code == 401:
             log(f"  {endpoint}: HTTP 401 — JWT rejected (expired or revoked)")
             return None
+        if r.status_code == 404:
+            return None  # let the caller try the next candidate path
         if r.status_code != 200:
             log(f"  {endpoint} page {page}: HTTP {r.status_code} — {r.text[:200]}")
             return all_rows if all_rows else None
@@ -230,8 +232,14 @@ def main() -> int:
 
     log("Fetching predictions...")
     raw_predictions = _fetch_all_pages("/predictions", jwt)
+
     log("Fetching opportunities (arbitrage)...")
-    raw_opportunities = _fetch_all_pages("/opportunities", jwt)
+    raw_opportunities = None
+    for candidate in ("/opportunities", "/sure-bets", "/surebets", "/sure_bets", "/arbitrage", "/arbs"):
+        raw_opportunities = _fetch_all_pages(candidate, jwt)
+        if raw_opportunities is not None:
+            log(f"  arbitrage endpoint found: {candidate}")
+            break
 
     if raw_predictions is None and raw_opportunities is None:
         log("FATAL: both endpoints failed — JWT may be expired/revoked, or API changed")
