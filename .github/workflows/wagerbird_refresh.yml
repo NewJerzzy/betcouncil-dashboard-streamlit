@@ -2,7 +2,7 @@ name: WagerBird Picks Refresh
 
 on:
   schedule:
-    - cron: "5,20,35,50 * * * *"
+    - cron: "30 11 * * *"   # once/day -- source posts a few picks a few times/week, not live data
   workflow_dispatch: {}
 
 jobs:
