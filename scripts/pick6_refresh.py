@@ -99,38 +99,62 @@ def _build_idx_to_name(array: list) -> dict:
     return {i: v for i, v in enumerate(array) if isinstance(v, str)}
 
 
-def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
+def _resolve_value(v, array: list, idx_to_name: dict, depth=0, max_depth=15):
     """
-    DK's compression scheme changed fundamentally (confirmed via live
-    re-test 2026-07-25, previous version of this function assumed
-    literal string keys like "dkId" and a single-key {"_N": val}
-    reference-marker pattern -- both wrong now). Current real format:
-    EVERY dict key is a "_N" reference where array[N] is the real field
-    name, and EVERY dict value is an index into array needing exactly
-    one dereference. Only recurses further into the dereferenced result
-    if it's itself a container (dict/list) -- a literal scalar found
-    nested inside an already-resolved list (e.g. a real comp-ID number)
-    is left alone, not treated as a further reference to chase.
+    Fully dereference a single value. Confirmed via a second live
+    re-test (2026-07-25) that the previous version of this resolver had
+    a second, deeper indirection bug: after one dereference, a LIST
+    result (e.g. entities: [1831]) is NOT already-resolved data -- its
+    own elements are themselves indices needing one more hop to become
+    real dicts (entities: [1831] -> array[1831] -> the real player dict).
+    Only trusts that second hop if it yields a genuine dict (a real
+    object reference) -- if array[element] is anything else (None, a
+    scalar), the original int was literal data (e.g. a real comp-ID
+    number, confirmed via compIds: [400] staying [400], not becoming
+    array[400]) and is kept as-is rather than replaced with a wrong value.
     """
     if depth > max_depth:
-        return obj
-    if isinstance(obj, dict):
-        out = {}
-        for k, v in obj.items():
-            if isinstance(k, str) and k.startswith("_") and k[1:].isdigit():
-                real_key = idx_to_name.get(int(k[1:]), k)
+        return v
+    if isinstance(v, int) and 0 <= v < len(array):
+        v = array[v]
+    if isinstance(v, list):
+        out = []
+        for item in v:
+            if isinstance(item, int) and 0 <= item < len(array):
+                deref = array[item]
+                if isinstance(deref, dict):
+                    out.append(_resolve_dict(deref, array, idx_to_name, depth + 1, max_depth))
+                else:
+                    out.append(item)
+            elif isinstance(item, dict):
+                out.append(_resolve_dict(item, array, idx_to_name, depth + 1, max_depth))
             else:
-                real_key = k
-            deref = array[v] if isinstance(v, int) and 0 <= v < len(array) else v
-            if isinstance(deref, (dict, list)):
-                out[real_key] = _resolve_refs(deref, array, idx_to_name, depth + 1, max_depth)
-            else:
-                out[real_key] = deref
+                out.append(item)
         return out
-    if isinstance(obj, list):
-        return [_resolve_refs(v, array, idx_to_name, depth + 1, max_depth) if isinstance(v, dict) else v
-                for v in obj]
-    return obj
+    if isinstance(v, dict):
+        return _resolve_dict(v, array, idx_to_name, depth + 1, max_depth)
+    return v
+
+
+def _resolve_dict(d: dict, array: list, idx_to_name: dict, depth=0, max_depth=15):
+    if depth > max_depth:
+        return d
+    out = {}
+    for k, v in d.items():
+        if isinstance(k, str) and k.startswith("_") and k[1:].isdigit():
+            real_key = idx_to_name.get(int(k[1:]), k)
+        else:
+            real_key = k
+        out[real_key] = _resolve_value(v, array, idx_to_name, depth + 1, max_depth)
+    return out
+
+
+def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
+    """Entry point -- dispatches to _resolve_dict/_resolve_value so both
+    a top-level dict and a top-level list are handled correctly."""
+    if isinstance(obj, dict):
+        return _resolve_dict(obj, array, idx_to_name, depth, max_depth)
+    return _resolve_value(obj, array, idx_to_name, depth, max_depth)
 
 
 def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
