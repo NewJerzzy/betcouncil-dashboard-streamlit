@@ -261,6 +261,9 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN or ODDS_API_IO_KEY not set")
         return 1
 
+    if not _rate_limit_ok(github_token):
+        return 0
+
     now_iso = datetime.now(timezone.utc).isoformat()
     files_payload = {}
     any_data = False
