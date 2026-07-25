@@ -147,34 +147,65 @@ def _fetch_all_pages(endpoint: str, jwt: str, max_pages: int = 20) -> list | Non
 
 
 def _normalize_prediction(row: dict) -> dict:
-    locked = bool(row.get("locked") or row.get("is_locked") or row.get("premium_locked"))
+    """Real shape confirmed live 2026-07-25 (not guessed): team/time/league
+    info sits under row['event'], the model that generated the pick under
+    row['model'], everything else is top-level. When is_locked is true,
+    SignalOdds itself redacts outcome_name/book_odds server-side (block
+    characters / zeros) rather than omitting the fields -- passed through
+    as-is since the redaction is already self-describing alongside the
+    locked flag."""
+    event = row.get("event") or {}
+    model = row.get("model") or {}
+    locked = bool(row.get("is_locked"))
     return {
-        "id": row.get("id") or row.get("prediction_id"),
-        "sport": row.get("sport") or row.get("league"),
-        "home_team": row.get("home_team"),
-        "away_team": row.get("away_team"),
-        "commence_time": row.get("commence_time") or row.get("start_time"),
-        "market": row.get("market") or row.get("market_type"),
-        "pick": None if locked else (row.get("pick") or row.get("selection")),
-        "confidence_pct": row.get("confidence") or row.get("confidence_pct"),
-        "ev_pct": row.get("ev") or row.get("expected_value") or row.get("ev_pct"),
-        "fair_line": row.get("fair_line") or row.get("pinnacle_fair_line"),
+        "id": row.get("id"),
+        "sport": (event.get("sport") or {}).get("name"),
+        "league": (event.get("league") or {}).get("title"),
+        "home_team": (event.get("home_team") or {}).get("full_name"),
+        "away_team": (event.get("away_team") or {}).get("full_name"),
+        "commence_time": event.get("commence_time"),
+        "market_key": row.get("market_key"),
+        "pick": row.get("outcome_name"),
+        "book_odds": row.get("book_odds"),
+        "bookmaker": (row.get("bookmaker") or {}).get("name"),
+        "confidence_pct": row.get("confidence"),
+        "confidence_band": row.get("confidence_band"),
+        "ev_pct": row.get("expected_value"),
+        "explanation": row.get("explanation") or None,
+        "model_name": model.get("name"),
+        "model_type": model.get("ai_model_type"),
         "locked": locked,
     }
 
 
 def _normalize_opportunity(row: dict) -> dict:
-    locked = bool(row.get("locked") or row.get("is_locked") or row.get("premium_locked"))
+    """Real shape confirmed live 2026-07-25: this is the /arbitrage
+    endpoint (NOT /opportunities, which 404s). Outcomes is a real array of
+    per-bookmaker legs with odds and stake sizing already computed."""
+    event = row.get("event") or {}
+    locked = bool(row.get("is_locked"))
+    outcomes = row.get("outcomes") or []
     return {
-        "id": row.get("id") or row.get("opportunity_id"),
-        "sport": row.get("sport") or row.get("league"),
-        "home_team": row.get("home_team"),
-        "away_team": row.get("away_team"),
-        "commence_time": row.get("commence_time") or row.get("start_time"),
-        "market": row.get("market") or row.get("market_type"),
-        "profit_pct": None if locked else (row.get("profit_pct") or row.get("roi") or row.get("arb_pct")),
-        "books": None if locked else row.get("books"),
-        "legs": None if locked else row.get("legs"),
+        "id": row.get("id"),
+        "sport": (event.get("sport") or {}).get("name"),
+        "league": (event.get("league") or {}).get("title"),
+        "home_team": (event.get("home_team") or {}).get("full_name"),
+        "away_team": (event.get("away_team") or {}).get("full_name"),
+        "commence_time": event.get("commence_time"),
+        "market_key": row.get("market_key"),
+        "market_name": row.get("market_name"),
+        "margin_percent": row.get("margin_percent"),
+        "freshness_status": row.get("freshness_status"),
+        "expires_at": row.get("expires_at"),
+        "legs": [
+            {
+                "bookmaker": o.get("bookmaker_name"),
+                "outcome": o.get("outcome_name"),
+                "odds": o.get("odds"),
+                "stake_pct": o.get("stake_percentage"),
+            }
+            for o in outcomes
+        ],
         "locked": locked,
     }
 
