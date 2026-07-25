@@ -1,0 +1,50 @@
+name: DataStreak Refresh
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      sport:
+        description: "Space-separated sport keys (e.g. mlb wnba). Leave blank for all."
+        required: false
+        default: ""
+      date:
+        description: "Date YYYY-MM-DD. Leave blank for today ET."
+        required: false
+        default: ""
+      skip_player_streaks:
+        description: "Skip per-player detail calls (faster, less data)"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run DataStreak refresh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.sport }}" ]; then
+            ARGS="$ARGS --sport ${{ github.event.inputs.sport }}"
+          fi
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
+          fi
+          if [ "${{ github.event.inputs.skip_player_streaks }}" = "true" ]; then
+            ARGS="$ARGS --skip-player-streaks"
+          fi
+          python3 scripts/src/datastreak_refresher/refresh.py $ARGS
