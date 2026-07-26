@@ -99,7 +99,7 @@ def global_css() -> str:
     /* Tab navigation -- hover + active-state feedback. Confirmed missing
        entirely (no tab-specific CSS existed anywhere) before this. */
     [data-testid="stTabs"] button[data-baseweb="tab"] {
-        transition: color 0.15s ease, border-color 0.15s ease;
+        transition: color 200ms cubic-bezier(0.4,0,0.2,1), border-color 200ms cubic-bezier(0.4,0,0.2,1);
         border-radius: 6px 6px 0 0;
     }
     [data-testid="stTabs"] button[data-baseweb="tab"]:hover {
@@ -110,7 +110,7 @@ def global_css() -> str:
         border-bottom: 2px solid var(--bc-blue, #1e90ff) !important;
     }
     .bc-card {
-        transition: border-color 0.15s ease;
+        transition: border-color 200ms cubic-bezier(0.4,0,0.2,1);
     }
     /* .pulse-stale -- applied to the sidebar Edge Freshness metric-box
        when get_edge_staleness() returns red/orange (stale, very stale, or
@@ -128,7 +128,7 @@ def global_css() -> str:
         border-color: var(--bc-blue) !important;
     }
     div[style*="border-radius:8px"] {
-        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        transition: border-color 200ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms cubic-bezier(0.4,0,0.2,1);
     }
     div[style*="border-radius:8px"]:hover {
         border-color: var(--bc-blue) !important;
@@ -157,7 +157,7 @@ def global_css() -> str:
     .bc-empty-state .bc-empty-subtitle { font-size: 0.85rem; }
     /* Button polish -- smoother state transitions on Streamlit's native buttons */
     .stButton > button {
-        transition: transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+        transition: transform 150ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms cubic-bezier(0.4,0,0.2,1), border-color 200ms cubic-bezier(0.4,0,0.2,1);
     }
     .stButton > button:hover {
         transform: translateY(-1px);
@@ -189,7 +189,7 @@ def global_css() -> str:
         padding: 14px 16px 12px;
         text-align: center;
         box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+        transition: transform 200ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms cubic-bezier(0.4,0,0.2,1), border-color 200ms cubic-bezier(0.4,0,0.2,1);
     }
     .command-card:hover {
         transform: translateY(-2px);
@@ -271,51 +271,87 @@ def global_css() -> str:
         padding: 8px 0 4px;
         border-bottom: 1px solid var(--bc-border);
     }
-    /* Header accent -- was a plain 1px gray border, replaced with a
-       gradient underline for a real brand identity line instead of
-       blending into the rest of the page. */
+    /* Header accent -- refined to a subtle brand line rather than a bold
+       banner: lower opacity, contained to the header's own width (not
+       page-width), plus a soft micro-shadow underneath for separation. */
     .bc-header {
         border-bottom: none !important;
         position: relative;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
     }
     .bc-header::after {
         content: "";
         position: absolute;
         left: 0; right: 0; bottom: -1px;
         height: 2px;
+        opacity: 0.4;
         background: linear-gradient(90deg, var(--bc-blue, #1e90ff), #4dd8c4, transparent);
     }
-    /* Active tab glow -- adds to the border-bottom already set earlier */
+    /* Active tab -- inner glow (feels premium) instead of outer (reads as
+       "gamey"), teal color shift, short fade-in on the border so switching
+       tabs feels smooth rather than an instant snap. */
     [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
-        box-shadow: 0 2px 8px rgba(30,144,255,0.25);
+        box-shadow: inset 0 -2px 6px -2px rgba(77,216,196,0.5);
+        border-bottom: 2px solid #4dd8c4 !important;
+        transition: box-shadow 150ms cubic-bezier(0.4,0,0.2,1), border-color 150ms cubic-bezier(0.4,0,0.2,1);
     }
     /* Bankroll pulse-on-change -- applied via a conditional class (see
        app_core.py) only on the render where the value actually differs
-       from the prior one, not a constant/looping animation. */
-    @keyframes bankroll-pulse {
+       from the prior one, not a constant/looping animation. Directional:
+       an increase gets the pulse (positive reinforcement), a decrease gets
+       a quieter fade instead of the same celebratory motion. */
+    /* Unified motion profile across the app: 150-350ms duration,
+       cubic-bezier(0.4,0,0.2,1) easing, scale shifts capped ~1-3% --
+       applied consistently above and below rather than each animated
+       element inventing its own timing. */
+    @keyframes bankroll-pulse-up {
         0%   { transform: scale(1); }
-        30%  { transform: scale(1.06); }
+        40%  { transform: scale(1.03); }
         100% { transform: scale(1); }
     }
-    .bankroll-pulse {
-        animation: bankroll-pulse 0.5s ease-out;
+    @keyframes bankroll-fade-down {
+        0%   { opacity: 0.55; filter: saturate(0.7); }
+        100% { opacity: 1;    filter: saturate(1); }
+    }
+    .bankroll-pulse-up {
+        animation: bankroll-pulse-up 300ms cubic-bezier(0.4,0,0.2,1);
         display: inline-block;
     }
-    /* Edge heatmap legend */
+    .bankroll-pulse-down {
+        animation: bankroll-fade-down 300ms cubic-bezier(0.4,0,0.2,1);
+        display: inline-block;
+    }
+    /* Edge heatmap legend -- soft reference style: small, right-aligned,
+       continuous gradient bar with a label above rather than a bold
+       standalone element competing with the actual board. */
     .heatmap-legend {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 2px;
+        font-size: 0.68rem;
+        color: var(--bc-dim);
+        margin: 4px 0 8px;
+        width: 150px;
+        margin-left: auto;
+    }
+    .heatmap-legend-title {
+        font-size: 0.65rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--bc-dim);
+    }
+    .heatmap-legend-row {
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 0.72rem;
-        color: var(--bc-dim);
-        margin: 4px 0 8px;
     }
     .heatmap-legend-swatch {
         display: inline-block;
-        width: 40px;
-        height: 8px;
+        width: 100px;
+        height: 6px;
         border-radius: 3px;
-        background: linear-gradient(90deg, rgba(34,197,94,0.05), rgba(34,197,94,0.4));
+        background: linear-gradient(90deg, rgba(34,197,94,0.05), rgba(34,197,94,0.45));
     }
     </style>"""
 
