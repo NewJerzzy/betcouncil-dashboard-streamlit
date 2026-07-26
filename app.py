@@ -256,12 +256,12 @@ with tabs[0]:
             f"{i/(len(_clv_trend_vals)-1)*_ct_w:.1f},{_ct_h - (v-_ct_min)/_ct_range*_ct_h:.1f}"
             for i, v in enumerate(_clv_trend_vals)
         )
-        _ct_color = "#22c55e" if _clv_trend_vals[-1] >= _clv_trend_vals[0] else "#e04040"
+        _ct_color = "#22c55e" if _clv_trend_vals[-1] > _clv_trend_vals[0] else "#e04040" if _clv_trend_vals[-1] < _clv_trend_vals[0] else "var(--bc-dim)"
         _clv_spark_svg = (
             f'<svg width="{_ct_w}" height="{_ct_h}" style="display:block;margin-top:4px;" '
             f'title="Last {len(_clv_trend_vals)} resolved bets\' CLV%">'
             f'<polyline points="{_ct_pts}" fill="none" stroke="{_ct_color}" stroke-width="1.5"/></svg>'
-            f'<span style="font-size:0.7rem;color:{_ct_color};font-weight:600;">{_clv_trend_vals[-1]:+.1f}%</span>'
+            f'<span style="display:block;margin-top:5px;font-size:0.68rem;color:{_ct_color};font-weight:600;">{_clv_trend_vals[-1]:+.1f}%</span>'
         )
     else:
         _clv_spark_svg = ""
@@ -271,15 +271,21 @@ with tabs[0]:
     # rerun -- avoids a constantly-pulsing number that would be more
     # distracting than informative.
     _bankroll_now_hero = _bi_top.get("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
-    _bankroll_pulse_cls = " bankroll-pulse" if st.session_state.get("_prev_bankroll_hero") not in (None, _bankroll_now_hero) else ""
+    _prev_bankroll_hero = st.session_state.get("_prev_bankroll_hero")
+    if _prev_bankroll_hero is None or _prev_bankroll_hero == _bankroll_now_hero:
+        _bankroll_pulse_cls = ""
+    elif _bankroll_now_hero > _prev_bankroll_hero:
+        _bankroll_pulse_cls = " bankroll-pulse-up"
+    else:
+        _bankroll_pulse_cls = " bankroll-pulse-down"
     st.session_state["_prev_bankroll_hero"] = _bankroll_now_hero
     # 7-day change label under the sparkline, real value from the same
     # reconstruction used to draw it -- not decorative, actionable.
     _spark_chg_label = ""
     if len(_spark_points) >= 2 and _spark_points[0]:
         _spark_chg_pct = (_spark_points[-1] - _spark_points[0]) / abs(_spark_points[0]) * 100
-        _spark_chg_color = "#22c55e" if _spark_chg_pct >= 0 else "#e04040"
-        _spark_chg_label = f'<span style="font-size:0.7rem;color:{_spark_chg_color};font-weight:600;">{_spark_chg_pct:+.1f}% (7d)</span>'
+        _spark_chg_color = "#22c55e" if _spark_chg_pct > 0 else "#e04040" if _spark_chg_pct < 0 else "var(--bc-dim)"
+        _spark_chg_label = f'<span style="display:block;margin-top:5px;font-size:0.68rem;color:{_spark_chg_color};font-weight:600;">{_spark_chg_pct:+.1f}% (7d)</span>'
 
     st.html(f"""
     <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
@@ -1678,8 +1684,9 @@ with tabs[2]:
         st.html(
             '<div class="heatmap-legend" title="Background intensity on the Edge % column scales with edge size, '
             'from 0% up to 15%+ -- purely visual, doesn\'t change the underlying number.">'
-            '<span class="heatmap-legend-swatch"></span>'
-            '<span>Edge Confidence: Low → High</span>'
+            '<span class="heatmap-legend-title">Edge Confidence</span>'
+            '<span class="heatmap-legend-row"><span class="heatmap-legend-swatch"></span>'
+            '<span>Low → High</span></span>'
             '</div>'
         )
 
