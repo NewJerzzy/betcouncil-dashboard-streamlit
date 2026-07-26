@@ -1959,33 +1959,141 @@ with tabs[2]:
             unsafe_allow_html=True
         )
 
-        # ── Spotlight: the single top-ranked pick on today's (filtered)
-        # board, real data only -- _rows[0] after the tier+sort above, and
-        # only shown when that top pick is genuinely Sovereign/Elite tier
-        # rather than surfacing a Lean-tier pick as if it were a standout
-        # on a weak day. No card at all if nothing qualifies.
-        if _rows and _rows[0].get("_tier") in ("SOVEREIGN", "ELITE"):
-            _sp = _rows[0]
-            _sp_tc = TIER_COLORS.get(_sp["_tier"], "#6a7a8a")
-            _sp_edge_str = f"+{_sp['_edge_pct']}%" if _sp["_edge_pct"] > 0 else f"{_sp['_edge_pct']}%"
-            st.markdown(
-                f'<div class="command-card" style="text-align:left;padding:16px 20px;margin-bottom:14px;'
-                f'border-left:4px solid {_sp_tc};background:linear-gradient(135deg,var(--bc-bg-card) 0%,{_sp_tc}14 140%);">'
+        # ── Spotlight: today's top-ranked pick(s), real data only.
+        # _rows is already tier+sort ordered above. Only ever shows
+        # Sovereign/Elite tier picks -- no false standout on a weak day.
+        def _sp_rationale(row):
+            """Real rationale from actual per-signal magnitudes already
+            computed on the prop (SignalBase/Defense/Location/Usage) --
+            NOT EdgeTypeReason, which is read elsewhere in this file but
+            confirmed (checked before building this) to never actually be
+            set anywhere in the codebase, so it's always empty. Picks
+            whichever real signal has the largest magnitude and names it,
+            plus the real model-vs-market gap -- no invented commentary."""
+            _p_sig = row.get("_p", {})
+            _sig_map = {
+                "opponent matchup": abs(float(_p_sig.get("SignalDefense", 0) or 0)),
+                "recent usage trend": abs(float(_p_sig.get("SignalUsage", 0) or 0)),
+                "home/away split": abs(float(_p_sig.get("SignalLocation", 0) or 0)),
+                "base model strength": abs(float(_p_sig.get("SignalBase", 0) or 0)),
+            }
+            _top_sig = max(_sig_map, key=_sig_map.get) if any(_sig_map.values()) else None
+            _parts = []
+            if _top_sig and _sig_map[_top_sig] > 0:
+                _parts.append(f"Driven primarily by {_top_sig}")
+            try:
+                _mp = float(str(row.get("_model_prob", "")).replace("%", ""))
+                _parts.append(f"model {_mp:.0f}% vs market-implied price")
+            except (ValueError, TypeError):
+                pass
+            return " · ".join(_parts) if _parts else "Edge from combined signal strength"
+
+        def _sp_card_html(row, label):
+            _tc = TIER_COLORS.get(row["_tier"], "#6a7a8a")
+            _edge_str = f"+{row['_edge_pct']}%" if row["_edge_pct"] > 0 else f"{row['_edge_pct']}%"
+            return (
+                f'<div class="command-card" style="text-align:left;padding:16px 20px;margin-bottom:10px;'
+                f'border-left:4px solid {_tc};background:linear-gradient(135deg,var(--bc-bg-card) 0%,{_tc}14 140%);">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;">'
                 f'<div>'
-                f'<div class="command-label" style="color:{_sp_tc};">🎯 Spotlight — Top Edge Right Now</div>'
+                f'<div class="command-label" style="color:{_tc};">{label}</div>'
                 f'<div style="font-size:1.15rem;font-weight:800;color:var(--bc-text);margin-top:4px;">'
-                f'{_sp["_player"]} <span style="font-weight:400;color:var(--bc-muted);">— {_sp["_side"]} {_sp["_line"]} {_sp["_prop"]}</span></div>'
-                f'<div style="font-size:0.8rem;color:var(--bc-dim);margin-top:2px;">{_sp["_team"]} · Model {_sp["_model_prob"]}% vs implied</div>'
+                f'{row["_player"]} <span style="font-weight:400;color:var(--bc-muted);">— {row["_side"]} {row["_line"]} {row["_prop"]}</span></div>'
+                f'<div style="font-size:0.8rem;color:var(--bc-dim);margin-top:2px;">{row["_team"]} · {_sp_rationale(row)}</div>'
                 f'</div>'
                 f'<div style="text-align:right;">'
-                f'<div class="odds-mono" style="font-size:1.6rem;font-weight:800;color:{_sp["_grade_color"]};">{_sp_edge_str}</div>'
-                f'<div style="font-size:0.7rem;color:{_sp_tc};font-weight:700;text-transform:uppercase;">{_sp["_tier"]} · Grade {_sp["_grade"]}</div>'
+                f'<div class="odds-mono" style="font-size:1.6rem;font-weight:800;color:{row["_grade_color"]};">{_edge_str}</div>'
+                f'<div style="font-size:0.7rem;color:{_tc};font-weight:700;text-transform:uppercase;">{row["_tier"]} · Grade {row["_grade"]}</div>'
                 f'</div>'
                 f'</div>'
-                f'</div>',
-                unsafe_allow_html=True
+                f'</div>'
             )
+
+        if _rows and _rows[0].get("_tier") in ("SOVEREIGN", "ELITE"):
+            _n_sov_today = sum(1 for r in _rows if r.get("_tier") == "SOVEREIGN")
+            _n_elite_today = sum(1 for r in _rows if r.get("_tier") == "ELITE")
+            # Multi-spotlight gate: >=3 Elite, or >=1 Sovereign + >=2 Elite.
+            _multi_ok = _n_elite_today >= 3 or (_n_sov_today >= 1 and _n_elite_today >= 2)
+            _sp_candidates = [_rows[0]]
+            if _multi_ok:
+                for _r2 in _rows[1:3]:
+                    if _r2.get("_tier") in ("SOVEREIGN", "ELITE"):
+                        _sp_candidates.append(_r2)
+
+            _sp_labels = (["🎯 Spotlight — Top Edge Right Now"] if len(_sp_candidates) == 1
+                          else [f"🎯 Spotlight #{i+1}" for i in range(len(_sp_candidates))])
+            st.markdown("".join(_sp_card_html(r, l) for r, l in zip(_sp_candidates, _sp_labels)), unsafe_allow_html=True)
+
+            # ── Spotlight alert: only fires when today's #1 pick is a
+            # genuinely NEW spotlight vs the last one seen this session,
+            # or jumped up to Sovereign from something lower. Session-only
+            # (not persisted across browser sessions) -- a real cross-
+            # session version would need its own Gist round-trip on every
+            # single board load just to check, which isn't worth the cost
+            # for a same-session convenience notice.
+            _sp_top = _rows[0]
+            _sp_id = f"{_sp_top['_player']}|{_sp_top['_prop']}|{_sp_top['_line']}"
+            _sp_prev_id = st.session_state.get("_sp_last_seen_id")
+            _sp_prev_tier = st.session_state.get("_sp_last_seen_tier")
+            if _sp_prev_id is not None and _sp_id != _sp_prev_id:
+                if _sp_top["_tier"] == "SOVEREIGN" and _sp_prev_tier != "SOVEREIGN":
+                    st.info(f"🔔 New Sovereign-tier spotlight: **{_sp_top['_player']}** — {_sp_top['_side']} {_sp_top['_line']} {_sp_top['_prop']}")
+                elif _sp_top["_tier"] == "ELITE" and _sp_prev_tier not in ("SOVEREIGN", "ELITE"):
+                    st.info(f"🔔 New Elite-tier spotlight: **{_sp_top['_player']}** — {_sp_top['_side']} {_sp_top['_line']} {_sp_top['_prop']}")
+            st.session_state["_sp_last_seen_id"] = _sp_id
+            st.session_state["_sp_last_seen_tier"] = _sp_top["_tier"]
+
+            # ── Spotlight history: log today's top pick once (deduped by
+            # date+player+prop), then show real win-rate/ROI IF enough
+            # past spotlight picks have since resolved -- no fake numbers
+            # on day one, an honest "not enough history yet" instead.
+            try:
+                _sp_today_key = date.today().strftime("%Y-%m-%d")
+                _sp_log = load_from_gist("spotlight_log", None) or []
+                _sp_entry_id = f"{_sp_today_key}|{_sp_top['_player']}|{_sp_top['_prop']}|{_sp_top['_line']}"
+                if not any(e.get("id") == _sp_entry_id for e in _sp_log):
+                    _sp_log.append({
+                        "id": _sp_entry_id, "date": _sp_today_key,
+                        "player": _sp_top["_player"], "prop": _sp_top["_prop"],
+                        "line": _sp_top["_line"], "side": _sp_top["_side"],
+                        "tier": _sp_top["_tier"], "sport": _sport,
+                    })
+                    _sp_log = _sp_log[-200:]  # cap growth, most-recent-first isn't needed for matching
+                    save_to_gist("spotlight_log", _sp_log)
+
+                _sp_resolved_matches = []
+                for _entry in _sp_log:
+                    for _h in st.session_state.get("history", []):
+                        if (_h.get("outcome") in ("WIN", "LOSS")
+                                and normalize_name(_h.get("player", "")) == normalize_name(_entry["player"])
+                                and _h.get("prop", "") == _entry["prop"]
+                                and _h.get("timestamp", "")[:10] >= _entry["date"]):
+                            _sp_resolved_matches.append(_h)
+                            break
+
+                if len(_sp_resolved_matches) >= 5:
+                    _sp_wins = sum(1 for h in _sp_resolved_matches if h["outcome"] == "WIN")
+                    _sp_last10 = _sp_resolved_matches[-10:]
+                    _sp_wr = _sp_wins / len(_sp_resolved_matches) * 100
+                    _sp_wagered = sum(float(h.get("wager", 0) or 0) for h in _sp_resolved_matches)
+                    _sp_net = sum(
+                        (float(h.get("wager", 0) or 0) * float(h.get("payout_mult", 1.0) or 1.0) - float(h.get("wager", 0) or 0))
+                        if h["outcome"] == "WIN" else -float(h.get("wager", 0) or 0)
+                        for h in _sp_resolved_matches
+                    )
+                    _sp_roi = (_sp_net / _sp_wagered * 100) if _sp_wagered else 0
+                    with st.expander(f"📜 Spotlight History — {len(_sp_resolved_matches)} resolved picks"):
+                        st.markdown(
+                            f'Win rate: <span style="color:{"#22c55e" if _sp_wr>=52.4 else "#e04040"};font-weight:700;">{_sp_wr:.0f}%</span> '
+                            f'({_sp_wins}/{len(_sp_resolved_matches)}) · '
+                            f'Last 10: {"".join("✅" if h["outcome"]=="WIN" else "❌" for h in _sp_last10)} · '
+                            f'Rolling ROI: <span style="color:{"#22c55e" if _sp_roi>=0 else "#e04040"};font-weight:700;">{_sp_roi:+.1f}%</span>',
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption(f"📜 Spotlight History: only {len(_sp_resolved_matches)} resolved spotlight pick(s) so far — needs 5+ before showing a real win rate.")
+            except Exception:
+                _logger.debug("Spotlight history tracking failed silently")
         st.caption(f"Showing {len(_rows)} props | Sorted by {_sort_col}")
 
         # ── Render table ────────────────────────────────────────
