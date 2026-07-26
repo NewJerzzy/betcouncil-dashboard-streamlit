@@ -1060,12 +1060,42 @@ hr { border-color: var(--bc-border) !important; opacity: 0.5; }
 """, unsafe_allow_html=True)
 
 # ── BetCouncil Header Bar ──────────────────────────────────────────────────
+# Header context line: board strength + prop count + real elapsed time
+# since the last scan -- same tier-strength logic already used on Full
+# Board/Summary, computed fresh here since the header renders before
+# either of those tabs runs.
+_hdr_board = st.session_state.get("board_data", []) or []
+_hdr_n_sov = sum(1 for p in _hdr_board if p.get("Tier") == "SOVEREIGN")
+_hdr_n_elite = sum(1 for p in _hdr_board if p.get("Tier") == "ELITE")
+if not _hdr_board:
+    _hdr_strength = "No board loaded"
+elif _hdr_n_sov or _hdr_n_elite:
+    _hdr_strength = "Strong board"
+elif any(p.get("Tier") == "APPROVED" for p in _hdr_board):
+    _hdr_strength = "Moderate board"
+else:
+    _hdr_strength = "Weak board"
+_hdr_scan_time = st.session_state.get("last_scan_time")
+if _hdr_scan_time:
+    try:
+        _hdr_last = datetime.strptime(_hdr_scan_time, "%H:%M:%S")
+        _hdr_now = datetime.now()
+        _hdr_mins = ((_hdr_now.hour * 60 + _hdr_now.minute) - (_hdr_last.hour * 60 + _hdr_last.minute))
+        if _hdr_mins < 0:
+            _hdr_mins += 1440
+        _hdr_updated = f"Updated {_hdr_mins}m ago"
+    except (ValueError, TypeError):
+        _hdr_updated = "Updated — unknown"
+else:
+    _hdr_updated = "Not loaded yet"
+_hdr_context = f"{_hdr_strength} · {len(_hdr_board)} props · {_hdr_updated}"
+
 st.markdown(f"""
 <div class="bc-header">
   <div class="bc-logo">bet<span>Council</span></div>
   <div class="bc-tagline">Sharp Analytics Engine · v5.2</div>
   <div class="bc-version">⚡ All sources live</div>
-  <div class="bc-last-updated">Last updated: {st.session_state.get("last_scan_time") or "not loaded yet"}</div>
+  <div class="bc-last-updated">{_hdr_context}</div>
 </div>
 """, unsafe_allow_html=True)
 
