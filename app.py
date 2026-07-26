@@ -1636,21 +1636,22 @@ with tabs[2]:
                                       "Pick a sport and load the board to populate the EV Optimizer."),
                     unsafe_allow_html=True)
     else:
-        # ── Filter bar ──────────────────────────────────────────
-        _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns([3,2,2,2,2])
-        with _fc1:
-            _search = st.text_input("🔍 Search player", "", key="ev_search", placeholder="e.g. LeBron, Strider...")
-        with _fc2:
-            _tier_f = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN"],
-                                      default=["SOVEREIGN","ELITE","APPROVED"], key="ev_tier")
-        with _fc3:
-            _all_props = sorted(set(p.get("Prop","") for p in _board if p.get("Prop","")))
-            _prop_f = st.multiselect("Prop type", _all_props, key="ev_prop")
-        with _fc4:
-            _min_edge = st.number_input("Min edge %", min_value=0.0, max_value=20.0,
-                                         value=0.0, step=0.5, key="ev_min_edge")
-        with _fc5:
-            _sort_col = st.selectbox("Sort by", ["BQ Score","Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
+        # ── Filter bar (sticky while scrolling the board below) ──
+        with st.container(key="ev_sticky_filters"):
+            _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns([3,2,2,2,2])
+            with _fc1:
+                _search = st.text_input("🔍 Search player", "", key="ev_search", placeholder="e.g. LeBron, Strider...")
+            with _fc2:
+                _tier_f = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN"],
+                                          default=["SOVEREIGN","ELITE","APPROVED"], key="ev_tier")
+            with _fc3:
+                _all_props = sorted(set(p.get("Prop","") for p in _board if p.get("Prop","")))
+                _prop_f = st.multiselect("Prop type", _all_props, key="ev_prop")
+            with _fc4:
+                _min_edge = st.number_input("Min edge %", min_value=0.0, max_value=20.0,
+                                             value=0.0, step=0.5, key="ev_min_edge")
+            with _fc5:
+                _sort_col = st.selectbox("Sort by", ["BQ Score","Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
 
         _unab_only = st.checkbox(
             "⚡ Unabated disagreement only (≥5pt gap between GEM and Unabated's real devigged price)",
@@ -2806,6 +2807,18 @@ with tabs[3]:
         _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
         _tc2 = TIER_COLORS
 
+        # Real multi-point line-movement history for the momentum sparkline
+        # below -- each board load already writes a new timestamped snapshot
+        # via store_game_board_snapshot(), so today's snapshots give genuine
+        # intraday points, not just the single open-vs-current comparison
+        # get_line_movement_summary() uses. Loaded once here, not per-game.
+        _gl_today_key = date.today().strftime("%Y-%m-%d")
+        _gl_snaps_raw = load_from_gist("game_board_snapshots", None) or {}
+        _gl_today_snaps = sorted(
+            (v for k, v in _gl_snaps_raw.items() if v.get("date") == _gl_today_key),
+            key=lambda v: v.get("timestamp", ""),
+        )
+
         for _gi, _g in enumerate(_fgames):
             _matchup = _g.get("matchup", _g.get("Matchup","—"))
             _gsport = _g.get("Sport",_sport2)
@@ -2972,6 +2985,30 @@ with tabs[3]:
                         '<span class="line-down">↓</span>' if _lm_dir == "down" else
                         '<span class="line-flat">–</span>'
                     ) if _lm else ""
+                    # Momentum sparkline: real TOTAL-line value from this
+                    # matchup across today's actual saved snapshots (not
+                    # fabricated intermediate points). Needs 2+ distinct
+                    # snapshots to draw anything.
+                    _mom_svg = ""
+                    _mom_vals = []
+                    for _snap in _gl_today_snaps:
+                        if _snap.get("sport") != _gsport:
+                            continue
+                        for _pk2 in _snap.get("picks", []):
+                            if _pk2.get("matchup") == _matchup and _pk2.get("market") == "TOTAL":
+                                _mom_vals.append(_pk2.get("line", 0))
+                                break
+                    if len(_mom_vals) >= 2 and len(set(_mom_vals)) >= 2:
+                        _mv_min, _mv_max = min(_mom_vals), max(_mom_vals)
+                        _mv_range = (_mv_max - _mv_min) or 1
+                        _mv_w, _mv_h = 50, 16
+                        _mv_pts = " ".join(
+                            f"{i/(len(_mom_vals)-1)*_mv_w:.1f},{_mv_h - (v-_mv_min)/_mv_range*_mv_h:.1f}"
+                            for i, v in enumerate(_mom_vals)
+                        )
+                        _mv_color = "#22c55e" if _mom_vals[-1] >= _mom_vals[0] else "#e04040"
+                        _mom_svg = (f'<svg width="{_mv_w}" height="{_mv_h}" style="vertical-align:middle;margin-left:4px;">'
+                                    f'<polyline points="{_mv_pts}" fill="none" stroke="{_mv_color}" stroke-width="1.5"/></svg>')
                     _gl_card_class = "gl-market-card has-edge" if _has_edge else "gl-market-card"
                     st.markdown(
                         f'<div class="{_gl_card_class}" style="border-left:3px solid {_pc_color};border:0.5px solid #1e2d3d;border-left:3px solid {_pc_color};padding:16px 18px;background:var(--bc-bg);">'
@@ -2982,7 +3019,7 @@ with tabs[3]:
                         f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">'
                         f'<span style="font-family:\'JetBrains Mono\',\'Fira Code\',\'Courier New\',monospace;font-size:19px;font-weight:700;color:#ffffff;">{_pk["pick"]}</span>'
                         f'<span style="font-family:\'JetBrains Mono\',\'Fira Code\',\'Courier New\',monospace;font-size:13px;color:#6a8aab;">{_pk["line"]}</span>'
-                        f'{_lm_arrow}'
+                        f'{_lm_arrow}{_mom_svg}'
                         f'</div>'
                         + (f'<div style="font-size:12px;color:#e8a020;margin-bottom:3px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
                         + f'<span style="font-family:\'JetBrains Mono\',\'Fira Code\',\'Courier New\',monospace;font-size:15px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
@@ -3635,6 +3672,52 @@ with tabs[4]:
                     f'<span style="font-weight:700;color:#4db8ff;">{_streak_count}-bet cold streak</span>'
                     f'</div>', unsafe_allow_html=True
                 )
+
+        # 10-day rolling ROI trend -- real daily net P&L / wagered from
+        # resolved history, grouped by calendar day. Only rendered when at
+        # least 2 days with resolved bets exist in that window; no fake
+        # flat line otherwise.
+        from collections import defaultdict as _dd_roi
+        from datetime import datetime as _dt_roi, timedelta as _td_roi
+        _roi_cutoff = (_dt_roi.now() - _td_roi(days=10)).strftime("%Y-%m-%d")
+        _roi_by_day = _dd_roi(lambda: {"wagered": 0.0, "net": 0.0})
+        for h in st.session_state.get("history", []):
+            _d = h.get("timestamp", "")[:10]
+            if _d < _roi_cutoff or h.get("outcome") not in ("WIN", "LOSS"):
+                continue
+            _w = float(h.get("wager", 0) or 0)
+            _roi_by_day[_d]["wagered"] += _w
+            if h.get("outcome") == "WIN":
+                _roi_by_day[_d]["net"] += (_w * float(h.get("payout_mult", 1.0) or 1.0) - _w) if h.get("payout_mult") else _w
+            else:
+                _roi_by_day[_d]["net"] -= _w
+        _roi_days = sorted(_roi_by_day.keys())
+        _roi_pcts = [
+            (_roi_by_day[d]["net"] / _roi_by_day[d]["wagered"] * 100) if _roi_by_day[d]["wagered"] else 0
+            for d in _roi_days
+        ]
+        if len(_roi_days) >= 2:
+            _roi_min, _roi_max = min(_roi_pcts + [0]), max(_roi_pcts + [0])
+            _roi_range = (_roi_max - _roi_min) or 1
+            _roi_w, _roi_h = 280, 60
+            _roi_pts = " ".join(
+                f"{i/(len(_roi_pcts)-1)*_roi_w:.1f},{_roi_h - (v-_roi_min)/_roi_range*_roi_h:.1f}"
+                for i, v in enumerate(_roi_pcts)
+            )
+            _roi_zero_y = _roi_h - (0 - _roi_min) / _roi_range * _roi_h
+            _roi_color = "#22c55e" if _roi_pcts[-1] >= 0 else "#e04040"
+            st.markdown(
+                f'<div class="command-card" style="padding:12px 16px;margin-bottom:14px;max-width:340px;">'
+                f'<div class="command-label" style="margin-bottom:6px;">10-Day Rolling ROI</div>'
+                f'<svg width="{_roi_w}" height="{_roi_h}" style="display:block;">'
+                f'<line x1="0" y1="{_roi_zero_y:.1f}" x2="{_roi_w}" y2="{_roi_zero_y:.1f}" '
+                f'stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="3,3"/>'
+                f'<polyline points="{_roi_pts}" fill="none" stroke="{_roi_color}" stroke-width="2"/>'
+                f'</svg>'
+                f'<div style="font-size:0.75rem;color:var(--bc-dim);margin-top:4px;">'
+                f'{_roi_days[0]} to {_roi_days[-1]} · latest day: {_roi_pcts[-1]:+.1f}% ROI</div>'
+                f'</div>', unsafe_allow_html=True
+            )
 
     if st.session_state.locks:
         # Group locks by timestamp (same minute = same slip)
