@@ -279,6 +279,8 @@ with tabs[0]:
             <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Auto from bankroll + Kelly</div>
         </div>
     </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
         <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px;" title="Rolling 20-bet hit rate">
             <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient({_hr_color} {_hr_deg}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;">
