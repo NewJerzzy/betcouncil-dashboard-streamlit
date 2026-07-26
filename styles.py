@@ -271,6 +271,52 @@ def global_css() -> str:
         padding: 8px 0 4px;
         border-bottom: 1px solid var(--bc-border);
     }
+    /* Header accent -- was a plain 1px gray border, replaced with a
+       gradient underline for a real brand identity line instead of
+       blending into the rest of the page. */
+    .bc-header {
+        border-bottom: none !important;
+        position: relative;
+    }
+    .bc-header::after {
+        content: "";
+        position: absolute;
+        left: 0; right: 0; bottom: -1px;
+        height: 2px;
+        background: linear-gradient(90deg, var(--bc-blue, #1e90ff), #4dd8c4, transparent);
+    }
+    /* Active tab glow -- adds to the border-bottom already set earlier */
+    [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+        box-shadow: 0 2px 8px rgba(30,144,255,0.25);
+    }
+    /* Bankroll pulse-on-change -- applied via a conditional class (see
+       app_core.py) only on the render where the value actually differs
+       from the prior one, not a constant/looping animation. */
+    @keyframes bankroll-pulse {
+        0%   { transform: scale(1); }
+        30%  { transform: scale(1.06); }
+        100% { transform: scale(1); }
+    }
+    .bankroll-pulse {
+        animation: bankroll-pulse 0.5s ease-out;
+        display: inline-block;
+    }
+    /* Edge heatmap legend */
+    .heatmap-legend {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.72rem;
+        color: var(--bc-dim);
+        margin: 4px 0 8px;
+    }
+    .heatmap-legend-swatch {
+        display: inline-block;
+        width: 40px;
+        height: 8px;
+        border-radius: 3px;
+        background: linear-gradient(90deg, rgba(34,197,94,0.05), rgba(34,197,94,0.4));
+    }
     </style>"""
 
 
