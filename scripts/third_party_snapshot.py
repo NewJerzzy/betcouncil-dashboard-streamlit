@@ -339,7 +339,11 @@ def snapshot_bettingpros(today: str) -> list:
     debug won't silently look identical since gradable count will show it.
     """
     sys.path.insert(0, ".")
-    from fetchers import fetch_bettingpros_from_gist
+    try:
+        from fetchers import fetch_bettingpros_from_gist
+    except ImportError:
+        log("  bettingpros: fetch_bettingpros_from_gist no longer exists in fetchers.py (removed as dead code 2026-07-26) -- skipping this snapshot section")
+        return []
 
     records = []
     raw_samples = []
