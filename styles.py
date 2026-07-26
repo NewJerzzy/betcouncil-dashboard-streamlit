@@ -173,6 +173,54 @@ def global_css() -> str:
         letter-spacing: 0.06em;
         margin-top: 4px;
     }
+    /* .bc-section-header -- tab-level section title banner (e.g. "EV
+       Optimizer -- MLB"). Used but never defined, same gap as .command-card. */
+    .bc-section-header {
+        background: linear-gradient(90deg, #0a5fa8, #0a1628);
+        border-left: 4px solid var(--bc-blue);
+        border-radius: 6px 6px 0 0;
+        padding: 10px 16px;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 1.05rem;
+        letter-spacing: 0.02em;
+        margin-bottom: 12px;
+    }
+    /* .odds-mono -- numeric odds/line/edge values. Tabular figures so
+       digits align column-to-column instead of jittering width by value. */
+    .odds-mono {
+        font-family: "SF Mono", "Roboto Mono", Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+    }
+    /* .line-up/.line-down/.line-flat -- line movement direction arrows. */
+    .line-up   { color: var(--bc-green, #22c55e); font-weight: 700; }
+    .line-down { color: var(--bc-red, #e04040);   font-weight: 700; }
+    .line-flat { color: var(--bc-dim);            font-weight: 700; }
+    /* .bc-summary-bar / .bc-summary-pill -- Full Board's sticky tier-count
+       bar (Sovereign/Elite/Approved/total action). Same gap as above --
+       used, never defined, rendering as unstyled inline text this whole time. */
+    .bc-summary-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--bc-bg-card);
+        border: 1px solid var(--bc-border);
+        border-radius: 8px;
+        padding: 8px 14px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+    }
+    .bc-summary-pill {
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 5px;
+        white-space: nowrap;
+    }
+    .bc-sov-pill    { background: rgba(245,197,24,0.15); color: #f5c518; }
+    .bc-elite-pill  { background: rgba(30,144,255,0.15); color: #4db8ff; }
+    .bc-appr-pill   { background: rgba(34,197,94,0.15);  color: #22c55e; }
+    .bc-action-pill { background: rgba(30,144,255,0.1);  color: var(--bc-text); }
     </style>"""
 
 
