@@ -54,7 +54,7 @@ SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
     "NFL": ("american-football", "usa-nfl"),
     "NBA": ("basketball", "usa-nba"),
-    "NHL": ("nhl", "usa-nhl"),  # was "hockey" -- confirmed wrong (400 "Invalid sport slug")
+    "NHL": ("ice-hockey", "usa-nhl"),  # confirmed via odds-api.io own /sports endpoint
 }
 
 # Conservative -- shares the same account/key and 100/hr free-tier limit
