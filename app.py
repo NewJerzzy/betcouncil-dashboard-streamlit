@@ -13811,7 +13811,6 @@ def load_sport_data(sport):
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     # ── Browser harvester data → session state (primary/secondary) ─────────
     _harvester_sources = [
-        ("fetch_action_network_from_gist",  "action_network_data",   "action_network_src"),
         ("fetch_covers_from_gist",          "covers_consensus",       "covers_src"),
         ("fetch_draftkings_props_from_gist","dk_props_harvested",     "dk_props_src"),
         ("fetch_unabated_from_gist",        "unabated_lines_h",       "unabated_src"),
@@ -13856,6 +13855,7 @@ def load_sport_data(sport):
         except Exception:
             _logger.debug("Silent except at line 10777")
             pass
+    st.session_state["action_network_data"] = st.session_state.get("covers_consensus", {})  # same underlying data as covers (fetch_action_network_from_gist and fetch_covers_from_gist were identical, calling the same source twice)
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
