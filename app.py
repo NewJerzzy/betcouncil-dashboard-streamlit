@@ -1958,6 +1958,34 @@ with tabs[2]:
             f'</div>',
             unsafe_allow_html=True
         )
+
+        # ── Spotlight: the single top-ranked pick on today's (filtered)
+        # board, real data only -- _rows[0] after the tier+sort above, and
+        # only shown when that top pick is genuinely Sovereign/Elite tier
+        # rather than surfacing a Lean-tier pick as if it were a standout
+        # on a weak day. No card at all if nothing qualifies.
+        if _rows and _rows[0].get("_tier") in ("SOVEREIGN", "ELITE"):
+            _sp = _rows[0]
+            _sp_tc = TIER_COLORS.get(_sp["_tier"], "#6a7a8a")
+            _sp_edge_str = f"+{_sp['_edge_pct']}%" if _sp["_edge_pct"] > 0 else f"{_sp['_edge_pct']}%"
+            st.markdown(
+                f'<div class="command-card" style="text-align:left;padding:16px 20px;margin-bottom:14px;'
+                f'border-left:4px solid {_sp_tc};background:linear-gradient(135deg,var(--bc-bg-card) 0%,{_sp_tc}14 140%);">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                f'<div>'
+                f'<div class="command-label" style="color:{_sp_tc};">🎯 Spotlight — Top Edge Right Now</div>'
+                f'<div style="font-size:1.15rem;font-weight:800;color:var(--bc-text);margin-top:4px;">'
+                f'{_sp["_player"]} <span style="font-weight:400;color:var(--bc-muted);">— {_sp["_side"]} {_sp["_line"]} {_sp["_prop"]}</span></div>'
+                f'<div style="font-size:0.8rem;color:var(--bc-dim);margin-top:2px;">{_sp["_team"]} · Model {_sp["_model_prob"]}% vs implied</div>'
+                f'</div>'
+                f'<div style="text-align:right;">'
+                f'<div class="odds-mono" style="font-size:1.6rem;font-weight:800;color:{_sp["_grade_color"]};">{_sp_edge_str}</div>'
+                f'<div style="font-size:0.7rem;color:{_sp_tc};font-weight:700;text-transform:uppercase;">{_sp["_tier"]} · Grade {_sp["_grade"]}</div>'
+                f'</div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         st.caption(f"Showing {len(_rows)} props | Sorted by {_sort_col}")
 
         # ── Render table ────────────────────────────────────────
