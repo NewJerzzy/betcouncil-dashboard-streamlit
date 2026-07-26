@@ -257,19 +257,41 @@ with tabs[0]:
             for i, v in enumerate(_clv_trend_vals)
         )
         _ct_color = "#22c55e" if _clv_trend_vals[-1] >= _clv_trend_vals[0] else "#e04040"
-        _clv_spark_svg = f'<svg width="{_ct_w}" height="{_ct_h}" style="display:block;margin-top:4px;"><polyline points="{_ct_pts}" fill="none" stroke="{_ct_color}" stroke-width="1.5"/></svg>'
+        _clv_spark_svg = (
+            f'<svg width="{_ct_w}" height="{_ct_h}" style="display:block;margin-top:4px;" '
+            f'title="Last {len(_clv_trend_vals)} resolved bets\' CLV%">'
+            f'<polyline points="{_ct_pts}" fill="none" stroke="{_ct_color}" stroke-width="1.5"/></svg>'
+            f'<span style="font-size:0.7rem;color:{_ct_color};font-weight:600;">{_clv_trend_vals[-1]:+.1f}%</span>'
+        )
     else:
         _clv_spark_svg = ""
+
+    # Bankroll pulse-on-change: only animates on the render where the value
+    # genuinely differs from the last one seen this session, not on every
+    # rerun -- avoids a constantly-pulsing number that would be more
+    # distracting than informative.
+    _bankroll_now_hero = _bi_top.get("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
+    _bankroll_pulse_cls = " bankroll-pulse" if st.session_state.get("_prev_bankroll_hero") not in (None, _bankroll_now_hero) else ""
+    st.session_state["_prev_bankroll_hero"] = _bankroll_now_hero
+    # 7-day change label under the sparkline, real value from the same
+    # reconstruction used to draw it -- not decorative, actionable.
+    _spark_chg_label = ""
+    if len(_spark_points) >= 2 and _spark_points[0]:
+        _spark_chg_pct = (_spark_points[-1] - _spark_points[0]) / abs(_spark_points[0]) * 100
+        _spark_chg_color = "#22c55e" if _spark_chg_pct >= 0 else "#e04040"
+        _spark_chg_label = f'<span style="font-size:0.7rem;color:{_spark_chg_color};font-weight:600;">{_spark_chg_pct:+.1f}% (7d)</span>'
 
     st.html(f"""
     <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
         <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
             <div class="command-label">Current Bankroll</div>
-            <div class="command-value" style="color:#22c55e;font-size:1.9rem;">${_bi_top.get("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL)):.2f}</div>
+            <div class="command-value{_bankroll_pulse_cls}" style="color:#22c55e;font-size:1.9rem;" title="7-day trajectory reconstructed from resolved bet history">${_bankroll_now_hero:.2f}</div>
             {_spark_svg}
+            {_spark_chg_label}
         </div>
         <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;" title="Average Kelly-advised stake across today's loaded board">
             <div class="command-label">Kelly Fraction</div>
+
             <div class="command-value" style="font-size:1.9rem;">{f"{_kelly_frac_avg:.1%}" if _kelly_frac_avg is not None else "—"}</div>
             <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Recommended stake %</div>
         </div>
@@ -1652,6 +1674,14 @@ with tabs[2]:
                                              value=0.0, step=0.5, key="ev_min_edge")
             with _fc5:
                 _sort_col = st.selectbox("Sort by", ["BQ Score","Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
+
+        st.html(
+            '<div class="heatmap-legend" title="Background intensity on the Edge % column scales with edge size, '
+            'from 0% up to 15%+ -- purely visual, doesn\'t change the underlying number.">'
+            '<span class="heatmap-legend-swatch"></span>'
+            '<span>Edge Confidence: Low → High</span>'
+            '</div>'
+        )
 
         _unab_only = st.checkbox(
             "⚡ Unabated disagreement only (≥5pt gap between GEM and Unabated's real devigged price)",
