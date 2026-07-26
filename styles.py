@@ -96,6 +96,19 @@ def global_css() -> str:
        (virtually every card container already uses border-radius:8px
        inline) so the hover effect actually applies across the app without
        needing to touch hundreds of scattered markdown call sites. */
+    /* Tab navigation -- hover + active-state feedback. Confirmed missing
+       entirely (no tab-specific CSS existed anywhere) before this. */
+    [data-testid="stTabs"] button[data-baseweb="tab"] {
+        transition: color 0.15s ease, border-color 0.15s ease;
+        border-radius: 6px 6px 0 0;
+    }
+    [data-testid="stTabs"] button[data-baseweb="tab"]:hover {
+        color: var(--bc-blue, #1e90ff) !important;
+        background: rgba(30,144,255,0.06);
+    }
+    [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+        border-bottom: 2px solid var(--bc-blue, #1e90ff) !important;
+    }
     .bc-card {
         transition: border-color 0.15s ease;
     }
