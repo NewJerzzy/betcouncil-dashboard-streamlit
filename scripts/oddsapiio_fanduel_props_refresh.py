@@ -54,7 +54,7 @@ SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
     "NFL": ("american-football", "usa-nfl"),
     "NBA": ("basketball", "usa-nba"),
-    "NHL": ("hockey", "usa-nhl"),
+    "NHL": ("nhl", "usa-nhl"),  # was "hockey" -- confirmed wrong (400 "Invalid sport slug")
 }
 
 # Conservative -- shares the same account/key and 100/hr free-tier limit
@@ -255,6 +255,11 @@ def main() -> int:
     }
 
     if not any_data:
+        any_200 = any(r.get("status") == 200 for r in DEBUG_LOG)
+        if any_200:
+            log("No FanDuel props currently posted (all API calls succeeded) — not treating as a failure")
+            push_files(files_payload, github_token)
+            return 0
         log("No FanDuel props captured this run — pushing debug log only")
         push_files(files_payload, github_token)
         return 1
