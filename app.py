@@ -161,18 +161,110 @@ with tabs[0]:
     _clv_avg_game_top = round(sum(_game_clv_pts) / len(_game_clv_pts), 2) if _game_clv_pts else 0.0
     _clv_n_game_top = len(_game_clv_pts)
 
-    _wr_c = "#22c55e" if _win_rate_top>=52.4 else "#e04040"
-    _wr_b = "34,197,94" if _win_rate_top>=52.4 else "224,64,64"
-    _cl_c = "#22c55e" if _clv_avg_top_pct>0 else "#e04040" if _clv_n_top else "#6a7a8a"
-    _cl_b = "34,197,94" if _clv_avg_top_pct>0 else "224,64,64" if _clv_n_top else "106,122,138"
+    # ── Real-data prep for the new hero/performance layout below ────────
+    # Kelly fraction: average KellyAdvisedPct across today's loaded board
+    # (real per-prop field already computed in load_sport_data); "—" if no
+    # board loaded yet rather than a fabricated number.
+    _kelly_vals = [float(p.get("KellyAdvisedPct", 0) or 0) for p in _board_all if p.get("KellyAdvisedPct")]
+    _kelly_frac_avg = (sum(_kelly_vals) / len(_kelly_vals)) if _kelly_vals else None
+
+    # Sovereign Score: % of today's board that's Sovereign or Elite tier --
+    # a real "how strong is today's slate" read, not an invented metric.
+    _sovereign_score = round((_sov_all + _elite_all) / _total_props * 100) if _total_props else None
+
+    # Variance: std dev of the last 10 resolved bets' P&L as a fraction of
+    # unit size -- real, derived from actual settled outcomes, not a canned
+    # "Normal/High" label with nothing behind it.
+    _recent_pnl = []
+    for h in _resolved_top[-10:]:
+        _w = float(h.get("wager", 0) or 0)
+        if h.get("outcome") == "WIN":
+            _recent_pnl.append(_w * float(h.get("payout_mult", 1.0) or 1.0) - _w if h.get("payout_mult") else _w)
+        elif h.get("outcome") == "LOSS":
+            _recent_pnl.append(-_w)
+    if len(_recent_pnl) >= 3:
+        _pnl_std = statistics.stdev(_recent_pnl)
+        _pnl_mean_abs = sum(abs(x) for x in _recent_pnl) / len(_recent_pnl) or 1
+        _variance_ratio = _pnl_std / _pnl_mean_abs
+        _variance_label = "High" if _variance_ratio > 1.4 else "Low" if _variance_ratio < 0.6 else "Normal"
+        _variance_color = "#e04040" if _variance_label == "High" else "#22c55e" if _variance_label == "Low" else "#e8a020"
+    else:
+        _variance_label, _variance_color = "—", "#6a7a8a"
+
+    # CLV grade: reuses the existing, real compute_clv_grade() -- not a new
+    # invented A/B/C/D scale next to the one that already exists.
+    _clv_grade_label, _clv_grade_color = compute_clv_grade(_clv_avg_top_pct if _clv_n_top else None)
+
+    # 7-day bankroll trajectory: reconstructed from real resolved-bet P&L
+    # history (no persisted daily bankroll snapshot exists yet to read
+    # directly, so this is a genuine derived reconstruction, not invented
+    # numbers) -- cumulative P&L over the last 7 days of resolved bets,
+    # walked backward from the current bankroll.
+    from datetime import timedelta as _td_spark
+    _spark_cutoff = datetime.now() - _td_spark(days=7)
+    _spark_bets = [h for h in _resolved_top if h.get("timestamp","") >= _spark_cutoff.strftime("%Y-%m-%d")]
+    _spark_points = [_bi_top.get("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))]
+    _running = _spark_points[0]
+    for h in reversed(_spark_bets):
+        _w = float(h.get("wager", 0) or 0)
+        _delta = (_w * float(h.get("payout_mult", 1.0) or 1.0) - _w) if h.get("outcome") == "WIN" else (-_w if h.get("outcome") == "LOSS" else 0)
+        _running -= _delta
+        _spark_points.append(_running)
+    _spark_points = list(reversed(_spark_points))
+    if len(_spark_points) >= 2:
+        _sp_min, _sp_max = min(_spark_points), max(_spark_points)
+        _sp_range = (_sp_max - _sp_min) or 1
+        _sp_w, _sp_h = 110, 28
+        _sp_pts = " ".join(
+            f"{i/(len(_spark_points)-1)*_sp_w:.1f},{_sp_h - (v-_sp_min)/_sp_range*_sp_h:.1f}"
+            for i, v in enumerate(_spark_points)
+        )
+        _sp_color = "#22c55e" if _spark_points[-1] >= _spark_points[0] else "#e04040"
+        _spark_svg = f'<svg width="{_sp_w}" height="{_sp_h}" style="display:block;margin-top:4px;"><polyline points="{_sp_pts}" fill="none" stroke="{_sp_color}" stroke-width="1.5"/></svg>'
+    else:
+        _spark_svg = ""
+
+    _hr_pct = _win_rate_top  # already computed above, real rolling-20 hit rate
+    _hr_deg = min(360, max(0, _hr_pct / 100 * 360))
+    _hr_color = "#22c55e" if _hr_pct >= 55 else "#4db8ff" if _hr_pct >= 52.4 else "#e8a020" if _hr_pct >= 48 else "#e04040"
+
     st.markdown(f"""
-    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px;">
-        <div class="command-card"><div class="command-value">{_total_props}</div><div class="command-label">Props Loaded</div></div>
-        <div class="command-card" style="border-color:rgba(245,197,24,0.35)"><div class="command-value" style="color:#f5c518">{_sov_all}</div><div class="command-label">Sovereign</div></div>
-        <div class="command-card" style="border-color:rgba(30,144,255,0.35)"><div class="command-value" style="color:#4db8ff">+{_avg_edge}%</div><div class="command-label">Avg Edge</div></div>
-        <div class="command-card" style="border-color:rgba({_wr_b},0.35)"><div class="command-value" style="color:{_wr_c}">{_win_rate_top}%</div><div class="command-label">Win Rate L20</div></div>
-        <div class="command-card" style="border-color:rgba({_cl_b},0.35)"><div class="command-value" style="color:{_cl_c}">{f"{_clv_avg_top_pct:+.2f}%" if _clv_n_top else "—"}</div><div class="command-label">CLV Avg{f" (n={_clv_n_top})" if _clv_n_top else ""}</div></div>
-        <div class="command-card" style="border-color:rgba(245,197,24,0.35)"><div class="command-value" style="color:#f5c518">{_bi_top.get("label","1.00x")}</div><div class="command-label">Bankroll Mult</div></div>
+    <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
+        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
+            <div class="command-label">Current Bankroll</div>
+            <div class="command-value" style="color:#22c55e;font-size:1.9rem;">${_bi_top.get("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL)):.2f}</div>
+            {_spark_svg}
+        </div>
+        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;" title="Average Kelly-advised stake across today's loaded board">
+            <div class="command-label">Kelly Fraction</div>
+            <div class="command-value" style="font-size:1.9rem;">{f"{_kelly_frac_avg:.1%}" if _kelly_frac_avg is not None else "—"}</div>
+            <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Recommended stake %</div>
+        </div>
+        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
+            <div class="command-label">Unit Size</div>
+            <div class="command-value" style="font-size:1.9rem;">${active_unit():.2f}</div>
+            <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Auto from bankroll + Kelly</div>
+        </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+        <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px;" title="Rolling 20-bet hit rate">
+            <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient({_hr_color} {_hr_deg}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;">
+                <div style="width:48px;height:48px;border-radius:50%;background:var(--bc-bg-card);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.9rem;color:{_hr_color};">{_hr_pct:.0f}%</div>
+            </div>
+            <div class="command-label" style="margin-top:8px;">Hit Rate (L20)</div>
+        </div>
+        <div class="command-card" style="padding:14px;" title="Weighted closing-line value vs Pinnacle">
+            <div class="command-value" style="color:{_clv_grade_color};font-size:1.3rem;">{_clv_grade_label}</div>
+            <div class="command-label">CLV Grade</div>
+        </div>
+        <div class="command-card" style="padding:14px;" title="Volatility of the last 10 settled bets' results">
+            <div class="command-value" style="color:{_variance_color};font-size:1.3rem;">{_variance_label}</div>
+            <div class="command-label">Variance</div>
+        </div>
+        <div class="command-card" style="padding:14px;" title="Share of today's board rated Sovereign or Elite tier">
+            <div class="command-value" style="font-size:1.3rem;">{f"{_sovereign_score}%" if _sovereign_score is not None else "—"}</div>
+            <div class="command-label">Sovereign Score</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     if _clv_n_game_top:
@@ -236,6 +328,81 @@ with tabs[0]:
             st.caption("🔌 Data Check: all data sources are current.")
     except Exception:
         pass
+
+    # ── Market Climate bar (Sharp Movement / RLM / Book Discrepancy) ────
+    # Reuses the real _climate computed above (recomputed here since it
+    # was scoped inside that try block) plus two more real, already-
+    # tracked signals: RLM mentions in today's board signal notes, and
+    # the real multibook_discrepancies list already populated elsewhere.
+    try:
+        _mc_climate_snaps = load_from_gist("game_board_snapshots", None) or {}
+        _mc_climate = compute_market_climate(_mc_climate_snaps)
+        _mc_sharp_pct = min(100, len(_mc_climate.get("movers", [])) * 25) if _mc_climate["verdict"] == "Moving" else (10 if _mc_climate["verdict"] == "Quiet" else 0)
+        _mc_rlm_count = sum(1 for p in _board_all if "RLM" in str(p.get("SignalNotes", "")))
+        _mc_rlm_pct = min(100, _mc_rlm_count * 20)
+        _mc_disc = st.session_state.get("multibook_discrepancies", [])
+        _mc_disc_pct = min(100, len(_mc_disc) * 15)
+        st.markdown(f"""
+        <div class="command-card" style="padding:12px 16px;margin-bottom:16px;">
+            <div class="command-label" style="margin-bottom:10px;">Market Climate</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Sharp Movement</span>
+                    <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_sharp_pct}%;height:100%;background:#4db8ff;border-radius:3px;"></div></div>
+                    <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{_mc_climate["verdict"]}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Reverse Line Move</span>
+                    <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_rlm_pct}%;height:100%;background:#e8a020;border-radius:3px;"></div></div>
+                    <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{_mc_rlm_count} flagged</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Book Discrepancy</span>
+                    <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_disc_pct}%;height:100%;background:#f5c518;border-radius:3px;"></div></div>
+                    <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{len(_mc_disc)} found</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    except Exception:
+        _logger.debug("Market Climate bar failed silently")
+
+    # ── Session Prep (collapsed by default -- progressive disclosure) ──
+    with st.expander("🏦 Bankroll Health"):
+        _day_start_prep = float(st.session_state.get("day_start_br", 0) or 0)
+        _bankroll_prep = float(st.session_state.get("bankroll", DEFAULT_BANKROLL) or 0)
+        if _day_start_prep:
+            _day_chg_pct = (_bankroll_prep - _day_start_prep) / _day_start_prep * 100
+            _dc_color = "#22c55e" if _day_chg_pct >= 0 else "#e04040"
+            st.markdown(f'Today: <span style="color:{_dc_color};font-weight:700;">{_day_chg_pct:+.1f}%</span> (${_bankroll_prep - _day_start_prep:+.2f}) vs. day-start bankroll of ${_day_start_prep:.2f}', unsafe_allow_html=True)
+        else:
+            st.caption("No day-start bankroll recorded yet.")
+
+    with st.expander("⚠️ Exposure Risk"):
+        _team_totals = {}
+        for lock in st.session_state.get("locks", []):
+            _t = lock.get("team", "")
+            if _t:
+                _team_totals[_t] = _team_totals.get(_t, 0) + float(lock.get("wager", 0) or 0)
+        if _team_totals:
+            _worst_team, _worst_amt = max(_team_totals.items(), key=lambda kv: kv[1])
+            _bankroll_now_prep = float(st.session_state.get("bankroll", DEFAULT_BANKROLL) or 1)
+            _worst_pct = _worst_amt / _bankroll_now_prep * 100 if _bankroll_now_prep else 0
+            _exp_color = "#e04040" if _worst_pct > 20 else "#e8a020" if _worst_pct > 10 else "#22c55e"
+            st.markdown(f'Highest single-team exposure today: <span style="color:{_exp_color};font-weight:700;">{_worst_team}</span> — ${_worst_amt:.2f} ({_worst_pct:.1f}% of bankroll)', unsafe_allow_html=True)
+        else:
+            st.caption("No active locks with team data yet today.")
+
+    with st.expander("📡 Model Freshness Check"):
+        try:
+            if _pi_sharp_dead:
+                st.error(f"{', '.join(_pi_sharp_dead)} — sharp reference feed(s) stale. Edges leaning on them may be behind.")
+            elif _pi_alerts:
+                st.warning(f"{len(_pi_alerts)} data source(s) updating slower than usual.")
+            else:
+                st.success("All data sources current.")
+        except NameError:
+            st.caption("Data freshness check unavailable right now.")
 
     st.markdown("---")
 
