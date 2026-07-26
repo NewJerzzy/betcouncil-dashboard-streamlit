@@ -2035,22 +2035,39 @@ def _flush_batch_gist(dirty, now=None):
         {"files": {"file1.json": {"content": "..."}, "file2.json": {"content": "..."}}}
     This replaces N sequential PATCHes with one round-trip regardless of how
     many keys are queued.
+
+    Retries on 409/403/429 (up to 3 attempts, short backoff) -- this Gist
+    also takes constant writes from 18-30+ background scraper workflows,
+    so a collision here is routine, not exceptional. Previously a single
+    failed attempt returned False with no retry: since gist_dirty is only
+    cleared on success, the removal (e.g. clicking WIN SLIP on a lock)
+    stayed correct in this session's memory but never reached the Gist --
+    so a later session reload brought the stale "still active" lock back.
+    Real reported symptom this fixes: a cleared/settled lock (e.g. James
+    Wood) reappearing after the fact, and locking in a pick feeling like
+    it hangs (a slow/retried attempt with no feedback while waiting).
     """
     if not dirty or not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return not dirty  # empty dirty dict is a no-op success
     now = now or time.time()
-    try:
-        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        files = {
-            f"betcouncil_{k}.json": {"content": json.dumps(v, indent=2)}
-            for k, v in dirty.items()
-        }
-        resp = _http.patch(
-            f"{GIST_API}/{GITHUB_GIST_ID}",
-            headers=headers,
-            json={"files": files},
-            timeout=15,
-        )
+    headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    files = {
+        f"betcouncil_{k}.json": {"content": json.dumps(v, indent=2)}
+        for k, v in dirty.items()
+    }
+    for _attempt in range(3):
+        try:
+            resp = _http.patch(
+                f"{GIST_API}/{GITHUB_GIST_ID}",
+                headers=headers,
+                json={"files": files},
+                timeout=15,
+            )
+        except (requests.RequestException, OSError):
+            if _attempt < 2:
+                time.sleep(1.5 * (_attempt + 1))
+                continue
+            return False
         if resp.status_code == 200:
             if "gist_last_write" not in st.session_state:
                 st.session_state["gist_last_write"] = {}
@@ -2058,9 +2075,12 @@ def _flush_batch_gist(dirty, now=None):
                 st.session_state["gist_last_write"][k] = now
             st.session_state["gist_dirty"].clear()
             st.session_state["gist_batch_start"] = now  # reset window after flush
-        return resp.status_code == 200
-    except (requests.RequestException, json.JSONDecodeError, OSError):
+            return True
+        if resp.status_code in (403, 409, 429) and _attempt < 2:
+            time.sleep(1.5 * (_attempt + 1))
+            continue
         return False
+    return False
 
 def _flush_gist_write(data_type, data, now=None):
     """Single-key flush — kept for backward compatibility; delegates to batch."""
@@ -21030,7 +21050,8 @@ with tabs[3]:
                         except Exception:
                             pass
                         save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                        if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                            st.warning("Locked locally, but the sync didn't go through — try again in a moment if it doesn't stick.")
                         st.rerun()
 
         # Keep line movement and public betting data below
@@ -21540,7 +21561,8 @@ with tabs[4]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                    if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                        st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
                     st.rerun()
             with btn_col3:
                 if st.button("❌ LOSS SLIP", key=f"loss_{slip_key}", use_container_width=True):
@@ -21557,7 +21579,8 @@ with tabs[4]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                    if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                        st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
                     st.rerun()
             with btn_col4:
                 if st.button("↩ VOID", key=f"void_{slip_key}", use_container_width=True):
@@ -21565,7 +21588,8 @@ with tabs[4]:
                         if lock in st.session_state.locks:
                             st.session_state.locks.remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                    if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                        st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
                     st.rerun()
 
             st.markdown("---")
@@ -24596,7 +24620,8 @@ with tabs[6]:
                             "smart_signal": row.get("smart_signal", False),
                         })
                         save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)
+                        if not save_to_gist("locks", st.session_state.locks):
+                            st.warning("Locked locally, but the sync didn't go through — try again in a moment if it doesn't stick.")
                         st.rerun()
             st.caption(
                 "🔒 Lock adds the pick to Locks & Ledger the same as any other pick — it flows into "
