@@ -572,7 +572,7 @@ with tabs[0]:
             action_label, action_color = "No Strong Plays Today", "#e04040"
             action_desc = "No high-conviction plays. Best move is to wait for a better slate."
 
-        st.markdown(f"""
+        st.html(f"""
         <div style="background:{action_color}11;border:1px solid {action_color}33;border-radius:8px;padding:1.2rem;margin-bottom:1.5rem;">
             <div style="color:{action_color};font-size:1.3rem;font-weight:700;margin-bottom:0.4rem;">⚡ {action_label.upper()}</div>
             <p style="color:var(--bc-muted);font-size:1.0rem;margin-bottom:1rem;">{action_desc}</p>
@@ -603,7 +603,7 @@ with tabs[0]:
                 </div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
         # ── MATCHUPS ────────────────────────────────────────
         games_list = st.session_state.games or []
@@ -910,7 +910,7 @@ with tabs[0]:
             best_game = max(game_analysis, key=lambda x: x.get("best_edge",0))
             bb = best_game.get("best_bet",{})
             if bb:
-                st.markdown(f"""
+                st.html(f"""
                 <div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-top:3px solid #378add;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                     <div style="font-size:1.0rem;color:var(--bc-blue);text-transform:uppercase;font-weight:700;margin-bottom:0.3rem;">{bb.get("type","Game")} Lock</div>
                     <div style="font-size:1.2rem;font-weight:700;color:var(--bc-text);margin-bottom:0.5rem;">{best_game.get("matchup","")} — {bb.get("pick","")}</div>
@@ -923,7 +923,7 @@ with tabs[0]:
                         <span>Total: {best_game.get("games",{}).get("Total","—") if isinstance(best_game.get("games"),dict) else "—"}</span>
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """)
         if game_analysis:
             _best_g = max(game_analysis, key=lambda x: x.get("best_edge",0))
             _game_edge = float(_best_g.get("best_edge",0) or 0)
@@ -1046,7 +1046,7 @@ with tabs[0]:
                 for p in parlay_props:
                     dot_c = tier_dot.get(p.get("Tier",""),"#6a7a8a")
                     legs_html += f'<div style="background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.7rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.5rem;"><span style="width:7px;height:7px;border-radius:50%;background:{dot_c};flex-shrink:0;"></span><span style="color:var(--bc-text);font-size:1.0rem;">{p.get("Player","")} {p.get("Side","")} {p.get("Line","")} {p.get("Prop","")}</span><span style="color:var(--bc-dim);font-size:1.0rem;margin-left:auto;">{p.get("EV_2pick","—")}</span></div>'
-                st.markdown(f"""
+                st.html(f"""
                 <div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
                         <span style="color:var(--bc-text);font-weight:700;">{len(parlay_props)}-Pick Prop Parlay · {PRIZEPICKS_MULTIPLIERS.get(len(parlay_props),3)}x</span>
@@ -1058,14 +1058,14 @@ with tabs[0]:
                     </div>
                     {legs_html}
                 </div>
-                """, unsafe_allow_html=True)
+                """)
             else:
                 # Identify which props are recommended as singles
                 _single_plays = [p for p in parlay_props if p.get("Edge",0) >= 0.08]
                 _single_html = ""
                 for _sp in _single_plays[:3]:
                     _single_html += f'<div style="color:var(--bc-text);font-size:0.9rem;padding:0.2rem 0;">· {_sp.get("Player","")} {_sp.get("Side","")} {_sp.get("Line","")} {_sp.get("Prop","")} <span style="color:#22c55e;">({_sp.get("Edge",0):+.1%} edge)</span></div>'
-                st.markdown(f"""
+                st.html(f"""
                 <div style="background:var(--bc-bg-card);border:0.5px solid var(--bc-border);border-left:3px solid #e8a020;border-radius:8px;padding:1rem;margin-bottom:0.5rem;">
                     <div style="color:#e8a020;font-weight:600;margin-bottom:0.4rem;">⚠️ Singles Only — Skip the Parlay Today</div>
                     <div style="color:var(--bc-muted);font-size:0.95rem;line-height:1.6;">
@@ -1079,7 +1079,7 @@ with tabs[0]:
                         </div>
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """)
         else:
             st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;padding:0.3rem 0;">Need 2+ SOVEREIGN/ELITE props to build a parlay.</div>', unsafe_allow_html=True)
 
@@ -1286,7 +1286,7 @@ with tabs[0]:
             _gk_warn_html = ""
             if _gk.get("warnings"):
                 _gk_warn_html = "".join(f'<div style="font-size:0.85rem;color:#e8a020;margin-top:0.3rem;">{w}</div>' for w in _gk["warnings"][:2])
-            st.markdown(f"""
+            st.html(f"""
             <div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:1.2rem;margin-bottom:1rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
                     <span style="color:var(--bc-text);font-weight:700;">{len(top_games)}-Game Parlay</span>
@@ -1296,7 +1296,7 @@ with tabs[0]:
                 {g_legs}
                 {_gk_warn_html}
             </div>
-            """, unsafe_allow_html=True)
+            """)
         else:
             _game_analysis_count = len(game_analysis) if game_analysis else 0
             if _game_analysis_count > 0:
@@ -1331,7 +1331,7 @@ with tabs[0]:
             score_color = "#22c55e" if total_score >= 75 else "#e8a020" if total_score >= 55 else "#e04040"
             _mc = "#22c55e" if market_score >= 17 else "#e8a020"
             _vc = "#22c55e" if vol_score >= 17 else "#e8a020"
-            st.markdown(f"""
+            st.html(f"""
             <div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:8px;padding:1.5rem;margin-bottom:1rem;text-align:center;">
                 <div style="font-size:2.8rem;font-weight:800;color:{score_color};">{total_score}<span style="font-size:1rem;color:#b8c6d6;">/100</span></div>
                 <div style="color:var(--bc-muted);font-size:1.0rem;margin-bottom:1rem;">MASTER SLIP CONFIDENCE</div>
@@ -1342,7 +1342,7 @@ with tabs[0]:
                     <div style="display:flex;justify-content:space-between;background:var(--bc-bg-card);border-radius:5px;padding:0.5rem 0.8rem;"><span style="color:#b8c6d6;font-size:1.0rem;">Volatility Risk <span style="color:var(--bc-dim);">(20%)</span></span><span style="color:{_vc};font-weight:700;">{vol_score}/20</span></div>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """)
 
         # ── BEST +EV PROPS ─────────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best +EV Props (2-pick, need 57.7%)</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
@@ -5962,7 +5962,7 @@ with tabs[5]:
         if _weekly:
             _wr1, _wr2 = st.columns(2)
             with _wr1:
-                st.markdown(f"""
+                st.html(f"""
     | Metric | Value |
     |--------|-------|
     | Period | {_weekly['period']} |
@@ -5972,7 +5972,7 @@ with tabs[5]:
     | ROI/bet | {_weekly['roi_per_bet']} |
     """)
             with _wr2:
-                st.markdown(f"""
+                st.html(f"""
     | Metric | Value |
     |--------|-------|
     | Best Sport | {_weekly['best_sport']} |
@@ -10229,12 +10229,12 @@ with tabs[11]:
                     explanation = src_fix.get(code_str, f"{name_err} is not responding correctly.")
                     fix_action = src_fix.get("fix", "Check the source's website and verify your API key.")
                     icon = "🔴" if result_color == "red" else "🟡"
-                    st.markdown(f"""
+                    st.html(f"""
 <div style="background:var(--bc-bg-card);border:1px solid {'#e04040' if result_color == 'red' else '#e8a020'};border-radius:8px;padding:12px 16px;margin-bottom:8px;">
   <div style="font-size:18px;font-weight:700;color:var(--bc-text);margin-bottom:4px;">{icon} {name_err} — Code {result_code}</div>
   <div style="font-size:15px;color:#9aa8b8;margin-bottom:6px;">{explanation}</div>
   <div style="font-size:14px;color:#0ea5a0;">→ {fix_action}</div>
-</div>""", unsafe_allow_html=True)
+</div>""")
 
     if results:
         for src in _PING_SOURCES:
@@ -10263,7 +10263,7 @@ with tabs[11]:
             dot = _DOT.get(color, "🟡")
             css = _COLOR_CSS.get(color, "")
 
-            st.markdown(f"""
+            st.html(f"""
 <div style="padding:12px 16px; margin-bottom:10px; border-radius:8px; {css}">
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <div>
@@ -10279,7 +10279,7 @@ with tabs[11]:
     <span><b>Gate:</b> {gate_str}</span>
   </div>
 </div>
-""", unsafe_allow_html=True)
+""")
     else:
         st.info("Hit **🔄 Refresh All** to check all API sources.")
     st.markdown("---")
