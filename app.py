@@ -2072,6 +2072,7 @@ with tabs[2]:
         elif _rows:
             st.caption("🎯 No Sovereign or Elite picks today. Board does not meet Spotlight criteria.")
 
+        if _rows:
             # ── Spotlight alert: only fires when today's #1 pick is a
             # genuinely NEW spotlight vs the last one seen this session,
             # or jumped up to Sovereign from something lower. Session-only
@@ -2084,9 +2085,9 @@ with tabs[2]:
             _sp_prev_id = st.session_state.get("_sp_last_seen_id")
             _sp_prev_tier = st.session_state.get("_sp_last_seen_tier")
             if _sp_prev_id is not None and _sp_id != _sp_prev_id:
-                if _sp_top["_tier"] == "SOVEREIGN" and _sp_prev_tier != "SOVEREIGN":
+                if _sp_top["_tier"] == "SOVEREIGN":
                     st.info(f"🔔 New Sovereign-tier spotlight: **{_sp_top['_player']}** — {_sp_top['_side']} {_sp_top['_line']} {_sp_top['_prop']}")
-                elif _sp_top["_tier"] == "ELITE" and _sp_prev_tier not in ("SOVEREIGN", "ELITE"):
+                elif _sp_top["_tier"] == "ELITE" and _sp_prev_tier != "SOVEREIGN":
                     st.info(f"🔔 New Elite-tier spotlight: **{_sp_top['_player']}** — {_sp_top['_side']} {_sp_top['_line']} {_sp_top['_prop']}")
             st.session_state["_sp_last_seen_id"] = _sp_id
             st.session_state["_sp_last_seen_tier"] = _sp_top["_tier"]
