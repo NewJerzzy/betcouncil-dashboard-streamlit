@@ -10739,7 +10739,9 @@ def track_bet_dialog(prop):
             sport=sport, outcome=outcome,
             wager=stake, pick_count=2, bet_type="prop",
             source=book, bet_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            tier=tier, edge=edge, prob=prob, notes=notes
+            tier=tier, edge=edge, prob=prob, notes=notes,
+            signals=_board_prop_signal_values(prop),
+            clv_capture=_capture_clv_placement(player, prop_name, prob),
         )
         # Store odds for CLV tracking
         _hist = st.session_state.get("history", [])
