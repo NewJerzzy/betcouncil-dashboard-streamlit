@@ -431,6 +431,26 @@ with tabs[0]:
     except Exception:
         _logger.debug("Market Climate bar failed silently")
 
+    # ── Daily Insight Summary -- one plain sentence combining real data
+    # already computed above (board strength, tier counts, CLV trend),
+    # not a "quest" or gamified summary, just a quick digest.
+    _dis_n_sov = _sov_all
+    _dis_n_elite = _elite_all
+    if _dis_n_sov or _dis_n_elite:
+        _dis_strength = "Strong"
+    elif _total_props:
+        _dis_strength = "Moderate" if any(p.get("Tier") == "APPROVED" for p in _board_all) else "Weak"
+    else:
+        _dis_strength = "No board loaded"
+    _dis_clv_part = ""
+    if len(_clv_trend_vals) >= 2:
+        _dis_clv_chg = _clv_trend_vals[-1] - _clv_trend_vals[0]
+        _dis_clv_part = f" CLV trend: {_dis_clv_chg:+.1f}%."
+    st.caption(
+        f"📋 Today's board strength: {_dis_strength}. "
+        f"{_dis_n_sov} Sovereign, {_dis_n_elite} Elite pick(s).{_dis_clv_part}"
+    )
+
     # ── Session Prep (collapsed by default -- progressive disclosure) ──
     with st.expander("🏦 Bankroll Health"):
         _day_start_prep = float(st.session_state.get("day_start_br", 0) or 0)
@@ -2011,11 +2031,12 @@ with tabs[2]:
                 pass
             return " · ".join(_parts) if _parts else "Edge from combined signal strength"
 
-        def _sp_card_html(row, label):
+        def _sp_card_html(row, label, reveal=False):
             _tc = TIER_COLORS.get(row["_tier"], "#6a7a8a")
             _edge_str = f"+{row['_edge_pct']}%" if row["_edge_pct"] > 0 else f"{row['_edge_pct']}%"
+            _reveal_cls = " spotlight-reveal" if reveal else ""
             return (
-                f'<div class="command-card" style="text-align:left;padding:16px 20px;margin-bottom:10px;'
+                f'<div class="command-card{_reveal_cls}" style="text-align:left;padding:16px 20px;margin-bottom:10px;'
                 f'border-left:4px solid {_tc};background:linear-gradient(135deg,var(--bc-bg-card) 0%,{_tc}14 140%);">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;">'
                 f'<div style="flex:1;">'
@@ -2066,9 +2087,25 @@ with tabs[2]:
                     if _r2.get("_tier") in ("SOVEREIGN", "ELITE"):
                         _sp_candidates.append(_r2)
 
+            # Cinematic reveal: fade-in + slight scale, but ONLY on the
+            # render where the #1 pick's identity is genuinely different
+            # from the last one seen this session -- not on every rerun,
+            # which would replay the animation on every filter tweak.
+            _sp_top_id_check = f"{_rows[0]['_player']}|{_rows[0]['_prop']}|{_rows[0]['_line']}"
+            _sp_is_new_reveal = (
+                st.session_state.get("_sp_last_seen_id") is not None
+                and st.session_state.get("_sp_last_seen_id") != _sp_top_id_check
+            )
+
             _sp_labels = (["🎯 Spotlight — Top Edge Right Now"] if len(_sp_candidates) == 1
                           else [f"🎯 Spotlight #{i+1}" for i in range(len(_sp_candidates))])
-            st.markdown("".join(_sp_card_html(r, l) for r, l in zip(_sp_candidates, _sp_labels)), unsafe_allow_html=True)
+            st.markdown(
+                "".join(
+                    _sp_card_html(r, l, reveal=(i == 0 and _sp_is_new_reveal))
+                    for i, (r, l) in enumerate(zip(_sp_candidates, _sp_labels))
+                ),
+                unsafe_allow_html=True
+            )
         elif _rows:
             st.caption("🎯 No Sovereign or Elite picks today. Board does not meet Spotlight criteria.")
 
