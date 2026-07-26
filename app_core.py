@@ -1034,8 +1034,14 @@ hr { border-color: var(--bc-border) !important; opacity: 0.5; }
     font-weight: 900;
     color: var(--bc-text);
     letter-spacing: -0.5px;
+    text-shadow: 0 0 12px rgba(30,144,255,0.25);
 }
-.bc-logo span { color: var(--bc-blue); }
+.bc-logo span { color: var(--bc-blue); text-shadow: 0 0 16px rgba(30,144,255,0.45); }
+.bc-last-updated {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--bc-dim);
+}
 .bc-tagline {
     font-size: 11px;
     color: var(--bc-muted);
@@ -1054,11 +1060,12 @@ hr { border-color: var(--bc-border) !important; opacity: 0.5; }
 """, unsafe_allow_html=True)
 
 # ── BetCouncil Header Bar ──────────────────────────────────────────────────
-st.markdown("""
+st.markdown(f"""
 <div class="bc-header">
   <div class="bc-logo">bet<span>Council</span></div>
   <div class="bc-tagline">Sharp Analytics Engine · v5.2</div>
   <div class="bc-version">⚡ All sources live</div>
+  <div class="bc-last-updated">Last updated: {st.session_state.get("last_scan_time") or "not loaded yet"}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -18151,9 +18158,10 @@ def _bc_df_html(data, columns=None):
     cols = columns or list(df.columns)
     head = "".join(f'<th style="text-align:left;padding:6px 10px;color:var(--bc-dim);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--bc-border);white-space:nowrap;">{c}</th>' for c in cols)
     body = ""
-    for _, row in df.iterrows():
+    for _i, (_, row) in enumerate(df.iterrows()):
+        _row_bg = "background:rgba(255,255,255,0.015);" if _i % 2 else ""
         cells = "".join(f'<td style="padding:6px 10px;font-size:13px;color:var(--bc-text);border-bottom:1px solid #16232f;">{row.get(c,"")}</td>' for c in cols)
-        body += f"<tr>{cells}</tr>"
+        body += f'<tr style="{_row_bg}">{cells}</tr>'
     return (
         f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);'
         f'border-radius:8px;overflow:auto;max-height:480px;margin-bottom:0.5rem;">'
