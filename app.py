@@ -3069,8 +3069,30 @@ with tabs[3]:
 
     if _games:
         _game_sports = list(set(g.get("Sport",_sport2) for g in _games))
-        _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
+        _gl_filt_col1, _gl_filt_col2 = st.columns([3, 1])
+        with _gl_filt_col1:
+            _gsf = st.multiselect("Filter by Sport", _game_sports, default=_game_sports, key="gl_sport")
+        with _gl_filt_col2:
+            _gl_sort = st.selectbox("Sort by", ["Time", "Best Edge", "Movement"], key="gl_sort")
         _fgames = [g for g in _games if g.get("Sport",_sport2) in (_gsf or _game_sports)]
+
+        # Real sort keys -- best edge is the largest-magnitude edge across
+        # the 3 real per-market fields already on each game (spread/total/
+        # moneyline), not a fabricated composite score.
+        def _gl_best_edge(g):
+            return max(abs(float(g.get("SpreadEdge", 0) or 0)), abs(float(g.get("TotalEdge", 0) or 0)), abs(float(g.get("MLEdge", 0) or 0)))
+        if _gl_sort == "Best Edge":
+            _fgames = sorted(_fgames, key=_gl_best_edge, reverse=True)
+        elif _gl_sort == "Movement":
+            # Real movement signal from the same function already used per-
+            # game below (get_line_movement_summary) -- games with a real
+            # detected movement direction sort first, not a fabricated
+            # magnitude proxy from unrelated edge fields.
+            def _gl_has_movement(g):
+                _m = _g_matchup = g.get("matchup", g.get("Matchup", "—"))
+                _lm = get_line_movement_summary(_m, g.get("Sport", _sport2), g)
+                return 1 if (_lm or {}).get("direction") else 0
+            _fgames = sorted(_fgames, key=_gl_has_movement, reverse=True)
         _tc2 = TIER_COLORS
 
         # Real multi-point line-movement history for the momentum sparkline
