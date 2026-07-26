@@ -1666,7 +1666,7 @@ with tabs[2]:
     else:
         # ── Filter bar (sticky while scrolling the board below) ──
         with st.container(key="ev_sticky_filters"):
-            _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns([3,2,2,2,2])
+            _fc1, _fc2, _fc3, _fc4, _fc5, _fc6 = st.columns([3,2,2,2,2,1.3])
             with _fc1:
                 _search = st.text_input("🔍 Search player", "", key="ev_search", placeholder="e.g. LeBron, Strider...")
             with _fc2:
@@ -1680,6 +1680,11 @@ with tabs[2]:
                                              value=0.0, step=0.5, key="ev_min_edge")
             with _fc5:
                 _sort_col = st.selectbox("Sort by", ["BQ Score","Edge %","L5 Hit %","Line","Reliability"], key="ev_sort")
+            with _fc6:
+                # Display-only density toggle -- same data, tighter padding
+                # and smaller font, not a separate feature mode. Whales can
+                # fit more rows on screen; new bettors can ignore it.
+                _density = st.selectbox("Density", ["Standard", "Dense"], key="ev_density")
 
         st.html(
             '<div class="heatmap-legend" title="Background intensity on the Edge % column scales with edge size, '
@@ -1969,21 +1974,39 @@ with tabs[2]:
             confirmed (checked before building this) to never actually be
             set anywhere in the codebase, so it's always empty. Picks
             whichever real signal has the largest magnitude and names it,
-            plus the real model-vs-market gap -- no invented commentary."""
+            plus the real model-vs-market gap -- no invented commentary.
+            Each named term carries a title= tooltip with its actual real
+            value -- "Reliability" uses the real _rel field (kept the
+            honest name rather than calling it "Variance Suppression",
+            since there's no genuine per-prop variance metric available
+            to back that specific label without inventing one)."""
             _p_sig = row.get("_p", {})
-            _sig_map = {
-                "opponent matchup": abs(float(_p_sig.get("SignalDefense", 0) or 0)),
-                "recent usage trend": abs(float(_p_sig.get("SignalUsage", 0) or 0)),
-                "home/away split": abs(float(_p_sig.get("SignalLocation", 0) or 0)),
-                "base model strength": abs(float(_p_sig.get("SignalBase", 0) or 0)),
+            _sig_vals = {
+                "Matchup Delta": abs(float(_p_sig.get("SignalDefense", 0) or 0)),
+                "Usage Trend": abs(float(_p_sig.get("SignalUsage", 0) or 0)),
+                "Home/Away Split": abs(float(_p_sig.get("SignalLocation", 0) or 0)),
+                "Base Model Strength": abs(float(_p_sig.get("SignalBase", 0) or 0)),
             }
-            _top_sig = max(_sig_map, key=_sig_map.get) if any(_sig_map.values()) else None
+            _top_sig = max(_sig_vals, key=_sig_vals.get) if any(_sig_vals.values()) else None
             _parts = []
-            if _top_sig and _sig_map[_top_sig] > 0:
-                _parts.append(f"Driven primarily by {_top_sig}")
+            if _top_sig and _sig_vals[_top_sig] > 0:
+                _parts.append(
+                    f'Driven primarily by <span title="Raw signal value: {_sig_vals[_top_sig]:.3f}" '
+                    f'style="border-bottom:1px dotted var(--bc-dim);cursor:help;">{_top_sig}</span>'
+                )
+            _rel_val = row.get("_rel", "")
+            if _rel_val and _rel_val != "—":
+                _parts.append(
+                    f'<span title="Signal agreement: {_rel_val} sources aligned" '
+                    f'style="border-bottom:1px dotted var(--bc-dim);cursor:help;">Reliability {_rel_val}</span>'
+                )
             try:
                 _mp = float(str(row.get("_model_prob", "")).replace("%", ""))
-                _parts.append(f"model {_mp:.0f}% vs market-implied price")
+                _edge_val = row.get("_edge_pct", 0)
+                _parts.append(
+                    f'<span title="Edge (model vs market-implied price): {_edge_val}%" '
+                    f'style="border-bottom:1px dotted var(--bc-dim);cursor:help;">Market Mispricing</span> ({_mp:.0f}% model)'
+                )
             except (ValueError, TypeError):
                 pass
             return " · ".join(_parts) if _parts else "Edge from combined signal strength"
@@ -1995,19 +2018,42 @@ with tabs[2]:
                 f'<div class="command-card" style="text-align:left;padding:16px 20px;margin-bottom:10px;'
                 f'border-left:4px solid {_tc};background:linear-gradient(135deg,var(--bc-bg-card) 0%,{_tc}14 140%);">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                f'<div>'
+                f'<div style="flex:1;">'
                 f'<div class="command-label" style="color:{_tc};">{label}</div>'
-                f'<div style="font-size:1.15rem;font-weight:800;color:var(--bc-text);margin-top:4px;">'
+                f'<div style="font-size:1.15rem;font-weight:800;color:var(--bc-text);margin-top:6px;">'
                 f'{row["_player"]} <span style="font-weight:400;color:var(--bc-muted);">— {row["_side"]} {row["_line"]} {row["_prop"]}</span></div>'
-                f'<div style="font-size:0.8rem;color:var(--bc-dim);margin-top:2px;">{row["_team"]} · {_sp_rationale(row)}</div>'
+                f'<div style="font-size:0.8rem;color:var(--bc-dim);margin-top:8px;">{row["_team"]} · {_sp_rationale(row)}</div>'
                 f'</div>'
+                f'<div style="width:1px;align-self:stretch;background:rgba(255,255,255,0.07);margin:0 18px;"></div>'
                 f'<div style="text-align:right;">'
+                f'<div class="command-label" style="font-size:0.62rem;">Model Confidence</div>'
+                f'<div class="odds-mono" style="font-size:1.05rem;font-weight:700;color:var(--bc-text);margin:2px 0 6px;">{row["_model_prob"]}%</div>'
                 f'<div class="odds-mono" style="font-size:1.6rem;font-weight:800;color:{row["_grade_color"]};">{_edge_str}</div>'
                 f'<div style="font-size:0.7rem;color:{_tc};font-weight:700;text-transform:uppercase;">{row["_tier"]} · Grade {row["_grade"]}</div>'
                 f'</div>'
                 f'</div>'
                 f'</div>'
             )
+
+        # ── Board Strength indicator -- real tier composition of today's
+        # (filtered) board, not decorative. Explains why Spotlight may or
+        # may not appear right below it.
+        _n_sov_bs = sum(1 for r in _rows if r.get("_tier") == "SOVEREIGN")
+        _n_elite_bs = sum(1 for r in _rows if r.get("_tier") == "ELITE")
+        _n_appr_bs = sum(1 for r in _rows if r.get("_tier") == "APPROVED")
+        if _n_sov_bs or _n_elite_bs:
+            _bs_label, _bs_color = "Strong board", "#22c55e"
+        elif _n_appr_bs:
+            _bs_label, _bs_color = "Moderate board", "#e8a020"
+        else:
+            _bs_label, _bs_color = "Weak board", "#6a7a8a"
+        st.markdown(
+            f'<div style="display:inline-flex;align-items:center;gap:6px;margin-bottom:10px;'
+            f'font-size:0.75rem;color:{_bs_color};font-weight:600;" '
+            f'title="Strong = Sovereign/Elite present · Moderate = Approved only · Weak = nothing above Approved">'
+            f'● {_bs_label}</div>',
+            unsafe_allow_html=True
+        )
 
         if _rows and _rows[0].get("_tier") in ("SOVEREIGN", "ELITE"):
             _n_sov_today = sum(1 for r in _rows if r.get("_tier") == "SOVEREIGN")
@@ -2023,6 +2069,8 @@ with tabs[2]:
             _sp_labels = (["🎯 Spotlight — Top Edge Right Now"] if len(_sp_candidates) == 1
                           else [f"🎯 Spotlight #{i+1}" for i in range(len(_sp_candidates))])
             st.markdown("".join(_sp_card_html(r, l) for r, l in zip(_sp_candidates, _sp_labels)), unsafe_allow_html=True)
+        elif _rows:
+            st.caption("🎯 No Sovereign or Elite picks today. Board does not meet Spotlight criteria.")
 
             # ── Spotlight alert: only fires when today's #1 pick is a
             # genuinely NEW spotlight vs the last one seen this session,
@@ -2124,6 +2172,13 @@ with tabs[2]:
             '</div>'
         )
         st.markdown(_header, unsafe_allow_html=True)
+
+        # Density toggle -- same data, tighter spacing/smaller font in
+        # Dense mode. Not a feature mode, purely a display density setting.
+        if st.session_state.get("ev_density") == "Dense":
+            _row_pad, _row_font, _row_minh = "3px 10px", "12px", "24px"
+        else:
+            _row_pad, _row_font, _row_minh = "6px 10px", "14px", "32px"
 
         # Rows
         _html_rows = []
@@ -2264,9 +2319,9 @@ with tabs[2]:
             _row = (
                 f'<div class="{_tier_css}" style="display:grid;grid-template-columns:'
                 f'12px 170px 58px 56px 95px 55px 60px 58px 62px 130px 48px 48px 48px 52px 72px;'
-                f'gap:6px;padding:6px 10px;background:{_bg};'
-                f'border-bottom:1px solid rgba(26,58,92,0.5);font-size:14px;align-items:center;'
-                f'min-height:32px;cursor:default;transition:background 0.15s;">'
+                f'gap:6px;padding:{_row_pad};background:{_bg};'
+                f'border-bottom:1px solid rgba(26,58,92,0.5);font-size:{_row_font};align-items:center;'
+                f'min-height:{_row_minh};cursor:default;transition:background 0.15s;">'
                 f'<span style="width:3px;height:24px;background:{_tc};display:block;margin:auto;border-radius:2px;"></span>'
                 f'<span style="font-weight:600;color:var(--bc-text);">{_r["_player"][:22]}</span>'
                 f'<span style="background:{_tier_bg};color:{_tc};font-size:11px;font-weight:700;'
