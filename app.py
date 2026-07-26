@@ -4729,6 +4729,35 @@ with tabs[5]:
     st.caption("Daily = today's essentials. Weekly = signal/model audits. Seasonal = deep reference data (Bankroll Intelligence, Season Regime, full Calibration Dashboard).")
     _view = st.radio("View", ["Daily", "Weekly", "Seasonal", "All"], horizontal=True, key="history_view_selector")
 
+    # ── Resolved Picks by Tier -- real breakdown of settled bets, always
+    # visible regardless of Daily/Weekly/Seasonal view since it's a
+    # standing reference, not a time-scoped section.
+    _rpt_resolved = [h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN", "LOSS")]
+    if _rpt_resolved:
+        _rpt_tier_counts = {}
+        for _h in _rpt_resolved:
+            _t = _h.get("tier") or "Unknown"
+            _rpt_tier_counts[_t] = _rpt_tier_counts.get(_t, 0) + 1
+        _rpt_total = len(_rpt_resolved)
+        _rpt_order = ["SOVEREIGN", "ELITE", "APPROVED", "LEAN"]
+        _rpt_colors = {"SOVEREIGN": "#f5c518", "ELITE": "#1e90ff", "APPROVED": "#e8a020", "LEAN": "#2a3a4a"}
+        _rpt_bars = ""
+        for _t in _rpt_order + [t for t in _rpt_tier_counts if t not in _rpt_order]:
+            _n = _rpt_tier_counts.get(_t, 0)
+            if not _n:
+                continue
+            _pct = _n / _rpt_total * 100
+            _rpt_bars += (
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+                f'<span style="width:80px;font-size:0.75rem;color:var(--bc-dim);">{_t.title()}</span>'
+                f'<div style="flex:1;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;">'
+                f'<div style="width:{_pct}%;height:100%;background:{_rpt_colors.get(_t, "#6a7a8a")};border-radius:4px;"></div></div>'
+                f'<span style="width:50px;font-size:0.75rem;color:var(--bc-dim);text-align:right;">{_n} ({_pct:.0f}%)</span>'
+                f'</div>'
+            )
+        with st.expander(f"📊 Resolved Picks by Tier — {_rpt_total} total"):
+            st.markdown(_rpt_bars, unsafe_allow_html=True)
+
     if _view in ("Daily", "All"):
 
         # ── Auto-resolve CLV for settled bets ──────────────────────────────
@@ -9336,7 +9365,8 @@ with tabs[11]:
     if not _cal_hist:
         st.caption("No resolved bets with a real stated probability yet — calibration needs actual settled history.")
     else:
-        st.caption(f"Based on {len(_cal_hist)} resolved bets with a real stated probability (of {len(st.session_state.get('history', []))} total logged).")
+        _cal_last_ts = max((h.get("timestamp", "") for h in _cal_hist), default="")
+        st.caption(f"Based on {len(_cal_hist)} resolved bets with a real stated probability (of {len(st.session_state.get('history', []))} total logged). Most recent resolved bet: {_cal_last_ts or 'unknown'}.")
 
         # 1. Tier calibration table
         st.markdown("#### Tier Calibration")
