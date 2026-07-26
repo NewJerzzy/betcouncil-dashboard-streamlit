@@ -289,19 +289,19 @@ with tabs[0]:
 
     st.html(f"""
     <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
-        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
+        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:14px 16px;">
             <div class="command-label">Current Bankroll</div>
             <div class="command-value{_bankroll_pulse_cls}" style="color:#22c55e;font-size:1.9rem;" title="7-day trajectory reconstructed from resolved bet history">${_bankroll_now_hero:.2f}</div>
             {_spark_svg}
             {_spark_chg_label}
         </div>
-        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;" title="Average Kelly-advised stake across today's loaded board">
+        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:14px 16px;" title="Average Kelly-advised stake across today's loaded board">
             <div class="command-label">Kelly Fraction</div>
 
             <div class="command-value" style="font-size:1.9rem;">{f"{_kelly_frac_avg:.1%}" if _kelly_frac_avg is not None else "—"}</div>
             <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Recommended stake %</div>
         </div>
-        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
+        <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:14px 16px;">
             <div class="command-label">Unit Size</div>
             <div class="command-value" style="font-size:1.9rem;">${active_unit():.2f}</div>
             <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Auto from bankroll + Kelly</div>
@@ -310,22 +310,22 @@ with tabs[0]:
     """)
     st.html(f"""
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-        <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px;" title="Rolling 20-bet hit rate">
+        <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px 16px;" title="Rolling 20-bet hit rate">
             <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient({_hr_color} {_hr_deg}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;">
                 <div style="width:48px;height:48px;border-radius:50%;background:var(--bc-bg-card);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.9rem;color:{_hr_color};">{_hr_pct:.0f}%</div>
             </div>
             <div class="command-label" style="margin-top:8px;">Hit Rate (L20)</div>
         </div>
-        <div class="command-card" style="padding:14px;" title="Weighted closing-line value vs Pinnacle">
+        <div class="command-card" style="padding:14px 16px;" title="Weighted closing-line value vs Pinnacle">
             <div class="command-value" style="color:{_clv_grade_color};font-size:1.3rem;">{_clv_grade_label}</div>
             <div class="command-label">CLV Grade</div>
             {_clv_spark_svg}
         </div>
-        <div class="command-card" style="padding:14px;" title="Volatility of the last 10 settled bets' results">
+        <div class="command-card" style="padding:14px 16px;" title="Volatility of the last 10 settled bets' results">
             <div class="command-value" style="color:{_variance_color};font-size:1.3rem;">{_variance_label}</div>
             <div class="command-label">Variance</div>
         </div>
-        <div class="command-card" style="padding:14px;" title="Share of today's board rated Sovereign or Elite tier">
+        <div class="command-card" style="padding:14px 16px;" title="Share of today's board rated Sovereign or Elite tier">
             <div class="command-value" style="font-size:1.3rem;">{f"{_sovereign_score}%" if _sovereign_score is not None else "—"}</div>
             <div class="command-label">Sovereign Score</div>
         </div>
@@ -407,7 +407,7 @@ with tabs[0]:
         _mc_disc = st.session_state.get("multibook_discrepancies", [])
         _mc_disc_pct = min(100, len(_mc_disc) * 15)
         st.html(f"""
-        <div class="command-card" style="padding:12px 16px;margin-bottom:16px;">
+        <div class="command-card" style="padding:14px 16px;margin-bottom:16px;">
             <div class="command-label" style="margin-bottom:10px;">Market Climate</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -3744,7 +3744,7 @@ with tabs[4]:
             _roi_zero_y = _roi_h - (0 - _roi_min) / _roi_range * _roi_h
             _roi_color = "#22c55e" if _roi_pcts[-1] >= 0 else "#e04040"
             st.markdown(
-                f'<div class="command-card" style="padding:12px 16px;margin-bottom:14px;max-width:340px;">'
+                f'<div class="command-card" style="padding:14px 16px;margin-bottom:14px;max-width:340px;">'
                 f'<div class="command-label" style="margin-bottom:6px;">10-Day Rolling ROI</div>'
                 f'<svg width="{_roi_w}" height="{_roi_h}" style="display:block;">'
                 f'<line x1="0" y1="{_roi_zero_y:.1f}" x2="{_roi_w}" y2="{_roi_zero_y:.1f}" '
@@ -7467,7 +7467,7 @@ with tabs[7]:
             if h2h_rate is not None:
                 _pl_cards.append((f"H2H vs {pl_opp}", f"{h2h_str} ({h2h_rate:.0%})", "#22c55e" if h2h_rate >= 0.6 else None))
             _pl_cards_html = "".join(
-                f'<div class="command-card" style="flex:1;min-width:120px;padding:12px 14px;text-align:center;">'
+                f'<div class="command-card" style="flex:1;min-width:120px;padding:14px 16px;text-align:center;">'
                 f'<div class="command-label">{label}</div>'
                 f'<div class="command-value" style="font-size:1.4rem;{f"color:{color};" if color else ""}">{value}</div>'
                 f'</div>'
@@ -7524,7 +7524,7 @@ with tabs[7]:
                     _pl_split_cards.append(("Away Hit %", f"{splits['away_hit_rate']:.0%} ({splits['away_games']}g)",
                                              "#22c55e" if splits['away_hit_rate'] >= 0.6 else None))
                 _pl_split_html = "".join(
-                    f'<div class="command-card" style="flex:1;min-width:120px;padding:12px 14px;text-align:center;">'
+                    f'<div class="command-card" style="flex:1;min-width:120px;padding:14px 16px;text-align:center;">'
                     f'<div class="command-label">{label}</div>'
                     f'<div class="command-value" style="font-size:1.4rem;{f"color:{color};" if color else ""}">{value}</div>'
                     f'</div>'
