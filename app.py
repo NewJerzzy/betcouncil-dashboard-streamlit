@@ -1,3 +1,18 @@
+import sys as _sys_reload_guard
+import importlib as _importlib_reload_guard
+if "app_core" in _sys_reload_guard.modules:
+    # CRITICAL: app_core.py's module-level code (session_state defaults,
+    # Gist history/locks loading, etc) must re-run on EVERY Streamlit
+    # script rerun, exactly like it did before the 2026-07-26 split when
+    # it was inline in this file. Python's import system only executes a
+    # module's top-level code ONCE per process and reuses the cached
+    # module on every subsequent import -- so without this reload, only
+    # the very first user session on a given server worker ever got
+    # st.session_state.board_data (and everything else in that init block)
+    # actually set; any second session hitting the same already-running
+    # worker crashed with AttributeError on session_state.board_data,
+    # confirmed as a real production error the day of the split.
+    _importlib_reload_guard.reload(_sys_reload_guard.modules["app_core"])
 from app_core import *
 from app_core import _CB_THRESHOLD, _ODDS_API_KEY_STATUS, _bc_df_html, _board_prop_signal_values, _capture_clv_closing_lines, _capture_clv_placement, _capture_clv_placement_game, _get_cal_tier, _get_ev_jwt, _http, _lock_board_prop, _show_team_exposure_warning, _ss
 # app_core.py holds everything that used to be here before the tab-rendering
