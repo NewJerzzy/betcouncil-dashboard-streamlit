@@ -216,6 +216,14 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN or ODDS_API_IO_KEY_BOVADA not set")
         return 1
 
+    # TEMP DIAGNOSTIC: find the real hockey sport slug (two guesses "hockey"
+    # and "nhl" both 400'd) -- removing this block once confirmed.
+    try:
+        r = requests.get(f"{BASE_URL}/sports", params={"apiKey": api_key}, timeout=15)
+        DEBUG_LOG.append({"path": "/sports", "status": r.status_code, "body_snippet": r.text[:3000]})
+    except Exception as e:
+        DEBUG_LOG.append({"path": "/sports", "error": str(e)[:300]})
+
     if not _rate_limit_ok(github_token):
         return 0
 
