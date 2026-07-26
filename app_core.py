@@ -397,17 +397,25 @@ st.markdown("""<style>
     border-left: 3px solid var(--bc-gold-bright) !important;
     animation: sovereign-pulse 2.5s ease-in-out infinite;
     background: rgba(248,197,24,0.04) !important;
+    transition: background 150ms cubic-bezier(0.4,0,0.2,1);
 }
+.row-sovereign:hover { background: rgba(248,197,24,0.10) !important; }
 .row-elite {
     border-left: 3px solid var(--bc-blue) !important;
     animation: elite-pulse 3s ease-in-out infinite;
+    transition: background 150ms cubic-bezier(0.4,0,0.2,1);
 }
+.row-elite:hover { background: rgba(30,144,255,0.08) !important; }
 .row-approved {
     border-left: 3px solid var(--bc-gold) !important;
+    transition: background 150ms cubic-bezier(0.4,0,0.2,1);
 }
+.row-approved:hover { background: rgba(232,160,32,0.06) !important; }
 .row-lean {
     border-left: 3px solid #2a3a4a !important;
+    transition: background 150ms cubic-bezier(0.4,0,0.2,1);
 }
+.row-lean:hover { background: rgba(255,255,255,0.03) !important; }
 
 /* ── MONOSPACE ODDS ────────────────────────────────────── */
 .odds-mono {
