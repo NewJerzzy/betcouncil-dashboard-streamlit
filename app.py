@@ -1969,6 +1969,14 @@ with tabs[2]:
             _gc    = _r["_grade_color"]
             _bg    = _r["_row_bg"]
             _e_str = f"+{_r['_edge_pct']}%" if _r["_edge_pct"] > 0 else f"{_r['_edge_pct']}%"
+            # Edge heatmap: background intensity scales with edge magnitude
+            # (0% -> transparent, 15%+ -> full intensity) so a scanning eye
+            # catches the strongest edges by color weight, not just the
+            # number itself. Green for positive edge (the only case that
+            # reaches display after the min-edge filter above), capped at
+            # 15% so one outlier prop doesn't wash out the rest of the scale.
+            _heat_alpha = min(1.0, max(0.0, _r["_edge_pct"] / 15.0)) * 0.35
+            _heat_bg = f"rgba(34,197,94,{_heat_alpha:.2f})" if _r["_edge_pct"] > 0 else "transparent"
             # Tier badge + left accent bar
             _tc_hex = TIER_COLORS.get(_r["_tier"], "#6a7a8a").lstrip("#")
             _tc_rgb = tuple(int(_tc_hex[i:i+2], 16) for i in (0, 2, 4)) if len(_tc_hex) == 6 else (106, 122, 138)
@@ -2093,7 +2101,7 @@ with tabs[2]:
                 f'<span style="text-align:center;color:var(--bc-muted);font-size:13px;">{_r["_prop"][:12]} {_r["_side"]}</span>'
                 f'<span class="odds-mono" style="text-align:center;font-size:14px;">{_r["_line"]}</span>'
                 f'<span style="text-align:center;font-size:{_gs};font-weight:800;color:{_gc};">{_r["_grade"]}</span>'
-                f'<span class="odds-mono" style="text-align:center;font-size:14px;color:{_gc};">{_e_str}</span>'
+                f'<span class="odds-mono" style="text-align:center;font-size:14px;color:{_gc};background:{_heat_bg};border-radius:4px;padding:2px 4px;">{_e_str}</span>'
                 f'<span class="odds-mono" style="text-align:center;font-size:14px;color:var(--bc-muted);">{_r["_model_prob"]}%</span>'
                 f'{_cons_cell}'
                 f'<span style="text-align:center;color:var(--bc-muted);font-size:13px;">{_r["_l5"]}</span>'
@@ -3594,6 +3602,39 @@ with tabs[3]:
 # ----- TAB 3: LOCKS & LEDGER -----
 with tabs[4]:
     st.markdown("## 🔒 Active Locks")
+
+    # Streak indicator: real consecutive win/loss count from the most
+    # recent resolved bets, walked backward chronologically. Not shown at
+    # all if there's no resolved history yet -- no fabricated "0-streak".
+    _streak_hist = sorted(
+        [h for h in st.session_state.get("history", []) if h.get("outcome") in ("WIN", "LOSS")],
+        key=lambda h: h.get("timestamp", ""),
+    )
+    if _streak_hist:
+        _streak_count = 0
+        _streak_type = _streak_hist[-1]["outcome"]
+        for h in reversed(_streak_hist):
+            if h["outcome"] == _streak_type:
+                _streak_count += 1
+            else:
+                break
+        if _streak_count >= 2:
+            if _streak_type == "WIN":
+                st.markdown(
+                    f'<div style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,140,0,0.12);'
+                    f'border:1px solid rgba(255,140,0,0.3);border-radius:8px;padding:6px 14px;margin-bottom:10px;">'
+                    f'<span style="font-size:18px;">🔥</span>'
+                    f'<span style="font-weight:700;color:#ff8c00;">{_streak_count}-bet win streak</span>'
+                    f'</div>', unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f'<div style="display:inline-flex;align-items:center;gap:6px;background:rgba(77,184,255,0.12);'
+                    f'border:1px solid rgba(77,184,255,0.3);border-radius:8px;padding:6px 14px;margin-bottom:10px;">'
+                    f'<span style="font-size:18px;">🥶</span>'
+                    f'<span style="font-weight:700;color:#4db8ff;">{_streak_count}-bet cold streak</span>'
+                    f'</div>', unsafe_allow_html=True
+                )
 
     if st.session_state.locks:
         # Group locks by timestamp (same minute = same slip)
