@@ -38,7 +38,10 @@ import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
-MLB_SERIES = ["KXMLBGAME", "KXMLBTOTAL", "KXMLBSPREAD"]
+SPORT_SERIES = {
+    "MLB": ["KXMLBGAME", "KXMLBTOTAL", "KXMLBSPREAD"],
+    "NFL": ["KXNFLGAME", "KXNFLTOTAL", "KXNFLSPREAD"],
+}
 
 DEBUG_LOG: list = []
 
@@ -102,9 +105,10 @@ def _normalize_market(m: dict) -> dict:
     }
 
 
-def _normalize_event(ev: dict) -> dict:
+def _normalize_event(ev: dict, sport: str) -> dict:
     markets = ev.get("markets") or []
     return {
+        "sport": sport,
         "event_ticker": ev.get("event_ticker"),
         "title": ev.get("title"),
         "series_ticker": ev.get("series_ticker"),
@@ -164,17 +168,21 @@ def main() -> int:
     dry_run = "--dry-run" in sys.argv
 
     all_events = []
-    for series in MLB_SERIES:
-        log(f"Fetching {series}...")
-        events = _fetch_series_events(series)
-        if events is None:
-            log(f"  {series}: failed, skipping")
-            continue
-        log(f"  {series}: {len(events)} open events")
-        all_events.extend(_normalize_event(e) for e in events)
+    for sport, series_list in SPORT_SERIES.items():
+        for series in series_list:
+            log(f"Fetching {sport} {series}...")
+            events = _fetch_series_events(series)
+            if events is None:
+                log(f"  {series}: failed or no data, skipping")
+                continue
+            log(f"  {series}: {len(events)} open events")
+            all_events.extend(_normalize_event(e, sport) for e in events)
 
     total_markets = sum(len(e["markets"]) for e in all_events)
-    log(f"Total: {len(all_events)} events, {total_markets} markets across {len(MLB_SERIES)} series")
+    by_sport = {}
+    for e in all_events:
+        by_sport[e["sport"]] = by_sport.get(e["sport"], 0) + 1
+    log(f"Total: {len(all_events)} events ({by_sport}), {total_markets} markets")
 
     if not all_events:
         log("FATAL: no events fetched from any series")
@@ -191,7 +199,7 @@ def main() -> int:
         return 0
 
     files_payload = {
-        "betcouncil_kalshi_mlb.json": {
+        "betcouncil_kalshi_markets.json": {
             "content": json.dumps({"source": "kalshi", "captured_at": now_iso, "events": all_events})
         },
         "betcouncil_kalshi_debug.json": {
