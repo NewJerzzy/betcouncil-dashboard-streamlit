@@ -238,6 +238,29 @@ with tabs[0]:
     _hr_deg = min(360, max(0, _hr_pct / 100 * 360))
     _hr_color = "#22c55e" if _hr_pct >= 55 else "#4db8ff" if _hr_pct >= 52.4 else "#e8a020" if _hr_pct >= 48 else "#e04040"
 
+    # CLV trend sparkline: real per-bet CLV values from resolved history's
+    # clv_capture (percent, props only -- same unit already used for
+    # _clv_avg_top_pct above), last 10 resolved bets with a resolved CLV
+    # value. Not invented -- if fewer than 2 real points exist, no sparkline
+    # renders rather than fabricating a flat/fake line.
+    _clv_trend_vals = [
+        h["clv_capture"]["clv_vs_novig"] * 100 for h in _resolved_top[-15:]
+        if h.get("clv_capture", {}).get("clv_resolved") and h.get("clv_capture", {}).get("bet_type") != "game"
+        and h.get("clv_capture", {}).get("clv_vs_novig") is not None
+    ][-10:]
+    if len(_clv_trend_vals) >= 2:
+        _ct_min, _ct_max = min(_clv_trend_vals), max(_clv_trend_vals)
+        _ct_range = (_ct_max - _ct_min) or 1
+        _ct_w, _ct_h = 90, 22
+        _ct_pts = " ".join(
+            f"{i/(len(_clv_trend_vals)-1)*_ct_w:.1f},{_ct_h - (v-_ct_min)/_ct_range*_ct_h:.1f}"
+            for i, v in enumerate(_clv_trend_vals)
+        )
+        _ct_color = "#22c55e" if _clv_trend_vals[-1] >= _clv_trend_vals[0] else "#e04040"
+        _clv_spark_svg = f'<svg width="{_ct_w}" height="{_ct_h}" style="display:block;margin-top:4px;"><polyline points="{_ct_pts}" fill="none" stroke="{_ct_color}" stroke-width="1.5"/></svg>'
+    else:
+        _clv_spark_svg = ""
+
     st.markdown(f"""
     <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
         <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
@@ -266,6 +289,7 @@ with tabs[0]:
         <div class="command-card" style="padding:14px;" title="Weighted closing-line value vs Pinnacle">
             <div class="command-value" style="color:{_clv_grade_color};font-size:1.3rem;">{_clv_grade_label}</div>
             <div class="command-label">CLV Grade</div>
+            {_clv_spark_svg}
         </div>
         <div class="command-card" style="padding:14px;" title="Volatility of the last 10 settled bets' results">
             <div class="command-value" style="color:{_variance_color};font-size:1.3rem;">{_variance_label}</div>
