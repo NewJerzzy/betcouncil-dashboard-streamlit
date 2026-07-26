@@ -58,7 +58,7 @@ SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
     "NFL": ("american-football", "usa-nfl"),
     "NBA": ("basketball", "usa-nba"),
-    "NHL": ("nhl", "usa-nhl"),  # was "hockey" -- confirmed wrong (400 "Invalid sport slug")
+    "NHL": ("ice-hockey", "usa-nhl"),  # confirmed via odds-api.io own /sports endpoint
 }
 
 # Hard per-run request budget -- confirmed free tier is 100/hour; this
