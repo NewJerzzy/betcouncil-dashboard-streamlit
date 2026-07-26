@@ -13,8 +13,18 @@ if "app_core" in _sys_reload_guard.modules:
     # worker crashed with AttributeError on session_state.board_data,
     # confirmed as a real production error the day of the split.
     _importlib_reload_guard.reload(_sys_reload_guard.modules["app_core"])
-from app_core import *
-from app_core import _CB_THRESHOLD, _ODDS_API_KEY_STATUS, _bc_df_html, _board_prop_signal_values, _capture_clv_closing_lines, _capture_clv_placement, _capture_clv_placement_game, _get_cal_tier, _get_ev_jwt, _http, _lock_board_prop, _show_team_exposure_warning, _ss
+import app_core as _app_core_module
+# `from app_core import *` skips every leading-underscore name by Python
+# convention (import *'s implicit __all__ excludes them) -- an explicit
+# list of 13 such names was tried first, then had to be patched to 18
+# after _bankroll_now caused a real production NameError; rather than
+# keep discovering missed names one crash at a time, copy EVERYTHING
+# from app_core's namespace (only Python's own dunder names excluded),
+# which can't miss anything by construction.
+for _name_copy_guard in dir(_app_core_module):
+    if not _name_copy_guard.startswith("__"):
+        globals()[_name_copy_guard] = getattr(_app_core_module, _name_copy_guard)
+del _name_copy_guard
 # app_core.py holds everything that used to be here before the tab-rendering
 # section: imports, constants, and ~181 pure helper/calc functions (887KB).
 # Split 2026-07-26 to shrink app.py, which had grown past 1.5MB and required
