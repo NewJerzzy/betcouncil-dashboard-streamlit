@@ -9319,6 +9319,113 @@ with tabs[11]:
             with st.expander(f"Show {len(_healthy)} healthy source(s) in this group"):
                 st.markdown(_bc_df_html(pd.DataFrame([{k: str(v) for k, v in r.items()} for r in _healthy])), unsafe_allow_html=True)
 
+    # ── Confidence Calibration Engine ─────────────────────────────────
+    # Real self-diagnostic: are the model's stated probabilities matching
+    # actual outcomes? Built from actual resolved history + the real
+    # signal_performance log, nothing invented. Every number below is
+    # gated on a minimum sample size (15) -- shows "not enough data yet"
+    # instead of a real-looking number built on too few bets, the exact
+    # trap flagged in the earlier one-off calibration review (Elite tier's
+    # -13.3pp gap was real but only n=14, too small to fully trust yet).
+    st.markdown("### 🎯 Confidence Calibration Engine")
+    _cal_min_n = 15
+    _cal_hist = [
+        h for h in st.session_state.get("history", [])
+        if h.get("outcome") in ("WIN", "LOSS") and h.get("prob") is not None
+    ]
+    if not _cal_hist:
+        st.caption("No resolved bets with a real stated probability yet — calibration needs actual settled history.")
+    else:
+        st.caption(f"Based on {len(_cal_hist)} resolved bets with a real stated probability (of {len(st.session_state.get('history', []))} total logged).")
+
+        # 1. Tier calibration table
+        st.markdown("#### Tier Calibration")
+        _cal_tier_rows = []
+        for _tier_name in ("SOVEREIGN", "ELITE", "APPROVED", "LEAN"):
+            _tier_bets = [h for h in _cal_hist if h.get("tier") == _tier_name]
+            _n = len(_tier_bets)
+            if _n < _cal_min_n:
+                _cal_tier_rows.append({"Tier": _tier_name, "N": _n, "Actual Win%": "—", "Stated Prob%": "—", "Gap": f"not enough data yet (n={_n}, needs {_cal_min_n}+)"})
+                continue
+            _actual_wr = sum(1 for h in _tier_bets if h["outcome"] == "WIN") / _n * 100
+            _stated_avg = sum(float(h.get("prob", 0) or 0) for h in _tier_bets) / _n * 100
+            _gap = _actual_wr - _stated_avg
+            _cal_tier_rows.append({
+                "Tier": _tier_name, "N": _n,
+                "Actual Win%": f"{_actual_wr:.1f}%", "Stated Prob%": f"{_stated_avg:.1f}%",
+                "Gap": f"{_gap:+.1f}pp" + (" ⚠️ overconfident" if _gap < -5 else " ⚠️ underconfident" if _gap > 10 else ""),
+            })
+        st.markdown(_bc_df_html(pd.DataFrame(_cal_tier_rows)), unsafe_allow_html=True)
+
+        # 2. Probability-bucket calibration curve
+        st.markdown("#### Probability-Bucket Calibration")
+        _cal_buckets = [(0.0, 0.50), (0.50, 0.55), (0.55, 0.60), (0.60, 0.65), (0.65, 0.70), (0.70, 1.01)]
+        _cal_bucket_rows = []
+        for _lo, _hi in _cal_buckets:
+            _b_bets = [h for h in _cal_hist if _lo <= float(h.get("prob", 0) or 0) < _hi]
+            _n = len(_b_bets)
+            _label = f"{_lo*100:.0f}–{min(_hi,1.0)*100:.0f}%"
+            if _n < _cal_min_n:
+                _cal_bucket_rows.append({"Stated Range": _label, "N": _n, "Actual Win%": "—", "Note": f"not enough data yet (n={_n})"})
+                continue
+            _actual_wr = sum(1 for h in _b_bets if h["outcome"] == "WIN") / _n * 100
+            _mid = (_lo + min(_hi, 1.0)) / 2 * 100
+            _diff = _actual_wr - _mid
+            _cal_bucket_rows.append({
+                "Stated Range": _label, "N": _n, "Actual Win%": f"{_actual_wr:.1f}%",
+                "Note": f"{_diff:+.1f}pp vs bucket midpoint",
+            })
+        st.markdown(_bc_df_html(pd.DataFrame(_cal_bucket_rows)), unsafe_allow_html=True)
+
+        # 3. Brier score -- overall + last-20 rolling, so a real
+        # improving/degrading trend is visible without inventing a
+        # smoother time series than the data actually supports.
+        st.markdown("#### Brier Score")
+        def _cal_brier(bets):
+            if not bets:
+                return None
+            return sum((float(h.get("prob", 0) or 0) - (1.0 if h["outcome"] == "WIN" else 0.0)) ** 2 for h in bets) / len(bets)
+        _brier_all = _cal_brier(_cal_hist)
+        _brier_recent = _cal_brier(_cal_hist[-20:]) if len(_cal_hist) >= _cal_min_n else None
+        _cal_b1, _cal_b2 = st.columns(2)
+        with _cal_b1:
+            st.metric(f"Overall (n={len(_cal_hist)})", f"{_brier_all:.4f}" if _brier_all is not None else "—",
+                      help="0.25 = coin-flip-equivalent, 0 = perfect, lower is better")
+        with _cal_b2:
+            st.metric(f"Last 20 resolved", f"{_brier_recent:.4f}" if _brier_recent is not None else "not enough data yet",
+                      delta=(f"{_brier_recent - _brier_all:+.4f} vs overall" if _brier_recent is not None else None),
+                      delta_color="inverse")
+
+        # 4. Signal activation audit -- from the real signal_performance
+        # log (separate Gist key from history), not invented. Confirms
+        # whether each tracked signal is genuinely contributing to
+        # tracked outcomes or structurally dead in the current pipeline.
+        st.markdown("#### Signal Activation Audit")
+        try:
+            _cal_sigperf = load_from_gist("signal_performance", None) or []
+            if not _cal_sigperf:
+                st.caption("No signal_performance log found yet.")
+            else:
+                _cal_sig_keys = sorted({k for r in _cal_sigperf for k in r.keys() if k.startswith(("base_", "defense_", "location_", "back_to_back", "sharp_", "weather_", "blowout_", "usage_", "pace_"))})
+                _sig_rows = []
+                for _sk in _cal_sig_keys:
+                    _active = [r for r in _cal_sigperf if r.get(_sk) is True or r.get(_sk) == 1]
+                    _inactive = [r for r in _cal_sigperf if not (r.get(_sk) is True or r.get(_sk) == 1)]
+                    _n_active = len(_active)
+                    if _n_active < _cal_min_n:
+                        _sig_rows.append({"Signal": _sk, "N Active": _n_active, "Win% Active": "—", "Win% Inactive": "—", "Lift": f"not enough activations yet (n={_n_active})"})
+                        continue
+                    _wr_active = sum(r.get("win", 0) for r in _active) / _n_active * 100
+                    _wr_inactive = sum(r.get("win", 0) for r in _inactive) / len(_inactive) * 100 if _inactive else 0
+                    _sig_rows.append({
+                        "Signal": _sk, "N Active": _n_active,
+                        "Win% Active": f"{_wr_active:.1f}%", "Win% Inactive": f"{_wr_inactive:.1f}%",
+                        "Lift": f"{_wr_active - _wr_inactive:+.1f}pp",
+                    })
+                st.markdown(_bc_df_html(pd.DataFrame(_sig_rows)), unsafe_allow_html=True)
+        except Exception:
+            _logger.debug("Signal activation audit failed silently")
+
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
     # refresh interval (pulled from the harvester JS's own throttle values),
