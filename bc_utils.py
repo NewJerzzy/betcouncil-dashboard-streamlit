@@ -5041,7 +5041,7 @@ def weather_edge_adjustment(weather, stat_norm, side="OVER", sport="MLB"):
 
 def get_edge_staleness(last_scan_time):
     if not last_scan_time:
-        return "🔴 Never loaded — load the board before trusting any edge shown", "red"
+        return "🔴 Not loaded — use Load Board to refresh", "red"
     try:
         last = datetime.strptime(last_scan_time, "%H:%M:%S")
         now = datetime.now()
