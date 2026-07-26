@@ -99,18 +99,18 @@ def global_css() -> str:
     /* Tab navigation -- hover + active-state feedback. Confirmed missing
        entirely (no tab-specific CSS existed anywhere) before this. */
     [data-testid="stTabs"] button[data-baseweb="tab"] {
-        transition: color 200ms cubic-bezier(0.4,0,0.2,1), border-color 200ms cubic-bezier(0.4,0,0.2,1);
+        transition: color 150ms cubic-bezier(0.4,0,0.2,1) 30ms, background-color 150ms cubic-bezier(0.4,0,0.2,1) 30ms, border-color 150ms cubic-bezier(0.4,0,0.2,1);
         border-radius: 6px 6px 0 0;
     }
     [data-testid="stTabs"] button[data-baseweb="tab"]:hover {
-        color: var(--bc-blue, #1e90ff) !important;
-        background: rgba(30,144,255,0.06);
+        color: var(--bc-text) !important;
+        background: rgba(77,216,196,0.1);
     }
     [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
         border-bottom: 2px solid var(--bc-blue, #1e90ff) !important;
     }
     .bc-card {
-        transition: border-color 200ms cubic-bezier(0.4,0,0.2,1);
+        transition: border-color 200ms cubic-bezier(0.4,0,0.2,1) 30ms;
     }
     /* .pulse-stale -- applied to the sidebar Edge Freshness metric-box
        when get_edge_staleness() returns red/orange (stale, very stale, or
@@ -189,7 +189,7 @@ def global_css() -> str:
         padding: 14px 16px 12px;
         text-align: center;
         box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        transition: transform 200ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms cubic-bezier(0.4,0,0.2,1), border-color 200ms cubic-bezier(0.4,0,0.2,1);
+        transition: transform 200ms cubic-bezier(0.4,0,0.2,1) 30ms, box-shadow 200ms cubic-bezier(0.4,0,0.2,1) 30ms, border-color 200ms cubic-bezier(0.4,0,0.2,1) 30ms;
     }
     .command-card:hover {
         transform: translateY(-2px);
@@ -280,12 +280,15 @@ def global_css() -> str:
         box-shadow: 0 2px 4px rgba(0,0,0,0.15);
     }
     .bc-header::after {
+        /* Locked brand values -- angle 135deg, stops at 0%/12%/100%,
+           opacity 5% -- so this stays a consistent reference point for any
+           future header/banner element rather than being re-eyeballed. */
         content: "";
         position: absolute;
         left: 0; right: 0; bottom: -1px;
         height: 2px;
-        opacity: 0.4;
-        background: linear-gradient(90deg, var(--bc-blue, #1e90ff), #4dd8c4, transparent);
+        opacity: 0.05;
+        background: linear-gradient(135deg, var(--bc-blue, #1e90ff) 0%, #4dd8c4 12%, transparent 100%);
     }
     /* Active tab -- inner glow (feels premium) instead of outer (reads as
        "gamey"), teal color shift, short fade-in on the border so switching
@@ -310,15 +313,18 @@ def global_css() -> str:
         100% { transform: scale(1); }
     }
     @keyframes bankroll-fade-down {
-        0%   { opacity: 0.55; filter: saturate(0.7); }
-        100% { opacity: 1;    filter: saturate(1); }
+        /* Refined: 6% opacity shift (was 45%), cooler blue-gray tint via
+           hue-rotate instead of plain desaturation, shorter 220ms so a
+           loss reads as quietly informational rather than punishing. */
+        0%   { opacity: 0.94; filter: saturate(0.85) hue-rotate(-8deg); }
+        100% { opacity: 1;    filter: saturate(1) hue-rotate(0deg); }
     }
     .bankroll-pulse-up {
         animation: bankroll-pulse-up 300ms cubic-bezier(0.4,0,0.2,1);
         display: inline-block;
     }
     .bankroll-pulse-down {
-        animation: bankroll-fade-down 300ms cubic-bezier(0.4,0,0.2,1);
+        animation: bankroll-fade-down 220ms cubic-bezier(0.4,0,0.2,1);
         display: inline-block;
     }
     /* Edge heatmap legend -- soft reference style: small, right-aligned,
@@ -334,9 +340,13 @@ def global_css() -> str:
         margin: 4px 0 8px;
         width: 150px;
         margin-left: auto;
+        padding: 4px 8px;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 6px;
     }
     .heatmap-legend-title {
         font-size: 0.65rem;
+        font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: var(--bc-dim);
