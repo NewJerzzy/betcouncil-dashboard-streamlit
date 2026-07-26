@@ -13884,9 +13884,9 @@ def load_sport_data(sport):
     except Exception:
         st.session_state["signalodds_arbitrage"] = []
     try:
-        st.session_state["kalshi_markets"] = fetch_kalshi_from_gist()
+        st.session_state["kalshi_events_scraped"] = fetch_kalshi_from_gist()
     except Exception:
-        st.session_state["kalshi_markets"] = []
+        st.session_state["kalshi_events_scraped"] = []
     st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
     st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
@@ -19365,7 +19365,7 @@ with tabs[0]:
         # not the full stacked-totals distribution -- that's available in
         # the raw data (fetch_kalshi_from_gist) for a future deeper view.
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Kalshi — Prediction Market Prices</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
-        _kalshi_events = st.session_state.get("kalshi_markets", [])
+        _kalshi_events = st.session_state.get("kalshi_events_scraped", [])
         if _kalshi_events:
             _kalshi_by_sport = {}
             for _kev in _kalshi_events:
