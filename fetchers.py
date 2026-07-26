@@ -18247,28 +18247,6 @@ def fetch_unabated_props(sport: str, platform: str = None) -> tuple:
     return [], "unavailable"
 
 
-def fetch_oddsjam_from_gist(sport: str) -> tuple:
-    """PRIMARY: OddsJam +EV from browser harvester. SECONDARY: none (new source)."""
-    data = _read_gist_file(f"betcouncil_oddsjam_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=100):
-        raw = data.get("data",{})
-        if raw:
-            print(f"[OddsJam] PRIMARY: browser harvester")
-            return raw, "browser_harvester"
-    return {}, "unavailable"
-
-
-def fetch_propswap_from_gist(sport: str) -> tuple:
-    """PRIMARY: PropSwap secondary market from browser harvester."""
-    data = _read_gist_file(f"betcouncil_propswap_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=32):
-        raw = data.get("data",{})
-        if raw:
-            print(f"[PropSwap] PRIMARY: browser harvester")
-            return raw, "browser_harvester"
-    return {}, "unavailable"
-
-
 def get_harvester_status(sport: str = "MLB") -> dict:
     """
     Real-time status of ALL browser harvesters.
@@ -18644,38 +18622,6 @@ def fetch_novig_from_gist(sport: str) -> tuple:
             if props:
                 return props, "browser_harvester"
     return [], "unavailable"
-
-def fetch_polymarket_from_gist(sport: str) -> tuple:
-    """Polymarket prediction markets from browser harvester."""
-    data = _read_gist_file(f"betcouncil_polymarket_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=32):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-# ── ProphetX normalizer — confirmed against live API 2026-07-13 ──────────
-# Real payload shape:
-#   GET /trade/public/api/v2/events/{id}/markets
-#   → {"data": {"markets": [...]}}
-#   Each market: {id, name, status, type, subType,
-#                 selections (list-of-lists, Moneyline only),
-#                 marketLines (list, Spread/Total/Props)}
-#   selections:   [[side0_price0, side0_price1, ...], [side1_price0, ...]]
-#   marketLines:  [{id, name, selections: [[over_px0,...],[under_px0,...]]}]
-#   Each price:   {odds (int, American), line (float), name, displayOdds, value, stake}
-#   Commissions:  GET /commission/public/commissions?event_ids=…
-#   → {"commissions": [{commission, eventId, marketId, source, subType}], "length": N}
-
-import re as _re
-
-# Game-level market names — everything else is a player prop
-_PROPHETX_GAME_MARKETS = frozenset({
-    "moneyline", "spread", "total", "total points",
-    "1st half total", "1st half moneyline", "1st half spread",
-    "1st quarter total", "1st quarter moneyline",
-    "draw no bet", "asian handicap", "match winner",
-})
-
 
 def _px_best_price(side_list):
     """Return the best (first) price from one side's price list, or None."""
@@ -19235,13 +19181,6 @@ def fetch_thescore_from_gist(sport: str) -> tuple:
     return [], "unavailable"
 
 
-def fetch_pregame_from_gist(sport: str) -> tuple:
-    data = _read_gist_file(f"betcouncil_pregame_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=32):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
 def fetch_fantasylabs_from_gist(sport: str) -> tuple:
     data = _read_gist_file(f"betcouncil_fantasylabs_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=32):
@@ -19320,112 +19259,14 @@ def fetch_numberfire_direct(sport: str) -> dict:
         return {}
 
 
-def fetch_numberfire_from_gist(sport: str) -> tuple:
-    # Try the direct, no-tab-needed path first (Jul 9 2026 fix) — only
-    # falls through to the browser-harvester Gist for sports without a
-    # confirmed public widget URL yet, or if the direct fetch is empty.
-    direct = fetch_numberfire_direct(sport)
-    if direct and direct.get("players"):
-        return direct, "direct_widget"
-    data = _read_gist_file(f"betcouncil_numberfire_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=32):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-
-
 def fetch_sportsinsights_from_gist(sport):
     data=_read_gist_file(f"betcouncil_sportsinsights_{sport}.json",5)
     if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
     return {}, "unavailable"
 
-def fetch_oddsshark_from_gist(sport):
-    data=_read_gist_file(f"betcouncil_oddsshark_{sport}.json",5)
-    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
-    # Browser harvester unavailable — try direct Python fetch (public API, no auth)
-    try:
-        import requests as _req
-        from datetime import date as _date
-        _sport_map = {"MLB":"mlb","NFL":"nfl","NBA":"nba","NHL":"nhl",
-                      "NCAAFB":"ncaaf","NCAAMB":"ncaab"}
-        _slug = _sport_map.get(sport.upper())
-        if not _slug:
-            return {}, "unavailable"
-        _today = _date.today().strftime("%Y-%m-%d")
-        _r = _req.get(
-            f"https://www.oddsshark.com/api/scores/{_slug}/{_today}",
-            headers={"Accept": "application/json",
-                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=14)
-        if _r.status_code == 200:
-            _d = _r.json()
-            if _d:
-                return (_d if isinstance(_d, dict) else {"games": _d}), "python_direct"
-    except Exception:
-        pass
-    return {}, "unavailable"
-
-def fetch_vegasinsider_from_gist(sport):
-    data=_read_gist_file(f"betcouncil_vegasinsider_{sport}.json",5)
-    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_propscash_from_gist(sport):
-    """Props.cash cross-book prop lines.
-    Tries Gist first (browser harvester); falls back to direct Python fetch
-    because CORS blocks browser requests from Streamlit's domain.
-    """
-    data=_read_gist_file(f"betcouncil_propscash_{sport}.json",5)
-    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
-    # Browser harvester CORS-blocked — try direct Python HTTP request
-    try:
-        import requests as _req
-        _sport_l = sport.lower()
-        _r = _req.get(
-            f"https://props.cash/api/props?sport={_sport_l}&limit=200",
-            headers={"Accept": "application/json",
-                     "Referer": "https://props.cash/",
-                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=14)
-        if _r.status_code == 200:
-            _d = _r.json()
-            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
-    except Exception:
-        pass
-    return {}, "unavailable"
-
 def fetch_baseballpress_from_gist():
     data=_read_gist_file("betcouncil_baseballpress.json",5)
     if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_bettingpros_from_gist(sport):
-    """BettingPros expert consensus picks.
-    Gist fallback + direct Python fetch (CORS-bypass).
-    """
-    data=_read_gist_file(f"betcouncil_bettingpros_{sport}.json",5)
-    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
-    try:
-        import requests as _req
-        _bp_map = {"MLB":"mlb","NBA":"nba","NFL":"nfl","NHL":"nhl","WNBA":"wnba"}
-        _bp_s   = _bp_map.get(sport, sport.lower())
-        _r = _req.get(
-            f"https://www.bettingpros.com/api/v3/picks/?sport={_bp_s}&market=game&page_size=50",
-            headers={"Accept": "application/json",
-                     "Referer": "https://www.bettingpros.com/",
-                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=14)
-        if _r.status_code == 200:
-            _d = _r.json()
-            return (_d if isinstance(_d, (list, dict)) else {}), "python_direct"
-    except Exception:
-        pass
-    return {}, "unavailable"
-
-def fetch_stokastic_from_gist(sport):
-    data=_read_gist_file(f"betcouncil_stokastic_{sport}.json",5)
-    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
     return {}, "unavailable"
 
 def fetch_rotogrinders_from_gist(sport):
@@ -19452,44 +19293,6 @@ def fetch_oddsportal_from_gist(sport):
     data = _read_gist_file(f"betcouncil_oddsportal_{sport}.json", 5)
     if data and _is_fresh(data, 300):  # capture happens once/day, so allow up to 5hrs old
         return data, "espn_opening_lines"
-    return {}, "unavailable"
-
-def fetch_outlier_from_gist(sport):
-    """
-    Outlier.bet +EV opportunities.
-
-    2026-07-16: investigated properly (Replit, verified independently).
-    The direct Python fetch this used to attempt was wrong on two counts:
-    outlier.bet is just the WordPress marketing site (the real app is at
-    app.outlier.bet, a separate React SPA), and the path
-    "/api/opportunities" doesn't exist anywhere — the real backend is
-    api.outlier.bet with paths like
-    /sportsdata/marketOpportunities/positiveEV, gated by a genuine AWS
-    Cognito JWT check at the API Gateway level (no CSS trick, no public
-    subset — confirmed via {"message":"Missing Authentication Token"} /
-    x-amzn-ErrorType: UnauthorizedException on every unauthenticated
-    call). There's no server-side workaround, so the direct-fetch
-    attempt has been removed rather than left pointing at a dead URL.
-
-    The gist-harvester fallback below is left in place — unlike the
-    server-side fetch, a browser-based approach (a Tampermonkey script
-    capturing the user's own Cognito ID token while logged into
-    app.outlier.bet, same pattern as the FanDuel Parlay Hub harvester)
-    is still theoretically possible if this becomes worth building later.
-    Currently unpopulated — no harvester has ever pushed to this file.
-    """
-    data=_read_gist_file(f"betcouncil_outlier_{sport}.json",5)
-    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_smarkets_from_gist(sport):
-    data=_read_gist_file(f"betcouncil_smarkets_{sport}.json",5)
-    if data and _is_fresh(data,28): return data.get("data",{}), "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_pickwise_from_gist(sport):
-    data=_read_gist_file(f"betcouncil_pickwise_{sport}.json",5)
-    if data and _is_fresh(data,22): return data.get("data",{}), "browser_harvester"
     return {}, "unavailable"
 
 def fetch_weather_from_gist(sport):
@@ -19765,119 +19568,6 @@ def fetch_scoresandodds_from_gist(sport):
     data=_read_gist_file(f"betcouncil_scoresandodds_{sport}.json",5)
     if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
     return {}, "unavailable"
-
-def fetch_kalshi2_from_gist(sport):
-    """Kalshi prediction market contracts.
-    Gist fallback + direct Python fetch via public Kalshi API (CORS-bypass).
-    Note: JS used trading-api.kalshi.com; Python uses the public elections API.
-    """
-    data=_read_gist_file(f"betcouncil_kalshi2_{sport}.json",5)
-    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
-    try:
-        import requests as _req
-        # Public Kalshi Markets API — no auth required for market listings
-        _r = _req.get(
-            "https://api.elections.kalshi.com/trade-api/v2/markets",
-            params={"status": "open", "series_ticker": sport, "limit": 100},
-            headers={"Accept": "application/json"},
-            timeout=14)
-        if _r.status_code == 200:
-            _d = _r.json()
-            return (_d if isinstance(_d, dict) else {}), "python_direct"
-        # Fallback: trading API (may require auth but worth trying)
-        _r2 = _req.get(
-            f"https://trading-api.kalshi.com/trade-api/v2/events/",
-            params={"status": "open", "series_ticker": sport},
-            headers={"Accept": "application/json"},
-            timeout=12)
-        if _r2.status_code == 200:
-            _d2 = _r2.json()
-            return (_d2 if isinstance(_d2, dict) else {}), "python_direct"
-    except Exception:
-        pass
-    return {}, "unavailable"
-
-
-
-def fetch_pickswise_from_gist(sport: str) -> tuple:
-    """Pickswise expert picks — no login needed."""
-    data = _read_gist_file(f"betcouncil_pickswise_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=32):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_betus_from_gist(sport: str) -> tuple:
-    """BetUS props builder — no login needed."""
-    data = _read_gist_file(f"betcouncil_betus_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_bet105_from_gist(sport: str) -> tuple:
-    """Bet105 low-juice lines — no login needed."""
-    data = _read_gist_file(f"betcouncil_bet105_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_betwhale_from_gist(sport: str) -> tuple:
-    """BetWhale lines — no login needed."""
-    data = _read_gist_file(f"betcouncil_betwhale_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_ybets_from_gist(sport: str) -> tuple:
-    """Ybets lines — no login needed."""
-    data = _read_gist_file(f"betcouncil_ybets_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-def fetch_zamba_from_gist(sport: str) -> tuple:
-    """Zamba.co lines — no login needed."""
-    data = _read_gist_file(f"betcouncil_zamba_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=28):
-        raw = data.get("data",{})
-        if raw: return raw, "browser_harvester"
-    return {}, "unavailable"
-
-
-
-def fetch_evbets_from_gist(sport: str) -> tuple:
-    """
-    EVBets +EV feed — free, 94 bookmakers, Pinnacle+Betfair sharp consensus.
-    Pre-computed EV%, Kelly sizing, no-vig fair prob. Updated every 30 min.
-    PRIMARY: browser harvester. SECONDARY: none (web-only source).
-    Returns (list of {event, outcome, market, ev_pct, best_odds, book, kelly}, source)
-    """
-    data = _read_gist_file(f"betcouncil_evbets_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=100):
-        raw = data.get("data", {})
-        if raw:
-            picks = _parse_evbets_data(raw, sport)
-            if picks:
-                print(f"[EVBets] PRIMARY: {len(picks)} +EV picks for {sport}")
-                return picks, "browser_harvester"
-    return [], "unavailable"
-
-
-def fetch_evbets_props_from_gist(sport: str) -> tuple:
-    """EVBets prop bets +EV feed."""
-    data = _read_gist_file(f"betcouncil_evbets_props_{sport}.json", cache_minutes=5)
-    if data and _is_fresh(data, max_age_minutes=100):
-        raw = data.get("data", {})
-        if raw:
-            picks = _parse_evbets_data(raw, sport)
-            if picks:
-                return picks, "browser_harvester"
-    return [], "unavailable"
-
 
 def _parse_evbets_data(raw, sport: str) -> list:
     """Parse EVBets HTML/JSON response into BetCouncil pick format."""

@@ -13054,6 +13054,25 @@ def get_calibration_source_records(bet_type=None):
     return combined
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_harvester_data_cached(sport, _fn_names_tuple):
+    """Parallel-fetch every harvester source for one sport, cached 5 min so
+    repeat Streamlit reruns within that window (any button click, dropdown
+    change, etc, which re-executes the whole script) don't re-hit the Gist
+    API for each of the ~19 sources every time -- only the data-fetching
+    is cached here, not session_state writes, since st.cache_data on a
+    function with session_state side effects is unreliable."""
+    def _run_one_harvester(_fn_name):
+        try:
+            import fetchers as _ftch
+            _fn = getattr(_ftch, _fn_name)
+            return _fn_name, _fn(sport)
+        except Exception:
+            return _fn_name, None
+    with ThreadPoolExecutor(max_workers=min(19, len(_fn_names_tuple) or 1)) as _hx:
+        return dict(_hx.map(_run_one_harvester, _fn_names_tuple))
+
+
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
     # ── Kill Switch ───────────────────────────────────────────────────────
@@ -13796,43 +13815,18 @@ def load_sport_data(sport):
         ("fetch_covers_from_gist",          "covers_consensus",       "covers_src"),
         ("fetch_draftkings_props_from_gist","dk_props_harvested",     "dk_props_src"),
         ("fetch_unabated_from_gist",        "unabated_lines_h",       "unabated_src"),
-        ("fetch_oddsjam_from_gist",         "oddsjam_ev",             "oddsjam_src"),
-        ("fetch_propswap_from_gist",        "propswap_listings",      "propswap_src"),
         ("fetch_prizepicks_from_gist",       "prizepicks_props_h",     "prizepicks_src"),
         ("fetch_underdog_from_gist",          "underdog_props_h",       "underdog_src"),
-        ("fetch_bovada_from_gist",            "bovada_lines_h",         "bovada_src"),
-        ("fetch_novig_from_gist",             "novig_props_h",          "novig_src"),
-        ("fetch_polymarket_from_gist",        "polymarket_data",        "polymarket_src"),
         ("fetch_prophetx_game_lines_from_gist","prophetx_lines_h",       "prophetx_lines_src"),
         ("fetch_prophetx_props_from_gist",     "prophetx_props_h",       "prophetx_props_src"),
-        ("fetch_mybookie_from_gist",           "mybookie_lines_h",       "mybookie_src"),
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
         ("fetch_bet365_from_gist",             "bet365_lines_h",         "bet365_src"),
-        ("fetch_pregame_from_gist",            "pregame_plays_h",        "pregame_src"),
         ("fetch_fantasylabs_from_gist",        "fantasylabs_data_h",     "fantasylabs_src"),
         ("fetch_rotowire_from_gist",           "rotowire_injuries_h",    "rotowire_src"),
-        ("fetch_numberfire_from_gist",         "numberfire_proj_h",      "numberfire_src"),
-        ("fetch_pickswise_from_gist",          "pickswise_picks_h",      "pickswise_src"),
-        ("fetch_betus_from_gist",              "betus_props_h",          "betus_src"),
-        ("fetch_bet105_from_gist",             "bet105_lines_h",         "bet105_src"),
-        ("fetch_betwhale_from_gist",           "betwhale_lines_h",       "betwhale_src"),
-        ("fetch_ybets_from_gist",              "ybets_lines_h",          "ybets_src"),
-        ("fetch_zamba_from_gist",              "zamba_lines_h",          "zamba_src"),
-        ("fetch_evbets_from_gist",             "evbets_ev_picks",        "evbets_src"),
-        ("fetch_evbets_props_from_gist",       "evbets_prop_picks",      "evbets_props_src"),
         ("fetch_sportsinsights_from_gist",     "sportsinsights_data",    "sportsinsights_src"),
-        ("fetch_oddsshark_from_gist",          "oddsshark_data",         "oddsshark_src"),
-        ("fetch_vegasinsider_from_gist",       "vegasinsider_data",      "vegasinsider_src"),
-        ("fetch_propscash_from_gist",          "propscash_data",         "propscash_src"),
-        ("fetch_bettingpros_from_gist",        "bettingpros_data",       "bettingpros_src"),
-        ("fetch_stokastic_from_gist",          "stokastic_data",         "stokastic_src"),
         ("fetch_rotogrinders_from_gist",       "rotogrinders_data",      "rotogrinders_src"),
         ("fetch_oddsportal_from_gist",         "oddsportal_data",        "oddsportal_src"),
-        ("fetch_outlier_from_gist",            "outlier_ev_data",        "outlier_src"),
-        ("fetch_smarkets_from_gist",           "smarkets_data",          "smarkets_src"),
-        ("fetch_pickwise_from_gist",           "pickwise_data",          "pickwise_src"),
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
-        ("fetch_kalshi2_from_gist",            "kalshi2_data",           "kalshi2_src"),
         ("fetch_pick6_props_from_gist",        "pick6_props_h",          "pick6_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
         ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
@@ -13849,11 +13843,13 @@ def load_sport_data(sport):
             _wx_data, _ = _fwx(sport)
             if _wx_data: st.session_state["weather_data"] = _wx_data
         except Exception: pass
+    _harvester_results = _fetch_harvester_data_cached(sport, tuple(h[0] for h in _harvester_sources))
     for _fn_name, _ss_key, _src_key in _harvester_sources:
+        _result = _harvester_results.get(_fn_name)
+        if not _result:
+            continue
         try:
-            import fetchers as _ftch
-            _fn   = getattr(_ftch, _fn_name)
-            _data, _src = _fn(sport)
+            _data, _src = _result
             if _data:
                 st.session_state[_ss_key] = _data
                 st.session_state[_src_key] = _src
