@@ -13867,6 +13867,10 @@ def load_sport_data(sport):
         st.session_state["signalodds_arbitrage"] = fetch_signalodds_arbitrage_from_gist()
     except Exception:
         st.session_state["signalodds_arbitrage"] = []
+    try:
+        st.session_state["kalshi_markets"] = fetch_kalshi_from_gist()
+    except Exception:
+        st.session_state["kalshi_markets"] = []
     st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
     st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
@@ -19338,6 +19342,49 @@ with tabs[0]:
             st.markdown("".join(_so_arb_html), unsafe_allow_html=True)
         else:
             st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;">No Signal Odds arbitrage opportunities found today.</div>', unsafe_allow_html=True)
+
+        # ── KALSHI — PREDICTION MARKET PRICES ─────────────────
+        # Real bid/ask from Kalshi's own public order book (yes-price ~=
+        # market-implied probability). Top markets per event by volume,
+        # not the full stacked-totals distribution -- that's available in
+        # the raw data (fetch_kalshi_from_gist) for a future deeper view.
+        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Kalshi — Prediction Market Prices</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
+        _kalshi_events = st.session_state.get("kalshi_markets", [])
+        if _kalshi_events:
+            _kalshi_by_sport = {}
+            for _kev in _kalshi_events:
+                _kalshi_by_sport.setdefault(_kev.get("sport", "?"), []).append(_kev)
+            _kalshi_html = []
+            for _ksport in sorted(_kalshi_by_sport.keys()):
+                _kevs = _kalshi_by_sport[_ksport]
+                def _kev_volume(ev):
+                    tot = 0.0
+                    for m in ev.get("markets", []):
+                        try:
+                            tot += float(m.get("volume") or 0)
+                        except (TypeError, ValueError):
+                            pass
+                    return tot
+                _top_kevs = sorted(_kevs, key=_kev_volume, reverse=True)[:5]
+                _kalshi_html.append(f'<div style="color:var(--bc-muted);font-size:0.9rem;text-transform:uppercase;margin:0.6rem 0 0.3rem;">{_ksport}</div>')
+                for _kev in _top_kevs:
+                    _kmarkets = _kev.get("markets") or []
+                    if not _kmarkets:
+                        continue
+                    _krows = []
+                    for m in sorted(_kmarkets, key=lambda x: float(x.get("volume") or 0), reverse=True)[:3]:
+                        try:
+                            _bid = float(m.get("yes_bid") or 0)
+                            _ask = float(m.get("yes_ask") or 0)
+                            _mid = (_bid + _ask) / 2 if (_bid or _ask) else float(m.get("last_price") or 0)
+                        except (TypeError, ValueError):
+                            _mid = 0
+                        _krows.append(f'{m.get("title","")}: {_mid*100:.0f}%')
+                    _krows_str = " · ".join(_krows)
+                    _kalshi_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid #6366f1;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{_kev.get("title","")}</div><div style="font-size:0.9rem;color:var(--bc-muted);">{_krows_str}</div></div>')
+            st.markdown("".join(_kalshi_html), unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;">No Kalshi market data available.</div>', unsafe_allow_html=True)
 
         # ── BEST OF ALL SPORTS ─────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Best of All Sports</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)

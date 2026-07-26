@@ -16083,6 +16083,36 @@ def fetch_signalodds_arbitrage_from_gist(max_age_minutes: int = 100) -> list:
     return []
 
 
+def fetch_kalshi_from_gist(sport: str = None, max_age_minutes: int = 100) -> list:
+    """
+    Kalshi prediction-market prices (real bid/ask, volume, open interest --
+    confirmed live 2026-07-25: 72 MLB events/117 markets across game/total/
+    spread series, plus NFL game markets, no auth needed for reading).
+
+    Distinct from the existing indirect Kalshi exposure buried inside
+    fetch_ev_api()'s multi-book aggregation -- this is a direct connection
+    (scripts/kalshi_refresh.py, GitHub Actions cron 5,35 * * * *) giving the
+    FULL picture per game rather than one blended number: every run-total
+    threshold priced separately (e.g. 1.5/2.5/3.5/4.5 runs each with their
+    own live yes/no price), which is what lets a caller reconstruct Kalshi's
+    implied probability distribution over the total rather than a single
+    line.
+
+    Each event: {sport, event_ticker, title, series_ticker, markets: [
+    {ticker, title, yes_bid, yes_ask, last_price, volume, open_interest,
+    liquidity, close_time, rules_primary}]}. Pass sport="MLB" or "NFL" to
+    filter; omit for everything.
+    """
+    data = _read_gist_file("betcouncil_kalshi_markets.json", cache_minutes=10)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("events", [])
+        if isinstance(raw, list):
+            if sport:
+                return [e for e in raw if e.get("sport") == sport]
+            return raw
+    return []
+
+
 
 def fetch_betslib_events(sport: str = None, category: str = "upcoming", limit: int = 50) -> list:
     """
