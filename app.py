@@ -13686,7 +13686,17 @@ def load_sport_data(sport):
         return result
     def _pf_unabated():       return fetch_unabated_lines(sport.lower())
 
-    _parallel_fns = [
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _get_parallel_results(_cache_sport):
+        """Cache the whole 77-source parallel fetch for 5 min. Previously
+        this ran in full on EVERY script rerun -- including a simple
+        button click like locking a game line, which triggers st.rerun()
+        and re-executes load_sport_data() top to bottom. Real reported
+        symptom this fixes: locking a pick taking an extremely long time
+        (waiting on all 77 sources again, several of them live network
+        calls with no caching of their own) for an action that has
+        nothing to do with re-fetching odds data."""
+        _fns = [
         _pf_prizepicks, _pf_underdog, _pf_dk_sal, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
@@ -13702,7 +13712,9 @@ def load_sport_data(sport):
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
     ]
-    _results = _fetch_parallel(_parallel_fns, show_progress=False)
+        return _fetch_parallel(_fns, show_progress=False)
+
+    _results = _get_parallel_results(sport)
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
