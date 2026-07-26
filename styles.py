@@ -76,7 +76,19 @@ def global_css() -> str:
     --bc-dim/--bc-border/etc. and hundreds of existing elements depend on
     those exact values; this only adds new rules on top, using the same
     variable names."""
-    return """<style>
+    return """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+    /* Font upgrade -- Inter app-wide instead of the generic browser sans
+       serif fallback. Same clean geometric sans used by most of the
+       platforms referenced in the UI redesign notes (FanDuel, Unabated,
+       BetQL). Purely typographic -- doesn't touch the existing --bc-*
+       color palette or any layout. */
+    html, body, [class*="css"], .stApp {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    }
     /* Card hover lift. .bc-card is defined (here and in app.py's own CSS
        block) but has zero real usage -- almost every card in this app is
        built via inline styles in an f-string, not a class attribute. The
@@ -86,6 +98,18 @@ def global_css() -> str:
        needing to touch hundreds of scattered markdown call sites. */
     .bc-card {
         transition: border-color 0.15s ease;
+    }
+    /* .pulse-stale -- applied to the sidebar Edge Freshness metric-box
+       when get_edge_staleness() returns red/orange (stale, very stale, or
+       never loaded), so a genuinely untrustworthy board gets an urgent
+       visual cue instead of sitting there as static text easy to miss. */
+    @keyframes pulse-stale-glow {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(224,64,64,0.35); }
+        50%      { box-shadow: 0 0 0 6px rgba(224,64,64,0); }
+    }
+    .pulse-stale {
+        animation: pulse-stale-glow 2s ease-in-out infinite;
+        border-color: rgba(224,64,64,0.5) !important;
     }
     .bc-card:hover {
         border-color: var(--bc-blue) !important;
