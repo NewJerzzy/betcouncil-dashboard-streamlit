@@ -139,6 +139,40 @@ def global_css() -> str:
         outline: 1px solid var(--bc-blue) !important;
         box-shadow: 0 0 0 2px rgba(30,144,255,0.15) !important;
     }
+    /* .command-card / .command-value / .command-label -- used by the Summary
+       tab's hero metrics bar (Props Loaded, Sovereign, Avg Edge, Win Rate,
+       CLV, Bankroll Mult) but never actually defined anywhere in the
+       codebase until now -- those cards had been rendering as unstyled
+       plain divs the entire time, which is the real, concrete reason the
+       most important row on the page never looked like it changed. */
+    .command-card {
+        background: linear-gradient(160deg, var(--bc-bg-card) 0%, #0a1622 100%);
+        border: 1px solid var(--bc-border);
+        border-radius: 10px;
+        padding: 14px 16px 12px;
+        text-align: center;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .command-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(30,144,255,0.2);
+    }
+    .command-value {
+        font-size: 1.65rem;
+        font-weight: 800;
+        color: var(--bc-text);
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+    }
+    .command-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--bc-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-top: 4px;
+    }
     </style>"""
 
 
