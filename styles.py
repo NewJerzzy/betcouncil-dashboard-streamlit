@@ -307,6 +307,18 @@ def global_css() -> str:
        cubic-bezier(0.4,0,0.2,1) easing, scale shifts capped ~1-3% --
        applied consistently above and below rather than each animated
        element inventing its own timing. */
+    /* Spotlight cinematic reveal -- fade-in + slight scale, applied only
+       on the render where the top pick is genuinely new this session
+       (see app.py's _sp_is_new_reveal check), not on every rerun. Same
+       unified motion profile as everything else: cubic-bezier(0.4,0,0.2,1),
+       within the 150-350ms range. */
+    @keyframes spotlight-reveal-in {
+        0%   { opacity: 0; transform: scale(0.97); }
+        100% { opacity: 1; transform: scale(1); }
+    }
+    .spotlight-reveal {
+        animation: spotlight-reveal-in 280ms cubic-bezier(0.4,0,0.2,1);
+    }
     @keyframes bankroll-pulse-up {
         0%   { transform: scale(1); }
         40%  { transform: scale(1.03); }
