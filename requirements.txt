@@ -14,3 +14,4 @@ Pillow
 cloudscraper
 sportsdataverse
 rapidfuzz
+# force-full-rebuild: 95645e9ebbba (summary-tab-html-render-stale-fix)
