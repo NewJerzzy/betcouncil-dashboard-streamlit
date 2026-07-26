@@ -18083,7 +18083,8 @@ pending = len([l for l in st.session_state.get("locks", []) if l.get("status") =
 dc = get_daily_change()
 dc_color = "#0ea5a0" if dc.startswith("+") else "#e04040"
 scan_t = st.session_state.get("last_scan_time", 0) or "—"
-staleness_label_bar, _ = get_edge_staleness(st.session_state.get("last_scan_time", 0))
+staleness_label_bar, _staleness_color_bar = get_edge_staleness(st.session_state.get("last_scan_time", 0))
+_staleness_pulse_class = " pulse-stale" if _staleness_color_bar in ("red", "orange") else ""
 st.markdown(f"""
 <div class="command-bar">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
@@ -18099,7 +18100,7 @@ st.markdown(f"""
     <div class="metric-box"><div class="metric-label">Min Edge</div><div class="metric-value gold-text">{st.session_state.get("min_edge", MIN_EDGE_DEFAULT)*100:.0f}%</div></div>
     <div class="metric-box"><div class="metric-label">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
     <div class="metric-box"><div class="metric-label">Props Loaded</div><div class="metric-value teal-text">{len(st.session_state.board_data)}</div></div>
-    <div class="metric-box"><div class="metric-label">Edge Freshness</div><div class="metric-value" style="font-size:14px;">{staleness_label_bar}</div></div>
+    <div class="metric-box{_staleness_pulse_class}"><div class="metric-label">Edge Freshness</div><div class="metric-value" style="font-size:14px;">{staleness_label_bar}</div></div>
   </div>
 </div>""", unsafe_allow_html=True)
 
