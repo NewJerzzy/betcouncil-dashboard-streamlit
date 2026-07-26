@@ -2407,7 +2407,7 @@ with tabs[3]:
     # Only use game_analysis if it matches current sport — prevents stale cross-sport data
     _ga_sport = _game_analysis_full[0].get("Sport", _game_analysis_full[0].get("sport","")) if _game_analysis_full else ""
     _games = _game_analysis_full if (_game_analysis_full and _ga_sport == _sport2) else _raw_games
-    st.markdown(f"## 🏟️ Game Lines — {_sport2}")
+    st.markdown(f'<div class="bc-section-header">🏟️ Game Lines <span style="opacity:0.6;font-weight:400;">— {_sport2}</span></div>', unsafe_allow_html=True)
 
     # ── ODDS_API_KEY status warning ────────────────────────────────────────
     if _ODDS_API_KEY_STATUS == "missing":
@@ -3638,7 +3638,7 @@ with tabs[3]:
 
 # ----- TAB 3: LOCKS & LEDGER -----
 with tabs[4]:
-    st.markdown("## 🔒 Active Locks")
+    st.markdown('<div class="bc-section-header">🔒 Active Locks</div>', unsafe_allow_html=True)
 
     # Streak indicator: real consecutive win/loss count from the most
     # recent resolved bets, walked backward chronologically. Not shown at
@@ -4389,7 +4389,7 @@ with tabs[4]:
                         st.caption(s)
 
     # Ledger section
-    st.markdown("## 📊 Ledger")
+    st.markdown('<div class="bc-section-header">📊 Ledger</div>', unsafe_allow_html=True)
     if st.session_state.get("history", []):
         total_bets = len(st.session_state.get("history", []))
         wins = sum(1 for h in st.session_state.get("history", []) if h.get("outcome") == "WIN")
@@ -4458,7 +4458,7 @@ with tabs[4]:
 
 # ----- TAB 4: HISTORY -----
 with tabs[5]:
-    st.markdown("## 📈 Full Bet History")
+    st.markdown('<div class="bc-section-header">📈 Full Bet History</div>', unsafe_allow_html=True)
 
     st.caption("Daily = today's essentials. Weekly = signal/model audits. Seasonal = deep reference data (Bankroll Intelligence, Season Regime, full Calibration Dashboard).")
     _view = st.radio("View", ["Daily", "Weekly", "Seasonal", "All"], horizontal=True, key="history_view_selector")
@@ -6457,7 +6457,7 @@ with tabs[5]:
 
     # ----- TAB 5: SLIP ANALYZER -----
 with tabs[6]:
-    st.markdown("## 🔍 Slip Analyzer")
+    st.markdown('<div class="bc-section-header">🔍 Slip Analyzer</div>', unsafe_allow_html=True)
     st.caption("Enter any prop slip — from PrizePicks, ParlayPlay, Underdog, or anywhere. The model analyzes each pick and scores the full parlay.")
 
     board = st.session_state.board_data
@@ -7255,7 +7255,7 @@ def get_goalie_for_team(team_abbr, goalies=None):
 
 
 with tabs[7]:
-    st.markdown("## 🔎 Player Lookup")
+    st.markdown('<div class="bc-section-header">🔎 Player Lookup</div>', unsafe_allow_html=True)
     st.caption("Deep dive on any player — game log, hit rates, H2H vs tonight's opponent, home/away splits. Powered by BallsDontLie.")
 
     if not BDL_API_KEY:
@@ -7415,20 +7415,28 @@ with tabs[7]:
             # Home/Away splits
             splits = compute_home_away_splits(logs, pl_stat, pl_line) if pl_line > 0 else None
 
-            # Header stats
+            # Header stats -- command-card style, matching Summary/Full
+            # Board's visual language instead of plain st.metric widgets.
+            # Same real values as before, just consistent styling.
             st.markdown(f"### {pl_name_d} — {pl_stat}")
-            metric_cols = st.columns(5)
-            metric_cols[0].metric("Season Avg", f"{avg:.1f}")
+            _pl_cards = [("Season Avg", f"{avg:.1f}", None)]
             if pl_line > 0:
-                diff = avg - pl_line
-                metric_cols[1].metric("vs Line", f"{diff:+.1f}", delta_color="normal")
+                _diff = avg - pl_line
+                _pl_cards.append(("vs Line", f"{_diff:+.1f}", "#22c55e" if _diff >= 0 else "#e04040"))
             if hits_l5 is not None:
-                metric_cols[2].metric("L5 Hit Rate", f"{hits_l5}/5 ({hits_l5/5:.0%})")
+                _pl_cards.append(("L5 Hit Rate", f"{hits_l5}/5 ({hits_l5/5:.0%})", "#22c55e" if hits_l5/5 >= 0.6 else None))
             if hits_l10 is not None:
-                metric_cols[3].metric("L10 Hit Rate", f"{hits_l10}/10 ({hits_l10/10:.0%})")
+                _pl_cards.append(("L10 Hit Rate", f"{hits_l10}/10 ({hits_l10/10:.0%})", "#22c55e" if hits_l10/10 >= 0.6 else None))
             if h2h_rate is not None:
-                h2h_color = "normal"
-                metric_cols[4].metric(f"H2H vs {pl_opp}", f"{h2h_str} ({h2h_rate:.0%})")
+                _pl_cards.append((f"H2H vs {pl_opp}", f"{h2h_str} ({h2h_rate:.0%})", "#22c55e" if h2h_rate >= 0.6 else None))
+            _pl_cards_html = "".join(
+                f'<div class="command-card" style="flex:1;min-width:120px;padding:12px 14px;text-align:center;">'
+                f'<div class="command-label">{label}</div>'
+                f'<div class="command-value" style="font-size:1.4rem;{f"color:{color};" if color else ""}">{value}</div>'
+                f'</div>'
+                for label, value, color in _pl_cards
+            )
+            st.markdown(f'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">{_pl_cards_html}</div>', unsafe_allow_html=True)
 
             # Always show last N game log
             st.markdown(f"#### 📋 Last {pl_games} Games")
@@ -7469,12 +7477,23 @@ with tabs[7]:
             # Home/Away splits
             if splits:
                 st.markdown("#### 🏠 Home / Away Splits")
-                split_cols = st.columns(4)
-                split_cols[0].metric("Home Avg", f"{splits['home_avg']}")
-                split_cols[1].metric("Away Avg", f"{splits['away_avg']}")
+                _pl_split_cards = [
+                    ("Home Avg", f"{splits['home_avg']}", None),
+                    ("Away Avg", f"{splits['away_avg']}", None),
+                ]
                 if pl_line > 0:
-                    split_cols[2].metric("Home Hit %", f"{splits['home_hit_rate']:.0%} ({splits['home_games']}g)")
-                    split_cols[3].metric("Away Hit %", f"{splits['away_hit_rate']:.0%} ({splits['away_games']}g)")
+                    _pl_split_cards.append(("Home Hit %", f"{splits['home_hit_rate']:.0%} ({splits['home_games']}g)",
+                                             "#22c55e" if splits['home_hit_rate'] >= 0.6 else None))
+                    _pl_split_cards.append(("Away Hit %", f"{splits['away_hit_rate']:.0%} ({splits['away_games']}g)",
+                                             "#22c55e" if splits['away_hit_rate'] >= 0.6 else None))
+                _pl_split_html = "".join(
+                    f'<div class="command-card" style="flex:1;min-width:120px;padding:12px 14px;text-align:center;">'
+                    f'<div class="command-label">{label}</div>'
+                    f'<div class="command-value" style="font-size:1.4rem;{f"color:{color};" if color else ""}">{value}</div>'
+                    f'</div>'
+                    for label, value, color in _pl_split_cards
+                )
+                st.markdown(f'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">{_pl_split_html}</div>', unsafe_allow_html=True)
 
             # Game log chart
             st.markdown("#### 📊 Last Games")
@@ -7786,7 +7805,7 @@ with tabs[7]:
 
 
 with tabs[8]:
-    st.markdown("## \U0001f4dd Log A Bet")
+    st.markdown('<div class="bc-section-header">📝 Log A Bet</div>', unsafe_allow_html=True)
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
 
@@ -8084,7 +8103,7 @@ with tabs[8]:
 
 
 with tabs[9]:
-    st.markdown("## \U0001f6d2 Line Shopping")
+    st.markdown('<div class="bc-section-header">🛒 Line Shopping</div>', unsafe_allow_html=True)
     st.caption("Compares lines across all loaded sources — DFS platforms + sportsbooks. Load the board first to populate.")
     board_ls = st.session_state.board_data
     if not board_ls:
@@ -8606,7 +8625,7 @@ with tabs[10]:
     # this far out, so nothing here should be treated as a recommendation.
     # Separate session-state/cache path from the live board; cannot collide
     # with today's board_loaded / last_good_props state.
-    st.markdown("## 📅 Preview — Tomorrow's Lines (Provisional)")
+    st.markdown('<div class="bc-section-header">📅 Preview <span style="opacity:0.6;font-weight:400;">— Tomorrow\'s Lines (Provisional)</span></div>', unsafe_allow_html=True)
     st.warning(
         "⚠️ **Provisional data only.** Starting pitchers, injury reports, and lineups "
         "are not finalized this far out — these lines are raw and unscored. No tier "
@@ -8627,7 +8646,7 @@ with tabs[10]:
                      unsafe_allow_html=True)
 
 with tabs[11]:
-    st.markdown("## ⚙️ System Info")
+    st.markdown('<div class="bc-section-header">⚙️ System Info</div>', unsafe_allow_html=True)
 
     # ── System Health Gauge (top fold) ──────────────────────────────────
     # "Is the system ready to fire, or is it broken" at a glance, instead
