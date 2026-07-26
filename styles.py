@@ -221,6 +221,19 @@ def global_css() -> str:
     .bc-elite-pill  { background: rgba(30,144,255,0.15); color: #4db8ff; }
     .bc-appr-pill   { background: rgba(34,197,94,0.15);  color: #22c55e; }
     .bc-action-pill { background: rgba(30,144,255,0.1);  color: var(--bc-text); }
+    /* Full Board's filter bar (st.container(key="ev_sticky_filters")) --
+       stays visible while scrolling the board below it, so filters/sort
+       don't require scrolling back up to adjust. Streamlit 1.3+ generates
+       a real .st-key-<key> class on keyed containers -- this targets that
+       directly rather than a fragile internal DOM selector. */
+    .st-key-ev_sticky_filters {
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: var(--bc-bg);
+        padding: 8px 0 4px;
+        border-bottom: 1px solid var(--bc-border);
+    }
     </style>"""
 
 
