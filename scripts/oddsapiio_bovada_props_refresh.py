@@ -51,7 +51,11 @@ SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
     "NFL": ("american-football", "usa-nfl"),
     "NBA": ("basketball", "usa-nba"),
-    "NHL": ("hockey", "usa-nhl"),
+    "NHL": ("nhl", "usa-nhl"),  # was "hockey" -- confirmed wrong (400 "Invalid sport slug"
+                                 # every run); odds-api.io's own NHL docs example uses "nhl"
+                                 # directly, not a descriptive word like the other sports.
+                                 # If this is still wrong on the next live run, "ice-hockey"
+                                 # is the next thing to try (common convention elsewhere).
 }
 
 MAX_REQUESTS_PER_RUN = 10
@@ -244,6 +248,18 @@ def main() -> int:
     }
 
     if not any_data:
+        # Was: unconditional "return 1" here -- treated a genuinely empty
+        # result (all API calls succeeded, Bovada just hasn't posted player
+        # props for these games yet) the same as a real failure. Confirmed
+        # live 2026-07-25/26: 3 straight runs failed this way with every
+        # single request returning a valid 200 -- moneylines/events present,
+        # zero player-prop markets in the response at that hour. That's a
+        # normal "nothing to report yet" outcome, not a break.
+        any_200 = any(r.get("status") == 200 for r in DEBUG_LOG)
+        if any_200:
+            log("No Bovada player props currently posted (all API calls succeeded) — not treating as a failure")
+            push_files(files_payload, github_token)
+            return 0
         log("No Bovada props captured this run — pushing debug log only")
         push_files(files_payload, github_token)
         return 1
