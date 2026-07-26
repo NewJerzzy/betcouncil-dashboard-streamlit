@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "arb_real_sample_1",
+        "is_locked": false,
+        "margin_percent": 0.75,
+        "arbitrage_margin": 0.0075,
+        "market_key": "h2h",
+        "market_name": "Match Winner",
+        "expires_at": "2026-07-25T18:00:00Z",
+        "freshness_status": "fresh",
+        "event": {
+          "home_team": {"full_name": "Team A"},
+          "away_team": {"full_name": "Team B"},
+          "commence_time": "2026-07-25T19:00:00Z",
+          "sport": {"name": "Soccer"},
+          "league": {"title": "Test League"}
+        },
+        "outcomes": [
+          {"bookmaker_name": "Betfair (EU)", "outcome_name": "Team A", "odds": 210, "stake_percentage": 48.2, "implied_probability": 0.32},
+          {"bookmaker_name": "Coolbet", "outcome_name": "Team B", "odds": 260, "stake_percentage": 51.8, "implied_probability": 0.28}
+        ]
+      }
+    ]
+  }
+}

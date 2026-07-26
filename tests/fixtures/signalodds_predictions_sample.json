@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "pred_real_sample_1",
+        "is_locked": false,
+        "confidence": 68.2958,
+        "confidence_band": "60-70%",
+        "expected_value": -0.04425608,
+        "outcome_name": "Ekstraklasa - Poland Draw",
+        "market_key": "match_winner",
+        "book_odds": 320,
+        "bookmaker": {"name": "Pinnacle"},
+        "event": {
+          "home_team": {"full_name": "Widzew Lodz"},
+          "away_team": {"full_name": "Piast Gliwice"},
+          "commence_time": "2026-07-25T17:00:00Z",
+          "sport": {"name": "Soccer"},
+          "league": {"title": "Ekstraklasa - Poland"}
+        },
+        "model": {"name": "The Oracle", "ai_model_type": "ensemble", "is_premium": true},
+        "explanation": ""
+      }
+    ]
+  }
+}

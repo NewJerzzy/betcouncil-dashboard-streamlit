@@ -1,0 +1,434 @@
+{
+  "sport": "MLB",
+  "captured_at": "2026-07-26T04:57:17.962593+00:00",
+  "data": {
+    "data": [
+      {
+        "type": "projection",
+        "id": "13338675",
+        "attributes": {
+          "adjusted_odds": true,
+          "board_time": "2026-07-25T22:56:53.905-04:00",
+          "custom_image": null,
+          "description": "TB",
+          "end_time": null,
+          "event_type": "team",
+          "flash_sale_line_score": null,
+          "game_id": "MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j",
+          "group_key": "257051-311-MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j-11-false",
+          "hr_20": true,
+          "in_game": false,
+          "is_live": false,
+          "is_live_scored": true,
+          "is_promo": false,
+          "line_score": 8.5,
+          "odds_type": "demon",
+          "projection_type": "Single Stat",
+          "rank": 891,
+          "refundable": true,
+          "start_time": "2026-07-26T12:15:00.000-04:00",
+          "stat_display_name": "Ks",
+          "stat_type": "Pitcher Strikeouts",
+          "status": "pre_game",
+          "tv_channel": null,
+          "updated_at": "2026-07-25T22:56:53.994-04:00"
+        },
+        "relationships": {
+          "duration": {
+            "data": {
+              "type": "duration",
+              "id": "11"
+            }
+          },
+          "game": {
+            "data": {
+              "type": "game",
+              "id": "169143"
+            }
+          },
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "new_player": {
+            "data": {
+              "type": "new_player",
+              "id": "257051"
+            }
+          },
+          "projection_type": {
+            "data": {
+              "type": "projection_type",
+              "id": "2"
+            }
+          },
+          "score": {
+            "data": null
+          },
+          "stat_type": {
+            "data": {
+              "type": "stat_type",
+              "id": "311"
+            }
+          }
+        }
+      },
+      {
+        "type": "projection",
+        "id": "13338676",
+        "attributes": {
+          "adjusted_odds": true,
+          "board_time": "2026-07-25T22:56:53.931-04:00",
+          "custom_image": null,
+          "description": "CLE",
+          "end_time": null,
+          "event_type": "team",
+          "flash_sale_line_score": null,
+          "game_id": "MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j",
+          "group_key": "68710-311-MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j-11-false",
+          "hr_20": true,
+          "in_game": false,
+          "is_live": false,
+          "is_live_scored": true,
+          "is_promo": false,
+          "line_score": 8.5,
+          "odds_type": "demon",
+          "projection_type": "Single Stat",
+          "rank": 892,
+          "refundable": true,
+          "start_time": "2026-07-26T12:15:00.000-04:00",
+          "stat_display_name": "Ks",
+          "stat_type": "Pitcher Strikeouts",
+          "status": "pre_game",
+          "tv_channel": null,
+          "updated_at": "2026-07-25T22:56:54.007-04:00"
+        },
+        "relationships": {
+          "duration": {
+            "data": {
+              "type": "duration",
+              "id": "11"
+            }
+          },
+          "game": {
+            "data": {
+              "type": "game",
+              "id": "169143"
+            }
+          },
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "new_player": {
+            "data": {
+              "type": "new_player",
+              "id": "68710"
+            }
+          },
+          "projection_type": {
+            "data": {
+              "type": "projection_type",
+              "id": "2"
+            }
+          },
+          "score": {
+            "data": null
+          },
+          "stat_type": {
+            "data": {
+              "type": "stat_type",
+              "id": "311"
+            }
+          }
+        }
+      },
+      {
+        "type": "projection",
+        "id": "13338892",
+        "attributes": {
+          "adjusted_odds": true,
+          "board_time": "2026-07-25T23:21:41.787-04:00",
+          "custom_image": null,
+          "description": "TB",
+          "end_time": null,
+          "event_type": "team",
+          "flash_sale_line_score": null,
+          "game_id": "MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j",
+          "group_key": "257051-232-MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j-11-false",
+          "hr_20": true,
+          "in_game": false,
+          "is_live": false,
+          "is_live_scored": true,
+          "is_promo": false,
+          "line_score": 8.5,
+          "odds_type": "demon",
+          "projection_type": "Single Stat",
+          "rank": 893,
+          "refundable": true,
+          "start_time": "2026-07-26T12:15:00.000-04:00",
+          "stat_display_name": "Hits Allowed",
+          "stat_type": "Hits Allowed",
+          "status": "pre_game",
+          "tv_channel": null,
+          "updated_at": "2026-07-25T23:21:41.867-04:00"
+        },
+        "relationships": {
+          "duration": {
+            "data": {
+              "type": "duration",
+              "id": "11"
+            }
+          },
+          "game": {
+            "data": {
+              "type": "game",
+              "id": "169143"
+            }
+          },
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "new_player": {
+            "data": {
+              "type": "new_player",
+              "id": "257051"
+            }
+          },
+          "projection_type": {
+            "data": {
+              "type": "projection_type",
+              "id": "2"
+            }
+          },
+          "score": {
+            "data": null
+          },
+          "stat_type": {
+            "data": {
+              "type": "stat_type",
+              "id": "232"
+            }
+          }
+        }
+      },
+      {
+        "type": "projection",
+        "id": "13338894",
+        "attributes": {
+          "adjusted_odds": true,
+          "board_time": "2026-07-25T23:21:41.870-04:00",
+          "custom_image": null,
+          "description": "CLE",
+          "end_time": null,
+          "event_type": "team",
+          "flash_sale_line_score": null,
+          "game_id": "MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j",
+          "group_key": "68710-232-MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j-11-false",
+          "hr_20": true,
+          "in_game": false,
+          "is_live": false,
+          "is_live_scored": true,
+          "is_promo": false,
+          "line_score": 8.5,
+          "odds_type": "demon",
+          "projection_type": "Single Stat",
+          "rank": 894,
+          "refundable": true,
+          "start_time": "2026-07-26T12:15:00.000-04:00",
+          "stat_display_name": "Hits Allowed",
+          "stat_type": "Hits Allowed",
+          "status": "pre_game",
+          "tv_channel": null,
+          "updated_at": "2026-07-25T23:21:41.958-04:00"
+        },
+        "relationships": {
+          "duration": {
+            "data": {
+              "type": "duration",
+              "id": "11"
+            }
+          },
+          "game": {
+            "data": {
+              "type": "game",
+              "id": "169143"
+            }
+          },
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "new_player": {
+            "data": {
+              "type": "new_player",
+              "id": "68710"
+            }
+          },
+          "projection_type": {
+            "data": {
+              "type": "projection_type",
+              "id": "2"
+            }
+          },
+          "score": {
+            "data": null
+          },
+          "stat_type": {
+            "data": {
+              "type": "stat_type",
+              "id": "232"
+            }
+          }
+        }
+      },
+      {
+        "type": "projection",
+        "id": "13338672",
+        "attributes": {
+          "adjusted_odds": true,
+          "board_time": "2026-07-25T22:56:53.423-04:00",
+          "custom_image": null,
+          "description": "CLE",
+          "end_time": null,
+          "event_type": "team",
+          "flash_sale_line_score": null,
+          "game_id": "MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j",
+          "group_key": "68710-311-MLB_game_tLY27Kt0A4ybiUuUS7xmfb4j-11-false",
+          "hr_20": true,
+          "in_game": false,
+          "is_live": false,
+          "is_live_scored": true,
+          "is_promo": false,
+          "line_score": 7.5,
+          "odds_type": "demon",
+          "projection_type": "Single Stat",
+          "rank": 895,
+          "refundable": true,
+          "start_time": "2026-07-26T12:15:00.000-04:00",
+          "stat_display_name": "Ks",
+          "stat_type": "Pitcher Strikeouts",
+          "status": "pre_game",
+          "tv_channel": null,
+          "updated_at": "2026-07-25T22:56:53.497-04:00"
+        },
+        "relationships": {
+          "duration": {
+            "data": {
+              "type": "duration",
+              "id": "11"
+            }
+          },
+          "game": {
+            "data": {
+              "type": "game",
+              "id": "169143"
+            }
+          },
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "new_player": {
+            "data": {
+              "type": "new_player",
+              "id": "68710"
+            }
+          },
+          "projection_type": {
+            "data": {
+              "type": "projection_type",
+              "id": "2"
+            }
+          },
+          "score": {
+            "data": null
+          },
+          "stat_type": {
+            "data": {
+              "type": "stat_type",
+              "id": "311"
+            }
+          }
+        }
+      }
+    ],
+    "included": [
+      {
+        "type": "new_player",
+        "id": "257051",
+        "attributes": {
+          "combo": false,
+          "display_name": "Parker Messick",
+          "image_url": "https://static.prizepicks.com/images/manual/Parker_Messick.png",
+          "jersey_number": "77",
+          "league": "MLB",
+          "league_id": 2,
+          "market": "Cleveland",
+          "name": "Parker Messick",
+          "position": "P",
+          "ppid": "MLB_player_oItHHkROmYDHsEQfnmCyc7OD",
+          "team": "CLE",
+          "team_name": "Guardians"
+        },
+        "relationships": {
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "team_data": {
+            "data": {
+              "type": "team",
+              "id": "2664"
+            }
+          }
+        }
+      },
+      {
+        "type": "new_player",
+        "id": "68710",
+        "attributes": {
+          "combo": false,
+          "display_name": "Drew Rasmussen",
+          "image_url": "https://static.prizepicks.com/images/players/MLB/Drew_Rasmussen_MLB_player_0eMNIFXZj8x4q1tjUhwyPj5m-450.webp",
+          "jersey_number": "57",
+          "league": "MLB",
+          "league_id": 2,
+          "market": "Tampa Bay",
+          "name": "Drew Rasmussen",
+          "position": "P",
+          "ppid": "MLB_player_0eMNIFXZj8x4q1tjUhwyPj5m",
+          "team": "TB",
+          "team_name": "Rays"
+        },
+        "relationships": {
+          "league": {
+            "data": {
+              "type": "league",
+              "id": "2"
+            }
+          },
+          "team_data": {
+            "data": {
+              "type": "team",
+              "id": "2638"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

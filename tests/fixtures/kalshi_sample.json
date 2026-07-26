@@ -1,0 +1,38 @@
+{
+  "source": "kalshi",
+  "captured_at": "2026-07-26T04:37:31.537798+00:00",
+  "events": [
+    {
+      "sport": "MLB",
+      "event_ticker": "KXMLBGAME-26JUL261215CLETB",
+      "title": "Cleveland vs Tampa Bay",
+      "series_ticker": "KXMLBGAME",
+      "markets": [
+        {
+          "ticker": "KXMLBGAME-26JUL261215CLETB-CLE",
+          "title": "Cleveland vs Tampa Bay Winner?",
+          "yes_bid": "0.4400",
+          "yes_ask": "0.4500",
+          "last_price": "0.4500",
+          "volume": "44751.43",
+          "open_interest": "43691.91",
+          "liquidity": "0.0000",
+          "close_time": "2026-07-29T16:15:00Z",
+          "rules_primary": "If Cleveland wins the Cleveland vs Tampa Bay professional baseball game originally scheduled for Jul 26, 2026 at 12:15 PM EDT, then the market resolves to Yes."
+        },
+        {
+          "ticker": "KXMLBGAME-26JUL261215CLETB-TB",
+          "title": "Cleveland vs Tampa Bay Winner?",
+          "yes_bid": "0.5600",
+          "yes_ask": "0.5700",
+          "last_price": "0.5700",
+          "volume": "65781.78",
+          "open_interest": "58581.95",
+          "liquidity": "0.0000",
+          "close_time": "2026-07-29T16:15:00Z",
+          "rules_primary": "If Tampa Bay wins the Cleveland vs Tampa Bay professional baseball game originally scheduled for Jul 26, 2026 at 12:15 PM EDT, then the market resolves to Yes."
+        }
+      ]
+    }
+  ]
+}
