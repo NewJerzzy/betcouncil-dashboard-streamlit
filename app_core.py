@@ -1624,6 +1624,7 @@ _ODDS_API_KEY_STATUS = _check_odds_api_key_status()
 
 API_SPORTS_KEY = st.secrets.get("API_SPORTS_KEY", "")
 SCRAPEOPS_KEY = st.secrets.get("SCRAPEOPS_KEY", "")
+SCRAPEOPS_KEY_2 = st.secrets.get("SCRAPEOPS_KEY_2", "")  # 2nd account, separate quota -- added 2026-07 once the first key started hitting its monthly limit
 SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "")
 SCRAPEDO_KEY   = st.secrets.get("SCRAPEDO_KEY",   "")
 FIRECRAWL_KEY  = st.secrets.get("FIRECRAWL_KEY",  "")
@@ -9356,13 +9357,35 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
         if _so_gist and _so_gist.get("exhausted") and _so_gist.get("month") == datetime.now().strftime("%Y-%m"):
             _so_exhausted = True
             st.session_state["scrapeops_exhausted"] = True
-    if SCRAPEOPS_KEY and not _so_exhausted:
+
+    # Two accounts now (2026-07): tries SCRAPEOPS_KEY first, then
+    # SCRAPEOPS_KEY_2 (a separate account/quota, not a bigger pool on the
+    # same account) once the first is exhausted. Each key tracks its own
+    # exhaustion state independently (scrapeops_exhausted vs
+    # scrapeops2_exhausted) so the second key doesn't get skipped just
+    # because the first was flagged exhausted in an earlier session.
+    _quota_phrases = ("insufficient credit", "credit limit", "quota exceeded",
+                       "out of credits", "usage limit", "no credits remaining")
+    for _so_slot, _so_key, _so_already_exhausted in (
+        ("scrapeops", SCRAPEOPS_KEY, _so_exhausted),
+        ("scrapeops2", SCRAPEOPS_KEY_2, st.session_state.get("scrapeops2_exhausted", False)),
+    ):
+        if not _so_key:
+            continue
+        _slot_exhausted = _so_already_exhausted
+        if _so_slot == "scrapeops2" and not _slot_exhausted:
+            _so2_gist = load_from_gist("scrapeops2_status", None)
+            if _so2_gist and _so2_gist.get("exhausted") and _so2_gist.get("month") == datetime.now().strftime("%Y-%m"):
+                _slot_exhausted = True
+                st.session_state["scrapeops2_exhausted"] = True
+        if _slot_exhausted:
+            continue
         try:
             encoded = quote(url, safe='')
-            r = _HTTP_DIRECT.get(f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=false",
+            r = _HTTP_DIRECT.get(f"https://proxy.scrapeops.io/v1/?api_key={_so_key}&url={encoded}&residential=true&country=us&render_js=false",
                 timeout=timeout
             )
-            _log("ScrapeOps", r.status_code, len(r.text))
+            _log(f"ScrapeOps ({_so_slot})", r.status_code, len(r.text))
             # 403/429/402 = quota exhausted via status code. Also check for
             # a 200 response carrying a quota-exceeded error body — some
             # proxy APIs (ScrapeOps included, per support docs) return 200
@@ -9371,20 +9394,19 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
             # burning real billable requests on every board load forever.
             # This is the likely explanation for credits hitting 100% despite
             # the exhaustion flag supposedly being active from an earlier run.
-            _quota_phrases = ("insufficient credit", "credit limit", "quota exceeded",
-                               "out of credits", "usage limit", "no credits remaining")
             _body_says_exhausted = (
                 r.status_code == 200 and
                 any(_p in r.text[:500].lower() for _p in _quota_phrases)
             )
             if r.status_code in (403, 429, 402) or _body_says_exhausted:
-                st.session_state["scrapeops_exhausted"] = True
-                save_to_gist("scrapeops_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
-                _log("ScrapeOps", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}" + (" (200 w/ quota error body)" if _body_says_exhausted else "")))
+                st.session_state[f"{_so_slot}_exhausted"] = True
+                save_to_gist(f"{_so_slot}_status", {"exhausted": True, "month": datetime.now().strftime("%Y-%m")})
+                _log(f"ScrapeOps ({_so_slot})", "QUOTA_EXHAUSTED", error=Exception(f"HTTP {r.status_code}" + (" (200 w/ quota error body)" if _body_says_exhausted else "")))
+                continue  # try the next key instead of falling straight to ScraperAPI
             elif _is_valid(r):
                 return r
         except (KeyError, TypeError, ValueError) as e:
-            _log("ScrapeOps", "ERR", error=e)
+            _log(f"ScrapeOps ({_so_slot})", "ERR", error=e)
 
     # ── 2. ScraperAPI ────────────────────────────────────────
     if SCRAPERAPI_KEY and not circuit_is_tripped("ScraperAPI"):
@@ -17860,13 +17882,16 @@ with st.sidebar:
             pass
         # Proxy credit warning — warn before consuming credits
         _so_exhausted = st.session_state.get("scrapeops_exhausted", False)
+        _so2_exhausted = st.session_state.get("scrapeops2_exhausted", False) if SCRAPEOPS_KEY_2 else True
         _sa_exhausted = st.session_state.get("scraperapi_exhausted", False)
         _load_count   = st.session_state.get("board_load_count", 0) + 1
         st.session_state["board_load_count"] = _load_count
-        if _so_exhausted and _sa_exhausted:
-            st.warning("⚠️ ScrapeOps + ScraperAPI credits exhausted. Scrape.do is fallback — PrizePicks may fail. Consider upgrading ScrapeOps ($9/mo).")
+        if _so_exhausted and _so2_exhausted and _sa_exhausted:
+            st.warning("⚠️ Both ScrapeOps accounts + ScraperAPI credits exhausted. Scrape.do is fallback — PrizePicks may fail. Consider upgrading ScrapeOps ($9/mo).")
+        elif _so_exhausted and _so2_exhausted:
+            st.warning("⚠️ Both ScrapeOps accounts exhausted — using ScraperAPI fallback for PrizePicks.")
         elif _so_exhausted:
-            st.warning("⚠️ ScrapeOps credits exhausted — using ScraperAPI fallback for PrizePicks.")
+            st.info("ℹ️ Primary ScrapeOps account exhausted — using the second ScrapeOps account.")
         elif _load_count > 5:
             st.info(f"ℹ️ Board loaded {_load_count}x this session — each load uses proxy credits. Reload only when needed.")
         # Off-season guard: warn but still allow load in case pre-season props exist
