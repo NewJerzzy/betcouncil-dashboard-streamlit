@@ -261,7 +261,7 @@ with tabs[0]:
     else:
         _clv_spark_svg = ""
 
-    st.markdown(f"""
+    st.html(f"""
     <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
         <div class="command-card" style="flex:1;min-width:180px;text-align:left;padding:16px 18px;">
             <div class="command-label">Current Bankroll</div>
@@ -279,8 +279,8 @@ with tabs[0]:
             <div style="font-size:0.75rem;color:var(--bc-dim);margin-top:2px;">Auto from bankroll + Kelly</div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
-    st.markdown(f"""
+    """)
+    st.html(f"""
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
         <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px;" title="Rolling 20-bet hit rate">
             <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient({_hr_color} {_hr_deg}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;">
@@ -302,7 +302,7 @@ with tabs[0]:
             <div class="command-label">Sovereign Score</div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """)
     if _clv_n_game_top:
         st.caption(f"Game-line CLV avg: {_clv_avg_game_top:+.2f}pts (n={_clv_n_game_top}, points not percent -- different unit from prop CLV above)")
 
@@ -378,7 +378,7 @@ with tabs[0]:
         _mc_rlm_pct = min(100, _mc_rlm_count * 20)
         _mc_disc = st.session_state.get("multibook_discrepancies", [])
         _mc_disc_pct = min(100, len(_mc_disc) * 15)
-        st.markdown(f"""
+        st.html(f"""
         <div class="command-card" style="padding:12px 16px;margin-bottom:16px;">
             <div class="command-label" style="margin-bottom:10px;">Market Climate</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
@@ -399,7 +399,7 @@ with tabs[0]:
                 </div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     except Exception:
         _logger.debug("Market Climate bar failed silently")
 
