@@ -51,11 +51,8 @@ SPORT_LEAGUES = {
     "MLB": ("baseball", "usa-mlb"),
     "NFL": ("american-football", "usa-nfl"),
     "NBA": ("basketball", "usa-nba"),
-    "NHL": ("nhl", "usa-nhl"),  # was "hockey" -- confirmed wrong (400 "Invalid sport slug"
-                                 # every run); odds-api.io's own NHL docs example uses "nhl"
-                                 # directly, not a descriptive word like the other sports.
-                                 # If this is still wrong on the next live run, "ice-hockey"
-                                 # is the next thing to try (common convention elsewhere).
+    "NHL": ("ice-hockey", "usa-nhl"),  # confirmed via odds-api.io's own /sports
+                                        # endpoint after "hockey" and "nhl" both 400'd
 }
 
 MAX_REQUESTS_PER_RUN = 10
@@ -215,14 +212,6 @@ def main() -> int:
     if not github_token or not api_key:
         log("FATAL: GITHUB_TOKEN or ODDS_API_IO_KEY_BOVADA not set")
         return 1
-
-    # TEMP DIAGNOSTIC: find the real hockey sport slug (two guesses "hockey"
-    # and "nhl" both 400'd) -- removing this block once confirmed.
-    try:
-        r = requests.get(f"{BASE_URL}/sports", params={"apiKey": api_key}, timeout=15)
-        DEBUG_LOG.append({"path": "/sports", "status": r.status_code, "body_snippet": r.text[:3000]})
-    except Exception as e:
-        DEBUG_LOG.append({"path": "/sports", "error": str(e)[:300]})
 
     if not _rate_limit_ok(github_token):
         return 0
