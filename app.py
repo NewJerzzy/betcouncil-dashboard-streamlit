@@ -1672,6 +1672,16 @@ with tabs[2]:
         except (ValueError, TypeError, ZeroDivisionError):
             _rows.sort(key=lambda x: str(x.get(_sk,"")), reverse=_sr)
 
+        # Group by tier (SOVEREIGN -> ELITE -> APPROVED -> LEAN) while
+        # preserving the chosen sort order within each tier -- Python's
+        # sort() is stable, so sorting again by tier rank alone keeps the
+        # existing order intact inside each group. Pure visual grouping,
+        # doesn't change which props appear -- lock buttons below still
+        # re-match by player/line against _board, not by position, so
+        # this re-sort is safe.
+        _tier_rank = {"SOVEREIGN": 0, "ELITE": 1, "APPROVED": 2, "LEAN": 3}
+        _rows.sort(key=lambda x: _tier_rank.get(x.get("_tier", ""), 9))
+
         # ── Sticky Summary Bar ─────────────────────────────────────────
         _n_sov   = sum(1 for r in _rows if r.get("_tier") == "SOVEREIGN")
         _n_elite = sum(1 for r in _rows if r.get("_tier") == "ELITE")
@@ -1726,7 +1736,17 @@ with tabs[2]:
         # Rows
         _html_rows = []
         _lock_buttons = []  # collect lock actions outside HTML
+        _prev_tier_group = None
         for _r in _rows:
+            if _r.get("_tier") != _prev_tier_group:
+                _prev_tier_group = _r.get("_tier")
+                _grp_color = _tier_colors.get(_prev_tier_group, "#6a7a8a")
+                _html_rows.append(
+                    f'<div style="padding:6px 10px 3px;margin-top:4px;font-size:11px;'
+                    f'font-weight:700;letter-spacing:0.5px;text-transform:uppercase;'
+                    f'color:{_grp_color};border-top:1px solid rgba(255,255,255,0.06);">'
+                    f'{_prev_tier_group}</div>'
+                )
             _tc    = _tier_colors.get(_r["_tier"],"#6a7a8a")
             _gc    = _r["_grade_color"]
             _bg    = _r["_row_bg"]
