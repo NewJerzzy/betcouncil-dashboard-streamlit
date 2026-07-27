@@ -3095,6 +3095,64 @@ with tabs[3]:
             _fgames = sorted(_fgames, key=_gl_has_movement, reverse=True)
         _tc2 = TIER_COLORS
 
+        # ── Game Lines hero card: single best-edge pick across today's
+        # slate, real data only. Same visual language already proven on
+        # Full Board's Spotlight card (accent bar, tier color) and
+        # Summary's Hit Rate gauge (conic-gradient circle) -- reusing
+        # both rather than inventing new CSS. Only shows a market that
+        # actually has a real pick (SpreadPick/TotalPick/MLPick present),
+        # not just a nonzero edge number with no real recommendation text.
+        _gl_hero = None
+        _gl_hero_edge = 0.0
+        for _hg in _fgames:
+            for _mkt, _pick_key, _tier_key, _edge_key in (
+                ("SPREAD", "SpreadPick", "SpreadTier", "SpreadEdge"),
+                ("TOTAL", "TotalPick", "TotalTier", "TotalEdge"),
+                ("ML", "MLPick", "MLTier", "MLEdge"),
+            ):
+                _pick_txt = _hg.get(_pick_key)
+                if not _pick_txt:
+                    continue
+                _e = abs(float(_hg.get(_edge_key, 0) or 0))
+                if _e > _gl_hero_edge:
+                    _gl_hero_edge = _e
+                    _gl_hero = {
+                        "matchup": _hg.get("matchup", _hg.get("Matchup", "—")),
+                        "market": _mkt, "pick_text": _pick_txt,
+                        "tier": _hg.get(_tier_key, "—"), "edge": _e,
+                        "time": _hg.get("Time", _hg.get("time", "")),
+                    }
+
+        if _gl_hero and _gl_hero["tier"] in ("SOVEREIGN", "ELITE"):
+            _gl_hero_tc = TIER_COLORS.get(_gl_hero["tier"], "#6a7a8a")
+            # No real per-game win-probability field exists (unlike player
+            # props, which have a genuine _model_prob) -- the ring shows the
+            # real edge % directly rather than inventing a confidence score.
+            # Scaled against a 15% ceiling (consistent with the same edge
+            # ceiling already used for the Full Board heatmap intensity)
+            # purely for the ring's fill amount, not the displayed number.
+            _gl_edge_pct = _gl_hero["edge"] * 100
+            _gl_ring_deg = min(1.0, _gl_edge_pct / 15.0) * 360
+            _gl_time_suffix = f' · {_gl_hero["time"]}' if _gl_hero.get("time") else ""
+            st.markdown(
+                f'<div class="command-card" style="text-align:left;padding:18px 22px;margin-bottom:14px;'
+                f'border-left:4px solid {_gl_hero_tc};display:flex;justify-content:space-between;align-items:center;'
+                f'background:linear-gradient(135deg,var(--bc-bg-card) 0%,{_gl_hero_tc}14 140%);">'
+                f'<div>'
+                f'<div class="command-label" style="color:{_gl_hero_tc};">THE CALL — {_sport2}</div>'
+                f'<div style="font-size:1.4rem;font-weight:800;color:var(--bc-text);margin-top:4px;">{_gl_hero["pick_text"]}</div>'
+                f'<div style="font-size:0.85rem;color:var(--bc-dim);margin-top:4px;">{_gl_hero["matchup"]} · {_gl_hero["market"]}{_gl_time_suffix}</div>'
+                f'<div style="font-size:0.7rem;color:{_gl_hero_tc};font-weight:700;text-transform:uppercase;margin-top:6px;">{_gl_hero["tier"]}</div>'
+                f'</div>'
+                f'<div style="width:72px;height:72px;border-radius:50%;background:conic-gradient({_gl_hero_tc} {_gl_ring_deg:.0f}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                f'<div style="width:58px;height:58px;border-radius:50%;background:var(--bc-bg-card);display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+                f'<div style="font-weight:800;font-size:1.1rem;color:{_gl_hero_tc};">{_gl_edge_pct:.1f}%</div>'
+                f'<div style="font-size:0.5rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
+                f'</div></div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
         # Real multi-point line-movement history for the momentum sparkline
         # below -- each board load already writes a new timestamped snapshot
         # via store_game_board_snapshot(), so today's snapshots give genuine
