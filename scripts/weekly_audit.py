@@ -292,6 +292,133 @@ def audit_harvester_health():
         return {"error": f"could not import fetchers.py: {str(e)[:200]}"}
 
 
+# ── 1f. Weight adjustment audit (moved here 2026-07-27) ─────────────────
+# This logic previously only ran when a human happened to open History >
+# Weekly in the live app -- a real, correctly-designed self-adjustment
+# mechanism (95% Wilson CI on 30+ resolved bets/signal, 100+ bets/sport,
+# clamped to +/-30% of the hand-tuned base weight) that had never actually
+# fired for real despite MLB (209 resolved bets) and WNBA (137) both
+# clearing the 100-bet activation threshold, confirmed via the real
+# betcouncil_weight_adjustment_log.json file not existing at all. Moved
+# here so it runs on the same real weekly schedule as everything else in
+# this audit, for every sport with enough data, not just whichever one a
+# human happened to have selected while looking at that one tab.
+#
+# Reimplements get_effective_signal_weights()'s read-and-clamp logic and
+# generate_weight_recommendations()'s own write logic directly (rather
+# than importing app_core.py, which does heavy module-level Streamlit
+# calls that don't run headless) -- both source functions were confirmed
+# Streamlit-free themselves, imported here from bc_utils.py and config.py,
+# the same two modules fetchers.py already imports cleanly in this exact
+# headless environment.
+
+def _gist_read_file(filename, default):
+    try:
+        resp = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                             headers={"Accept": "application/vnd.github+json"}, timeout=20)
+        if resp.status_code != 200:
+            return default
+        f = resp.json().get("files", {}).get(filename)
+        if not f:
+            return default
+        content = f.get("content", "")
+        if f.get("truncated"):
+            content = requests.get(f["raw_url"], timeout=20).text
+        return json.loads(content)
+    except Exception as e:
+        log(f"Could not read {filename}: {e}")
+        return default
+
+
+def _gist_write_files(token, files_dict):
+    resp = requests.patch(
+        f"https://api.github.com/gists/{GIST_ID}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        json={"files": files_dict}, timeout=30,
+    )
+    return resp.status_code in (200, 201)
+
+
+def audit_weight_adjustments(token):
+    try:
+        sys.path.insert(0, ".")
+        from config import SPORT_SIGNAL_WEIGHTS
+        from bc_utils import generate_weight_recommendations
+    except Exception as e:
+        return {"error": f"could not import weight-recommendation dependencies: {str(e)[:200]}"}
+
+    history = _gist_read_file("betcouncil_history.json", [])
+    if not isinstance(history, list) or not history:
+        return {"note": "no history data available this run"}
+
+    wt_overrides = _gist_read_file("betcouncil_weight_overrides.json", {})
+    wt_log = _gist_read_file("betcouncil_weight_adjustment_log.json", [])
+    if not isinstance(wt_overrides, dict):
+        wt_overrides = {}
+    if not isinstance(wt_log, list):
+        wt_log = []
+
+    sports_seen = sorted({h.get("sport", "") for h in history
+                           if h.get("outcome") in ("WIN", "LOSS") and h.get("sport")})
+
+    results = {"sports_checked": [], "sports_eligible": [], "newly_applied": []}
+    any_new = False
+
+    for sport in sports_seen:
+        results["sports_checked"].append(sport)
+        base = dict(SPORT_SIGNAL_WEIGHTS.get(sport, SPORT_SIGNAL_WEIGHTS.get("NBA", {})))
+        sport_ovr = dict(wt_overrides.get(sport, {}))
+        # Same +/-30% clamp as get_effective_signal_weights() -- a second
+        # safety net regardless of what's already stored.
+        current_weights = dict(base)
+        for key, new_val in sport_ovr.items():
+            if key in base:
+                try:
+                    lo, hi = base[key] * 0.7, base[key] * 1.3
+                    current_weights[key] = round(max(lo, min(hi, float(new_val))), 4)
+                except (TypeError, ValueError):
+                    pass
+
+        recs, n = generate_weight_recommendations(history, sport, current_weights=current_weights)
+        if recs is None:
+            continue  # under the 100-bet activation threshold for this sport
+        results["sports_eligible"].append({"sport": sport, "n": n, "recommendations": len(recs)})
+
+        newly_applied_this_sport = []
+        for rec in recs:
+            wkey = rec["Signal"].lower()[:6]
+            already = sport_ovr.get(wkey)
+            if already is None or abs(float(already) - rec["Suggested W"]) > 1e-6:
+                sport_ovr[wkey] = rec["Suggested W"]
+                newly_applied_this_sport.append(rec)
+
+        if newly_applied_this_sport:
+            any_new = True
+            wt_overrides[sport] = sport_ovr
+            for rec in newly_applied_this_sport:
+                entry = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "sport": sport, "signal": rec["Signal"], "action": rec["Action"],
+                    "from": rec["Current W"], "to": rec["Suggested W"],
+                    "n": rec["N"], "win_rate": rec["Win Rate"],
+                    "ci_low": rec["CI Low"], "ci_high": rec["CI High"],
+                    "source": "weekly_audit_automated",
+                }
+                wt_log.append(entry)
+                results["newly_applied"].append(entry)
+
+    if any_new:
+        ok = _gist_write_files(token, {
+            "betcouncil_weight_overrides.json": {"content": json.dumps(wt_overrides, indent=2)},
+            "betcouncil_weight_adjustment_log.json": {"content": json.dumps(wt_log, indent=2)},
+        })
+        results["gist_write_ok"] = ok
+    else:
+        results["gist_write_ok"] = None  # nothing to write this run
+
+    return results
+
+
 # ── 1d. Missing/broken local imports ──────────────────────────────────
 # The exact check that would have caught unified_sharp_score.py importing
 # 5 modules (team_canon, book_quality, bayesian_line_updater,
@@ -513,6 +640,7 @@ def build_summary_markdown(current, diff):
     stubs = current.get("stub_functions", [])
     missing_imports = current.get("missing_imports", [])
     silent_excepts = current.get("silent_excepts", [])
+    wt_adj = current.get("weight_adjustments", {})
 
     lines = [f"## BetCouncil Weekly Self-Audit — {current['run_date']}", ""]
     lines.append(f"**Fetch functions:** {wired_count} wired in / {len(dead)} orphaned (defined, never referenced)")
@@ -541,6 +669,29 @@ def build_summary_markdown(current, diff):
         lines.append("#### 🟡 Silent except blocks (review — may be hiding a real bug)")
         for r in silent_excepts[:20]:
             lines.append(f"- `{r['file']}:{r['line']}` — {r['note']}")
+
+    lines.append("")
+    lines.append("### Weight adjustments (self-adjusting model)")
+    if wt_adj.get("error"):
+        lines.append(f"⚠️ {wt_adj['error']}")
+    elif wt_adj.get("note"):
+        lines.append(wt_adj["note"])
+    else:
+        eligible = wt_adj.get("sports_eligible", [])
+        applied = wt_adj.get("newly_applied", [])
+        checked = wt_adj.get("sports_checked", [])
+        lines.append(f"Sports checked: {', '.join(checked) or 'none'}. "
+                      f"Eligible (100+ resolved bets): {', '.join(s['sport'] for s in eligible) or 'none yet'}.")
+        if applied:
+            lines.append("")
+            lines.append("**Applied this run:**")
+            for e in applied:
+                lines.append(f"- {e['sport']} · {e['signal']}: {e['action']} "
+                              f"{e['from']:.4f} → {e['to']:.4f} (n={e['n']}, win rate {e['win_rate']:.1%}, "
+                              f"95% CI [{e['ci_low']:.1%}, {e['ci_high']:.1%}])")
+        else:
+            lines.append("No signal cleared the 95% confidence bar this run — no changes applied.")
+
     lines.append("")
     lines.append("### Changes since last audit")
     for c in diff:
@@ -715,6 +866,16 @@ def main():
     log("Checking harvester health...")
     harvester_health = audit_harvester_health()
 
+    log("Running weight adjustment audit (moved here 2026-07-27, was UI-only)...")
+    weight_adjustments = audit_weight_adjustments(token)
+    if weight_adjustments.get("newly_applied"):
+        for entry in weight_adjustments["newly_applied"]:
+            log(f"  Applied: {entry['sport']} {entry['signal']} {entry['action']} "
+                f"{entry['from']:.4f} -> {entry['to']:.4f} (n={entry['n']}, wr={entry['win_rate']:.1%})")
+    else:
+        log(f"  No new adjustments this run. Eligible sports: "
+            f"{[s['sport'] for s in weight_adjustments.get('sports_eligible', [])]}")
+
     log("Checking file sizes...")
     file_sizes = audit_file_sizes()
 
@@ -733,6 +894,7 @@ def main():
         "dead_signal_fields": dead_signal_fields,
         "stub_functions": stub_functions,
         "harvester_health": harvester_health,
+        "weight_adjustments": weight_adjustments,
         "file_sizes": file_sizes,
         "missing_imports": missing_imports,
         "silent_excepts": silent_excepts,
