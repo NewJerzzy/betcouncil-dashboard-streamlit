@@ -9478,6 +9478,44 @@ with tabs[11]:
             except Exception:
                 _logger.debug("Signal activation audit failed silently")
 
+    # ── System Metrics Mini-Dashboard -- real values only, recomputed
+    # fresh here rather than reusing variables from the Calibration Engine
+    # above (which may not exist if that section took its "not enough
+    # data" early-exit branch). Every number traces to something already
+    # tracked elsewhere in the app -- nothing new invented.
+    st.markdown("### 📟 System Metrics")
+    try:
+        _sm_cal_hist = [
+            h for h in st.session_state.get("history", [])
+            if h.get("outcome") in ("WIN", "LOSS") and h.get("prob") is not None
+        ]
+        _sm_sigperf = load_from_gist("signal_performance", None) or []
+        _sm_active_signals = 0
+        if _sm_sigperf:
+            _sm_sig_keys = {k for r in _sm_sigperf for k in r.keys() if k.startswith(("base_", "defense_", "location_", "back_to_back", "sharp_", "weather_", "blowout_", "usage_", "pace_"))}
+            for _sk in _sm_sig_keys:
+                if sum(1 for r in _sm_sigperf if r.get(_sk) is True or r.get(_sk) == 1) >= 15:
+                    _sm_active_signals += 1
+        _sm_timings = st.session_state.get("fetch_timings", {})
+        _sm_avg_refresh = (sum(t.get("time", 0) for t in _sm_timings.values()) / len(_sm_timings)) if _sm_timings else None
+        _sm_gist_writes = st.session_state.get("gist_last_write", {})
+        _sm_last_sync = max(_sm_gist_writes.values()) if _sm_gist_writes else None
+        _sm_last_sync_str = datetime.fromtimestamp(_sm_last_sync).strftime("%H:%M:%S") if _sm_last_sync else "no sync yet"
+
+        _sm_c1, _sm_c2, _sm_c3, _sm_c4 = st.columns(4)
+        with _sm_c1:
+            st.metric("Calibration Samples", len(_sm_cal_hist), help="Resolved bets with a real stated probability")
+        with _sm_c2:
+            st.metric("Active Signals", f"{_sm_active_signals}/{len(_sm_sig_keys) if _sm_sigperf else 0}" if _sm_sigperf else "—",
+                      help="Signals with 15+ real activations in the signal_performance log")
+        with _sm_c3:
+            st.metric("Avg Refresh Time", f"{_sm_avg_refresh:.1f}s" if _sm_avg_refresh is not None else "—",
+                      help="Average across all sources in this session's fetch_timings")
+        with _sm_c4:
+            st.metric("Last Gist Sync", _sm_last_sync_str, help="Most recent successful write across all tracked data types this session")
+    except Exception:
+        _logger.debug("System Metrics Mini-Dashboard failed silently")
+
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
     # refresh interval (pulled from the harvester JS's own throttle values),
