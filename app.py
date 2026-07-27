@@ -9504,13 +9504,37 @@ with tabs[11]:
 
         _sm_c1, _sm_c2, _sm_c3, _sm_c4 = st.columns(4)
         with _sm_c1:
-            st.metric("Calibration Samples", len(_sm_cal_hist), help="Resolved bets with a real stated probability")
+            # Trend cue: real delta vs the last time this ran this session,
+            # not a fabricated direction. Sample count only ever grows or
+            # holds steady within a session, so no color inversion needed.
+            _sm_prev_samples = st.session_state.get("_sm_prev_cal_samples")
+            _sm_samples_delta = (len(_sm_cal_hist) - _sm_prev_samples) if _sm_prev_samples is not None else None
+            st.session_state["_sm_prev_cal_samples"] = len(_sm_cal_hist)
+            st.metric("Calibration Samples", len(_sm_cal_hist),
+                      delta=(f"+{_sm_samples_delta}" if _sm_samples_delta else None),
+                      help="Resolved bets with a real stated probability")
         with _sm_c2:
+            _sm_prev_active = st.session_state.get("_sm_prev_active_signals")
+            _sm_active_delta = (_sm_active_signals - _sm_prev_active) if _sm_prev_active is not None else None
+            st.session_state["_sm_prev_active_signals"] = _sm_active_signals
             st.metric("Active Signals", f"{_sm_active_signals}/{len(_sm_sig_keys) if _sm_sigperf else 0}" if _sm_sigperf else "—",
+                      delta=(_sm_active_delta if _sm_active_delta else None),
                       help="Signals with 15+ real activations in the signal_performance log")
         with _sm_c3:
-            st.metric("Avg Refresh Time", f"{_sm_avg_refresh:.1f}s" if _sm_avg_refresh is not None else "—",
-                      help="Average across all sources in this session's fetch_timings")
+            # Threshold alert: flags an average fetch time above 3s. The
+            # 20s total-wall-time "slow" threshold already exists elsewhere
+            # in this file (System Health Gauge) for the combined load --
+            # 3s per-source average is a new, separate threshold chosen for
+            # this per-source metric, not copied from that existing one.
+            _sm_prev_refresh = st.session_state.get("_sm_prev_avg_refresh")
+            _sm_refresh_delta = (round(_sm_avg_refresh - _sm_prev_refresh, 1) if (_sm_prev_refresh is not None and _sm_avg_refresh is not None) else None)
+            if _sm_avg_refresh is not None:
+                st.session_state["_sm_prev_avg_refresh"] = _sm_avg_refresh
+            _sm_refresh_slow = _sm_avg_refresh is not None and _sm_avg_refresh > 3.0
+            st.metric("Avg Refresh Time", (f"⚠️ {_sm_avg_refresh:.1f}s" if _sm_refresh_slow else f"{_sm_avg_refresh:.1f}s") if _sm_avg_refresh is not None else "—",
+                      delta=(f"{_sm_refresh_delta:+.1f}s" if _sm_refresh_delta is not None else None),
+                      delta_color="inverse",
+                      help="Average across all sources in this session's fetch_timings. Flagged if over 3s.")
         with _sm_c4:
             st.metric("Last Gist Sync", _sm_last_sync_str, help="Most recent successful write across all tracked data types this session")
     except Exception:
