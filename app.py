@@ -9534,7 +9534,7 @@ with tabs[11]:
             st.metric("Avg Refresh Time", (f"⚠️ {_sm_avg_refresh:.1f}s" if _sm_refresh_slow else f"{_sm_avg_refresh:.1f}s") if _sm_avg_refresh is not None else "—",
                       delta=(f"{_sm_refresh_delta:+.1f}s" if _sm_refresh_delta is not None else None),
                       delta_color="inverse",
-                      help="Average across all sources in this session's fetch_timings. Flagged if over 3s.")
+                      help="Average across all sources in this session's fetch_timings. Alert thresholds: >3s average here, >20s total wall-time in the System Health Gauge above.")
         with _sm_c4:
             st.metric("Last Gist Sync", _sm_last_sync_str, help="Most recent successful write across all tracked data types this session")
     except Exception:
