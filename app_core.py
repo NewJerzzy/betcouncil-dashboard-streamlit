@@ -15302,11 +15302,22 @@ def load_sport_data(sport):
         "TD", "Touchdowns", "Touchdown",
         "Aces", "ACES", "Sacks", "SACKS",
     }
+    # PrizePicks goblin/demon alt-lines are ALWAYS More/Over-only, regardless
+    # of stat type -- confirmed against a real live PrizePicks API response
+    # (odds_type field is genuinely present per-projection) and confirmed
+    # directly by the user, an actual PrizePicks bettor: PrizePicks does not
+    # offer an Under selection on either goblin or demon lines, only on
+    # odds_type="standard". This is separate from _OVER_ONLY_STATS above
+    # (which is about the STAT itself being universally one-directional
+    # across every book) -- this is about the LINE TYPE on this one specific
+    # book being one-directional regardless of stat.
     for _p in props:
         _prop_key = _p.get("Prop","") or _p.get("stat_key","") or ""
         _stat_n   = STAT_NORMALIZE.get((sport, _prop_key), _prop_key)
         if _prop_key in _OVER_ONLY_STATS or _stat_n in _OVER_ONLY_STATS:
             _p["Side"] = "OVER"   # no book offers HR/Goal/TD UNDER
+        elif _p.get("source") == "PrizePicks" and _p.get("OddsType","") in ("goblin", "demon"):
+            _p["Side"] = "OVER"   # PrizePicks goblin/demon lines are More-only, confirmed by user
 
     enriched = []
     skipped_def = skipped_edge = 0
