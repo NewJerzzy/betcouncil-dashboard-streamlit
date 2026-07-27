@@ -294,8 +294,21 @@ def run():
             log(f"  {sport}: ERROR — {e}")
 
     if not fetched_any:
-        log("No sports had real data this run")
-        sys.exit(0)
+        log("No sports had real data this run -- this is a real failure, not exiting 0")
+        # Emergency diagnostic push so the actual cause (parse failures,
+        # site blocking, layout drift) is visible in Gist -- confirmed via
+        # real data that this workflow has reported "success" on every
+        # run while zero betcouncil_vsin_*.json files have ever existed.
+        try:
+            if GITHUB_TOKEN:
+                debug_payload = {
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                    "note": "0 games parsed for every sport this run",
+                }
+                push_to_gist("betcouncil_vsin_debug.json", debug_payload)
+        except Exception as _e:
+            log(f"debug push also failed: {_e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
