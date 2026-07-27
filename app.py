@@ -9598,6 +9598,57 @@ with tabs[11]:
     except Exception:
         _logger.debug("System Metrics Mini-Dashboard failed silently")
 
+    # ── Model Self-Learning (plain-language) ──────────────────────────
+    # Surfaces the same weekly_audit.py weight-adjustment run that used
+    # to only be visible in a GitHub Issue -- written for a non-technical
+    # reader, not a statistics audience. No jargon (no "Wilson CI", no
+    # "clamped to +/-30%") -- just what changed and why, in plain terms.
+    st.markdown("### 🧠 Model Self-Learning")
+    try:
+        _sl_plain_names = {
+            "base": "how the player's average compares to the betting line",
+            "defense": "how weak the opponent's defense is",
+            "location": "whether the player is at home",
+            "rest": "back-to-back game fatigue",
+            "pace": "game pace",
+            "usage": "recent usage boost",
+            "blowout": "blowout risk",
+            "sharp": "sharp money movement",
+        }
+        _sl_audit = load_from_gist("weekly_audit", None) or {}
+        _sl_wt = _sl_audit.get("weight_adjustments", {})
+        _sl_log = load_from_gist("weight_adjustment_log", None) or []
+
+        if not _sl_wt and not _sl_log:
+            st.caption("This runs automatically every Monday and hasn't checked in yet.")
+        else:
+            _sl_checked = _sl_wt.get("sports_checked", [])
+            _sl_eligible = {e["sport"]: e["n"] for e in _sl_wt.get("sports_eligible", [])}
+            _sl_run_date = _sl_audit.get("run_date", "unknown date")
+            st.caption(f"Last checked: {_sl_run_date}. This looks at your settled bets every week and only "
+                       f"changes anything when a pattern is clear and consistent — not from a lucky or unlucky streak.")
+
+            for sport in _sl_checked:
+                if sport not in _sl_eligible:
+                    st.caption(f"**{sport}**: still collecting bets — needs 100 settled bets before it can check for patterns.")
+                else:
+                    _n = _sl_eligible[sport]
+                    _sport_changes = [e for e in _sl_log if e.get("sport") == sport]
+                    if not _sport_changes:
+                        st.caption(f"**{sport}**: has enough bets ({_n}) to check, but hasn't found a clear enough pattern yet to change anything.")
+                    else:
+                        with st.expander(f"**{sport}**: adjusted {len(_sport_changes)} time(s) — {_n} bets checked"):
+                            for e in sorted(_sport_changes, key=lambda x: x.get("timestamp",""), reverse=True)[:10]:
+                                _plain_sig = _sl_plain_names.get(str(e.get("signal","")).lower(), e.get("signal","this signal"))
+                                _direction = "trusted **more**" if e.get("action") == "INCREASE" else "trusted **less**"
+                                st.markdown(
+                                    f"- **{_plain_sig.capitalize()}** is now {_direction} — it's been right "
+                                    f"{e.get('win_rate', 0):.0%} of the time over {e.get('n', '?')} bets "
+                                    f"(normal luck alone would rarely produce that)."
+                                )
+    except Exception:
+        st.caption("Model self-learning status unavailable right now.")
+
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
     # refresh interval (pulled from the harvester JS's own throttle values),
