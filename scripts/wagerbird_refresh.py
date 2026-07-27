@@ -258,4 +258,34 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Every failed run so far has produced ZERO debug output in Gist --
+    # not even the debug file main() tries to push on its own known
+    # failure paths (fetch failed / 0 picks). That means something is
+    # crashing before main()'s own error handling ever runs. Wrapping
+    # the whole entry point here guarantees SOME real signal lands in
+    # Gist on the next failure, since GitHub Actions job logs aren't
+    # reachable for diagnosis in this environment.
+    try:
+        sys.exit(main())
+    except Exception as _e:
+        import traceback
+        _tb = traceback.format_exc()
+        try:
+            _emergency_token = os.environ.get("GITHUB_TOKEN", "")
+            if _emergency_token:
+                import urllib.request as _ur
+                _body = json.dumps({"files": {"betcouncil_wagerbird_debug.json": {
+                    "content": json.dumps({
+                        "captured_at": datetime.now(timezone.utc).isoformat(),
+                        "uncaught_exception": str(_e),
+                        "traceback": _tb[-3000:],
+                    }, indent=2)
+                }}}).encode()
+                _req = _ur.Request(f"https://api.github.com/gists/{GIST_ID}", data=_body, method="PATCH",
+                    headers={"Authorization": f"token {_emergency_token}", "Accept": "application/vnd.github+json",
+                             "Content-Type": "application/json"})
+                _ur.urlopen(_req, timeout=15)
+        except Exception:
+            pass
+        print(_tb, flush=True)
+        sys.exit(1)
