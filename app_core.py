@@ -17856,12 +17856,14 @@ with st.sidebar:
         if _worst[1]["grade"] in ("FAIR", "NEEDS WORK") and _worst[0] != _best[0]:
             _plain = _grade_plain.get(_worst[1]["grade"], "")
             _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is the main drag on this number — "
-                               f"its {_plain}. Bet sizing for {_worst[0]} is already reduced automatically until it improves. "
+                               f"its {_plain}. Kelly sizing is one global multiplier across ALL sports, not per-sport — "
+                               f"so a recent stretch like this one throttles every bet's stake, including {_best[0]}'s, "
+                               f"until overall recent performance recovers. "
                                f"{_best[0]} is grading {_best[1]['grade']}.")
         elif _worst[1]["grade"] in ("FAIR", "NEEDS WORK"):
             _plain = _grade_plain.get(_worst[1]["grade"], "")
             _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far — "
-                               f"its {_plain}. Bet sizing for {_worst[0]} is already reduced automatically until it improves.")
+                               f"its {_plain}. Kelly sizing is throttled globally in response, not just for {_worst[0]}.")
         else:
             _cal_explainer = f"All tracked sports are grading GOOD or better — {_best[0]} leads at {_best[1]['grade']}."
     if not _cal_explainer:
@@ -17880,7 +17882,7 @@ with st.sidebar:
         f'</div></div>', unsafe_allow_html=True)
     st.caption(_cal_explainer)
     if not _thin_sample and _cal_grade in ("FAIR", "NEEDS WORK"):
-        st.warning(f"⚠️ Calibration is {_cal_grade} — model confidence has drifted from actual outcomes. Kelly sizing for the affected sport(s) is already being throttled automatically.")
+        st.warning(f"⚠️ Calibration is {_cal_grade} — model confidence has drifted from actual outcomes. Kelly sizing is one global multiplier across your whole recent history, and it's already being throttled for every sport as a result, not just the sport(s) driving this grade down.")
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
