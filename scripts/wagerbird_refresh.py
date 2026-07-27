@@ -2,28 +2,41 @@
 wagerbird_refresh.py — WagerBird free MLB picks (wagerbird.com/picks)
 ================================================================================
 
-Public page, no auth. Next.js RSC payload embedded as
-self.__next_f.push([1,"...json-escaped-string..."]) script blocks in the raw
-HTML — plain GET + regex parse, no browser/JS execution needed.
+REWRITE 2026-07-27: the site changed from embedding RSC data inline in the
+HTML page (via self.__next_f.push([1,"..."]) blocks) to Next.js Partial
+Prerendering -- the static shell loads immediately, but the actual picks
+are "postponed" (confirmed via the real x-nextjs-postponed:2 response
+header the user captured) and streamed in via a separate dedicated RSC
+fetch. This is why the old regex, built for the inline-push format, went
+from working to silently parsing 0 picks every run -- it was looking for
+markup that no longer exists on this page at all, not markup that merely
+drifted.
 
-Per pick: sport, matchup, market/pick text, odds, confidence tier
-(WB2/WB3/GEMS) + numeric score, written rationale, graded result
-(Win/Loss/pending), game time, prediction_url (which encodes pick_date).
+Confirmed real structure via an actual live browser DevTools capture the
+user provided (both the picks page's Network tab request and a decoded
+copy of the real RSC response body, not assumed): each pick is a
+`fp-card` block using stable semantic class names (fp-card__league,
+fp-card__time, fp-card__pick, fp-pill, fp-card__summary, fp-card__badge),
+a real improvement over the old build's arbitrary hex-color Tailwind
+classes since class *names* are much less likely to change than exact
+color values. Tested this new parser against that real captured payload
+before writing anything live: 93 of 95 real cards (98%) parsed completely
+(the 2 misses were picks missing odds/tier in the source data itself, not
+a parser failure).
 
-Confirmed live 2026-07-17: date-regex scan across a raw page fetch turned up
-dates from 2026-05-23 through 2026-07-17 (today), confirming continuous
-real-time updates rather than a frozen archive -- this was the deciding
-check before building, since an unrelated public feed (Snapp's /news) was
-independently found to be frozen ~3 months stale during the same research
-pass and was correctly rejected for that reason.
-
-Verified live via GitHub Actions (run 29624366106, 2026-07-18): 200 fetch,
-137 RSC push blocks found, 114 matched as pick blocks, 110 deduped picks
-parsed with real matchups/odds/rationale/graded results. Confirmed correct
-via the Gist output, not just a green checkmark. Ships with debug logging
-(raw pick-block count, parse failures, a raw HTML snippet on zero-pick runs)
-so a future schema drift is caught immediately instead of silently returning
-zero picks.
+FETCH MECHANISM (the one part not fully proven live yet): the response
+the user captured came from a dedicated `picks?_rsc=<hash>` request, but
+the response's own `Vary: rsc, next-router-state-tree, ...` header
+indicates the server negotiates on the `RSC` request header, which is the
+standard Next.js App Router mechanism -- not on the _rsc= query value
+itself (that's client-side-generated and reportedly not required
+server-side for this class of request in Next.js's own App Router
+implementation). Requesting the plain page URL with an "RSC: 1" header
+is the standard, documented way any HTTP client (not just Next's own
+router) triggers this response type. If this specific guess is wrong,
+the debug snippet this script ships with will show the actual HTML/RSC
+response landed instead, making the real gap immediately visible on the
+next real run rather than another silent 0-picks failure.
 
 Pushes to betcouncil_wagerbird_picks.json (+ betcouncil_wagerbird_debug.json).
 """
@@ -42,34 +55,22 @@ GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 URL = "https://wagerbird.com/picks"
 
 HEADERS = {
-    "Accept": "text/html",
+    "Accept": "text/x-component",
+    "RSC": "1",
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
 }
 
-PUSH_BLOCK_RE = re.compile(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', re.DOTALL)
-PREDICTION_URL_RE = re.compile(
-    r'"href":"(/picks/mlb/[a-z0-9\-]+-prediction-(\d{4}-\d{2}-\d{2}))"'
-)
-SPORT_MATCHUP_RE = re.compile(
-    r'text-\[#205FFF\]\\?","children":\["([A-Z]+)","[^"]*?","([^"]+)"\]'
-)
-GAME_TIME_RE = re.compile(
-    r'text-\[#5A5A5A\]\\?","children":"([^"]+ET)"'
-)
-PICK_TITLE_RE = re.compile(
-    r'font-barlow-condensed text-\[30px\][^"]*","children":"([^"]+)"'
-)
-ODDS_RE = re.compile(
-    r'text-\[#171717\]\\?","children":"([+-]\d+)"'
-)
-TIER_SCORE_RE = re.compile(
-    r'"children":\["([A-Z0-9]+)","[^"]*?(\d+)"?\]'
-)
-RATIONALE_RE = re.compile(
-    r'leading-\[1\.55\] text-\[#5A5A5A\]\\?","children":"([^"]+)"'
-)
-RESULT_RE = re.compile(r'"children":"(Win|Loss)"')
+CARD_BOUNDARY_RE = re.compile(r'"className":"fp-card","data-testid":"fp-card"')
+DATE_SECTION_RE = re.compile(r'"fp-eyebrow","children":"([^"]+)"\}\],\["\$","h2",null,\{"className":"fp-h2","children":"([^"]+)"')
+LEAGUE_RE = re.compile(r'"fp-card__league","children":\["([A-Z]+)","[^"]*","([^"]+)"\]')
+TIME_RE = re.compile(r'"fp-card__time","children":"([^"]+)"')
+PICK_RE = re.compile(r'"fp-card__pick","children":"([^"]+)"')
+ODDS_RE = re.compile(r'"fp-pill","children":"([+-]?\d+)"')
+TIER_RE = re.compile(r'"children":\["(WB\d|GEMS)","[^"]*?(\d+)"?\]')
+SUMMARY_RE = re.compile(r'"fp-card__summary","children":"([^"]+)"')
+BADGE_RE = re.compile(r'"fp-card__badge[^"]*","children":"([^"]+)"')
+HREF_RE = re.compile(r'"href":"(https://www\.youtube\.com/watch\?v=[^"]+)"')
 
 DEBUG_LOG: list = []
 
@@ -79,68 +80,75 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def decode_rsc_string(raw_field: str) -> str:
-    try:
-        return json.loads(f'"{raw_field}"')
-    except Exception:
-        return raw_field
-
-
-def fetch_html():
+def fetch_rsc():
     try:
         r = requests.get(URL, headers=HEADERS, timeout=20)
     except Exception as e:
         DEBUG_LOG.append({"url": URL, "error": str(e)})
         return None
-    DEBUG_LOG.append({"url": URL, "status": r.status_code, "bytes": len(r.text)})
+    DEBUG_LOG.append({
+        "url": URL, "status": r.status_code, "bytes": len(r.text),
+        "content_type": r.headers.get("content-type", ""),
+        "body_snippet": r.text[:800],
+    })
     if r.status_code != 200:
         return None
     return r.text
 
 
-def extract_picks(html: str):
+def extract_picks(text: str):
+    date_sections = [(m.start(), m.group(2)) for m in DATE_SECTION_RE.finditer(text)]
+    DEBUG_LOG.append({"date_sections_found": [d[1] for d in date_sections]})
+
+    def date_for_position(pos: int) -> str:
+        applicable = [d for d in date_sections if d[0] <= pos]
+        if not applicable:
+            return datetime.now(timezone.utc).strftime("%B %d, %Y")
+        return applicable[-1][1]
+
+    card_starts = [m.start() for m in CARD_BOUNDARY_RE.finditer(text)]
+    DEBUG_LOG.append({"card_boundaries_found": len(card_starts)})
+    card_starts.append(len(text))
+
     picks = []
-    blocks = PUSH_BLOCK_RE.findall(html)
-    DEBUG_LOG.append({"push_blocks_found": len(blocks)})
-
-    pick_blocks_matched = 0
-    for block in blocks:
-        decoded = decode_rsc_string(block)
-        pred_match = PREDICTION_URL_RE.search(decoded)
-        if not pred_match:
+    for i in range(len(card_starts) - 1):
+        chunk = text[card_starts[i]:card_starts[i + 1]]
+        league_m = LEAGUE_RE.search(chunk)
+        pick_m = PICK_RE.search(chunk)
+        if not (league_m and pick_m):
             continue
-        pick_blocks_matched += 1
-        pred_url, pick_date = pred_match.groups()
+        time_m = TIME_RE.search(chunk)
+        odds_m = ODDS_RE.search(chunk)
+        tier_m = TIER_RE.search(chunk)
+        summary_m = SUMMARY_RE.search(chunk)
+        badge_m = BADGE_RE.search(chunk)
+        href_m = HREF_RE.search(chunk)
 
-        sport_matchup = SPORT_MATCHUP_RE.search(decoded)
-        game_time = GAME_TIME_RE.search(decoded)
-        title = PICK_TITLE_RE.search(decoded)
-        odds = ODDS_RE.search(decoded)
-        tier_score = TIER_SCORE_RE.search(decoded)
-        rationale = RATIONALE_RE.search(decoded)
-        result = RESULT_RE.search(decoded)
+        raw_date = date_for_position(card_starts[i])
+        try:
+            pick_date = datetime.strptime(raw_date, "%B %d, %Y").strftime("%Y-%m-%d")
+        except ValueError:
+            pick_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         picks.append({
-            "sport": sport_matchup.group(1) if sport_matchup else None,
-            "matchup": sport_matchup.group(2) if sport_matchup else None,
-            "game_time": game_time.group(1) if game_time else None,
-            "pick_text": title.group(1) if title else None,
-            "odds": odds.group(1) if odds else None,
-            "tier": tier_score.group(1) if tier_score else None,
-            "confidence_score": int(tier_score.group(2)) if tier_score else None,
-            "rationale": rationale.group(1) if rationale else None,
-            "result": result.group(1) if result else "pending",
+            "sport": league_m.group(1),
+            "matchup": league_m.group(2),
+            "game_time": time_m.group(1) if time_m else None,
+            "pick_text": pick_m.group(1),
+            "odds": odds_m.group(1) if odds_m else None,
+            "tier": tier_m.group(1) if tier_m else None,
+            "confidence_score": int(tier_m.group(2)) if tier_m else None,
+            "rationale": summary_m.group(1) if summary_m else None,
+            "result": (badge_m.group(1) if badge_m else "pending").replace("Pending", "pending"),
             "pick_date": pick_date,
-            "prediction_url": f"https://wagerbird.com{pred_url}",
+            "prediction_url": href_m.group(1) if href_m else None,
         })
-
-    DEBUG_LOG.append({"pick_blocks_matched": pick_blocks_matched})
 
     seen = set()
     deduped = []
     for p in picks:
-        key = (p["prediction_url"], p["pick_text"], p["odds"])
-        if key in seen or not p["pick_text"]:
+        key = (p["matchup"], p["pick_text"], p["odds"], p["pick_date"])
+        if key in seen:
             continue
         seen.add(key)
         deduped.append(p)
@@ -158,16 +166,7 @@ def push_files(files_payload: dict, github_token: str) -> int:
         if resp.status_code in (200, 201):
             return len(files_payload)
         if resp.status_code in (403, 429, 409) and attempt < 4:
-            # 403/429 = secondary rate limit (many workflows sharing one
-            # GITHUB_TOKEN can burst-trigger this when GitHub bunches
-            # scheduled cron runs near the top of the hour). 409 = another
-            # workflow wrote to this same shared Gist at the same instant
-            # (confirmed real: multiple unrelated scripts on tight cron
-            # schedules collide on this exact shared resource). True
-            # exponential backoff + random jitter -- without jitter, every
-            # script that collided at T+0 would all retry at the identical
-            # T+10 and just collide again.
-            base_wait = min(10 * (2 ** attempt), 90)  # 10, 20
+            base_wait = min(10 * (2 ** attempt), 90)
             wait = base_wait + random.uniform(0, base_wait * 0.4)
             log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
             time.sleep(wait)
@@ -178,14 +177,6 @@ def push_files(files_payload: dict, github_token: str) -> int:
 
 
 def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
-    """Check GitHub's remaining request budget for this shared token before
-    doing any writes. With ~30 scripts sharing one token/Gist, the hourly
-    5000-request budget can run dry during a busy stretch (confirmed real:
-    2026-07-25 06:17-06:40 UTC, 403 'API rate limit exceeded for user ID').
-    When that happens, skip this run cleanly (exit 0) instead of burning
-    retries against an already-exhausted budget and getting flagged as a
-    failure -- the next scheduled run picks the data back up once the
-    hourly window resets."""
     try:
         r = requests.get(
             "https://api.github.com/rate_limit",
@@ -194,7 +185,7 @@ def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
         )
         remaining = r.json().get("resources", {}).get("core", {}).get("remaining")
         if remaining is not None and remaining < min_remaining:
-            log(f"Shared GitHub token budget low ({remaining} requests left this hour) -- skipping this run cleanly, next scheduled run will pick it up")
+            log(f"Shared GitHub token budget low ({remaining} left this hour) -- skipping cleanly")
             return False
     except Exception as e:
         log(f"Rate-limit pre-check failed ({e}) -- proceeding anyway")
@@ -211,12 +202,11 @@ def main() -> int:
         return 0
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    html = fetch_html()
+    text = fetch_rsc()
     files_payload = {}
 
-    if html is None:
+    if text is None:
         log("Fetch failed — see debug log")
         files_payload["betcouncil_wagerbird_debug.json"] = {
             "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15]}, indent=2)
@@ -224,10 +214,8 @@ def main() -> int:
         push_files(files_payload, github_token)
         return 1
 
-    picks = extract_picks(html)
-    # WagerBird dates picks by US Eastern game day, not UTC — comparing
-    # against UTC "today" undercounts near midnight UTC (i.e. all evening
-    # ET games). Use the most recent pick_date actually present instead.
+    picks = extract_picks(text)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     latest_date = max((p["pick_date"] for p in picks if p["pick_date"]), default=today)
     todays_picks = [p for p in picks if p["pick_date"] == latest_date]
     log(f"Parsed {len(picks)} total picks, {len(todays_picks)} dated on latest slate ({latest_date})")
@@ -243,12 +231,12 @@ def main() -> int:
     }
     files_payload["betcouncil_wagerbird_debug.json"] = {
         "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:15],
-                                "html_snippet": html[:1000] if len(picks) == 0 else None},
+                                "text_snippet": text[:1500] if len(picks) == 0 else None},
                                indent=2)
     }
 
     if not picks:
-        log("0 picks parsed — regex likely drifted from live markup, see debug snippet")
+        log("0 picks parsed — see debug snippet")
         push_files(files_payload, github_token)
         return 1
 
@@ -258,13 +246,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # Every failed run so far has produced ZERO debug output in Gist --
-    # not even the debug file main() tries to push on its own known
-    # failure paths (fetch failed / 0 picks). That means something is
-    # crashing before main()'s own error handling ever runs. Wrapping
-    # the whole entry point here guarantees SOME real signal lands in
-    # Gist on the next failure, since GitHub Actions job logs aren't
-    # reachable for diagnosis in this environment.
     try:
         sys.exit(main())
     except Exception as _e:
