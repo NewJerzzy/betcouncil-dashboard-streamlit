@@ -11560,6 +11560,30 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
 # ═══════════════════════════════════════════════════════════
 
 # _parse_pp_ocr_inline — moved to slip_parser.py
+def _normalize_ocr_sport(raw_sport: str) -> str:
+    """Map an OCR-extracted sport token to the exact casing used in the
+    real SPORTS list and st.session_state.board_data's "Sport" field.
+
+    Root cause this fixes: the OCR parser below was blindly .upper()-ing
+    every extracted sport token, producing e.g. "SOCCER". That matches
+    SPORTS' casing for NBA/MLB/NHL/WNBA/NFL/UFC (already all-caps), but
+    NOT for "Soccer", "Golf", "Tennis" (title case in SPORTS) -- so any
+    Soccer/Golf/Tennis screenshot import silently failed every
+    lookup_board_edge() match (exact-string sport comparison), meaning
+    edge/tier/prob/signals never backfilled for those sports even when a
+    real matching board pick existed. Confirmed via real logged data
+    (2026-07-27 Soccer imports: sport="SOCCER", zero signal matches).
+    """
+    _map = {
+        "SOCCER": "Soccer", "SOC": "Soccer",
+        "GOLF": "Golf", "PGA": "Golf",
+        "TENNIS": "Tennis",
+        "UFC": "UFC", "MMA": "UFC",
+        "NBA": "NBA", "WNBA": "WNBA", "MLB": "MLB", "NHL": "NHL", "NFL": "NFL",
+    }
+    return _map.get(str(raw_sport or "").strip().upper(), str(raw_sport or "NBA").strip())
+
+
 def parse_bet_screenshot_ocr(image_bytes):
     """
     Parse PrizePicks/prop screenshots via OCR.space then multi-sport parser.
@@ -11635,13 +11659,13 @@ def parse_bet_screenshot_ocr(image_bytes):
                     result.append({"player": m1.group(1).strip(), "prop": "Line",
                         "line": float(m1.group(3)),
                         "side": "OVER" if m1.group(2).upper() in ("OVER","MORE") else "UNDER",
-                        "sport": sp.group(1).upper() if sp else "NBA", "book": "PrizePicks"})
+                        "sport": _normalize_ocr_sport(sp.group(1)) if sp else "NBA", "book": "PrizePicks"})
                     continue
                 if re.search(SPORTS_RE, block, re.I) and ("|" in block or "@" in block):
                     try:
                         clean = re.sub(r"^[~\\\s\-\.\*]+", "", block).strip()
                         sp2 = re.search(SPORTS_RE, clean, re.I)
-                        sport = sp2.group(1).upper() if sp2 else "NBA"
+                        sport = _normalize_ocr_sport(sp2.group(1)) if sp2 else "NBA"
                         stag = f"({sport})"
                         player_part = clean.split(stag)[0] if stag in clean else clean.split(sport)[0]
                         player = re.sub(r"[@|()\d\.\*]+", "", player_part).strip()
@@ -11677,7 +11701,7 @@ def parse_bet_screenshot_ocr(image_bytes):
                 stat_nums = list(_re3.finditer(r"(Ks|Pts|Reb|Ast|Hits|HR|RBI|TB|SO|Strokes|Saves|Goals|SOG|Fantasy|Points|Rebounds|Assists|Strikeouts|Total Bases|Break Points Won)\s+([\d.]+)", full_text, _re3.I))
                 for pi, pm in enumerate(matches3):
                     pname = pm.group(1).strip()
-                    psport = pm.group(2).upper()
+                    psport = _normalize_ocr_sport(pm.group(2))
                     # Match with corresponding stat
                     if pi < len(stat_nums):
                         sn = stat_nums[pi]
@@ -11758,7 +11782,7 @@ def parse_prizepicks_text(raw_text):
 
         player   = rows[i]
         pos      = rows[i + 1].upper()
-        sport    = rows[i + 2].upper()
+        sport    = _normalize_ocr_sport(rows[i + 2])
 
         if pos not in POSITIONS or sport not in SPORTS:
             i += 1
