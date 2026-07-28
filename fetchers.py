@@ -15841,7 +15841,13 @@ HARVESTER_REGISTRY = {
     # theScore: was never registered here at all (not a wrong filename --
     # simply missing), confirmed via the real script scripts/thescore_scores_refresh.py
     # which writes betcouncil_thescore_scores_{sport}.json (uppercase sport).
-    "thescore":        ("betcouncil_thescore_scores_{sport}.json",   90, "lines"),
+    # thescore: registry entry removed -- confirmed the underlying
+    # scripts/thescore_scores_refresh.py workflow was entirely unused
+    # (only ever referenced by this registry entry itself, not by any
+    # real data-consuming function) and has been deliberately disabled.
+    # The actually-used theScore data comes from a separate Tampermonkey
+    # harvester (betcouncil_thescore_games.json via fetch_thescore_from_gist),
+    # not tracked in this registry at all.
     "sportsinsights":  ("betcouncil_sportsinsights_{sport}.json",    15, "signal"),
     "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
