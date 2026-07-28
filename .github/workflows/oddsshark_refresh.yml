@@ -10,6 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: DIAGNOSTIC - test raw DNS resolution
+        run: |
+          echo "=== nslookup ==="
+          nslookup www.oddsshark.com || echo "nslookup failed"
+          echo "=== dig via 8.8.8.8 ==="
+          dig @8.8.8.8 www.oddsshark.com || echo "dig failed"
+          echo "=== curl -v to a different known-working site for comparison ==="
+          curl -s -o /dev/null -w "google.com: %{http_code}\n" https://www.google.com --max-time 10
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
