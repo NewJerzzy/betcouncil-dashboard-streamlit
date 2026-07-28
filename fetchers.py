@@ -15771,13 +15771,23 @@ def _is_fresh(data: dict, max_age_minutes: int = 30) -> bool:
 
 
 def _gist_data_age_minutes(data: dict):
-    """Age in minutes of a harvested payload's captured_at, or None if missing/bad."""
-    ts = (data or {}).get("captured_at", "")
+    """Age in minutes of a harvested payload's captured_at (or timestamp,
+    for the handful of scripts like betcouncil_auto_scraper.py that use
+    that field name instead), or None if missing/bad.
+
+    Confirmed via live testing 2026-07-28: auto_scraped_props.json uses
+    "timestamp", not "captured_at", and that field has no timezone suffix
+    -- both silently produced None here before this fix, which made
+    check_harvester_health() report BetMGM as never-seen regardless of
+    whether the underlying data was actually fresh."""
+    ts = (data or {}).get("captured_at") or (data or {}).get("timestamp", "")
     if not ts:
         return None
     try:
         from datetime import datetime, timezone
         captured = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if captured.tzinfo is None:
+            captured = captured.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - captured).total_seconds() / 60
     except Exception:
         return None
@@ -15791,11 +15801,25 @@ def _gist_data_age_minutes(data: dict):
 # alert), or "signal" (secondary context — informational only).
 HARVESTER_REGISTRY = {
     "evsharps":        ("betcouncil_tokens.json",                    50, "sharp"),
-    "betmgm":          ("betcouncil_betmgm_{sport}.json",            25, "lines"),
+    # BetMGM: confirmed 2026-07-28 the real script (betcouncil_auto_scraper.py,
+    # workflow "Auto Scraper Refresh (DK/BetMGM/Novig/Betr)") pushes DK/BetMGM/
+    # Novig/Betr all combined into ONE file with no "betcouncil_" prefix and
+    # no per-sport split -- the old entry here (betcouncil_betmgm_{sport}.json)
+    # never matched anything real, so this source was always reported dead
+    # regardless of its actual health. Checking the real combined file instead;
+    # this approximates "the whole DK/BetMGM/Novig/Betr batch's freshness"
+    # since they share one push timestamp, not BetMGM specifically.
+    "betmgm":          ("auto_scraped_props.json",                   90, "lines"),
     "action_network":  ("betcouncil_actionnetwork_{sport}.json",     40, "signal"),
     "covers":          ("betcouncil_covers_{sport}.json",            20, "signal"),
     "dk_props":        ("betcouncil_dk_props_{sport}.json",          20, "props"),
-    "unabated":        ("betcouncil_unabated_{sport}.json",          30, "sharp"),
+    # Unabated: confirmed 2026-07-28 the real script (scripts/unabated_refresh.py)
+    # writes betcouncil_unabated_props_mlb.json / betcouncil_unabated_lines_mlb.json
+    # -- lowercase sport, "_props_"/"_lines_" in the name, and MLB-only right now
+    # (SPORTS = ["mlb"] in that script). The old entry here matched none of that,
+    # so this source was always reported dead regardless of its actual health
+    # (verified alive: real fresh data, 8000 rows, ~2 hours old at time of fix).
+    "unabated":        ("betcouncil_unabated_props_mlb.json",        90, "sharp"),
     "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
     "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
@@ -15805,6 +15829,10 @@ HARVESTER_REGISTRY = {
     "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
     "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
     "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
+    # theScore: was never registered here at all (not a wrong filename --
+    # simply missing), confirmed via the real script scripts/thescore_scores_refresh.py
+    # which writes betcouncil_thescore_scores_{sport}.json (uppercase sport).
+    "thescore":        ("betcouncil_thescore_scores_{sport}.json",   90, "lines"),
     "pregame":         ("betcouncil_pregame_{sport}.json",           30, "signal"),
     "fantasylabs":     ("betcouncil_fantasylabs_{sport}.json",       30, "signal"),
     "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
