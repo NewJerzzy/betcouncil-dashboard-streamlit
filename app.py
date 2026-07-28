@@ -9788,6 +9788,40 @@ with tabs[11]:
     except Exception:
         st.caption("Model self-learning status unavailable right now.")
 
+    # ── Third-Party Model Comparison (plain-language) ─────────────────
+    # Surfaces betcouncil_third_party_calibration.json, which was being
+    # computed daily (real grading against the same ground-truth resolvers
+    # BetCouncil's own board uses) but never shown anywhere. Real names,
+    # real sample-size caveats -- not editorializing about whether any
+    # number is "good," just showing what's actually there honestly.
+    st.markdown("### 📡 Third-Party Model Comparison")
+    try:
+        _tpc = load_from_gist("third_party_calibration", None) or {}
+        _tpc_display_names = {
+            "favoredprops": "FavoredProps", "draftedge": "DraftEdge", "dimers": "Dimers",
+            "covers": "Covers", "lineterminal": "LineTerminal", "wagerbird": "WagerBird",
+            "dk_most_bet": "DK Most Bet",
+        }
+        if not _tpc:
+            st.caption("No comparison data yet.")
+        else:
+            st.caption("Same real games, same grading logic BetCouncil uses on its own board — "
+                       "not a different methodology, so these are directly comparable. Sources with "
+                       "few graded picks so far are marked as too small to read into yet.")
+            for _key, _label in _tpc_display_names.items():
+                _stats = _tpc.get(_key, {})
+                _gradable = _stats.get("gradable", 0)
+                _wins = _stats.get("wins", 0)
+                _losses = _stats.get("losses", 0)
+                if _gradable < 30:
+                    st.caption(f"**{_label}**: only {_gradable} graded picks so far — too small to read into yet.")
+                else:
+                    _wr = _wins / _gradable if _gradable else 0
+                    st.markdown(f"**{_label}**: {_wr:.1%} hit rate over {_gradable:,} graded picks "
+                                f"({_wins:,}-{_losses:,})")
+    except Exception:
+        st.caption("Third-party comparison data unavailable right now.")
+
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
     # refresh interval (pulled from the harvester JS's own throttle values),
