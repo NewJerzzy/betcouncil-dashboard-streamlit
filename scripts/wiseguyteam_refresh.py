@@ -70,6 +70,12 @@ SPORTS = {
     "soccer": "SOCCER",
     "cfb":    "CFB",
     "cbb":    "CBB",
+    # Confirmed via a real live API test 2026-07-28: sport=tennis returns
+    # genuine live match data (37 real matches, real player names, real
+    # moneyline structure) -- unlike golf/pga, which returned 0 games with
+    # an empty structure on the same test, confirming golf genuinely has
+    # no coverage here rather than just being an off-day.
+    "tennis": "TENNIS",
 }
 
 HEADERS = {
