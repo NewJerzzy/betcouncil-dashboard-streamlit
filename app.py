@@ -3701,6 +3701,29 @@ with tabs[3]:
                         break
             except Exception:
                 _sleeper_game = None
+
+        # OddsShark/Covers totals consensus -- genuinely new data (the
+        # existing Covers integration only covers sides/ML, not totals/O-U).
+        # Deliberately NOT wired into the sides/ML consensus lists below,
+        # since that data is the exact same real Covers number the
+        # existing Covers integration already provides -- adding it there
+        # too would double-count one real consensus figure as if two
+        # independent sources agreed on it.
+        _osk_game = None
+        try:
+            _osk_data = load_from_gist(f"oddsshark_consensus_{_gsport.upper()}", None) or {}
+            for _osk_g in _osk_data.get("games", []):
+                _osk_home, _osk_away = _osk_g.get("home_team", ""), _osk_g.get("away_team", "")
+                if _osk_home and _osk_away and _home_nm and _away_nm and (
+                    _osk_home.lower() in _home_nm.lower() or _home_nm.lower() in _osk_home.lower()
+                ) and (
+                    _osk_away.lower() in _away_nm.lower() or _away_nm.lower() in _osk_away.lower()
+                ):
+                    _osk_game = _osk_g
+                    break
+        except Exception:
+            _osk_game = None
+
         if _sleeper_game:
             _sl_away, _sl_home = _sleeper_game.get("away", {}), _sleeper_game.get("home", {})
             _sl_score_txt = None
@@ -3950,6 +3973,10 @@ with tabs[3]:
                         _wgt_tot_sharp_d = _wgt_t1 if _wgt_tot["sharp_side"] == "side1" else _wgt_t2
                         _tot_sharp.append(("WiseGuyTeam money", _wgt_tot_sharp_side,
                                           f"{_wgt_tot_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_tot_sharp_d.get('bet_pct','?')}% of bets"))
+                if _osk_game and _osk_game.get("consensus_ou_side"):
+                    _osk_side = _osk_game["consensus_ou_side"].capitalize()
+                    _osk_pct = max(_osk_game.get("over_pct", 0) or 0, _osk_game.get("under_pct", 0) or 0)
+                    _tot_public.append(("OddsShark/Covers", _osk_side, f"{_osk_pct}% of public picks"))
                 _consensus_verdict("Total", _tot_public, _tot_sharp)
 
                 st.markdown("---")
