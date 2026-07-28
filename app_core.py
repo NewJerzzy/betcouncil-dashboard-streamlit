@@ -13839,6 +13839,30 @@ def load_sport_data(sport):
     st.session_state[f"unabated_props_{sport}"]     = _unabated_props_lines
     st.session_state[f"unabated_props_src_{sport}"] = _unabated_props_src
 
+    # ── Sleeper scoreboard/lineups — same deliberately-separate pattern as
+    # Unabated props above. Function itself only has MLB verified against a
+    # real capture (per its own docstring) -- gating here matches that,
+    # rather than trusting unverified non-MLB output.
+    try:
+        from fetchers import fetch_sleeper_scoreboard as _fetch_sleeper
+        _sleeper_data = _fetch_sleeper(sport) if sport == "MLB" else []
+    except Exception as _sl_err:
+        _sleeper_data = []
+        print(f"[WARN] fetch_sleeper_scoreboard({sport}): {_sl_err}")
+    st.session_state[f"sleeper_data_{sport}"] = _sleeper_data
+
+    # ── NumberFire direct widgets — same pattern. Function itself only has
+    # a real URL for NFL/NBA (per its own docstring/url_map) and returns {}
+    # for everything else already, so this gate is just belt-and-suspenders
+    # against a wasted network call for sports it can't serve.
+    try:
+        from fetchers import fetch_numberfire_direct as _fetch_numberfire
+        _numberfire_data = _fetch_numberfire(sport) if sport in ("NFL", "NBA") else {}
+    except Exception as _nf_err:
+        _numberfire_data = {}
+        print(f"[WARN] fetch_numberfire_direct({sport}): {_nf_err}")
+    st.session_state[f"numberfire_data_{sport}"] = _numberfire_data
+
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
         games, is_playoff, home_teams, away_teams = _game_lines_result
