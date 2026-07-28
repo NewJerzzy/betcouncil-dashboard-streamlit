@@ -12,19 +12,11 @@ jobs:
     steps:
       - name: DIAGNOSTIC - test raw DNS resolution
         run: |
-          echo "=== nslookup ==="
-          nslookup www.oddsshark.com || echo "nslookup failed"
-          echo "=== dig via 8.8.8.8 ==="
-          dig @8.8.8.8 www.oddsshark.com || echo "dig failed"
-          echo "=== curl -v to a different known-working site for comparison ==="
-          curl -s -o /dev/null -w "google.com: %{http_code}\n" https://www.google.com --max-time 10
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install dependencies
-        run: pip install requests beautifulsoup4
-      - name: Run OddsShark consensus scraper
-        env:
-          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN_2 }}
-        run: python scripts/oddsshark_refresh.py
+          DNS1=$(getent hosts www.oddsshark.com 2>&1 | tr '\n' ' ' || echo "getent failed")
+          DNS2=$(nslookup www.oddsshark.com 8.8.8.8 2>&1 | tr '\n' ' ')
+          GOOGLE=$(curl -s -o /dev/null -w "%{http_code}" https://www.google.com --max-time 10)
+          DIRECT=$(curl -s -o /dev/null -w "%{http_code}" https://www.oddsshark.com/mlb/consensus-picks --max-time 10 2>&1)
+          echo "::notice title=DNS1::$DNS1"
+          echo "::notice title=DNS2 (via 8.8.8.8)::$DNS2"
+          echo "::notice title=GoogleTest::$GOOGLE"
+          echo "::notice title=DirectCurl::$DIRECT"
