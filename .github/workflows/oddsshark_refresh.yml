@@ -12,11 +12,13 @@ jobs:
     steps:
       - name: DIAGNOSTIC - test raw DNS resolution
         run: |
-          DNS1=$(getent hosts www.oddsshark.com 2>&1 | tr '\n' ' ' || echo "getent failed")
-          DNS2=$(nslookup www.oddsshark.com 8.8.8.8 2>&1 | tr '\n' ' ')
-          GOOGLE=$(curl -s -o /dev/null -w "%{http_code}" https://www.google.com --max-time 10)
-          DIRECT=$(curl -s -o /dev/null -w "%{http_code}" https://www.oddsshark.com/mlb/consensus-picks --max-time 10 2>&1)
+          set +e
+          DNS1=$(getent hosts www.oddsshark.com 2>&1 | tr '\n' ' ')
+          GOOGLE=$(curl -s -o /dev/null -w "%{http_code}" https://www.google.com --max-time 10 2>&1)
+          DIRECT_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://www.oddsshark.com/mlb/consensus-picks --max-time 10 2>&1)
+          DIRECT_ERR=$(curl -s https://www.oddsshark.com/mlb/consensus-picks --max-time 10 2>&1 | head -c 100)
           echo "::notice title=DNS1::$DNS1"
-          echo "::notice title=DNS2 (via 8.8.8.8)::$DNS2"
-          echo "::notice title=GoogleTest::$GOOGLE"
-          echo "::notice title=DirectCurl::$DIRECT"
+          echo "::notice title=GoogleTest::HTTP $GOOGLE"
+          echo "::notice title=DirectCurlCode::HTTP $DIRECT_CODE"
+          echo "::notice title=DirectCurlErr::$DIRECT_ERR"
+          exit 0
