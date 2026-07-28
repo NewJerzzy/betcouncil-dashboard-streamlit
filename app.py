@@ -3794,6 +3794,39 @@ with tabs[3]:
                     for _n in _lt_notes[:6]:
                         st.caption(f"• {_n}")
 
+        # Smarkets real betting-exchange prices -- a real, independent
+        # money-backed probability (like Kalshi/Polymarket, which already
+        # show elsewhere in this section), not a bookmaker's posted line.
+        # MLB only, matching current real coverage. event_name is a single
+        # "Team A at Team B" string here rather than separate away/home
+        # fields, so matched differently than the other sources above.
+        _smk_game = None
+        if _gsport.upper() == "MLB":
+            try:
+                _smk_data = load_from_gist("smarkets_game_lines_MLB", None) or {}
+                for _smk_g in _smk_data.get("games", []):
+                    _smk_evt = _smk_g.get("event_name", "")
+                    if _smk_evt and _home_nm and _away_nm and (
+                        _home_nm.split()[-1].lower() in _smk_evt.lower() and
+                        _away_nm.split()[-1].lower() in _smk_evt.lower()
+                    ):
+                        _smk_game = _smk_g
+                        break
+            except Exception:
+                _smk_game = None
+        if _smk_game:
+            _smk_ml_market = next((m for m in _smk_game.get("markets", []) if m.get("market_type") == "WINNER_2_WAY"), None)
+            if _smk_ml_market:
+                _smk_parts = []
+                for _c in _smk_ml_market.get("contracts", []):
+                    if _c.get("american_odds") is not None and _c.get("implied_pct") is not None:
+                        try:
+                            _smk_parts.append(f"{_c.get('name','')} {int(_c['american_odds']):+d} ({_c['implied_pct']:.1f}% implied)")
+                        except (TypeError, ValueError):
+                            pass
+                if _smk_parts:
+                    st.caption(f"🔄 Smarkets exchange: {' vs '.join(_smk_parts)}")
+
         if _sleeper_game:
             _sl_away, _sl_home = _sleeper_game.get("away", {}), _sleeper_game.get("home", {})
             _sl_score_txt = None
