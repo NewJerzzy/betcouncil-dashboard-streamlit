@@ -3724,6 +3724,43 @@ with tabs[3]:
         except Exception:
             _osk_game = None
 
+        # AreYouWatchingThis multi-book moneyline feed -- real per-book
+        # prices (DraftKings/FanDuel/MGM/Kalshi/Novig/Polymarket/etc, not
+        # just consensus %), was captured but never shown anywhere. Finds
+        # the best real moneyline price across all listed books for each
+        # side of this specific game.
+        _ayw_best = None
+        try:
+            _ayw_data = load_from_gist(f"areyouwatchingthis_{_gsport.upper()}", None) or {}
+            for _ayw_g in _ayw_data.get("games", []):
+                _ayw_t1 = f"{_ayw_g.get('team1_city','')} {_ayw_g.get('team1_name','')}".strip()
+                _ayw_t2 = f"{_ayw_g.get('team2_city','')} {_ayw_g.get('team2_name','')}".strip()
+                if _ayw_t1 and _ayw_t2 and _home_nm and _away_nm and (
+                    (_ayw_t1.lower() in _home_nm.lower() or _home_nm.lower() in _ayw_t1.lower() or
+                     _ayw_g.get("team1_initials","").lower() == _home_nm.lower()[:3]) or
+                    (_ayw_t2.lower() in _home_nm.lower() or _home_nm.lower() in _ayw_t2.lower() or
+                     _ayw_g.get("team2_initials","").lower() == _home_nm.lower()[:3])
+                ):
+                    _ayw_providers = [p for p in _ayw_g.get("providers", []) if p.get("provider") != "CONSENSUS"]
+                    if _ayw_providers:
+                        _best_1 = max(_ayw_providers, key=lambda p: p.get("moneyline_1_american", -9999) or -9999)
+                        _best_2 = max(_ayw_providers, key=lambda p: p.get("moneyline_2_american", -9999) or -9999)
+                        _ayw_best = {
+                            "team1_book": _best_1.get("provider"), "team1_price": _best_1.get("moneyline_1_american"),
+                            "team2_book": _best_2.get("provider"), "team2_price": _best_2.get("moneyline_2_american"),
+                            "n_books": len(_ayw_providers),
+                        }
+                    break
+        except Exception:
+            _ayw_best = None
+        if _ayw_best and _ayw_best.get("team1_price") is not None and _ayw_best.get("team2_price") is not None:
+            try:
+                st.caption(f"💰 Best ML price across {_ayw_best['n_books']} books: "
+                           f"{int(_ayw_best['team2_price']):+d} ({_ayw_best['team2_book'].replace('_',' ').title()}) / "
+                           f"{int(_ayw_best['team1_price']):+d} ({_ayw_best['team1_book'].replace('_',' ').title()})")
+            except (TypeError, ValueError):
+                pass
+
         if _sleeper_game:
             _sl_away, _sl_home = _sleeper_game.get("away", {}), _sleeper_game.get("home", {})
             _sl_score_txt = None
