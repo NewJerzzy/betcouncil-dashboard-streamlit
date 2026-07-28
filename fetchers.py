@@ -15811,8 +15811,6 @@ HARVESTER_REGISTRY = {
     # since they share one push timestamp, not BetMGM specifically.
     "betmgm":          ("auto_scraped_props.json",                   90, "lines"),
     "action_network":  ("betcouncil_actionnetwork_{sport}.json",     40, "signal"),
-    "covers":          ("betcouncil_covers_{sport}.json",            20, "signal"),
-    "dk_props":        ("betcouncil_dk_props_{sport}.json",          20, "props"),
     # Unabated: confirmed 2026-07-28 the real script (scripts/unabated_refresh.py)
     # writes betcouncil_unabated_props_mlb.json / betcouncil_unabated_lines_mlb.json
     # -- lowercase sport, "_props_"/"_lines_" in the name, and MLB-only right now
@@ -15820,8 +15818,6 @@ HARVESTER_REGISTRY = {
     # so this source was always reported dead regardless of its actual health
     # (verified alive: real fresh data, 8000 rows, ~2 hours old at time of fix).
     "unabated":        ("betcouncil_unabated_props_mlb.json",        90, "sharp"),
-    "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
-    "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
     "underdog":        ("betcouncil_underdog_{sport}.json",          20, "props"),
     # bovada: confirmed 2026-07-28 the real active source is
@@ -15837,7 +15833,6 @@ HARVESTER_REGISTRY = {
     # betcouncil_mybookie_{sport}.json entry here, which reported this
     # source dead despite it being genuinely alive.
     "mybookie":        ("betcouncil_mybookie_ssr_{sport}.json",       90, "lines"),
-    "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
     # bet365: confirmed 2026-07-28 the real active source is
     # scripts/oddsapiio_bet365_refresh.py ->
     # betcouncil_oddsapiio_bet365_{sport}.json (50 min old) -- the old
@@ -15847,13 +15842,7 @@ HARVESTER_REGISTRY = {
     # simply missing), confirmed via the real script scripts/thescore_scores_refresh.py
     # which writes betcouncil_thescore_scores_{sport}.json (uppercase sport).
     "thescore":        ("betcouncil_thescore_scores_{sport}.json",   90, "lines"),
-    "pregame":         ("betcouncil_pregame_{sport}.json",           30, "signal"),
-    "fantasylabs":     ("betcouncil_fantasylabs_{sport}.json",       30, "signal"),
-    "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
-    "sleeper":         ("betcouncil_sleeper_{sport}.json",           30, "signal"),
-    "numberfire":      ("betcouncil_numberfire_{sport}.json",        30, "signal"),
     "sportsinsights":  ("betcouncil_sportsinsights_{sport}.json",    15, "signal"),
-    "oddsshark":       ("betcouncil_oddsshark_{sport}.json",         20, "signal"),
     "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
     "bettingpros":     ("betcouncil_bettingpros_{sport}.json",       20, "signal"),
@@ -15889,11 +15878,10 @@ HARVESTER_DISPLAY_NAMES = {
     "evsharps": "EV Sharps (Pinnacle/Circa benchmark)",
     "evsharps_ev": "EV Sharps EV feed",
     "unabated": "Unabated (sharp line consensus)",
-    "oddsjam": "OddsJam (sharp line consensus)",
     "evbets": "EV Bets (sharp line feed)",
     "evbets_props": "EV Bets props feed",
     "betmgm": "BetMGM", "bovada": "Bovada", "mybookie": "MyBookie",
-    "dk_props": "DraftKings props", "underdog": "Underdog",
+    "underdog": "Underdog",
     "prizepicks": "PrizePicks", "pick6": "DK Pick6",
     "caesars": "Caesars",
 }
