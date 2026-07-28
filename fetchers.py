@@ -76,7 +76,7 @@ try:
         _ATP_GRAND_SLAMS, _SLAM_SURFACE,
         _UFC_WEIGHTCLASS_BASELINES, _UFC_ROUND_DEFAULT, _UFC_CHAMPIONSHIP_ROUNDS,
         DFF_HEADERS, DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP,
-        ODDS_API_BASE, ODDS_API_KEY, ODDSPAPI_KEY, REQUEST_TIMEOUT,
+        ODDS_API_BASE, ODDS_API_KEY, ODDS_API_KEY_GAMES, ODDSPAPI_KEY, REQUEST_TIMEOUT,
         SCRAPEOPS_KEY, GITHUB_TOKEN, GITHUB_GIST_ID,
         ACTION_NETWORK_SPORT_MAP, ACTION_NETWORK_LEAGUE_IDS,
         ACTION_NETWORK_PROP_TYPE_MAP, ODDS_API_SPORT_MAP,
@@ -8379,13 +8379,13 @@ def fetch_odds_api_game_lines(sport):
         return sbr_games, sbr_home, sbr_away
 
     # ── OddsAPI fallback (requires key + remaining budget) ──
-    if not ODDS_API_KEY:
-        print("[ODDS_API] ODDS_API_KEY not set — OddsAPI game lines skipped")
+    if not ODDS_API_KEY_GAMES:
+        print("[ODDS_API] ODDS_API_KEY_GAMES not set — OddsAPI game lines skipped")
         return [], {}, {}
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return [], {}, {}
-    allowed, reason = api_budget_check("ODDS_API")
+    allowed, reason = api_budget_check("ODDS_API_GAMES")
     if not allowed:
         print(f"[ODDS_API] budget check blocked game lines for {sport}: {reason}")
         return [], {}, {}
@@ -8394,13 +8394,13 @@ def fetch_odds_api_game_lines(sport):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 60:
             return _safe_load_pkl(cache_path)
-    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API", amount=60)  # 10 x 3 markets x 2 regions
+        api_budget_increment("ODDS_API_GAMES", amount=60)  # 10 x 3 markets x 2 regions
         if resp.status_code != 200:
             print(f"[ODDS_API] game lines HTTP {resp.status_code} for {sport} — "
-                  f"{'ODDS_API_KEY invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
+                  f"{'ODDS_API_KEY_GAMES invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
             return [], {}, {}
         events = resp.json()
         games = []
