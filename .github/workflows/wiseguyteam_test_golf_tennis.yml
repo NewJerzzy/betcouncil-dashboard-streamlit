@@ -9,14 +9,11 @@ jobs:
     steps:
       - name: Test golf and tennis sport params directly
         run: |
-          echo "=== golf ==="
-          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=golf" | head -c 1500
-          echo ""
-          echo "=== tennis ==="
-          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=tennis" | head -c 1500
-          echo ""
-          echo "=== pga (alt name) ==="
-          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=pga" | head -c 500
-          echo ""
-          echo "=== atp (alt name) ==="
-          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=atp" | head -c 500
+          GOLF=$(curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=golf" | head -c 300 | tr '\n' ' ')
+          TENNIS=$(curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=tennis" | head -c 300 | tr '\n' ' ')
+          PGA=$(curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=pga" | head -c 200 | tr '\n' ' ')
+          ATP=$(curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=atp" | head -c 200 | tr '\n' ' ')
+          echo "::notice title=GOLF::$GOLF"
+          echo "::notice title=TENNIS::$TENNIS"
+          echo "::notice title=PGA::$PGA"
+          echo "::notice title=ATP::$ATP"
