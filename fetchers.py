@@ -6384,6 +6384,42 @@ def fetch_underdog_props(sport):
                     return cached
             except (ValueError, KeyError, TypeError, AttributeError):
                 pass
+
+    props = _fetch_underdog_live(sport, sport_id)
+
+    if not props:
+        # Live direct-API call failed/returned nothing (this fails silently
+        # and often, confirmed 2026-07-28 -- the previous code just returned
+        # [] here with zero diagnostics). Fall back to the separate scheduled
+        # Gist harvester (scripts/underdog_refresh.py). Checked first rather
+        # than assumed: that harvester does NOT save the raw live-API shape
+        # -- it saves an already-simplified {player_id, stat_type,
+        # stat_value, title} form per line, confirmed against the real
+        # current Gist file before writing this, so it needs its own
+        # parser (_parse_underdog_gist_fallback below), not a reuse of
+        # _parse_underdog_raw. Real, working data as of this fix: confirmed
+        # 1,820 real MLB props parsed correctly from the live Gist file
+        # when the live path had nothing to show for it.
+        try:
+            gist_raw = load_from_gist(f"underdog_{sport}", None)
+            if gist_raw and isinstance(gist_raw.get("data"), dict):
+                props = _parse_underdog_gist_fallback(gist_raw["data"], sport)
+        except Exception:
+            pass
+
+    if props:
+        try:
+            with open(cache_path, "wb") as _f:
+                pickle.dump(props, _f)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
+    return props
+
+
+def _fetch_underdog_live(sport, sport_id):
+    """The original direct-to-Underdog live API call, factored out so
+    fetch_underdog_props() above can cleanly fall back to the Gist
+    harvester when this returns nothing."""
     # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
     product_exp_id = "018e1234-5678-9abc-def0-123456789006"
     state_config_id = "725014ef-3570-4e93-871d-d69674ab3521"
@@ -6407,130 +6443,159 @@ def fetch_underdog_props(sport):
         if resp.status_code != 200:
             return []
         data = resp.json()
-        props = []
-        seen = set()
-
-        # Detect v1 vs v2 response
-        # v1 has "suggested_picks" wrapper, v2 has flat "over_under_lines" list
-        is_v1 = "suggested_picks" in data
-        sp = data["suggested_picks"] if is_v1 else data
-
-        # Players: dict (v1) or list (v2)
-        players_dict = sp.get("players", {})
-        if isinstance(players_dict, dict):
-            players_map = {pid: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
-                          for pid, p in players_dict.items()}
-        elif isinstance(players_dict, list):
-            players_map = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
-                          for p in players_dict if isinstance(p, dict) and "id" in p}
-        else:
-            players_map = {}
-
-        # Appearances: dict (v1) or list (v2)
-        appearances_dict = sp.get("appearances", {})
-        if isinstance(appearances_dict, dict):
-            appearances_map = {aid: a.get("player_id","") for aid, a in appearances_dict.items()}
-        elif isinstance(appearances_dict, list):
-            appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict if isinstance(a, dict)}
-        else:
-            appearances_map = {}
-
-        # over_under_lines: dict (v1) or list (v2)
-        oul = sp.get("over_under_lines", {})
-        if isinstance(oul, dict):
-            lines_list = list(oul.values())
-        elif isinstance(oul, list):
-            lines_list = oul
-        else:
-            lines_list = []
-
-        # Filter by sport
-        sport_id = sport.upper()
-        teams_dict = sp.get("teams", {})
-        games_dict = sp.get("games", {})
-
-        for line in lines_list:
-            if line.get("status","") == "closed":
-                continue
-
-            line_val = line.get("stat_value")
-            if line_val is None:
-                continue
-
-            # Get player name from options[0].selection_header (most reliable)
-            options = line.get("options", [])
-            if options:
-                opt = options[0]
-                name = opt.get("selection_header","").strip()
-                stat_name = opt.get("stat_display","").strip()
-                if not stat_name:
-                    stat_name = opt.get("selection_subheader","").split(" ", 2)[-1] if opt.get("selection_subheader") else ""
-            else:
-                # Fallback: use over_under.appearance_stat
-                ou = line.get("over_under", {})
-                app_stat = ou.get("appearance_stat", {})
-                app_id = app_stat.get("appearance_id","")
-                player_id = appearances_map.get(app_id,"")
-                name = players_map.get(player_id,"")
-                stat_name = app_stat.get("display_stat","")
-
-            if not name or not stat_name:
-                continue
-
-            # Sport filter: check player sport via appearances/games
-            ou = line.get("over_under", {})
-            app_stat = ou.get("appearance_stat", {})
-            app_id = app_stat.get("appearance_id","")
-            app_data = appearances_dict.get(app_id, {}) if isinstance(appearances_dict, dict) else {}
-            match_id = str(app_data.get("match_id",""))
-            game = games_dict.get(match_id, {}) if isinstance(games_dict, dict) else {}
-            game_sport = game.get("sport_id","")
-
-            if game_sport and game_sport.upper() != sport_id:
-                continue
-
-            key = (sport, name, stat_name, line_val)
-            if key in seen:
-                continue
-            seen.add(key)
-            props.append({
-                "Player": name,
-                "Prop": stat_name,
-                "Line": float(line_val),
-                "Side": "OVER",
-                "Sport": sport,
-                "source": "Underdog",
-                "Book": "Underdog",
-            })
-
-        if not props and lines_list:
-            # If sport filter removed everything, return without filter
-            for line in lines_list[:50]:
-                if line.get("status","") == "closed":
-                    continue
-                line_val = line.get("stat_value")
-                options = line.get("options", [])
-                if options and line_val:
-                    opt = options[0]
-                    name = opt.get("selection_header","").strip()
-                    stat_name = opt.get("stat_display","").strip()
-                    if name and stat_name:
-                        key = (sport, name, stat_name, line_val)
-                        if key not in seen:
-                            seen.add(key)
-                            props.append({"Player": name, "Prop": stat_name,
-                                        "Line": float(line_val), "Side": "OVER",
-                                        "Sport": sport, "source": "Underdog", "Book": "Underdog"})
-        if props:
-            try:
-                with open(cache_path, "wb") as _f:
-                    pickle.dump(props, _f)
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
-        return props
+        return _parse_underdog_raw(data, sport, sport_id)
     except (IOError, ValueError) as e:
         print(f"Underdog props error: {e}")
         return []
+
+
+def _parse_underdog_raw(data, sport, sport_id):
+    """Parse a raw Underdog API response (v1 or v2 shape) into the
+    standard props list. Shared by the live fetch path and the Gist
+    fallback below -- the harvester script saves this exact raw shape,
+    so both paths reuse the same parsing logic rather than duplicating it."""
+    props = []
+    seen = set()
+
+    # Detect v1 vs v2 response
+    # v1 has "suggested_picks" wrapper, v2 has flat "over_under_lines" list
+    is_v1 = "suggested_picks" in data
+    sp = data["suggested_picks"] if is_v1 else data
+
+    # Players: dict (v1) or list (v2)
+    players_dict = sp.get("players", {})
+    if isinstance(players_dict, dict):
+        players_map = {pid: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+                      for pid, p in players_dict.items()}
+    elif isinstance(players_dict, list):
+        players_map = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+                      for p in players_dict if isinstance(p, dict) and "id" in p}
+    else:
+        players_map = {}
+
+    # Appearances: dict (v1) or list (v2)
+    appearances_dict = sp.get("appearances", {})
+    if isinstance(appearances_dict, dict):
+        appearances_map = {aid: a.get("player_id","") for aid, a in appearances_dict.items()}
+    elif isinstance(appearances_dict, list):
+        appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict if isinstance(a, dict)}
+    else:
+        appearances_map = {}
+
+    # over_under_lines: dict (v1) or list (v2)
+    oul = sp.get("over_under_lines", {})
+    if isinstance(oul, dict):
+        lines_list = list(oul.values())
+    elif isinstance(oul, list):
+        lines_list = oul
+    else:
+        lines_list = []
+
+    # Filter by sport
+    sport_id = sport.upper()
+    teams_dict = sp.get("teams", {})
+    games_dict = sp.get("games", {})
+
+    for line in lines_list:
+        if line.get("status","") == "closed":
+            continue
+
+        line_val = line.get("stat_value")
+        if line_val is None:
+            continue
+
+        # Get player name from options[0].selection_header (most reliable)
+        options = line.get("options", [])
+        if options:
+            opt = options[0]
+            name = opt.get("selection_header","").strip()
+            stat_name = opt.get("stat_display","").strip()
+            if not stat_name:
+                stat_name = opt.get("selection_subheader","").split(" ", 2)[-1] if opt.get("selection_subheader") else ""
+        else:
+            # Fallback: use over_under.appearance_stat
+            ou = line.get("over_under", {})
+            app_stat = ou.get("appearance_stat", {})
+            app_id = app_stat.get("appearance_id","")
+            player_id = appearances_map.get(app_id,"")
+            name = players_map.get(player_id,"")
+            stat_name = app_stat.get("display_stat","")
+
+        if not name or not stat_name:
+            continue
+
+        # Sport filter: check player sport via appearances/games
+        ou = line.get("over_under", {})
+        app_stat = ou.get("appearance_stat", {})
+        app_id = app_stat.get("appearance_id","")
+        app_data = appearances_dict.get(app_id, {}) if isinstance(appearances_dict, dict) else {}
+        match_id = str(app_data.get("match_id",""))
+        game = games_dict.get(match_id, {}) if isinstance(games_dict, dict) else {}
+        game_sport = game.get("sport_id","")
+
+        if game_sport and game_sport.upper() != sport_id:
+            continue
+
+        key = (sport, name, stat_name, line_val)
+        if key in seen:
+            continue
+        seen.add(key)
+        props.append({
+            "Player": name,
+            "Prop": stat_name,
+            "Line": float(line_val),
+            "Side": "OVER",
+            "Sport": sport,
+            "source": "Underdog",
+            "Book": "Underdog",
+        })
+
+    if not props and lines_list:
+        # If sport filter removed everything, return without filter
+        for line in lines_list[:50]:
+            if line.get("status","") == "closed":
+                continue
+            line_val = line.get("stat_value")
+            options = line.get("options", [])
+            if options and line_val:
+                opt = options[0]
+                name = opt.get("selection_header","").strip()
+                stat_name = opt.get("stat_display","").strip()
+                if name and stat_name:
+                    key = (sport, name, stat_name, line_val)
+                    if key not in seen:
+                        seen.add(key)
+                        props.append({"Player": name, "Prop": stat_name,
+                                    "Line": float(line_val), "Side": "OVER",
+                                    "Sport": sport, "source": "Underdog", "Book": "Underdog"})
+    return props
+
+
+def _parse_underdog_gist_fallback(data, sport):
+    """Parse the Underdog harvester's saved shape (scripts/underdog_refresh.py)
+    -- confirmed via the real live Gist file to be a simplified
+    {player_id, stat_type, stat_value, title} form per over_under_lines
+    entry, NOT the same raw shape the live API parser above handles.
+    Deliberately much simpler than _parse_underdog_raw since this shape
+    has already had the player-name/appearance lookups done upstream by
+    the harvester script itself."""
+    props = []
+    for line in data.get("over_under_lines", []) or []:
+        name = line.get("title", "")
+        stat_name = line.get("stat_type", "")
+        line_val = line.get("stat_value")
+        if not name or not stat_name or line_val is None:
+            continue
+        try:
+            line_val = float(line_val)
+        except (TypeError, ValueError):
+            continue
+        props.append({
+            "Player": name, "Prop": stat_name, "Line": line_val, "Side": "OVER",
+            "Sport": sport, "source": "Underdog", "Book": "Underdog",
+        })
+    return props
+
 
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
