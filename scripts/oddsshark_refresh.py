@@ -49,6 +49,8 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml",
 }
 
+SCRAPEOPS_KEY = os.environ.get("SCRAPEOPS_KEY", "")
+
 DEBUG_LOG: list = []
 
 
@@ -59,18 +61,40 @@ def log(msg: str) -> None:
 
 def fetch_page(sport_slug: str):
     url = f"https://www.oddsshark.com/{sport_slug}/consensus-picks"
+    # Confirmed via live workflow testing 2026-07-28: GitHub Actions
+    # runners cannot reach oddsshark.com at all (HTTP 000, DNS/connection
+    # failure), while general connectivity is fine (google.com returns
+    # 200 from the same runner) -- almost certainly a bot-protection
+    # block on their CDN targeting known cloud-datacenter IP ranges. A
+    # direct fetch is attempted first in case that block is ever lifted,
+    # then falls back to the same ScrapeOps residential-proxy route
+    # already used elsewhere in this app for exactly this class of block.
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            DEBUG_LOG.append({"url": url, "method": "direct", "status": r.status_code, "bytes": len(r.text)})
+            return r.text
+        DEBUG_LOG.append({"url": url, "method": "direct", "status": r.status_code})
     except Exception as e:
-        DEBUG_LOG.append({"url": url, "error": str(e)})
+        DEBUG_LOG.append({"url": url, "method": "direct", "error": str(e)[:200]})
+
+    if not SCRAPEOPS_KEY:
+        DEBUG_LOG.append({"url": url, "method": "scrapeops", "error": "SCRAPEOPS_KEY not set"})
         return None
-    DEBUG_LOG.append({
-        "url": url, "status": r.status_code, "bytes": len(r.text),
-        "body_snippet": r.text[:1200],
-    })
-    if r.status_code != 200:
+    try:
+        import urllib.parse
+        encoded = urllib.parse.quote(url, safe="")
+        r = requests.get(
+            f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=false",
+            timeout=30,
+        )
+        DEBUG_LOG.append({"url": url, "method": "scrapeops", "status": r.status_code, "bytes": len(r.text)})
+        if r.status_code != 200:
+            return None
+        return r.text
+    except Exception as e:
+        DEBUG_LOG.append({"url": url, "method": "scrapeops", "error": str(e)[:200]})
         return None
-    return r.text
 
 
 def parse_moneyline_table(soup, table):
