@@ -70,11 +70,16 @@
     XMLHttpRequest.prototype.send = function(...args) {
         if (this._bc_url && this._bc_url.includes('americanwagering.com')) {
             const auth = this._bc_headers && this._bc_headers['authorization'];
-            if (auth && auth.startsWith('Bearer ') && auth.length > 60) {
-                const bearer = auth.slice('Bearer '.length);
-                const waf    = this._bc_headers['x-aws-waf-token'] || '';
-                console.log('[BetCouncil] Captured Caesars Bearer token');
-                pushToGist(bearer, waf);
+            const waf  = (this._bc_headers && this._bc_headers['x-aws-waf-token']) || '';
+            const hasBearer = auth && auth.startsWith('Bearer ') && auth.length > 60;
+            // Confirmed via real live traffic 2026-07-28: many real Caesars
+            // API calls carry a valid x-aws-waf-token with NO Authorization
+            // header at all -- the old code required both, silently
+            // discarding a perfectly good WAF token on every such request.
+            // Push on EITHER being present, not requiring both.
+            if (hasBearer || waf) {
+                console.log(`[BetCouncil] Captured Caesars token(s) -- bearer=${hasBearer} waf=${!!waf}`);
+                pushToGist(hasBearer ? auth.slice('Bearer '.length) : '', waf);
             }
         }
         return origSend.call(this, ...args);
@@ -83,21 +88,27 @@
     // Also intercept fetch
     const origFetch = window.fetch;
     window.fetch = function(input, init, ...args) {
+        // Confirmed via real live traffic 2026-07-28: Caesars' app builds
+        // some fetch calls via `new Request(url, {headers})` instead of
+        // passing headers as this function's own second argument -- the
+        // old code only ever checked `init`, silently missing every
+        // request built that way. Check both.
         const url = typeof input === 'string' ? input : (input && input.url) || '';
-        if (url.includes('americanwagering.com') && init && init.headers) {
-            const headers = init.headers;
+        let headersSource = (init && init.headers) || (input instanceof Request ? input.headers : null);
+        if (url.includes('americanwagering.com') && headersSource) {
             let auth = '', waf = '';
-            if (headers instanceof Headers) {
-                auth = headers.get('authorization') || '';
-                waf  = headers.get('x-aws-waf-token') || '';
-            } else if (typeof headers === 'object') {
-                const h = Object.fromEntries(Object.entries(headers).map(([k,v]) => [k.toLowerCase(), v]));
+            if (headersSource instanceof Headers) {
+                auth = headersSource.get('authorization') || '';
+                waf  = headersSource.get('x-aws-waf-token') || '';
+            } else if (typeof headersSource === 'object') {
+                const h = Object.fromEntries(Object.entries(headersSource).map(([k,v]) => [k.toLowerCase(), v]));
                 auth = h['authorization'] || '';
                 waf  = h['x-aws-waf-token'] || '';
             }
-            if (auth.startsWith('Bearer ') && auth.length > 60) {
-                console.log('[BetCouncil] Captured Caesars Bearer (fetch)');
-                pushToGist(auth.slice('Bearer '.length), waf);
+            const hasBearer = auth.startsWith('Bearer ') && auth.length > 60;
+            if (hasBearer || waf) {
+                console.log(`[BetCouncil] Captured Caesars token(s) (fetch) -- bearer=${hasBearer} waf=${!!waf}`);
+                pushToGist(hasBearer ? auth.slice('Bearer '.length) : '', waf);
             }
         }
         return origFetch.call(this, input, init, ...args);
