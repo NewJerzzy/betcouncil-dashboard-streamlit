@@ -8397,7 +8397,7 @@ def fetch_odds_api_game_lines(sport):
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API_GAMES", amount=60)  # 10 x 3 markets x 2 regions
+        api_budget_increment("ODDS_API_GAMES", amount=6)  # verified formula: 3 markets x 2 regions (no per-event multiplier on the live endpoint -- that only applies to the separate historical/snapshot endpoint)
         if resp.status_code != 200:
             print(f"[ODDS_API] game lines HTTP {resp.status_code} for {sport} — "
                   f"{'ODDS_API_KEY_GAMES invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
@@ -8472,12 +8472,12 @@ def fetch_preview_game_lines(sport):
     # real game date instead of hardcoding date.today(). Cached separately
     # from the live board's cache so it never collides with or overwrites
     # today's board state.
-    if not ODDS_API_KEY:
+    if not ODDS_API_KEY_GAMES:
         return []
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return []
-    allowed, reason = api_budget_check("ODDS_API")
+    allowed, reason = api_budget_check("ODDS_API_GAMES")
     if not allowed:
         print(f"[ODDS_API] budget check blocked preview lines for {sport}: {reason}")
         return []
@@ -8486,10 +8486,10 @@ def fetch_preview_game_lines(sport):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 60:
             return _safe_load_pkl(cache_path)
-    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API", amount=60)  # 10 x 3 markets x 2 regions
+        api_budget_increment("ODDS_API_GAMES", amount=6)  # verified formula: 3 markets x 2 regions
         if resp.status_code != 200:
             print(f"[ODDS_API] preview lines HTTP {resp.status_code} for {sport}")
             return []
