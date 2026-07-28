@@ -3661,6 +3661,26 @@ with tabs[3]:
         _cov_data = st.session_state.get("covers_consensus", [])
         _home_nm, _away_nm = _g.get("home", ""), _g.get("away", "")
 
+        # Match WiseGuyTeam sharp-report data to this game -- a second,
+        # independent public-tickets-vs-money source alongside Action
+        # Network, fed into the exact same _ml_public/_ml_sharp etc lists
+        # below so it flows through the existing consensus verdict rather
+        # than creating a separate, redundant display.
+        _wgt_game = None
+        try:
+            _wgt_data = load_from_gist(f"wiseguyteam_{_gsport.upper()}", None) or {}
+            for _wg in _wgt_data.get("games", []):
+                _wg_home, _wg_away = _wg.get("home_team", ""), _wg.get("away_team", "")
+                if _wg_home and _wg_away and _home_nm and _away_nm and (
+                    _wg_home.lower() in _home_nm.lower() or _home_nm.lower() in _wg_home.lower()
+                ) and (
+                    _wg_away.lower() in _away_nm.lower() or _away_nm.lower() in _wg_away.lower()
+                ):
+                    _wgt_game = _wg
+                    break
+        except Exception:
+            _wgt_game = None
+
         # Match Covers data to this game
         _cov_game = None
         if isinstance(_cov_data, dict):
@@ -3814,6 +3834,18 @@ with tabs[3]:
                     (_ml_sharp if _vsin_sig.get("confirms") else _ml_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig.get("confirms") else "opposite of model", _vsin_sig["note"])
                     )
+                if _wgt_game and _wgt_game.get("ml"):
+                    _wgt_ml = _wgt_game["ml"]
+                    _wgt_s1, _wgt_s2 = _wgt_ml.get("side1", {}), _wgt_ml.get("side2", {})
+                    if _wgt_s1.get("bet_pct") is not None:
+                        _wgt_pub_side = _away_nm if _wgt_s1.get("bet_pct", 0) > _wgt_s2.get("bet_pct", 0) else _home_nm
+                        _wgt_pub_pct = max(_wgt_s1.get("bet_pct", 0), _wgt_s2.get("bet_pct", 0))
+                        _ml_public.append(("WiseGuyTeam tickets", _wgt_pub_side, f"{_wgt_pub_pct}% of bets"))
+                    if _wgt_ml.get("sharp_side"):
+                        _wgt_sharp_side = _away_nm if _wgt_ml["sharp_side"] == "side1" else _home_nm
+                        _wgt_sharp_d = _wgt_s1 if _wgt_ml["sharp_side"] == "side1" else _wgt_s2
+                        _ml_sharp.append(("WiseGuyTeam money", _wgt_sharp_side,
+                                          f"{_wgt_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_sharp_d.get('bet_pct','?')}% of bets"))
                 _consensus_verdict("Moneyline", _ml_public, _ml_sharp)
 
                 # -- Spread: Action Network spread tickets/money + steam on spread
@@ -3834,6 +3866,17 @@ with tabs[3]:
                     (_sp_sharp if _vsin_sig_sp.get("confirms") else _sp_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig_sp.get("confirms") else "opposite of model", _vsin_sig_sp["note"])
                     )
+                if _wgt_game and _wgt_game.get("spread"):
+                    _wgt_sp = _wgt_game["spread"]
+                    _wgt_sp1, _wgt_sp2 = _wgt_sp.get("side1", {}), _wgt_sp.get("side2", {})
+                    if _wgt_sp1.get("bet_pct") is not None:
+                        _wgt_sp_pub_side = _away_nm if _wgt_sp1.get("bet_pct", 0) > _wgt_sp2.get("bet_pct", 0) else _home_nm
+                        _sp_public.append(("WiseGuyTeam tickets", _wgt_sp_pub_side, f"{max(_wgt_sp1.get('bet_pct',0), _wgt_sp2.get('bet_pct',0))}% of bets"))
+                    if _wgt_sp.get("sharp_side"):
+                        _wgt_sp_sharp_side = _away_nm if _wgt_sp["sharp_side"] == "side1" else _home_nm
+                        _wgt_sp_sharp_d = _wgt_sp1 if _wgt_sp["sharp_side"] == "side1" else _wgt_sp2
+                        _sp_sharp.append(("WiseGuyTeam money", _wgt_sp_sharp_side,
+                                          f"{_wgt_sp_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_sp_sharp_d.get('bet_pct','?')}% of bets"))
                 _consensus_verdict("Spread", _sp_public, _sp_sharp)
 
                 # -- Total: Action Network total tickets/money + steam on total
@@ -3857,6 +3900,17 @@ with tabs[3]:
                     (_tot_sharp if _vsin_sig_tot.get("confirms") else _tot_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig_tot.get("confirms") else "opposite of model", _vsin_sig_tot["note"])
                     )
+                if _wgt_game and _wgt_game.get("total"):
+                    _wgt_tot = _wgt_game["total"]
+                    _wgt_t1, _wgt_t2 = _wgt_tot.get("side1", {}), _wgt_tot.get("side2", {})
+                    if _wgt_t1.get("bet_pct") is not None:
+                        _wgt_tot_pub_side = "Over" if _wgt_t1.get("bet_pct", 0) > _wgt_t2.get("bet_pct", 0) else "Under"
+                        _tot_public.append(("WiseGuyTeam tickets", _wgt_tot_pub_side, f"{max(_wgt_t1.get('bet_pct',0), _wgt_t2.get('bet_pct',0))}% of bets"))
+                    if _wgt_tot.get("sharp_side"):
+                        _wgt_tot_sharp_side = "Over" if _wgt_tot["sharp_side"] == "side1" else "Under"
+                        _wgt_tot_sharp_d = _wgt_t1 if _wgt_tot["sharp_side"] == "side1" else _wgt_t2
+                        _tot_sharp.append(("WiseGuyTeam money", _wgt_tot_sharp_side,
+                                          f"{_wgt_tot_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_tot_sharp_d.get('bet_pct','?')}% of bets"))
                 _consensus_verdict("Total", _tot_public, _tot_sharp)
 
                 st.markdown("---")
