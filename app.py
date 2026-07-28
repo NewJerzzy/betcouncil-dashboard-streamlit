@@ -3761,6 +3761,39 @@ with tabs[3]:
             except (TypeError, ValueError):
                 pass
 
+        # LineTerminal real plain-language trend notes -- MLB only,
+        # matching this source's own real scope. Was captured but never
+        # shown anywhere. Matches by team name against the same
+        # _home_nm/_away_nm used elsewhere in this section.
+        _lt_matchup = None
+        if _gsport.upper() == "MLB":
+            try:
+                _lt_data = load_from_gist("lineterminal_pulse_MLB", None) or {}
+                for _lt_m in (_lt_data.get("data", {}) or {}).get("matchups", []):
+                    _lt_away_side = _lt_m.get("away", {})
+                    _lt_home_side = _lt_m.get("home", {})
+                    _lt_away_nm = _lt_away_side.get("teamName", "")
+                    _lt_home_nm = _lt_home_side.get("teamName", "")
+                    if _lt_away_nm and _lt_home_nm and _home_nm and _away_nm and (
+                        _lt_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _lt_home_nm.lower()
+                    ) and (
+                        _lt_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _lt_away_nm.lower()
+                    ):
+                        _lt_matchup = _lt_m
+                        break
+            except Exception:
+                _lt_matchup = None
+        if _lt_matchup:
+            _lt_notes = []
+            for _lt_side_key in ("away", "home"):
+                for _n in (_lt_matchup.get(_lt_side_key, {}) or {}).get("notes", [])[:2]:
+                    if _n.get("note"):
+                        _lt_notes.append(_n["note"])
+            if _lt_notes:
+                with st.expander(f"📋 LineTerminal trends ({len(_lt_notes)})", expanded=False):
+                    for _n in _lt_notes[:6]:
+                        st.caption(f"• {_n}")
+
         if _sleeper_game:
             _sl_away, _sl_home = _sleeper_game.get("away", {}), _sleeper_game.get("home", {})
             _sl_score_txt = None
