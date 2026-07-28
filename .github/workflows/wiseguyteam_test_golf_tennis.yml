@@ -1,0 +1,22 @@
+name: WGT Golf Tennis Test (diagnostic)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test golf and tennis sport params directly
+        run: |
+          echo "=== golf ==="
+          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=golf" | head -c 1500
+          echo ""
+          echo "=== tennis ==="
+          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=tennis" | head -c 1500
+          echo ""
+          echo "=== pga (alt name) ==="
+          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=pga" | head -c 500
+          echo ""
+          echo "=== atp (alt name) ==="
+          curl -s "https://inngest-worker.memberservice.workers.dev/sharp-report?sport=atp" | head -c 500
