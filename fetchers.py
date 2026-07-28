@@ -15824,11 +15824,25 @@ HARVESTER_REGISTRY = {
     "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
     "underdog":        ("betcouncil_underdog_{sport}.json",          20, "props"),
-    "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
+    # bovada: confirmed 2026-07-28 the real active source is
+    # scripts/oddsapiio_bovada_props_refresh.py ->
+    # betcouncil_oddsapiio_bovada_props_{sport}.json (91 min old) -- the
+    # old betcouncil_bovada_{sport}.json entry never matched anything real.
+    "bovada":          ("betcouncil_oddsapiio_bovada_props_{sport}.json", 90, "lines"),
     "polymarket":      ("betcouncil_sharptrack_live.json",           30, "signal"),
-    "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
+    # mybookie: confirmed 2026-07-28 two real active sources exist
+    # (scripts/mybookie_refresh.py -> betcouncil_mybookie_ssr_{sport}.json,
+    # 80 min old; scripts/theoddsapi_mybookie_refresh.py -> a separate
+    # file, 195 min old) -- neither matches the old
+    # betcouncil_mybookie_{sport}.json entry here, which reported this
+    # source dead despite it being genuinely alive.
+    "mybookie":        ("betcouncil_mybookie_ssr_{sport}.json",       90, "lines"),
     "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
-    "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
+    # bet365: confirmed 2026-07-28 the real active source is
+    # scripts/oddsapiio_bet365_refresh.py ->
+    # betcouncil_oddsapiio_bet365_{sport}.json (50 min old) -- the old
+    # betcouncil_bet365_games.json entry never matched anything real.
+    "bet365":          ("betcouncil_oddsapiio_bet365_{sport}.json",   90, "lines"),
     # theScore: was never registered here at all (not a wrong filename --
     # simply missing), confirmed via the real script scripts/thescore_scores_refresh.py
     # which writes betcouncil_thescore_scores_{sport}.json (uppercase sport).
