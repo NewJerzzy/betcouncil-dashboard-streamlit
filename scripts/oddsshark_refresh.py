@@ -85,10 +85,10 @@ def fetch_page(sport_slug: str):
         import urllib.parse
         encoded = urllib.parse.quote(url, safe="")
         r = requests.get(
-            f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=false",
+            f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=true",
             timeout=30,
         )
-        DEBUG_LOG.append({"url": url, "method": "scrapeops", "status": r.status_code, "bytes": len(r.text)})
+        DEBUG_LOG.append({"url": url, "method": "scrapeops", "status": r.status_code, "bytes": len(r.text), "body_snippet": r.text[:400]})
         if r.status_code != 200:
             return None
         return r.text
