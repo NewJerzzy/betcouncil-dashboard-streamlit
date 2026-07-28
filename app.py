@@ -33,7 +33,7 @@ del _name_copy_guard
 # (each tab depends on variables computed by the ones before it in the same
 # script run) and wasn't safe to split blind in the same pass.
 
-tabs = st.tabs(["📋 Summary", "🆕 New Bettor", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack"])
+tabs = st.tabs(["📋 Summary", "🆕 New Bettor", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🔭 Market Scanner"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -11486,3 +11486,168 @@ with tabs[1]:
             )
     else:
         st.caption("Click the button above to scan today's boards and check them against the public sources.")
+
+
+with tabs[13]:
+    # ── Market Scanner ──────────────────────────────────────────────
+    # Cross-sport view: merges TODAY's latest board_snapshot per sport
+    # (the same real data source Spotlight History and the signal-
+    # backfill lookup already depend on) into one ranked list, since
+    # Full Board only ever shows one sport at a time. No new data
+    # source, no new infrastructure -- just a different lens on data
+    # that's already being saved every time a board loads.
+    #
+    # Distinct violet visual treatment (scoped to .ms-* classes only,
+    # doesn't touch the app-wide --bc-* blue palette used everywhere
+    # else) per the user's reference image -- a trading/crypto-screener
+    # look (Finviz/TradingView-style dense sortable table + glow cards),
+    # not the sports-betting-site look used for the rest of the app.
+    st.html("""
+    <style>
+    .ms-card {
+        background: linear-gradient(160deg, #1a1230 0%, #12091f 100%);
+        border: 1px solid rgba(168,120,255,0.25);
+        border-radius: 12px;
+        padding: 16px 18px;
+        box-shadow: 0 0 24px rgba(140,90,255,0.08), 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .ms-label {
+        font-size: 11px;
+        color: #9a86c9;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 4px;
+    }
+    .ms-value {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: #f3eeff;
+    }
+    .ms-glow-line {
+        height: 2px;
+        background: linear-gradient(90deg, #a878ff, #6b46c1, transparent);
+        border-radius: 2px;
+        margin: 10px 0 16px;
+        opacity: 0.6;
+    }
+    .ms-row {
+        display: grid;
+        grid-template-columns: 14px 150px 60px 90px 55px 70px 70px 60px;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(168,120,255,0.08);
+        font-size: 13px;
+        transition: background 150ms ease;
+    }
+    .ms-row:hover { background: rgba(168,120,255,0.06); }
+    .ms-header-row {
+        display: grid;
+        grid-template-columns: 14px 150px 60px 90px 55px 70px 70px 60px;
+        gap: 8px;
+        padding: 6px 10px;
+        font-size: 11px;
+        color: #9a86c9;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border-bottom: 1px solid rgba(168,120,255,0.2);
+    }
+    .ms-edge-bar-bg {
+        background: rgba(168,120,255,0.1);
+        border-radius: 3px;
+        height: 6px;
+        width: 100%;
+        overflow: hidden;
+    }
+    .ms-edge-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #6b46c1, #a878ff);
+        border-radius: 3px;
+    }
+    </style>
+    """)
+
+    st.markdown('<div style="font-size:1.3rem;font-weight:800;color:#f3eeff;margin-bottom:2px;">🔭 Market Scanner</div>', unsafe_allow_html=True)
+    st.caption("Every sport's board merged into one ranked list — real data from today's saved board snapshots, no new source.")
+
+    try:
+        _ms_today = date.today().strftime("%Y-%m-%d")
+        _ms_snaps = load_from_gist("board_snapshots", None) or {}
+        _ms_today_snaps = {k: v for k, v in _ms_snaps.items() if v.get("date") == _ms_today}
+
+        # Latest snapshot per sport only -- multiple loads/day shouldn't
+        # duplicate props, just reflect the most recent board state.
+        _ms_latest_per_sport = {}
+        for snap in _ms_today_snaps.values():
+            _sp = snap.get("sport", "")
+            _ts = snap.get("timestamp", "")
+            if _sp not in _ms_latest_per_sport or _ts > _ms_latest_per_sport[_sp].get("timestamp", ""):
+                _ms_latest_per_sport[_sp] = snap
+
+        _ms_all_props = []
+        for sport, snap in _ms_latest_per_sport.items():
+            for p in snap.get("props", []):
+                _ms_all_props.append({**p, "sport": sport})
+
+        if not _ms_all_props:
+            st.info("No sports loaded yet today — load a board in Full Board first, then check back here.")
+        else:
+            _ms_all_props.sort(key=lambda p: abs(p.get("edge", 0) or 0), reverse=True)
+            _ms_sports_active = sorted(_ms_latest_per_sport.keys())
+            _ms_avg_edge = sum(abs(p.get("edge", 0) or 0) for p in _ms_all_props) / len(_ms_all_props)
+            _ms_top_edge = _ms_all_props[0]
+
+            # ── Top stat row ──
+            _ms_c1, _ms_c2, _ms_c3, _ms_c4 = st.columns(4)
+            with _ms_c1:
+                st.markdown(f'<div class="ms-card"><div class="ms-label">Props Scanned</div><div class="ms-value">{len(_ms_all_props)}</div></div>', unsafe_allow_html=True)
+            with _ms_c2:
+                st.markdown(f'<div class="ms-card"><div class="ms-label">Sports Active Today</div><div class="ms-value">{len(_ms_sports_active)}</div></div>', unsafe_allow_html=True)
+            with _ms_c3:
+                st.markdown(f'<div class="ms-card"><div class="ms-label">Avg Edge</div><div class="ms-value">{_ms_avg_edge*100:.1f}%</div></div>', unsafe_allow_html=True)
+            with _ms_c4:
+                st.markdown(f'<div class="ms-card"><div class="ms-label">Top Edge Right Now</div><div class="ms-value" style="font-size:1.1rem;">{_ms_top_edge.get("player","")[:16]}</div></div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="ms-glow-line"></div>', unsafe_allow_html=True)
+
+            # ── Sort control ──
+            _ms_sort = st.selectbox("Sort by", ["Edge", "Tier", "Sport"], key="ms_sort")
+            if _ms_sort == "Tier":
+                _tier_order = {"SOVEREIGN": 0, "ELITE": 1, "APPROVED": 2, "LEAN": 3}
+                _ms_all_props.sort(key=lambda p: _tier_order.get(p.get("tier", ""), 4))
+            elif _ms_sort == "Sport":
+                _ms_all_props.sort(key=lambda p: p.get("sport", ""))
+
+            _ms_tier_colors = {"SOVEREIGN": "#f5c518", "ELITE": "#a878ff", "APPROVED": "#22c55e", "LEAN": "#6a7a8a"}
+            _ms_max_edge = max(abs(p.get("edge", 0) or 0) for p in _ms_all_props) or 1
+
+            st.markdown(
+                '<div class="ms-header-row"><span></span><span>Player</span><span>Sport</span>'
+                '<span>Prop</span><span>Line</span><span>Edge</span><span>Model %</span><span>Tier</span></div>',
+                unsafe_allow_html=True
+            )
+            _ms_rows_html = ""
+            for p in _ms_all_props[:60]:
+                _tc = _ms_tier_colors.get(p.get("tier", ""), "#6a7a8a")
+                _edge_pct = (p.get("edge", 0) or 0) * 100
+                _edge_bar_w = min(100, abs(p.get("edge", 0) or 0) / _ms_max_edge * 100)
+                _prob_pct = (p.get("prob", 0.5) or 0.5) * 100
+                _ms_rows_html += (
+                    f'<div class="ms-row">'
+                    f'<span style="width:8px;height:8px;border-radius:50%;background:{_tc};display:inline-block;"></span>'
+                    f'<span style="color:#f3eeff;">{p.get("player","")[:20]}</span>'
+                    f'<span style="color:#9a86c9;font-size:11px;">{p.get("sport","")}</span>'
+                    f'<span style="color:#c9bce8;font-size:12px;">{p.get("side","")} {p.get("prop","")[:14]}</span>'
+                    f'<span style="color:#c9bce8;">{p.get("line","")}</span>'
+                    f'<span><div class="ms-edge-bar-bg"><div class="ms-edge-bar-fill" style="width:{_edge_bar_w}%;"></div></div>'
+                    f'<span style="font-size:11px;color:#a878ff;">{_edge_pct:+.1f}%</span></span>'
+                    f'<span style="color:#c9bce8;">{_prob_pct:.0f}%</span>'
+                    f'<span style="color:{_tc};font-weight:700;font-size:11px;">{p.get("tier","")}</span>'
+                    f'</div>'
+                )
+            st.markdown(f'<div class="ms-card" style="padding:4px 8px;">{_ms_rows_html}</div>', unsafe_allow_html=True)
+            if len(_ms_all_props) > 60:
+                st.caption(f"Showing top 60 of {len(_ms_all_props)} props by {_ms_sort.lower()}.")
+    except Exception:
+        st.info("Market Scanner data unavailable right now — try loading a board first.")
+
