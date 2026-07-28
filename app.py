@@ -3681,6 +3681,45 @@ with tabs[3]:
         except Exception:
             _wgt_game = None
 
+        # Sleeper live score + confirmed starting lineup -- MLB only,
+        # matching fetch_sleeper_scoreboard's own documented caveat that
+        # only MLB's shape is verified. Matches by team display name
+        # against the same _home_nm/_away_nm used for WGT above.
+        _sleeper_game = None
+        if _gsport.upper() == "MLB":
+            try:
+                _sleeper_all = st.session_state.get(f"sleeper_data_{_gsport.upper()}", {}) or {}
+                for _sl_gid, _sl_g in _sleeper_all.items():
+                    _sl_home_nm = (_sl_g.get("home", {}) or {}).get("name", "")
+                    _sl_away_nm = (_sl_g.get("away", {}) or {}).get("name", "")
+                    if _sl_home_nm and _sl_away_nm and _home_nm and _away_nm and (
+                        _sl_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _sl_home_nm.lower()
+                    ) and (
+                        _sl_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _sl_away_nm.lower()
+                    ):
+                        _sleeper_game = _sl_g
+                        break
+            except Exception:
+                _sleeper_game = None
+        if _sleeper_game:
+            _sl_away, _sl_home = _sleeper_game.get("away", {}), _sleeper_game.get("home", {})
+            _sl_score_txt = None
+            if _sl_away.get("score") is not None and _sl_home.get("score") is not None:
+                _sl_score_txt = f"{_sl_away.get('score')}-{_sl_home.get('score')} ({_sleeper_game.get('status','')})"
+            with st.expander(f"⚾ Sleeper: live score & confirmed lineup" + (f" — {_sl_score_txt}" if _sl_score_txt else ""), expanded=False):
+                _sl_c1, _sl_c2 = st.columns(2)
+                for _sl_col, _sl_side, _sl_label in ((_sl_c1, _sl_away, _away_nm), (_sl_c2, _sl_home, _home_nm)):
+                    with _sl_col:
+                        st.markdown(f"**{_sl_label}**")
+                        if _sl_side.get("probable_pitcher"):
+                            st.caption(f"Probable pitcher: {_sl_side['probable_pitcher']}")
+                        _sl_lineup = _sl_side.get("lineup", [])
+                        if _sl_lineup:
+                            for _sl_p in _sl_lineup:
+                                st.caption(f"{_sl_p.get('batting_order', _sl_p.get('order', '?'))}. {_sl_p.get('name','')}")
+                        else:
+                            st.caption("Lineup not confirmed yet")
+
         # Match Covers data to this game
         _cov_game = None
         if isinstance(_cov_data, dict):
@@ -7801,6 +7840,25 @@ with tabs[7]:
             pl_name_d = st.session_state.get("pl_name_display", pl_name)
 
             _pl_sport_used = st.session_state.get("pl_sport_used", "NBA")
+
+            # NumberFire ranking lookup -- NFL/NBA only, matching the real
+            # coverage fetch_numberfire_direct actually has. Matches by
+            # normalized name against the raw scraped rows.
+            if _pl_sport_used in ("NFL", "NBA"):
+                try:
+                    _nf_data = st.session_state.get(f"numberfire_data_{_pl_sport_used}", {}) or {}
+                    _nf_players = _nf_data.get("players", [])
+                    _nf_match = None
+                    _pl_name_norm = normalize_name(pl_name_d)
+                    for _nf_p in _nf_players:
+                        if normalize_name(_nf_p.get("name", "")) == _pl_name_norm:
+                            _nf_match = _nf_p
+                            break
+                    if _nf_match:
+                        st.caption(f"📊 NumberFire: {_nf_match.get('raw_row', '')[:200]}")
+                except Exception:
+                    pass
+
             stat_key_map = {
                 # NBA / WNBA
                 "Points": "pts", "Rebounds": "reb", "Assists": "ast",
