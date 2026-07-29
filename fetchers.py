@@ -14471,6 +14471,13 @@ def fetch_heritage_game_lines(sport: str) -> list:
     return []
 
 
+_SBR_SPORT_PATHS = {
+    "NFL": "nfl-football", "NBA": "nba-basketball", "MLB": "mlb-baseball",
+    "NHL": "nhl-hockey", "WNBA": "wnba-basketball",
+    "NCAAF": "ncaaf-football", "NCAAB": "ncaab-basketball", "CFL": "cfl-football",
+}
+
+
 def fetch_sbr_game_lines(sport: str) -> list:
     """
     Scrape SportsbookReview.com odds for all supported sports/leagues.
@@ -14518,6 +14525,12 @@ def fetch_sbr_game_lines(sport: str) -> list:
     if all_games:
         _safe_save_pkl(cache_path, all_games)
     return all_games
+
+_SPORTSLINE_SPORT_PATHS = {
+    "NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl",
+    "WNBA": "wnba", "Soccer": "soccer",
+}
+
 
 def fetch_sportsline_game_lines(sport: str) -> list:
     """
@@ -14666,13 +14679,19 @@ def fetch_sportsline_game_lines(sport: str) -> list:
     return games
 
 
+_BOOKMAKER_SPORT_PATHS = {
+    "NFL": "football/nfl", "NBA": "basketball/nba", "MLB": "baseball/mlb",
+    "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
+}
+
+
 def fetch_bookmaker_game_lines(sport: str) -> list:
     """
     Fetch Bookmaker.eu game lines via HTML scraping (server-rendered page).
     Auth: cf_clearance + PHPSESSID cookies stored in Streamlit secrets.
     Cached 20 min.
     """
-    sport_path = BOOKMAKER_SPORT_PATHS.get(sport)
+    sport_path = _BOOKMAKER_SPORT_PATHS.get(sport)
     if not sport_path:
         return []
 
@@ -15353,6 +15372,24 @@ def _amer_to_prob(odds):
         o=float(odds)
         return 100.0/(o+100.0) if o>0 else (-o)/((-o)+100.0)
     except Exception: return 0.5
+
+# Not live-verified against api.sharpapi.io (not in this sandbox's network
+# allowlist) -- best-effort simple lowercase codes based on the confirmed
+# real error hint from sharpapi_novig_refresh.py's first run ("sport=
+# baseball_mlb" -> "did you mean sport=baseball"), which was on a different
+# param (sport= not leagues=) but is the only live confirmation available
+# of this API's naming convention. Was previously undefined entirely,
+# which crashed every one of the 3 functions below on the very first line
+# with an uncaught NameError -- this makes them at minimum fail gracefully
+# through the existing HTTP-error handling if these guesses are wrong,
+# same as every other guessed-endpoint script in this repo.
+SHARPAPI_LEAGUE_MAP = {
+    "MLB": "baseball", "NBA": "basketball", "WNBA": "basketball",
+    "NFL": "football", "NHL": "hockey", "NCAAF": "football",
+    "NCAAB": "basketball", "Soccer": "soccer", "Tennis": "tennis",
+    "Golf": "golf", "UFC": "mma",
+}
+
 
 def fetch_sharpapi_line_drops(sport: str, min_drop_pct: float = 0.03) -> list:
     """
@@ -17723,6 +17760,17 @@ def _px_parse_prop_name(market_name):
     return market_name, market_name
 
 
+_PROPHETX_GAME_MARKETS = {
+    "moneyline", "moneyline (2 way)", "spread", "game spread",
+    "run line", "puck line", "point spread", "total", "totals",
+    "total points", "total runs", "total goals (regular time)",
+    "total games", "total sets", "total rounds",
+    "spread (regular time)", "draw (90 min)",
+    "1st inning moneyline", "1st inning total runs",
+    "1st-5th inning moneyline", "1st-5th inning spread", "1st-5th inning total runs",
+}
+
+
 def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport):
     """Split one event's raw v2 markets payload into (game_line_rows, prop_rows)."""
     lines_out, props_out = [], []
@@ -17793,7 +17841,7 @@ def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport
                 p1 = _px_best_price(ml_sels[1])
                 if not (p0 and p1):
                     continue
-                mkt_label = "Spread" if label_lc == "spread" else "Total"
+                mkt_label = "Spread" if any(k in label_lc for k in ("spread", "run line", "puck line")) else "Total"
                 lines_out.append({
                     "game": game_label, "home": home, "away": away,
                     "market": mkt_label,
