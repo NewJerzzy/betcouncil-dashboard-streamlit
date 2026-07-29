@@ -158,6 +158,45 @@ def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
     return _resolve_value(obj, array, idx_to_name, depth, max_depth)
 
 
+def _load_player_names_from_gist(github_token: str) -> dict:
+    """
+    Read the player name map pushed by the Tampermonkey harvester
+    (betcouncil_player_names.json in the gist).
+    Returns {dkId(int): name(str)} or {} if the file doesn't exist yet.
+    """
+    try:
+        resp = requests.get(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}",
+                     "Accept": "application/vnd.github+json"},
+            timeout=(5, 10),
+        )
+        if not resp.ok:
+            return {}
+        files = resp.json().get("files", {})
+        names_file = files.get("betcouncil_player_names.json", {})
+        raw_url = names_file.get("raw_url", "")
+        if not raw_url:
+            return {}
+        content_resp = requests.get(raw_url, timeout=(5, 10))
+        if not content_resp.ok:
+            return {}
+        data = content_resp.json()
+        raw_names = data.get("names", data if isinstance(data, dict) else {})
+        # Keys may be strings from JSON; convert to int for lookup
+        result = {}
+        for k, v in raw_names.items():
+            try:
+                result[int(k)] = v
+            except (ValueError, TypeError):
+                pass
+        DEBUG_LOG.append({"note": "gist_player_names_loaded", "count": len(result)})
+        return result
+    except Exception as ex:
+        DEBUG_LOG.append({"note": "gist_player_names_error", "error": str(ex)[:120]})
+        return {}
+
+
 def _load_dk_credentials(github_token: str) -> tuple[str, str]:
     """
     Read DK credentials from the gist (betcouncil_cfg.json) when env vars
@@ -293,7 +332,8 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     return player_names, stat_names
 
 
-def fetch_sport_props(sport: str, session: requests.Session | None = None) -> list:
+def fetch_sport_props(sport: str, session: requests.Session | None = None,
+                      harvested_names: dict | None = None) -> list:
     url = f"{BASE_URL}?sport={sport}"
     fetcher = session if session is not None else requests
     r = fetcher.get(url, headers=HEADERS, timeout=(8, 20))
@@ -309,7 +349,10 @@ def fetch_sport_props(sport: str, session: requests.Session | None = None) -> li
 
     idx_to_name = _build_idx_to_name(array)
     player_names, stat_names = _build_lookup_tables(array, idx_to_name)
-    # If SSR gave no names (expected) and we have an auth session, try the DK API
+    # Merge in harvested names from Tampermonkey gist file (higher priority than SSR)
+    if harvested_names:
+        player_names = {**harvested_names, **player_names}  # SSR wins on conflict (unlikely)
+    # If still no names and we have an auth session, try DK API (best-effort)
     if not player_names and session is not None:
         player_names = _fetch_player_names_auth(session, sport)
     pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
@@ -405,10 +448,15 @@ def main() -> int:
     else:
         log("No DK credentials available — running unauthenticated")
 
+    # Load harvested player names from Tampermonkey gist file (populated by browser script)
+    log("Loading harvested player names from gist…")
+    harvested_names = _load_player_names_from_gist(github_token)
+    log(f"  {len(harvested_names)} player names loaded from gist")
+
     all_props = []
     for sport in SPORTS:
         try:
-            props = fetch_sport_props(sport, session=dk_session)
+            props = fetch_sport_props(sport, session=dk_session, harvested_names=harvested_names)
         except Exception as e:
             log(f"  {sport}: error — {e}")
             continue
