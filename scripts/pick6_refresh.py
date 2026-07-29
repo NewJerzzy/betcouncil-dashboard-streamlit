@@ -236,17 +236,30 @@ def fetch_sport_props(sport: str) -> list:
         resolved = _resolve_refs(item, array, idx_to_name)
         entities = resolved.get("entities", [])
         dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
-        # Log first two resolved entities so we can see all available name fields
+        # Log first resolved pickable dict fully to find name fields
         if not entity_samples_logged and entities and sport in ("MLB", "WNBA"):
+            def _safe_repr(v):
+                if isinstance(v, (str, int, float, bool)) or v is None:
+                    return v
+                if isinstance(v, list):
+                    return [_safe_repr(i) for i in v[:3]]
+                if isinstance(v, dict):
+                    return {kk: _safe_repr(vv) for kk, vv in list(v.items())[:8]}
+                return str(v)[:80]
+            markets = resolved.get("activePickableMarkets", [])
+            selections = resolved.get("activeSelections", [])
             DEBUG_LOG.append({
                 "sport": sport,
-                "note": "resolved_entity_samples",
-                "entities": [
-                    {k: v for k, v in (e.items() if isinstance(e, dict) else {}.items())
-                     if not isinstance(v, list)}
-                    for e in entities[:2]
+                "note": "full_pickable_sample",
+                "entities_all_fields": [
+                    {k: _safe_repr(v) for k, v in (e.items() if isinstance(e, dict) else {}.items())}
+                    for e in entities[:1]
                 ],
-                "pickable_top_keys": [k for k in resolved if k not in ("entities", "activePickableMarkets", "activeSelections")],
+                "first_market": _safe_repr(markets[0]) if markets else None,
+                "first_selection": _safe_repr(selections[0]) if selections else None,
+                "pickable_scalar_fields": {k: _safe_repr(v) for k, v in resolved.items()
+                                           if k not in ("entities", "activePickableMarkets", "activeSelections")
+                                           and not isinstance(v, (list, dict))},
             })
             entity_samples_logged = True
         # Try to get player name directly from the entity dict (all common name fields)
