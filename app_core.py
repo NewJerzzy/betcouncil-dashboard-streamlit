@@ -8931,7 +8931,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": [], "betql": [], "wagerbird": [], "lineterminal": [], "propsmadness": []}
+    result = {"dk_props": [], "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": [], "betql": [], "wagerbird": [], "lineterminal": [], "propsmadness": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8948,15 +8948,6 @@ def build_market_comparison(shortlist):
             matched_player = next((p for p in shortlist_players if p in market_l), None)
             if matched_player:
                 result["dk_props"].append({**row, "matches_shortlist": True, "matched_player": matched_player})
-
-    # ── FanDuel Parlay Hub: whatever the harvester has, per sport ───────
-    for sport in list(sports_needed) + ["ALL"]:
-        try:
-            fdph = fetch_fanduel_parlayhub_from_gist(sport)
-        except Exception:
-            fdph = []
-        if fdph:
-            result["fd_parlayhub"][sport] = fdph
 
     # ── FavoredProps: match against shortlist prop players, both dfs
     # (PrizePicks/Underdog-style) and sportsbook variants ───────────────
