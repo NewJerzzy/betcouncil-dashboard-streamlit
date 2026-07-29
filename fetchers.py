@@ -76,7 +76,7 @@ try:
         _ATP_GRAND_SLAMS, _SLAM_SURFACE,
         _UFC_WEIGHTCLASS_BASELINES, _UFC_ROUND_DEFAULT, _UFC_CHAMPIONSHIP_ROUNDS,
         DFF_HEADERS, DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP,
-        ODDS_API_BASE, ODDS_API_KEY, ODDS_API_KEY_GAMES, ODDSPAPI_KEY, REQUEST_TIMEOUT,
+        ODDS_API_BASE, ODDS_API_KEY, ODDSPAPI_KEY, REQUEST_TIMEOUT,
         SCRAPEOPS_KEY, GITHUB_TOKEN, GITHUB_GIST_ID,
         ACTION_NETWORK_SPORT_MAP, ACTION_NETWORK_LEAGUE_IDS,
         ACTION_NETWORK_PROP_TYPE_MAP, ODDS_API_SPORT_MAP,
@@ -5239,92 +5239,6 @@ def fetch_paddypower_lines(sport="NBA"):
     except Exception as e:
         return {}
 
-def fetch_tennis_player_stats(player_name):
-    """
-    ATP season stats from TennisMyLife via scripts/sackmann_tennis_refresh.py
-    (betcouncil_tennis_sackmann_ATP.json). Previously this function was
-    called live inside score_pick_standalone for every Tennis prop but
-    didn't exist anywhere in the codebase -- silently NameError'd into a
-    bare except, so every Tennis prop fell straight to the flat league
-    baseline (Aces=6.0, Games Won=18.0, etc, identical for every player)
-    regardless of who was actually being scored.
-
-    WTA: no working source as of this fix (TennisMyLife is ATP-only,
-    confirmed via their own site) -- returns {} for WTA players, which
-    correctly falls through to the same baseline as before rather than
-    fabricating a number.
-
-    Key mapping is deliberately partial: this dataset is serve/return
-    percentages (aces, double faults, break points), not a "games won"
-    counter, so "Games Won" is left unmapped rather than guessed at --
-    that one stat type still falls through to baseline; the other three
-    (Aces / Double Faults / Break Points Won) get real per-player data.
-    """
-    data = _read_gist_file("betcouncil_tennis_sackmann_ATP.json", cache_minutes=180)
-    if not data:
-        return {}
-    players = data.get("players", {})
-    if not players:
-        return {}
-    norm = normalize_name(player_name)
-    match = next((v for k, v in players.items() if normalize_name(k) == norm), None)
-    if not match:
-        return {}
-    return {
-        "_tour": "ATP",
-        "n_games": match.get("matches", "?"),
-        "Aces": match.get("ace_avg", 0),
-        "Double Faults": match.get("df_avg", 0),
-        "Break Points Won": match.get("bp_won_avg", 0),
-    }
-
-
-def fetch_ufc_fighter_stats(fighter_name):
-    """
-    No verified live data source for UFC fighter stats as of this fix --
-    same NameError-into-bare-except situation as fetch_tennis_player_stats
-    had (called live inside score_pick_standalone, didn't exist anywhere).
-    Returns {} immediately, matching the deliberate fetch_soccer_player_stats
-    pattern above (ESPN has no public per-fighter stats endpoint, confirmed
-    dead there) -- falls through cleanly to the existing league-baseline
-    fallback instead of either crashing or shipping an unverified scraper
-    guessed at without live network access to test against.
-    """
-    return {}
-
-
-
-def fetch_thescore_pitcher_starts(player_name):
-    """
-    Per-start pitcher lines (K/BB/W-L) from scripts/thescore_boxscores_refresh.py
-    (betcouncil_thescore_boxscores_MLB.json) -- scraped every 30 min but never
-    read by anything until this fix. Note: the source's own `pitcher_box_lines`
-    field (pitch-mix/velocity breakdown promised in its docstring) is empty on
-    every game sampled -- only `starting_pitchers` is reliably populated, so
-    that's the only field this reads. Returns a list of starts, newest first.
-    """
-    data = _read_gist_file("betcouncil_thescore_boxscores_MLB.json", cache_minutes=30)
-    if not data:
-        return []
-    norm = normalize_name(player_name)
-    starts = []
-    for g in data.get("games", []):
-        for side in ("home", "away"):
-            sp = (g.get("starting_pitchers") or {}).get(side) or {}
-            p = sp.get("player") or {}
-            if p.get("full_name") and normalize_name(p["full_name"]) == norm:
-                starts.append({
-                    "date": g.get("game_date", ""),
-                    "opponent": g.get("away_team") if side == "home" else g.get("home_team"),
-                    "strikeouts": sp.get("strikeouts"),
-                    "walks": sp.get("walks"),
-                    "wins": sp.get("wins"),
-                    "losses": sp.get("losses"),
-                })
-    starts.sort(key=lambda s: s.get("date", ""), reverse=True)
-    return starts
-
-
 def fetch_soccer_player_stats(player_name):
     """
     Confirmed dead end (live-tested): ESPN does not publish individual
@@ -6470,42 +6384,6 @@ def fetch_underdog_props(sport):
                     return cached
             except (ValueError, KeyError, TypeError, AttributeError):
                 pass
-
-    props = _fetch_underdog_live(sport, sport_id)
-
-    if not props:
-        # Live direct-API call failed/returned nothing (this fails silently
-        # and often, confirmed 2026-07-28 -- the previous code just returned
-        # [] here with zero diagnostics). Fall back to the separate scheduled
-        # Gist harvester (scripts/underdog_refresh.py). Checked first rather
-        # than assumed: that harvester does NOT save the raw live-API shape
-        # -- it saves an already-simplified {player_id, stat_type,
-        # stat_value, title} form per line, confirmed against the real
-        # current Gist file before writing this, so it needs its own
-        # parser (_parse_underdog_gist_fallback below), not a reuse of
-        # _parse_underdog_raw. Real, working data as of this fix: confirmed
-        # 1,820 real MLB props parsed correctly from the live Gist file
-        # when the live path had nothing to show for it.
-        try:
-            gist_raw = load_from_gist(f"underdog_{sport}", None)
-            if gist_raw and isinstance(gist_raw.get("data"), dict):
-                props = _parse_underdog_gist_fallback(gist_raw["data"], sport)
-        except Exception:
-            pass
-
-    if props:
-        try:
-            with open(cache_path, "wb") as _f:
-                pickle.dump(props, _f)
-        except (ValueError, KeyError, TypeError, AttributeError):
-            pass
-    return props
-
-
-def _fetch_underdog_live(sport, sport_id):
-    """The original direct-to-Underdog live API call, factored out so
-    fetch_underdog_props() above can cleanly fall back to the Gist
-    harvester when this returns nothing."""
     # Try new v1 lobbies endpoint first (discovered via DevTools May 2026)
     product_exp_id = "018e1234-5678-9abc-def0-123456789006"
     state_config_id = "725014ef-3570-4e93-871d-d69674ab3521"
@@ -6529,159 +6407,130 @@ def _fetch_underdog_live(sport, sport_id):
         if resp.status_code != 200:
             return []
         data = resp.json()
-        return _parse_underdog_raw(data, sport, sport_id)
-    except (IOError, ValueError) as e:
-        print(f"Underdog props error: {e}")
-        return []
+        props = []
+        seen = set()
 
+        # Detect v1 vs v2 response
+        # v1 has "suggested_picks" wrapper, v2 has flat "over_under_lines" list
+        is_v1 = "suggested_picks" in data
+        sp = data["suggested_picks"] if is_v1 else data
 
-def _parse_underdog_raw(data, sport, sport_id):
-    """Parse a raw Underdog API response (v1 or v2 shape) into the
-    standard props list. Shared by the live fetch path and the Gist
-    fallback below -- the harvester script saves this exact raw shape,
-    so both paths reuse the same parsing logic rather than duplicating it."""
-    props = []
-    seen = set()
-
-    # Detect v1 vs v2 response
-    # v1 has "suggested_picks" wrapper, v2 has flat "over_under_lines" list
-    is_v1 = "suggested_picks" in data
-    sp = data["suggested_picks"] if is_v1 else data
-
-    # Players: dict (v1) or list (v2)
-    players_dict = sp.get("players", {})
-    if isinstance(players_dict, dict):
-        players_map = {pid: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
-                      for pid, p in players_dict.items()}
-    elif isinstance(players_dict, list):
-        players_map = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
-                      for p in players_dict if isinstance(p, dict) and "id" in p}
-    else:
-        players_map = {}
-
-    # Appearances: dict (v1) or list (v2)
-    appearances_dict = sp.get("appearances", {})
-    if isinstance(appearances_dict, dict):
-        appearances_map = {aid: a.get("player_id","") for aid, a in appearances_dict.items()}
-    elif isinstance(appearances_dict, list):
-        appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict if isinstance(a, dict)}
-    else:
-        appearances_map = {}
-
-    # over_under_lines: dict (v1) or list (v2)
-    oul = sp.get("over_under_lines", {})
-    if isinstance(oul, dict):
-        lines_list = list(oul.values())
-    elif isinstance(oul, list):
-        lines_list = oul
-    else:
-        lines_list = []
-
-    # Filter by sport
-    sport_id = sport.upper()
-    teams_dict = sp.get("teams", {})
-    games_dict = sp.get("games", {})
-
-    for line in lines_list:
-        if line.get("status","") == "closed":
-            continue
-
-        line_val = line.get("stat_value")
-        if line_val is None:
-            continue
-
-        # Get player name from options[0].selection_header (most reliable)
-        options = line.get("options", [])
-        if options:
-            opt = options[0]
-            name = opt.get("selection_header","").strip()
-            stat_name = opt.get("stat_display","").strip()
-            if not stat_name:
-                stat_name = opt.get("selection_subheader","").split(" ", 2)[-1] if opt.get("selection_subheader") else ""
+        # Players: dict (v1) or list (v2)
+        players_dict = sp.get("players", {})
+        if isinstance(players_dict, dict):
+            players_map = {pid: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+                          for pid, p in players_dict.items()}
+        elif isinstance(players_dict, list):
+            players_map = {p["id"]: f"{p.get('first_name','').strip()} {p.get('last_name','').strip()}".strip()
+                          for p in players_dict if isinstance(p, dict) and "id" in p}
         else:
-            # Fallback: use over_under.appearance_stat
-            ou = line.get("over_under", {})
-            app_stat = ou.get("appearance_stat", {})
-            app_id = app_stat.get("appearance_id","")
-            player_id = appearances_map.get(app_id,"")
-            name = players_map.get(player_id,"")
-            stat_name = app_stat.get("display_stat","")
+            players_map = {}
 
-        if not name or not stat_name:
-            continue
+        # Appearances: dict (v1) or list (v2)
+        appearances_dict = sp.get("appearances", {})
+        if isinstance(appearances_dict, dict):
+            appearances_map = {aid: a.get("player_id","") for aid, a in appearances_dict.items()}
+        elif isinstance(appearances_dict, list):
+            appearances_map = {a["id"]: a.get("player_id","") for a in appearances_dict if isinstance(a, dict)}
+        else:
+            appearances_map = {}
 
-        # Sport filter: check player sport via appearances/games
-        ou = line.get("over_under", {})
-        app_stat = ou.get("appearance_stat", {})
-        app_id = app_stat.get("appearance_id","")
-        app_data = appearances_dict.get(app_id, {}) if isinstance(appearances_dict, dict) else {}
-        match_id = str(app_data.get("match_id",""))
-        game = games_dict.get(match_id, {}) if isinstance(games_dict, dict) else {}
-        game_sport = game.get("sport_id","")
+        # over_under_lines: dict (v1) or list (v2)
+        oul = sp.get("over_under_lines", {})
+        if isinstance(oul, dict):
+            lines_list = list(oul.values())
+        elif isinstance(oul, list):
+            lines_list = oul
+        else:
+            lines_list = []
 
-        if game_sport and game_sport.upper() != sport_id:
-            continue
+        # Filter by sport
+        sport_id = sport.upper()
+        teams_dict = sp.get("teams", {})
+        games_dict = sp.get("games", {})
 
-        key = (sport, name, stat_name, line_val)
-        if key in seen:
-            continue
-        seen.add(key)
-        props.append({
-            "Player": name,
-            "Prop": stat_name,
-            "Line": float(line_val),
-            "Side": "OVER",
-            "Sport": sport,
-            "source": "Underdog",
-            "Book": "Underdog",
-        })
-
-    if not props and lines_list:
-        # If sport filter removed everything, return without filter
-        for line in lines_list[:50]:
+        for line in lines_list:
             if line.get("status","") == "closed":
                 continue
+
             line_val = line.get("stat_value")
+            if line_val is None:
+                continue
+
+            # Get player name from options[0].selection_header (most reliable)
             options = line.get("options", [])
-            if options and line_val:
+            if options:
                 opt = options[0]
                 name = opt.get("selection_header","").strip()
                 stat_name = opt.get("stat_display","").strip()
-                if name and stat_name:
-                    key = (sport, name, stat_name, line_val)
-                    if key not in seen:
-                        seen.add(key)
-                        props.append({"Player": name, "Prop": stat_name,
-                                    "Line": float(line_val), "Side": "OVER",
-                                    "Sport": sport, "source": "Underdog", "Book": "Underdog"})
-    return props
+                if not stat_name:
+                    stat_name = opt.get("selection_subheader","").split(" ", 2)[-1] if opt.get("selection_subheader") else ""
+            else:
+                # Fallback: use over_under.appearance_stat
+                ou = line.get("over_under", {})
+                app_stat = ou.get("appearance_stat", {})
+                app_id = app_stat.get("appearance_id","")
+                player_id = appearances_map.get(app_id,"")
+                name = players_map.get(player_id,"")
+                stat_name = app_stat.get("display_stat","")
 
+            if not name or not stat_name:
+                continue
 
-def _parse_underdog_gist_fallback(data, sport):
-    """Parse the Underdog harvester's saved shape (scripts/underdog_refresh.py)
-    -- confirmed via the real live Gist file to be a simplified
-    {player_id, stat_type, stat_value, title} form per over_under_lines
-    entry, NOT the same raw shape the live API parser above handles.
-    Deliberately much simpler than _parse_underdog_raw since this shape
-    has already had the player-name/appearance lookups done upstream by
-    the harvester script itself."""
-    props = []
-    for line in data.get("over_under_lines", []) or []:
-        name = line.get("title", "")
-        stat_name = line.get("stat_type", "")
-        line_val = line.get("stat_value")
-        if not name or not stat_name or line_val is None:
-            continue
-        try:
-            line_val = float(line_val)
-        except (TypeError, ValueError):
-            continue
-        props.append({
-            "Player": name, "Prop": stat_name, "Line": line_val, "Side": "OVER",
-            "Sport": sport, "source": "Underdog", "Book": "Underdog",
-        })
-    return props
+            # Sport filter: check player sport via appearances/games
+            ou = line.get("over_under", {})
+            app_stat = ou.get("appearance_stat", {})
+            app_id = app_stat.get("appearance_id","")
+            app_data = appearances_dict.get(app_id, {}) if isinstance(appearances_dict, dict) else {}
+            match_id = str(app_data.get("match_id",""))
+            game = games_dict.get(match_id, {}) if isinstance(games_dict, dict) else {}
+            game_sport = game.get("sport_id","")
 
+            if game_sport and game_sport.upper() != sport_id:
+                continue
+
+            key = (sport, name, stat_name, line_val)
+            if key in seen:
+                continue
+            seen.add(key)
+            props.append({
+                "Player": name,
+                "Prop": stat_name,
+                "Line": float(line_val),
+                "Side": "OVER",
+                "Sport": sport,
+                "source": "Underdog",
+                "Book": "Underdog",
+            })
+
+        if not props and lines_list:
+            # If sport filter removed everything, return without filter
+            for line in lines_list[:50]:
+                if line.get("status","") == "closed":
+                    continue
+                line_val = line.get("stat_value")
+                options = line.get("options", [])
+                if options and line_val:
+                    opt = options[0]
+                    name = opt.get("selection_header","").strip()
+                    stat_name = opt.get("stat_display","").strip()
+                    if name and stat_name:
+                        key = (sport, name, stat_name, line_val)
+                        if key not in seen:
+                            seen.add(key)
+                            props.append({"Player": name, "Prop": stat_name,
+                                        "Line": float(line_val), "Side": "OVER",
+                                        "Sport": sport, "source": "Underdog", "Book": "Underdog"})
+        if props:
+            try:
+                with open(cache_path, "wb") as _f:
+                    pickle.dump(props, _f)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                pass
+        return props
+    except (IOError, ValueError) as e:
+        print(f"Underdog props error: {e}")
+        return []
 
 def scrape_prizepicks(sport):
     league_ids = {"NBA": 4, "MLB": 5, "NHL": 3, "NFL": 7, "WNBA": 8, "UFC": 6, "Golf": 11, "Tennis": 12, "Soccer": 2}
@@ -8465,13 +8314,13 @@ def fetch_odds_api_game_lines(sport):
         return sbr_games, sbr_home, sbr_away
 
     # ── OddsAPI fallback (requires key + remaining budget) ──
-    if not ODDS_API_KEY_GAMES:
-        print("[ODDS_API] ODDS_API_KEY_GAMES not set — OddsAPI game lines skipped")
+    if not ODDS_API_KEY:
+        print("[ODDS_API] ODDS_API_KEY not set — OddsAPI game lines skipped")
         return [], {}, {}
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return [], {}, {}
-    allowed, reason = api_budget_check("ODDS_API_GAMES")
+    allowed, reason = api_budget_check("ODDS_API")
     if not allowed:
         print(f"[ODDS_API] budget check blocked game lines for {sport}: {reason}")
         return [], {}, {}
@@ -8480,13 +8329,13 @@ def fetch_odds_api_game_lines(sport):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 60:
             return _safe_load_pkl(cache_path)
-    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API_GAMES", amount=6)  # verified formula: 3 markets x 2 regions (no per-event multiplier on the live endpoint -- that only applies to the separate historical/snapshot endpoint)
+        api_budget_increment("ODDS_API", amount=60)  # 10 x 3 markets x 2 regions
         if resp.status_code != 200:
             print(f"[ODDS_API] game lines HTTP {resp.status_code} for {sport} — "
-                  f"{'ODDS_API_KEY_GAMES invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
+                  f"{'ODDS_API_KEY invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
             return [], {}, {}
         events = resp.json()
         games = []
@@ -8558,12 +8407,12 @@ def fetch_preview_game_lines(sport):
     # real game date instead of hardcoding date.today(). Cached separately
     # from the live board's cache so it never collides with or overwrites
     # today's board state.
-    if not ODDS_API_KEY_GAMES:
+    if not ODDS_API_KEY:
         return []
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
         return []
-    allowed, reason = api_budget_check("ODDS_API_GAMES")
+    allowed, reason = api_budget_check("ODDS_API")
     if not allowed:
         print(f"[ODDS_API] budget check blocked preview lines for {sport}: {reason}")
         return []
@@ -8572,10 +8421,10 @@ def fetch_preview_game_lines(sport):
         age_mins = (time.time() - os.path.getmtime(cache_path)) / 60
         if age_mins < 60:
             return _safe_load_pkl(cache_path)
-    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
-        api_budget_increment("ODDS_API_GAMES", amount=6)  # verified formula: 3 markets x 2 regions
+        api_budget_increment("ODDS_API", amount=60)  # 10 x 3 markets x 2 regions
         if resp.status_code != 200:
             print(f"[ODDS_API] preview lines HTTP {resp.status_code} for {sport}")
             return []
@@ -14471,13 +14320,6 @@ def fetch_heritage_game_lines(sport: str) -> list:
     return []
 
 
-_SBR_SPORT_PATHS = {
-    "NFL": "nfl-football", "NBA": "nba-basketball", "MLB": "mlb-baseball",
-    "NHL": "nhl-hockey", "WNBA": "wnba-basketball",
-    "NCAAF": "ncaaf-football", "NCAAB": "ncaab-basketball", "CFL": "cfl-football",
-}
-
-
 def fetch_sbr_game_lines(sport: str) -> list:
     """
     Scrape SportsbookReview.com odds for all supported sports/leagues.
@@ -14525,12 +14367,6 @@ def fetch_sbr_game_lines(sport: str) -> list:
     if all_games:
         _safe_save_pkl(cache_path, all_games)
     return all_games
-
-_SPORTSLINE_SPORT_PATHS = {
-    "NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl",
-    "WNBA": "wnba", "Soccer": "soccer",
-}
-
 
 def fetch_sportsline_game_lines(sport: str) -> list:
     """
@@ -14679,19 +14515,13 @@ def fetch_sportsline_game_lines(sport: str) -> list:
     return games
 
 
-_BOOKMAKER_SPORT_PATHS = {
-    "NFL": "football/nfl", "NBA": "basketball/nba", "MLB": "baseball/mlb",
-    "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
-}
-
-
 def fetch_bookmaker_game_lines(sport: str) -> list:
     """
     Fetch Bookmaker.eu game lines via HTML scraping (server-rendered page).
     Auth: cf_clearance + PHPSESSID cookies stored in Streamlit secrets.
     Cached 20 min.
     """
-    sport_path = _BOOKMAKER_SPORT_PATHS.get(sport)
+    sport_path = BOOKMAKER_SPORT_PATHS.get(sport)
     if not sport_path:
         return []
 
@@ -15373,24 +15203,6 @@ def _amer_to_prob(odds):
         return 100.0/(o+100.0) if o>0 else (-o)/((-o)+100.0)
     except Exception: return 0.5
 
-# Not live-verified against api.sharpapi.io (not in this sandbox's network
-# allowlist) -- best-effort simple lowercase codes based on the confirmed
-# real error hint from sharpapi_novig_refresh.py's first run ("sport=
-# baseball_mlb" -> "did you mean sport=baseball"), which was on a different
-# param (sport= not leagues=) but is the only live confirmation available
-# of this API's naming convention. Was previously undefined entirely,
-# which crashed every one of the 3 functions below on the very first line
-# with an uncaught NameError -- this makes them at minimum fail gracefully
-# through the existing HTTP-error handling if these guesses are wrong,
-# same as every other guessed-endpoint script in this repo.
-SHARPAPI_LEAGUE_MAP = {
-    "MLB": "baseball", "NBA": "basketball", "WNBA": "basketball",
-    "NFL": "football", "NHL": "hockey", "NCAAF": "football",
-    "NCAAB": "basketball", "Soccer": "soccer", "Tennis": "tennis",
-    "Golf": "golf", "UFC": "mma",
-}
-
-
 def fetch_sharpapi_line_drops(sport: str, min_drop_pct: float = 0.03) -> list:
     """
     Poll SharpAPI Odds Delta for Pinnacle line movements.
@@ -15894,23 +15706,13 @@ def _is_fresh(data: dict, max_age_minutes: int = 30) -> bool:
 
 
 def _gist_data_age_minutes(data: dict):
-    """Age in minutes of a harvested payload's captured_at (or timestamp,
-    for the handful of scripts like betcouncil_auto_scraper.py that use
-    that field name instead), or None if missing/bad.
-
-    Confirmed via live testing 2026-07-28: auto_scraped_props.json uses
-    "timestamp", not "captured_at", and that field has no timezone suffix
-    -- both silently produced None here before this fix, which made
-    check_harvester_health() report BetMGM as never-seen regardless of
-    whether the underlying data was actually fresh."""
-    ts = (data or {}).get("captured_at") or (data or {}).get("timestamp", "")
+    """Age in minutes of a harvested payload's captured_at, or None if missing/bad."""
+    ts = (data or {}).get("captured_at", "")
     if not ts:
         return None
     try:
         from datetime import datetime, timezone
         captured = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        if captured.tzinfo is None:
-            captured = captured.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - captured).total_seconds() / 60
     except Exception:
         return None
@@ -15924,54 +15726,27 @@ def _gist_data_age_minutes(data: dict):
 # alert), or "signal" (secondary context — informational only).
 HARVESTER_REGISTRY = {
     "evsharps":        ("betcouncil_tokens.json",                    50, "sharp"),
-    # BetMGM: confirmed 2026-07-28 the real script (betcouncil_auto_scraper.py,
-    # workflow "Auto Scraper Refresh (DK/BetMGM/Novig/Betr)") pushes DK/BetMGM/
-    # Novig/Betr all combined into ONE file with no "betcouncil_" prefix and
-    # no per-sport split -- the old entry here (betcouncil_betmgm_{sport}.json)
-    # never matched anything real, so this source was always reported dead
-    # regardless of its actual health. Checking the real combined file instead;
-    # this approximates "the whole DK/BetMGM/Novig/Betr batch's freshness"
-    # since they share one push timestamp, not BetMGM specifically.
-    "betmgm":          ("auto_scraped_props.json",                   90, "lines"),
+    "betmgm":          ("betcouncil_betmgm_{sport}.json",            25, "lines"),
     "action_network":  ("betcouncil_actionnetwork_{sport}.json",     40, "signal"),
-    # Unabated: confirmed 2026-07-28 the real script (scripts/unabated_refresh.py)
-    # writes betcouncil_unabated_props_mlb.json / betcouncil_unabated_lines_mlb.json
-    # -- lowercase sport, "_props_"/"_lines_" in the name, and MLB-only right now
-    # (SPORTS = ["mlb"] in that script). The old entry here matched none of that,
-    # so this source was always reported dead regardless of its actual health
-    # (verified alive: real fresh data, 8000 rows, ~2 hours old at time of fix).
-    "unabated":        ("betcouncil_unabated_props_mlb.json",        90, "sharp"),
+    "covers":          ("betcouncil_covers_{sport}.json",            20, "signal"),
+    "dk_props":        ("betcouncil_dk_props_{sport}.json",          20, "props"),
+    "unabated":        ("betcouncil_unabated_{sport}.json",          30, "sharp"),
+    "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
+    "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
     "underdog":        ("betcouncil_underdog_{sport}.json",          20, "props"),
-    # bovada: confirmed 2026-07-28 the real active source is
-    # scripts/oddsapiio_bovada_props_refresh.py ->
-    # betcouncil_oddsapiio_bovada_props_{sport}.json (91 min old) -- the
-    # old betcouncil_bovada_{sport}.json entry never matched anything real.
-    "bovada":          ("betcouncil_oddsapiio_bovada_props_{sport}.json", 90, "lines"),
+    "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
     "polymarket":      ("betcouncil_sharptrack_live.json",           30, "signal"),
-    # mybookie: confirmed 2026-07-28 two real active sources exist
-    # (scripts/mybookie_refresh.py -> betcouncil_mybookie_ssr_{sport}.json,
-    # 80 min old; scripts/theoddsapi_mybookie_refresh.py -> a separate
-    # file, 195 min old) -- neither matches the old
-    # betcouncil_mybookie_{sport}.json entry here, which reported this
-    # source dead despite it being genuinely alive.
-    "mybookie":        ("betcouncil_mybookie_ssr_{sport}.json",       90, "lines"),
-    # bet365: confirmed 2026-07-28 the real active source is
-    # scripts/oddsapiio_bet365_refresh.py ->
-    # betcouncil_oddsapiio_bet365_{sport}.json (50 min old) -- the old
-    # betcouncil_bet365_games.json entry never matched anything real.
-    "bet365":          ("betcouncil_oddsapiio_bet365_{sport}.json",   90, "lines"),
-    # theScore: was never registered here at all (not a wrong filename --
-    # simply missing), confirmed via the real script scripts/thescore_scores_refresh.py
-    # which writes betcouncil_thescore_scores_{sport}.json (uppercase sport).
-    # thescore: registry entry removed -- confirmed the underlying
-    # scripts/thescore_scores_refresh.py workflow was entirely unused
-    # (only ever referenced by this registry entry itself, not by any
-    # real data-consuming function) and has been deliberately disabled.
-    # The actually-used theScore data comes from a separate Tampermonkey
-    # harvester (betcouncil_thescore_games.json via fetch_thescore_from_gist),
-    # not tracked in this registry at all.
+    "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
+    "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
+    "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
+    "pregame":         ("betcouncil_pregame_{sport}.json",           30, "signal"),
+    "fantasylabs":     ("betcouncil_fantasylabs_{sport}.json",       30, "signal"),
+    "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
+    "sleeper":         ("betcouncil_sleeper_{sport}.json",           30, "signal"),
+    "numberfire":      ("betcouncil_numberfire_{sport}.json",        30, "signal"),
     "sportsinsights":  ("betcouncil_sportsinsights_{sport}.json",    15, "signal"),
+    "oddsshark":       ("betcouncil_oddsshark_{sport}.json",         20, "signal"),
     "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
     "bettingpros":     ("betcouncil_bettingpros_{sport}.json",       20, "signal"),
@@ -16007,10 +15782,11 @@ HARVESTER_DISPLAY_NAMES = {
     "evsharps": "EV Sharps (Pinnacle/Circa benchmark)",
     "evsharps_ev": "EV Sharps EV feed",
     "unabated": "Unabated (sharp line consensus)",
+    "oddsjam": "OddsJam (sharp line consensus)",
     "evbets": "EV Bets (sharp line feed)",
     "evbets_props": "EV Bets props feed",
     "betmgm": "BetMGM", "bovada": "Bovada", "mybookie": "MyBookie",
-    "underdog": "Underdog",
+    "dk_props": "DraftKings props", "underdog": "Underdog",
     "prizepicks": "PrizePicks", "pick6": "DK Pick6",
     "caesars": "Caesars",
 }
@@ -16191,7 +15967,7 @@ def fetch_pick6_props_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -
     the page's server-rendered HTML).
     Returns (props_list, source_label)
     """
-    data = _read_gist_file("pick6_props_live.json", cache_minutes=10)
+    data = _read_gist_file("betcouncil_pick6_props.json", cache_minutes=10)
     if not data:
         return [], "unavailable"
 
@@ -17224,6 +17000,81 @@ def fetch_dk_most_bet_props(sport: str, max_rows: int = 15) -> list:
         return []
 
 
+def fetch_fanduel_parlayhub_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    Reads FanDuel's "Parlay Hub" (curated popular same-game-parlay picks;
+    login-gated in FanDuel's own app) from the Gist file pushed by
+    scripts/tampermonkey_fanduel_parlayhub_harvester.user.js while you
+    browse Parlay Hub in your own authenticated FanDuel tab. No Parlay
+    Hub API is public — this is the only path to it, same pattern as
+    the existing BetMGM/FanDuel-props browser harvesters.
+
+    2026-07-16 fix: confirmed the real response shape via a live capture
+    — it's a nested dict ({"popularBettingOpportunities": [...],
+    "attachments": {"markets": {...}, "events": {...}}}), not a flat
+    list as originally assumed. This now parses it into clean records
+    (narrative/teams/odds/totalBets) via _parse_fanduel_parlayhub()
+    instead of returning the raw nested structure.
+
+    Returns [] if the harvester hasn't pushed anything recently (no
+    forced/fake data).
+    """
+    data = _read_gist_file(f"betcouncil_fd_parlayhub_{sport}.json", cache_minutes=5)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("data", {})
+        if isinstance(raw, dict) and raw.get("popularBettingOpportunities"):
+            return _parse_fanduel_parlayhub(raw)
+        if isinstance(raw, list) and raw:
+            return raw  # legacy/unexpected-shape fallback
+    return []
+
+
+def _parse_fanduel_parlayhub(raw: dict) -> list:
+    """
+    Turns FanDuel's raw betting-opportunities/all response into clean,
+    display-ready records. Each popularBettingOpportunities entry already
+    carries americanOdds/totalBets/type directly; team names come from
+    the entry itself (SGP type) or get resolved via the attachments.markets
+    block (PARLAY type, where team info sits on the market's runners).
+    """
+    opportunities = raw.get("popularBettingOpportunities", [])
+    markets = raw.get("attachments", {}).get("markets", {})
+
+    records = []
+    for opp in opportunities:
+        matchup = opp.get("abbreviatedEventNameShort", "")
+        if not matchup:
+            home = opp.get("homeTeam", {}).get("abbrName")
+            away = opp.get("awayTeam", {}).get("abbrName")
+            if home and away:
+                matchup = f"{away} @ {home}"
+        if not matchup:
+            # PARLAY entries often span multiple games — pull team names
+            # from the first selection's market, if attached.
+            for sel in opp.get("selections", []):
+                mkt = markets.get(sel.get("marketId", ""), {})
+                for runner in mkt.get("runners", []):
+                    home = runner.get("homeTeam", {}).get("abbrName")
+                    away = runner.get("awayTeam", {}).get("abbrName")
+                    if home and away:
+                        matchup = f"{away} @ {home}"
+                        break
+                if matchup:
+                    break
+
+        records.append({
+            "type": opp.get("type", ""),
+            "narrative": opp.get("narrative", ""),
+            "matchup": matchup,
+            "total_bets": opp.get("totalBets", 0),
+            "american_odds": opp.get("americanOdds"),
+            "num_legs": len(opp.get("selections", [])),
+        })
+
+    records.sort(key=lambda r: r.get("total_bets", 0), reverse=True)
+    return records
+
+
 def fetch_favoredprops_from_gist(kind: str, sport: str, max_age_minutes: int = 100) -> list:
     """
     Reads FavoredProps' public props data (no login, no key — confirmed
@@ -17476,25 +17327,13 @@ def get_harvester_status(sport: str = "MLB") -> dict:
 
 
 
-_PRIZEPICKS_GIST_LEAGUE_KEY = {
-    # prizepicks_ssr_scraper.py names each Gist file after PrizePicks' own
-    # `league` attribute on the projection, which is always uppercase and
-    # sometimes a different code entirely (Golf -> "PGA", not "GOLF") --
-    # not the app's own title-case sport names. NBA/MLB/NHL/WNBA/NFL/UFC
-    # happen to already be uppercase in both places so those were never
-    # affected; Tennis/Golf/Soccer silently 404'd on every request.
-    "TENNIS": "TENNIS", "GOLF": "PGA", "SOCCER": "SOCCER",
-}
-
-
 def fetch_prizepicks_from_gist(sport: str) -> tuple:
     """
     PRIMARY: PrizePicks props from browser harvester.
     SECONDARY: Falls back to fetch_prizepicks_props() CDN scraper.
     Returns (props_list, source_label)
     """
-    _gist_league = _PRIZEPICKS_GIST_LEAGUE_KEY.get(sport.upper(), sport)
-    data = _read_gist_file(f"betcouncil_prizepicks_{_gist_league}.json", cache_minutes=5)
+    data = _read_gist_file(f"betcouncil_prizepicks_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
@@ -17760,17 +17599,6 @@ def _px_parse_prop_name(market_name):
     return market_name, market_name
 
 
-_PROPHETX_GAME_MARKETS = {
-    "moneyline", "moneyline (2 way)", "spread", "game spread",
-    "run line", "puck line", "point spread", "total", "totals",
-    "total points", "total runs", "total goals (regular time)",
-    "total games", "total sets", "total rounds",
-    "spread (regular time)", "draw (90 min)",
-    "1st inning moneyline", "1st inning total runs",
-    "1st-5th inning moneyline", "1st-5th inning spread", "1st-5th inning total runs",
-}
-
-
 def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport):
     """Split one event's raw v2 markets payload into (game_line_rows, prop_rows)."""
     lines_out, props_out = [], []
@@ -17841,7 +17669,7 @@ def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport
                 p1 = _px_best_price(ml_sels[1])
                 if not (p0 and p1):
                     continue
-                mkt_label = "Spread" if any(k in label_lc for k in ("spread", "run line", "puck line")) else "Total"
+                mkt_label = "Spread" if label_lc == "spread" else "Total"
                 lines_out.append({
                     "game": game_label, "home": home, "away": away,
                     "market": mkt_label,
