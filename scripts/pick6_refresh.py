@@ -174,7 +174,14 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     name_key = next((k for k, v in idx_to_name.items() if v == "name"), None)
     fullname_key = next((k for k, v in idx_to_name.items() if v == "fullName"), None)
 
+    # Name-field keys we'll accept from any resolved dict
+    NAME_FIELDS = ("displayName", "fullName", "name", "firstName", "lastName", "shortName")
+    # ID-field keys that could link a name dict to a player dkId
+    ID_FIELDS = ("dkId", "playerId", "entityId", "id", "participantId", "draftableId")
+
     player_names, stat_names = {}, {}
+    name_dict_samples = []  # diagnostic: dicts that carry any NAME_FIELD
+
     for item in array:
         if not isinstance(item, dict):
             continue
@@ -189,29 +196,51 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
             mkt_id, label = resolved.get("pickSixMarketId"), resolved.get("name")
             if mkt_id and label:
                 stat_names[mkt_id] = label
+        # Scan for name-bearing dicts (any dict with a name field and any ID field)
+        if len(name_dict_samples) < 5 and name_key is not None and f"_{name_key}" in item:
+            resolved = _resolve_refs(item, array, idx_to_name)
+            has_name = any(resolved.get(f) for f in NAME_FIELDS)
+            has_id = any(resolved.get(f) for f in ID_FIELDS)
+            if has_name and has_id:
+                name_dict_samples.append({k: resolved[k] for k in resolved
+                                          if k in NAME_FIELDS or k in ID_FIELDS})
+        elif len(name_dict_samples) < 5 and fullname_key is not None and f"_{fullname_key}" in item:
+            resolved = _resolve_refs(item, array, idx_to_name)
+            has_name = any(resolved.get(f) for f in NAME_FIELDS)
+            has_id = any(resolved.get(f) for f in ID_FIELDS)
+            if has_name and has_id:
+                name_dict_samples.append({k: resolved[k] for k in resolved
+                                          if k in NAME_FIELDS or k in ID_FIELDS})
+
+    if name_dict_samples:
+        DEBUG_LOG.append({"note": "name_id_dict_samples", "samples": name_dict_samples[:5]})
+    elif dkid_key is not None:
+        # Log a few raw name-field dicts even without a co-located ID field
+        raw_name_dicts = []
+        for item in array:
+            if isinstance(item, dict) and (
+                (name_key and f"_{name_key}" in item) or
+                (fullname_key and f"_{fullname_key}" in item)
+            ):
+                resolved = _resolve_refs(item, array, idx_to_name)
+                if any(resolved.get(f) for f in NAME_FIELDS):
+                    raw_name_dicts.append({k: v for k, v in resolved.items()
+                                           if not isinstance(v, (list, dict)) or k in ID_FIELDS})
+                    if len(raw_name_dicts) >= 5:
+                        break
+        DEBUG_LOG.append({"note": "name_dicts_no_id", "count": len(raw_name_dicts),
+                           "samples": raw_name_dicts[:5]})
+
     return player_names, stat_names
 
 
 def fetch_sport_props(sport: str) -> list:
     url = f"{BASE_URL}?sport={sport}"
-    r = requests.get(url, headers=HEADERS, timeout=25)
+    r = requests.get(url, headers=HEADERS, timeout=(8, 20))
     DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
                        "body_len": len(r.text)})
     if r.status_code != 200:
         return []
-
-    # One-time: scan for a known player's dkId in the raw HTML (MLB only)
-    # to find whether names appear in a different HTML section
-    if sport == "MLB" and not any(e.get("note") == "dkid_html_context" for e in DEBUG_LOG):
-        probe_id = "639885"
-        positions = [i for i in range(len(r.text)) if r.text[i:i+len(probe_id)] == probe_id]
-        snippets = [r.text[max(0,p-120):p+120] for p in positions[:5]]
-        DEBUG_LOG.append({
-            "note": "dkid_html_context",
-            "probe_dkid": probe_id,
-            "occurrences": len(positions),
-            "snippets": snippets,
-        })
 
     array = _extract_stream_payload(r.text)
     if not array:
