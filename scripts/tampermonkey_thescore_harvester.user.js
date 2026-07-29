@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BetCouncil TheScore Bet Harvester
 // @namespace    betcouncil
-// @version      3.1
-// @description  Captures theScore Bet game lines (moneyline/spread/total) with self-healing persisted query hash, pushes to shared Gist
+// @version      4.0
+// @description  Captures theScore Bet game lines (moneyline/spread/total) via a hand-built full GraphQL query (not persisted-query hash), pushes to shared Gist
 // @match        https://sportsbook.thescore.bet/*
 // @grant        none
 // ==/UserScript==
@@ -10,9 +10,6 @@
 (function () {
     'use strict';
     const GRAPHQL_ENDPOINT = "https://sportsbook.us-default.thescore.bet/graphql";
-    const OPERATION_NAME = "CompetitionPageSectionLinesTabNode";
-    let QUERY_HASH = localStorage.getItem("bc_thescore_hash") ||
-        "4fcab2e9b286b7b14db66c66280a38bceab9effed830e3a805e833d7ce8cac0b";
     const SPORTS_SECTIONS = {
         MLB: "Section:d9513891-c315-4c16-8554-09d52d3ce9b2",
         NFL: "Section:647c3091-b79f-47bc-a96c-b053cc3a4a6a",
@@ -24,84 +21,132 @@
     const GITHUB_TOKEN = "PASTE_YOUR_GITHUB_TOKEN_HERE";
     const GIST_FILENAME = "betcouncil_thescore_games.json";
     const POLL_INTERVAL_MS = 45000;
-    const HASH_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-    function buildRequestUrl(sectionId) {
-        // Optional/cosmetic flags all set false -- confirmed via real error
-        // messages ('Cannot query field jerseyImage/headshots/logos/colour1
-        // on Team/Player', 'Unknown type RecommendedPropSelection/Country')
-        // that these conditionally-included fields no longer exist on the
-        // current schema, even though this persisted query hash still
-        // references them when these flags are true. We only need core
-        // odds data, not player headshots/branding/recommended-props UI.
-        const variables = {
-            isSubscription: false,
-            includeStandardizedBoxscore: false,
-            pageType: "PAGE",
-            includeRecommendedProps: false,
-            isBrandingImageEnabled: false,
-            isNewFeaturedBetParticipantLogoEnabled: false,
-            isFeaturedBetCarouselHeaderRedesignEnabled: false,
-            isCfpRankingEnabled: false,
-            isCombatSportsRedesignEnabled: false,
-            isFeaturedMarketCardRedesignEnabled: false,
-            isDsModelRecommendedPropsEnabled: false,
-            includeRichEvent: false,
-            oddsFormat: "AMERICAN",
-            sectionId: sectionId,
-            selectedFilterId: "",
-        };
-        const extensions = { persistedQuery: { version: 1, sha256Hash: QUERY_HASH } };
-        const params = new URLSearchParams({
-            operationName: OPERATION_NAME,
-            variables: JSON.stringify(variables),
-            extensions: JSON.stringify(extensions),
-        });
-        return `${GRAPHQL_ENDPOINT}/persisted_queries/${QUERY_HASH}?${params.toString()}`;
-    }
-
-    async function checkForHashUpdate() {
-        try {
-            const homeRes = await fetch("https://sportsbook.thescore.bet/", { credentials: "omit" });
-            const homeHtml = await homeRes.text();
-            const scriptSrcs = Array.from(homeHtml.matchAll(/src="(\/_next\/static\/chunks\/pages\/index-[^"]+\.js)"/g)).map(m => m[1]);
-            if (scriptSrcs.length === 0) {
-                console.warn("[BetCouncil TheScore Harvester] hash self-heal: could not find index bundle");
-                return;
-            }
-            for (const src of scriptSrcs) {
-                const jsRes = await fetch(`https://sportsbook.thescore.bet${src}`, { credentials: "omit" });
-                const jsText = await jsRes.text();
-                const linesMatch = jsText.match(new RegExp(`"${OPERATION_NAME}":"([a-f0-9]{64})"`));
-                if (linesMatch && linesMatch[1] !== QUERY_HASH) {
-                    console.warn(`[BetCouncil TheScore Harvester] hash changed: ${QUERY_HASH} -> ${linesMatch[1]}`);
-                    QUERY_HASH = linesMatch[1];
-                    localStorage.setItem("bc_thescore_hash", QUERY_HASH);
-                }
-                if (linesMatch) break;
-            }
-        } catch (e) {
-            console.warn("[BetCouncil TheScore Harvester] hash self-heal check failed:", e);
+    // Hand-built, non-persisted GraphQL query -- the original persisted
+    // query hash bakes in a stale ParticipantTeam fragment (abbreviation,
+    // colour1, logos) that no longer exists on the current Team type,
+    // which is a schema VALIDATION error (no partial data possible, ever,
+    // regardless of variables). This full query document has that broken
+    // fragment (and several other now-broken optional pieces: richEvent,
+    // recommendedProps, statistics) removed entirely. Confirmed via a real
+    // test call that this document parses and passes schema validation
+    // cleanly (a real `data` key came back, just null due to an auth
+    // check on the resolver -- a completely different, expected kind of
+    // block that a real logged-in browser session resolves).
+    const QUERY_DOCUMENT = `query GetCompetitionLines($sectionId: ID!, $oddsFormat: OddsFormat!, $isSubscription: Boolean = false, $pageType: PageType = PAGE, $selectedFilterId: ID) {
+  competitionSection(id: $sectionId) {
+    id
+    slug
+    sectionChildren {
+      ... on MarketplaceShelf {
+        id
+        icon(imageSize: { resizeFormat: AUTO, maxWidth: 48, maxHeight: 48 }) {
+          customSize: customSizeThemable
+          customHeight
+          customWidth
         }
+        marketplaceShelfChildren(selectedFilterId: $selectedFilterId) {
+          ... on GridMarketCard {
+            id
+            rawId
+            attributes
+            marketTags
+            deepLink(pageType: $pageType) { webUrl }
+            markets(pageType: $pageType) {
+              id
+              name @skip(if: $isSubscription)
+              status
+              type @skip(if: $isSubscription)
+              extraInformation
+              startTime
+              updatedAtTime
+              selections {
+                id
+                rawId
+                status
+                probabilityEncrypted
+                name @skip(if: $isSubscription) {
+                  cleanName
+                  defaultName
+                  fullName
+                  minimalName
+                }
+                odds {
+                  denominatorLong
+                  numeratorLong
+                  formattedOdds(oddsFormat: $oddsFormat)
+                }
+                points @skip(if: $isSubscription) {
+                  decimalPoints
+                  formattedPoints
+                }
+                participant @skip(if: $isSubscription) {
+                  id
+                  abbreviation
+                  mediumName
+                  fullName
+                  resourceUri
+                }
+              }
+            }
+            fallbackEvent @skip(if: $isSubscription) {
+              id
+              name
+              startTime
+              status
+              slug
+              resourceUri
+              competition { id name slug resourceUri }
+              sport { id name slug resourceUri }
+              organization { id slug }
+              ... on StandardEvent {
+                homeParticipant { id abbreviation mediumName fullName resourceUri }
+                awayParticipant { id abbreviation mediumName fullName resourceUri }
+              }
+            }
+          }
+          ... on ThreeWayMoneylineMarketCard { id rawId }
+          ... on CompactMultipleMarketCard { id rawId }
+          ... on ListMarketCard { id rawId }
+          ... on SoccerGridMarketCard { id rawId }
+          ... on TennisGridMarketCard { id rawId }
+          ... on SimpleGridMarketCard { id rawId }
+          ... on CricketGridMarketCard { id rawId }
+          ... on CombatGridMarketCard { id rawId }
+        }
+      }
+      ... on FeaturedMarketsCarousel { id label }
+    }
+  }
+}
+`;
+
+    function buildRequestBody(sectionId) {
+        const variables = {
+            sectionId: sectionId,
+            oddsFormat: "AMERICAN",
+            isSubscription: false,
+            pageType: "PAGE",
+            selectedFilterId: null,
+        };
+        return JSON.stringify({
+            operationName: "GetCompetitionLines",
+            variables: variables,
+            query: QUERY_DOCUMENT,
+        });
     }
 
     async function harvestGameLines() {
         const allData = {};
         for (const [sport, sectionId] of Object.entries(SPORTS_SECTIONS)) {
             try {
-                const res = await fetch(buildRequestUrl(sectionId), { method: "GET", credentials: "include", headers: { "Accept": "application/json" } });
+                const res = await fetch(GRAPHQL_ENDPOINT, { method: "POST", credentials: "include", headers: { "Accept": "application/json", "Content-Type": "application/json" }, body: buildRequestBody(sectionId) });
                 const json = await res.json().catch(() => null);
                 if (!json) {
                     console.warn(`[BetCouncil TheScore Harvester] ${sport} unparseable body, status:`, res.status);
                     continue;
                 }
                 if (json.errors) {
-                    const notFound = json.errors.some(e => e?.message === "PersistedQueryNotFound" || e?.extensions?.code === "PERSISTED_QUERY_NOT_FOUND");
-                    if (notFound) {
-                        console.warn("[BetCouncil TheScore Harvester] PersistedQueryNotFound — forcing hash refresh");
-                        await checkForHashUpdate();
-                        continue;
-                    }
                     // GraphQL supports partial success: data + errors can both be
                     // present in the same response. Confirmed via real capture
                     // that this specific field error (Team.abbreviation, not
@@ -131,8 +176,6 @@
         else { console.log("[BetCouncil TheScore Harvester] pushed", GIST_FILENAME, "at", payload.captured_at); }
     }
 
-    checkForHashUpdate();
-    setInterval(checkForHashUpdate, HASH_CHECK_INTERVAL_MS);
     harvestGameLines();
     setInterval(harvestGameLines, POLL_INTERVAL_MS);
 })();
