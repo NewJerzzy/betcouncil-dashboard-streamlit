@@ -256,17 +256,23 @@ def _fetch_player_name_map(sport: str) -> dict:
                           "status": lobby_resp.status_code if lobby_resp else None})
         if not lobby_resp.ok:
             raise ValueError(f"lobby HTTP {lobby_resp.status_code}")
-        dgs = lobby_resp.json().get("DraftGroups", [])
-        for dg in dgs[:8]:
-            dgid = dg.get("DraftGroupId")
-            if not dgid:
-                continue
+        lobby_json = lobby_resp.json()
+        dgs = lobby_json.get("DraftGroups", [])
+        dgids = [dg.get("DraftGroupId") for dg in dgs if dg.get("DraftGroupId")][:6]
+        if sport == "MLB":  # log once so we can diagnose
+            DEBUG_LOG.append({"note": "dk_lobby_draftgroups", "sport": sport,
+                              "dgids": dgids[:10]})
+        for dgid in dgids:
             for url_tmpl in [
                 f"https://api.draftkings.com/lineups/v1/draftgroups/{dgid}/draftables?format=json",
                 f"https://api.draftkings.com/draftgroups/v1/{dgid}/draftables?format=json",
             ]:
                 try:
                     dr = requests.get(url_tmpl, headers=HEADERS, timeout=(5, 10))
+                    if sport == "MLB" and not any(e.get("note") == "dk_draftables_sample" for e in DEBUG_LOG):
+                        DEBUG_LOG.append({"note": "dk_draftables_sample", "url": url_tmpl,
+                                          "status": dr.status_code,
+                                          "body_snippet": dr.text[:200]})
                     if not dr.ok:
                         continue
                     for p in dr.json().get("draftables", []):
@@ -279,10 +285,38 @@ def _fetch_player_name_map(sport: str) -> dict:
                         DEBUG_LOG.append({"note": "dk_api_names_ok", "sport": sport,
                                           "count": len(name_map), "url": url_tmpl})
                         return name_map
-                except Exception:
+                except Exception as ex:
+                    if sport == "MLB":
+                        DEBUG_LOG.append({"note": "dk_draftables_exception", "url": url_tmpl,
+                                          "error": str(ex)[:120]})
                     continue
-    except Exception:
-        pass
+    except Exception as ex:
+        DEBUG_LOG.append({"note": "dk_lobby_exception", "sport": sport, "error": str(ex)[:120]})
+    # Fallback: try DK players direct API
+    try:
+        dk_sport_key = {"SOCCER": "SOC", "UFC": "MMA", "PGA+TOUR": "GOLF",
+                        "NASCAR": "NAS"}.get(sport, sport)
+        players_resp = requests.get(
+            f"https://api.draftkings.com/players/v1/players?sport={dk_sport_key}&format=json&pageSize=500",
+            headers=HEADERS, timeout=(5, 12),
+        )
+        if sport == "MLB":
+            DEBUG_LOG.append({"note": "dk_players_api", "status": players_resp.status_code,
+                              "body_snippet": players_resp.text[:200]})
+        if players_resp.ok:
+            for p in players_resp.json().get("players", []):
+                pid = p.get("playerId") or p.get("draftableId")
+                name = (p.get("displayName") or p.get("shortName") or
+                        f"{p.get('firstName','')} {p.get('lastName','')}".strip() or None)
+                if pid and name:
+                    name_map[int(pid)] = name
+            if name_map:
+                DEBUG_LOG.append({"note": "dk_players_api_ok", "sport": sport,
+                                  "count": len(name_map)})
+                return name_map
+    except Exception as ex:
+        if sport == "MLB":
+            DEBUG_LOG.append({"note": "dk_players_api_exception", "error": str(ex)[:120]})
     if not name_map:
         DEBUG_LOG.append({"note": "dk_api_names_failed", "sport": sport})
     return name_map
