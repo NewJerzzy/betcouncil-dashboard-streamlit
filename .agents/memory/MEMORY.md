@@ -1,1 +1,2 @@
 - [theScore Bet GraphQL](thescore-bet-graphql.md) — real endpoint is subdomain, not homepage; hash current but 37 schema errors, not 1; sectionId required not competitionSlug
+- [Pick6 Props Pipeline](pick6-pipeline.md) — gist at 300-file cap so uses betcouncil_pick6_props.json; SSR has no player names (confirmed all APIs); token is collaborator, can't create new files

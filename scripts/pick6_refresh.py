@@ -159,20 +159,15 @@ def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
 
 def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     """
-    Scan the flat array for player-ID dicts (Shape B: has the compressed
-    key for "dkId") and market-type dicts (Shape D: has the compressed
-    key for "pickSixMarketId" + "name"), building dkId->name and
-    marketId->stat_name lookups. Player names (Shape A) and player IDs
-    (Shape B) are confirmed to be SEPARATE dict shapes in the real data
-    -- this builds a dkId->name correlation from whatever fields are
-    actually present once each candidate dict is fully resolved, logging
-    via debug if either lookup ends up empty so a further schema
-    mismatch is visible rather than silently producing "Unknown Player".
+    Scan the flat array for:
+    - dkId-carrying dicts → dkId->name lookup (NOTE: confirmed 2026-07-29 that
+      the Pick6 SSR stream does NOT include player display names; they are loaded
+      client-side via XHR after hydration. player_names will always be empty from
+      this source alone. dkId_ placeholder names are used as a fallback.)
+    - market dicts → pickSixMarketId->stat_name lookup (this DOES work from SSR)
     """
     dkid_key = idx_to_name and next((k for k, v in idx_to_name.items() if v == "dkId"), None)
     market_id_key = next((k for k, v in idx_to_name.items() if v == "pickSixMarketId"), None)
-    name_key = next((k for k, v in idx_to_name.items() if v == "name"), None)
-    fullname_key = next((k for k, v in idx_to_name.items() if v == "fullName"), None)
 
     player_names, stat_names = {}, {}
     for item in array:
@@ -181,7 +176,7 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
         if dkid_key is not None and f"_{dkid_key}" in item:
             resolved = _resolve_refs(item, array, idx_to_name)
             dk_id = resolved.get("dkId")
-            name = resolved.get("fullName") or resolved.get("name")
+            name = resolved.get("displayName") or resolved.get("fullName") or resolved.get("name")
             if dk_id and name:
                 player_names[dk_id] = name
         if market_id_key is not None and f"_{market_id_key}" in item:
@@ -194,7 +189,7 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
 
 def fetch_sport_props(sport: str) -> list:
     url = f"{BASE_URL}?sport={sport}"
-    r = requests.get(url, headers=HEADERS, timeout=25)
+    r = requests.get(url, headers=HEADERS, timeout=(8, 20))
     DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
                        "body_len": len(r.text)})
     if r.status_code != 200:
@@ -209,21 +204,9 @@ def fetch_sport_props(sport: str) -> list:
     player_names, stat_names = _build_lookup_tables(array, idx_to_name)
     pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
 
-    if sport == "MLB":
-        DEBUG_LOG.append({"sport": sport, "array_len": len(array),
-                           "player_names_found": len(player_names), "stat_names_found": len(stat_names),
-                           "pickable_id_key_found": pickable_id_key is not None})
-        if not player_names or not stat_names or pickable_id_key is None:
-            # Capture real samples to fix field names precisely instead of
-            # guessing again -- using the confirmed-correct compressed-key
-            # detection this time, not a literal string check.
-            dkid_key = next((k for k, v in idx_to_name.items() if v == "dkId"), None)
-            dkid_samples = ([item for item in array if isinstance(item, dict) and f"_{dkid_key}" in item][:3]
-                             if dkid_key is not None else [])
-            DEBUG_LOG.append({"sport": sport, "dkid_key": dkid_key, "dkid_samples": dkid_samples,
-                               "pickable_id_key": pickable_id_key,
-                               "note": "player_names may still be empty if names truly aren't co-located "
-                                       "with dkId in any single dict -- see dkid_samples for what's actually there"})
+    DEBUG_LOG.append({"sport": sport, "array_len": len(array),
+                       "player_names_found": len(player_names), "stat_names_found": len(stat_names),
+                       "pickable_id_key_found": pickable_id_key is not None})
 
     if pickable_id_key is None:
         return []
@@ -236,6 +219,8 @@ def fetch_sport_props(sport: str) -> list:
         resolved = _resolve_refs(item, array, idx_to_name)
         entities = resolved.get("entities", [])
         dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
+        # player_names is always empty (confirmed: Pick6 SSR carries no display names).
+        # dkId_ placeholder stays until a working name API is found.
         player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
 
         for market in resolved.get("activePickableMarkets", []):
@@ -265,7 +250,7 @@ def push_to_gist(props: list, github_token: str) -> bool:
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"pick6_props_live.json": {"content": json.dumps(payload)}}},
+        json={"files": {"betcouncil_pick6_props.json": {"content": json.dumps(payload)}}},
         timeout=30,
     )
     if resp.status_code in (200, 201):

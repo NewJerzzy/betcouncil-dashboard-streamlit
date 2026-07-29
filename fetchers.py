@@ -15967,7 +15967,7 @@ def fetch_pick6_props_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -
     the page's server-rendered HTML).
     Returns (props_list, source_label)
     """
-    data = _read_gist_file("pick6_props_live.json", cache_minutes=10)
+    data = _read_gist_file("betcouncil_pick6_props.json", cache_minutes=10)
     if not data:
         return [], "unavailable"
 

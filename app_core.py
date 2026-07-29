@@ -13481,7 +13481,12 @@ def load_sport_data(sport):
     # fetch_pick6_props_from_gist() (the free, no-login SSR scraper) below.
     # Stub kept here (always returns []) so the _parallel_fns tuple below
     # doesn't need renumbering.
-    def _pf_dk_pick6():    return []
+    def _pf_dk_pick6():
+        try:
+            props, _ = fetch_pick6_props_from_gist(sport)
+            return props
+        except Exception:
+            return []
     def _pf_betrivers_lines(): return fetch_betrivers_game_lines(sport)
     def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
     def _pf_espnbet_lines():   return fetch_espnbet_game_lines(sport)
