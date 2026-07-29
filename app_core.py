@@ -8931,7 +8931,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": [], "betql": [], "wagerbird": [], "lineterminal": [], "propsmadness": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": [], "betql": [], "wagerbird": [], "lineterminal": [], "propsmadness": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
@@ -8948,6 +8948,15 @@ def build_market_comparison(shortlist):
             matched_player = next((p for p in shortlist_players if p in market_l), None)
             if matched_player:
                 result["dk_props"].append({**row, "matches_shortlist": True, "matched_player": matched_player})
+
+    # ── FanDuel Parlay Hub: whatever the harvester has, per sport ───────
+    for sport in list(sports_needed) + ["ALL"]:
+        try:
+            fdph = fetch_fanduel_parlayhub_from_gist(sport)
+        except Exception:
+            fdph = []
+        if fdph:
+            result["fd_parlayhub"][sport] = fdph
 
     # ── FavoredProps: match against shortlist prop players, both dfs
     # (PrizePicks/Underdog-style) and sportsbook variants ───────────────
@@ -13253,6 +13262,12 @@ def load_sport_data(sport):
         # ── Score each prop via standalone model (ESPN live stats) ───────────
         enriched = []
         n_edge = 0
+        _fetch_fn = {
+            "Tennis": fetch_tennis_player_stats,
+            "Golf":   fetch_golf_player_stats,
+            "Soccer": fetch_soccer_player_stats,
+            "UFC":    fetch_ufc_fighter_stats,
+        }.get(sport)
 
         for p in props:
             player  = p["Player"]
@@ -13458,21 +13473,20 @@ def load_sport_data(sport):
             return fetch_h2h_game_lines(sport)
         return fetch_game_lines(sport)
     def _pf_parlayplay():   return []  # parlayplay disabled
-    # _pf_dk_pick6 (rewired Jul 29 2026) — previously hardcoded to always
-    # return [] since Jul 10 2026, with a comment claiming real Pick6 data
-    # "comes entirely from fetch_pick6_props_from_gist() below" -- that was
-    # never actually true, nothing called it from here. fetch_pick6_props_
-    # from_gist() was genuinely being called elsewhere (a dynamic-dispatch
-    # table further down in this file), but only populated a session key
-    # read by the System tab's status counter, never the real props
-    # pipeline. This bridges that gap for real. Note: the underlying
-    # scraper (scripts/pick6_refresh.py) has a separate, still-open bug as
-    # of this fix (player-name/dkId join failing on live DraftKings data,
-    # see betcouncil.md notes) -- this wiring is correct and ready, it
-    # will just keep returning [] until that scraper bug is fixed upstream.
+    # _pf_dk_pick6 removed (Jul 10 2026) — fetch_draftkings_pick6() always
+    # returned [] since no Pick6 bearer-token harvester was ever wired in to
+    # populate the tokens it needed; it was a guaranteed no-op every cycle,
+    # spending a fetch slot and logging a warning pointing at a nonexistent
+    # "Harvest Pick6 Tokens" UI button. Real Pick6 data comes entirely from
+    # fetch_pick6_props_from_gist() (the free, no-login SSR scraper) below.
+    # Stub kept here (always returns []) so the _parallel_fns tuple below
+    # doesn't need renumbering.
     def _pf_dk_pick6():
-        _pk6_props, _pk6_src = fetch_pick6_props_from_gist(sport)
-        return _pk6_props
+        try:
+            props, _ = fetch_pick6_props_from_gist(sport)
+            return props
+        except Exception:
+            return []
     def _pf_betrivers_lines(): return fetch_betrivers_game_lines(sport)
     def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
     def _pf_espnbet_lines():   return fetch_espnbet_game_lines(sport)
@@ -13829,30 +13843,6 @@ def load_sport_data(sport):
         print(f"[WARN] fetch_unabated_props({sport}): {_uap_err}")
     st.session_state[f"unabated_props_{sport}"]     = _unabated_props_lines
     st.session_state[f"unabated_props_src_{sport}"] = _unabated_props_src
-
-    # ── Sleeper scoreboard/lineups — same deliberately-separate pattern as
-    # Unabated props above. Function itself only has MLB verified against a
-    # real capture (per its own docstring) -- gating here matches that,
-    # rather than trusting unverified non-MLB output.
-    try:
-        from fetchers import fetch_sleeper_scoreboard as _fetch_sleeper
-        _sleeper_data = _fetch_sleeper(sport) if sport == "MLB" else []
-    except Exception as _sl_err:
-        _sleeper_data = []
-        print(f"[WARN] fetch_sleeper_scoreboard({sport}): {_sl_err}")
-    st.session_state[f"sleeper_data_{sport}"] = _sleeper_data
-
-    # ── NumberFire direct widgets — same pattern. Function itself only has
-    # a real URL for NFL/NBA (per its own docstring/url_map) and returns {}
-    # for everything else already, so this gate is just belt-and-suspenders
-    # against a wasted network call for sports it can't serve.
-    try:
-        from fetchers import fetch_numberfire_direct as _fetch_numberfire
-        _numberfire_data = _fetch_numberfire(sport) if sport in ("NFL", "NBA") else {}
-    except Exception as _nf_err:
-        _numberfire_data = {}
-        print(f"[WARN] fetch_numberfire_direct({sport}): {_nf_err}")
-    st.session_state[f"numberfire_data_{sport}"] = _numberfire_data
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
