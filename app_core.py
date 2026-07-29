@@ -13458,15 +13458,21 @@ def load_sport_data(sport):
             return fetch_h2h_game_lines(sport)
         return fetch_game_lines(sport)
     def _pf_parlayplay():   return []  # parlayplay disabled
-    # _pf_dk_pick6 removed (Jul 10 2026) — fetch_draftkings_pick6() always
-    # returned [] since no Pick6 bearer-token harvester was ever wired in to
-    # populate the tokens it needed; it was a guaranteed no-op every cycle,
-    # spending a fetch slot and logging a warning pointing at a nonexistent
-    # "Harvest Pick6 Tokens" UI button. Real Pick6 data comes entirely from
-    # fetch_pick6_props_from_gist() (the free, no-login SSR scraper) below.
-    # Stub kept here (always returns []) so the _parallel_fns tuple below
-    # doesn't need renumbering.
-    def _pf_dk_pick6():    return []
+    # _pf_dk_pick6 (rewired Jul 29 2026) — previously hardcoded to always
+    # return [] since Jul 10 2026, with a comment claiming real Pick6 data
+    # "comes entirely from fetch_pick6_props_from_gist() below" -- that was
+    # never actually true, nothing called it from here. fetch_pick6_props_
+    # from_gist() was genuinely being called elsewhere (a dynamic-dispatch
+    # table further down in this file), but only populated a session key
+    # read by the System tab's status counter, never the real props
+    # pipeline. This bridges that gap for real. Note: the underlying
+    # scraper (scripts/pick6_refresh.py) has a separate, still-open bug as
+    # of this fix (player-name/dkId join failing on live DraftKings data,
+    # see betcouncil.md notes) -- this wiring is correct and ready, it
+    # will just keep returning [] until that scraper bug is fixed upstream.
+    def _pf_dk_pick6():
+        _pk6_props, _pk6_src = fetch_pick6_props_from_gist(sport)
+        return _pk6_props
     def _pf_betrivers_lines(): return fetch_betrivers_game_lines(sport)
     def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
     def _pf_espnbet_lines():   return fetch_espnbet_game_lines(sport)
