@@ -3832,6 +3832,37 @@ with tabs[3]:
                 if _smk_parts:
                     st.caption(f"🔄 Smarkets exchange: {' vs '.join(_smk_parts)}")
 
+        # Novig real exchange prices via The Odds API (novig_odds_refresh.py)
+        # -- same category as the Smarkets block above (real money-backed
+        # exchange, not a bookmaker's posted line), all sports rather than
+        # MLB-only. Captured but never shown anywhere until now.
+        _nvg_game = None
+        try:
+            _nvg_data = load_from_gist("novig_odds", None) or {}
+            for _nvg_g in _nvg_data.get("events", []):
+                _nvg_home, _nvg_away = _nvg_g.get("home_team", ""), _nvg_g.get("away_team", "")
+                if _nvg_home and _nvg_away and _home_nm and _away_nm and (
+                    _nvg_home.lower() in _home_nm.lower() or _home_nm.lower() in _nvg_home.lower()
+                ) and (
+                    _nvg_away.lower() in _away_nm.lower() or _away_nm.lower() in _nvg_away.lower()
+                ):
+                    _nvg_game = _nvg_g
+                    break
+        except Exception:
+            _nvg_game = None
+        if _nvg_game:
+            _nvg_h2h = (_nvg_game.get("novig_markets") or {}).get("h2h", [])
+            if _nvg_h2h:
+                _nvg_parts = []
+                for _o in _nvg_h2h:
+                    if _o.get("price") is not None:
+                        try:
+                            _nvg_parts.append(f"{_o.get('name','')} {int(_o['price']):+d}")
+                        except (TypeError, ValueError):
+                            pass
+                if _nvg_parts:
+                    st.caption(f"🔄 Novig exchange: {' vs '.join(_nvg_parts)}")
+
         if _bdl_game:
             _bdl_home_data = _bdl_game.get("home_team_data") or {}
             _bdl_away_data = _bdl_game.get("away_team_data") or {}
@@ -7978,6 +8009,23 @@ with tabs[7]:
             pl_name_d = st.session_state.get("pl_name_display", pl_name)
 
             _pl_sport_used = st.session_state.get("pl_sport_used", "NBA")
+
+            # TheScore per-start pitcher lines (K/BB/W-L) -- MLB only,
+            # matching this source's real coverage. Was captured every
+            # 30 min but never shown anywhere until now.
+            if _pl_sport_used == "MLB":
+                try:
+                    _ts_starts = fetch_thescore_pitcher_starts(pl_name_d)
+                except Exception:
+                    _ts_starts = []
+                if _ts_starts:
+                    with st.expander(f"⚾ TheScore: last {min(len(_ts_starts), 10)} starts", expanded=False):
+                        for _ts_s in _ts_starts[:10]:
+                            st.caption(
+                                f"{_ts_s['date'][:16]} vs {_ts_s.get('opponent','?')} — "
+                                f"K: {_ts_s.get('strikeouts','?')}  BB: {_ts_s.get('walks','?')}  "
+                                f"W-L: {_ts_s.get('wins',0)}-{_ts_s.get('losses',0)}"
+                            )
 
             # NumberFire ranking lookup -- NFL/NBA only, matching the real
             # coverage fetch_numberfire_direct actually has. Matches by
