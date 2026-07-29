@@ -1,0 +1,1 @@
+- [theScore Bet GraphQL](thescore-bet-graphql.md) — real endpoint is subdomain, not homepage; hash current but 37 schema errors, not 1; sectionId required not competitionSlug
