@@ -252,8 +252,10 @@ def _fetch_player_name_map(sport: str) -> dict:
             f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
             headers=HEADERS, timeout=(5, 10),
         )
+        DEBUG_LOG.append({"note": "dk_lobby_response", "sport": sport,
+                          "status": lobby_resp.status_code if lobby_resp else None})
         if not lobby_resp.ok:
-            return name_map
+            raise ValueError(f"lobby HTTP {lobby_resp.status_code}")
         dgs = lobby_resp.json().get("DraftGroups", [])
         for dg in dgs[:8]:
             dgid = dg.get("DraftGroupId")
@@ -413,7 +415,7 @@ def push_debug(github_token: str) -> None:
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
             json={"files": {"betcouncil_pick6_debug.json": {
                 "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
-                                        "requests": DEBUG_LOG[:20]}, indent=2)
+                                        "requests": DEBUG_LOG[:40]}, indent=2)
             }}},
             timeout=30,
         )
