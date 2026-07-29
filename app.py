@@ -3682,25 +3682,30 @@ with tabs[3]:
             _wgt_game = None
 
         # Sleeper live score + confirmed starting lineup -- MLB only,
-        # matching fetch_sleeper_scoreboard's own documented caveat that
-        # only MLB's shape is verified. Matches by team display name
-        # against the same _home_nm/_away_nm used for WGT above.
-        _sleeper_game = None
-        if _gsport.upper() == "MLB":
+        # BallDontLie live scores -- replaces Sleeper's role here with
+        # broader, officially-documented coverage (MLB/NFL/WNBA confirmed
+        # real access; NHL returns a genuine 401 despite showing FREE on
+        # the account dashboard, not yet resolved). Confirmed via real
+        # official docs that lineups specifically need a paid tier, so
+        # this shows live score only, not lineups (unlike the old Sleeper
+        # slot, which claimed "confirmed lineup" it usually couldn't back
+        # up with real data anyway).
+        _bdl_game = None
+        if _gsport.upper() in ("MLB", "NFL", "WNBA"):
             try:
-                _sleeper_all = st.session_state.get(f"sleeper_data_{_gsport.upper()}", {}) or {}
-                for _sl_gid, _sl_g in _sleeper_all.items():
-                    _sl_home_nm = (_sl_g.get("home", {}) or {}).get("name", "")
-                    _sl_away_nm = (_sl_g.get("away", {}) or {}).get("name", "")
-                    if _sl_home_nm and _sl_away_nm and _home_nm and _away_nm and (
-                        _sl_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _sl_home_nm.lower()
+                _bdl_data = load_from_gist(f"bdl_scores_{_gsport.upper()}", None) or {}
+                for _bdl_g in _bdl_data.get("games", []):
+                    _bdl_home_nm = _bdl_g.get("home_team_name", "")
+                    _bdl_away_nm = _bdl_g.get("away_team_name", "")
+                    if _bdl_home_nm and _bdl_away_nm and _home_nm and _away_nm and (
+                        _bdl_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _bdl_home_nm.lower()
                     ) and (
-                        _sl_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _sl_away_nm.lower()
+                        _bdl_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _bdl_away_nm.lower()
                     ):
-                        _sleeper_game = _sl_g
+                        _bdl_game = _bdl_g
                         break
             except Exception:
-                _sleeper_game = None
+                _bdl_game = None
 
         # OddsShark/Covers totals consensus -- genuinely new data (the
         # existing Covers integration only covers sides/ML, not totals/O-U).
@@ -3827,24 +3832,27 @@ with tabs[3]:
                 if _smk_parts:
                     st.caption(f"🔄 Smarkets exchange: {' vs '.join(_smk_parts)}")
 
-        if _sleeper_game:
-            _sl_away, _sl_home = _sleeper_game.get("away", {}), _sleeper_game.get("home", {})
-            _sl_score_txt = None
-            if _sl_away.get("score") is not None and _sl_home.get("score") is not None:
-                _sl_score_txt = f"{_sl_away.get('score')}-{_sl_home.get('score')} ({_sleeper_game.get('status','')})"
-            with st.expander(f"⚾ Sleeper: live score & confirmed lineup" + (f" — {_sl_score_txt}" if _sl_score_txt else ""), expanded=False):
-                _sl_c1, _sl_c2 = st.columns(2)
-                for _sl_col, _sl_side, _sl_label in ((_sl_c1, _sl_away, _away_nm), (_sl_c2, _sl_home, _home_nm)):
-                    with _sl_col:
-                        st.markdown(f"**{_sl_label}**")
-                        if _sl_side.get("probable_pitcher"):
-                            st.caption(f"Probable pitcher: {_sl_side['probable_pitcher']}")
-                        _sl_lineup = _sl_side.get("lineup", [])
-                        if _sl_lineup:
-                            for _sl_p in _sl_lineup:
-                                st.caption(f"{_sl_p.get('batting_order', _sl_p.get('order', '?'))}. {_sl_p.get('name','')}")
-                        else:
-                            st.caption("Lineup not confirmed yet")
+        if _bdl_game:
+            _bdl_home_data = _bdl_game.get("home_team_data") or {}
+            _bdl_away_data = _bdl_game.get("away_team_data") or {}
+            _bdl_status = _bdl_game.get("status", "")
+            _bdl_score_txt = None
+            if _bdl_away_data.get("runs") is not None and _bdl_home_data.get("runs") is not None:
+                _bdl_score_txt = f"{_bdl_away_data.get('runs')}-{_bdl_home_data.get('runs')} ({_bdl_status})"
+            elif _bdl_status:
+                _bdl_score_txt = _bdl_status
+            with st.expander("📊 BallDontLie: live score" + (f" — {_bdl_score_txt}" if _bdl_score_txt else ""), expanded=False):
+                _bdl_c1, _bdl_c2 = st.columns(2)
+                with _bdl_c1:
+                    st.markdown(f"**{_away_nm}**")
+                    if _bdl_away_data:
+                        st.caption(f"R: {_bdl_away_data.get('runs','?')}  H: {_bdl_away_data.get('hits','?')}  E: {_bdl_away_data.get('errors','?')}")
+                with _bdl_c2:
+                    st.markdown(f"**{_home_nm}**")
+                    if _bdl_home_data:
+                        st.caption(f"R: {_bdl_home_data.get('runs','?')}  H: {_bdl_home_data.get('hits','?')}  E: {_bdl_home_data.get('errors','?')}")
+                if _bdl_game.get("venue"):
+                    st.caption(f"📍 {_bdl_game['venue']}")
 
         # Match Covers data to this game
         _cov_game = None
