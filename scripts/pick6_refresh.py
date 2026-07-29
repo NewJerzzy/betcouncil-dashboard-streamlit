@@ -209,11 +209,10 @@ def fetch_sport_props(sport: str) -> list:
     player_names, stat_names = _build_lookup_tables(array, idx_to_name)
     pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
 
-    if sport == "MLB":
-        DEBUG_LOG.append({"sport": sport, "array_len": len(array),
-                           "player_names_found": len(player_names), "stat_names_found": len(stat_names),
-                           "pickable_id_key_found": pickable_id_key is not None})
-        if not player_names or not stat_names or pickable_id_key is None:
+    DEBUG_LOG.append({"sport": sport, "array_len": len(array),
+                       "player_names_found": len(player_names), "stat_names_found": len(stat_names),
+                       "pickable_id_key_found": pickable_id_key is not None})
+    if not player_names or not stat_names or pickable_id_key is None:
             # Capture real samples to fix field names precisely instead of
             # guessing again -- using the confirmed-correct compressed-key
             # detection this time, not a literal string check.
