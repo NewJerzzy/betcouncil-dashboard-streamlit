@@ -121,6 +121,35 @@
 }
 `;
 
+    // Confirmed via real, empirical testing: credentials:"include" only
+    // forwards cookies, but theScore's auth token is a JWT stored in
+    // localStorage (Zustand persist format), never a cookie -- that's
+    // the actual missing piece the whole time. Verified by observing a
+    // real 403 -> 401 status/message flip the moment ANY Authorization
+    // header is present, confirming the resolver requires a real bearer
+    // token specifically, not just a valid session.
+    function getAuthHeaders() {
+        let bearerToken = null;
+        try {
+            const raw = localStorage.getItem("__SBWEB____AUTH_TOKENS__");
+            if (raw) bearerToken = JSON.parse(raw)?.state?.bearerToken ?? null;
+        } catch (_) {}
+        let dmaCode = "", device = "DESKTOP";
+        try {
+            const raw = sessionStorage.getItem("__SBWEB____VIEWER_DATA__");
+            if (raw) {
+                const vd = JSON.parse(raw)?.state?.viewerData;
+                dmaCode = vd?.dmaCode ?? "";
+                device = vd?.device ?? "DESKTOP";
+            }
+        } catch (_) {}
+        const headers = { "Content-Type": "application/json", "Accept": "application/json" };
+        if (bearerToken) headers["authorization"] = `Bearer ${bearerToken}`;
+        headers["x-dma"] = dmaCode;
+        headers["x-device"] = device;
+        return headers;
+    }
+
     function buildRequestBody(sectionId) {
         const variables = {
             sectionId: sectionId,
@@ -140,7 +169,7 @@
         const allData = {};
         for (const [sport, sectionId] of Object.entries(SPORTS_SECTIONS)) {
             try {
-                const res = await fetch(GRAPHQL_ENDPOINT, { method: "POST", credentials: "include", headers: { "Accept": "application/json", "Content-Type": "application/json" }, body: buildRequestBody(sectionId) });
+                const res = await fetch(GRAPHQL_ENDPOINT, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: buildRequestBody(sectionId) });
                 const json = await res.json().catch(() => null);
                 if (!json) {
                     console.warn(`[BetCouncil TheScore Harvester] ${sport} unparseable body, status:`, res.status);
