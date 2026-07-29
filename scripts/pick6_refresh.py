@@ -158,6 +158,39 @@ def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
     return _resolve_value(obj, array, idx_to_name, depth, max_depth)
 
 
+def _load_dk_credentials(github_token: str) -> tuple[str, str]:
+    """
+    Read DK credentials from the gist (betcouncil_cfg.json) when env vars
+    DK_EMAIL / DK_PASSWORD are not set in the workflow environment.
+    Returns (email, password) or ("", "") on any failure.
+    """
+    try:
+        resp = requests.get(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}",
+                     "Accept": "application/vnd.github+json"},
+            timeout=(5, 10),
+        )
+        if not resp.ok:
+            return "", ""
+        files = resp.json().get("files", {})
+        cfg_file = files.get("betcouncil_cfg.json", {})
+        raw_url = cfg_file.get("raw_url", "")
+        if not raw_url:
+            return "", ""
+        cfg_resp = requests.get(raw_url, timeout=(5, 10))
+        if not cfg_resp.ok:
+            return "", ""
+        import base64
+        cfg = cfg_resp.json()
+        email = base64.b64decode(cfg.get("dk_e", "")).decode()
+        password = base64.b64decode(cfg.get("dk_p", "")).decode()
+        return email, password
+    except Exception as ex:
+        DEBUG_LOG.append({"note": "cfg_load_error", "error": str(ex)[:120]})
+        return "", ""
+
+
 def _dk_login(email: str, password: str) -> requests.Session | None:
     """
     Log in to DraftKings SSO and return an authenticated session.
@@ -358,6 +391,9 @@ def main() -> int:
     # Attempt authenticated DK session — degrades gracefully to anonymous if credentials absent/fail
     dk_email = os.environ.get("DK_EMAIL", "")
     dk_password = os.environ.get("DK_PASSWORD", "")
+    if not (dk_email and dk_password):
+        log("DK_EMAIL/DK_PASSWORD env vars not set — loading credentials from gist…")
+        dk_email, dk_password = _load_dk_credentials(github_token)
     dk_session: requests.Session | None = None
     if dk_email and dk_password:
         log("Logging in to DraftKings for authenticated player name resolution…")
@@ -367,7 +403,7 @@ def main() -> int:
         else:
             log("DK login failed — continuing without auth (names will be dkId_ placeholders)")
     else:
-        log("DK_EMAIL/DK_PASSWORD not set — running unauthenticated")
+        log("No DK credentials available — running unauthenticated")
 
     all_props = []
     for sport in SPORTS:
