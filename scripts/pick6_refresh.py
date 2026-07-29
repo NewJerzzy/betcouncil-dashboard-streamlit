@@ -228,6 +228,7 @@ def fetch_sport_props(sport: str) -> list:
         return []
 
     normalized = []
+    entity_samples_logged = False
     pickable_key_str = f"_{pickable_id_key}"
     for item in array:
         if not isinstance(item, dict) or pickable_key_str not in item:
@@ -235,7 +236,28 @@ def fetch_sport_props(sport: str) -> list:
         resolved = _resolve_refs(item, array, idx_to_name)
         entities = resolved.get("entities", [])
         dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
-        player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
+        # Log first two resolved entities so we can see all available name fields
+        if not entity_samples_logged and entities and sport in ("MLB", "WNBA"):
+            DEBUG_LOG.append({
+                "sport": sport,
+                "note": "resolved_entity_samples",
+                "entities": [
+                    {k: v for k, v in (e.items() if isinstance(e, dict) else {}.items())
+                     if not isinstance(v, list)}
+                    for e in entities[:2]
+                ],
+                "pickable_top_keys": [k for k in resolved if k not in ("entities", "activePickableMarkets", "activeSelections")],
+            })
+            entity_samples_logged = True
+        # Try to get player name directly from the entity dict (all common name fields)
+        player = None
+        if entities and isinstance(entities[0], dict):
+            ent = entities[0]
+            player = (ent.get("displayName") or ent.get("fullName") or
+                      ent.get("name") or ent.get("shortName") or
+                      player_names.get(dk_id))
+        if not player:
+            player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
 
         for market in resolved.get("activePickableMarkets", []):
             if not isinstance(market, dict):
