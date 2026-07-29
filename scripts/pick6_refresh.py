@@ -200,6 +200,19 @@ def fetch_sport_props(sport: str) -> list:
     if r.status_code != 200:
         return []
 
+    # One-time: scan for a known player's dkId in the raw HTML (MLB only)
+    # to find whether names appear in a different HTML section
+    if sport == "MLB" and not any(e.get("note") == "dkid_html_context" for e in DEBUG_LOG):
+        probe_id = "639885"
+        positions = [i for i in range(len(r.text)) if r.text[i:i+len(probe_id)] == probe_id]
+        snippets = [r.text[max(0,p-120):p+120] for p in positions[:5]]
+        DEBUG_LOG.append({
+            "note": "dkid_html_context",
+            "probe_dkid": probe_id,
+            "occurrences": len(positions),
+            "snippets": snippets,
+        })
+
     array = _extract_stream_payload(r.text)
     if not array:
         DEBUG_LOG.append({"sport": sport, "note": "no streamController.enqueue payload found or failed to parse"})
