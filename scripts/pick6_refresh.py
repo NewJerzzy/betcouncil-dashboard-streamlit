@@ -159,36 +159,24 @@ def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
 
 def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     """
-    Scan the flat array for player-ID dicts (Shape B: has the compressed
-    key for "dkId") and market-type dicts (Shape D: has the compressed
-    key for "pickSixMarketId" + "name"), building dkId->name and
-    marketId->stat_name lookups. Player names (Shape A) and player IDs
-    (Shape B) are confirmed to be SEPARATE dict shapes in the real data
-    -- this builds a dkId->name correlation from whatever fields are
-    actually present once each candidate dict is fully resolved, logging
-    via debug if either lookup ends up empty so a further schema
-    mismatch is visible rather than silently producing "Unknown Player".
+    Scan the flat array for:
+    - dkId-carrying dicts → dkId->name lookup (NOTE: confirmed 2026-07-29 that
+      the Pick6 SSR stream does NOT include player display names; they are loaded
+      client-side via XHR after hydration. player_names will always be empty from
+      this source alone. dkId_ placeholder names are used as a fallback.)
+    - market dicts → pickSixMarketId->stat_name lookup (this DOES work from SSR)
     """
     dkid_key = idx_to_name and next((k for k, v in idx_to_name.items() if v == "dkId"), None)
     market_id_key = next((k for k, v in idx_to_name.items() if v == "pickSixMarketId"), None)
-    name_key = next((k for k, v in idx_to_name.items() if v == "name"), None)
-    fullname_key = next((k for k, v in idx_to_name.items() if v == "fullName"), None)
-
-    # Name-field keys we'll accept from any resolved dict
-    NAME_FIELDS = ("displayName", "fullName", "name", "firstName", "lastName", "shortName")
-    # ID-field keys that could link a name dict to a player dkId
-    ID_FIELDS = ("dkId", "playerId", "entityId", "id", "participantId", "draftableId")
 
     player_names, stat_names = {}, {}
-    name_dict_samples = []  # diagnostic: dicts that carry any NAME_FIELD
-
     for item in array:
         if not isinstance(item, dict):
             continue
         if dkid_key is not None and f"_{dkid_key}" in item:
             resolved = _resolve_refs(item, array, idx_to_name)
             dk_id = resolved.get("dkId")
-            name = resolved.get("fullName") or resolved.get("name")
+            name = resolved.get("displayName") or resolved.get("fullName") or resolved.get("name")
             if dk_id and name:
                 player_names[dk_id] = name
         if market_id_key is not None and f"_{market_id_key}" in item:
@@ -196,126 +184,7 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
             mkt_id, label = resolved.get("pickSixMarketId"), resolved.get("name")
             if mkt_id and label:
                 stat_names[mkt_id] = label
-        # Scan for name-bearing dicts (any dict with a name field and any ID field)
-        if len(name_dict_samples) < 5 and name_key is not None and f"_{name_key}" in item:
-            resolved = _resolve_refs(item, array, idx_to_name)
-            has_name = any(resolved.get(f) for f in NAME_FIELDS)
-            has_id = any(resolved.get(f) for f in ID_FIELDS)
-            if has_name and has_id:
-                name_dict_samples.append({k: resolved[k] for k in resolved
-                                          if k in NAME_FIELDS or k in ID_FIELDS})
-        elif len(name_dict_samples) < 5 and fullname_key is not None and f"_{fullname_key}" in item:
-            resolved = _resolve_refs(item, array, idx_to_name)
-            has_name = any(resolved.get(f) for f in NAME_FIELDS)
-            has_id = any(resolved.get(f) for f in ID_FIELDS)
-            if has_name and has_id:
-                name_dict_samples.append({k: resolved[k] for k in resolved
-                                          if k in NAME_FIELDS or k in ID_FIELDS})
-
-    if name_dict_samples:
-        DEBUG_LOG.append({"note": "name_id_dict_samples", "samples": name_dict_samples[:5]})
-    elif dkid_key is not None:
-        # Log a few raw name-field dicts even without a co-located ID field
-        raw_name_dicts = []
-        for item in array:
-            if isinstance(item, dict) and (
-                (name_key and f"_{name_key}" in item) or
-                (fullname_key and f"_{fullname_key}" in item)
-            ):
-                resolved = _resolve_refs(item, array, idx_to_name)
-                if any(resolved.get(f) for f in NAME_FIELDS):
-                    raw_name_dicts.append({k: v for k, v in resolved.items()
-                                           if not isinstance(v, (list, dict)) or k in ID_FIELDS})
-                    if len(raw_name_dicts) >= 5:
-                        break
-        DEBUG_LOG.append({"note": "name_dicts_no_id", "count": len(raw_name_dicts),
-                           "samples": raw_name_dicts[:5]})
-
     return player_names, stat_names
-
-
-def _fetch_player_name_map(sport: str) -> dict:
-    """
-    Try to resolve dkId -> player display name via DraftKings' public DFS
-    lobby and draftables APIs. The Pick6 SSR stream does not include player
-    names (confirmed — they are fetched client-side after hydration). This
-    function uses the same dkId values that appear in the Pick6 SSR but
-    from the DFS lineup builder API, which does include display names.
-    Returns {dkId(int): name(str)} or {} on any failure.
-    """
-    # Pick6 sport codes -> DK lobby sport param (SOC/MMA differ)
-    dk_sport = {"SOCCER": "SOC", "UFC": "MMA", "PGA+TOUR": "GOLF",
-                "NASCAR": "NAS"}.get(sport, sport)
-    name_map = {}
-    try:
-        lobby_resp = requests.get(
-            f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
-            headers=HEADERS, timeout=(5, 10),
-        )
-        DEBUG_LOG.append({"note": "dk_lobby_response", "sport": sport,
-                          "status": lobby_resp.status_code if lobby_resp else None})
-        if not lobby_resp.ok:
-            raise ValueError(f"lobby HTTP {lobby_resp.status_code}")
-        dgs = lobby_resp.json().get("DraftGroups", [])
-        dgids = [dg.get("DraftGroupId") for dg in dgs if dg.get("DraftGroupId")][:6]
-        for dgid in dgids:
-            for url_tmpl in [
-                f"https://api.draftkings.com/lineups/v1/draftgroups/{dgid}/draftables?format=json",
-                f"https://api.draftkings.com/draftgroups/v1/{dgid}/draftables?format=json",
-            ]:
-                try:
-                    dr = requests.get(url_tmpl, headers=HEADERS, timeout=(4, 8))
-                    if not dr.ok:
-                        continue
-                    for p in dr.json().get("draftables", []):
-                        pid = p.get("playerId") or p.get("draftableId")
-                        name = (p.get("displayName") or p.get("shortName") or
-                                f"{p.get('firstName','')} {p.get('lastName','')}".strip() or None)
-                        if pid and name:
-                            name_map[int(pid)] = name
-                    if name_map:
-                        DEBUG_LOG.append({"note": "dk_api_names_ok", "sport": sport,
-                                          "count": len(name_map), "source": "draftables"})
-                        return name_map
-                except Exception:
-                    continue
-    except Exception:
-        pass
-    # Fallback: try Pick6-specific player endpoint on same domain the scraper accesses
-    dk_sport_key = {"SOCCER": "SOC", "UFC": "MMA", "PGA+TOUR": "GOLF",
-                    "NASCAR": "NAS"}.get(sport, sport)
-    for url in [
-        f"https://pick6.draftkings.com/api/pick6/v1/players?sport={sport}",
-        f"https://pick6.draftkings.com/api/pick6/v2/players?sport={sport}",
-        f"https://api.draftkings.com/pick6/v1/entities?sport={dk_sport_key}&format=json",
-        f"https://api.draftkings.com/pick6/v2/pickables?sport={dk_sport_key}&format=json",
-    ]:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=(4, 10))
-            if sport == "MLB" and not any(e.get("note") == "pick6_api_probe" for e in DEBUG_LOG):
-                DEBUG_LOG.append({"note": "pick6_api_probe", "url": url,
-                                  "status": r.status_code, "snippet": r.text[:200]})
-            if not r.ok:
-                continue
-            d = r.json()
-            players = (d.get("players") or d.get("entities") or d.get("data") or
-                       d.get("pickables") or (d if isinstance(d, list) else []))
-            for p in (players if isinstance(players, list) else []):
-                pid = (p.get("dkId") or p.get("playerId") or p.get("draftableId") or p.get("id"))
-                name = (p.get("displayName") or p.get("fullName") or p.get("name") or
-                        p.get("shortName") or
-                        f"{p.get('firstName','')} {p.get('lastName','')}".strip() or None)
-                if pid and name:
-                    name_map[int(pid)] = name
-            if name_map:
-                DEBUG_LOG.append({"note": "dk_api_names_ok", "sport": sport,
-                                  "count": len(name_map), "source": url})
-                return name_map
-        except Exception:
-            continue
-    if not name_map:
-        DEBUG_LOG.append({"note": "dk_api_names_failed", "sport": sport})
-    return name_map
 
 
 def fetch_sport_props(sport: str) -> list:
@@ -333,32 +202,16 @@ def fetch_sport_props(sport: str) -> list:
 
     idx_to_name = _build_idx_to_name(array)
     player_names, stat_names = _build_lookup_tables(array, idx_to_name)
-    # SSR stream has no player names (they're fetched client-side via XHR).
-    # Try the DK DFS lobby+draftables API as a secondary name source.
-    if not player_names:
-        player_names = _fetch_player_name_map(sport)
     pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
 
     DEBUG_LOG.append({"sport": sport, "array_len": len(array),
                        "player_names_found": len(player_names), "stat_names_found": len(stat_names),
                        "pickable_id_key_found": pickable_id_key is not None})
-    if not player_names or not stat_names or pickable_id_key is None:
-            # Capture real samples to fix field names precisely instead of
-            # guessing again -- using the confirmed-correct compressed-key
-            # detection this time, not a literal string check.
-            dkid_key = next((k for k, v in idx_to_name.items() if v == "dkId"), None)
-            dkid_samples = ([item for item in array if isinstance(item, dict) and f"_{dkid_key}" in item][:3]
-                             if dkid_key is not None else [])
-            DEBUG_LOG.append({"sport": sport, "dkid_key": dkid_key, "dkid_samples": dkid_samples,
-                               "pickable_id_key": pickable_id_key,
-                               "note": "player_names may still be empty if names truly aren't co-located "
-                                       "with dkId in any single dict -- see dkid_samples for what's actually there"})
 
     if pickable_id_key is None:
         return []
 
     normalized = []
-    entity_samples_logged = False
     pickable_key_str = f"_{pickable_id_key}"
     for item in array:
         if not isinstance(item, dict) or pickable_key_str not in item:
@@ -366,41 +219,9 @@ def fetch_sport_props(sport: str) -> list:
         resolved = _resolve_refs(item, array, idx_to_name)
         entities = resolved.get("entities", [])
         dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
-        # Log first resolved pickable dict fully to find name fields
-        if not entity_samples_logged and entities and sport in ("MLB", "WNBA"):
-            def _safe_repr(v):
-                if isinstance(v, (str, int, float, bool)) or v is None:
-                    return v
-                if isinstance(v, list):
-                    return [_safe_repr(i) for i in v[:3]]
-                if isinstance(v, dict):
-                    return {kk: _safe_repr(vv) for kk, vv in list(v.items())[:8]}
-                return str(v)[:80]
-            markets = resolved.get("activePickableMarkets", [])
-            selections = resolved.get("activeSelections", [])
-            DEBUG_LOG.append({
-                "sport": sport,
-                "note": "full_pickable_sample",
-                "entities_all_fields": [
-                    {k: _safe_repr(v) for k, v in (e.items() if isinstance(e, dict) else {}.items())}
-                    for e in entities[:1]
-                ],
-                "first_market": _safe_repr(markets[0]) if markets else None,
-                "first_selection": _safe_repr(selections[0]) if selections else None,
-                "pickable_scalar_fields": {k: _safe_repr(v) for k, v in resolved.items()
-                                           if k not in ("entities", "activePickableMarkets", "activeSelections")
-                                           and not isinstance(v, (list, dict))},
-            })
-            entity_samples_logged = True
-        # Try to get player name directly from the entity dict (all common name fields)
-        player = None
-        if entities and isinstance(entities[0], dict):
-            ent = entities[0]
-            player = (ent.get("displayName") or ent.get("fullName") or
-                      ent.get("name") or ent.get("shortName") or
-                      player_names.get(dk_id))
-        if not player:
-            player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
+        # player_names is always empty (confirmed: Pick6 SSR carries no display names).
+        # dkId_ placeholder stays until a working name API is found.
+        player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
 
         for market in resolved.get("activePickableMarkets", []):
             if not isinstance(market, dict):
@@ -445,7 +266,7 @@ def push_debug(github_token: str) -> None:
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
             json={"files": {"betcouncil_pick6_debug.json": {
                 "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
-                                        "requests": DEBUG_LOG[:40]}, indent=2)
+                                        "requests": DEBUG_LOG[:20]}, indent=2)
             }}},
             timeout=30,
         )
