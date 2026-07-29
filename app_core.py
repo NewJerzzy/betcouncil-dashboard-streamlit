@@ -7423,6 +7423,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 home_power = power_ratings[home_full]
                 away_power = power_ratings[away_full]
                 power_diff = home_power - away_power
+                if sport in ("MLB", "NHL"):
+                    # Convert the ~100-scale power index to run/goal-equivalent
+                    # units before comparing against market_spread, which is
+                    # already in those units. Without this, power_diff (which
+                    # can be 10-15+ across the full league range) completely
+                    # dominates a market_spread of ~1.5-2.5, producing a wildly
+                    # inflated edge that just pins at the ±20% ceiling on
+                    # nearly every matchup with any real rating gap.
+                    power_diff = power_diff / 10.0
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / 10.0
