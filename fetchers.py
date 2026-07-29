@@ -5239,6 +5239,92 @@ def fetch_paddypower_lines(sport="NBA"):
     except Exception as e:
         return {}
 
+def fetch_tennis_player_stats(player_name):
+    """
+    ATP season stats from TennisMyLife via scripts/sackmann_tennis_refresh.py
+    (betcouncil_tennis_sackmann_ATP.json). Previously this function was
+    called live inside score_pick_standalone for every Tennis prop but
+    didn't exist anywhere in the codebase -- silently NameError'd into a
+    bare except, so every Tennis prop fell straight to the flat league
+    baseline (Aces=6.0, Games Won=18.0, etc, identical for every player)
+    regardless of who was actually being scored.
+
+    WTA: no working source as of this fix (TennisMyLife is ATP-only,
+    confirmed via their own site) -- returns {} for WTA players, which
+    correctly falls through to the same baseline as before rather than
+    fabricating a number.
+
+    Key mapping is deliberately partial: this dataset is serve/return
+    percentages (aces, double faults, break points), not a "games won"
+    counter, so "Games Won" is left unmapped rather than guessed at --
+    that one stat type still falls through to baseline; the other three
+    (Aces / Double Faults / Break Points Won) get real per-player data.
+    """
+    data = _read_gist_file("betcouncil_tennis_sackmann_ATP.json", cache_minutes=180)
+    if not data:
+        return {}
+    players = data.get("players", {})
+    if not players:
+        return {}
+    norm = normalize_name(player_name)
+    match = next((v for k, v in players.items() if normalize_name(k) == norm), None)
+    if not match:
+        return {}
+    return {
+        "_tour": "ATP",
+        "n_games": match.get("matches", "?"),
+        "Aces": match.get("ace_avg", 0),
+        "Double Faults": match.get("df_avg", 0),
+        "Break Points Won": match.get("bp_won_avg", 0),
+    }
+
+
+def fetch_ufc_fighter_stats(fighter_name):
+    """
+    No verified live data source for UFC fighter stats as of this fix --
+    same NameError-into-bare-except situation as fetch_tennis_player_stats
+    had (called live inside score_pick_standalone, didn't exist anywhere).
+    Returns {} immediately, matching the deliberate fetch_soccer_player_stats
+    pattern above (ESPN has no public per-fighter stats endpoint, confirmed
+    dead there) -- falls through cleanly to the existing league-baseline
+    fallback instead of either crashing or shipping an unverified scraper
+    guessed at without live network access to test against.
+    """
+    return {}
+
+
+
+def fetch_thescore_pitcher_starts(player_name):
+    """
+    Per-start pitcher lines (K/BB/W-L) from scripts/thescore_boxscores_refresh.py
+    (betcouncil_thescore_boxscores_MLB.json) -- scraped every 30 min but never
+    read by anything until this fix. Note: the source's own `pitcher_box_lines`
+    field (pitch-mix/velocity breakdown promised in its docstring) is empty on
+    every game sampled -- only `starting_pitchers` is reliably populated, so
+    that's the only field this reads. Returns a list of starts, newest first.
+    """
+    data = _read_gist_file("betcouncil_thescore_boxscores_MLB.json", cache_minutes=30)
+    if not data:
+        return []
+    norm = normalize_name(player_name)
+    starts = []
+    for g in data.get("games", []):
+        for side in ("home", "away"):
+            sp = (g.get("starting_pitchers") or {}).get(side) or {}
+            p = sp.get("player") or {}
+            if p.get("full_name") and normalize_name(p["full_name"]) == norm:
+                starts.append({
+                    "date": g.get("game_date", ""),
+                    "opponent": g.get("away_team") if side == "home" else g.get("home_team"),
+                    "strikeouts": sp.get("strikeouts"),
+                    "walks": sp.get("walks"),
+                    "wins": sp.get("wins"),
+                    "losses": sp.get("losses"),
+                })
+    starts.sort(key=lambda s: s.get("date", ""), reverse=True)
+    return starts
+
+
 def fetch_soccer_player_stats(player_name):
     """
     Confirmed dead end (live-tested): ESPN does not publish individual
