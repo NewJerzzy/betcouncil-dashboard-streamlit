@@ -8,12 +8,15 @@ Three features, in the priority order Abraham confirmed:
    prop. Reuses consensus_engine.american_to_implied_prob (already correct,
    already in the repo) rather than reinventing odds math.
 
-2. record_prop_snapshot / get_prop_line_moves — timestamped snapshots of
-   PP/Underdog/Pick6 lines, Gist-backed, same pattern as
-   market_microstructure.py's originator-lag snapshots. Diffing two
-   snapshots surfaces "PrizePicks moved Judge HR 0.5 -> 1.5 between 10:00
-   and 10:15" and feeds the existing (currently hardcoded empty-string)
-   "Movement" column in the enriched prop dict in app.py.
+2. record_prop_snapshot / get_prop_line_moves / get_odds_type_flips —
+   timestamped snapshots of PP/Underdog/Pick6 lines AND odds_type, Gist-
+   backed, same pattern as market_microstructure.py's originator-lag
+   snapshots. Diffing two snapshots surfaces "PrizePicks moved Judge HR
+   0.5 -> 1.5 between 10:00 and 10:15" (line value) and separately
+   "PrizePicks flipped Judge HR to demon between 10:00 and 10:15" (odds_type
+   re-pricing) -- catching the odds_type flip early, before/as it happens,
+   is the actual signal; once flipped, PrizePicks has already priced in
+   whatever sharp/consensus pressure caused it.
 
 3. group_props_by_event / find_cross_team_correlations — groups props by
    Matchup (same game) and flags CROSS-TEAM correlated pairs (QB passing
@@ -30,6 +33,7 @@ Public API
 devig_vs_gem(price, gem_prob) -> dict | None
 record_prop_snapshot(sport, book_data) -> bool
 get_prop_line_moves(sport, min_minutes_apart=10) -> list[dict]
+get_odds_type_flips(sport, min_minutes_apart=10) -> list[dict]
 group_props_by_event(props) -> dict[str, list[dict]]
 find_cross_team_correlations(props) -> list[dict]
 """
@@ -140,7 +144,8 @@ def record_prop_snapshot(sport: str, book_data: dict) -> bool:
                 line_f = float(line)
             except (TypeError, ValueError):
                 continue
-            rows.append({"key": _prop_row_key(book, player, stat), "line": line_f})
+            odds_type = str(p.get("OddsType") or p.get("odds_type") or "standard").lower()
+            rows.append({"key": _prop_row_key(book, player, stat), "line": line_f, "odds_type": odds_type})
 
     if not rows:
         return False
@@ -202,6 +207,56 @@ def get_prop_line_moves(sport: str, min_minutes_apart: float = 10.0) -> list:
 
     moves.sort(key=lambda x: abs(x["delta"]), reverse=True)
     return moves
+
+
+def get_odds_type_flips(sport: str, min_minutes_apart: float = 10.0) -> list:
+    """
+    Detect PrizePicks-style odds_type re-pricing (standard -> goblin/demon,
+    or goblin/demon -> standard) between the earliest and most recent
+    snapshot at least min_minutes_apart minutes apart. Same baseline-
+    selection logic as get_prop_line_moves, applied to odds_type instead
+    of line value, since a goblin/demon flip is PrizePicks reacting to
+    the same sharp-money/consensus pressure that also moves lines --
+    catching the flip early (before it happens) is the actual signal;
+    once it's flipped, PrizePicks already priced it in.
+
+    Returns
+    -------
+    list[dict]: {book, player, stat, from_type, to_type, minutes_between}
+    Empty list on cold start (fewer than 2 snapshots, or none far enough
+    apart yet, or no odds_type field in the recorded rows).
+    """
+    gist_key = f"prop_line_history_{sport.lower()}"
+    history = _read_gist_file(f"betcouncil_{gist_key}.json") or []
+    if len(history) < _MIN_SNAPSHOTS_FOR_SIGNAL:
+        return []
+
+    latest = history[-1]
+    baseline = None
+    for snap in history:
+        if (latest["ts"] - snap["ts"]) / 60.0 >= min_minutes_apart:
+            baseline = snap
+    if baseline is None:
+        baseline = history[0]
+
+    minutes_between = round((latest["ts"] - baseline["ts"]) / 60.0, 1)
+    if minutes_between <= 0:
+        return []
+
+    base_types = {r["key"]: r.get("odds_type") for r in baseline.get("rows", [])}
+    flips = []
+    for r in latest.get("rows", []):
+        prev_type = base_types.get(r["key"])
+        cur_type = r.get("odds_type")
+        if not prev_type or not cur_type or prev_type == cur_type:
+            continue
+        book, player, stat = r["key"].split("|", 2)
+        flips.append({
+            "book": book, "player": player, "stat": stat,
+            "from_type": prev_type, "to_type": cur_type,
+            "minutes_between": minutes_between,
+        })
+    return flips
 
 
 # ── 3. Event grouping + cross-team correlation ───────────────────────────
