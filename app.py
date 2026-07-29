@@ -3307,12 +3307,26 @@ with tabs[3]:
                     f'padding:2px 8px;border-radius:10px;background:{_vsin_color}22;color:{_vsin_color};'
                     f'border:0.5px solid {_vsin_color}44;margin-left:6px;">{_vsin_icon} Nevada</span>'
                 )
+            _gl_row_best = max(_picks, key=lambda p: abs(p["edge"]))
+            _gl_row_tc = _tc2.get(_gl_row_best["tier"], "#6a7a8a")
+            _gl_row_edge_pct = _gl_row_best["edge"] * 100
+            _gl_row_ring_deg = min(1.0, abs(_gl_row_edge_pct) / 15.0) * 360
+            _gl_row_ring_html = (
+                f'<div style="width:40px;height:40px;border-radius:50%;'
+                f'background:conic-gradient({_gl_row_tc} {_gl_row_ring_deg:.0f}deg, rgba(255,255,255,0.08) 0deg);'
+                f'display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;">'
+                f'<div style="width:32px;height:32px;border-radius:50%;background:var(--bc-bg-card);'
+                f'display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+                f'<div style="font-weight:800;font-size:0.68rem;color:{_gl_row_tc};">{_gl_row_edge_pct:.1f}%</div>'
+                f'<div style="font-size:0.4rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
+                f'</div></div>'
+            )
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:19px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_row_ring_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
