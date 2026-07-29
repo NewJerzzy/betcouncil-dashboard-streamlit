@@ -234,6 +234,58 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     return player_names, stat_names
 
 
+def _fetch_player_name_map(sport: str) -> dict:
+    """
+    Try to resolve dkId -> player display name via DraftKings' public DFS
+    lobby and draftables APIs. The Pick6 SSR stream does not include player
+    names (confirmed — they are fetched client-side after hydration). This
+    function uses the same dkId values that appear in the Pick6 SSR but
+    from the DFS lineup builder API, which does include display names.
+    Returns {dkId(int): name(str)} or {} on any failure.
+    """
+    # Pick6 sport codes -> DK lobby sport param (SOC/MMA differ)
+    dk_sport = {"SOCCER": "SOC", "UFC": "MMA", "PGA+TOUR": "GOLF",
+                "NASCAR": "NAS"}.get(sport, sport)
+    name_map = {}
+    try:
+        lobby_resp = requests.get(
+            f"https://www.draftkings.com/lobby/getcontests?sport={dk_sport}",
+            headers=HEADERS, timeout=(5, 10),
+        )
+        if not lobby_resp.ok:
+            return name_map
+        dgs = lobby_resp.json().get("DraftGroups", [])
+        for dg in dgs[:8]:
+            dgid = dg.get("DraftGroupId")
+            if not dgid:
+                continue
+            for url_tmpl in [
+                f"https://api.draftkings.com/lineups/v1/draftgroups/{dgid}/draftables?format=json",
+                f"https://api.draftkings.com/draftgroups/v1/{dgid}/draftables?format=json",
+            ]:
+                try:
+                    dr = requests.get(url_tmpl, headers=HEADERS, timeout=(5, 10))
+                    if not dr.ok:
+                        continue
+                    for p in dr.json().get("draftables", []):
+                        pid = p.get("playerId") or p.get("draftableId")
+                        name = (p.get("displayName") or p.get("shortName") or
+                                f"{p.get('firstName','')} {p.get('lastName','')}".strip() or None)
+                        if pid and name:
+                            name_map[int(pid)] = name
+                    if name_map:
+                        DEBUG_LOG.append({"note": "dk_api_names_ok", "sport": sport,
+                                          "count": len(name_map), "url": url_tmpl})
+                        return name_map
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    if not name_map:
+        DEBUG_LOG.append({"note": "dk_api_names_failed", "sport": sport})
+    return name_map
+
+
 def fetch_sport_props(sport: str) -> list:
     url = f"{BASE_URL}?sport={sport}"
     r = requests.get(url, headers=HEADERS, timeout=(8, 20))
@@ -249,6 +301,10 @@ def fetch_sport_props(sport: str) -> list:
 
     idx_to_name = _build_idx_to_name(array)
     player_names, stat_names = _build_lookup_tables(array, idx_to_name)
+    # SSR stream has no player names (they're fetched client-side via XHR).
+    # Try the DK DFS lobby+draftables API as a secondary name source.
+    if not player_names:
+        player_names = _fetch_player_name_map(sport)
     pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
 
     DEBUG_LOG.append({"sport": sport, "array_len": len(array),
