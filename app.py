@@ -11740,34 +11740,6 @@ with tabs[1]:
         if shortlist["props"] and shortlist["games"]:
             st.markdown("**🧮 Should you parlay props + game lines together, all in one slip?**")
             _nb_verdict_card(evaluate_parlay_verdict(props_legs + games_legs))
-
-        # ── FanDuel Parlay Hub: not per-pick matchable, shown as its own block ──
-        if cmp.get("fd_parlayhub"):
-            st.markdown("#### 🔷 FanDuel Parlay Hub")
-            for sport, items in cmp["fd_parlayhub"].items():
-                st.markdown(f'<span style="color:#8ab4d4;font-size:12px;font-weight:700;">{sport}</span>', unsafe_allow_html=True)
-                for item in items[:5]:
-                    if isinstance(item, dict) and "narrative" in item:
-                        _fd_odds = item.get("american_odds")
-                        _fd_odds_str = f"+{_fd_odds}" if isinstance(_fd_odds, (int, float)) and _fd_odds > 0 else str(_fd_odds or "")
-                        _fd_text = (
-                            f'<b>{item.get("narrative") or item.get("matchup") or item.get("type","")}</b>'
-                            f'<div style="color:#8ab4d4;font-size:11px;margin-top:2px;">'
-                            f'{item.get("type","")} · {item.get("num_legs","?")} legs · {_fd_odds_str} · '
-                            f'{item.get("total_bets","?")} bets placed</div>'
-                        )
-                    else:
-                        _fd_text = str(item)[:140]
-                    st.markdown(
-                        f'<div style="background:{_SOURCE_STYLE["fd"]["color"]}15;border:1px solid {_SOURCE_STYLE["fd"]["color"]}44;'
-                        f'border-radius:6px;padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                        f'{_fd_text}</div>', unsafe_allow_html=True
-                    )
-        elif comparison:
-            st.caption(
-                "🔷 No FanDuel Parlay Hub data yet — open scripts/tampermonkey_fanduel_parlayhub_harvester.user.js, "
-                "fill in the Parlay Hub endpoint, install it, and browse Parlay Hub in a logged-in FanDuel tab."
-            )
     else:
         st.caption("Click the button above to scan today's boards and check them against the public sources.")
 
