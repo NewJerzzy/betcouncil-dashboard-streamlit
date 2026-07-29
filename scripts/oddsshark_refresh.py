@@ -81,14 +81,34 @@ def fetch_page(sport_slug: str):
     if not SCRAPEOPS_KEY:
         DEBUG_LOG.append({"url": url, "method": "scrapeops", "error": "SCRAPEOPS_KEY not set"})
         return None
+
+    import urllib.parse
+    encoded = urllib.parse.quote(url, safe="")
+
+    # Tier 1: plain residential proxy, no JS rendering. The confirmed block
+    # (HTTP 000 / connection failure at the network layer, not a JS
+    # challenge response) is an IP-reputation block, not something that
+    # needs a real browser to clear -- render_js costs far more credits
+    # per call on ScrapeOps' pricing, so only pay for it if this cheaper
+    # tier actually fails.
     try:
-        import urllib.parse
-        encoded = urllib.parse.quote(url, safe="")
+        r = requests.get(
+            f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=false",
+            timeout=25,
+        )
+        DEBUG_LOG.append({"url": url, "method": "scrapeops_no_js", "status": r.status_code, "bytes": len(r.text), "body_snippet": r.text[:400]})
+        if r.status_code == 200:
+            return r.text
+    except Exception as e:
+        DEBUG_LOG.append({"url": url, "method": "scrapeops_no_js", "error": str(e)[:200]})
+
+    # Tier 2: render_js=true fallback, only reached if the cheap tier failed.
+    try:
         r = requests.get(
             f"https://proxy.scrapeops.io/v1/?api_key={SCRAPEOPS_KEY}&url={encoded}&residential=true&country=us&render_js=true",
             timeout=30,
         )
-        DEBUG_LOG.append({"url": url, "method": "scrapeops", "status": r.status_code, "bytes": len(r.text), "body_snippet": r.text[:400]})
+        DEBUG_LOG.append({"url": url, "method": "scrapeops_js", "status": r.status_code, "bytes": len(r.text), "body_snippet": r.text[:400]})
         if r.status_code != 200:
             return None
         return r.text
