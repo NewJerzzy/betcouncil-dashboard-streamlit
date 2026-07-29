@@ -13473,20 +13473,12 @@ def load_sport_data(sport):
             return fetch_h2h_game_lines(sport)
         return fetch_game_lines(sport)
     def _pf_parlayplay():   return []  # parlayplay disabled
-    # _pf_dk_pick6 removed (Jul 10 2026) — fetch_draftkings_pick6() always
-    # returned [] since no Pick6 bearer-token harvester was ever wired in to
-    # populate the tokens it needed; it was a guaranteed no-op every cycle,
-    # spending a fetch slot and logging a warning pointing at a nonexistent
-    # "Harvest Pick6 Tokens" UI button. Real Pick6 data comes entirely from
-    # fetch_pick6_props_from_gist() (the free, no-login SSR scraper) below.
-    # Stub kept here (always returns []) so the _parallel_fns tuple below
-    # doesn't need renumbering.
-    def _pf_dk_pick6():
-        try:
-            props, _ = fetch_pick6_props_from_gist(sport)
-            return props
-        except Exception:
-            return []
+    # DK Pick6 removed entirely (Jul 29 2026) — redundant DFS pick'em product
+    # (same category as PrizePicks/Underdog, both already working), and its
+    # scraper never produced real player names (dkId_XXXXX placeholders only,
+    # confirmed unfixable without a browser-session harvester). Stub kept so
+    # the _parallel_fns tuple below doesn't need renumbering.
+    def _pf_dk_pick6():    return []
     def _pf_betrivers_lines(): return fetch_betrivers_game_lines(sport)
     def _pf_fanatics_lines():  return fetch_fanatics_game_lines(sport)
     def _pf_espnbet_lines():   return fetch_espnbet_game_lines(sport)
@@ -13956,7 +13948,6 @@ def load_sport_data(sport):
         ("fetch_rotogrinders_from_gist",       "rotogrinders_data",      "rotogrinders_src"),
         ("fetch_oddsportal_from_gist",         "oddsportal_data",        "oddsportal_src"),
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
-        ("fetch_pick6_props_from_gist",        "pick6_props_h",          "pick6_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
         ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
     ]
