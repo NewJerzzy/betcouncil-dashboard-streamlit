@@ -100,10 +100,16 @@
                     if (notFound) {
                         console.warn("[BetCouncil TheScore Harvester] PersistedQueryNotFound — forcing hash refresh");
                         await checkForHashUpdate();
-                    } else {
-                        console.warn(`[BetCouncil TheScore Harvester] ${sport} graphql error: ${JSON.stringify(json.errors[0])}`);
+                        continue;
                     }
-                    continue;
+                    // GraphQL supports partial success: data + errors can both be
+                    // present in the same response. Confirmed via real capture
+                    // that this specific field error (Team.abbreviation, not
+                    // gated by any of our disabled flags) still comes back
+                    // alongside real usable data -- only bail out if data is
+                    // genuinely empty, not just because *an* error exists.
+                    console.warn(`[BetCouncil TheScore Harvester] ${sport} graphql error (using partial data anyway): ${JSON.stringify(json.errors[0])}`);
+                    if (!json.data) { continue; }
                 }
                 allData[sport] = json;
             } catch (e) {
