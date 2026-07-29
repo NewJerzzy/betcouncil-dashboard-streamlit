@@ -9468,13 +9468,6 @@ with tabs[11]:
     else:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
-    # Pick6 (SSR scrape via GitHub Actions, no login/browser needed)
-    _pk6 = st.session_state.get("pick6_props_h", [])
-    if _pk6:
-        _src_statuses.append({"Source": "Pick6", "Status": f"🟢 {len(_pk6)} props (auto via GitHub Actions)", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Pick6", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
     # Action Network (live public API, no auth needed)
     _an = st.session_state.get("action_network_data", {})
     if _an:
