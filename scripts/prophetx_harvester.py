@@ -209,7 +209,7 @@ def push_to_gist(key: str, payload: dict) -> bool:
             }
         )
         try:
-            with urllib.request.urlopen(req, timeout=25) as r:
+            with urllib.request.urlopen(req, timeout=60) as r:
                 return r.status == 200
         except urllib.error.HTTPError as e:
             if e.code in (403, 429, 409) and attempt < 2:
@@ -219,6 +219,20 @@ def push_to_gist(key: str, payload: dict) -> bool:
                 time.sleep(wait)
                 continue
             log(f"  Gist push failed for {key}: HTTP {e.code} {e.read()[:300]}")
+            return False
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            # Previously only HTTPError was caught here -- a socket timeout on
+            # the multi-MB payloads (all.json/MLB.json) raises URLError, not
+            # HTTPError, and was propagating uncaught, crashing the whole
+            # harvester with no debug output. Treat it like a retryable
+            # server hiccup instead.
+            if attempt < 2:
+                base_wait = 10 * (2 ** attempt)
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"  Gist push errored for {key}: {e} -- retrying in {wait:.1f}s (attempt {attempt+1}/3)")
+                time.sleep(wait)
+                continue
+            log(f"  Gist push failed for {key}: {e}")
             return False
     return False
 
@@ -285,16 +299,15 @@ def run():
         }
 
     all_ok = True
+    push_results = {}
 
-    # combined payload
-    all_payload = {
-        "captured_at": now_iso, "updated": now_iso,
-        "source": "prophetx.co (public exchange API)",
-        "event_count": len(events),
-        "sport_id_map": sport_id_map,
-        "events": [enrich(ev) for ev in events],
-    }
-    all_ok &= push_to_gist("betcouncil_prophetx_all.json", all_payload)
+    # NOTE: previously also pushed a combined "betcouncil_prophetx_all.json"
+    # (grew to 8.5MB) duplicating every event already covered by the
+    # per-sport-bucket files below. Nothing in app.py/fetchers.py ever read
+    # it (checked). Dropped -- it was roughly doubling this script's write
+    # volume/payload size against the shared Gist for zero consumers, which
+    # was the likely driver of this harvester's timeouts and of collision
+    # pressure on other scripts sharing the same Gist on overlapping crons.
 
     all_ok &= push_to_gist("betcouncil_prophetx_sports.json", {
         "captured_at": now_iso, "updated": now_iso,
@@ -311,10 +324,22 @@ def run():
         }
         key = f"betcouncil_prophetx_{bucket}.json"
         ok = push_to_gist(key, payload)
+        push_results[key] = ok
         all_ok &= ok
         log(f"  {bucket}: {len(bucket_events)} events -> {key} {'ok' if ok else 'FAILED'}")
 
     if not all_ok:
+        # Previously exited here with zero diagnostic trail left in the Gist
+        # -- only visible in GH Actions logs, which aren't reliably
+        # reachable for diagnosis. Best-effort push a debug summary.
+        try:
+            push_to_gist("betcouncil_prophetx_debug.json", {
+                "captured_at": now_iso,
+                "error": "one_or_more_pushes_failed",
+                "push_results": push_results,
+            })
+        except Exception:
+            pass
         sys.exit(1)
 
 
