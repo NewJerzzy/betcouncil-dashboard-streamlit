@@ -264,7 +264,7 @@ def push_to_gist(props: list, github_token: str) -> bool:
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"pick6_props_live.json": {"content": json.dumps(payload)}}},
+        json={"files": {"betcouncil_pick6_props.json": {"content": json.dumps(payload)}}},
         timeout=30,
     )
     if resp.status_code in (200, 201):
