@@ -13253,12 +13253,6 @@ def load_sport_data(sport):
         # ── Score each prop via standalone model (ESPN live stats) ───────────
         enriched = []
         n_edge = 0
-        _fetch_fn = {
-            "Tennis": fetch_tennis_player_stats,
-            "Golf":   fetch_golf_player_stats,
-            "Soccer": fetch_soccer_player_stats,
-            "UFC":    fetch_ufc_fighter_stats,
-        }.get(sport)
 
         for p in props:
             player  = p["Player"]
