@@ -123,6 +123,7 @@ from contextlib import contextmanager as _ctx
 from fetchers import *  # extracted fetch_/compute_ functions
 from fetchers import _fetch_wnba_roster_via_teams  # leading underscore -> not covered by the star import above
 from fetchers import _map_prop_to_stat_key  # wildcard import excludes underscore-prefixed names
+from prop_market_intelligence import record_prop_snapshot, get_odds_type_flips
 from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
 
 def _bc_track(stage, duration, meta=None):
@@ -13293,7 +13294,7 @@ def load_sport_data(sport):
                 "SignalBase": edge, "SignalDefense": 0, "SignalLocation": 0,
                 "SignalUsage": 0, "SignalRest": 0, "SignalPace": 0,
                 "SignalBlowout": 0, "WeatherNote": "",
-                "Movement": "", "Efficiency": "—", "EffScore": 0,
+                "Movement": "", "OddsTypeFlip": "", "Efficiency": "—", "EffScore": 0,
                 "SharpFlag": "",
                 "source": p.get("source", ""), "OddsType": "standard",
                 "DisplayOnly": False,
@@ -16572,7 +16573,7 @@ def load_sport_data(sport):
             "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0),
             "SignalRest": best_signals.get("rest", 0), "SignalPace": best_signals.get("pace", 0),
             "SignalBlowout": blowout_adj, "SignalH2H": h2h_adj, "H2HNote": h2h_note,
-            "WeatherNote": weather_note, "Movement": "",
+            "WeatherNote": weather_note, "Movement": "", "OddsTypeFlip": "",
             "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag,
             "source": p.get("source", ""), "Source": p.get("source","").title() or "Unknown",  # uppercase for Audit 3
             "ProjConfidence": _proj_conf.get("score", 50),
@@ -17406,10 +17407,29 @@ def load_sport_data(sport):
     st.session_state["all_sports_best"] = existing_best[:10]
     line_movement = track_line_movement(enriched)
     st.session_state["line_movement"] = line_movement
+    # Goblin/Demon (odds_type) re-pricing detector -- records this board
+    # load as a snapshot, then flags any prop whose odds_type changed
+    # since an earlier snapshot (standard -> goblin/demon or back), the
+    # same signal a sharp bettor watches for: PrizePicks re-pricing a
+    # prop in reaction to sharp/consensus pressure. Cold-start safe --
+    # returns [] until enough snapshot history has accumulated.
+    try:
+        _pp_props_for_snapshot = [p for p in enriched if p.get("Book") == "PrizePicks"]
+        if _pp_props_for_snapshot:
+            record_prop_snapshot(sport, {"PrizePicks": _pp_props_for_snapshot})
+        odds_type_flips = get_odds_type_flips(sport)
+    except Exception:
+        odds_type_flips = []
+    _flip_lookup = {f"{f['player']}_{f['stat']}": f for f in odds_type_flips if f.get("book") == "PrizePicks"}
     for prop in enriched:
         key = f"{prop['Player']}_{prop['Prop']}"
         move = line_movement.get(key, {})
         prop["Movement"] = (move.get("direction", "") + str(abs(move.get("diff", 0))) if move else "")
+        _flip = _flip_lookup.get(key)
+        prop["OddsTypeFlip"] = (
+            f"{_flip['from_type']}\u2192{_flip['to_type']} ({_flip['minutes_between']:.0f}m ago)"
+            if _flip else ""
+        )
     # ── Store snapshots and opening lines ────────────────────
     # MLB lineup status applied to enriched props
     if sport == "MLB":
