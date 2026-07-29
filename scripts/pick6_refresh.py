@@ -47,7 +47,6 @@ HEADERS = {
 }
 
 DEBUG_LOG: list = []
-SSO_LOGIN_URL = "https://sso.draftkings.com/api/authentication/v1/login"
 
 
 def log(msg: str) -> None:
@@ -158,150 +157,6 @@ def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
     return _resolve_value(obj, array, idx_to_name, depth, max_depth)
 
 
-def _load_player_names_from_gist(github_token: str) -> dict:
-    """
-    Read the player name map pushed by the Tampermonkey harvester
-    (betcouncil_player_names.json in the gist).
-    Returns {dkId(int): name(str)} or {} if the file doesn't exist yet.
-    """
-    try:
-        resp = requests.get(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}",
-                     "Accept": "application/vnd.github+json"},
-            timeout=(5, 10),
-        )
-        if not resp.ok:
-            return {}
-        files = resp.json().get("files", {})
-        names_file = files.get("betcouncil_player_names.json", {})
-        raw_url = names_file.get("raw_url", "")
-        if not raw_url:
-            return {}
-        content_resp = requests.get(raw_url, timeout=(5, 10))
-        if not content_resp.ok:
-            return {}
-        data = content_resp.json()
-        raw_names = data.get("names", data if isinstance(data, dict) else {})
-        # Keys may be strings from JSON; convert to int for lookup
-        result = {}
-        for k, v in raw_names.items():
-            try:
-                result[int(k)] = v
-            except (ValueError, TypeError):
-                pass
-        DEBUG_LOG.append({"note": "gist_player_names_loaded", "count": len(result)})
-        return result
-    except Exception as ex:
-        DEBUG_LOG.append({"note": "gist_player_names_error", "error": str(ex)[:120]})
-        return {}
-
-
-def _load_dk_credentials(github_token: str) -> tuple[str, str]:
-    """
-    Read DK credentials from the gist (betcouncil_cfg.json) when env vars
-    DK_EMAIL / DK_PASSWORD are not set in the workflow environment.
-    Returns (email, password) or ("", "") on any failure.
-    """
-    try:
-        resp = requests.get(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}",
-                     "Accept": "application/vnd.github+json"},
-            timeout=(5, 10),
-        )
-        if not resp.ok:
-            return "", ""
-        files = resp.json().get("files", {})
-        cfg_file = files.get("betcouncil_cfg.json", {})
-        raw_url = cfg_file.get("raw_url", "")
-        if not raw_url:
-            return "", ""
-        cfg_resp = requests.get(raw_url, timeout=(5, 10))
-        if not cfg_resp.ok:
-            return "", ""
-        import base64
-        cfg = cfg_resp.json()
-        email = base64.b64decode(cfg.get("dk_e", "")).decode()
-        password = base64.b64decode(cfg.get("dk_p", "")).decode()
-        return email, password
-    except Exception as ex:
-        DEBUG_LOG.append({"note": "cfg_load_error", "error": str(ex)[:120]})
-        return "", ""
-
-
-def _dk_login(email: str, password: str) -> requests.Session | None:
-    """
-    Log in to DraftKings SSO and return an authenticated session.
-    Returns None if login fails so callers can gracefully degrade.
-    """
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    try:
-        resp = session.post(
-            SSO_LOGIN_URL,
-            json={"login": email, "password": password, "rememberMe": False},
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=(8, 20),
-        )
-        cookie_names = list(session.cookies.keys())
-        DEBUG_LOG.append({"note": "dk_login", "status": resp.status_code,
-                           "cookies": cookie_names})
-        if resp.ok or cookie_names:
-            return session
-        log(f"DK login failed: HTTP {resp.status_code}")
-        return None
-    except Exception as ex:
-        DEBUG_LOG.append({"note": "dk_login_exception", "error": str(ex)[:120]})
-        return None
-
-
-def _fetch_player_names_auth(session: requests.Session, sport: str) -> dict:
-    """
-    Use an authenticated DK session to build dkId->displayName.
-    Tries several endpoints; returns {} if none work.
-    """
-    dk_sport = {"SOCCER": "SOC", "UFC": "MMA", "PGA+TOUR": "GOLF",
-                "NASCAR": "NAS"}.get(sport, sport)
-    name_map: dict = {}
-    endpoints = [
-        f"https://api.draftkings.com/players/v1/players?sport={dk_sport}&format=json&pageSize=1000",
-        f"https://api.draftkings.com/pick6/v1/pickables?sport={dk_sport}&format=json",
-        f"https://api.draftkings.com/pick6/v2/pickables?sport={dk_sport}&format=json",
-        f"https://api.draftkings.com/pick6/v1/entities?sport={dk_sport}&format=json",
-    ]
-    for url in endpoints:
-        try:
-            r = session.get(url, timeout=(6, 15))
-            # Log the first endpoint attempt per sport so we can diagnose
-            if not any(e.get("note") == f"dk_auth_probe_{sport}" for e in DEBUG_LOG):
-                DEBUG_LOG.append({"note": f"dk_auth_probe_{sport}", "url": url,
-                                   "status": r.status_code, "snippet": r.text[:300]})
-            if not r.ok:
-                continue
-            d = r.json()
-            players = (d.get("players") or d.get("draftables") or d.get("pickables") or
-                       d.get("entities") or d.get("data") or
-                       (d if isinstance(d, list) else []))
-            for p in (players if isinstance(players, list) else []):
-                pid = (p.get("dkId") or p.get("playerId") or
-                       p.get("draftableId") or p.get("id"))
-                name = (p.get("displayName") or p.get("fullName") or p.get("name") or
-                        p.get("shortName") or
-                        " ".join(filter(None, [p.get("firstName"), p.get("lastName")])) or None)
-                if pid and name:
-                    name_map[int(pid)] = name
-            if name_map:
-                DEBUG_LOG.append({"note": "dk_auth_names_ok", "sport": sport,
-                                   "count": len(name_map), "source": url})
-                return name_map
-        except Exception:
-            continue
-    if not name_map:
-        DEBUG_LOG.append({"note": "dk_auth_names_failed", "sport": sport})
-    return name_map
-
-
 def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     """
     Scan the flat array for:
@@ -332,11 +187,9 @@ def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
     return player_names, stat_names
 
 
-def fetch_sport_props(sport: str, session: requests.Session | None = None,
-                      harvested_names: dict | None = None) -> list:
+def fetch_sport_props(sport: str) -> list:
     url = f"{BASE_URL}?sport={sport}"
-    fetcher = session if session is not None else requests
-    r = fetcher.get(url, headers=HEADERS, timeout=(8, 20))
+    r = requests.get(url, headers=HEADERS, timeout=(8, 20))
     DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
                        "body_len": len(r.text)})
     if r.status_code != 200:
@@ -349,12 +202,6 @@ def fetch_sport_props(sport: str, session: requests.Session | None = None,
 
     idx_to_name = _build_idx_to_name(array)
     player_names, stat_names = _build_lookup_tables(array, idx_to_name)
-    # Merge in harvested names from Tampermonkey gist file (higher priority than SSR)
-    if harvested_names:
-        player_names = {**harvested_names, **player_names}  # SSR wins on conflict (unlikely)
-    # If still no names and we have an auth session, try DK API (best-effort)
-    if not player_names and session is not None:
-        player_names = _fetch_player_names_auth(session, sport)
     pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
 
     DEBUG_LOG.append({"sport": sport, "array_len": len(array),
@@ -431,32 +278,19 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
-    # Attempt authenticated DK session — degrades gracefully to anonymous if credentials absent/fail
-    dk_email = os.environ.get("DK_EMAIL", "")
-    dk_password = os.environ.get("DK_PASSWORD", "")
-    if not (dk_email and dk_password):
-        log("DK_EMAIL/DK_PASSWORD env vars not set — loading credentials from gist…")
-        dk_email, dk_password = _load_dk_credentials(github_token)
-    dk_session: requests.Session | None = None
-    if dk_email and dk_password:
-        log("Logging in to DraftKings for authenticated player name resolution…")
-        dk_session = _dk_login(dk_email, dk_password)
-        if dk_session:
-            log("DK login OK — will use authenticated session for player names")
-        else:
-            log("DK login failed — continuing without auth (names will be dkId_ placeholders)")
-    else:
-        log("No DK credentials available — running unauthenticated")
-
-    # Load harvested player names from Tampermonkey gist file (populated by browser script)
-    log("Loading harvested player names from gist…")
-    harvested_names = _load_player_names_from_gist(github_token)
-    log(f"  {len(harvested_names)} player names loaded from gist")
+    # NOTE (2026-07-29): an authenticated-DK-login approach was attempted here
+    # and removed. DK's SSO endpoint blocks GitHub Actions runner IPs (same
+    # wall as every other DK/BetMGM/Caesars auth attempt in this project), so
+    # it never actually worked, and the credential-storage side of it (base64
+    # in the Gist) was a real exposure with zero corresponding benefit. Player
+    # names remain dkId_XXXXX placeholders until a real name source exists --
+    # a browser-based harvester (Tampermonkey, real user session) is the
+    # established working pattern for auth-gated sources elsewhere in this repo.
 
     all_props = []
     for sport in SPORTS:
         try:
-            props = fetch_sport_props(sport, session=dk_session, harvested_names=harvested_names)
+            props = fetch_sport_props(sport)
         except Exception as e:
             log(f"  {sport}: error — {e}")
             continue
