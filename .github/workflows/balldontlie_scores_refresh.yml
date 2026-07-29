@@ -1,0 +1,23 @@
+name: BallDontLie Scores Refresh
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run BallDontLie scores harvester
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN_2 }}
+          BALLSDONTLIE_API_KEY: ${{ secrets.BALLSDONTLIE_API_KEY }}
+        run: python scripts/balldontlie_scores_refresh.py
