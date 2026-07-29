@@ -17353,13 +17353,25 @@ def get_harvester_status(sport: str = "MLB") -> dict:
 
 
 
+_PRIZEPICKS_GIST_LEAGUE_KEY = {
+    # prizepicks_ssr_scraper.py names each Gist file after PrizePicks' own
+    # `league` attribute on the projection, which is always uppercase and
+    # sometimes a different code entirely (Golf -> "PGA", not "GOLF") --
+    # not the app's own title-case sport names. NBA/MLB/NHL/WNBA/NFL/UFC
+    # happen to already be uppercase in both places so those were never
+    # affected; Tennis/Golf/Soccer silently 404'd on every request.
+    "TENNIS": "TENNIS", "GOLF": "PGA", "SOCCER": "SOCCER",
+}
+
+
 def fetch_prizepicks_from_gist(sport: str) -> tuple:
     """
     PRIMARY: PrizePicks props from browser harvester.
     SECONDARY: Falls back to fetch_prizepicks_props() CDN scraper.
     Returns (props_list, source_label)
     """
-    data = _read_gist_file(f"betcouncil_prizepicks_{sport}.json", cache_minutes=5)
+    _gist_league = _PRIZEPICKS_GIST_LEAGUE_KEY.get(sport.upper(), sport)
+    data = _read_gist_file(f"betcouncil_prizepicks_{_gist_league}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
