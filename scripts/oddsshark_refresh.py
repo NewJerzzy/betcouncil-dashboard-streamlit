@@ -61,14 +61,12 @@ def log(msg: str) -> None:
 
 def fetch_page(sport_slug: str):
     url = f"https://www.oddsshark.com/{sport_slug}/consensus-picks"
-    # Confirmed via live workflow testing 2026-07-28: GitHub Actions
-    # runners cannot reach oddsshark.com at all (HTTP 000, DNS/connection
-    # failure), while general connectivity is fine (google.com returns
-    # 200 from the same runner) -- almost certainly a bot-protection
-    # block on their CDN targeting known cloud-datacenter IP ranges. A
-    # direct fetch is attempted first in case that block is ever lifted,
-    # then falls back to the same ScrapeOps residential-proxy route
-    # already used elsewhere in this app for exactly this class of block.
+    # Bot-protection status here is inconsistent across runs: confirmed
+    # blocked (HTTP 000, connection failure) on 2026-07-28, then confirmed
+    # working via direct fetch for all 5 sports on 2026-07-29 -- treat as
+    # intermittent, not a hard block. Direct fetch attempted first every
+    # run regardless; the two-tier ScrapeOps fallback below only spends
+    # credits on the runs where direct genuinely fails.
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code == 200:
