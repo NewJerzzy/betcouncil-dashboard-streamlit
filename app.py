@@ -8751,6 +8751,7 @@ with tabs[8]:
             if col_confirm1.button("✅ Submit All Parsed Bets", key="submit_parsed_bets"):
                 submitted = 0
                 _skipped_pending = 0
+                _submit_errors = []
                 for bet in parsed_bets:
                     if bet.get("outcome") not in ("WIN","LOSS","PUSH"):
                         _skipped_pending += 1
@@ -8770,7 +8771,8 @@ with tabs[8]:
                         )
                         log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals)
                         submitted += 1
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as _sbe:
+                        _submit_errors.append(f"{bet.get('player','?')} ({bet.get('prop','?')}): {type(_sbe).__name__} — {_sbe}")
                         continue
                 if submitted > 0:
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
@@ -8781,6 +8783,8 @@ with tabs[8]:
                     st.rerun()
                 elif _skipped_pending:
                     st.warning(f"All {_skipped_pending} parsed bet(s) are still PENDING — nothing to log yet.")
+                if _submit_errors:
+                    st.error("⚠️ " + str(len(_submit_errors)) + " parsed bet(s) failed to log (bad line/wager value most likely from a misread screenshot) — fix these in the review section above and re-submit:\n\n" + "\n".join(f"- {e}" for e in _submit_errors))
             if col_confirm2.button("❌ Clear Parsed Bets", key="clear_parsed_bets"):
                 st.session_state["parsed_bets"] = []
                 st.session_state["ocr_raw_text"] = ""
