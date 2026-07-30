@@ -17925,7 +17925,7 @@ with st.sidebar:
         f'</div></div>', unsafe_allow_html=True)
     st.caption(_cal_explainer)
     if not _thin_sample and _cal_grade in ("FAIR", "NEEDS WORK"):
-        st.warning(f"⚠️ {_cal_grade}: {_grade_gloss}. As a safety measure, your bet-size setting has been reduced across every sport right now — not just the one causing this — until predictions and results line back up.")
+        st.warning(f"⚠️ {_cal_grade}: {_grade_gloss}. This is the model checking its own recent picks against what actually happened — it's not a different system judging it. As a safety measure, it's automatically betting smaller across every sport right now (not just the one causing this) until its results catch back up with what it's predicting. You'll still see the same picks, just sized down until then.")
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
