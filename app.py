@@ -12030,9 +12030,14 @@ with tabs[13]:
                     _mko_bid, _mko_ask = 0.0, 0.0
                 _mko_bid_pct = max(0.0, min(100.0, _mko_bid * 100))
                 _mko_ask_pct = max(0.0, min(100.0, _mko_ask * 100))
-                _mko_vol_val = _mm.get("volume") or 0
-                _mko_liq = _mm.get("liquidity") or 0
-                _mko_oi = _mm.get("open_interest") or 0
+                def _mko_num(v):
+                    try:
+                        return float(v or 0)
+                    except (TypeError, ValueError):
+                        return 0.0
+                _mko_vol_val = _mko_num(_mm.get("volume"))
+                _mko_liq = _mko_num(_mm.get("liquidity"))
+                _mko_oi = _mko_num(_mm.get("open_interest"))
                 st.markdown(
                     f'<div style="margin-bottom:8px;">'
                     f'<div style="display:flex;justify-content:space-between;font-size:12px;color:#c9bce8;margin-bottom:2px;">'
