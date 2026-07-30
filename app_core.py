@@ -17877,39 +17877,38 @@ with st.sidebar:
     _regime_data  = detect_season_regime("MLB")
     _regime_label = _regime_data.get("label", "REGULAR FLOOR")
     _edge_thresh  = _regime_data.get("edge_floor", 0.045)
-    # Auto-generated "why" sentence from the actual per-sport breakdown —
-    # answers "why is it low" without the user having to open History.
+    # Per-sport grade badges -- quick scan instead of a paragraph. Same
+    # grade words as the History tab (ELITE/GOOD/FAIR/NEEDS WORK) so this
+    # can never disagree with the detailed breakdown there.
     _per_sport_cal = _brier_data.get("per_sport", {}) or {}
-    _cal_explainer = ""
+    _grade_color = {"ELITE": "#22c55e", "GOOD": "#22c55e", "FAIR": "#e8a020", "NEEDS WORK": "#e04040"}
+    _cal_badges_html = ""
+    _any_low = False
+    if not _thin_sample and _per_sport_cal:
+        _ranked = sorted(_per_sport_cal.items(), key=lambda x: x[1]["brier_score"])
+        for _sp_name, _sp_data in _ranked:
+            _sp_grade = _sp_data["grade"]
+            _sp_n = _sp_data["n"]
+            _sp_color = _grade_color.get(_sp_grade, "#6a7a8a")
+            if _sp_grade in ("FAIR", "NEEDS WORK"):
+                _any_low = True
+            _cal_badges_html += (
+                f'<span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:10px;'
+                f'background:{_sp_color}22;color:{_sp_color};border:0.5px solid {_sp_color}44;'
+                f'margin-right:6px;margin-top:4px;display:inline-block;" '
+                f'title="{_sp_n} settled bets">{_sp_name}: {_sp_grade}</span>'
+            )
+    _cal_note = (
+        "Bet sizes are reduced across every sport until this improves — not just the sport(s) grading low."
+        if _any_low else
+        "How closely your predicted win probabilities have matched real results. See the History tab for the full breakdown."
+    )
     _grade_gloss = {
         "ELITE": "your predictions are landing almost exactly as often as expected",
         "GOOD": "your predictions are landing close to as often as expected",
         "FAIR": "your predictions are landing somewhat off from what's expected",
         "NEEDS WORK": "your predictions aren't landing close to as often as expected",
     }.get(_cal_grade, "")
-    _grade_plain = {
-        "NEEDS WORK": "its bets haven't been winning as often as the model expected",
-        "FAIR":       "its bets have been winning somewhat less often than the model expected",
-    }
-    if not _thin_sample and _per_sport_cal:
-        _ranked = sorted(_per_sport_cal.items(), key=lambda x: x[1]["brier_score"])
-        _best   = _ranked[0]
-        _worst  = _ranked[-1]
-        if _worst[1]["grade"] in ("FAIR", "NEEDS WORK") and _worst[0] != _best[0]:
-            _plain = _grade_plain.get(_worst[1]["grade"], "")
-            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is bringing this number down — "
-                               f"{_plain}. Your bet-size setting is one shared setting across every sport, not one per sport — "
-                               f"so a rough stretch like this in {_worst[0]} shrinks the recommended bet size everywhere, "
-                               f"including on {_best[0]} picks, until results catch back up with predictions. "
-                               f"{_best[0]} is grading {_best[1]['grade']}.")
-        elif _worst[1]["grade"] in ("FAIR", "NEEDS WORK"):
-            _plain = _grade_plain.get(_worst[1]["grade"], "")
-            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far — "
-                               f"{_plain}. Your bet-size setting has been reduced everywhere in response, not just for {_worst[0]}.")
-        else:
-            _cal_explainer = f"All tracked sports are grading GOOD or better — {_best[0]} leads at {_best[1]['grade']}."
-    if not _cal_explainer:
-        _cal_explainer = "How closely your predicted win probabilities have matched real results (higher = better). See the History tab for the full breakdown."
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:2px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
@@ -17923,9 +17922,9 @@ with st.sidebar:
         + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
         f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
-    st.caption(_cal_explainer)
-    if not _thin_sample and _cal_grade in ("FAIR", "NEEDS WORK"):
-        st.warning(f"⚠️ {_cal_grade}: {_grade_gloss}. This is the model checking its own recent picks against what actually happened — it's not a different system judging it. As a safety measure, it's automatically betting smaller across every sport right now (not just the one causing this) until its results catch back up with what it's predicting. You'll still see the same picks, just sized down until then.")
+    if _cal_badges_html:
+        st.markdown(f'<div style="margin-top:2px;">{_cal_badges_html}</div>', unsafe_allow_html=True)
+    st.caption(_cal_note)
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
