@@ -236,7 +236,12 @@ def main() -> int:
         if html is None:
             log(f"{display}: fetch failed")
             continue
-        parsed = extract_sport(html, display)
+        try:
+            parsed = extract_sport(html, display)
+        except Exception as e:
+            log(f"{display}: parse error — {e}")
+            DEBUG_LOG.append({"sport": display, "parse_error": str(e)[:200]})
+            continue
         n_ml, n_tot = len(parsed["moneyline"]), len(parsed["totals"])
         log(f"{display}: {n_ml} moneyline rows, {n_tot} totals rows")
         if n_ml or n_tot:
