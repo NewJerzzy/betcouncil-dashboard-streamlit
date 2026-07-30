@@ -3836,15 +3836,35 @@ with tabs[3]:
         if _smk_game:
             _smk_ml_market = next((m for m in _smk_game.get("markets", []) if m.get("market_type") == "WINNER_2_WAY"), None)
             if _smk_ml_market:
-                _smk_parts = []
+                _smk_vol = _smk_ml_market.get("volume_pence")
+                st.markdown('<div style="font-size:12px;color:#6a8aab;margin-top:6px;">🔄 Smarkets exchange</div>', unsafe_allow_html=True)
                 for _c in _smk_ml_market.get("contracts", []):
-                    if _c.get("american_odds") is not None and _c.get("implied_pct") is not None:
-                        try:
-                            _smk_parts.append(f"{_c.get('name','')} {int(_c['american_odds']):+d} ({_c['implied_pct']:.1f}% implied)")
-                        except (TypeError, ValueError):
-                            pass
-                if _smk_parts:
-                    st.caption(f"🔄 Smarkets exchange: {' vs '.join(_smk_parts)}")
+                    try:
+                        _smk_back = float(_c.get("best_back_price") or 0)
+                        _smk_lay = float(_c.get("best_lay_price") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if not (_smk_back or _smk_lay):
+                        continue
+                    _smk_back_pct = max(0.0, min(100.0, _smk_back * 100))
+                    _smk_lay_pct = max(0.0, min(100.0, _smk_lay * 100))
+                    st.markdown(
+                        f'<div style="margin-bottom:6px;">'
+                        f'<div style="display:flex;justify-content:space-between;font-size:12px;color:#c9bce8;">'
+                        f'<span>{_c.get("name","")}</span>'
+                        f'<span>Back {_smk_back*100:.0f}¢ / Lay {_smk_lay*100:.0f}¢</span>'
+                        f'</div>'
+                        f'<div style="position:relative;height:8px;border-radius:4px;background:#1a2a3a;overflow:hidden;">'
+                        f'<div style="position:absolute;left:0;width:{_smk_back_pct}%;height:100%;background:#22c55e88;"></div>'
+                        f'<div style="position:absolute;right:0;width:{100-_smk_lay_pct}%;height:100%;background:#e0404088;"></div>'
+                        f'</div></div>',
+                        unsafe_allow_html=True
+                    )
+                if _smk_vol:
+                    try:
+                        st.caption(f"Volume £{float(_smk_vol)/100:,.0f}")
+                    except (TypeError, ValueError):
+                        pass
 
         # Novig real exchange prices via The Odds API (novig_odds_refresh.py)
         # -- same category as the Smarkets block above (real money-backed
