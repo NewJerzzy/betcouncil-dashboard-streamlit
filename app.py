@@ -11966,3 +11966,68 @@ with tabs[13]:
     except Exception:
         st.info("Market Scanner data unavailable right now — try loading a board first.")
 
+    # ── Kalshi order book ──────────────────────────────────────────
+    # Real bid/ask spread + volume/liquidity/open interest per market
+    # (same fields the Game Lines Kalshi block reads, just shown per-market
+    # instead of collapsed to one midpoint %). For multi-strike totals
+    # events, shows the real implied-probability distribution across
+    # strikes instead of just the top market -- genuine depth data that
+    # was already being fetched but not displayed anywhere.
+    try:
+        _mko_events = st.session_state.get("kalshi_events_scraped", [])
+    except Exception:
+        _mko_events = []
+    if _mko_events:
+        st.markdown('<div class="ms-glow-line" style="margin-top:1.2rem;"></div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:1.1rem;font-weight:800;color:#f3eeff;margin-bottom:2px;">🔷 Kalshi Order Book</div>', unsafe_allow_html=True)
+        st.caption("Real bid/ask spread, volume, liquidity, and open interest per market. Multi-strike totals show the full implied-probability distribution.")
+
+        def _mko_vol(ev):
+            tot = 0.0
+            for m in ev.get("markets", []):
+                try:
+                    tot += float(m.get("volume") or 0)
+                except (TypeError, ValueError):
+                    pass
+            return tot
+
+        for _mko_ev in sorted(_mko_events, key=_mko_vol, reverse=True)[:8]:
+            _mko_markets = _mko_ev.get("markets") or []
+            if not _mko_markets:
+                continue
+            st.markdown(
+                f'<div class="ms-card" style="padding:10px 14px;margin-bottom:10px;">'
+                f'<div style="color:#f3eeff;font-weight:700;font-size:1.0rem;margin-bottom:6px;">'
+                f'{_mko_ev.get("title","")} <span style="color:#9a86c9;font-size:11px;font-weight:400;">· {_mko_ev.get("sport","")}</span></div>',
+                unsafe_allow_html=True
+            )
+            _mko_sorted_markets = sorted(_mko_markets, key=lambda x: float(x.get("volume") or 0), reverse=True)
+            for _mm in _mko_sorted_markets[:6]:
+                try:
+                    _mko_bid = float(_mm.get("yes_bid") or 0)
+                    _mko_ask = float(_mm.get("yes_ask") or 0)
+                except (TypeError, ValueError):
+                    _mko_bid, _mko_ask = 0.0, 0.0
+                _mko_bid_pct = max(0.0, min(100.0, _mko_bid * 100))
+                _mko_ask_pct = max(0.0, min(100.0, _mko_ask * 100))
+                _mko_vol_val = _mm.get("volume") or 0
+                _mko_liq = _mm.get("liquidity") or 0
+                _mko_oi = _mm.get("open_interest") or 0
+                st.markdown(
+                    f'<div style="margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;font-size:12px;color:#c9bce8;margin-bottom:2px;">'
+                    f'<span>{_mm.get("title","")}</span>'
+                    f'<span>Bid {_mko_bid*100:.0f}¢ / Ask {_mko_ask*100:.0f}¢</span>'
+                    f'</div>'
+                    f'<div style="position:relative;height:10px;border-radius:5px;background:#1a1428;overflow:hidden;">'
+                    f'<div style="position:absolute;left:0;width:{_mko_bid_pct}%;height:100%;background:#22c55e88;"></div>'
+                    f'<div style="position:absolute;right:0;width:{100-_mko_ask_pct}%;height:100%;background:#e0404088;"></div>'
+                    f'</div>'
+                    f'<div style="font-size:11px;color:#7a6a9c;margin-top:2px;">'
+                    f'Volume ${_mko_vol_val:,.0f} · Liquidity ${_mko_liq:,.0f} · Open Interest {_mko_oi:,.0f}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
+
