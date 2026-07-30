@@ -17881,9 +17881,15 @@ with st.sidebar:
     # answers "why is it low" without the user having to open History.
     _per_sport_cal = _brier_data.get("per_sport", {}) or {}
     _cal_explainer = ""
+    _grade_gloss = {
+        "ELITE": "your predictions are landing almost exactly as often as expected",
+        "GOOD": "your predictions are landing close to as often as expected",
+        "FAIR": "your predictions are landing somewhat off from what's expected",
+        "NEEDS WORK": "your predictions aren't landing close to as often as expected",
+    }.get(_cal_grade, "")
     _grade_plain = {
-        "NEEDS WORK": "predicted win probabilities haven't matched what actually happened",
-        "FAIR":       "predicted win probabilities have drifted somewhat from actual results",
+        "NEEDS WORK": "its bets haven't been winning as often as the model expected",
+        "FAIR":       "its bets have been winning somewhat less often than the model expected",
     }
     if not _thin_sample and _per_sport_cal:
         _ranked = sorted(_per_sport_cal.items(), key=lambda x: x[1]["brier_score"])
@@ -17891,19 +17897,19 @@ with st.sidebar:
         _worst  = _ranked[-1]
         if _worst[1]["grade"] in ("FAIR", "NEEDS WORK") and _worst[0] != _best[0]:
             _plain = _grade_plain.get(_worst[1]["grade"], "")
-            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is the main drag on this number — "
-                               f"its {_plain}. Kelly sizing is one global multiplier across ALL sports, not per-sport — "
-                               f"so a recent stretch like this one throttles every bet's stake, including {_best[0]}'s, "
-                               f"until overall recent performance recovers. "
+            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is bringing this number down — "
+                               f"{_plain}. Your bet-size setting is one shared setting across every sport, not one per sport — "
+                               f"so a rough stretch like this in {_worst[0]} shrinks the recommended bet size everywhere, "
+                               f"including on {_best[0]} picks, until results catch back up with predictions. "
                                f"{_best[0]} is grading {_best[1]['grade']}.")
         elif _worst[1]["grade"] in ("FAIR", "NEEDS WORK"):
             _plain = _grade_plain.get(_worst[1]["grade"], "")
             _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far — "
-                               f"its {_plain}. Kelly sizing is throttled globally in response, not just for {_worst[0]}.")
+                               f"{_plain}. Your bet-size setting has been reduced everywhere in response, not just for {_worst[0]}.")
         else:
             _cal_explainer = f"All tracked sports are grading GOOD or better — {_best[0]} leads at {_best[1]['grade']}."
     if not _cal_explainer:
-        _cal_explainer = "How closely your predicted win probabilities have matched real results (higher = better calibrated). See the History tab for the full breakdown."
+        _cal_explainer = "How closely your predicted win probabilities have matched real results (higher = better). See the History tab for the full breakdown."
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:2px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
@@ -17912,13 +17918,14 @@ with st.sidebar:
         f'</div>'
         + (f'<div style="font-size:16px;font-weight:700;color:var(--bc-dim);margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
            if _thin_sample else
-           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n}) · {_cal_grade}</span></div>')
+           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n}) · {_cal_grade}</span></div>'
+           + (f'<div style="font-size:11px;color:#8a9aab;margin-top:2px;">{_grade_gloss}</div>' if _grade_gloss else ''))
         + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
         f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
     st.caption(_cal_explainer)
     if not _thin_sample and _cal_grade in ("FAIR", "NEEDS WORK"):
-        st.warning(f"⚠️ Calibration is {_cal_grade} — model confidence has drifted from actual outcomes. Kelly sizing is one global multiplier across your whole recent history, and it's already being throttled for every sport as a result, not just the sport(s) driving this grade down.")
+        st.warning(f"⚠️ {_cal_grade}: {_grade_gloss}. As a safety measure, your bet-size setting has been reduced across every sport right now — not just the one causing this — until predictions and results line back up.")
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
