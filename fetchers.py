@@ -5239,6 +5239,19 @@ def fetch_paddypower_lines(sport="NBA"):
     except Exception as e:
         return {}
 
+def fetch_bettingpros_props(sport: str) -> list:
+    """
+    Whole-sport BettingPros props (line/consensus/odds/probability/EV/
+    bet_rating/projection/performance per prop), for the harvester loop
+    -- feeds the SignalNotes overlay in score_pick_standalone, matched
+    per-player the same way GamblingForecast's playerProps is.
+    """
+    data = _read_gist_file(f"betcouncil_bettingpros_{sport.upper()}.json", cache_minutes=30)
+    if not data:
+        return []
+    return data.get("props", [])
+
+
 def fetch_bettingpros_hitrate(player_name, sport="MLB"):
     """
     Prop-level hit-rate/streak trend data (last 1/5/10/15/20 games,
