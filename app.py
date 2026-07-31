@@ -8091,10 +8091,43 @@ with tabs[7]:
                     _bp_props = []
                 for _bp in _bp_props[:3]:
                     _bp_perf = _bp.get("performance", {})
+                    _bp_over = _bp.get("over", {}) or {}
+                    _bp_under = _bp.get("under", {}) or {}
+                    _bp_proj = _bp.get("projection", {}) or {}
+                    _bp_extra = _bp.get("extra", {}) or {}
                     _bp_stat = _bp.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
                     _bp_streak = _bp_perf.get("streak", 0)
                     _bp_streak_type = _bp_perf.get("streak_type", "")
-                    with st.expander(f"📊 {_bp_stat or 'Prop'} hit-rate trend", expanded=False):
+                    with st.expander(f"📊 {_bp_stat or 'Prop'} — BettingPros", expanded=False):
+                        # Line/odds/EV/rating -- best available side and consensus
+                        _bp_rec = str(_bp_proj.get("recommended_side", "")).upper()
+                        _bp_side_block = _bp_over if _bp_rec == "OVER" else _bp_under if _bp_rec == "UNDER" else None
+                        if _bp_side_block:
+                            _bp_stars = "⭐" * int(_bp_side_block.get("bet_rating", 0) or 0)
+                            st.markdown(
+                                f"**{_bp_rec}** best line **{_bp_side_block.get('line','?')}** "
+                                f"({_bp_side_block.get('odds','?'):+} odds) {_bp_stars}"
+                                if isinstance(_bp_side_block.get("odds"), (int, float)) else
+                                f"**{_bp_rec}** best line **{_bp_side_block.get('line','?')}** {_bp_stars}"
+                            )
+                            _bp_ev = _bp_side_block.get("expected_value")
+                            _bp_prob = _bp_side_block.get("probability")
+                            if _bp_ev is not None:
+                                st.caption(f"BettingPros model: {_bp_prob:.1%} win probability, {_bp_ev:+.1%} EV" if _bp_prob is not None else f"EV: {_bp_ev:+.1%}")
+                        _bp_cons_line = _bp_over.get("consensus_line")
+                        if _bp_cons_line is not None:
+                            st.caption(f"Consensus line across books: {_bp_cons_line}")
+                        if _bp_proj.get("value") is not None:
+                            st.caption(f"BettingPros projection: {_bp_proj['value']} (diff vs line: {_bp_proj.get('diff', 0):+})")
+                        # MLB-specific context
+                        if _bp_extra.get("opposing_pitcher"):
+                            st.caption(f"Opposing pitcher: {_bp_extra['opposing_pitcher']}")
+                        if "in_lineup" in _bp_extra:
+                            st.caption(f"Lineup status: {'✅ Confirmed' if _bp_extra['in_lineup'] else '⚠️ Not yet confirmed'}")
+                        _bp_opp_rank = _bp_extra.get("opposition_rank")
+                        if _bp_opp_rank and _bp_opp_rank.get("rank"):
+                            st.caption(f"Opponent ranks #{_bp_opp_rank['rank']} vs this stat")
+                        st.markdown("---")
                         if _bp_streak and _bp_streak_type:
                             st.caption(f"Current streak: {_bp_streak} games {_bp_streak_type}")
                         for window in ("last_5", "last_10", "last_20", "season"):
