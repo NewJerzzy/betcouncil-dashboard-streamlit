@@ -65,8 +65,18 @@ def main() -> int:
             for m in re.finditer(r"\d{1,3}\s?%", r.text):
                 start = max(0, m.start() - 60)
                 end = min(len(r.text), m.end() + 20)
-                pct_contexts.append(r.text[start:end].replace("\n", " ").strip())
-            entry["pct_context_samples"] = pct_contexts[:25]
+                ctx = r.text[start:end].replace("\n", " ").strip()
+                # skip CSS gradient/color-palette boilerplate
+                if "gradient" in ctx or "rgb(" in ctx or "--wp--" in ctx:
+                    continue
+                pct_contexts.append(ctx)
+            entry["pct_context_samples"] = pct_contexts[:30]
+            entry["total_pct_matches"] = len(list(re.finditer(r"\d{1,3}\s?%", r.text)))
+            entry["non_css_pct_matches"] = len(pct_contexts)
+            # look for API/AJAX endpoint references
+            api_refs = set(re.findall(r'["\'](/wp-json/[^"\']{0,80})["\']', r.text))
+            api_refs |= set(re.findall(r'["\']([^"\']*(?:ajax|/api/|\.json)[^"\']{0,60})["\']', r.text, re.I))
+            entry["api_ref_samples"] = list(api_refs)[:15]
             entry["snippet"] = r.text[:1500]
             log(f"{url} -> {r.status_code}, {len(r.text)} bytes, "
                 f"handle={entry['mentions_handle']} tickets={entry['mentions_tickets']}")
