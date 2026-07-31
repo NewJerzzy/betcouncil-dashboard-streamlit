@@ -8361,17 +8361,20 @@ def fetch_odds_api_game_lines(sport):
                         outcomes = mkt.get("outcomes", [])
                         if key == "h2h":
                             for o in outcomes:
-                                if o["name"] == home:
-                                    home_ml = o["price"]
-                                elif o["name"] == away:
-                                    away_ml = o["price"]
+                                if o.get("name") == home:
+                                    home_ml = o.get("price", home_ml)
+                                elif o.get("name") == away:
+                                    away_ml = o.get("price", away_ml)
                         elif key == "spreads":
                             for o in outcomes:
-                                if o["name"] == home:
-                                    spread = f"{home} {o['point']:+.1f}"
+                                if o.get("name") == home and o.get("point") is not None:
+                                    try:
+                                        spread = f"{home} {float(o['point']):+.1f}"
+                                    except (TypeError, ValueError):
+                                        pass
                         elif key == "totals":
                             for o in outcomes:
-                                if o["name"] == "Over":
+                                if o.get("name") == "Over":
                                     total = o.get("point", "N/A")
                     break
                 if odds_source != "N/A":
@@ -8394,7 +8397,7 @@ def fetch_odds_api_game_lines(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(result, f)
         return result
-    except (IOError, ValueError) as e:
+    except Exception as e:
         print(f"[ODDS_API] game lines fetch exception for {sport}: {e}")
         return [], {}, {}
 
