@@ -8082,7 +8082,29 @@ with tabs[7]:
                             f"SLG: {_gf_matchup.get('slg','?')}  OPS: {_gf_matchup.get('ops','?')}"
                         )
 
-            # NumberFire ranking lookup -- NFL/NBA only, matching the real
+            # BettingPros hit-rate/streak trend data -- covers all 5
+            # sports this source has (MLB/NBA/NHL/WNBA/NFL).
+            if _pl_sport_used in ("MLB", "NBA", "NHL", "WNBA", "NFL"):
+                try:
+                    _bp_props = fetch_bettingpros_hitrate(pl_name_d, _pl_sport_used)
+                except Exception:
+                    _bp_props = []
+                for _bp in _bp_props[:3]:
+                    _bp_perf = _bp.get("performance", {})
+                    _bp_stat = _bp.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                    _bp_streak = _bp_perf.get("streak", 0)
+                    _bp_streak_type = _bp_perf.get("streak_type", "")
+                    with st.expander(f"📊 {_bp_stat or 'Prop'} hit-rate trend", expanded=False):
+                        if _bp_streak and _bp_streak_type:
+                            st.caption(f"Current streak: {_bp_streak} games {_bp_streak_type}")
+                        for window in ("last_5", "last_10", "last_20", "season"):
+                            w = _bp_perf.get(window, {})
+                            o, u, psh = w.get("over", 0), w.get("under", 0), w.get("push", 0)
+                            total = o + u + psh
+                            if total:
+                                label = window.replace("last_", "Last ").replace("season", "Season").title()
+                                st.caption(f"{label}: {o}-{u}" + (f"-{psh}" if psh else "") + f" O/U ({total} games)")
+
             # coverage fetch_numberfire_direct actually has. Matches by
             # normalized name against the raw scraped rows.
             if _pl_sport_used in ("NFL", "NBA"):
