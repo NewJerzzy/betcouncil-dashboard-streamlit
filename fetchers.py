@@ -5239,6 +5239,47 @@ def fetch_paddypower_lines(sport="NBA"):
     except Exception as e:
         return {}
 
+def fetch_bettingpros_hitrate(player_name, sport="MLB"):
+    """
+    Prop-level hit-rate/streak trend data (last 1/5/10/15/20 games,
+    season, prior season, h2h vs opponent, current streak) from
+    scripts/bettingpros_refresh.py (betcouncil_bettingpros_{sport}.json).
+
+    This is the real data hitrate_logger.py's compute_hit_rate() was
+    always meant to compute but never could (that function is a stub
+    that always returns None, waiting on resolved-outcome data that
+    was never wired in) -- this fills that gap directly instead.
+
+    Returns a list of matching prop dicts (a player can have multiple
+    props -- e.g. Strikeouts and Outs Recorded for a pitcher), each
+    with its own performance/over/under/projection blocks. Matches by
+    participant.player.short_name (BettingPros' own compact format,
+    e.g. "S. Drohan").
+    """
+    data = _read_gist_file(f"betcouncil_bettingpros_{sport.upper()}.json", cache_minutes=30)
+    if not data:
+        return []
+    props = data.get("props", [])
+    if not props:
+        return []
+
+    parts = player_name.strip().split()
+    if not parts:
+        return []
+    search_last = parts[-1].lower()
+    search_first_initial = parts[0][0].lower() if parts[0] else ""
+
+    matches = []
+    for p in props:
+        player = (p.get("participant", {}) or {}).get("player", {}) or {}
+        short = str(player.get("short_name", "")).lower()
+        last = str(player.get("last_name", "")).lower()
+        first = str(player.get("first_name", "")).lower()
+        if last == search_last and (not search_first_initial or first[:1] == search_first_initial or search_first_initial in short):
+            matches.append(p)
+    return matches
+
+
 def fetch_gamblingforecast_matchup(player_name):
     """
     Batter-vs-this-specific-pitcher history (H/HR/RBI/AVG/OPS) from
