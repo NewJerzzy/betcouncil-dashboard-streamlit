@@ -76,8 +76,9 @@ def main() -> int:
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": {"betcouncil_vsin_splits_explore_debug.json": {
+            json={"files": {"betcouncil_gamblingforecast_debug.json": {
                 "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
+                                        "note": "TEMPORARY: this is vsin_splits_explore.py diagnostic output, not gamblingforecast -- repurposing this slot because the gist is at its 300-file cap and can't create new files",
                                         "results": results}, indent=2)}}},
             timeout=30,
         )
