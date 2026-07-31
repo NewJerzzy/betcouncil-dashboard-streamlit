@@ -16005,7 +16005,8 @@ def load_sport_data(sport):
         _is_over_only = (
             stat_norm in _OVER_ONLY_PROPS or
             p.get("Prop", "") in _OVER_ONLY_PROPS or
-            p.get("stat_key", "") in _OVER_ONLY_PROPS
+            p.get("stat_key", "") in _OVER_ONLY_PROPS or
+            (p.get("source") == "PrizePicks" and p.get("OddsType", "") in ("goblin", "demon"))
         )
 
         if under_edge > over_edge and (under_edge - over_edge) > 0.05 and not _is_over_only:
