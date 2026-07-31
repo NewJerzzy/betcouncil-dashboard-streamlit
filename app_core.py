@@ -1484,6 +1484,17 @@ def render_signal_chart(prop, sport="NBA"):
     if zero_signals:
         zero_html = f'<div style="font-size:16px;color:#4a5a6a;margin-top:4px">No impact: {", ".join(zero_signals)}</div>'
 
+    _sig_notes = str(prop.get("SignalNotes", "")).strip()
+    signal_notes_html = ""
+    if _sig_notes:
+        signal_notes_html = (
+            f'<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1e2d3d;">'
+            f'<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;">'
+            f'External signals & market checks</div>'
+            f'<div style="font-size:13px;color:#c9d8e8;line-height:1.8;">{_sig_notes}</div>'
+            f'</div>'
+        )
+
     # Overall verdict in plain English
     strong_count = sum(1 for v in signals.values() if abs(v) >= 0.06)
     moderate_count = sum(1 for v in signals.values() if 0.02 <= abs(v) < 0.06)
@@ -1629,6 +1640,7 @@ def render_signal_chart(prop, sport="NBA"):
   <div style="font-size:16px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Signal breakdown — what is pushing this pick</div>
   {rows_html}
   {zero_html}
+  {signal_notes_html}
 </div>"""
     return html
 
@@ -13515,6 +13527,7 @@ def load_sport_data(sport):
     def _pf_sharpapi_ev():   return fetch_sharpapi_ev_opportunities(sport)
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
+    def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
     def _pf_betslib_live():  return fetch_betslib_live_events(sport)
     def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
     def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
@@ -13804,7 +13817,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
-        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
+        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -13822,7 +13835,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
-     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
+     signalodds_raw, betslib_raw, gamblingforecast_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -13989,6 +14002,7 @@ def load_sport_data(sport):
     st.session_state["action_network_data"] = st.session_state.get("covers_consensus", {})  # same underlying data as covers (fetch_action_network_from_gist and fetch_covers_from_gist were identical, calling the same source twice)
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
+    st.session_state["gamblingforecast_props"] = gamblingforecast_raw or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
     try:
         st.session_state["signalodds_arbitrage"] = fetch_signalodds_arbitrage_from_gist()
@@ -16206,6 +16220,31 @@ def load_sport_data(sport):
                         final_edge = final_edge*0.92
             except Exception:
                 _logger.debug("Silent except at line 12407")
+                pass
+
+        # ── GamblingForecast model overlay ───────────────────────────────
+        # A second independent model's projection-vs-line, matched by
+        # player name (not team, unlike SignalOdds above -- this is a
+        # per-player call, not a per-game prediction).
+        if player:
+            try:
+                _gf_props = st.session_state.get("gamblingforecast_props", [])
+                _gf_norm = normalize_name(player)
+                _gf_hit = next((gp for gp in _gf_props
+                    if normalize_name(str(gp.get("name",""))) == _gf_norm), None)
+                if _gf_hit:
+                    _gf_call = str(_gf_hit.get("overUnder","")).upper()
+                    _gf_diff = _gf_hit.get("projDiff", 0)
+                    try:
+                        _gf_diff_val = float(str(_gf_diff).replace("+",""))
+                    except (TypeError, ValueError):
+                        _gf_diff_val = 0
+                    if _gf_call == best_side and abs(_gf_diff_val) > 0:
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" 📈 GF:{_gf_call}({_gf_diff:+} proj gap)"
+                        final_edge = min(final_edge * 1.04, EDGE_CAP)
+                    elif _gf_call and _gf_call != best_side:
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ GF disagrees:{_gf_call}"
+            except Exception:
                 pass
 
         # ── FantasyPros projection cross-check ──────────────────────────────
