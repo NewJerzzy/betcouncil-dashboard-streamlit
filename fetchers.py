@@ -5239,6 +5239,47 @@ def fetch_paddypower_lines(sport="NBA"):
     except Exception as e:
         return {}
 
+def fetch_gamblingforecast_matchup(player_name):
+    """
+    Batter-vs-this-specific-pitcher history (H/HR/RBI/AVG/OPS) from
+    scripts/gamblingforecast_refresh.py (betcouncil_gamblingforecast_
+    mlb_matchups.json). Real field names discovered live via GraphQL
+    introspection when the scraper ran (not guessed).
+
+    Name matching quirk (confirmed against real captured data): the
+    stored `name` field glues FirstName+LastInitial+"."+LastName with
+    no spaces, e.g. "SeiyaS.Suzuki" for Seiya Suzuki -- a formatting
+    artifact on their end, not something to normalize away naively.
+    Parses first/last name out of both the stored glued format and the
+    plain search name, then compares those.
+    """
+    data = _read_gist_file("betcouncil_gamblingforecast_mlb_matchups.json", cache_minutes=180)
+    if not data:
+        return {}
+    matchups = data.get("matchups", [])
+    if not matchups:
+        return {}
+
+    search_parts = player_name.strip().split()
+    search_first = search_parts[0].lower() if search_parts else ""
+    search_last = search_parts[-1].lower() if len(search_parts) > 1 else ""
+    if not search_first or not search_last:
+        return {}
+
+    for m in matchups:
+        stored = str(m.get("name", "")).strip()
+        glued = re.match(r"^([A-Za-z]+)([A-Z])\.([A-Za-z\-]+)$", stored)
+        if glued:
+            stored_first, _, stored_last = glued.groups()
+        else:
+            parts = stored.split()
+            stored_first = parts[0] if parts else ""
+            stored_last = parts[-1] if len(parts) > 1 else ""
+        if stored_first.lower() == search_first and stored_last.lower() == search_last:
+            return m
+    return {}
+
+
 def fetch_soccer_player_stats(player_name):
     """
     Confirmed dead end (live-tested): ESPN does not publish individual
