@@ -8061,6 +8061,27 @@ with tabs[7]:
                                 f"W-L: {_ts_s.get('wins',0)}-{_ts_s.get('losses',0)}"
                             )
 
+            # GamblingForecast batter-vs-this-pitcher matchup history --
+            # MLB only, matching this source's real coverage.
+            if _pl_sport_used == "MLB":
+                try:
+                    _gf_matchup = fetch_gamblingforecast_matchup(pl_name_d)
+                except Exception:
+                    _gf_matchup = {}
+                if _gf_matchup:
+                    _gf_opp = _gf_matchup.get("opp", "?")
+                    _gf_pitcher = _gf_matchup.get("pitcher", "?")
+                    with st.expander(f"🎯 vs {_gf_pitcher} history ({_gf_opp})", expanded=False):
+                        st.caption(
+                            f"AB: {_gf_matchup.get('ab','?')}  H: {_gf_matchup.get('h','?')}  "
+                            f"HR: {_gf_matchup.get('hr','?')}  RBI: {_gf_matchup.get('rbi','?')}  "
+                            f"BB: {_gf_matchup.get('bb','?')}  K: {_gf_matchup.get('k','?')}"
+                        )
+                        st.caption(
+                            f"AVG: {_gf_matchup.get('avg','?')}  OBP: {_gf_matchup.get('obp','?')}  "
+                            f"SLG: {_gf_matchup.get('slg','?')}  OPS: {_gf_matchup.get('ops','?')}"
+                        )
+
             # NumberFire ranking lookup -- NFL/NBA only, matching the real
             # coverage fetch_numberfire_direct actually has. Matches by
             # normalized name against the raw scraped rows.
