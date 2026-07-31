@@ -411,17 +411,17 @@ with tabs[0]:
             <div class="command-label" style="margin-bottom:10px;">Market Climate</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Sharp Movement</span>
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;border-bottom:1px dotted var(--bc-dim);cursor:help;" title="Whether betting lines are actively moving right now. Lines move when real money comes in on one side of a bet.">Sharp Movement</span>
                     <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_sharp_pct}%;height:100%;background:#4db8ff;border-radius:3px;"></div></div>
                     <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{_mc_climate["verdict"]}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Reverse Line Move</span>
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;border-bottom:1px dotted var(--bc-dim);cursor:help;" title="A line moving the OPPOSITE way from where most public bets are placed — often a sign that large/sharp bettors are betting the other side, even though most people are betting the other way.">Reverse Line Move</span>
                     <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_rlm_pct}%;height:100%;background:#e8a020;border-radius:3px;"></div></div>
                     <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{_mc_rlm_count} flagged</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Book Discrepancy</span>
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;border-bottom:1px dotted var(--bc-dim);cursor:help;" title="Cases where different sportsbooks are offering noticeably different odds or lines on the same bet right now — sometimes a sign one book hasn't updated yet, which can mean a better price is available elsewhere.">Book Discrepancy</span>
                     <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_disc_pct}%;height:100%;background:#f5c518;border-radius:3px;"></div></div>
                     <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{len(_mc_disc)} found</span>
                 </div>
