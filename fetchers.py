@@ -5280,6 +5280,20 @@ def fetch_gamblingforecast_matchup(player_name):
     return {}
 
 
+def fetch_gamblingforecast_props(sport: str) -> list:
+    """
+    GamblingForecast's own model projection-vs-line, pre-sorted by edge
+    (projDiff), from scripts/gamblingforecast_refresh.py
+    (betcouncil_gamblingforecast_props_{sport}.json). Covers MLB/NBA/NFL.
+    A second independent model's opinion, matched per-player into
+    SignalNotes the same way SignalOdds/BetsLib already is.
+    """
+    data = _read_gist_file(f"betcouncil_gamblingforecast_props_{sport}.json", cache_minutes=30)
+    if not data:
+        return []
+    return data.get("props", [])
+
+
 def fetch_soccer_player_stats(player_name):
     """
     Confirmed dead end (live-tested): ESPN does not publish individual
