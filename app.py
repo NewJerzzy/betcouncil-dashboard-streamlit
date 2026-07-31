@@ -8089,6 +8089,17 @@ with tabs[7]:
                     _bp_props = fetch_bettingpros_hitrate(pl_name_d, _pl_sport_used)
                 except Exception:
                     _bp_props = []
+                if _bp_props:
+                    _bp_player_info = (_bp_props[0].get("participant", {}) or {}).get("player", {}) or {}
+                    _bp_headshot = _bp_player_info.get("image")
+                    _bp_pos = _bp_player_info.get("position", "")
+                    _bp_team = _bp_player_info.get("team", "")
+                    if _bp_headshot:
+                        _bp_col1, _bp_col2 = st.columns([1, 5])
+                        with _bp_col1:
+                            st.image(_bp_headshot, width=60)
+                        with _bp_col2:
+                            st.caption(f"{_bp_pos} — {_bp_team}" if _bp_pos or _bp_team else "")
                 for _bp in _bp_props[:3]:
                     _bp_perf = _bp.get("performance", {})
                     _bp_over = _bp.get("over", {}) or {}
@@ -8911,6 +8922,24 @@ with tabs[9]:
                 ls_sources.setdefault(k, {}).setdefault(prop, {})[source_name] = float(line)
 
         _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
+        # ── BettingPros (public props API, best line + cross-book consensus) ──
+        _bp_ls_props, _bp_ls_consensus = [], []
+        for _bp_lp in st.session_state.get("bettingpros_props", []):
+            _bp_lp_player = (_bp_lp.get("participant", {}) or {}).get("player", {}) or {}
+            _bp_lp_name = f"{_bp_lp_player.get('first_name','')} {_bp_lp_player.get('last_name','')}".strip()
+            _bp_lp_stat = _bp_lp.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+            if not _bp_lp_name or not _bp_lp_stat:
+                continue
+            _bp_lp_proj = _bp_lp.get("projection", {}) or {}
+            _bp_lp_side = "over" if str(_bp_lp_proj.get("recommended_side","")).lower() != "under" else "under"
+            _bp_lp_line = _bp_lp.get(_bp_lp_side, {}).get("line")
+            _bp_lp_cons = _bp_lp.get("over", {}).get("consensus_line")
+            if _bp_lp_line is not None:
+                _bp_ls_props.append({"Player": _bp_lp_name, "Prop": _bp_lp_stat, "Line": _bp_lp_line})
+            if _bp_lp_cons is not None:
+                _bp_ls_consensus.append({"Player": _bp_lp_name, "Prop": _bp_lp_stat, "Line": _bp_lp_cons})
+        _ls_add(_bp_ls_props, "BettingPros (best)")
+        _ls_add(_bp_ls_consensus, "BettingPros (consensus)")
         # ── Unabated (data.unabated.com, 15-min cron, no auth/WAF dependency) ──
         # Independent of the token-gated scrapers below — still fresh even
         # when Caesars/Bovada/DK Pick6 tokens have expired since last capture.
