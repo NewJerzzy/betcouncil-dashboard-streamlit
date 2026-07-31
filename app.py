@@ -312,7 +312,7 @@ with tabs[0]:
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
         <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px 16px;" title="Rolling 20-bet hit rate">
             <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient({_hr_color} {_hr_deg}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;">
-                <div style="width:48px;height:48px;border-radius:50%;background:var(--bc-bg-card);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.9rem;color:{_hr_color};">{_hr_pct:.0f}%</div>
+                <div style="width:48px;height:48px;border-radius:50%;background:var(--bc-bg-card);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.9rem;color:#ffffff;">{_hr_pct:.0f}%</div>
             </div>
             <div class="command-label" style="margin-top:8px;">Hit Rate (L20)</div>
         </div>
@@ -3146,7 +3146,7 @@ with tabs[3]:
                 f'</div>'
                 f'<div style="width:72px;height:72px;border-radius:50%;background:conic-gradient({_gl_hero_tc} {_gl_ring_deg:.0f}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
                 f'<div style="width:58px;height:58px;border-radius:50%;background:var(--bc-bg-card);display:flex;flex-direction:column;align-items:center;justify-content:center;">'
-                f'<div style="font-weight:800;font-size:1.1rem;color:{_gl_hero_tc};">{_gl_edge_pct:.1f}%</div>'
+                f'<div style="font-weight:800;font-size:1.1rem;color:#ffffff;">{_gl_edge_pct:.1f}%</div>'
                 f'<div style="font-size:0.5rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
                 f'</div></div>'
                 f'</div>',
@@ -3317,7 +3317,7 @@ with tabs[3]:
                 f'display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;">'
                 f'<div style="width:32px;height:32px;border-radius:50%;background:var(--bc-bg-card);'
                 f'display:flex;flex-direction:column;align-items:center;justify-content:center;">'
-                f'<div style="font-weight:800;font-size:0.68rem;color:{_gl_row_tc};">{_gl_row_edge_pct:.1f}%</div>'
+                f'<div style="font-weight:800;font-size:0.68rem;color:#ffffff;">{_gl_row_edge_pct:.1f}%</div>'
                 f'<div style="font-size:0.4rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
                 f'</div></div>'
             )
