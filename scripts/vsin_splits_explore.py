@@ -29,14 +29,8 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
            "Accept": "text/html,application/json"}
 
 CANDIDATE_URLS = [
-    "https://data.vsin.com/betting-splits/",
-    "https://data.vsin.com/mlb-betting-splits/",
-    "https://data.vsin.com/nfl-betting-splits/",
-    "https://data.vsin.com/betting-splits/?sportid=mlb",
-    "https://www.vsin.com/betting-splits/mlb/",
-    "https://www.vsin.com/mlb/betting-splits/",
-    "https://data.vsin.com/apps/consensus/",
-    "https://data.vsin.com/api/consensus/mlb/",
+    "https://vsin.com/betting-splits/",
+    "https://vsin.com/mlb/",
 ]
 
 
@@ -64,7 +58,16 @@ def main() -> int:
             entry["mentions_handle"] = "handle" in lower
             entry["mentions_tickets"] = "ticket" in lower
             entry["mentions_bets_pct"] = "bets %" in lower or "bets%" in lower
-            entry["snippet"] = r.text[:800]
+            # Find percent-sign occurrences with surrounding context to
+            # locate the actual betting-split numbers in the real DOM
+            import re
+            pct_contexts = []
+            for m in re.finditer(r"\d{1,3}\s?%", r.text):
+                start = max(0, m.start() - 60)
+                end = min(len(r.text), m.end() + 20)
+                pct_contexts.append(r.text[start:end].replace("\n", " ").strip())
+            entry["pct_context_samples"] = pct_contexts[:25]
+            entry["snippet"] = r.text[:1500]
             log(f"{url} -> {r.status_code}, {len(r.text)} bytes, "
                 f"handle={entry['mentions_handle']} tickets={entry['mentions_tickets']}")
         except Exception as e:
