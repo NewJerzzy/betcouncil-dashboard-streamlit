@@ -3897,6 +3897,46 @@ with tabs[3]:
                 if _nvg_parts:
                     st.caption(f"🔄 Novig exchange: {' vs '.join(_nvg_parts)}")
 
+        # SportsInsights public betting % (bets on spread/total/ML per side)
+        # -- real fresh data, was being scraped every cycle but silently
+        # discarded due to a key mismatch (fetch function expected "data",
+        # real payload uses "games"). Fixed same session this was found.
+        try:
+            _si_games = st.session_state.get("sportsinsights_games", [])
+            _si_game = next((g for g in _si_games if _home_nm and _away_nm and (
+                str(g.get("home_team","")).lower() in _home_nm.lower() or _home_nm.lower() in str(g.get("home_team","")).lower()
+            ) and (
+                str(g.get("away_team","")).lower() in _away_nm.lower() or _away_nm.lower() in str(g.get("away_team","")).lower()
+            )), None)
+        except Exception:
+            _si_game = None
+        if _si_game:
+            _si_parts = []
+            for label, key in (("Spread", "home_pct_spread"), ("Total", "home_pct_ou"), ("ML", "home_pct_ml")):
+                v = _si_game.get(key)
+                if v is not None:
+                    _si_parts.append(f"{label} {v}% home")
+            if _si_parts:
+                st.caption(f"👥 Public bets (SportsInsights): {' · '.join(_si_parts)} ({_si_game.get('total_bets','?'):,} bets)" if isinstance(_si_game.get("total_bets"), (int, float)) else f"👥 Public bets (SportsInsights): {' · '.join(_si_parts)}")
+
+        # MLB probable pitchers -- team-keyed, includes Savant FIP/xFIP/
+        # xwOBA/K%/BB% enrichment already built in. Confirmed unused
+        # anywhere in the codebase before this.
+        if _gsport == "MLB":
+            try:
+                _mlb_pitchers = st.session_state.get("mlb_probable_pitchers", {})
+                _mp_home = next((v for k, v in _mlb_pitchers.items() if _home_nm and (k.lower() in _home_nm.lower() or _home_nm.lower() in k.lower())), None)
+                _mp_away = next((v for k, v in _mlb_pitchers.items() if _away_nm and (k.lower() in _away_nm.lower() or _away_nm.lower() in k.lower())), None)
+            except Exception:
+                _mp_home = _mp_away = None
+            _mp_parts = []
+            for _mp in (_mp_away, _mp_home):
+                if _mp and _mp.get("pitcher"):
+                    _mp_fip = _mp.get("fip_live")
+                    _mp_parts.append(f"{_mp['pitcher']}" + (f" (FIP {_mp_fip})" if _mp_fip is not None else ""))
+            if _mp_parts:
+                st.caption(f"⚾ Probable pitchers: {' vs '.join(_mp_parts)}")
+
         if _bdl_game:
             _bdl_home_data = _bdl_game.get("home_team_data") or {}
             _bdl_away_data = _bdl_game.get("away_team_data") or {}
