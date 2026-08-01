@@ -20218,7 +20218,10 @@ def fetch_vsin_splits_from_gist(sport: str = "MLB", max_age_minutes: int = 35) -
     Returns [] on parse error or stale/missing file (not an error — caller handles
     empty gracefully). Sport filter is exact-match on the "sport" field.
     """
-    data = _read_gist_file("betcouncil_vsin_splits.json", cache_minutes=max_age_minutes)
+    data = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=max_age_minutes)
+    if not data:
+        return []
+    data = data.get("vsin_splits", {})
     if not data:
         return []
     games = data.get("games", [])
