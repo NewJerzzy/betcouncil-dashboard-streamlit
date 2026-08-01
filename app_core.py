@@ -2259,7 +2259,7 @@ def run_comprehensive_elo_update():
             if not _elo_events or not isinstance(_elo_events, list):
                 continue  # empty schedule or malformed response — skip sport silently
             _elo_processed_key = f"elo_processed_{_elo_sport.lower()}"
-            _elo_processed = set(load_from_gist(_elo_processed_key, []) or [])
+            _elo_processed = set(load_from_gist(_elo_processed_key, None) or [])
             _elo_new = False
             for _elo_event in _elo_events:
                 if not _elo_event.get("status", {}).get("type", {}).get("completed"):
@@ -5928,7 +5928,7 @@ def analyze_injury_performance():
     results["player_breakdown"] = player_results
     return results, len(injured)
 
-def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
+def lookup_board_edge(player: str, prop: str, sport: str, date_str: str, _snapshots_cache=None):
     """Backfill edge/tier/prob/signals for a manually-logged bet.
 
     Checks TWO sources, live board first:
@@ -5943,6 +5943,15 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
         grade_board_snapshots_for_date reads. Only useful for the exact
         date+player+prop combination that happened to be in that day's
         top-30 snapshot, and only goes back as far as snapshots exist.
+
+    _snapshots_cache: optional pre-fetched board_snapshots dict, to avoid
+    a full Gist re-fetch on every call when this runs inside a loop over
+    several bets (confirmed real bug -- load_from_gist has no caching and
+    fetches the entire multi-file Gist fresh every call; looping this over
+    N parsed bets meant N full Gist fetches in a row, which is what made
+    Submit All Parsed Bets / Log This Parlay appear to hang with more than
+    a couple of bets queued up). Callers looping over multiple bets should
+    fetch board_snapshots once before the loop and pass it here each time.
 
     Fixes two related root causes of signal_performance/history records
     being unusable for calibration: (1) edge/tier/prob defaulting to 0/None
@@ -5978,7 +5987,9 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str):
 
     # (2) Historical snapshot fallback
     try:
-        stored = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
+        stored = _snapshots_cache if _snapshots_cache is not None else (
+            load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
+        )
         day_snaps = {k: v for k, v in stored.items() if v.get("date") == target_date}
         for snap in day_snaps.values():
             if sport and snap.get("sport") and snap.get("sport") != sport:
@@ -17957,7 +17968,7 @@ with st.sidebar:
             save_json_data(BANKROLL_PATH, st.session_state.bankroll)
             save_to_gist("bankroll", st.session_state.bankroll)
             st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
-            _txn_log = load_from_gist("bankroll_transactions", [])
+            _txn_log = load_from_gist("bankroll_transactions", None)
             if not isinstance(_txn_log, list):
                 _txn_log = []
             _txn_log.append({"type": "deposit", "amount": _dw_amount,
@@ -17971,7 +17982,7 @@ with st.sidebar:
             save_json_data(BANKROLL_PATH, st.session_state.bankroll)
             save_to_gist("bankroll", st.session_state.bankroll)
             st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
-            _txn_log = load_from_gist("bankroll_transactions", [])
+            _txn_log = load_from_gist("bankroll_transactions", None)
             if not isinstance(_txn_log, list):
                 _txn_log = []
             _txn_log.append({"type": "withdraw", "amount": _dw_amount,
