@@ -3929,6 +3929,28 @@ with tabs[3]:
             if _si_parts:
                 st.caption(f"👥 Public bets (SportsInsights): {' · '.join(_si_parts)} ({_si_game.get('total_bets','?'):,} bets)" if isinstance(_si_game.get("total_bets"), (int, float)) else f"👥 Public bets (SportsInsights): {' · '.join(_si_parts)}")
 
+        # VSIN handle%/bets% splits -- real money vs ticket-count split
+        # per side (spread/total/ML), the actual tickets-vs-money signal
+        # this project didn't have a working source for until now.
+        try:
+            _vsin_games = st.session_state.get("vsin_splits_games", [])
+            _vsin_game = next((g for g in _vsin_games if _home_nm and _away_nm and (
+                str(g.get("home_team","")).lower() in _home_nm.lower() or _home_nm.lower() in str(g.get("home_team","")).lower()
+            ) and (
+                str(g.get("road_team","")).lower() in _away_nm.lower() or _away_nm.lower() in str(g.get("road_team","")).lower()
+            )), None)
+        except Exception:
+            _vsin_game = None
+        if _vsin_game:
+            _vs_parts = []
+            for label, key in (("Spread", "spread"), ("Total", "total"), ("ML", "moneyline")):
+                block = _vsin_game.get(key, {})
+                home_side = block.get("home") or block.get("over")
+                if home_side:
+                    _vs_parts.append(f"{label}: {home_side.get('handle_pct','?')}% handle / {home_side.get('bets_pct','?')}% bets (home)")
+            if _vs_parts:
+                st.caption(f"💰 VSIN handle vs bets: {' · '.join(_vs_parts)}")
+
         # MLB probable pitchers -- team-keyed, includes Savant FIP/xFIP/
         # xwOBA/K%/BB% enrichment already built in. Confirmed unused
         # anywhere in the codebase before this.
