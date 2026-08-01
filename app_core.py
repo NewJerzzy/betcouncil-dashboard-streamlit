@@ -15342,7 +15342,7 @@ def load_sport_data(sport):
         _stat_n   = STAT_NORMALIZE.get((sport, _prop_key), _prop_key)
         if _prop_key in _OVER_ONLY_STATS or _stat_n in _OVER_ONLY_STATS:
             _p["Side"] = "OVER"   # no book offers HR/Goal/TD UNDER
-        elif _p.get("source") == "PrizePicks" and _p.get("OddsType","") in ("goblin", "demon"):
+        elif _p.get("Book") == "PrizePicks" and _p.get("OddsType","") in ("goblin", "demon"):
             _p["Side"] = "OVER"   # PrizePicks goblin/demon lines are More-only, confirmed by user
 
     enriched = []
@@ -16026,7 +16026,7 @@ def load_sport_data(sport):
             stat_norm in _OVER_ONLY_PROPS or
             p.get("Prop", "") in _OVER_ONLY_PROPS or
             p.get("stat_key", "") in _OVER_ONLY_PROPS or
-            (p.get("source") == "PrizePicks" and p.get("OddsType", "") in ("goblin", "demon"))
+            (p.get("Book") == "PrizePicks" and p.get("OddsType", "") in ("goblin", "demon"))
         )
 
         if under_edge > over_edge and (under_edge - over_edge) > 0.05 and not _is_over_only:
