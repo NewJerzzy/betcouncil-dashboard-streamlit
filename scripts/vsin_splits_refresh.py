@@ -376,7 +376,13 @@ def main() -> int:
         r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
                           headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
                           timeout=15)
-        existing = json.loads(r.json()["files"][SHARED_FILE]["content"]) if SHARED_FILE in r.json().get("files", {}) else {}
+        r_files = r.json().get("files", {})
+        if SHARED_FILE in r_files:
+            raw_url = r_files[SHARED_FILE]["raw_url"]
+            raw_resp = requests.get(raw_url, timeout=15)
+            existing = raw_resp.json()
+        else:
+            existing = {}
     except Exception as e:
         log(f"Could not read existing shared file, starting fresh: {e}")
         existing = {}
