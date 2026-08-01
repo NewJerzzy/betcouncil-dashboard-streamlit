@@ -14641,26 +14641,30 @@ def fetch_sportsline_game_lines(sport: str) -> list:
 
 
 BOOKMAKER_SPORT_PATHS = {
-    "NFL": "football/nfl", "NBA": "basketball/nba", "MLB": "baseball/mlb",
-    "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
+    "NFL": "football", "NBA": "basketball", "MLB": "baseball",
+    "NHL": "hockey", "WNBA": "basketball",
 }
 
 
 def fetch_bookmaker_game_lines(sport: str) -> list:
     """
-    Fetch Bookmaker.eu game lines via HTML scraping (server-rendered page).
-    Auth: cf_clearance + PHPSESSID cookies stored in Streamlit secrets.
+    Fetch Bookmaker.eu game lines via lines.bookmaker.eu -- a separate
+    public SEO subdomain from the CF/login-gated www.bookmaker.eu
+    sportsbook. Confirmed live 2026-08-01 via GH Actions
+    workflow_dispatch: 200 status, zero cookies sent, real server-
+    rendered <table class='oddsTable'> in the response. No auth needed.
+
+    Real row structure (confirmed from live HTML, not guessed):
+      <tr id='vTeam_N'> (visitor) / <tr id='hTeam_N'> (home), each with
+      <td id='vN_N'>/<td id='hN_N'>  -- team name (inside <a> text)
+      <td id='vS_N'>/<td id='hS_N'>  -- run line / spread (uses unicode ½)
+      <td id='vT_N'>/<td id='hT_N'>  -- total
+      <td id='vM_N'>/<td id='hM_N'>  -- moneyline
     Cached 20 min.
     """
     sport_path = BOOKMAKER_SPORT_PATHS.get(sport)
     if not sport_path:
         return []
-
-    try:
-        cf   = BOOKMAKER_CF   if BOOKMAKER_CF   else ""
-        sess = BOOKMAKER_SESSID if BOOKMAKER_SESSID else ""
-    except Exception:
-        cf = sess = ""
 
     cache_path = os.path.join(CACHE_DIR, f"bookmaker_lines_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -14670,92 +14674,61 @@ def fetch_bookmaker_game_lines(sport: str) -> list:
 
     try:
         url = f"https://lines.bookmaker.eu/en/sports/{sport_path}/"
-        cookie_parts = []
-        if cf:   cookie_parts.append(f"cf_clearance={cf}")
-        if sess: cookie_parts.append(f"PHPSESSID={sess}")
         headers = {
             "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
-            "Referer":         "https://lines.bookmaker.eu/en/sports/",
-            "upgrade-insecure-requests": "1",
         }
-        if cookie_parts:
-            headers["Cookie"] = "; ".join(cookie_parts)
-
         r = _http.get(url, headers=headers, timeout=20)
         if r.status_code != 200:
             print(f"[WARN] fetch_bookmaker_game_lines HTTP {r.status_code}")
             return []
 
         html = r.text
-        results = []
-
-        # Try JSON embedded in script tag
         import re as _re
-        for pattern in [
-            r'var\s+lines\s*=\s*(\[.*?\]);',
-            r'var\s+events\s*=\s*(\[.*?\]);',
-            r'"events"\s*:\s*(\[.*?\])',
-        ]:
-            jm = _re.search(pattern, html, _re.S)
-            if jm:
-                try:
-                    events = json.loads(jm.group(1))
-                    for ev in events:
-                        home = ev.get("home", ev.get("homeTeam", ""))
-                        away = ev.get("away", ev.get("awayTeam", ""))
-                        if not home or not away: continue
-                        game = f"{away} @ {home}"
-                        for mkt, sel, odds_key in [
-                            ("Moneyline", away, "awayML"),
-                            ("Moneyline", home, "homeML"),
-                        ]:
-                            odds = ev.get(odds_key, "")
-                            if odds:
-                                results.append({"game":game,"home":home,"away":away,
-                                    "market":mkt,"selection":sel,"odds":odds,
-                                    "book":"Bookmaker","sport":sport,"source":"bookmaker"})
-                    if results:
-                        _safe_save_pkl(cache_path, results)
-                        return results
-                except Exception:
-                    pass
 
-        # HTML table parsing — Bookmaker renders odds in data attributes
-        rows = _re.findall(
-            r'data-away="([^"]+)"[^>]*data-home="([^"]+)"[^>]*'
-            r'(?:data-away-ml="([^"]*)")?[^>]*(?:data-home-ml="([^"]*)")?'
-            r'(?:[^>]*data-total-line="([^"]*)")?'
-            r'(?:[^>]*data-over-price="([^"]*)")?'
-            r'(?:[^>]*data-under-price="([^"]*)")?'
-            r'(?:[^>]*data-away-spread="([^"]*)")?'
-            r'(?:[^>]*data-home-spread="([^"]*)")?',
-            html, _re.S
-        )
-        for row in rows:
-            away, home = row[0].strip(), row[1].strip()
-            if not away or not home: continue
+        def _cell(row_id_prefix, n):
+            m = _re.search(
+                rf"id='{row_id_prefix}_{n}'[^>]*>(?:<a[^>]*>)?([^<]+)",
+                html)
+            return m.group(1).strip() if m else ""
+
+        def _frac_to_float(s):
+            if not s:
+                return None
+            s = s.replace("½", ".5").replace("¼", ".25").replace("¾", ".75")
+            try:
+                return float(s)
+            except (TypeError, ValueError):
+                return None
+
+        results = []
+        game_ids = sorted(set(int(m) for m in _re.findall(r"id='vTeam_(\d+)'", html)))
+        for n in game_ids:
+            away = _cell("vN", n)
+            home = _cell("hN", n)
+            if not away or not home:
+                continue
             game = f"{away} @ {home}"
-            away_ml  = row[2] if len(row) > 2 else ""
-            home_ml  = row[3] if len(row) > 3 else ""
-            tot_line = row[4] if len(row) > 4 else ""
-            over_p   = row[5] if len(row) > 5 else ""
-            under_p  = row[6] if len(row) > 6 else ""
-            away_sp  = row[7] if len(row) > 7 else ""
-            home_sp  = row[8] if len(row) > 8 else ""
-            for mkt, sel, odds in [
+            away_sp = _cell("vS", n)
+            home_sp = _cell("hS", n)
+            away_tot = _cell("vT", n)
+            home_tot = _cell("hT", n)
+            away_ml = _cell("vM", n)
+            home_ml = _cell("hM", n)
+
+            for mkt, sel, val in [
                 ("Moneyline", away, away_ml),
                 ("Moneyline", home, home_ml),
-                ("Total", f"Over {tot_line}",  over_p),
-                ("Total", f"Under {tot_line}", under_p),
                 ("Spread", f"{away} {away_sp}", away_sp),
                 ("Spread", f"{home} {home_sp}", home_sp),
+                ("Total", f"Over {away_tot}", away_tot),
+                ("Total", f"Under {home_tot}", home_tot),
             ]:
-                if odds and odds not in ("", "0", "EV"):
-                    results.append({"game":game,"home":home,"away":away,
-                        "market":mkt,"selection":sel,"odds":odds,
-                        "book":"Bookmaker","sport":sport,"source":"bookmaker"})
+                if val:
+                    results.append({"game": game, "home": home, "away": away,
+                        "market": mkt, "selection": sel, "odds": val,
+                        "book": "Bookmaker", "sport": sport, "source": "bookmaker"})
 
         if results:
             _safe_save_pkl(cache_path, results)
@@ -14764,7 +14737,6 @@ def fetch_bookmaker_game_lines(sport: str) -> list:
     except Exception as e:
         print(f"[WARN] fetch_bookmaker_game_lines: {e}")
         return []
-
 
 
 # ── StatMuse ──────────────────────────────────────────────────────────────────
@@ -15357,11 +15329,11 @@ def fetch_sharpapi_line_drops(sport: str, min_drop_pct: float = 0.03) -> list:
             import streamlit as st
             return st.session_state.get(f"sharpapi_drops_{sport}", [])
         except Exception: return []
-    api_key = _sharpapi_key()
+    api_key = SHARPAPI_KEY
     if not api_key: return []
     league = SHARPAPI_LEAGUE_MAP.get(sport, sport)
     try:
-        hdrs = {"Authorization":f"Bearer {api_key}","Accept":"application/json"}
+        hdrs = {"X-API-Key": api_key, "Accept": "application/json"}
         since = _SHARPAPI_LAST_SINCE.get(sport)
         url   = f"{SHARPAPI_BASE}/odds/delta?sportsbooks=pinnacle&leagues={league}&limit=500"
         if since: url += f"&since={since}"
@@ -15417,12 +15389,12 @@ def fetch_sharpapi_ev_opportunities(sport: str) -> list:
     if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 10:
         c = _safe_load_pkl(cp)
         if c is not None: return c
-    api_key = _sharpapi_key()
+    api_key = SHARPAPI_KEY
     if not api_key: return []
     league = SHARPAPI_LEAGUE_MAP.get(sport, sport)
     try:
         r = _http.get(f"{SHARPAPI_BASE}/opportunities/ev?leagues={league}&min_ev=0.02&limit=100",
-            headers={"Authorization":f"Bearer {api_key}","Accept":"application/json"},timeout=15)
+            headers={"X-API-Key": api_key, "Accept":"application/json"},timeout=15)
         if r.status_code != 200: return []
         data  = r.json()
         items = data if isinstance(data,list) else data.get("data",data.get("opportunities",[]))
@@ -15451,7 +15423,7 @@ def fetch_fanduel_props_sharpapi(sport: str) -> list:
         c = _safe_load_pkl(cp)
         if c is not None: return c
 
-    api_key = _sharpapi_key()
+    api_key = SHARPAPI_KEY
     if not api_key: return []
 
     league = SHARPAPI_LEAGUE_MAP.get(sport, sport.lower())
@@ -15465,7 +15437,7 @@ def fetch_fanduel_props_sharpapi(sport: str) -> list:
                 params += f"&cursor={cursor}"
             url = f"{SHARPAPI_BASE}/odds?{params}"
             r   = _http.get(url, headers={
-                "Authorization": f"Bearer {api_key}",
+                "X-API-Key":     api_key,
                 "Accept":        "application/json",
             }, timeout=15)
 
