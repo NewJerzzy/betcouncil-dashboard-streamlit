@@ -9644,6 +9644,8 @@ with tabs[11]:
         _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": f"🟢 {len(_oddspapi)} props", "Action": "None"})
     elif "oddspapi" in str(_error_sources).lower():
         _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "🟡 Rate limited or quota hit", "Action": "Wait for daily reset (100/day, 1000/month)"})
+    elif not ODDSPAPI_KEY:
+        _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "🟡 Add ODDSPAPI_KEY to secrets", "Action": "None"})
     else:
         _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
