@@ -8730,10 +8730,12 @@ with tabs[8]:
             if _pk_players:
                 _pk_date_str = datetime.combine(_pk_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
                 _logged_pk = 0
+                _pk_snap_cache = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
                 for _pkl in _pk_players:
                     try:
                         _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
-                            _pkl["player"], _pkl["prop"], _pk_sport, _pk_date_str
+                            _pkl["player"], _pkl["prop"], _pk_sport, _pk_date_str,
+                            _snapshots_cache=_pk_snap_cache
                         )
                         log_manual_bet(
                             player=_pkl["player"], prop=_pkl["prop"],
@@ -8931,6 +8933,7 @@ with tabs[8]:
                 submitted = 0
                 _skipped_pending = 0
                 _submit_errors = []
+                _snap_cache = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
                 for bet in parsed_bets:
                     if bet.get("outcome") not in ("WIN","LOSS","PUSH"):
                         _skipped_pending += 1
@@ -8946,7 +8949,8 @@ with tabs[8]:
                                 continue
                     try:
                         _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
-                            bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str
+                            bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str,
+                            _snapshots_cache=_snap_cache
                         )
                         log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals)
                         submitted += 1
