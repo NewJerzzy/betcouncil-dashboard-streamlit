@@ -13484,7 +13484,8 @@ def load_sport_data(sport):
             return []
     def _pf_covers():
         try:
-            return fetch_covers_consensus(sport)
+            raw, _src = fetch_covers_from_gist(sport)
+            return raw
         except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else {}
@@ -13531,6 +13532,9 @@ def load_sport_data(sport):
     def _pf_bettingpros():   return fetch_bettingpros_props(sport)
     def _pf_sportsinsights(): return fetch_sportsinsights_from_gist(sport)[0]
     def _pf_mlb_pitchers(): return fetch_mlb_probable_pitchers() if sport == "MLB" else {}
+    def _pf_oddsportal():
+        _op_raw, _ = fetch_oddsportal_from_gist(sport)
+        return _op_raw
     def _pf_betslib_live():  return fetch_betslib_live_events(sport)
     def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
     def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
@@ -13820,7 +13824,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
-        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
+        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -13838,7 +13842,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
-     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
+     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -14009,6 +14013,7 @@ def load_sport_data(sport):
     st.session_state["bettingpros_props"] = bettingpros_raw or []
     st.session_state["sportsinsights_games"] = sportsinsights_raw or []
     st.session_state["mlb_probable_pitchers"] = mlb_pitchers_raw or {}
+    st.session_state["oddsportal_data"] = oddsportal_raw or {}
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
     try:
         st.session_state["signalodds_arbitrage"] = fetch_signalodds_arbitrage_from_gist()
@@ -16290,6 +16295,22 @@ def load_sport_data(sport):
                             final_edge = min(final_edge * 1.03, EDGE_CAP)
                         else:
                             p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ BP disagrees:{_bp_call}"
+            except Exception:
+                pass
+
+        # ── Market consensus overlay (Kalshi/Polymarket/Covers) ─────────────
+        # Was fully built (volume-weighted divergence vs prediction markets)
+        # but never called anywhere -- confirmed via full-repo search.
+        if player:
+            try:
+                _mc_model_prob = over_prob if best_side == "OVER" else under_prob
+                _mc = compute_market_consensus(_mc_model_prob, player, stat_norm, sport)
+                if _mc and _mc.get("signal") not in (None, "AGREEMENT"):
+                    p["SignalNotes"] = p.get("SignalNotes", "") + f" {_mc['note']}"
+                    if _mc["signal"] in ("MODEL_BULLISH", "MODEL_LEAN_BULLISH") and best_side:
+                        final_edge = min(final_edge + _mc["edge_adj"], EDGE_CAP)
+                    elif _mc["signal"] == "MARKET_BULLISH":
+                        final_edge = max(final_edge + _mc["edge_adj"], -EDGE_CAP)
             except Exception:
                 pass
 
