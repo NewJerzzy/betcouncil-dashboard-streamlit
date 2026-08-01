@@ -89,7 +89,7 @@ import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 TARGET_FILE = "betcouncil_evbets_combined.json"
-LEGACY_FILE = "betcouncil_oddsshark_CFB.json"  # dead 143b placeholder — repurposed on first run
+LEGACY_FILE = "betcouncil_oddsapiio_bovada_props_debug.json"  # confirmed diagnostic-only, safe to repurpose (real oddsshark_CFB.json is active data, NOT dead -- do not target that)
 HUB_URL = "https://evbets.app/value-bets"
 SPORT_URL = "https://evbets.app/value-bets/{slug}"
 HEADERS = {
